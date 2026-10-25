@@ -19,6 +19,8 @@ type ClaudeProfile = {
   /** A level the menu shows that Claude Code takes under another name (`--effort`). */
   effortMap?: Partial<Record<EffortLevel, EffortLevel>>;
   window: ClaudeWindow;
+  /** Has Claude Code's fast mode. */
+  fast?: boolean;
 };
 
 const FIVE: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
@@ -28,12 +30,12 @@ const TWO_HUNDRED_K = 200_000;
 
 const PROFILES: Record<string, ClaudeProfile> = {
   "fable-5": { efforts: FIVE, defaultEffort: "medium", window: { fixed: ONE_M } },
-  "opus-5-5": { efforts: FIVE, defaultEffort: "medium", window: { fixed: ONE_M } },
-  "opus-5": { efforts: FIVE, defaultEffort: "high", window: { fixed: ONE_M } },
-  "opus-4-8": { efforts: FIVE, defaultEffort: "high", window: { fixed: ONE_M } },
-  "opus-4-7": { efforts: FIVE, defaultEffort: "xhigh", effortMap: { xhigh: "max" }, window: { fixed: ONE_M } },
-  "opus-4-6": { efforts: FOUR, defaultEffort: "high", window: { standard: TWO_HUNDRED_K, long: ONE_M } },
-  "opus-4-5": { efforts: FOUR, defaultEffort: "high", window: { fixed: TWO_HUNDRED_K } },
+  "opus-5-5": { efforts: FIVE, defaultEffort: "medium", window: { fixed: ONE_M }, fast: true },
+  "opus-5": { efforts: FIVE, defaultEffort: "high", window: { fixed: ONE_M }, fast: true },
+  "opus-4-8": { efforts: FIVE, defaultEffort: "high", window: { fixed: ONE_M }, fast: true },
+  "opus-4-7": { efforts: FIVE, defaultEffort: "xhigh", effortMap: { xhigh: "max" }, window: { fixed: ONE_M }, fast: true },
+  "opus-4-6": { efforts: FOUR, defaultEffort: "high", window: { standard: TWO_HUNDRED_K, long: ONE_M }, fast: true },
+  "opus-4-5": { efforts: FOUR, defaultEffort: "high", window: { fixed: TWO_HUNDRED_K }, fast: true },
   "sonnet-5": { efforts: FIVE, defaultEffort: "high", window: { fixed: ONE_M } },
   "sonnet-4-6": { efforts: FOUR, defaultEffort: "high", effortMap: { max: "high" }, window: { standard: TWO_HUNDRED_K, long: ONE_M } },
   "haiku-5-5": { efforts: FIVE, defaultEffort: "medium", window: { fixed: ONE_M } },
@@ -119,10 +121,54 @@ export function claudeCodeModels(version: string | null): SubscriptionModel[] {
         ...(spec.defaultEffort ? { defaultEffort: spec.defaultEffort } : {}),
         contexts: contexts(spec.window),
         vision: true,
+        ...(spec.fast ? { fast: "on" } : {}),
         description: entry.current ? "Anthropic · newest" : "Anthropic · earlier model",
       };
     }),
   ];
+}
+
+/** One model as Claude Code's own `initialize` reply lists it for the signed-in plan. */
+export type ClaudeCodeListed = {
+  value?: string;
+  resolvedModel?: string;
+  displayName?: string;
+  description?: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
+  supportsFastMode?: boolean;
+};
+
+/**
+ * The models as Claude Code itself lists them (its `initialize` reply: the plan's picks, each with
+ * its thinking levels and whether it has fast mode), with the context window and default level from
+ * the table, followed by the earlier models this version still runs. Without a list, the table.
+ */
+export function claudeCodeModelsFrom(listed: ClaudeCodeListed[] | null | undefined, version: string | null): SubscriptionModel[] {
+  const table = claudeCodeModels(version);
+  if (!listed?.length) return table;
+  const out: SubscriptionModel[] = [];
+  const covered = new Set<string>();
+  for (const row of listed) {
+    const id = (row.value ?? "").trim();
+    if (!id || out.some((model) => model.id === id)) continue;
+    const entry = claudeModel(row.resolvedModel) ?? claudeModel(id);
+    if (entry && id !== "default") covered.add(entry.id);
+    const efforts = row.supportsEffort === false ? [] : (row.supportedEffortLevels ?? entry?.spec.efforts ?? []).filter((level): level is EffortLevel => FIVE.includes(level as EffortLevel));
+    out.push({
+      id,
+      label: (row.displayName ?? entry?.label ?? id).slice(0, 120),
+      ...(id === "default" ? { isDefault: true } : {}),
+      ...(entry && entry.id !== id ? { aliases: [entry.id] } : {}),
+      ...(efforts.length ? { efforts } : {}),
+      ...(entry?.spec.defaultEffort && efforts.includes(entry.spec.defaultEffort) ? { defaultEffort: entry.spec.defaultEffort } : {}),
+      ...(entry ? { contexts: contexts(entry.spec.window) } : {}),
+      vision: true,
+      ...(row.supportsFastMode ? { fast: "on" } : {}),
+      ...(row.description ? { description: row.description.slice(0, 240) } : {}),
+    });
+  }
+  return [...out, ...table.filter((model) => model.id !== "default" && !covered.has(model.id))].slice(0, 120);
 }
 
 /** The newest model this Claude Code cannot run yet, as a sentence for the person. */
@@ -139,7 +185,7 @@ export function claudeUpdateNote(version: string | null): string | null {
  * `--model` (with `[1m]` for the long window where the model has one) and `--effort` under the name
  * Claude Code takes. A choice the model does not take is left out, with a note for the run.
  */
-export function claudeLaunch(choice: { model?: string | null; effort?: string | null; context?: "long_context" | "default" | null }): { model: string | null; effort: string | null; notes: string[] } {
+export function claudeLaunch(choice: { model?: string | null; effort?: string | null; context?: "long_context" | "default" | null; fast?: boolean }): { model: string | null; effort: string | null; fast?: true; notes: string[] } {
   const notes: string[] = [];
   const raw = (choice.model ?? "").trim();
   const named = raw && raw !== "default" ? raw.replace(/\[1m\]$/i, "") : "";
@@ -159,5 +205,8 @@ export function claudeLaunch(choice: { model?: string | null; effort?: string | 
     else if (entry.spec.efforts.includes(level as EffortLevel)) effort = entry.spec.effortMap?.[level as EffortLevel] ?? level;
     if (!effort) notes.push(`${entry?.label ?? (named || "This model")} does not take thinking “${level}”; it runs at its default.`);
   }
-  return { model, effort, notes };
+  // Fast mode: Claude Code's `fastMode` setting, for a model that has it (the plan's default is checked by Claude Code).
+  if (choice.fast && entry && !entry.spec.fast) notes.push(`${entry.label} has no fast mode; it runs at its usual speed.`);
+  const fast = choice.fast === true && (!entry || entry.spec.fast === true);
+  return { model, effort, ...(fast ? { fast: true as const } : {}), notes };
 }

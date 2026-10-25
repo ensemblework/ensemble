@@ -151,7 +151,17 @@ export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "truste
 
 export async function runCodex(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; effort?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: {
+    prompt: string;
+    model?: string | null;
+    effort?: string | null;
+    /** The service tier that is the model's fast mode ("priority"), when fast mode was chosen. */
+    serviceTier?: string | null;
+    stopCheck: () => Promise<void>;
+    resume?: string | null;
+    chat?: boolean;
+    trace?: EngineTrace;
+  },
 ): Promise<EngineResult> {
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
@@ -322,6 +332,7 @@ export async function runCodex(
         ? { type: "workspaceWrite", writableRoots: writable, networkAccess: ctx.network, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
         : { type: "dangerFullAccess" },
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
     })) as { turn?: { id?: string } };
     turnId = turn.turn?.id ?? null;
     result.turns = 1;

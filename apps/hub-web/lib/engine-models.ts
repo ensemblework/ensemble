@@ -4,7 +4,7 @@
  * thinking levels and context windows where its agent says (Claude Code from its model table,
  * Codex from `model/list`, GitHub Copilot from `models.list`); Cursor's agent lists names only.
  */
-import { claudeCodeModels, EFFORT_LABEL, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { ACP_ENGINES, claudeCodeModels, EFFORT_LABEL, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { AssignInput, SubscriptionsView } from "./api";
 
 const record = (value: unknown): Record<string, unknown> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
@@ -25,10 +25,19 @@ export function claudeFallback(): SubscriptionAgent {
 /** The agents whose models have more than one context window to choose from. */
 const WINDOWED: ReadonlySet<CodeEngine> = new Set(["claude-code", "copilot-cli"]);
 
-/** Whether Ensemble on the computer runs the engine. A runtime without the `engines` list predates GitHub Copilot. */
+/** Whether Ensemble on the computer runs the engine. A runtime without the `engines` list predates GitHub Copilot and the ACP agents. */
 export function computerRuns(engine: CodeEngine, capabilities: unknown): boolean {
   const listed = record(capabilities)?.engines;
-  return Array.isArray(listed) ? listed.includes(engine) : engine !== "copilot-cli";
+  return Array.isArray(listed) ? listed.includes(engine) : engine !== "copilot-cli" && !(ACP_ENGINES as readonly string[]).includes(engine);
+}
+
+/**
+ * Whether the agent can run inside its own OS sandbox on that computer. Grok Build, OpenCode and
+ * Antigravity have none Ensemble can turn on; Gemini CLI has one on macOS.
+ */
+export function engineSandboxes(engine: CodeEngine, platform: string | null | undefined): boolean {
+  if (engine === "gemini-cli") return /^(mac|darwin)/i.test(platform ?? "");
+  return !(ACP_ENGINES as readonly string[]).includes(engine);
 }
 
 export type EngineModel = {
@@ -40,6 +49,8 @@ export type EngineModel = {
   defaultEffort: EffortLevel | null;
   /** Context windows to choose from. Empty when the model has one size. */
   contexts: ModelContext[];
+  /** The model has a fast mode (Claude Code, Codex). */
+  fast: boolean;
 };
 
 /** `chosen`: a model id, or empty for the agent's default. */
@@ -52,6 +63,7 @@ export function engineModel(agent: SubscriptionAgent | null, chosen: string): En
     efforts: model ? orderLevels(model.efforts ?? agent?.efforts ?? []) : [],
     defaultEffort: model?.defaultEffort ? (orderLevels([model.defaultEffort])[0] ?? null) : null,
     contexts: model?.contexts && model.contexts.length > 1 ? model.contexts : [],
+    fast: Boolean(model?.fast),
   };
 }
 
@@ -70,9 +82,9 @@ export function fitEngineChoice(view: EngineModel, effort: ReasoningEffort, cont
  */
 export function engineAssign(
   engine: CodeEngine,
-  choice: { model: string; effort: string; context?: ContextTier | null },
+  choice: { model: string; effort: string; context?: ContextTier | null; fast?: boolean },
   view?: EngineModel,
-): Pick<AssignInput, "engine" | "model" | "reasoningEffort" | "contextTier"> {
+): Pick<AssignInput, "engine" | "model" | "reasoningEffort" | "contextTier" | "fast"> {
   const model = choice.model.trim();
   const base = { engine, ...(model ? { model } : {}) };
   const effort = choice.effort !== "default" && (!view || (view.efforts as string[]).includes(choice.effort)) ? choice.effort : null;
@@ -85,7 +97,8 @@ export function engineAssign(
     : WINDOWED.has(engine)
       ? (choice.context ?? null)
       : null;
-  return { ...base, ...(effort ? { reasoningEffort: effort } : {}), ...(context ? { contextTier: context } : {}) };
+  const fast = choice.fast === true && (!view || view.fast);
+  return { ...base, ...(effort ? { reasoningEffort: effort } : {}), ...(context ? { contextTier: context } : {}), ...(fast ? { fast: true } : {}) };
 }
 
 export function effortName(level: string): string {

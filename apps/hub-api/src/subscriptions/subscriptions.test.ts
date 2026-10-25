@@ -12,7 +12,8 @@ import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArg
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
-import { claudeAppCopy, claudeEfforts, codexLimits, codexModels, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { claudeLimits } from "./claude-control.js";
+import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer } from "./turn.js";
 
@@ -80,6 +81,35 @@ test("Codex's model list keeps visible models with their thinking levels, defaul
   ]);
   assert.equal(firstVersion("codex-cli 0.162.0-alpha.17.2"), "0.162.0-alpha.17.2");
   assert.equal(firstVersion("2.1.296 (Claude Code)"), "2.1.296");
+});
+
+test("Claude's usage windows from get_usage: 5-hour, weekly and per model, in the order people read them", () => {
+  const limits = claudeLimits({
+    five_hour: { utilization: 37.5, resets_at: "2026-10-26T05:00:00Z" },
+    seven_day: { utilization: 12, resets_at: null },
+    seven_day_opus: null,
+    model_scoped: [{ display_name: "Fable", utilization: 80, resets_at: "2026-10-30T00:00:00Z" }],
+    extra_usage: { is_enabled: false, utilization: 3 },
+  });
+  assert.deepEqual(limits, [
+    { id: "five_hour", label: "5-hour limit", usedPercent: 37.5, minutes: 300, resetsAt: "2026-10-26T05:00:00.000Z" },
+    { id: "seven_day", label: "Weekly limit", usedPercent: 12, minutes: 10_080 },
+    { id: "model:fable", label: "Weekly Fable limit", usedPercent: 80, minutes: 10_080, resetsAt: "2026-10-30T00:00:00.000Z" },
+  ]);
+  assert.deepEqual(claudeLimits(null), [], "an API key or a cloud provider has no plan windows");
+});
+
+test("Grok's sign-in and models come from `grok models`; OpenCode's sign-ins from `opencode auth list`; Codex's fast tier from model/list", () => {
+  assert.deepEqual(parseGrokModels("You are logged in as mira@example.com\nModels:\n  - grok-code-fast (default)\n  * grok-4"), {
+    signedIn: true,
+    models: [{ id: "grok-code-fast", label: "Grok code fast", isDefault: true }, { id: "grok-4", label: "Grok 4" }],
+  });
+  assert.equal(parseGrokModels("Error: not authenticated. Run grok login.").signedIn, false);
+  assert.equal(parseOpenCodeAuth("┌  Credentials ~/.local/share/opencode/auth.json\n│\n●  Anthropic oauth\n●  OpenAI oauth\n│\n└  2 credentials"), 2);
+  assert.equal(parseOpenCodeAuth("└  0 credentials"), 0);
+  assert.equal(codexFastTier({ serviceTiers: [{ id: "priority", name: "Fast" }], additionalSpeedTiers: ["fast"] }), "priority");
+  assert.equal(codexFastTier({ serviceTiers: [], additionalSpeedTiers: ["fast"] }), "fast");
+  assert.equal(codexFastTier({}), null);
 });
 
 test("Codex's usage windows: the 5-hour and weekly limits, the month on Free, and none for one model only", () => {

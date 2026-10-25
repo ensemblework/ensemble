@@ -163,6 +163,10 @@ export const ModelProvider = z.enum([
   "codex",
   "cursor-agent",
   "copilot-cli",
+  "grok-cli",
+  "opencode",
+  "gemini-cli",
+  "antigravity",
   "mock",
 ]);
 export type ModelProvider = z.infer<typeof ModelProvider>;
@@ -276,8 +280,10 @@ export const RunProfile = z.object({
   /** `provider::model`, or empty for the task's tier. With an engine: its model name, or empty for its default. */
   model: z.string().max(240).default(""),
   effort: ReasoningEffort.default("default"),
-  /** The model's context window, where it offers more than one (GitHub Copilot). Unset: the default. */
+  /** The model's context window, where it offers more than one (Claude, GitHub Copilot). Unset: the default. */
   context: ContextTier.optional(),
+  /** The model's fast mode, where it has one (Claude Code, Codex). */
+  fast: z.boolean().optional(),
   branchMode: z.enum(["as-is", "new"]).default("as-is"),
   /** Git for the run: `push` lets the agent commit, push any branch and work with pull requests; `local` and `commit` are limits the person picks. */
   delivery: z.enum(["local", "commit", "push"]).default("push"),

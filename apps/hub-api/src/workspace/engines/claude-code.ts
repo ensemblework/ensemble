@@ -94,8 +94,10 @@ export function claudeFilesystem(input: {
 const HOME_APP_FOLDERS = new Set(["Library", "AppData", "Applications", "snap"]);
 
 /** The per-run settings: the hook on every tool call, and the sandbox and internet the run asked for. */
-export function claudeSettings(input: { hookCommand: string; sandboxed: boolean; network: boolean; filesystem: ClaudeFilesystem }): Record<string, unknown> {
+export function claudeSettings(input: { hookCommand: string; sandboxed: boolean; network: boolean; filesystem: ClaudeFilesystem; fast?: boolean }): Record<string, unknown> {
   return {
+    // The model's fast mode: faster output that uses more of the plan.
+    ...(input.fast ? { fastMode: true } : {}),
     hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: input.hookCommand, timeout: 86_400 }] }] },
     sandbox: input.sandboxed
       ? {
@@ -126,6 +128,8 @@ export async function runClaudeCode(
     effort?: string | null;
     /** The 1M window, for a model that has one (`[1m]`). */
     context?: "long_context" | null;
+    /** The model's fast mode, for a model that has one. */
+    fast?: boolean;
     maxTurns: number;
     stopCheck: () => Promise<void>;
     resume?: string | null;
@@ -150,9 +154,9 @@ export async function runClaudeCode(
     homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [],
     toolchain: (process.platform === "darwin" ? TOOLCHAIN_HOME_READS : process.platform === "linux" ? LINUX_TOOLCHAIN_HOME : []).map((name) => join(home, name)),
   });
-  const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, filesystem });
-  // The model, its context window and thinking level as Claude Code takes them (shared-types/claude-models.ts).
-  const launch = claudeLaunch({ model: options.model, effort: options.effort, context: options.context ?? null });
+  // The model, its context window, thinking level and fast mode as Claude Code takes them (shared-types/claude-models.ts).
+  const launch = claudeLaunch({ model: options.model, effort: options.effort, context: options.context ?? null, fast: options.fast === true });
+  const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, filesystem, fast: launch.fast === true });
   for (const note of launch.notes) await ctx.event("engine_note", { note });
   const args = [
     "-p",

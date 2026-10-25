@@ -13,10 +13,13 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { claudeCodeModels, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeCodeModelsFrom, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
 import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
+import { acpProbe } from "./acp-probe.js";
+import { ANTIGRAVITY_MODELS, antigravityInstalled, antigravitySignedIn } from "./antigravity.js";
+import { claudeControl } from "./claude-control.js";
 import { copilotSavedSignIn, copilotStatus } from "./copilot.js";
 
 /**
@@ -31,6 +34,12 @@ const NOT_FOR_AGENTS = [
   "CODEX_API_KEY",
   "CODEX_ACCESS_TOKEN",
   "CURSOR_API_KEY",
+  "XAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "OPENROUTER_API_KEY",
+  "MISTRAL_API_KEY",
   "ENSEMBLE_DESKTOP_TOKEN",
   "ENSEMBLE_INTERNAL_TOKEN",
 ];
@@ -134,10 +143,23 @@ export async function codexAgentBinary(): Promise<AgentBinary | null> {
   return app ? { path: app, via: "app" } : null;
 }
 
+/** The command each agent runs as; Antigravity's is the server Ensemble installs. */
+const COMMANDS: Record<Exclude<SubscriptionProvider, "claude-code" | "codex" | "antigravity">, string> = {
+  "cursor-agent": "cursor-agent",
+  "copilot-cli": "copilot",
+  "grok-cli": "grok",
+  opencode: "opencode",
+  "gemini-cli": "gemini",
+};
+
 export async function agentBinary(id: SubscriptionProvider): Promise<AgentBinary | null> {
   if (id === "claude-code") return claudeBinary();
   if (id === "codex") return codexAgentBinary();
-  const name = id === "cursor-agent" ? "cursor-agent" : "copilot";
+  if (id === "antigravity") {
+    const installed = antigravityInstalled();
+    return installed ? { path: installed.executable, via: "app" } : null;
+  }
+  const name = COMMANDS[id];
   const cli = await hostExecutable(name).catch(() => null);
   return cli ? { path: cli, via: "cli" } : null;
 }
@@ -266,7 +288,12 @@ const now = () => new Date().toISOString();
 async function probeClaude(): Promise<SubscriptionAgent | null> {
   const found = await claudeBinary();
   if (!found) return null;
-  const [version, status, help] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["auth", "status", "--json"]), quickRun(found.path, ["--help"])]);
+  const [version, status, help, control] = await Promise.all([
+    quickRun(found.path, ["--version"]),
+    quickRun(found.path, ["auth", "status", "--json"]),
+    quickRun(found.path, ["--help"]),
+    claudeControl(found.path).catch(() => null),
+  ]);
   const { signedIn, plan } = parseClaudeStatus(status);
   const efforts = claudeEfforts(help.stdout);
   const installed = firstVersion(version.stdout);
@@ -275,11 +302,12 @@ async function probeClaude(): Promise<SubscriptionAgent | null> {
     via: found.via,
     version: installed,
     signedIn,
-    plan,
-    // Each model with its own thinking levels and context windows, as this version runs them.
-    models: claudeCodeModels(installed),
+    plan: plan ?? (signedIn ? (control?.subscription ?? null) : null),
+    // The plan's models as Claude Code lists them, with context windows from Ensemble's table.
+    models: claudeCodeModelsFrom(control?.models, installed),
     typedModels: true,
     ...(efforts.length ? { efforts } : {}),
+    ...(signedIn !== false && control?.limits.length ? { limits: control.limits } : {}),
     problem: version.code === 0 ? null : "Claude Code did not start. Open the Claude app once, or reinstall Claude Code.",
     checkedAt: now(),
   };
@@ -295,7 +323,16 @@ type CodexModel = {
   supportedReasoningEfforts?: Array<{ reasoningEffort?: string }>;
   defaultReasoningEffort?: string | null;
   inputModalities?: string[];
+  serviceTiers?: Array<{ id?: string; name?: string }> | null;
+  additionalSpeedTiers?: string[] | null;
 };
+
+/** The service tier that is Codex's fast mode for a model ("priority", named Fast), or the older `fast` speed tier. */
+export function codexFastTier(row: Pick<CodexModel, "serviceTiers" | "additionalSpeedTiers">): string | null {
+  const named = (row.serviceTiers ?? []).find((tier) => typeof tier?.id === "string" && /fast/i.test(`${tier.name ?? ""} ${tier.id}`));
+  if (named?.id) return named.id.slice(0, 40);
+  return (row.additionalSpeedTiers ?? []).includes("fast") ? "fast" : null;
+}
 
 export function codexModels(rows: CodexModel[]): SubscriptionModel[] {
   return rows
@@ -311,6 +348,7 @@ export function codexModels(rows: CodexModel[]): SubscriptionModel[] {
         ...(efforts.length ? { efforts: efforts.slice(0, 10) } : {}),
         ...(fallback ? { defaultEffort: fallback } : {}),
         ...(Array.isArray(row.inputModalities) ? { vision: row.inputModalities.includes("image") } : {}),
+        ...(codexFastTier(row) ? { fast: codexFastTier(row)! } : {}),
         ...(row.description ? { description: row.description.slice(0, 240) } : {}),
       };
     })
@@ -457,11 +495,110 @@ async function probeCopilot(): Promise<SubscriptionAgent | null> {
   };
 }
 
+/** `grok models`: whether Grok Build is signed in (it always exits 0; the words say) and its models, one bullet each. After T3 Code's `parseGrokModelsCliOutput`. */
+export function parseGrokModels(text: string): { signedIn: boolean | null; models: SubscriptionModel[] } {
+  const clean = stripAnsi(text);
+  const signedIn = /you are logged in/i.test(clean) ? true : /not authenticated|not logged in/i.test(clean) ? false : null;
+  const models: SubscriptionModel[] = [];
+  for (const line of clean.split("\n")) {
+    const bullet = /^\s*[*-]\s+(\S+)(.*)$/.exec(line);
+    if (!bullet?.[1] || models.some((model) => model.id === bullet[1])) continue;
+    const id = bullet[1].slice(0, 120);
+    models.push({ id, label: id.split(/[-_]/).map((part) => (part.toLowerCase() === "grok" ? "Grok" : part)).join(" ").slice(0, 120), ...(/\(default\)/i.test(bullet[2] ?? "") ? { isDefault: true } : {}) });
+  }
+  return { signedIn, models: models.slice(0, 120) };
+}
+
+/** `opencode auth list`: how many providers OpenCode holds a sign-in for (its "N credentials" line, else its bullets). */
+export function parseOpenCodeAuth(text: string): number | null {
+  const clean = stripAnsi(text);
+  const counted = /(\d+)\s+credentials?/i.exec(clean);
+  if (counted) return Number(counted[1]);
+  const bullets = clean.split("\n").filter((line) => /^\s*[●•*]\s+\S/.test(line)).length;
+  return bullets || (clean.trim() ? 0 : null);
+}
+
+async function probeGrok(): Promise<SubscriptionAgent | null> {
+  const found = await agentBinary("grok-cli");
+  if (!found) return null;
+  const [version, listed] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["models"], 25_000)]);
+  const { signedIn, models } = parseGrokModels(`${listed.stdout}\n${listed.stderr}`);
+  return {
+    id: "grok-cli",
+    via: "cli",
+    version: firstVersion(version.stdout),
+    signedIn,
+    plan: null,
+    models: models.length ? models : [{ id: "default", label: "Grok's default", isDefault: true }],
+    typedModels: true,
+    problem: signedIn === false ? "Grok Build is not signed in on this computer. Press Sign in, or run `grok login` there." : null,
+    checkedAt: now(),
+  };
+}
+
+async function probeOpenCode(): Promise<SubscriptionAgent | null> {
+  const found = await agentBinary("opencode");
+  if (!found) return null;
+  const [version, auth, listed] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["auth", "list"], 20_000), quickRun(found.path, ["models"], 25_000)]);
+  const credentials = parseOpenCodeAuth(`${auth.stdout}\n${auth.stderr}`);
+  const models = parseModelLines(listed.stdout).filter((model) => model.id.includes("/"));
+  return {
+    id: "opencode",
+    via: "cli",
+    version: firstVersion(version.stdout),
+    // OpenCode can also run on keys in the person's own environment: a model list counts as signed in.
+    signedIn: credentials === null ? (models.length ? true : null) : credentials > 0 || models.length > 0,
+    plan: null,
+    models: [{ id: "default", label: "OpenCode's default", isDefault: true }, ...models].slice(0, 120),
+    typedModels: true,
+    problem: credentials === 0 && !models.length ? "OpenCode has no provider signed in. Press Sign in, or run `opencode auth login` there." : null,
+    checkedAt: now(),
+  };
+}
+
+async function probeGemini(): Promise<SubscriptionAgent | null> {
+  const found = await agentBinary("gemini-cli");
+  if (!found) return null;
+  const [version, probe] = await Promise.all([quickRun(found.path, ["--version"]), acpProbe("gemini-cli").catch(() => null)]);
+  return {
+    id: "gemini-cli",
+    via: "cli",
+    version: firstVersion(version.stdout),
+    signedIn: probe?.signedIn ?? null,
+    plan: null,
+    models: probe?.models.length ? probe.models : [{ id: "default", label: "Gemini CLI's default", isDefault: true }],
+    typedModels: true,
+    problem: probe?.signedIn === false ? "Gemini CLI is not signed in on this computer. Press Sign in, or run `gemini` there and choose Sign in with Google." : (probe?.problem ?? null),
+    checkedAt: now(),
+  };
+}
+
+async function probeAntigravity(): Promise<SubscriptionAgent | null> {
+  const installed = antigravityInstalled();
+  if (!installed) return null;
+  const signedIn = antigravitySignedIn();
+  return {
+    id: "antigravity",
+    via: "app",
+    version: installed.version,
+    signedIn,
+    plan: null,
+    models: ANTIGRAVITY_MODELS,
+    typedModels: true,
+    problem: signedIn ? null : "Antigravity is installed but not signed in. Press Sign in: Google's sign-in page opens in the browser.",
+    checkedAt: now(),
+  };
+}
+
 const PROBES: Record<SubscriptionProvider, () => Promise<SubscriptionAgent | null>> = {
   "claude-code": probeClaude,
   codex: probeCodex,
   "cursor-agent": probeCursor,
   "copilot-cli": probeCopilot,
+  "grok-cli": probeGrok,
+  opencode: probeOpenCode,
+  "gemini-cli": probeGemini,
+  antigravity: probeAntigravity,
 };
 
 const FRESH_MS = 10 * 60_000;

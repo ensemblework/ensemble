@@ -10,7 +10,7 @@ import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
-import { claudeFallback, computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, fitEngineChoice, modelFacts } from "@/lib/engine-models";
+import { claudeFallback, computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, engineSandboxes, fitEngineChoice, modelFacts } from "@/lib/engine-models";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
 import { useHostCode, useModuleState } from "@/lib/use-module";
@@ -112,6 +112,10 @@ const ENGINE_OPTION: Record<CodeEngine, string> = {
   codex: "Codex (your sign-in, CLI or ChatGPT app)",
   "cursor-agent": "Cursor agent (your sign-in)",
   "copilot-cli": "GitHub Copilot (your sign-in)",
+  "grok-cli": "Grok Build (your sign-in)",
+  opencode: "OpenCode (your sign-in)",
+  "gemini-cli": "Gemini CLI (your Google sign-in)",
+  antigravity: "Antigravity (your Google sign-in)",
 };
 
 /** What each agent is called where it is signed in, and the command that signs it in. */
@@ -120,6 +124,10 @@ const ENGINE_SIGN_IN: Record<CodeEngine, { program: string; login: string; short
   codex: { program: "Codex", login: "codex login", short: "Codex" },
   "cursor-agent": { program: "Cursor's agent", login: "cursor-agent login", short: "Cursor" },
   "copilot-cli": { program: "Copilot CLI", login: "copilot login", short: "Copilot" },
+  "grok-cli": { program: "Grok Build", login: "grok login", short: "Grok" },
+  opencode: { program: "OpenCode", login: "opencode auth login", short: "OpenCode" },
+  "gemini-cli": { program: "Gemini CLI", login: "gemini", short: "Gemini" },
+  antigravity: { program: "Antigravity", login: "Sign in under Settings → Models", short: "Antigravity" },
 };
 
 const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
@@ -387,6 +395,7 @@ export function AssignDialog({
   const [askFirst, setAskFirst] = useState(true);
   const [credentials, setCredentials] = useState(false);
   const [sandbox, setSandbox] = useState(true);
+  const [fast, setFast] = useState(false);
   const [network, setNetwork] = useState(true);
   // null follows Settings; a choice here is for this run only.
   const [outside, setOutside] = useState<"none" | "read" | "read-write" | null>(null);
@@ -475,6 +484,7 @@ export function AssignDialog({
     model: kind === "code" && engine !== "ensemble" ? claudeModel : modelChoice,
     effort,
     context: kind === "code" && engine !== "ensemble" ? context : undefined,
+    fast: kind === "code" && engine !== "ensemble" && fast ? true : undefined,
     branchMode: branchMode === "new" ? "new" : "as-is",
     delivery: prOn ? "commit" : delivery,
     askBeforePublish: askFirst,
@@ -504,6 +514,7 @@ export function AssignDialog({
     setAskFirst(profile.askBeforePublish);
     setMode(profile.mode);
     setSandbox(profile.sandbox);
+    setFast(profile.fast === true);
     setCredentials(profile.useCredentials);
     setNetwork(profile.network);
     setOutside(null);
@@ -657,7 +668,7 @@ export function AssignDialog({
         taskId,
         kind,
         instructions,
-        ...(claude ? engineAssign(engine, { model: claudeModel, effort, context }, reportedAgent ? agentModel : undefined) : model ? { provider, model } : {}),
+        ...(claude ? engineAssign(engine, { model: claudeModel, effort, context, fast }, reportedAgent ? agentModel : undefined) : model ? { provider, model } : {}),
         ...(effort !== "default" && !claude ? { reasoningEffort: effort } : {}),
         markDone,
         maxMinutes: limitValue(maxMinutes, "maxMinutes"),
@@ -898,6 +909,7 @@ export function AssignDialog({
                   setClaudeModel("");
                   setEffort("default");
                   setContext(undefined);
+                  setFast(false);
                 }
                 setEngine(value);
               }}
@@ -941,9 +953,11 @@ export function AssignDialog({
                   onChange={(event) => {
                     const next = event.target.value;
                     setClaudeModel(next);
-                    const fitted = fitEngineChoice(engineModel(engineAgent, next), effort, context);
+                    const nextModel = engineModel(engineAgent, next);
+                    const fitted = fitEngineChoice(nextModel, effort, context);
                     setEffort(fitted.effort);
                     setContext(fitted.context);
+                    if (!nextModel.fast) setFast(false);
                   }}
                   className="field w-full"
                 >
@@ -992,6 +1006,17 @@ export function AssignDialog({
                   </div>
                 ) : null}
               </div>
+            ) : null}
+            {agentModel.fast ? (
+              <div className="flex items-center justify-between gap-3" data-testid="engine-fast">
+                <Label tip="Faster output from the same model. It uses more of your plan's usage.">Fast mode</Label>
+                <Toggle checked={fast} onChange={setFast} label="Fast mode" />
+              </div>
+            ) : null}
+            {sandbox && !engineSandboxes(codeEngine, selectedDevice?.platform ?? (typeof navigator === "undefined" ? null : navigator.platform)) ? (
+              <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status" data-testid="engine-no-sandbox">
+                {ENGINE_LABELS[codeEngine]} has no OS sandbox Ensemble can turn on there, so a sandboxed run stops. Turn Sandbox off below to run it: Ensemble still judges every command, edit, outside read and fetch it asks to make.
+              </p>
             ) : null}
             {selectedDevice && !computerRuns(codeEngine, selectedDevice.capabilities) ? (
               <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status">

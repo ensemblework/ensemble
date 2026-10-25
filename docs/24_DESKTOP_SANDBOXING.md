@@ -59,7 +59,7 @@ A run Ensemble starts carries the same trust: in a folder the person trusted by 
 | Run unattended | Trusted folder; takes configured or recommended answers and lists them in the result; never waits for a person |
 | Read-only access | A separate lower-level grant; tools and OS deny writes and network accordingly |
 
-No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)).
+No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)). Grok Build, OpenCode and Antigravity, and Gemini CLI outside macOS, have no OS sandbox Ensemble can turn on: their runs need Sandbox off, which the Assign dialog says, and the judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-and-antigravity)).
 
 ## 5. Git and credentials
 

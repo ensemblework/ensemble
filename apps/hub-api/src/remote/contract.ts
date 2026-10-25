@@ -129,6 +129,8 @@ export const JobSpec = z
     reasoningEffort: text(200).nullish(),
     /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
     contextTier: z.enum(["default", "long_context"]).nullish(),
+    /** The model's fast mode (Claude Code, Codex). Older servers omit it. */
+    fast: z.boolean().nullish(),
     /** The run ends in a pull request into `base`, merged as `merge` says (docs/24 §5.1). Older servers omit it. */
     pullRequest: z.object({ base: text(200).default(""), merge: z.enum(["ask", "auto", "never"]).default("ask") }).nullish(),
     unattended: z.boolean().default(false),

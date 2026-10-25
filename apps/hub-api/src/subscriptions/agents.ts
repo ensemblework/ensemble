@@ -17,7 +17,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { checkEffort, claudeLaunch, SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
+import { checkEffort, claudeLaunch, SUBSCRIPTION_INFO, type AcpEngine, type SubscriptionProvider } from "@ensemble/shared-types";
+import { acpCalls, ACP_AGENTS, configChoices, type ConfigOption, optionValues, pickOption } from "../workspace/engines/acp.js";
+import { antigravityAuthLink } from "./antigravity.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
@@ -440,11 +442,86 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, mcp }) => {
   }
 };
 
+/** An ACP agent's own requests during an assistant turn: only Ensemble's tools may run. */
+export function answerAcpTurn(method: string, params: Record<string, unknown>): unknown {
+  if (method === "session/request_permission") {
+    const options = (Array.isArray(params.options) ? params.options : []) as Array<{ optionId: string; kind?: string }>;
+    const ours = acpCalls((params.toolCall ?? {}) as Parameters<typeof acpCalls>[0]).every((call) => call.tool.startsWith("mcp__ensemble__"));
+    const optionId = pickOption(options, ours);
+    return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
+  }
+  throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
+}
+
+/** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
+const runAcpTurn =
+  (id: AcpEngine): Driver =>
+  async ({ spec, io, folder, mcp }) => {
+    const model = chosen(spec.model);
+    const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env });
+    if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
+    const child = spawn(launch.program, launch.args, { cwd: folder, env: launch.env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+    child.stdin.on("error", () => undefined);
+    const rpc = new RpcConnection((line) => child.stdin.writable && void child.stdin.write(line), { jsonrpc: true });
+    let reply = "";
+    let stderr = "";
+    let sessionId: string | null = null;
+    rpc.onRequest = async (method, params) => answerAcpTurn(method, params);
+    rpc.onNotification = (method, params) => {
+      if (method !== "session/update") return;
+      const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
+      if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
+        reply += update.content.text;
+        io.onDelta(update.content.text);
+      }
+    };
+    createInterface({ input: child.stdout }).on("line", (line) => (antigravityAuthLink(line) ? rpc.close("not signed in") : void rpc.receive(line)));
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString("utf8")).slice(-4000);
+    });
+    child.once("close", () => rpc.close(`${SUBSCRIPTION_INFO[id].label} stopped. ${stderr.split("\n").filter((line) => line.trim()).slice(-3).join(" ")}`.trim()));
+    const stop = () => {
+      if (sessionId) rpc.notify("session/cancel", { sessionId });
+      setTimeout(() => stopChild(child), 2000).unref();
+    };
+    io.signal.addEventListener("abort", stop, { once: true });
+    try {
+      await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" }, ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}) });
+      if (launch.authMethod) await rpc.request("authenticate", { methodId: launch.authMethod });
+      const session = await rpc.request("session/new", {
+        cwd: folder,
+        mcpServers: [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }],
+      });
+      sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
+      if (!sessionId) throw agentProblem(id, "it did not start a session");
+      const config = Array.isArray(session.configOptions) ? (session.configOptions as ConfigOption[]) : [];
+      const { model: modelOption, thought } = configChoices(config);
+      if (model && modelOption && optionValues(modelOption).includes(model) && modelOption.currentValue !== model) await rpc.request("session/set_config_option", { sessionId, configId: modelOption.id, value: model });
+      if (spec.effort && thought && optionValues(thought).includes(spec.effort)) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: spec.effort });
+      // ACP has no system prompt: Ensemble's instructions lead the message.
+      const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `${spec.system}\n\n---\n\n${spec.prompt}` }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+      if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
+      if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
+      return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null };
+    } catch (error) {
+      if (io.signal.aborted) throw aborted();
+      if (error instanceof AgentTurnError) throw error;
+      throw agentProblem(id, error instanceof Error ? error.message : String(error));
+    } finally {
+      io.signal.removeEventListener("abort", stop);
+      stopChild(child);
+    }
+  };
+
 const DRIVERS: Record<SubscriptionProvider, Driver> = {
   "claude-code": runClaude,
   codex: runCodex,
   "cursor-agent": runCursor,
   "copilot-cli": runCopilot,
+  "grok-cli": runAcpTurn("grok-cli"),
+  opencode: runAcpTurn("opencode"),
+  "gemini-cli": runAcpTurn("gemini-cli"),
+  antigravity: runAcpTurn("antigravity"),
 };
 
 /** Runs the turn with the agent's own sign-in; the tools are called through `io.call`. */

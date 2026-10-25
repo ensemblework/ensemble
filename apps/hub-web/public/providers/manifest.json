@@ -68,6 +68,11 @@
       "source": "https://github.com/simple-icons/simple-icons",
       "asset": "openrouter.svg",
       "license": "CC0 canonical vendor symbol"
+    },
+    "opencode": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "opencode.svg (from github.com/anomalyco/opencode packages/identity/mark.svg)",
+      "license": "CC0 canonical vendor symbol"
     }
   }
 }

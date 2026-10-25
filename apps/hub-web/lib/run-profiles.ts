@@ -25,6 +25,7 @@ const KEYS: Array<keyof ProfileFields> = [
   "model",
   "effort",
   "context",
+  "fast",
   "branchMode",
   "delivery",
   "askBeforePublish",
@@ -44,7 +45,7 @@ const KEYS: Array<keyof ProfileFields> = [
 export function differs(profile: RunProfile, fields: ProfileFields): boolean {
   // An unset context window and "default" are the same choice.
   const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) =>
-    key === "context" && row.context === "default" ? null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : (row[key] ?? null);
+    key === "context" && row.context === "default" ? null : key === "fast" ? row.fast === true || null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : (row[key] ?? null);
   return KEYS.some((key) => value(profile, key) !== value(fields, key));
 }
 

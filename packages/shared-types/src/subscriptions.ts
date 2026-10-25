@@ -1,13 +1,13 @@
 /**
- * The person's own AI subscriptions (Claude, ChatGPT, Cursor, GitHub Copilot) as model providers.
- * Each runs as that vendor's own agent on the person's paired computer, signed in with the vendor's
- * own sign-in: Claude Code (the CLI, or the copy the Claude app ships), Codex (the CLI, or the copy
- * the ChatGPT app ships), Cursor's agent, Copilot CLI. Ensemble never holds their credentials.
- * docs/30 §8.
+ * The person's own AI subscriptions as model providers and coding agents. Each runs as that
+ * vendor's own agent on the person's paired computer, signed in with the vendor's own sign-in:
+ * Claude Code (the CLI, or the copy the Claude app ships), Codex (the CLI, or the copy the ChatGPT
+ * app ships), Cursor's agent, Copilot CLI, Grok Build, OpenCode, Gemini CLI and Google Antigravity.
+ * Ensemble never holds their credentials. docs/30.
  */
 import { z } from "zod";
 
-export const SUBSCRIPTION_PROVIDERS = ["claude-code", "codex", "cursor-agent", "copilot-cli"] as const;
+export const SUBSCRIPTION_PROVIDERS = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
 export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
 
 export function isSubscriptionProvider(provider: string | null | undefined): provider is SubscriptionProvider {
@@ -50,15 +50,54 @@ export const SUBSCRIPTION_INFO: Record<SubscriptionProvider, SubscriptionInfo> =
     program: "GitHub Copilot CLI (the copilot command)",
     install: { label: "Install Copilot CLI", url: "https://github.com/features/copilot/cli" },
   },
+  "grok-cli": {
+    label: "Grok",
+    plan: "SuperGrok or an X Premium plan",
+    program: "Grok Build (the grok command)",
+    install: { label: "Install Grok Build", url: "https://x.ai/cli" },
+  },
+  opencode: {
+    label: "OpenCode",
+    plan: "the providers you signed in to in OpenCode (Zen, Claude, ChatGPT, Copilot…)",
+    program: "OpenCode (the opencode command)",
+    install: { label: "Install OpenCode", url: "https://opencode.ai/download" },
+  },
+  "gemini-cli": {
+    label: "Gemini",
+    plan: "your Google account (Gemini Code Assist or Google AI plan)",
+    program: "Gemini CLI (the gemini command)",
+    install: { label: "Install Gemini CLI", url: "https://github.com/google-gemini/gemini-cli" },
+  },
+  antigravity: {
+    label: "Antigravity",
+    plan: "your Google account (Google Antigravity)",
+    program: "Google Antigravity's agent server, which Ensemble installs",
+    install: { label: "Install with Sign in", url: "https://antigravity.google" },
+  },
 };
 
 /**
  * The coding agents that can do a code task on the person's computer (docs/30 §1–§4), each with
  * their own sign-in. Ensemble's own agent is "ensemble" and is not listed here.
  */
-export const CODE_ENGINES = ["claude-code", "codex", "cursor-agent", "copilot-cli"] as const;
+export const CODE_ENGINES = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
 export type CodeEngine = (typeof CODE_ENGINES)[number];
-export const ENGINE_LABELS: Record<CodeEngine, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor", "copilot-cli": "GitHub Copilot" };
+export const ENGINE_LABELS: Record<CodeEngine, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "cursor-agent": "Cursor",
+  "copilot-cli": "GitHub Copilot",
+  "grok-cli": "Grok Build",
+  opencode: "OpenCode",
+  "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity",
+};
+/** The agents driven through ACP, the Agent Client Protocol, by one shared runner (docs/30 §3.3). */
+export const ACP_ENGINES = ["grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
+export type AcpEngine = (typeof ACP_ENGINES)[number];
+export function isAcpEngine(value: string | null | undefined): value is AcpEngine {
+  return (ACP_ENGINES as readonly string[]).includes(value ?? "");
+}
 
 export function isCodeEngine(value: string | null | undefined): value is CodeEngine {
   return (CODE_ENGINES as readonly string[]).includes(value ?? "");
@@ -92,6 +131,11 @@ export const SubscriptionModel = z.object({
   vision: z.boolean().optional(),
   /** What a request costs on the plan, as the vendor puts it ("1× premium requests"). */
   cost: z.string().max(60).optional(),
+  /**
+   * The model has a fast mode (faster output, more of the plan's usage): Claude Code's `fastMode`
+   * ("on"), or the Codex service tier that runs it ("priority").
+   */
+  fast: z.string().min(1).max(40).optional(),
   description: z.string().max(240).optional(),
 });
 export type SubscriptionModel = z.infer<typeof SubscriptionModel>;

@@ -194,6 +194,11 @@ export function isChatTurn(context: unknown): boolean {
   return typeof context === "object" && context !== null && (context as { chat?: unknown }).chat === true;
 }
 
+/** The model's fast mode chosen for the run (Claude Code, Codex), kept on the job's context. */
+export function fastOf(context: unknown): boolean {
+  return typeof context === "object" && context !== null && (context as { fast?: unknown }).fast === true;
+}
+
 /** The context window chosen for the run's model (GitHub Copilot's long_context), kept on the job's context. */
 export function contextTierOf(context: unknown): "long_context" | null {
   return typeof context === "object" && context !== null && (context as { contextTier?: unknown }).contextTier === "long_context" ? "long_context" : null;

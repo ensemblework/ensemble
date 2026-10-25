@@ -201,13 +201,14 @@ export function runRequest(input: {
   // web's Assign sends them; the runner on the computer checks them against the model's own.
   const effort = own && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
   const context = own && engine !== "ensemble" && profile.context === "long_context" ? { contextTier: "long_context" } : {};
+  const fast = own && engine !== "ensemble" && profile.fast ? { fast: true } : {};
   const picked = engine !== "ensemble" && input.agent?.model && input.agent.model !== "default" ? agentFields(input.agent) : null;
   const pullRequest = profile.pullRequest ?? null;
   return {
     taskId: input.taskId,
     kind: "code",
     engine,
-    ...(picked ?? { ...model, ...effort, ...context }),
+    ...(picked ?? { ...model, ...effort, ...context, ...fast }),
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
     ...(pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
     branchMode: pullRequest ? "as-is" : profile.branchMode,

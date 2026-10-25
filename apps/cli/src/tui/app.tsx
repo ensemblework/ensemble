@@ -66,7 +66,23 @@ const LOCAL_ONLY_PICK = "\u0000included";
 const DEFAULT_PICK = "\u0000default";
 const TYPE_PICK = "\u0000type";
 /** The command that signs each agent in, in a terminal. */
-const SIGN_IN: Record<AgentEngine, string> = { "claude-code": "claude auth login", codex: "codex login", "cursor-agent": "cursor-agent login", "copilot-cli": "copilot login" };
+const SIGN_IN: Record<AgentEngine, string> = {
+  "claude-code": "claude auth login",
+  codex: "codex login",
+  "cursor-agent": "cursor-agent login",
+  "copilot-cli": "copilot login",
+  "grok-cli": "grok login",
+  opencode: "opencode auth login",
+  "gemini-cli": "gemini (then Sign in with Google)",
+  antigravity: "Sign in for Antigravity in Ensemble's Settings → Models",
+};
+/** Where each of the ACP agents comes from, for /agent when this computer does not have it yet. */
+const ACP_INSTALL: Record<"grok-cli" | "opencode" | "gemini-cli" | "antigravity", string> = {
+  "grok-cli": "https://x.ai/cli",
+  opencode: "curl -fsSL https://opencode.ai/install | bash",
+  "gemini-cli": "npm install -g @google/gemini-cli",
+  antigravity: "press Sign in for Antigravity in Settings → Models (Ensemble installs it)",
+};
 /** How long /agent waits for this computer's agent check before it shows what it has. */
 const AGENT_CHECK_WAIT_MS = 3000;
 const MUTED = "gray";
@@ -585,6 +601,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (the ChatGPT app's)"}` : "not found · the ChatGPT app, or npm i -g @openai/codex" },
       { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not found · curl https://cursor.com/install -fsS | bash" },
       { id: "copilot-cli", note: copilotNote(copilotOf(agents ?? detected), Boolean(has("copilot")?.cli)) },
+      // Grok Build, OpenCode, Gemini CLI and Antigravity, as this computer's agent check found them.
+      ...(["grok-cli", "opencode", "gemini-cli", "antigravity"] as const).map((id) => {
+        const row = (agents ?? detected)?.find((agent) => agent.id === id);
+        const note = !row ? `not found · ${ACP_INSTALL[id]}` : row.signedIn === false ? `not signed in · ${SIGN_IN[id]}` : `your ${ENGINE_LABEL[id]} sign-in`;
+        return { id, note };
+      }),
     ];
     setOverlay({
       kind: "picker",

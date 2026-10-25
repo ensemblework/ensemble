@@ -142,8 +142,15 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     await choose("Claude Code model", "claude-sonnet-4-6");
     assert.deepEqual(options("Claude Code thinking"), ["Default (High)", "Low", "Medium", "High", "Max"]);
     assert.deepEqual(options("Context window"), ["Standard · 200K", "Long context · 1M"]);
+    assert.equal(document.querySelector('[data-testid="engine-fast"]'), null, "Sonnet 4.6 has no fast mode");
     await choose("Claude Code model", "claude-opus-5-5");
     assert.equal(select("Context window"), null, "Opus 5.5 has one 1M window");
+    assert.ok(document.querySelector('[data-testid="engine-fast"]'), "Opus 5.5 has fast mode");
+    assert.equal(document.querySelector('[data-testid="engine-no-sandbox"]'), null, "Claude Code has its own sandbox");
+    await choose("Who does the work", "grok-cli");
+    assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there/);
+    await choose("Who does the work", "claude-code");
+    await choose("Claude Code model", "claude-opus-5-5");
     assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "Anthropic · newest · 1M context");
     await choose("Who does the work", "copilot-cli");
     assert.deepEqual(options("Copilot model"), ["Copilot default (Auto)", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);

@@ -11,7 +11,7 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
     taskId, kind: profile.kind,
     ...(engine === "ensemble"
       ? { engine, ...(model ? { ...(provider ? { provider } : {}), model: modelId } : {}), ...(profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}) }
-      : engineAssign(engine, { model: model ?? "", effort: profile.effort, context: profile.context })),
+      : engineAssign(engine, { model: model ?? "", effort: profile.effort, context: profile.context, fast: profile.fast })),
     instructions: profile.instructions, markDone: profile.markDone, network: profile.network,
     ...(profile.deviceId ? { deviceId: profile.deviceId } : {}),
     ...(profile.maxMinutes ? { maxMinutes: profile.maxMinutes } : {}),

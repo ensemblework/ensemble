@@ -138,6 +138,7 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     ...(model && engine === profile.engine ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
     ...(profile.effort !== "default" && engine === profile.engine ? { reasoningEffort: profile.effort } : {}),
     ...(engine !== "ensemble" && engine === profile.engine && profile.context ? { contextTier: profile.context } : {}),
+    ...(engine !== "ensemble" && engine === profile.engine && profile.fast ? { fast: true } : {}),
     instructions: [profile.instructions, input.instructions].filter((part) => part?.trim()).join("\n\n"),
     markDone: profile.markDone,
     network: profile.network,

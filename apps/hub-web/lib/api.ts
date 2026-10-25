@@ -747,6 +747,8 @@ export type AssignInput = {
   reasoningEffort?: string;
   /** GitHub Copilot: the model's context window, where it offers more than one. */
   contextTier?: ContextTier;
+  /** The model's fast mode (Claude Code, Codex). */
+  fast?: boolean;
   instructions?: string;
   repoUrl?: string;
   folder?: string;

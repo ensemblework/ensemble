@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AssistantPageContext, AssistantToolArea, Settings } from "@ensemble/shared-types";
+import type { AssistantPageContext, AssistantToolArea, CodeEngine, Settings } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 
@@ -10,7 +10,7 @@ export interface CodeSession {
   /** The folder `ensemble` was opened in (absolute). */
   folder: string;
   /** Who does the coding work. Default: the run profile's engine. */
-  engine?: "ensemble" | "claude-code" | "codex" | "cursor-agent" | "copilot-cli";
+  engine?: "ensemble" | CodeEngine;
   /** A run profile id or name. Default: the person's default profile, else Quick. */
   profileId?: string | null;
   /** The run's model (`provider::model` for Ensemble's agent, the engine's own name otherwise). */

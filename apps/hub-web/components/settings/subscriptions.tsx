@@ -13,14 +13,16 @@ import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
 import { ConnectComputerButton } from "./connect-computer";
 import { navigateSettings } from "./url-state";
-import { ProviderLogo } from "../connectors/provider-logo";
+import { modelBrand, ProviderLogo } from "../connectors/provider-logo";
 
 type Patch = (patch: Record<string, unknown>) => void;
 const TIER_IDS = ["easy", "medium", "high", "max"] as const;
 const TIER_NAMES: Record<(typeof TIER_IDS)[number], string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
 export function SubscriptionMark({ id, size = 34 }: { id: SubscriptionProvider; size?: number }) {
-  return <span className="inline-flex shrink-0 items-center justify-center rounded-xl border border-line bg-panel" style={{ width: size, height: size }}><ProviderLogo id={id} size={Math.round(size * .65)} /></span>;
+  // A vendor without a published mark here (Grok) shows its initial.
+  const mark = modelBrand(null, id) ? <ProviderLogo id={id} size={Math.round(size * .65)} /> : <span className="text-[15px] font-semibold text-ink" aria-hidden>{SUBSCRIPTION_INFO[id].label.slice(0, 1)}</span>;
+  return <span className="inline-flex shrink-0 items-center justify-center rounded-xl border border-line bg-panel" style={{ width: size, height: size }}>{mark}</span>;
 }
 
 /** While a check or a sign-in is under way, ask more often; otherwise a calm refresh. */
@@ -34,8 +36,18 @@ export function activeComputer(view: SubscriptionsView | undefined): Subscriptio
   return computers.find((row) => row.id === view?.preferred && row.online) ?? computers.find((row) => row.online) ?? computers[0] ?? null;
 }
 
+const PROGRAM: Record<SubscriptionProvider, string> = {
+  "claude-code": "Claude Code",
+  codex: "the Codex CLI",
+  "cursor-agent": "Cursor's agent",
+  "copilot-cli": "Copilot CLI",
+  "grok-cli": "Grok Build",
+  opencode: "OpenCode",
+  "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity's agent, installed by Ensemble",
+};
 const viaText = (agent: SubscriptionAgent): string => {
-  const program = agent.id === "claude-code" ? (agent.via === "app" ? "the Claude app" : "Claude Code") : agent.id === "codex" ? (agent.via === "app" ? "the ChatGPT app" : "the Codex CLI") : agent.id === "cursor-agent" ? "Cursor's agent" : "Copilot CLI";
+  const program = agent.id === "claude-code" && agent.via === "app" ? "the Claude app" : agent.id === "codex" && agent.via === "app" ? "the ChatGPT app" : PROGRAM[agent.id];
   return `via ${program}${agent.version ? ` ${agent.version}` : ""}`;
 };
 
@@ -149,7 +161,12 @@ function SubscriptionTile({
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11.5px] text-faint">{using.length ? `In use: ${using.join(", ")}` : ""}</span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {!agent ? (
+          {!agent && id === "antigravity" ? (
+            // Antigravity has nothing to install by hand: Sign in installs Google's agent, then opens Google's sign-in.
+            <button type="button" className="btn py-0.5 text-[12px]" onClick={onSignIn} disabled={signingIn || !computer?.online || !computer.ready} data-testid="antigravity-install">
+              <LogIn size={11} aria-hidden /> {signingIn ? "Setting up…" : "Install and sign in"}
+            </button>
+          ) : !agent ? (
             <a className="btn py-0.5 text-[12px]" href={info.install.url} target="_blank" rel="noreferrer">
               {info.install.label} <ExternalLink size={11} aria-hidden />
             </a>
