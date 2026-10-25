@@ -91,6 +91,8 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 
 Node turns also have every assistant tool for the owner's modules: workspace search across tasks, pages and files, page and board edits, settings, connected-app reads (`apps_search`, `apps_read`, MCP tools for what the owner connected) and `hub_web_search`. Writes follow the owner's write policy (§7).
 
+**Files on messages.** A person can attach up to 8 of their own Files to a message. The node reads the files on its owner's messages since its last turn: their text and, when its model reads images, the pictures (`node/brain.ts` passes them to the turn as file mentions; [38](38_AGENT_READABLE_FILES.md)). A node works in its owner's space, so files on someone else's message are named in the transcript with a note that it cannot open them.
+
 ## 7. Approvals
 
 `POST /api/node/approvals/:messageId {decision: approve|discard, callIds?, body?}`. Only the card's owner can settle it, and only while they are still in the room. A card is settled once: it moves from `pending` to `applying` with a JSON-guarded update. Held tool calls are applied by `POST /api/assistant/apply` with the node's conversation (same dedupe, locks, undo entry and ledger as the Hub). If that fails, the card returns to pending with the error so the owner can retry or discard. Discarding marks the calls failed with "Not approved by the person." in the conversation. Approving a draft posts exactly the approved (optionally edited) words, which then speak for the owner. After an approval, the node gets a follow-up turn with the result so it can continue its plan.
@@ -112,7 +114,7 @@ Node turns also have every assistant tool for the owner's modules: workspace sea
 | `GET/POST /api/node/rooms`, `GET/PATCH/DELETE /api/node/rooms/:id` | Rooms I am in; a new room with 1–3 of my nodes and emails to invite; title (unique) and crew lead by the creator; my own responsibility line |
 | `POST /api/node/rooms/:id/invites`, `DELETE …/invites/:inviteId`, `GET /api/node/invites`, `POST /api/node/invites/:id/accept`, `POST …/decline` | Requests to join a room (§3) |
 | `POST /api/node/rooms/:id/nodes`, `PATCH/DELETE …/members/:memberId` | Add my node (a crew: its creator; a room: 3 per person); make one of mine the lead; leave or remove mine (the creator may remove anyone) |
-| `GET/POST /api/node/rooms/:id/messages`, `POST …/read`, `POST …/stop` | Messages I may see (`after`/`before`/`limit`, `author=people\|nodes`); `replyToId` quotes a message (a public reply may not quote a private one); post (`clientId` makes a resend return the first copy, `private`); read marker; stop my nodes here |
+| `GET/POST /api/node/rooms/:id/messages`, `POST …/read`, `POST …/stop` | Messages I may see (`after`/`before`/`limit`, `author=people\|nodes`); `replyToId` quotes a message (a public reply may not quote a private one); post (`clientId` makes a resend return the first copy, `private`, `files`: up to 8 of the sender's own Files ids, so `body` may be empty); read marker; stop my nodes here |
 | `GET /api/node/messages/:id`, `DELETE /api/node/messages/:id` | One message I may see; delete my own (its text goes, a deleted line stays) |
 | `POST /api/node/messages/:id/reactions {emoji}` | Add or take back my reaction (one of eight) |
 | `GET/POST /api/node/rooms/:id/pins` | Pinned messages (25 at most; only ones everyone in the room can read), pin or unpin |

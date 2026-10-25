@@ -5,6 +5,7 @@
  * anyone but the owner holds every write for the owner's approval. Nothing runs on this server:
  * work on a computer is an Ensemble job (hub_assign_to_agent), always approved by the owner.
  */
+import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn } from "@prisma/client";
 import { INCLUDED_PROVIDER, type AssistantToolCall } from "@ensemble/shared-types";
@@ -109,6 +110,13 @@ function replyMark(row: NodeMessage): string {
   return typeof seq === "number" ? ` ↪ #${seq}` : "";
 }
 
+/** Files a message carries (routes.ts stores them as data.files). */
+function filesOf(row: NodeMessage): Array<{ id: string; name: string }> {
+  const files = (row.data as { files?: unknown } | null)?.files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((file) => (file && typeof file === "object" && typeof (file as { id?: unknown }).id === "string" ? [{ id: String((file as { id: string }).id), name: String((file as { name?: unknown }).name ?? "file") }] : []));
+}
+
 export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps): Promise<TurnOutcome> {
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: turn.nodeId } });
@@ -157,9 +165,18 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   };
 
   const who = await namesFor(app, room, members, owner);
+  // Files on the owner's messages are read with this turn (assistant/attachments.ts); a node works in its
+  // owner's space, so another person's files are named but not opened.
+  const attachedFiles = transcriptRows.flatMap((row) => (row.userId === owner && row.authorKind === "human" ? filesOf(row) : [])).slice(-MESSAGE_FILES_MAX);
+  const fileNote = (row: NodeMessage) => {
+    const files = filesOf(row);
+    if (!files.length) return "";
+    const names = files.map((file) => `“${file.name}”`).join(", ");
+    return row.userId === owner && row.authorKind === "human" ? ` [attached ${names}]` : ` [attached ${names}, which you cannot open: they are in that person's Files]`;
+  };
   const transcript = [
     `Room “${room.title}”. New messages since your last turn:`,
-    ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}`),
+    ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
     turn.note ? `\nUpdate for you: ${turn.note}` : "",
   ].filter(Boolean).join("\n");
 
@@ -205,6 +222,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       conversationId,
       message: transcript,
       messageId: userRow.id,
+      ...(attachedFiles.length ? { mentions: attachedFiles.map((file) => ({ kind: "file" as const, id: file.id, label: file.name })) } : {}),
       settings: turnSettings,
       model: choice.model,
       provider: choice.provider,

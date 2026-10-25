@@ -1,5 +1,6 @@
 /** OpenAI-compatible and Anthropic request/response mapping. No network. */
 
+import { anthropicUserContent } from "./content-parts.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -300,7 +301,14 @@ export function toAnthropic(messages: Json[]): { system: string; messages: Json[
       out.push({ role: "assistant", content: blocks.length ? blocks : [{ type: "text", text: "" }] });
       continue;
     }
-    out.push({ role: "user", content: textOf(message.content) });
+    const content = anthropicUserContent(message.content);
+    const last = out[out.length - 1];
+    // Images that follow tool results join that user turn, after its tool_result blocks.
+    if (Array.isArray(content) && last && last.role === "user" && Array.isArray(last.content)) {
+      (last.content as Json[]).push(...content);
+      continue;
+    }
+    out.push({ role: "user", content });
   }
   return { system: system.join("\n\n"), messages: out };
 }

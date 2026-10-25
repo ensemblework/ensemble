@@ -92,7 +92,8 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 - An interrupted workflow step with an unknown outcome is not replayed. Starting an import is not finishing it.
 - There is no native email, Slack or Teams send. Calendar invitations can notify guests; some connected-item updates and vendor MCP tools write after Apply.
 - Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
-- Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button lists saved Files and searches no connector.
+- Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button uploads into Files or lists saved Files and searches no connector.
+- Files attached in chat, in Ensemble Node or to a task reach the model as text, and as pictures for models that read images; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
 
 ## 6. Connected apps and imports
 
