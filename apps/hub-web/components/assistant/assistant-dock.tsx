@@ -14,7 +14,8 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { assistantErrorText, ASSISTANT_UNAVAILABLE, CHAT_FILES_MAX, CONNECT_COMPUTER_HREF, formatChord, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
+import { asksForIds, assistantErrorText, ASSISTANT_UNAVAILABLE, CHAT_FILES_MAX, CONNECT_COMPUTER_HREF, formatChord, formatEntityText, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type AssistantRef, type PageMention } from "@ensemble/shared-types";
+import { callRefs, replyContext, savedRefs, type ReplyContext } from "@/lib/assistant-refs";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -79,7 +80,7 @@ const ASSISTANT_LAYER = 2000;
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
-function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; conversationId: string | null }) {
+function ToolCall({ call, conversationId, refs }: { call: AssistantToolCallRecord; conversationId: string | null; refs?: readonly AssistantRef[] }) {
   const toast = useToast();
   const client = useQueryClient();
   const [local, setLocal] = useState<{ phase: "applied" | "undone"; entryId: string | null } | null>(null);
@@ -148,7 +149,7 @@ function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; con
     <div className="assistant-tool tile m-tool flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]" data-motion-slot="tool.call" data-state={motion}>
       {icon}
       <span className="assistant-tool-name" title={call.name}>{call.name.replace(/^(hub_|apps_)/, "").replace(/_/g, " ")}</span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{call.error ?? call.summary}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{formatEntityText(call.error ?? call.summary ?? "", [...(call.refs ?? []), ...(refs ?? [])], { plain: true })}</span>
       {phase === "applied" ? <span className="text-faint">{call.isWrite === false ? "Read" : "Applied"}</span> : null}
       {phase === "undone" ? <span className="text-faint">Undone</span> : null}
       {call.href ? (
@@ -228,11 +229,14 @@ export function Message({
   conversationId,
   onChoose,
   onRetry,
+  context,
 }: {
   message: AssistantMessageRecord;
   conversationId: string | null;
   onChoose?: (text: string) => void;
   onRetry?: () => void;
+  /** The records this reply may name by id, and whether its question asked for ids. Default: its own. */
+  context?: ReplyContext;
 }) {
   if (message.role === "user") {
     return (
@@ -245,7 +249,11 @@ export function Message({
   if (message.role === "error" || /^The model runtime (?:is not running|could not be reached)/i.test(message.content)) return <AssistantFailure message={message.content} onRetry={onRetry} />;
   const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
   const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
-  const answer = splitCutOffReply(message.content);
+  // Records show by title; the saved text keeps the model's words.
+  const { refs, showIds } = context ?? replyContext([message], 0);
+  const shown = formatEntityText(message.content, refs, { showIds });
+  const plainText = formatEntityText(message.content, refs, { showIds, plain: true });
+  const answer = splitCutOffReply(plainText);
   // Replies saved before 18 Oct 2026 named included credits as an API key.
   const included = message.credentialSource === INCLUDED_SOURCE || message.credentialSource === `API key · ${INCLUDED_PROVIDER}`;
   const source = included ? INCLUDED_SOURCE : message.credentialSource;
@@ -260,12 +268,12 @@ export function Message({
             <ApplyAll calls={pending} conversationId={conversationId} />
           ) : null}
           {message.toolCalls.map((call) => (
-            <ToolCall key={call.id} call={call} conversationId={conversationId} />
+            <ToolCall key={call.id} call={call} conversationId={conversationId} refs={refs} />
           ))}
           </div>
         </details>
       ) : null}
-      <div className="assistant-answer-body"><AssistantAnswer content={message.content} /></div>
+      <div className="assistant-answer-body"><AssistantAnswer content={shown} /></div>
       {onChoose
         ? choiceLines(answer.body).map((choice) => (
             <button key={choice} type="button" className="btn mr-1 mt-1" onClick={() => onChoose(choice)}>
@@ -276,7 +284,7 @@ export function Message({
       <div className="assistant-message-footer">
         {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} provider={included ? INCLUDED_PROVIDER : undefined} size={11} />{included ? includedModelName(message.model) : message.model}</span> : null}
         {source ? <span className="min-w-0 break-words">{source}</span> : null}
-        <CopyReply content={message.content} />
+        <CopyReply content={plainText} />
       </div>
     </article>
   );
@@ -389,6 +397,8 @@ export function AssistantDock() {
   const [includedPick, setIncludedPick] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
   const [liveTools, setLiveTools] = useState<AssistantToolCallRecord[]>([]);
+  /** Records the turn showed the model by id, sent before its text (the `refs` frame). */
+  const [turnRefs, setTurnRefs] = useState<AssistantRef[]>([]);
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [draft, setDraft] = useState("");
@@ -475,10 +485,11 @@ export function AssistantDock() {
     setTurnError(null);
     setStreaming("");
     setLiveTools([]);
+    setTurnRefs([]);
     setWorking("Assistant is thinking…");
     setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, mentions, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
     let nextId = conversationId;
-    const held: { reply: { messageId?: string; content: string; failed?: boolean } | null } = { reply: null };
+    const held: { reply: { messageId?: string; content: string; failed?: boolean; refs?: AssistantRef[] } | null } = { reply: null };
     try {
       const response = await fetch(`${API}/api/assistant/turn`, {
         method: "POST",
@@ -536,6 +547,7 @@ export function AssistantDock() {
           resetsAt?: string;
           saveFailed?: boolean;
           failed?: boolean;
+          refs?: AssistantRef[];
         };
         if (event === "status") {
           if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
@@ -547,6 +559,7 @@ export function AssistantDock() {
           }
         }
         if (event === "delta") setStreaming((value) => value + (frame.text ?? ""));
+        if (event === "refs") setTurnRefs(savedRefs(frame.refs));
         if ((event === "tool" || event === "pending") && frame.call) {
           const call = frame.preview ? { ...frame.call, summary: frame.preview } : frame.call;
           setLiveTools((rows) => [...rows.filter((row) => row.id !== call.id), call]);
@@ -569,7 +582,7 @@ export function AssistantDock() {
         }
         if (event === "done" && frame.conversationId) {
           nextId = frame.conversationId;
-          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed };
+          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed, refs: savedRefs(frame.refs) };
         }
       });
       if (nextId) setConversationId(nextId);
@@ -594,6 +607,7 @@ export function AssistantDock() {
                 id: kept.messageId || `unsaved-${Date.now()}`,
                 role: kept.failed ? "error" : "assistant",
                 content: kept.content,
+                ...(kept.refs?.length ? { mentions: kept.refs as PageMention[] } : {}),
                 toolCalls: [],
                 model: null,
                 createdAt: new Date().toISOString(),
@@ -606,6 +620,7 @@ export function AssistantDock() {
       setStreaming("");
       setLiveTools([]);
       if (sent) attachments.release(sent.files);
+      setTurnRefs([]);
     } catch (error) {
       if (isSilentCancellation(error, controller.signal)) {
         setTurnError(null);
@@ -649,6 +664,9 @@ export function AssistantDock() {
 
   const saved = messages.data?.messages ?? [];
   const all = [...saved, ...optimistic.filter((row) => !saved.some((message) => message.id === row.id))];
+  // While a reply streams: the records its calls returned, the ones the turn showed the model, and the question's mentions.
+  const liveRefs = [...callRefs(liveTools), ...turnRefs, ...(lastRequest.current?.mentions ?? [])];
+  const liveShowIds = asksForIds(lastRequest.current?.text);
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
@@ -792,13 +810,13 @@ export function AssistantDock() {
           <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void send(text)} />
         ) : (
           all.map((message, index) => (
-            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
+            <Message key={message.id} message={message} context={replyContext(all, index)} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
           ))
         )}
         {pending ? (
           <div className="assistant-turn space-y-2">
             {liveTools.map((call) => (
-              <ToolCall key={call.id} call={call} conversationId={conversationId} />
+              <ToolCall key={call.id} call={call} conversationId={conversationId} refs={liveRefs} />
             ))}
             <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
               <div className={streaming ? "mb-3 flex justify-center" : "flex flex-col items-center gap-3 py-4"}>
@@ -809,7 +827,7 @@ export function AssistantDock() {
                 <div className="flex items-start gap-2">
                   <BrandMorph size={16} state="loop" />
                   <div className="min-w-0 flex-1">
-                    <MarkdownText text={streaming} />
+                    <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
                   </div>
                 </div>
               ) : null}

@@ -2,11 +2,11 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import type { PageMention } from "@ensemble/shared-types";
+import { refKind, refPath, type PageMention } from "@ensemble/shared-types";
 import Link from "next/link";
 import { Fragment, createContext, useContext, useState, type ReactNode } from "react";
 import { ADDRESS_SOURCE, addressLink } from "@/lib/linkify";
-import { LINK_CLASS, LinkifiedText, TextLink, linkify } from "./linkified-text";
+import { LINK_CLASS, LinkifiedText, TextLink } from "./linkified-text";
 
 const Mentions = createContext<PageMention[] | null>(null);
 
@@ -312,7 +312,7 @@ const INLINE = new RegExp(
   [
     "(`[^`]+`)",
     String.raw`(\*\*[^*]+\*\*)`,
-    String.raw`(\[([^\]]+)\]\(((?:https?:\/\/|\/(?![\/\\]))(?:[^()\s\\]|\([^()\s\\]*\))*)\))`,
+    String.raw`(\[([^\]]+)\]\(((?:https?:\/\/|ensemble:\/\/|\/(?![\/\\]))(?:[^()\s\\]|\([^()\s\\]*\))*)\))`,
     String.raw`(?<![A-Za-z0-9])\*(?!\*|\s)([^*\n]*?[^\s*])\*(?!\*)(?![A-Za-z0-9])`,
     String.raw`(?<![A-Za-z0-9])_(?!_|\s)([^_\n]*?[^\s_])_(?!_)(?![A-Za-z0-9])`,
     "(~~[^~]+~~)",
@@ -344,9 +344,9 @@ function inline(text: string): ReactNode[] {
     if (match.index > last) plain(text.slice(last, match.index));
     const token = match[0];
     if (match[1]) nodes.push(<code key={key++} className="rounded bg-panel px-1 font-mono text-[12px] [overflow-wrap:anywhere]">{token.slice(1, -1)}</code>);
-    else if (match[2]) nodes.push(<strong key={key++}>{linkify(token.slice(2, -2))}</strong>);
-    else if (match[6] || match[7]) nodes.push(<em key={key++}>{linkify(match[6] ?? match[7]!)}</em>);
-    else if (match[8]) nodes.push(<del key={key++}>{linkify(token.slice(2, -2))}</del>);
+    else if (match[2]) nodes.push(<strong key={key++}>{inline(token.slice(2, -2))}</strong>);
+    else if (match[6] || match[7]) nodes.push(<em key={key++}>{inline(match[6] ?? match[7]!)}</em>);
+    else if (match[8]) nodes.push(<del key={key++}>{inline(token.slice(2, -2))}</del>);
     else if (match[9]) {
       const inner = match[9];
       const link = addressLink(inner);
@@ -354,15 +354,29 @@ function inline(text: string): ReactNode[] {
       nodes.push(href ? <TextLink key={key++} href={href}>{inner}</TextLink> : <Plain key={key++} text={token} />);
     } else if (match[3]) {
       const href = match[5]!;
-      nodes.push(
-        /^https?:\/\//i.test(href) ? (
-          <TextLink key={key++} href={href}>{match[4]}</TextLink>
-        ) : (
-          <Link key={key++} href={href} className={LINK_CLASS}>
-            {match[4]}
-          </Link>
-        ),
-      );
+      const record = /^ensemble:\/\/([a-z]+)\/([^/?#]+)$/i.exec(href);
+      if (record) {
+        // A record link from the model, `[@Draft brief](ensemble://task/<id>)`: its label, opening the record.
+        const label = match[4]!.replace(/^@+/, "");
+        const kind = refKind(record[1]!);
+        let path: string | null = null;
+        try {
+          path = kind ? refPath({ kind, id: decodeURIComponent(record[2]!), label }) : null;
+        } catch {
+          path = null;
+        }
+        nodes.push(path ? <Link key={key++} href={path} className={LINK_CLASS}>{label}</Link> : <Fragment key={key++}>{label}</Fragment>);
+      } else {
+        nodes.push(
+          /^https?:\/\//i.test(href) ? (
+            <TextLink key={key++} href={href}>{match[4]}</TextLink>
+          ) : (
+            <Link key={key++} href={href} className={LINK_CLASS}>
+              {match[4]}
+            </Link>
+          ),
+        );
+      }
     }
     last = end;
   }

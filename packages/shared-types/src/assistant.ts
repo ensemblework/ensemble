@@ -43,6 +43,19 @@ export type AssistantPageContext = z.infer<typeof AssistantPageContext>;
 export const AssistantToolCallState = z.enum(["ok", "failed", "awaiting_approval", "applying"]);
 export type AssistantToolCallState = z.infer<typeof AssistantToolCallState>;
 
+/**
+ * A workspace record an assistant reply or tool result names: its id for links and later calls,
+ * and the title shown instead of the id. `kind` is a mention kind, or `page`, `meeting` or `reminder`.
+ */
+export const AssistantRef = z.object({
+  kind: z.string().max(20),
+  id: z.string().max(200),
+  label: z.string().max(200),
+  /** A short qualifier (email, due date, status) that tells two records with one title apart. */
+  detail: z.string().max(80).optional(),
+});
+export type AssistantRef = z.infer<typeof AssistantRef>;
+
 export const AssistantToolCall = z.object({
   id: z.string(),
   name: z.string(),
@@ -56,11 +69,15 @@ export const AssistantToolCall = z.object({
   href: z.string().optional(),
   undoEntryId: z.string().optional(),
   error: z.string().optional(),
+  /** Records the result names, so a reply can show their titles and link to them instead of printing ids. */
+  refs: z.array(AssistantRef).optional(),
 });
 export type AssistantToolCall = z.infer<typeof AssistantToolCall>;
 
 export const AssistantStreamFrame = z.discriminatedUnion("type", [
   z.object({ type: z.literal("status"), text: z.string() }),
+  /** Records the model was shown before it answers (workspace snapshot, mentions, history), sent before any text. */
+  z.object({ type: z.literal("refs"), refs: z.array(AssistantRef) }),
   z.object({ type: z.literal("tool"), call: AssistantToolCall }),
   z.object({ type: z.literal("pending"), call: AssistantToolCall, preview: z.string() }),
   z.object({ type: z.literal("delta"), text: z.string() }),

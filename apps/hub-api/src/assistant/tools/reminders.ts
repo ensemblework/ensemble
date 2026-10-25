@@ -71,7 +71,8 @@ export const reminderTools = [
     undoable: true,
     async preview(ctx, input) {
       const row = await ctx.prisma.reminder.findFirst({ where: { id: input.reminderId, userId: ctx.userId }, select: { title: true } });
-      return `Update reminder “${row?.title ?? input.reminderId}”`;
+      if (!row) throw Object.assign(new Error("That reminder is not in this space. Call hub_list_reminders and use an id it returns."), { statusCode: 404 });
+      return `Update reminder “${row.title}”`;
     },
     async run(ctx, input) {
       const reminder = await inTransaction(ctx, (tx) =>

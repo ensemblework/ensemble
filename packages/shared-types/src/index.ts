@@ -5,6 +5,7 @@ export * from "./model-efforts.js";
 export * from "./included.js";
 export * from "./personas.js";
 export * from "./mentions.js";
+export * from "./assistant-text.js";
 export * from "./page-markdown.js";
 export * from "./page-images.js";
 export * from "./page-boards.js";

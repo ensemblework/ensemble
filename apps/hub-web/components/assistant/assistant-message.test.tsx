@@ -218,3 +218,39 @@ test("unavailable replies are error alerts with Retry and no model or Copy contr
     assert.equal(retried, 2);
   } finally { await act(async () => root.unmount()); host.remove(); }
 });
+
+test("a reply names records by title, keeps ids in code, and shows them when the person asked", async () => {
+  // next/link schedules its prefetch with self.requestIdleCallback.
+  Object.defineProperty(globalThis, "self", { configurable: true, value: window });
+  const id = "3f2a9c1e-7b44-4d2a-9a51-0c8f5e6d7b10";
+  const reply: AssistantMessageRecord = {
+    id: "m-ids",
+    role: "assistant",
+    content: `Added “Draft brief” (${id}).\n\n\`${id}\``,
+    toolCalls: [{ id: "c-ids", name: "hub_create_tasks", state: "ok", isWrite: true, summary: `Added 1 task(s): “Draft brief” (${id}).`, refs: [{ kind: "task", id, label: "Draft brief" }] }],
+    model: "gemini-3.5-flash",
+    createdAt: "2026-10-04T20:00:00.000Z",
+  };
+  const show = async (context?: { refs: Array<{ kind: string; id: string; label: string }>; showIds: boolean }) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const client = new QueryClient();
+    await act(async () => {
+      root.render(<QueryClientProvider client={client}><Message message={reply} conversationId="conv" context={context} /></QueryClientProvider>);
+    });
+    const text = host.querySelector(".assistant-answer-body")?.textContent ?? "";
+    const chip = host.querySelector(".assistant-tool")?.textContent ?? "";
+    const link = host.querySelector(".assistant-answer-body a")?.getAttribute("href") ?? null;
+    await act(async () => root.unmount());
+    host.remove();
+    return { text, chip, link };
+  };
+  const plain = await show();
+  assert.equal(plain.text, `Added “Draft brief”.${id}`, "the title shows; the id stays only in code");
+  assert.equal(plain.link, `/tasks/${id}`);
+  assert.equal(plain.chip.includes(id), false, "an older receipt drops the id beside its title");
+  assert.match(plain.chip, /“Draft brief”/);
+  const asked = await show({ refs: reply.toolCalls[0]!.refs!, showIds: true });
+  assert.ok(asked.text.includes(`(${id})`), "the person asked for ids");
+});

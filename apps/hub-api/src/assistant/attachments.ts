@@ -49,11 +49,11 @@ export async function messageAttachments(
   return { text, parts: read.parts, files: files.length };
 }
 
-/** "(Attached: “q3.pdf”, “chart.png”. Read them again with hub_read_file or hub_view_file.)" for a replayed message. */
+/** "(Attached: [q3.pdf](ensemble://file/…). Read them again with hub_read_file or hub_view_file.)" for a replayed message. */
 export function attachedNote(mentions: unknown): string {
   if (!Array.isArray(mentions)) return "";
   const files = (mentions as Mention[]).filter((mention) => mention?.kind === "file" && typeof mention.id === "string");
   if (!files.length) return "";
-  const names = files.map((file) => `“${String(file.label ?? "file")}” → ensemble://file/${String(file.id)}`).join("; ");
+  const names = files.map((file) => `[${String(file.label ?? "file").replace(/[[\]]/g, "")}](ensemble://file/${String(file.id)})`).join(", ");
   return `(Attached: ${names}. Read them again with hub_read_file, or hub_view_file for a picture.)`;
 }

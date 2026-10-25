@@ -152,3 +152,41 @@ test("Apply can attach tasks to a project created earlier in the same transactio
     await prisma.user.delete({ where: { id: owner.id } });
   }
 });
+
+test("task receipts name titles and counts; the ids stay in the result's data", async (t) => {
+  if (!(await databaseReady())) {
+    t.skip("Postgres is not reachable");
+    return;
+  }
+  const stamp = Date.now().toString(36);
+  const owner = await prisma.user.create({ data: { email: `receipts-${stamp}@ensemble.test`, name: "Receipts" } });
+  const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  try {
+    const create = getTool("hub_create_tasks");
+    const update = getTool("hub_update_task");
+    assert.ok(create && update);
+    const one = await prisma.$transaction((tx) => create.run({ ...ctx(owner.id), tx }, create.input.parse({ tasks: [{ title: "Draft brief", status: "todo" }] })));
+    assert.equal(one.summary, "Added “Draft brief”.");
+    const made = (one.data as { tasks: Array<{ id: string; title: string }> }).tasks;
+    assert.equal(made[0]?.title, "Draft brief");
+    assert.match(made[0]?.id ?? "", uuid, "the id is in the data");
+
+    const titles = ["Call Mira", "Review", "Review", "Book room", "Send notes", "Plan Q4", "Share deck"];
+    const many = await prisma.$transaction((tx) => create.run({ ...ctx(owner.id), tx }, create.input.parse({ tasks: titles.map((title, index) => ({ title, ...(index === 1 ? { due: "2026-11-02" } : {}) })) })));
+    assert.equal(many.summary, "Added 7 tasks: “Call Mira”, “Review” (due 2026-11-02), “Review” (2), “Book room”, “Send notes” and 2 more.");
+    assert.doesNotMatch(many.summary, uuid);
+    assert.equal((many.data as { tasks: unknown[] }).tasks.length, 7);
+
+    const changed = await update.run(ctx(owner.id), update.input.parse({ taskId: made[0]!.id, matchTitle: "Draft brief", status: "done" }));
+    assert.equal(changed.summary, "Marked “Draft brief” done.");
+    assert.equal(changed.href, `/tasks/${made[0]!.id}`);
+    const renamed = await update.run(ctx(owner.id), update.input.parse({ taskId: made[0]!.id, matchTitle: "draft brief", title: "Final brief", priority: "p0" }));
+    assert.equal(renamed.summary, "Renamed “draft brief” to “Final brief”; changed priority.");
+    assert.equal((renamed.data as { task: { id: string } }).task.id, made[0]!.id);
+  } finally {
+    await prisma.task.deleteMany({ where: { userId: owner.id } });
+    await prisma.undoEntry.deleteMany({ where: { userId: owner.id } });
+    await prisma.taskPage.deleteMany({ where: { userId: owner.id } });
+    await prisma.user.delete({ where: { id: owner.id } });
+  }
+});

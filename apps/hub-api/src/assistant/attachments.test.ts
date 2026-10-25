@@ -30,6 +30,6 @@ test("the model gets an attached file's text, and is told when one is gone", asy
 });
 
 test("a replayed message names its files instead of resending them", () => {
-  assert.match(attachedNote([{ kind: "file", id: "f1", label: "brief.txt" }]), /“brief\.txt” → ensemble:\/\/file\/f1/);
+  assert.match(attachedNote([{ kind: "file", id: "f1", label: "brief.txt" }]), /\[brief\.txt\]\(ensemble:\/\/file\/f1\)/);
   assert.equal(attachedNote([{ kind: "task", id: "t1", label: "x" }]), "");
 });

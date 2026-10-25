@@ -95,6 +95,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 - Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
 - Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button uploads into Files or lists saved Files and searches no connector.
 - Files attached in chat, in Ensemble Node or to a task reach the model as text, and as pictures for models that read images; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
+- Replies, receipts and previews name records by title and link to them; ids stay in tool data and link targets, and show only when the person asks ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)).
 
 ## 6. Connected apps and imports
 

@@ -8,7 +8,7 @@
 import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn } from "@prisma/client";
-import { INCLUDED_PROVIDER, type AssistantToolCall } from "@ensemble/shared-types";
+import { asksForIds, INCLUDED_PROVIDER, type AssistantRef, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
 import { env } from "../config.js";
 import { assertIncludedOpen } from "../included/budget.js";
@@ -46,7 +46,7 @@ async function namesFor(app: FastifyInstance, room: NodeRoom, members: NodeRoomM
   };
 }
 
-async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean): Promise<string> {
+async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean): Promise<{ text: string; rooms: AssistantRef[] }> {
   const prisma = app.prisma;
   const [nodes, rooms, memories, people] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: members.filter((row) => row.nodeId).map((row) => row.nodeId!) } } }),
@@ -91,13 +91,15 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
     memories.length ? `\nWhat you remember (newest first):\n${memories.map((row) => `- ${row.content}`).join("\n")}` : "",
   ];
-  return lines.filter((line) => line !== "").join("\n");
+  // Room ids are for node_post; a reply that prints one shows the room's title instead.
+  const known = rooms.filter((row) => !row.room.archivedAt).map((row) => ({ kind: "room", id: row.room.id, label: row.room.title }));
+  return { text: lines.filter((line) => line !== "").join("\n"), rooms: known };
 }
 
 
 
 function chips(calls: AssistantToolCall[]): Array<Record<string, unknown>> {
-  return calls.map((call) => ({ id: call.id, name: call.name, state: call.state, summary: call.summary ?? null, href: call.href ?? null }));
+  return calls.map((call) => ({ id: call.id, name: call.name, state: call.state, summary: call.summary ?? null, href: call.href ?? null, ...(call.refs?.length ? { refs: call.refs } : {}) }));
 }
 
 async function ownerNotice(app: FastifyInstance, node: NodeAgent, roomId: string, text: string, data: Record<string, unknown> = {}): Promise<void> {
@@ -213,9 +215,12 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
 
   const people = await roomPeople(prisma, room.id);
   const audience = privateTo ?? people;
+  // Someone in the room asked for ids: the reply shows them as written.
+  const showIds = transcriptRows.some((row) => row.authorKind === "human" && asksForIds(row.body));
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
   let result: AssistantTurnResult;
   try {
+    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner);
     result = await runAssistantTurn({
       app,
       userId: spaceId,
@@ -228,13 +233,14 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       provider: choice.provider,
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
-      agentPersona: await persona(app, node, room, members, ownerName, fromNonOwner),
+      agentPersona: nodePersona.text,
+      extraRefs: nodePersona.rooms,
       extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly: !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner)), redis: app.redis as never, dispatch: deps.dispatch }),
       purpose: "Ensemble Node",
       signal: deps.signal,
       emit(frame) {
-        if (frame.type === "delta" || frame.type === "tool" || frame.type === "pending") {
-          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, frame });
+        if (frame.type === "delta" || frame.type === "tool" || frame.type === "pending" || frame.type === "refs") {
+          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, frame, ...(showIds ? { showIds } : {}) });
         }
       },
     });
@@ -255,6 +261,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
           role: result.failed ? "error" : "assistant",
           content,
           toolCalls: result.toolCalls as never,
+          ...(result.refs?.length && !result.failed ? { mentions: result.refs as never } : {}),
           model: result.failed ? null : result.model,
           credentialSource: result.credentialSource,
           credits: result.credits ?? undefined,
@@ -276,9 +283,11 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const text = cleanReply(result.content, single || Boolean(privateTo));
   const scope = { prisma, node, lineage, dispatch: deps.dispatch };
   if (text && text !== NO_REPLY) {
-    // Tool chips name the owner's workspace items: shown only where nobody else reads.
+    // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
+    // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || privateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
-    await postAsNode(scope, room, text, privateTo, { data: toolData });
+    const named = result.refs?.length ? { refs: result.refs } : {};
+    await postAsNode(scope, room, text, privateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}) } });
   }
   const held = result.toolCalls.filter((call) => call.state === "awaiting_approval");
   if (held.length) {
