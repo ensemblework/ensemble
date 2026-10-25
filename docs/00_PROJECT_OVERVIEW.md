@@ -93,6 +93,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 - There is no native email, Slack or Teams send. Calendar invitations can notify guests; some connected-item updates and vendor MCP tools write after Apply.
 - Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
 - Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button lists saved Files and searches no connector.
+- Replies, receipts and previews name records by title and link to them; ids stay in tool data and link targets, and show only when the person asks ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)).
 
 ## 6. Connected apps and imports
 

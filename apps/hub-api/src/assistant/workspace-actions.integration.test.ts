@@ -263,3 +263,22 @@ test("relationship previews resolve real targets and reject unavailable apps bef
  await assert.rejects(async () => tool.preview!(context(u), tool.input.parse({ action: "link_project", source: "atlassian", containerId: "LAUNCH", projectId: project.id })), /Project source links use.*jira/);
  const sources = (await run(u, "hub_list_app_relationships", { view: "project_containers" })).data as any; assert.ok(sources.linkSources.includes("jira"));
 });
+
+test("record previews and receipts name records by title, never by id", async () => {
+ const u = await h.asUser();
+ const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+ const project = await h.prisma.project.create({ data: { userId: u.id, name: "Launch", createdBy: "me" } });
+ const mira = await h.prisma.person.create({ data: { userId: u.id, name: "Mira Chen" } });
+ const a = (await run(u, "hub_create_page", { title: "Brief" })).data as any;
+ const b = (await run(u, "hub_create_page", { title: "Plans" })).data as any;
+ const preview = async (name: string, input: unknown) => { const tool = getTool(name)!; return tool.preview!(context(u), tool.input.parse(input)); };
+ const update = await preview("hub_update_project", { projectId: project.id, status: "done", personIds: [mira.id, randomUUID()] });
+ assert.equal(update, "Update project “Launch”: mark done; people: “Mira Chen” and 1 other");
+ assert.equal(await preview("hub_move_page", { pageId: a.id, parentId: b.id }), "Move “Brief” under “Plans”.");
+ const record = await preview("hub_manage_record", { action: "add_comment", kind: "project", id: project.id, text: "Ship it" });
+ assert.equal(record, "Comment on project “Launch”: Ship it.");
+ for (const text of [update, record]) assert.doesNotMatch(text, uuid);
+ const moved = await run(u, "hub_move_page", { pageId: a.id, parentId: b.id });
+ assert.equal(moved.summary, "Moved “Brief” under “Plans”.");
+ await assert.rejects(preview("hub_update_project", { projectId: randomUUID() }), /not in this space/);
+});

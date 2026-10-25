@@ -52,7 +52,7 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
         reason: "run",
         triggerMessageId: null,
         note: [
-          `The computer run for “${title}” (task ${run.taskId}) ${words}.`,
+          `The computer run for [${title.replace(/[[\]]/g, "")}](ensemble://task/${run.taskId}) ${words}.`,
           job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
           job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
           "Report the result to whoever asked (mention them if it was another node), and say what is next.",

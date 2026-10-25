@@ -159,7 +159,8 @@ export const graphTools = [
     undoable: true,
     async preview(ctx, input) {
       const row = await ctx.prisma.deliverable.findFirst({ where: { id: input.deliverableId, userId: ctx.userId }, select: { title: true } });
-      return `Update deliverable “${row?.title ?? input.deliverableId}”${input.title ? `: title → ${input.title}` : ""}`;
+      if (!row) throw Object.assign(new Error("That deliverable is not in this space. Call hub_list_deliverables and use an id it returns."), { statusCode: 404 });
+      return `Update deliverable “${row.title}”${input.title ? `: title → ${input.title}` : ""}`;
     },
     async run(ctx, input) {
       const { deliverableId, ...patch } = input;

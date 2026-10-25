@@ -69,6 +69,7 @@ A turn writes the thread's new messages as one user message ("Room “Launch”.
 
 - `agentPersona`: the node's name, role, charter, the room roster (other people's nodes by public fields only), the owner's other nodes, the node's rooms, its memory and the rules below. It replaces the person's persona for the turn and grants nothing.
 - `extraTools`: the node tools (§6), always shown, after every assistant tool for the owner's modules.
+- `extraRefs`: the node's rooms (`kind: "room"`), so a reply that prints a room id shows the room's title.
 - `requestHeaders`: internal credentials for the owner's space, so route-backed tools run exactly as they do for a signed-in request.
 - `purpose: "Ensemble Node"` for metrics and included credits.
 
@@ -76,7 +77,9 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 
 **Writes.** The owner's Ensemble write policy applies. Connected-app writes, settings, workflows and `hub_assign_to_agent` always wait. A turn started by anyone but the owner, or by a message descended from one, runs with the policy narrowed to *preview*, so every write waits for the owner. Held calls become one owner-only approval card.
 
-**Posting.** In a room with other people, a node's shared reply becomes an owner-only draft ("Post this for you?") unless the owner set the node's `autonomy.sharedRooms` to `auto`. Tool chips (names and summaries of the owner's items) appear only where nobody else reads.
+**Posting.** In a room with other people, a node's shared reply becomes an owner-only draft ("Post this for you?") unless the owner set the node's `autonomy.sharedRooms` to `auto`. Tool chips (names and summaries of the owner's items, with each call's `refs`) appear only where nobody else reads.
+
+**Records by title.** A reply names records by title, as in the Hub ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). The posted message keeps the model's words and carries `data.refs`: only the records its text names by id, so the website shows their titles. `data.showIds` is set when a person's message in the turn asked for ids. `node.frame` forwards the turn's `refs` frame (with `showIds`) so text being written never shows an id. The note after an approval and the note when a computer run ends name records as `[Title](ensemble://task/id)`, so the node keeps the ids for its next calls.
 
 **Models and credits.** A node can use any model its owner can (`nodeModelOptions` in `node/model.ts`, `GET /api/node/models`): the included models the server offers (`includedConfig().models`, the same `ENSEMBLE_INCLUDED_MODELS` list as the Hub and the CLI, with name and version, vendor, role and relative cost, so a deployment added there shows on Node at once); models on the owner's own API keys (Ensemble's stored model catalog); and AI plans (Claude Code, Codex, Cursor, Copilot) found signed in on an online paired computer, which run the whole turn there with Ensemble's tools ([30](30_ENGINES.md)). A node stores `provider` and `model`; `PATCH /api/node/nodes/:id` refuses a model the account cannot use (`modelProblem`). The default chat model is the included `gpt-5-mini` when the server offers it, else the first everyday model, else the owner's own medium tier. Included credits are per account, so Node, the Hub, the desktop app and the CLI share the same 20,000 monthly credits ([33](33_INCLUDED_AI.md)). When credits are used up, the node posts Ensemble's own message to its owner and stops.
 
