@@ -1,5 +1,5 @@
 import type { FileImportSource, FileRecord, FileStyleProfile, FileUsage, PageDocument, SheetPatch } from "@ensemble/shared-types";
-import { API, ApiError, api, del, get, itemViewHeaders, post, put, type ArtifactRecord } from "./api";
+import { API, ApiError, api, del, get, itemViewHeaders, post, put, request, type ArtifactRecord } from "./api";
 
 /** Files people uploaded or imported (routes/files.ts). Docs: docs/32_FILES.md. */
 export const FILE_QUERY = {
@@ -23,12 +23,27 @@ export function toBase64(bytes: Uint8Array): string {
 export const filesApi = {
   list: (q = "") => get<{ files: FileRecord[]; usage: FileUsage }>(`/api/documents${q ? `?q=${encode(q)}` : ""}`),
   get: (id: string) => get<{ file: FileRecord }>(`/api/documents/${encode(id)}`),
-  /** Uploads a file the person chose or dropped. With `onProgress`, reports 0–1 as it reads and sends. */
-  async upload(file: File | { name: string; type: string; bytes: Uint8Array }, options: { onProgress?: (fraction: number) => void } = {}): Promise<{ file: FileRecord }> {
+  /**
+   * Uploads a file the person chose or dropped. With `onProgress`, reports 0–1 as it reads and sends.
+   * `signal` stops it with an AbortError; the server may have saved the file already.
+   * `summarize: false` skips the AI summary the server writes for new files.
+   */
+  async upload(
+    file: File | { name: string; type: string; bytes: Uint8Array },
+    options: { onProgress?: (fraction: number) => void; signal?: AbortSignal; summarize?: boolean } = {},
+  ): Promise<{ file: FileRecord }> {
+    const { signal } = options;
+    signal?.throwIfAborted();
     const bytes = file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : file.bytes;
-    const body = { filename: file.name, mediaType: file.type || "application/octet-stream", dataBase64: toBase64(bytes) };
-    if (!options.onProgress || typeof XMLHttpRequest === "undefined") return post<{ file: FileRecord }>("/api/documents", body);
-    return sendWithProgress<{ file: FileRecord }>("/api/documents", body, options.onProgress);
+    signal?.throwIfAborted();
+    const body = {
+      filename: file.name,
+      mediaType: file.type || "application/octet-stream",
+      dataBase64: toBase64(bytes),
+      ...(options.summarize === undefined ? {} : { summarize: options.summarize }),
+    };
+    if (!options.onProgress || typeof XMLHttpRequest === "undefined") return request<{ file: FileRecord }>("/api/documents", { method: "POST", json: body, signal });
+    return sendWithProgress<{ file: FileRecord }>("/api/documents", body, options.onProgress, signal);
   },
   /** The original bytes, for previews and conversions. */
   async original(id: string): Promise<ArrayBuffer> {
@@ -91,17 +106,27 @@ export const fromAppsApi = {
 };
 
 /** A JSON POST over XMLHttpRequest, which (unlike fetch) reports upload progress. Errors read like `request`'s. */
-function sendWithProgress<T>(path: string, body: unknown, onProgress: (fraction: number) => void): Promise<T> {
+function sendWithProgress<T>(path: string, body: unknown, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    const stop = () => xhr.abort();
+    const settle = () => signal?.removeEventListener("abort", stop);
     xhr.open("POST", `${API}${path}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("Content-Type", "application/json");
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total) onProgress(event.loaded / event.total);
     };
-    xhr.onerror = () => reject(new ApiError("Ensemble can't reach its server right now.", 0));
+    xhr.onabort = () => {
+      settle();
+      reject(new DOMException("The upload was cancelled.", "AbortError"));
+    };
+    xhr.onerror = () => {
+      settle();
+      reject(new ApiError("Ensemble can't reach its server right now.", 0));
+    };
     xhr.onload = () => {
+      settle();
       const text = xhr.responseText ?? "";
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(1);
@@ -122,6 +147,8 @@ function sendWithProgress<T>(path: string, body: unknown, onProgress: (fraction:
       }
       reject(new ApiError(message, xhr.status));
     };
+    if (signal?.aborted) return reject(new DOMException("The upload was cancelled.", "AbortError"));
+    signal?.addEventListener("abort", stop, { once: true });
     xhr.send(JSON.stringify(body));
   });
 }

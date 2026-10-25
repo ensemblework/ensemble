@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { QueryClient } from "@tanstack/react-query";
 import type { FileRecord } from "@ensemble/shared-types";
 import { FILE_QUERY, filesApi } from "@/lib/api-files";
+import { pastedFiles } from "@/lib/files/pasted";
 import { emitToast } from "@/lib/toast-bus";
 
 export type FileAttachOptions = {
@@ -115,23 +116,7 @@ export async function uploadFiles(editor: Editor, files: File[], options: { pos?
   return done;
 }
 
-function htmlText(html: string): string {
-  return html
-    .replace(/<(style|script|head)\b[\s\S]*?<\/\1>/gi, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;|&#160;/g, " ")
-    .trim();
-}
-
-/** Files on the clipboard, unless they ride along with copied text: Word, Excel and browsers add a picture of the selection. */
-export function pastedFiles(data: DataTransfer | null): File[] {
-  const files = Array.from(data?.files ?? []);
-  if (!data || !files.length) return [];
-  const types = Array.from(data.types ?? []);
-  if (types.includes("text/rtf")) return [];
-  const html = types.includes("text/html") ? data.getData("text/html") : "";
-  return html && htmlText(html) ? [] : files;
-}
+export { pastedFiles };
 
 /** Dropped and pasted files upload into the page; `/file` opens the chooser. Read-only editors leave both alone. */
 export const FileAttach = Extension.create<FileAttachOptions>({
