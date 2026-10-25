@@ -148,7 +148,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Connectors | `/api/connectors/catalog`, `/api/connectors/:provider/start`, `/callback`, `/token`, `DELETE /api/connectors/:provider`, `PUT /api/connectors/:id/products`, `/api/connectors/apps`; `routes/connectors.ts`. `/api/connections/:id/sync`, `/api/fetch`; `routes/system.ts` |
 | Vendor MCP | `/api/mcp-connections`, `/api/mcp-connections/:id`, `/api/mcp-connections/callback`, `/api/mcp-connections/:id/refresh-tools`; `routes/mcp-connections.ts` |
 | Connected items | `/api/app-items/*`; operations in [31](31_CONNECTORS_IN_USE.md#6-api) |
-| Files | `/api/documents`, `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts`. `/api/documents/import`; `routes/file-imports.ts` |
+| Files | `/api/documents` (`purpose: "page-image"` for images in pages, [32 §6](32_FILES.md#images-in-pages)), `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts`. `/api/documents/import`; `routes/file-imports.ts` |
 | Imports | `/api/imports/*`; preview/job/undo contract in [27](27_IMPORTS.md#6-api) |
 | Plots and diagrams | `/api/plots/*`, `/api/diagrams/*`; `routes/plots.ts`, `diagrams.ts`, [20](20_PLOTS_DESIGN.md) |
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |
@@ -227,6 +227,8 @@ Duplicate creates independent writing. Save as template snapshots the page for t
 ### Blocks and mentions
 
 Slash commands insert writing blocks; `@` links real entities by ID and can request Ensemble. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
+
+Images (`components/editor/page-image.ts`, the `image` node) come from `/image`, a drop, a paste or HTML with `data:` images, upload into Files with `purpose: "page-image"` behind a progress placeholder (`file-attach.ts`), and land as one undoable step. Width (10–100% of the column, or the image's own size), alignment, alt text and the original's size are node attributes, so they save, undo and co-edit; drag handles with a keyboard slider, a toolbar with alignment and width presets, Alt and remove appear only on editable pages. File-backed images load with the share headers and show from object URLs, so shared pages and public links show them. Each image is at most 2 MB (2,097,152 bytes), PNG, JPEG, GIF or WebP; the rules, storage and limits are in [32 §6](32_FILES.md#images-in-pages).
 
 Links in an editable page open on click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link by drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
 

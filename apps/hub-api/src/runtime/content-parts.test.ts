@@ -41,7 +41,7 @@ test("Responses gets input_text and input_image parts, also from stored items", 
 });
 
 test("Copilot requests that carry a picture say so", () => {
-  const target = { base: "https://api.githubcopilot.com", headers: { Authorization: "Bearer x" } };
+  const target: { base: string; headers: Record<string, string> } = { base: "https://api.githubcopilot.com", headers: { Authorization: "Bearer x" } };
   assert.equal(withVision("copilot", target, { messages: [{ role: "user", content: asked }] }).headers["Copilot-Vision-Request"], "true");
   assert.equal(withVision("copilot", target, { input: [{ role: "user", content: "hi" }] }).headers["Copilot-Vision-Request"], undefined);
   assert.equal(withVision("openai", target, { messages: [{ role: "user", content: asked }] }), target);

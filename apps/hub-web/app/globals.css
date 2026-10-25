@@ -560,6 +560,40 @@ select:focus-visible {
 .page-image { max-width: 100%; height: auto; border-radius: 8px; }
 .page-image-broken { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 64px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .page-image-broken a { color: var(--faint); text-decoration: underline; }
+/* Images in pages (components/editor/page-image.ts): width is a share of the column, align places it. */
+.page-image-block { position: relative; display: flex; flex-direction: column; align-items: center; margin: 6px 0; }
+.page-image-block[data-align="left"] { align-items: flex-start; }
+.page-image-block[data-align="right"] { align-items: flex-end; }
+.page-image-box { position: relative; max-width: 100%; min-width: 0; }
+.page-image-box > .page-image { display: block; max-width: 100%; height: auto; }
+.page-image-block[data-width] .page-image-box > .page-image { width: 100%; }
+.page-image-box.is-loading { min-width: min(240px, 100%); min-height: 64px; border-radius: 8px; background: var(--hover); }
+.page-image-box.is-loading > .page-image { visibility: hidden; }
+.page-image-box > .page-image-broken { min-width: min(280px, 100%); }
+.page-image-block.ProseMirror-selectednode .page-image-box > .page-image { outline: 2px solid rgb(var(--accent-rgb) / 0.55); outline-offset: 2px; }
+.page-image-handle { position: absolute; top: 50%; width: 8px; height: 44px; max-height: calc(100% - 12px); transform: translateY(-50%); border: 1px solid var(--line-strong); border-radius: 4px; background: var(--raised); cursor: ew-resize; touch-action: none; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.page-image-handle.is-left { left: 6px; }
+.page-image-handle.is-right { right: 6px; }
+.page-image-handle:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.6); outline-offset: 1px; }
+.page-image-handle[hidden], .page-image-toolbar[hidden] { display: none; }
+.page-image-toolbar { position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); white-space: nowrap; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease); }
+.page-image-tools { display: flex; gap: 1px; }
+.page-image-tools + .page-image-tools { margin-left: 2px; padding-left: 3px; border-left: 1px solid var(--line); }
+.page-image-tool { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.page-image-tool:hover, .page-image-tool:focus-visible, .page-image-tool[aria-pressed="true"] { color: var(--ink); background: var(--hover); }
+.page-image-block:hover :is(.page-image-toolbar, .page-image-handle),
+.page-image-block:focus-within :is(.page-image-toolbar, .page-image-handle),
+.page-image-block.ProseMirror-selectednode :is(.page-image-toolbar, .page-image-handle),
+.page-image-handle.is-dragging { opacity: 1; pointer-events: auto; }
+.page-image-alt { display: flex; flex-direction: column; gap: 3px; width: min(420px, 100%); margin-top: 6px; }
+.page-image-alt input { width: 100%; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--raised); color: var(--ink); font-size: 13px; }
+.page-image-alt-hint { color: var(--faint); font-size: 11.5px; }
+.image-upload-placeholder { display: flex; flex-direction: column; gap: 6px; width: min(420px, 100%); margin: 6px 0; padding: 8px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-size: 12.5px; }
+.image-upload-preview { display: block; width: 100%; min-height: 48px; overflow: hidden; border-radius: 6px; background: var(--hover); }
+.image-upload-preview img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0.55; }
+.image-upload-bar { display: block; height: 4px; overflow: hidden; border-radius: 2px; background: var(--line); }
+.image-upload-bar > span { display: block; width: 0; height: 100%; background: rgb(var(--accent-rgb)); transition: width 120ms linear; }
+.image-upload-percent { font-variant-numeric: tabular-nums; }
 .notion-fg-gray { color: var(--muted); }
 .notion-fg-brown, .notion-fg-orange { color: var(--tag-orange-fg, #c18b58); }
 .notion-fg-yellow { color: var(--tag-yellow-fg, #c6a254); }
@@ -2892,7 +2926,7 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
   [data-theme-canvas] { background: #fff !important; }
   .page-focus { position: static !important; overflow: visible !important; }
   #main-content *:has(> [data-focus-keep]) > :not([data-focus-keep]) { display: none !important; }
-  .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .comment-overlay, .toggle-block-trigger, .embed-resize { display: none !important; }
+  .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .comment-overlay, .toggle-block-trigger, .embed-resize, .page-image-toolbar, .page-image-handle { display: none !important; }
   .ProseMirror { min-height: 0; }
   .mention { color: #111 !important; background: none !important; box-shadow: inset 0 0 0 1px #bbb !important; }
   .mention .mention-at { opacity: 1; }

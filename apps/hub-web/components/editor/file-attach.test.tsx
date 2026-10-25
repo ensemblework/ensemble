@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Editor, type JSONContent } from "@tiptap/core";
 import { Slice } from "@tiptap/pm/model";
 import { documentMentions, restoreMentionLinks, type FileRecord, type PageDocument } from "@ensemble/shared-types";
+import { testPng } from "@ensemble/shared-types/page-images-testing";
 import { bindToast } from "@/lib/toast-bus";
 import { applyBlock, matchCommands } from "./editor-commands";
 import { editorExtensions } from "./extensions";
@@ -189,7 +190,7 @@ test("files are in the @ menu with their type, scoped and unscoped", () => {
 });
 
 test("/file and its synonyms open the chooser, and an upload lands as a card where the command was", async () => {
-  for (const word of ["file", "attach", "upload", "pdf", "image"]) assert.equal(matchCommands(word)[0]?.id, "file", word);
+  for (const word of ["file", "attach", "upload", "pdf"]) assert.equal(matchCommands(word)[0]?.id, "file", word);
   const server = serve({});
   const opened: number[] = [];
   const editor = makeEditor("<p>Intro /file</p>", (pos) => opened.push(pos));
@@ -215,14 +216,16 @@ test("/file and its synonyms open the chooser, and an upload lands as a card whe
 
     const input = dialog.querySelector<HTMLInputElement>("input[type='file']")!;
     assert.equal(input.multiple, true);
-    Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF-1.7"], "notes.pdf", { type: "application/pdf" })] });
+    // An image chosen here is attached as a card too: /file is how to keep one over the page-image limit.
+    const photo = testPng(10, 10);
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([photo as BlobPart], "photo.png", { type: "image/png" })] });
     await act(async () => {
       input.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
     await settle(() => fileMentions(editor).length > 0);
     const upload = server.calls.find((call) => call.method === "POST")!;
-    assert.deepEqual(upload.body, { filename: "notes.pdf", mediaType: "application/pdf", dataBase64: Buffer.from("%PDF-1.7").toString("base64") });
-    assert.deepEqual(fileMentions(editor), [{ kind: "file", id: "up-notes.pdf", label: "notes.pdf" }]);
+    assert.deepEqual(upload.body, { filename: "photo.png", mediaType: "image/png", dataBase64: Buffer.from(photo).toString("base64") });
+    assert.deepEqual(fileMentions(editor), [{ kind: "file", id: "up-photo.png", label: "photo.png" }]);
     const paragraph = editor.getJSON().content![0]!;
     assert.deepEqual(paragraph.content!.map((node) => node.type), ["text", "mention", "text"]);
     assert.equal(document.querySelector("[aria-label='Attach a file']"), null);
@@ -275,22 +278,22 @@ function pasteEvent(data: { files?: File[]; types?: string[]; text?: string; htm
   return event as ClipboardEvent;
 }
 
-test("pasting an image uploads it with an inline placeholder and puts a card at the cursor", async () => {
+test("pasting a file uploads it with an inline placeholder and puts a card at the cursor", async () => {
   const server = serve({});
   const editor = makeEditor("<p>Hello world</p>");
   try {
     editor.commands.setTextSelection(6);
-    const shot = new File(["png"], "shot.png", { type: "image/png" });
-    const event = pasteEvent({ files: [shot], types: ["Files"] });
+    const notes = new File(["notes"], "notes.txt", { type: "text/plain" });
+    const event = pasteEvent({ files: [notes], types: ["Files"] });
     editor.view.dom.dispatchEvent(event);
     assert.equal(event.defaultPrevented, true);
-    assert.equal(editor.view.dom.querySelector(".file-upload-placeholder")?.textContent, "Uploading shot.png…");
+    assert.equal(editor.view.dom.querySelector(".file-upload-placeholder")?.textContent, "Uploading notes.txt…");
     assert.equal(editor.getText(), "Hello world", "the placeholder is not part of the saved page");
     await settle(() => fileMentions(editor).length > 0);
     assert.equal(server.calls.filter((call) => call.method === "POST").length, 1);
     assert.equal(editor.view.dom.querySelector(".file-upload-placeholder"), null);
     const paragraph = editor.getJSON().content![0]!;
-    assert.deepEqual(paragraph.content!.map((node) => node.text ?? node.attrs?.label), ["Hello", "shot.png", "  world"]);
+    assert.deepEqual(paragraph.content!.map((node) => node.text ?? node.attrs?.label), ["Hello", "notes.txt", "  world"]);
   } finally {
     await act(async () => editor.destroy());
     server.restore();

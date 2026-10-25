@@ -12,6 +12,7 @@ import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http
 import { fileRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
 import { MISSING_ID } from "../lib/route-inventory.js";
 import { makePdf } from "../files/testing.js";
+import { testJpeg, testPng } from "@ensemble/shared-types/page-images-testing";
 
 const harness: HttpHarness = await createHttpHarness();
 const db = harness.prisma;
@@ -353,6 +354,102 @@ test("a shared page or public link opens the files placed on it, read-only, and 
   await ok(owner.inject({ method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision: 2, content: { type: "doc", content: [{ type: "paragraph" }] } } }));
   assert.equal((await asCara({ method: "GET", url: `/api/documents/${placed.id}` })).statusCode, 403, "taking the file off the page closes it again");
   assert.equal((await anon(`/api/documents/${placed.id}`)).statusCode, 403);
+});
+
+function pageImage(user: HttpUser, filename: string, bytes: Uint8Array, mediaType = "image/png", headers: Record<string, string> = {}) {
+  return user.inject({ method: "POST", url: "/api/documents", headers, payload: { filename, mediaType, dataBase64: Buffer.from(bytes).toString("base64"), purpose: "page-image" } });
+}
+
+const imageNode = (fileId: string, more: Record<string, unknown> = {}) => ({ type: "image", attrs: { src: null, alt: "", fileId, ...more } });
+
+test("page images: exactly 2 MiB is kept with its size; one byte more, a damaged header, an SVG or a wrong name is refused", async () => {
+  const owner = await person("Mira Chen");
+  const count = async () => (await ok<{ usage: FileUsage }>(owner.inject({ method: "GET", url: "/api/documents" }))).usage.count;
+  const kept = await ok<{ file: FileRecord; image: { format: string; width: number; height: number } }>(pageImage(owner, "site.png", testPng(1200, 800, 2_097_152)), 201);
+  assert.equal(kept.file.byteSize, 2_097_152);
+  assert.deepEqual(kept.image, { format: "png", width: 1200, height: 800 });
+  assert.equal(kept.file.kind, "image");
+  const row = await db.document.findUniqueOrThrow({ where: { id: kept.file.id }, select: { enrichmentStatus: true } });
+  assert.equal(row.enrichmentStatus, "skipped", "page images are not summarised");
+  const before = await count();
+
+  const over = await pageImage(owner, "site.png", testPng(1200, 800, 2_097_153));
+  assert.equal(over.statusCode, 413, over.body);
+  assert.equal(over.json<{ error: string }>().error, "site.png is just over 2 MB. Images in pages can be up to 2 MB: make it smaller, or attach it as a file with /file.");
+  const huge = await pageImage(owner, "scan.png", testPng(10, 10, 6 * 1024 * 1024));
+  assert.equal(huge.statusCode, 413);
+  assert.match(huge.json<{ error: string }>().error, /^scan\.png is 6\.0 MB\./);
+  const plain = await upload(owner, "big as a file.png", testPng(10, 10, 2_097_153), "image/png");
+  assert.equal(plain.statusCode, 201, "the limit is for images in pages; Files keeps larger ones");
+
+  const png = testPng(40, 30);
+  const damaged = png.slice(0, png.length - 12);
+  const corrupt = await pageImage(owner, "cut.png", damaged);
+  assert.equal(corrupt.statusCode, 400, corrupt.body);
+  assert.match(corrupt.json<{ error: string }>().error, /cut\.png looks damaged/);
+  const svg = await pageImage(owner, "logo.svg", new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), "image/svg+xml");
+  assert.equal(svg.statusCode, 415);
+  assert.match(svg.json<{ error: string }>().error, /SVG files can carry scripts/);
+  const renamed = await pageImage(owner, "photo.png", testJpeg(20, 10), "image/png");
+  assert.equal(renamed.statusCode, 415);
+  assert.match(renamed.json<{ error: string }>().error, /photo\.png is named \.png but holds a JPEG image/);
+  const zero = await pageImage(owner, "zero.png", testPng(0, 10));
+  assert.equal(zero.statusCode, 400);
+  assert.equal(await count(), before + 1, "only the plain file upload was kept");
+
+  const unnamed = await ok<{ file: FileRecord }>(pageImage(owner, "Screenshot", testJpeg(20, 10), "application/octet-stream"), 201);
+  assert.equal(unnamed.file.filename, "Screenshot.jpg");
+  assert.equal(unnamed.file.mediaType, "image/jpeg");
+});
+
+test("a shared page's viewers and its public link open the images placed on it, and no other image", async () => {
+  const owner = await person("Mira Chen");
+  const cara = await person("Cara Diaz");
+  const placed = (await ok<{ file: FileRecord }>(pageImage(owner, "placed.png", testPng(8, 8)), 201)).file;
+  const other = (await ok<{ file: FileRecord }>(pageImage(owner, "other.png", testPng(9, 9)), 201)).file;
+  const page = await ok<{ page: { id: string } }>(owner.inject({ method: "POST", url: "/api/pages" }), 201);
+  const content = { type: "doc", content: [imageNode(placed.id, { width: 50, align: "left" }), { type: "paragraph" }] };
+  await ok(owner.inject({ method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision: 1, content } }));
+  const shares = await ok<{ shares: Array<{ id: string }> }>(
+    owner.inject({ method: "POST", url: "/api/sharing/items", payload: { kind: "page", resourceId: page.page.id, personId: cara.id, role: "view" } }),
+    201,
+  );
+  const share = { "x-ensemble-share": shares.shares[0]!.id };
+  const asCara = (url: string) => cara.inject({ method: "GET", url, headers: share });
+  const seen = await asCara(`/api/documents/${placed.id}/original`);
+  assert.equal(seen.statusCode, 200, seen.body);
+  assert.equal(seen.headers["content-type"], "image/png");
+  assert.deepEqual(new Uint8Array(seen.rawPayload), testPng(8, 8));
+  assert.equal((await asCara(`/api/documents/${other.id}/original`)).statusCode, 403);
+  assert.equal((await pageImage(cara, "mine.png", testPng(), "image/png", share)).statusCode, 403, "a viewer adds no images");
+
+  const link = await ok<{ link: { token: string } }>(owner.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: page.page.id, role: "view" } }), 201);
+  const anon = (url: string) => harness.app.inject({ method: "GET", url, headers: { "x-ensemble-link": link.link.token, "x-ensemble-visitor": "visitor-images-123" } });
+  assert.equal((await anon(`/api/documents/${placed.id}/original`)).statusCode, 200);
+  assert.equal((await anon(`/api/documents/${other.id}/original`)).statusCode, 403);
+});
+
+test("page writes refuse new images over the limit or of non-images, and old pages still save", async () => {
+  const owner = await person("Mira Chen");
+  const page = await ok<{ page: { id: string } }>(owner.inject({ method: "POST", url: "/api/pages" }), 201);
+  const save = (revision: number, ...content: unknown[]) => owner.inject({ method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision, content: { type: "doc", content } } });
+  const big = (await uploaded(owner, "poster.png", testPng(10, 10, 3 * 1024 * 1024), "image/png"));
+  const pdf = await uploaded(owner, "brief.pdf", makePdf(["Brief"]), "application/pdf");
+  const fine = (await ok<{ file: FileRecord }>(pageImage(owner, "fine.png", testPng(10, 10)), 201)).file;
+
+  const tooBig = await save(1, imageNode(big.id));
+  assert.equal(tooBig.statusCode, 413, tooBig.body);
+  assert.match(tooBig.json<{ error: string }>().error, /^poster\.png is 3\.0 MB, over the 2 MB limit for images in pages\. Attach it as a file instead: \[@poster\.png\]\(ensemble:\/\/file\//);
+  assert.equal((await save(1, imageNode(pdf.id))).statusCode, 415);
+  const pasted = `data:image/png;base64,${Buffer.from(testPng(10, 10, 2_097_153)).toString("base64")}`;
+  const data = await save(1, { type: "image", attrs: { src: pasted, alt: "Pasted chart" } });
+  assert.equal(data.statusCode, 413);
+  assert.match(data.json<{ error: string }>().error, /^Pasted chart is just over 2 MB/);
+  await ok(save(1, imageNode(fine.id), { type: "image", attrs: { src: "data:image/png;base64,iVBORw0KGgo=", alt: "" } }));
+
+  // A page that already holds an oversized pasted image (from before the limit) keeps saving.
+  await db.taskPage.update({ where: { id: page.page.id }, data: { content: { type: "doc", content: [{ type: "image", attrs: { src: pasted, alt: "Old" } }] } } });
+  await ok(save(2, { type: "image", attrs: { src: pasted, alt: "Old" } }, { type: "paragraph", content: [{ type: "text", text: "Edited" }] }));
 });
 
 test("hosted accounts keep ten files in 50 MB; removing one frees room; the server has a total", { timeout: 120_000 }, async (t) => {
