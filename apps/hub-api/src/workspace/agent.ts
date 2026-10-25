@@ -64,6 +64,31 @@ export interface JobControl {
 
 class LimitReached extends Error {}
 
+/** After Stop, a tool call gets this long to end; then the run ends without it, so Stop always stops. */
+export const STOP_GRACE_MS = 30_000;
+
+/** The tool call's result, or a stop once the run was stopped and the call did not end within the grace. */
+export async function untilStopped<T>(work: Promise<T>, signal: AbortSignal, graceMs = STOP_GRACE_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reject: (error: Error) => void = () => undefined;
+  const stopped = new Promise<never>((_, fail) => {
+    reject = fail;
+  });
+  stopped.catch(() => undefined);
+  const start = () => {
+    timer = setTimeout(() => reject(new DOMException("Stopped", "AbortError")), graceMs);
+    timer.unref?.();
+  };
+  if (signal.aborted) start();
+  else signal.addEventListener("abort", start, { once: true });
+  try {
+    return await Promise.race([work, stopped]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal.removeEventListener("abort", start);
+  }
+}
+
 /** The thinking levels each engine's own flag takes (`claude --effort`, Codex's turn `effort`). */
 const ENGINE_EFFORTS: Record<string, string[]> = { codex: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] };
 
@@ -984,7 +1009,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
         const startedCall = Date.now();
         const signature = `${call.name}:${JSON.stringify(args)}`;
-        const result = await runTool(ctx, call.name, args);
+        const result = await untilStopped(runTool(ctx, call.name, args), ctx.signal);
         const outcome = JSON.stringify(result.result).slice(0, 2000);
         const seen = repeats.get(signature);
         if (seen && seen.outcome === outcome) {

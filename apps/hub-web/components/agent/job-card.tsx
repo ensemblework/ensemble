@@ -194,6 +194,11 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
           <span className="min-w-0 flex-1 truncate">{job.progress}</span>
         </div>
       ) : null}
+      {job.status === "queued" && job.waitingFor ? (
+        <div className="text-[12px] leading-[17px] text-muted" data-testid="job-waiting-for">
+          {job.waitingFor}
+        </div>
+      ) : null}
       {job.kind === "code" && (job.folder || job.repoUrl) ? (
         <div className="flex items-center gap-1 truncate font-mono text-[11.5px] text-faint">
           {job.branch ? <GitBranch size={11} /> : null}

@@ -85,6 +85,8 @@ With **No limits** an agent opens and merges pull requests itself when the task 
 
 `run_command` takes a program and arguments, not a shell string: no pipes, redirects, `&&` or `sh -c`. Allowed interpreters still run code, so the OS sandbox must contain their subprocesses. Never-listed programs, sensitive paths and environment variables have extra guards.
 
+A command is over when its own process exits: output still in the pipes is read for 2 seconds (`DRAIN_MS`), so a process it left running (a server, a stuck test worker) cannot hold the result open; the result notes what is still running, and the run's end stops it. A timeout or Stop kills the command's whole session, including a process that moved to a process group of its own (`timeout`, a shell with job control).
+
 Child environments are scrubbed of provider, session and device credentials. `runner.ts` enforces timeouts and kills the process tree on stop, keeping partial work; it cannot undo a completed remote write. Internet on/off is a per-run choice; there is no per-domain approval proxy for all traffic.
 
 ## 7. Files that run later

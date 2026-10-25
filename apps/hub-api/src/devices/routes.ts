@@ -48,6 +48,7 @@ import { pageMarkdown } from "../pages/markdown.js";
 import { FileAnswer, MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
+import { endUnconfirmedStops } from "./settle.js";
 import { PageDocument } from "@ensemble/shared-types";
 
 const Register = z.object({
@@ -382,12 +383,15 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         data: { leaseUntil: new Date(now.getTime() + LEASE_MS) },
       });
     }
+    const forced = await endUnconfirmedStops(prisma, device.id, device.name, now);
+    for (const id of forced) sseHub.publish(device.userId, { event: "workspace", data: { id } });
     const cancelling = await prisma.workspaceJob.findMany({
       where: { deviceId: device.id, cancelRequestedAt: { not: null }, status: { in: ["queued", ...LIVE_DEVICE_STATUSES, "stopping"] } },
       select: { id: true },
     });
     publishBrowserDevice(device.userId, device.id);
-    return { cancel: cancelling.map((job) => job.id) };
+    // A run ended here after an unconfirmed stop is still stopped on the computer.
+    return { cancel: [...new Set([...cancelling.map((job) => job.id), ...forced])] };
   });
 
   app.post("/api/devices/self/claim", async (request, reply) => {

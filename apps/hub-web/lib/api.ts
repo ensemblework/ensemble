@@ -580,6 +580,8 @@ export type AgentJob = {
   kind: "research" | "code";
   status: "queued" | "claimed" | "running" | "stopping" | "waiting_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "interrupted";
   position: number | null;
+  /** A queued job only: why it has not started (the pause, a running task it waits for, every slot in use). */
+  waitingFor?: string | null;
   executionMode: "sandbox" | "native";
   delivery: "local" | "commit" | "push";
   useCredentials: boolean;
