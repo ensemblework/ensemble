@@ -1,8 +1,20 @@
 /** The tail of what a running job's commands printed, for the live view. In memory: a restart starts empty. */
 const LIMIT = 24_000;
 const logs = new Map<string, { text: string; end: number }>();
+/** When each running job's engine last said anything (a line on its output, a message, a tool call). */
+const alive = new Map<string, number>();
+
+/** The engine of this job said something just now: it is working, not stuck (engine-watch.ts). */
+export function touchLive(jobId: string): void {
+  alive.set(jobId, Date.now());
+}
+
+export function lastLive(jobId: string): number {
+  return alive.get(jobId) ?? 0;
+}
 
 export function appendLive(jobId: string, text: string): void {
+  alive.set(jobId, Date.now());
   const current = logs.get(jobId) ?? { text: "", end: 0 };
   const next = current.text + text;
   logs.set(jobId, { text: next.length > LIMIT ? next.slice(-LIMIT) : next, end: current.end + text.length });
@@ -29,5 +41,6 @@ export function dropLive(jobId: string): void {
   const current = logs.get(jobId);
   setTimeout(() => {
     if (logs.get(jobId) === current) logs.delete(jobId);
+    alive.delete(jobId);
   }, 60_000).unref();
 }

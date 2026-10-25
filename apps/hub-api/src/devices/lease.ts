@@ -1,5 +1,6 @@
 /**
- * Expired device leases become `interrupted`. They are not queued again.
+ * Expired device leases become `interrupted`. They are not queued again here: the computer, when it
+ * is back, reattaches a run that kept going or asks to carry on one it lost (recover.ts).
  *
  * One conditional UPDATE … RETURNING, the same idea as `claimSlot`: Postgres
  * hands each row to a single statement, so several API processes can run the
@@ -13,13 +14,35 @@
 import type { FastifyInstance } from "fastify";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
-import { INTERRUPTED_ERROR } from "./constants.js";
+import { INTERRUPTED_ERROR, LEASE_MS } from "./constants.js";
 import { publishBrowserDevice } from "./publish.js";
-import { blockInProgressTasks, endOpenRuns, expireDeviceDecisions } from "./settle.js";
+import { blockInProgressTasks, endOpenRuns, expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
 
 type ExpiredRow = { id: string; user_id: string; device_id: string; task_id: string };
 
+let graced = false;
+
+/**
+ * Once per API start, and only after an outage of this server (no computer's heartbeat reached it
+ * for a lease period): leases that ran out meanwhile get one more period, so computers that kept
+ * working through it can heartbeat before anything is interrupted.
+ */
+async function graceAfterStart(app: FastifyInstance): Promise<void> {
+  if (graced) return;
+  graced = true;
+  const newest = (await app.prisma.device.aggregate({ where: { revokedAt: null }, _max: { lastSeenAt: true } }))._max.lastSeenAt;
+  if (!newest || Date.now() - newest.getTime() < LEASE_MS) return;
+  await app.prisma.$executeRaw`
+    UPDATE workspace_jobs
+    SET lease_until = (NOW() AT TIME ZONE 'UTC') + make_interval(secs => ${LEASE_MS / 1000})
+    WHERE device_id IS NOT NULL
+      AND status IN ('claimed'::"WorkspaceJobStatus", 'running'::"WorkspaceJobStatus", 'waiting_approval'::"WorkspaceJobStatus")
+      AND lease_until < (NOW() AT TIME ZONE 'UTC') + make_interval(secs => ${LEASE_MS / 1000})
+  `;
+}
+
 export async function sweepExpiredDeviceLeases(app: FastifyInstance): Promise<number> {
+  await graceAfterStart(app);
   const rows = await app.prisma.$queryRaw<ExpiredRow[]>`
     UPDATE workspace_jobs
     SET
@@ -52,5 +75,6 @@ export async function sweepExpiredDeviceLeases(app: FastifyInstance): Promise<nu
     sseHub.publish(row.user_id, { event: "workspace", data: { id: row.id } });
     publishBrowserDevice(row.user_id, row.device_id);
   }
+  for (const userId of new Set(rows.map((row) => row.user_id))) await wakeQueuedDevices(app.prisma, userId).catch(() => undefined);
   return rows.length;
 }

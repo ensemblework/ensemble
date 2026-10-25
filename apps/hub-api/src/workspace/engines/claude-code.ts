@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
-import { appendLive } from "../live-log.js";
+import { appendLive, touchLive } from "../live-log.js";
 import { claudeBinary } from "../../subscriptions/detect.js";
 import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
@@ -119,7 +119,7 @@ function summarize(name: string, input: Record<string, unknown>): string {
 
 export async function runClaudeCode(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: { prompt: string; model?: string | null; effort?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
   // The `claude` command, else the Claude Code the Claude app keeps for its Code tab (subscriptions/detect.ts).
   const found = await claudeBinary();
@@ -158,6 +158,7 @@ export async function runClaudeCode(
     "--max-turns",
     String(options.maxTurns),
     ...(options.model && options.model !== "default" ? ["--model", options.model] : []),
+    ...(options.effort ? ["--effort", options.effort] : []),
     // The next message in a chat: the same Claude Code session, so it remembers the conversation.
     ...(options.resume ? ["--resume", options.resume] : []),
   ];
@@ -191,6 +192,7 @@ export async function runClaudeCode(
   const lines = createInterface({ input: child.stdout });
   try {
     for await (const line of lines) {
+      touchLive(ctx.job.id);
       if (!line.trim()) continue;
       let message: Record<string, unknown>;
       try {

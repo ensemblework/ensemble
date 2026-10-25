@@ -13,8 +13,10 @@ import { loadSettings } from "../lib/settings.js";
 import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.js";
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
+import { currentDevice, currentDevices } from "../devices/successor.js";
 import { jobOrigin } from "../remote/origin.js";
-import { repeatAssignment } from "../workspace/repeat.js";
+import { repeatAssignment, resumeOf } from "../workspace/repeat.js";
+import { MAX_AUTO_RESUMES } from "../remote/contract.js";
 import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
@@ -48,6 +50,22 @@ export async function runnerRefusal(app: FastifyInstance, job: { userId: string;
   const row = await app.prisma.user.findUnique({ where: { id }, select: { name: true } });
   const first = row?.name.trim().split(/\s+/)[0];
   return `Only ${first && !first.includes("@") ? first : "the person running it"} can do this. It runs on their computer.`;
+}
+
+type DeviceShown = { name: string; lastSeenAt: Date | null; revokedAt: Date | null };
+
+/** Runs on a computer that was paired again show, and open, on its current pairing (devices/successor.ts). */
+async function onCurrentDevices<T extends { deviceId: string | null; device?: DeviceShown | null }>(prisma: FastifyInstance["prisma"], jobs: T[]): Promise<T[]> {
+  const revoked = [...new Set(jobs.filter((job) => job.deviceId && job.device?.revokedAt).map((job) => job.deviceId!))];
+  if (!revoked.length) return jobs;
+  const current = await currentDevices(prisma, await prisma.device.findMany({ where: { id: { in: revoked } } }));
+  for (const job of jobs) {
+    const next = job.deviceId ? current.get(job.deviceId) : null;
+    if (!next) continue;
+    job.deviceId = next.id;
+    job.device = { name: next.name, lastSeenAt: next.lastSeenAt, revokedAt: null };
+  }
+  return jobs;
 }
 
 /** What a finished run reported: the model that answered, its cost estimate, the files it changed (names and line counts). */
@@ -115,6 +133,8 @@ function card(job: JobRow, position?: number, options: { paths?: boolean } = {})
     maxToolCalls: job.maxToolCalls,
     maxMinutes: job.maxMinutes,
     continueFromJobId: job.continueFromJobId,
+    // Carrying on a run cut off when its computer restarted (devices/recover.ts).
+    resume: resumeOf(job.context) ? { ...resumeOf(job.context)!, of: MAX_AUTO_RESUMES } : null,
     createdAt: job.createdAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,
     finishedAt: job.finishedAt?.toISOString() ?? null,
@@ -161,10 +181,13 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     if (old.deviceId && (await isPaused(app.redis, request.userId))) {
       return reply.code(409).send({ error: "The agent is paused. Resume it before assigning work to a computer." });
     }
+    // A computer paired again since runs it again under its current pairing.
+    const ranOn = old.deviceId ? await prisma.device.findUnique({ where: { id: old.deviceId } }) : null;
+    const now = ranOn ? await currentDevice(prisma, ranOn) : null;
     const created = await createJob(
       prisma,
       request.userId,
-      repeatAssignment(old),
+      repeatAssignment(now && now.id !== old.deviceId ? { ...old, deviceId: now.id } : old),
       { retryOf: old.id },
     );
     return created ? reply.code(201).send(created) : reply.code(404).send({ error: "Task not found." });
@@ -184,6 +207,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       loadSettings(prisma, userId),
       isPaused(app.redis, userId),
     ]);
+    await onCurrentDevices(prisma, jobs);
     const queued = jobs.filter((job) => job.status === "queued");
     const recent = (statuses: string[]) =>
       jobs
@@ -215,6 +239,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       include: { task: { select: { id: true, title: true, priority: true, status: true } }, review: { select: { id: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
     });
     const host = await canUseHostCredentials(request.userId);
+    await onCurrentDevices(prisma, jobs);
     return { jobs: jobs.map((job) => ({ ...card(job, undefined, { paths: host }), reviewId: job.review?.id ?? null })) };
   });
 
@@ -225,6 +250,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       include: { task: { select: { id: true, title: true, priority: true, status: true } }, review: { select: { id: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
     });
     if (!job) return reply.code(404).send({ error: "Job not found." });
+    await onCurrentDevices(prisma, [job]);
     const events = await prisma.workspaceEvent.findMany({ where: { jobId: id }, orderBy: { sequence: "desc" }, take: 150 });
     const host = await canUseHostCredentials(request.userId);
     return {
@@ -412,6 +438,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         include: { task: { select: { id: true, title: true, priority: true, status: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
       }),
     ]);
+    await onCurrentDevices(prisma, jobs);
     const jobIds = new Set(jobs.map((job) => `job:${job.id}`));
     const host = await canUseHostCredentials(userId);
     return {

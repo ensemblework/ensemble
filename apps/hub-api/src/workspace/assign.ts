@@ -220,7 +220,7 @@ async function createDeviceJob(
 
 export async function createJob(prisma: PrismaClient, userId: string, input: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
   await requireVerifiedUser(keysFor(userId));
-  const body = withPullRequest(input);
+  const body = { ...withPullRequest(input) };
   const task = await prisma.task.findFirst({ where: { id: body.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
@@ -239,7 +239,11 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
     throw error;
   }
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
-  if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
+  // A job on the tier's own model takes the tier's context window as it takes its thinking level (Settings → Models).
+  if (!body.contextTier && !body.model && provider === tier.provider && model === tier.model && tier.context === "long_context") body.contextTier = "long_context";
+  // The tier's thinking level belongs to its own provider: another engine or model family does not take it.
+  const tierEffort = provider === tier.provider ? tier.effort : null;
+  if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tierEffort, settings.orchestration, options);
   // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.
   if (actorFor(userId)) throw new GuardError("In a shared space, the agent runs on your own computer. Pick one of your paired computers.");
   await requireHostAccess(userId, "Host workspace execution");
@@ -336,7 +340,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       createBranch: body.branchMode === "new",
       provider,
       model,
-      reasoningEffort: body.reasoningEffort ?? (body.model ? null : tier.effort),
+      reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
       resourceKeys,
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,

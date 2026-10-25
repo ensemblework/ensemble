@@ -8,9 +8,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { deviceOnline } from "../devices/constants.js";
 import { askDevice } from "../devices/file-relay.js";
+import { currentDevice } from "../devices/successor.js";
+import type { Device } from "@prisma/client";
 import { canUseHostCredentials } from "../lib/hosted-access.js";
 import { actorFor } from "../sharing/context.js";
-import { folderPath, listFolder, readFolderFile, refusedPath } from "../workspace/folder-read.js";
+import { folderPath, listedChanges, listFolder, outsideListing, readChangedFile, refusedPath } from "../workspace/folder-read.js";
 import { GuardError } from "../workspace/guard.js";
 
 const JOB_SELECT = {
@@ -21,7 +23,7 @@ const JOB_SELECT = {
   externalRoot: true,
   repoPath: true,
   evidence: true,
-  device: { select: { name: true, lastSeenAt: true, revokedAt: true, capabilities: true } },
+  device: true,
 } as const;
 
 type JobRow = {
@@ -32,7 +34,7 @@ type JobRow = {
   externalRoot: string | null;
   repoPath: string;
   evidence: unknown;
-  device: { name: string; lastSeenAt: Date | null; revokedAt: Date | null; capabilities: unknown } | null;
+  device: Device | null;
 };
 
 type Refusal = { status: number; error: string };
@@ -75,7 +77,18 @@ type EvidenceFile = { path?: unknown; status?: unknown; added?: unknown; removed
 export async function jobFileRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
 
-  const loadJob = (id: string, userId: string) => prisma.workspaceJob.findFirst({ where: { id, userId }, select: JOB_SELECT }) as Promise<JobRow | null>;
+  /** The job, with a computer paired again since standing in for the pairing that ran it (devices/successor.ts). */
+  const loadJob = async (id: string, userId: string): Promise<JobRow | null> => {
+    const job = (await prisma.workspaceJob.findFirst({ where: { id, userId }, select: JOB_SELECT })) as JobRow | null;
+    if (job?.device?.revokedAt) {
+      const now = await currentDevice(prisma, job.device);
+      if (now) {
+        job.device = now;
+        job.deviceId = now.id;
+      }
+    }
+    return job;
+  };
 
   /** Ask the device, or read this server's folder. */
   async function readLive(job: JobRow, kind: "tree" | "file", path: string) {
@@ -88,7 +101,7 @@ export async function jobFileRoutes(app: FastifyInstance): Promise<void> {
     }
     const root = job.externalRoot || job.repoPath;
     try {
-      return kind === "tree" ? { listing: await listFolder(root, path) } : { file: await readFolderFile(root, path) };
+      return kind === "tree" ? { listing: await listFolder(root, path) } : { file: await readChangedFile(root, listedChanges(job.evidence), path) };
     } catch (error) {
       return { refusal: failure(error) };
     }
@@ -137,10 +150,13 @@ export async function jobFileRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/agent/jobs/:id/file", async (request, reply) => {
     const { id } = request.params as { id: string };
     const query = z.object({ path: z.string().min(1).max(1000), live: z.enum(["0", "1"]).optional() }).parse(request.query);
-    const path = folderPath(query.path);
     const job = await loadJob(id, request.userId);
     if (!job) return reply.code(404).send({ error: "Job not found." });
-    const refused = refusedPath(path);
+    // A file the run changed outside its folder is named as the run listed it (`~/…`), and only such a file.
+    const outside = outsideListing(query.path);
+    if (outside && !listedChanges(job.evidence).includes(query.path)) return reply.code(403).send({ error: "That file is outside the task's folder and is not one this run changed." });
+    const path = outside ? query.path : folderPath(query.path);
+    const refused = refusedPath(outside ? path.replace(/^~?\//, "") : path);
     if (refused) return reply.code(403).send({ error: refused });
     const notYours = textRefusal(job);
     if (notYours) return reply.code(notYours.status).send({ error: notYours.error });

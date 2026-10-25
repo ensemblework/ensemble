@@ -148,6 +148,18 @@ export class EngineTrace {
     });
   }
 
+  /** Tool calls started and not yet answered: a long build or test is quiet, not stuck. */
+  get openCalls(): number {
+    return this.open.size;
+  }
+
+  /** The engine stopped and is started again (engine-watch.ts): its unanswered calls end here, the trace goes on. */
+  interrupted(note: string): Promise<void> {
+    this.closeOpen("skipped", note);
+    this.early.clear();
+    return this.queue;
+  }
+
   /** Tool calls whose result never came back, closed as they stand. */
   private closeOpen(status: "done" | "failed" | "skipped", note?: string): void {
     const now = new Date();

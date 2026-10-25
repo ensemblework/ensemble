@@ -17,7 +17,7 @@ import { CLAUDE_CODE_MODELS, type SubscriptionAgent, type SubscriptionModel, typ
 import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
-import { copilotStatus } from "./copilot.js";
+import { copilotSavedSignIn, copilotStatus } from "./copilot.js";
 
 /**
  * Variables that would make an agent bill an API key or another account instead of the person's
@@ -372,16 +372,22 @@ async function probeCopilot(): Promise<SubscriptionAgent | null> {
   // Copilot CLI 1.0 reports its account and the plan's models (context windows, thinking levels, cost) itself.
   const reported = await copilotStatus(found.path).catch(() => null);
   if (reported) {
+    // Not signed in while a saved sign-in is listed: the keychain could not be read (locked, or not ready after a restart).
+    const keychain = reported.signedIn === false && (await copilotSavedSignIn());
     return {
       id: "copilot-cli",
       via: "cli",
       version: firstVersion(reported.version ?? "") ?? firstVersion((await quickRun(found.path, ["--version"])).stdout),
-      signedIn: reported.signedIn,
+      signedIn: keychain ? null : reported.signedIn,
       plan: null,
       account: reported.account,
       models: reported.models.length ? reported.models : [{ id: "auto", label: "Auto (Copilot picks)", isDefault: true }],
       typedModels: true,
-      problem: reported.signedIn === false ? "Copilot CLI is not signed in on this computer. Press Sign in, or run `copilot login` there." : null,
+      problem: keychain
+        ? "Copilot is signed in, but this computer's keychain could not be read just now (locked, or not ready after a restart). Log in to its desktop once if this stays."
+        : reported.signedIn === false
+          ? "Copilot CLI is not signed in on this computer. Press Sign in, or run `copilot login` there."
+          : null,
       checkedAt: now(),
     };
   }

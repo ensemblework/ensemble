@@ -176,6 +176,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
         <Tag tone={state.tone}>{state.label}</Tag>
         <RunnerTag job={job} />
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
+        {job.resume ? <span title={`Carried on by itself: ${job.resume.reason}`}><Tag tone="orange">{`resumed ${job.resume.attempt}/${job.resume.of}`}</Tag></span> : null}
         <PriorityTag priority={job.priority} />
         {job.kind === "code" ? (
           <>
@@ -223,7 +224,17 @@ const EVENT_LABEL: Record<string, string> = {
   pull_request_branch: "Branch",
   not_sandboxed: "Not sandboxed",
   trust_revoked: "Trust removed",
+  interrupted: "Interrupted",
+  reconnected: "Reconnected",
+  resumed: "Resumed",
+  resumed_as: "Carried on",
+  engine_retry: "Restarted",
 };
+
+function minutesText(seconds: unknown): string {
+  const value = typeof seconds === "number" && seconds > 0 ? seconds : 0;
+  return value < 90 ? `${Math.round(value)} s` : value < 5400 ? `${Math.round(value / 60)} min` : `${Math.round(value / 360) / 10} h`;
+}
 
 /** The latest agent attempt for a task, live, on the task page. */
 export function TaskAgentPanel({ taskId }: { taskId: string }) {
@@ -249,6 +260,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
       <div className="flex flex-wrap items-center gap-2">
         <Tag tone={state.tone}>{state.label}</Tag>
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
+        {job.resume ? <span title={`Carried on by itself: ${job.resume.reason}`}><Tag tone="orange">{`resumed ${job.resume.attempt}/${job.resume.of}`}</Tag></span> : null}
         {job.position ? <span className="text-muted">#{job.position} in the queue</span> : null}
         <span className="text-muted">{job.kind === "code" ? "Code" : "Research"} · <ModelLogo model={job.model} /> {job.model}</span>
         {answeredBy ? <span className="text-warn" title="The model the provider reported for this run">answered by {answeredBy}</span> : null}
@@ -316,6 +328,16 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
                       ? String(data.reason)
                       : event.kind === "trust_revoked"
                         ? `Trust for ${String(data.root)} was removed. Paused on Needs me.`
+                      : event.kind === "interrupted"
+                        ? data.reason === "computer_restarted" ? "The computer restarted while this ran." : "The computer stopped answering."
+                      : event.kind === "reconnected"
+                        ? `Back after ${minutesText(data.offlineSeconds)} offline. The run went on there${data.finished ? " and finished" : ""}; nothing ran twice.`
+                      : event.kind === "resumed_as"
+                        ? `Carried on in a new run (${String(data.attempt)} of ${String(data.of)}) in the same folder.`
+                      : event.kind === "resumed"
+                        ? `Carrying on: ${String(data.reason)}${data.session ? " (same agent session)." : " (a new agent session)."}`
+                      : event.kind === "engine_retry"
+                        ? `${String(data.reason)} — continuing (${String(data.attempt)} of ${String(data.of)}).`
                         : String(data.title ?? event.kind);
             return (
               <div key={event.id} className="flex gap-2">

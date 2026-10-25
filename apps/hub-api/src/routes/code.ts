@@ -81,11 +81,14 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request) => requireHostAccess(request.userId, "Code filesystem"));
   const { prisma } = app;
 
-  /** The workspace, the folders Code can use (settings.code.roots, never the terminal's), and agent run checkouts. */
+  /** The workspace, the folders Code can use (settings.code.roots, never the terminal's), agent run checkouts, and repositories runs changed and Ensemble recorded for review. */
   async function roots(userId: string): Promise<string[]> {
     const settings = await loadSettings(prisma, userId);
-    const jobs = await prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] });
-    return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath)];
+    const [jobs, reviews] = await Promise.all([
+      prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] }),
+      prisma.codeReview.findMany({ where: { userId, expiredAt: null }, select: { repoPath: true }, distinct: ["repoPath"] }),
+    ]);
+    return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath), ...reviews.map((review) => review.repoPath)];
   }
 
   async function resolveSource(request: FastifyRequest, input: unknown) {

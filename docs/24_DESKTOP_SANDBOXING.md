@@ -42,7 +42,7 @@ With the sandbox on, `outsideAccess` is:
 | `read-write` | Outside reads and writes allowed, except hard-denied secret, app and system areas |
 | `none` | Only the granted folder and toolchains |
 
-None of these grants keys, browser data, app database or discovery files, or control of another process. With the sandbox off there is no OS boundary; only the application and tool checks remain.
+None of these grants keys, browser data, app database or discovery files, or control of another process. Whatever the setting and mode, `outsideRefusal` (`workspace/guard.ts`) refuses keys, sign-ins and browser data (`SECRET_PATHS`), another account's files and Ensemble's own data, and refuses writes to start-up files (shell profiles, `.gitconfig`, launch agents), system folders, Ensemble's own code and the home folder itself. Device files such as `/dev/null`, temporary folders, tool caches and other projects are ordinary outside paths. With the sandbox off there is no OS boundary; only the application and tool checks remain.
 
 ## 4. Trust and run modes
 

@@ -604,6 +604,8 @@ export type AgentJob = {
   maxToolCalls: number;
   maxMinutes: number;
   continueFromJobId: string | null;
+  /** Carrying on a run cut off when its computer restarted: why, and which carry-on of how many. */
+  resume?: { reason: string; attempt: number; of: number } | null;
   deviceId?: string | null;
   deviceName?: string | null;
   /** In a shared space: whose computer runs it (null: the space's owner). */

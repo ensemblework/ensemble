@@ -36,7 +36,7 @@ Sync people is a separate, explicit, metadata-only action. There is no BullMQ sc
 
 `lib/state-machine.ts` allows: Proposed → Todo/Dropped/In progress; Todo → In progress/Dropped/Done/Proposed; In progress → Waiting for approval/Blocked/Done/Todo/Dropped; Waiting for approval → In progress/Done/Blocked/Dropped; Blocked → Todo/In progress/Dropped; Done → Todo; Dropped → Proposed/Todo. Other moves are a 409. Snooze is `snoozedUntil`, not a status. Owner (`me`, `agent`, `unassigned`), status, priority and complexity are separate.
 
-Complexity picks the Low/Medium/High/Max model profile; a complexity the person set is never reclassified. Assignment freezes model, effort and execution settings for that attempt, validated before spending; later Settings changes do not rewrite queued work or evidence. Included models and personal keys are separate sources ([01](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [33](33_INCLUDED_AI.md)).
+Complexity picks the Low/Medium/High/Max model profile; a complexity the person set is never reclassified. A job on the profile's own model takes its thinking level and context window too (`createJob` in `workspace/assign.ts`); a job on another engine or provider takes neither. Assignment freezes model, effort and execution settings for that attempt, validated before spending; later Settings changes do not rewrite queued work or evidence. Included models and personal keys are separate sources ([01](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [33](33_INCLUDED_AI.md)).
 
 ## 4. Queue slots and limits
 
@@ -58,7 +58,7 @@ Publishing resumes from the reviewed payload and approval instead of replanning.
 
 Pause stops new work and cancels active model and command activity. Stop on a task affects that task; Stop everything also cancels queued jobs. Partial files and evidence remain. An external request already accepted may still complete; stopping is not a remote rollback.
 
-On restart, a server job left Running, Stopping or Waiting becomes interrupted and waits for an explicit retry. Remote jobs stay with their device until lease handling settles them. Unknown mid-command outcomes are never replayed. A stopped checkout can stay reserved until cleanup is safe. Retry starts a new attempt; answering a saved decision resumes the old one, and the UI says which.
+On restart, a server job left Running, Stopping or Waiting becomes interrupted and waits for an explicit retry. Remote jobs stay with their device until lease handling settles them; when the computer is back it reattaches a run that kept going or has one it lost to a restart carried on, at most twice ([25 §3](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#3-lease-heartbeat-and-interruption)). A coding engine that stalls or fails for a passing reason carries on in its own session ([30 §3.1](30_ENGINES.md#31-keeping-a-run-going)). Unknown mid-command outcomes are never replayed. A stopped checkout can stay reserved until cleanup is safe. Retry starts a new attempt; answering a saved decision resumes the old one, and the UI says which.
 
 ## 7. Evidence and feedback
 

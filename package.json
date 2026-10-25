@@ -42,5 +42,5 @@
   "devDependencies": {
     "playwright-core": "^1.63.0"
   },
-  "version": "0.4.12"
+  "version": "0.4.13"
 }
