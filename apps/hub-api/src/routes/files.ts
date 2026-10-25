@@ -4,7 +4,7 @@
  */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { fileFormat, fileTypeProblem, PageDocument, type FileStyleProfile } from "@ensemble/shared-types";
+import { fileFormat, fileTypeProblem, PAGE_IMAGE_MAX_BYTES, PageDocument, pageImageTooLarge, type FileStyleProfile } from "@ensemble/shared-types";
 import { Prisma } from "@prisma/client";
 import { enrichDocument } from "../context/enrich-documents.js";
 import { clip } from "../lib/office/text.js";
@@ -15,6 +15,7 @@ import { assertOwned } from "../services/records.js";
 import { configureFileText, fileTextRunning, patchWorkbook, queueFileText } from "../files/extract.js";
 import { pageFromFile, pageTitle, serverPageFormat } from "../files/page.js";
 import { ORIGINAL_SELECT, originalBytes } from "../files/originals.js";
+import { assertNewPageImages, assertPageImage } from "../files/page-image.js";
 import { assertNewFile, FILE_SELECT, FileError, fileRecord, fileStyle, fileTooLarge, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
 
 const TEXT_DEFAULT = 6000;
@@ -41,6 +42,8 @@ const Upload = z.object({
   dataBase64: z.string(),
   summarize: z.boolean().default(true),
   tags: DocumentTags.default({}),
+  /** "page-image": an image going into a page, held to the page-image rules (files/page-image.ts). */
+  purpose: z.enum(["file", "page-image"]).default("file"),
 });
 
 const Replace = z.object({
@@ -148,16 +151,25 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/documents", { bodyLimit: uploadLimit() }, async (request, reply) => {
     const body = Upload.parse(request.body);
     checkName(body.filename);
+    const image = body.purpose === "page-image";
+    // Refused from the base64 length, before decoding, when it cannot fit a page image.
+    const estimate = Math.floor((body.dataBase64.length * 3) / 4);
+    if (image && estimate - 2 > PAGE_IMAGE_MAX_BYTES) throw new FileError(pageImageTooLarge(body.filename.trim(), estimate), 413);
     const bytes = decode(body.dataBase64);
     assertNewFile(body.filename, bytes.byteLength);
+    const checked = image ? assertPageImage(body.filename, body.mediaType, bytes) : null;
     await assertDocumentTags(prisma, request.userId, body.tags);
     const file = await saveFile(
       prisma,
       request.userId,
-      { filename: body.filename, mediaType: body.mediaType, bytes },
-      { summarize: body.summarize, tags: body.tags },
+      { filename: checked?.filename ?? body.filename, mediaType: checked?.mediaType ?? body.mediaType, bytes },
+      { summarize: image ? false : body.summarize, tags: body.tags },
     );
-    return reply.code(201).send({ file, document: { id: file.id, filename: file.filename, parseStatus: file.textStatus } });
+    return reply.code(201).send({
+      file,
+      document: { id: file.id, filename: file.filename, parseStatus: file.textStatus },
+      ...(checked ? { image: { format: checked.format, width: checked.width, height: checked.height } } : {}),
+    });
   });
 
   app.get("/api/documents/:id", async (request, reply) => {
@@ -247,6 +259,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     if (!row) return notFound(reply);
     const format = fileFormat(row.filename);
     let content = body.content;
+    if (content) await assertNewPageImages(prisma, request.userId, content, null);
     if (!content) {
       if (format.toPage === "browser") return reply.code(400).send({ error: `${format.label} files become pages in your browser. Open the file in Ensemble and make the page from there.` });
       if (!serverPageFormat(row.filename)) return reply.code(400).send({ error: "This kind of file cannot become a page." });

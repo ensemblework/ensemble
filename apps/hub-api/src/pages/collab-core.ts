@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { Fragment, Node, Schema } from "prosemirror-model";
 import { AttrStep, ReplaceAroundStep, ReplaceStep, Step } from "prosemirror-transform";
-import { PageMention, type PageDocument } from "@ensemble/shared-types";
+import { PAGE_IMAGE_MAX_BYTES, PAGE_IMAGE_MAX_LABEL, PageMention, dataUrlBytes, type PageDocument } from "@ensemble/shared-types";
 import { mergeDocs } from "@ensemble/shared-types/page-merge";
 import { diffSteps, rebaseSteps } from "./page-diff.js";
 import { LONE_SURROGATE } from "./content.js";
@@ -100,6 +100,34 @@ function mentionsValid(fragment: Fragment): boolean {
   return valid;
 }
 
+/** An image whose bytes ride in the page as a `data:` URL larger than a page image may be. */
+function oversizedData(node: Node | null | undefined, src: unknown = node?.attrs.src): src is string {
+  return node?.type.name === "image" && typeof src === "string" && (dataUrlBytes(src) ?? 0) > PAGE_IMAGE_MAX_BYTES;
+}
+
+function heldData(doc: Node): Set<string> {
+  const held = new Set<string>();
+  doc.descendants((node) => {
+    if (oversizedData(node)) held.add(node.attrs.src as string);
+    return true;
+  });
+  return held;
+}
+
+/** Such an image the step brings in that the page did not hold before the batch (moving an old one is fine). */
+function addsOversizedData(fragment: Fragment, doc: Node): boolean {
+  const added: string[] = [];
+  fragment.descendants((node) => {
+    if (oversizedData(node)) added.push(node.attrs.src as string);
+    return true;
+  });
+  if (!added.length) return false;
+  const held = heldData(doc);
+  return added.some((src) => !held.has(src));
+}
+
+const DATA_IMAGE = `Images in pages can be up to ${PAGE_IMAGE_MAX_LABEL}. Upload the image instead of pasting its data, or attach it as a file with /file.`;
+
 /** What the stored copy holds. */
 type Known = {
   revision: number;
@@ -179,7 +207,7 @@ export class Authority {
       let result;
       try {
         step = Step.fromJSON(this.schema, json);
-        const refused = this.refuse(step, doc);
+        const refused = this.refuse(step, doc, this.doc);
         if (refused) throw refuse("COLLAB_REJECTED", refused);
         result = step.apply(doc);
       } catch (error) {
@@ -224,14 +252,16 @@ export class Authority {
     return { epoch: this.epoch, from: version, version: this.version, steps: parsed.map((step) => step.toJSON()), clientIDs: parsed.map(() => clientID), saved: this.saved };
   }
 
-  /** Why a step is refused before it is applied: a mention the store cannot index. */
-  private refuse(step: Step, doc: Node): string | null {
+  /** Why a step is refused before it is applied: a mention the store cannot index, or a `data:` image over the limit. */
+  private refuse(step: Step, doc: Node, start: Node): string | null {
     if (step instanceof ReplaceStep || step instanceof ReplaceAroundStep) {
       if (!mentionsValid(step.slice.content)) return "This change has a mention of an unknown kind.";
+      if (addsOversizedData(step.slice.content, start)) return DATA_IMAGE;
     }
     if (step instanceof AttrStep) {
       const node = step.pos >= 0 && step.pos < doc.content.size ? doc.nodeAt(step.pos) : null;
       if (node?.type.name === "mention" && !validMention({ ...node.attrs, [step.attr]: step.value })) return "This change has a mention of an unknown kind.";
+      if (step.attr === "src" && oversizedData(node, step.value) && !heldData(start).has(step.value)) return DATA_IMAGE;
     }
     return null;
   }

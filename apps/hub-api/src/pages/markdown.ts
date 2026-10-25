@@ -8,7 +8,7 @@
  */
 import { checkpointPage, pageEditor } from "./history.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { markdownToNodes, PageDocument, type PageNode } from "@ensemble/shared-types";
+import { imageMarkdown, markdownToNodes, PageDocument, type PageNode } from "@ensemble/shared-types";
 import { sseHub } from "../lib/sse.js";
 
 export { markdownToNodes };
@@ -22,6 +22,7 @@ function textOf(node: PageNode, forAgents: boolean): string {
     return `@${label}`;
   }
   if (forAgents && typeof node.attrs?.fileId === "string" && node.attrs.fileId) {
+    if (node.type === "image") return `[image: ${String(node.attrs.alt ?? "") || "no description"} (file id ${node.attrs.fileId})]`;
     return `[file: ${String(node.attrs.label ?? node.attrs.filename ?? "file")} (id ${node.attrs.fileId})]`;
   }
   return (node.content ?? []).map((child) => textOf(child, forAgents)).join(node.type === "paragraph" || node.type === "heading" ? "" : "\n");
@@ -103,8 +104,13 @@ function blockMarkdown(node: PageNode, indent = ""): string {
       return children.map((child) => blockMarkdown(child)).join("\n\n").split("\n").map((line) => `> ${line}`).join("\n");
     case "horizontalRule":
       return "---";
-    case "image":
-      return `![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})`;
+    case "image": {
+      const markdown = imageMarkdown(node.attrs);
+      if (markdown) return `${indent}${markdown}`;
+      const src = String(node.attrs?.src ?? "");
+      // An image pasted into an old page as a data: URL: its bytes are not text for an agent.
+      return /^data:/i.test(src) ? `${indent}[image: ${String(node.attrs?.alt ?? "") || "embedded"}]` : `${indent}![${String(node.attrs?.alt ?? "")}](${src})`;
+    }
     case "table": {
       const rows = children.map((row) => (row.content ?? []).map((cell) => (cell.content ?? []).map((part) => inlineMarkdown(part.content)).join(" ").replace(/\|/g, "\\|").trim()));
       if (!rows.length) return "";

@@ -365,6 +365,33 @@ test("steps the page store could not save are refused: a null character, an unkn
   assert.equal(code(() => authority.receive(1, [{ stepType: "attr", pos: 3, attr: "kind", value: "project" }], "tab")), "accepted");
 });
 
+test("a data: image over 2 MiB is refused; a small one, or moving one the page already had, is not", () => {
+  const big = `data:image/png;base64,${"A".repeat(Math.ceil((2 * 1024 * 1024 + 3) / 3) * 4)}`;
+  const image = (src: string) => ({ type: "image", attrs: { src, alt: "" } });
+  const old: PageDocument = { type: "doc", content: [image(big) as never, ...p("After").content] };
+  // Large steps and pages are allowed here, so the refusal is the image rule's own.
+  const limits = { ...LIMITS, stepBytes: 50_000_000, docBytes: 50_000_000, logBytes: 50_000_000 };
+  const authority = new Authority(pageSchema, { doc: pageDoc(old), revision: 1, raw: old }, limits);
+  const refusal = (work: () => unknown) => {
+    try {
+      work();
+      return "accepted";
+    } catch (error) {
+      return error instanceof CollabError ? `${error.code}: ${error.message}` : "threw";
+    }
+  };
+  const end = authority.doc.content.size;
+  const refused = "COLLAB_REJECTED: Images in pages can be up to 2 MB. Upload the image instead of pasting its data, or attach it as a file with /file.";
+  assert.equal(refusal(() => authority.receive(0, inserted(authority.doc, end, image(big.replace("AAAA", "BBBB"))), "tab")), refused);
+  assert.equal(refusal(() => authority.receive(0, [{ stepType: "attr", pos: 0, attr: "src", value: big.replace("AAAA", "CCCC") }], "tab")), refused);
+  assert.equal(refusal(() => authority.receive(0, inserted(authority.doc, end, image("data:image/png;base64,iVBORw0KGgo=")), "tab")), "accepted");
+  const moved = new Transform(authority.doc);
+  const first = moved.doc.child(0);
+  moved.delete(0, first.nodeSize).insert(moved.doc.content.size, first);
+  assert.equal(refusal(() => authority.receive(1, moved.steps.map((step) => step.toJSON()), "tab")), "accepted");
+  assert.equal(authority.doc.lastChild?.attrs.src, big);
+});
+
 test("a page cannot grow past its byte limit, and the step log is bounded by bytes", () => {
   const limits = { ...LIMITS, docBytes: 2_000, logBytes: 1_000, stepBytes: 1_500 };
   const authority = new Authority(pageSchema, { doc: pageDoc(p("Start")), revision: 1, raw: p("Start") }, limits);

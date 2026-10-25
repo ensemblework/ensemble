@@ -23,12 +23,19 @@ export function toBase64(bytes: Uint8Array): string {
 export const filesApi = {
   list: (q = "") => get<{ files: FileRecord[]; usage: FileUsage }>(`/api/documents${q ? `?q=${encode(q)}` : ""}`),
   get: (id: string) => get<{ file: FileRecord }>(`/api/documents/${encode(id)}`),
-  /** Uploads a file the person chose or dropped. With `onProgress`, reports 0–1 as it reads and sends. */
-  async upload(file: File | { name: string; type: string; bytes: Uint8Array }, options: { onProgress?: (fraction: number) => void } = {}): Promise<{ file: FileRecord }> {
+  /**
+   * Uploads a file the person chose or dropped. With `onProgress`, reports 0–1 as it reads and sends.
+   * `purpose: "page-image"` holds it to the page-image rules (2 MB, PNG/JPEG/GIF/WebP) and answers its size.
+   */
+  async upload(
+    file: File | { name: string; type: string; bytes: Uint8Array },
+    options: { onProgress?: (fraction: number) => void; purpose?: "page-image" } = {},
+  ): Promise<{ file: FileRecord; image?: { format: string; width: number; height: number } }> {
     const bytes = file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : file.bytes;
-    const body = { filename: file.name, mediaType: file.type || "application/octet-stream", dataBase64: toBase64(bytes) };
-    if (!options.onProgress || typeof XMLHttpRequest === "undefined") return post<{ file: FileRecord }>("/api/documents", body);
-    return sendWithProgress<{ file: FileRecord }>("/api/documents", body, options.onProgress);
+    const body = { filename: file.name, mediaType: file.type || "application/octet-stream", dataBase64: toBase64(bytes), ...(options.purpose ? { purpose: options.purpose } : {}) };
+    type Uploaded = { file: FileRecord; image?: { format: string; width: number; height: number } };
+    if (!options.onProgress || typeof XMLHttpRequest === "undefined") return post<Uploaded>("/api/documents", body);
+    return sendWithProgress<Uploaded>("/api/documents", body, options.onProgress);
   },
   /** The original bytes, for previews and conversions. */
   async original(id: string): Promise<ArrayBuffer> {
@@ -97,6 +104,8 @@ function sendWithProgress<T>(path: string, body: unknown, onProgress: (fraction:
     xhr.open("POST", `${API}${path}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("Content-Type", "application/json");
+    // Like `request`: on a shared page or public link the server decides with the share header.
+    for (const [name, value] of Object.entries(itemViewHeaders())) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total) onProgress(event.loaded / event.total);
     };

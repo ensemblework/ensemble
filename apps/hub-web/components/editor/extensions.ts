@@ -24,7 +24,8 @@ import {
   mentionHref,
   type BlockCommandId,
 } from "./editor-commands";
-import { PageLink, PageImage, Underline, NotionColor } from "./imported-blocks";
+import { PageLink, Underline, NotionColor } from "./imported-blocks";
+import { PageImage } from "./page-image";
 import { ToggleBlock } from "./toggle-block";
 import { AgentBlock } from "./agent-block";
 import { CommentMark } from "./comment-mark";

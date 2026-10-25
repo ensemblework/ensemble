@@ -66,7 +66,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 
 Notes: `POST /api/pages/delete-many` (shared) checks every id, keeps descendants in the same space and records one Undo entry. `POST /api/skills/:id/test` (shared) runs with the acting person's credentials. Run feedback starts a follow-up only for the run's runner and repeats the assignment checks.
 
-**Single items** use `SHARE_RULES`: each kind lists its routes and which param, query or body field must be the item's id; `personal`, `self`, `live` and `open` routes stay allowed. `gate.ts` also lets a shared page or task (and a public link to one) read files its current content mentions or embeds (`/api/documents/:id`, `/original`, `/text`), and a shared plot space read the datasets its tiles use.
+**Single items** use `SHARE_RULES`: each kind lists its routes and which param, query or body field must be the item's id; `personal`, `self`, `live` and `open` routes stay allowed. `gate.ts` also lets a shared page or task (and a public link to one) read files its current content mentions or embeds, file cards and images alike (`/api/documents/:id`, `/original`, `/text`), and a shared plot space read the datasets its tiles use.
 
 A computer downloads a run's attachments (`GET /api/devices/self/jobs/:id/attachments/:fileId`) only with the job's live lease (`x-ensemble-job-lease`), on its assigned device, while the runner is still a member.
 
@@ -135,7 +135,7 @@ Everyone on a page or task page edits one live document: ProseMirror's central-a
 
 | Code | Cause |
 |---|---|
-| 400 `COLLAB_REJECTED` | U+0000 or a lone surrogate (half an emoji) in parsed text or attribute values; an unknown mention kind; blocks nested over 48 deep |
+| 400 `COLLAB_REJECTED` | U+0000 or a lone surrogate (half an emoji) in parsed text or attribute values; an unknown mention kind; blocks nested over 48 deep; a `data:` image over 2 MiB the page did not already hold ([32 §6](32_FILES.md#images-in-pages)) |
 | 413 `COLLAB_TOO_LARGE` | a step over 1 MB; over 1,000 steps; growing the page past 4,200,000 positions or 8,000,000 characters of JSON (at least what a 4 MiB page save holds) |
 
 Only growth past a limit is refused, so an oversized page can still be shortened. A refusal names the step (`step`): if no other steps arrived since, the editor drops it, moves later typing past it (`without`), sends the rest and says what was removed; otherwise it asks again. A body-limit 413 counts the same for one step; with several, the editor then sends one step per request. Pasted and dropped text loses U+0000 and lone surrogates first (`storableText`); whole-page saves store well-formed text (`storable` in `pages/content.ts`: U+0000 dropped, lone surrogates as U+FFFD).

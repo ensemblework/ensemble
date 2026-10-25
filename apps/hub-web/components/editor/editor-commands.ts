@@ -8,6 +8,7 @@ import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
 import { liftTarget } from "@tiptap/pm/transform";
 import {
+  PAGE_IMAGE_MAX_LABEL,
   dateMention,
   isEntityKind,
   mentionHref,
@@ -31,6 +32,7 @@ export type BlockCommandId =
   | "quote"
   | "divider"
   | "toggle"
+  | "image"
   | "file";
 
 export interface BlockCommand {
@@ -54,7 +56,8 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "toggle", label: "Collapsible block", detail: "A summary with any blocks inside", aliases: "toggle collapse collapsible details disclosure", symbol: "▸" },
   { id: "quote", label: "Quote", detail: "Call out a passage", aliases: "blockquote citation", symbol: "❝" },
   { id: "divider", label: "Divider", detail: "Separate sections", aliases: "hr rule line separator", symbol: "—" },
-  { id: "file", label: "File", detail: "Upload or attach a PDF, image, sheet or any file", aliases: "attach attachment upload pdf image photo picture document", symbol: "⎘" },
+  { id: "image", label: "Image", detail: `A PNG, JPEG, GIF or WebP up to ${PAGE_IMAGE_MAX_LABEL}, shown in the page`, aliases: "picture photo img png jpg jpeg gif webp screenshot", symbol: "▣" },
+  { id: "file", label: "File", detail: "Upload or attach a PDF, sheet or any file as a card", aliases: "attach attachment upload pdf document", symbol: "⎘" },
 ];
 
 export function matchCommands(query: string): BlockCommand[] {
@@ -148,6 +151,10 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
     case "file":
       chain.run();
       editor.commands.chooseFile(range.from);
+      break;
+    case "image":
+      chain.run();
+      editor.commands.chooseImage(range.from);
       break;
     default:
       convert(chain, command);
