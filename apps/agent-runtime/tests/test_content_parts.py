@@ -38,3 +38,14 @@ def test_copilot_requests_with_a_picture_say_so():
     assert _with_vision("copilot", {}, {"messages": [{"role": "user", "content": ASKED}]}) == {"Copilot-Vision-Request": "true"}
     assert _with_vision("copilot", {}, {"input": [{"role": "user", "content": "hi"}]}) == {}
     assert _with_vision("openai", {}, {"messages": [{"role": "user", "content": ASKED}]}) == {}
+
+
+def test_included_reservation_counts_a_picture_as_a_fixed_allowance():
+    from ensemble_agent.included import IMAGE_INPUT_ALLOWANCE, estimate_input_tokens
+
+    huge = "data:image/png;base64," + "A" * 3_000_000
+    with_picture = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}, {"type": "input_image", "image_url": huge}]}]}
+    without = {"input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}, {"type": "input_image", "image_url": ""}]}]}
+    assert estimate_input_tokens(with_picture) == estimate_input_tokens(without) + IMAGE_INPUT_ALLOWANCE
+    claude = {"messages": [{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A" * 3_000_000}}]}]}
+    assert estimate_input_tokens(claude) < 20_000

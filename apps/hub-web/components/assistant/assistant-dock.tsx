@@ -692,12 +692,19 @@ export function AssistantDock() {
     return true;
   };
 
-  /** The failed turn again, as it was sent. Files that came back to the shelf after it failed leave it again. */
+  /**
+   * The failed turn again. Files that came back to the shelf after it failed leave it again; one the
+   * person removed from the shelf meanwhile is not sent.
+   */
   const retryLast = () => {
     const request = lastRequest.current;
     if (!request) return;
     const sent = request.sent;
-    void sendText(request.text, request.mentions, sent && { draft: sent.draft, files: sent.files.length ? attachments.take(sent.files) : [] });
+    if (!sent) return void sendText(request.text, request.mentions);
+    const attached = new Set(sent.files.flatMap((file) => (file.fileId ? [file.fileId] : [])));
+    const typed = request.mentions.filter((mention) => !(mention.kind === "file" && attached.has(mention.id)));
+    const taken = sent.files.length ? attachments.take(sent.files) : [];
+    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken });
   };
 
   const submit = () => {

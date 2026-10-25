@@ -3,6 +3,7 @@ import test from "node:test";
 import { anthropicPayload, buildChatPayload, toAnthropic } from "./payload.js";
 import { cleanItems, itemsFromChat } from "./responses-api.js";
 import { withVision } from "./models.js";
+import { estimateInputTokens, IMAGE_INPUT_ALLOWANCE } from "./included.js";
 
 const picture = { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } };
 const asked = [{ type: "text", text: "What does this chart show?" }, picture];
@@ -45,4 +46,13 @@ test("Copilot requests that carry a picture say so", () => {
   assert.equal(withVision("copilot", target, { messages: [{ role: "user", content: asked }] }).headers["Copilot-Vision-Request"], "true");
   assert.equal(withVision("copilot", target, { input: [{ role: "user", content: "hi" }] }).headers["Copilot-Vision-Request"], undefined);
   assert.equal(withVision("openai", target, { messages: [{ role: "user", content: asked }] }), target);
+});
+
+test("an included-model reservation counts a picture as a fixed allowance, not its base64 length", () => {
+  const huge = `data:image/png;base64,${"A".repeat(3_000_000)}`;
+  const responses = { input: [{ role: "user", content: [{ type: "input_text", text: "hi" }, { type: "input_image", image_url: huge }] }] };
+  const claude = { messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "A".repeat(3_000_000) } }] }] };
+  const plain = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_text", text: "hi" }, { type: "input_image", image_url: "" }] }] });
+  assert.equal(estimateInputTokens(responses), plain + IMAGE_INPUT_ALLOWANCE);
+  assert.ok(estimateInputTokens(claude) < 20_000);
 });

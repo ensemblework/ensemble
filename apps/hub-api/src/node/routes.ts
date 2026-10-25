@@ -784,6 +784,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (messageDeleted(message)) return reply.code(204).send();
     const data: Record<string, unknown> = { ...((message.data ?? {}) as Record<string, unknown>), deleted: true, deletedAt: new Date().toISOString() };
     delete data.reactions;
+    delete data.files;
     const updated = await prisma.nodeMessage.update({ where: { id: message.id }, data: { body: "", mentions: [], data: data as Prisma.InputJsonValue } });
     const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
     if (room && roomSettings(room).pinned.includes(message.id)) {

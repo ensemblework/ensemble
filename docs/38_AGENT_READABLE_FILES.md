@@ -20,8 +20,9 @@ In chat, `hub_list_files` finds files by name or text when the person asks for o
 `files/model-input.ts` turns a file into an image part (`{type:"image_url", image_url:{url:"data:…;base64,…"}}`):
 
 - **Kinds.** PNG, JPEG, GIF and WebP, recognised from the first bytes (`sniffImage`), not the name. Anything else, including SVG, HEIC and TIFF, is described instead: "not a PNG, JPEG, GIF or WebP picture… a PNG or JPEG copy can be read."
-- **Size.** Up to 5 MB a picture (`MODEL_IMAGE_MAX_BYTES`, the smallest provider limit). Larger pictures are refused with their size, never resized.
-- **How many.** Up to 4 pictures with one message or brief, 12 MB together. The rest are listed with "open it with hub_view_file" (chat) or "view_attachment" (task). In a running conversation only the newest 4 pictures are kept; older ones become a note (`keepRecentPictures`), so a long run does not resend them every turn.
+- **Size.** Up to 3.75 MB a picture (`MODEL_IMAGE_MAX_BYTES`: Anthropic's 5 MB limit applies to the base64 text, the smallest provider limit). Larger pictures are refused with their size, never resized.
+- **How many.** Up to 4 pictures with one message or brief, 8 MB together (`MODEL_IMAGE_TOTAL_BYTES`). The rest are listed with "open it with hub_view_file" (chat) or "view_attachment" (task). In a running conversation only the newest 4 pictures, and no more than 8 MB of them, are kept; older ones become a note (`keepRecentPictures`), so a long run does not resend them every turn and a desktop or CLI request stays under its body limit.
+- **Credits.** An included-model reservation counts each picture as 8,000 input tokens (`IMAGE_INPUT_ALLOWANCE` in `runtime/included.ts` and `included.py`), not the length of its base64; providers charge a few thousand at most ([33](33_INCLUDED_AI.md)).
 - **Order.** A picture a tool opened follows all of that step's tool results as a user message, which every provider API accepts.
 - **History.** Chat stores only the file mentions. A replayed earlier message says which files it had, and the model opens them again if it needs to.
 
@@ -35,7 +36,7 @@ In chat, `hub_list_files` finds files by name or text when the person asks for o
 | A person's own key (OpenAI, Anthropic, Google, Mistral, OpenRouter, Copilot, Ollama, Kimi, Qwen…) | By model family: GPT-4o/4.1/5/6, o1/o3/o4-mini, Claude 3 and later, Gemini, Gemma 3, Grok 4, Pixtral and recent Mistral Small/Medium, Qwen VL, Llama 3.2 Vision and 4, LLaVA-style local models |
 | Anything else, `cursor`, and the subscription agents in Ensemble chat | No. Unknown is not a yes |
 
-A model that does not read images is told plainly, for each picture, that it was not shown and that it should say so rather than guess. If a provider still refuses image input ("image_url is only supported by certain models"), the request is sent once more with each picture replaced by a note and the turn says so (`imagesRefused`, `withoutImages`): in chat as a status line, on a task as an engine note.
+A model that does not read images is told plainly, for each picture, that it was not shown and that it should say so rather than guess. If a provider still refuses image input ("image_url is only supported by certain models", or a picture over its size limit), the request is sent once more with each picture replaced by a note and the turn says so (`imagesRefused`, `withoutImages`): in chat as a status line, on a task as an engine note.
 
 ### Transport
 
@@ -68,7 +69,7 @@ Text comes from Files' extraction ([32 §7](32_FILES.md)): PDFs with a text laye
 | Chat attachments are file mentions | `assistant_messages.mentions` already persists `{ kind, id, label }`, replays with the conversation and is visible to the dock after a reload, so no new table or migration |
 | Page images are ordinary Files with `attrs.fileId` ([32](32_FILES.md)) | They become task attachments, shared-page reads and paired-computer downloads with no extra code |
 | Pictures only to models known to read them, with one text-only retry | A wrong "yes" fails the whole turn; a wrong "no" is visible and honest |
-| Pictures refused above 5 MB rather than resized | No image library on the server; resizing changes what the model sees without the person knowing |
+| Pictures refused above 3.75 MB rather than resized | No image library on the server; resizing changes what the model sees without the person knowing |
 | No OCR or PDF rendering on the server | Both need native libraries and isolated workers; coding agents and pictures of pages cover the common cases meanwhile |
 | Files read as they are now (no version pinning) | Files keeps one original per file; pinning would promise old bytes that may already be replaced |
 

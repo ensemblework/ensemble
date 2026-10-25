@@ -20,6 +20,7 @@ test("a person's own keys follow the model family; unknown is text only", () => 
 test("a refused picture is replaced by a plain note", () => {
   assert.equal(imagesRefused(new Error("Invalid content type. image_url is only supported by certain models.")), true);
   assert.equal(imagesRefused(new Error("The model is overloaded.")), false);
+  assert.equal(imagesRefused(new Error("messages.0.content.1.image.source.base64: image exceeds 5 MB maximum: 5592408 bytes > 5242880 bytes")), true);
   const messages = [{ role: "user", content: [{ type: "text", text: "Look" }, { type: "image_url", image_url: { url: "data:image/png;base64,AA" } }] }, { role: "user", content: "plain" }];
   assert.deepEqual(withoutImages(messages), [{ role: "user", content: [{ type: "text", text: "Look" }, { type: "text", text: IMAGES_REFUSED_NOTE }] }, messages[1]]);
 });

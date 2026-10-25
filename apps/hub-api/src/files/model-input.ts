@@ -9,12 +9,15 @@ import { type AttachedFile, describeFile, fileOriginal, filesSection } from "./a
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-/** The smallest per-image limit among the providers (Anthropic's 5 MB); larger pictures are refused, not resized. */
-export const MODEL_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * The smallest per-image limit among the providers: Anthropic's 5 MB applies to the base64 text, so
+ * 3.75 MB of picture. Larger pictures are refused, not resized.
+ */
+export const MODEL_IMAGE_MAX_BYTES = (5 * 1024 * 1024 * 3) / 4;
 /** Pictures given with one message or brief; more can be opened with the view tool. */
 export const MODEL_IMAGES_PER_MESSAGE = 4;
-/** All pictures given with one message or brief together. */
-export const MODEL_IMAGE_TOTAL_BYTES = 12 * 1024 * 1024;
+/** All pictures in one request together, kept well under the desktop/CLI included-turn body limit (routes/included.ts). */
+export const MODEL_IMAGE_TOTAL_BYTES = 8 * 1024 * 1024;
 
 export type ImagePart = { type: "image_url"; image_url: { url: string } };
 export type ContentPart = { type: "text"; text: string } | ImagePart;
@@ -39,7 +42,7 @@ function megabytes(bytes: number): string {
 export async function imageForModel(db: Db, userId: string, file: AttachedFile): Promise<{ image: ModelImage } | { problem: string }> {
   if (file.kind !== "image") return { problem: `${file.filename} is not a picture (${describeFile(file)}).` };
   if (file.byteSize > MODEL_IMAGE_MAX_BYTES) {
-    return { problem: `${file.filename} is ${megabytes(file.byteSize)}; models take pictures up to ${megabytes(MODEL_IMAGE_MAX_BYTES)}. A smaller copy (PNG or JPEG) can be read.` };
+    return { problem: `${file.filename} is ${megabytes(file.byteSize)}; models take pictures up to 3.75 MB. A smaller copy (PNG or JPEG) can be read.` };
   }
   const original = await fileOriginal(db, userId, file.id);
   if (!original) return { problem: `${file.filename} is no longer in Files.` };
@@ -123,8 +126,10 @@ export function withPictures(text: string, parts: ContentPart[]): string | Conte
  * Keeps the newest `keep` pictures in a running conversation and turns older ones into a note,
  * so a long run does not resend every picture on every turn.
  */
-export function keepRecentPictures<T extends { content?: unknown }>(messages: T[], keep: number): void {
+export function keepRecentPictures<T extends { content?: unknown }>(messages: T[], keep: number, maxBytes = MODEL_IMAGE_TOTAL_BYTES): void {
   let seen = 0;
+  let chars = 0;
+  const maxChars = Math.ceil(maxBytes / 3) * 4;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const content = messages[index]?.content;
     if (!Array.isArray(content)) continue;
@@ -132,7 +137,10 @@ export function keepRecentPictures<T extends { content?: unknown }>(messages: T[
     for (let part = parts.length - 1; part >= 0; part -= 1) {
       if (parts[part]?.type !== "image_url") continue;
       seen += 1;
-      if (seen > keep) parts[part] = { type: "text", text: "(A picture shown earlier; open it again to look at it.)" };
+      const url = (parts[part]?.image_url as { url?: unknown } | undefined)?.url;
+      chars += typeof url === "string" ? url.length : 0;
+      // The newest picture always stays; older ones go once there are `keep` of them or they outgrow the budget.
+      if (seen > 1 && (seen > keep || chars > maxChars)) parts[part] = { type: "text", text: "(A picture shown earlier; open it again to look at it.)" };
     }
   }
 }

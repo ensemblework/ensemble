@@ -36,7 +36,10 @@ export function modelReadsImages(provider: string | null | undefined, model: str
 /** The provider refused image input for this model: the request can go again without images. */
 export function imagesRefused(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error ?? "");
-  return /\b(image|images|vision|image_url|input_image|multimodal)\b/i.test(text) && /\b(not|only|unsupported|invalid|cannot|can't|enable|enabled|disabled)\b/i.test(text);
+  return (
+    /\b(image|images|vision|image_url|input_image|multimodal)\b/i.test(text) &&
+    /\b(not|only|unsupported|invalid|cannot|can't|enable|enabled|disabled|exceeds?|too large|too big|maximum)\b/i.test(text)
+  );
 }
 
 export const IMAGES_REFUSED_NOTE = "[The model refused the image, so it was not sent. Say you could not look at it, and work from its name and any text.]";

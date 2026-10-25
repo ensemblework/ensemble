@@ -807,6 +807,33 @@ test("attached files upload with progress, Cancel stops one, Send waits for uplo
   }
 });
 
+test("Retry after a failed send leaves out a file removed from the shelf meanwhile", async () => {
+  const turns: Array<{ message: string; mentions?: unknown }> = [];
+  const dock = await attachmentDock((url, init) => {
+    if (!url.includes("/api/assistant/turn")) return null;
+    turns.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify({ error: "The assistant is down." }), { status: 500, headers: { "content-type": "application/json" } });
+  });
+  try {
+    const { chip, button, until } = dock;
+    await dock.pick([new File(["%PDF-1.7"], "notes.pdf", { type: "application/pdf" }), new File(["a,b"], "data.csv", { type: "text/csv" })]);
+    await until(() => FakeUpload.made.length === 2, "both files start uploading");
+    for (const upload of FakeUpload.made) await act(async () => upload.respond(201, { file: savedFile(upload.filename === "notes.pdf" ? "doc-notes" : "doc-data", upload.filename) }));
+    await until(() => chip("notes.pdf")?.dataset.state === "ready" && chip("data.csv")?.dataset.state === "ready", "the uploads land");
+    await dock.type("Compare these");
+    await act(async () => button("Send")!.click());
+    await until(() => document.body.querySelector('[role="alert"]'), "the failed send says so");
+    assert.equal(dock.chips().length, 2, "the files come back");
+    await act(async () => button("Remove data.csv from this message")!.click());
+    const retry = [...document.body.querySelectorAll<HTMLButtonElement>('[role="alert"] button')].find((node) => node.textContent === "Retry")!;
+    await act(async () => retry.click());
+    await until(() => turns.length === 2, "Retry sends the turn again");
+    assert.deepEqual(turns[1]!.mentions, [{ kind: "file", id: "doc-notes", label: "notes.pdf" }]);
+  } finally {
+    await dock.cleanup();
+  }
+});
+
 test("one message takes up to eight files: Choose from Files attaches a saved file once, drops and pastes count, Remove never deletes", async () => {
   const dock = await attachmentDock((url) => {
     if (new URL(url, "http://localhost").pathname !== "/api/documents") return null;

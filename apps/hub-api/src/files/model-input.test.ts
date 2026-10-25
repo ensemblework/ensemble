@@ -48,7 +48,15 @@ test("a picture that is not really a picture, or is too large, is explained inst
   const read = await filesForModel(store, "u1", [file("s1", "logo.png", "image"), file("b1", "huge.jpg", "image", MODEL_IMAGE_MAX_BYTES + 1)], { images: true });
   assert.equal(read.parts.length, 0);
   assert.match(read.text, /not a PNG, JPEG, GIF or WebP picture/);
-  assert.match(read.text, /models take pictures up to 5\.0 MB/);
+  assert.match(read.text, /models take pictures up to 3\.75 MB/);
+});
+
+test("older pictures go once together they outgrow the byte budget; the newest stays", () => {
+  const big = () => ({ type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(4000)}` } });
+  const messages = [{ content: [big()] }, { content: [big()] }];
+  keepRecentPictures(messages, 4, 3000);
+  assert.equal((messages[0]!.content as Array<{ type: string }>)[0]!.type, "text");
+  assert.equal((messages[1]!.content as Array<{ type: string }>)[0]!.type, "image_url");
 });
 
 test("only the newest pictures stay in a long conversation", () => {
