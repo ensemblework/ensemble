@@ -216,7 +216,10 @@ export const responsesSpecs = (specs: ToolSpec[]) => specs.map((spec) => ({ type
 export async function askPerson(
   ctx: JobContext,
   input: { event: "question" | "permission"; toolName: string; title: string; options?: string[]; allowCustom?: boolean; command?: string; recommended?: string | null },
+  /** The agent stopped waiting (its tool call timed out or was cancelled): the card is withdrawn, as an answer would reach nobody. */
+  withdrawn?: AbortSignal,
 ): Promise<{ decision: "allow" | "deny" | "expired"; answer: string | null }> {
+  if (withdrawn?.aborted) return { decision: "expired", answer: null };
   const row = await ctx.prisma.agentDecision.create({
     data: {
       userId: ctx.userId,
@@ -246,9 +249,10 @@ export async function askPerson(
   await ctx.event("needs_me", { decisionId: row.id, title: input.title });
   const onAbort = () => decisionBus.emit(row.id);
   ctx.signal.addEventListener("abort", onAbort, { once: true });
+  withdrawn?.addEventListener("abort", onAbort, { once: true });
   try {
     const decided = await ctx.waitForPerson(async () => {
-      while (!ctx.signal.aborted) {
+      while (!ctx.signal.aborted && !withdrawn?.aborted) {
         const current = await waitFor(row.id, 30_000);
         if (!current || current.status !== "pending") return current;
       }
@@ -258,10 +262,16 @@ export async function askPerson(
       await ctx.prisma.agentDecision.updateMany({ where: { id: row.id, status: "pending" }, data: { status: "expired" } });
       throw new DOMException("Stopped", "AbortError");
     }
+    if (withdrawn?.aborted && decided?.status !== "decided") {
+      const closed = await ctx.prisma.agentDecision.updateMany({ where: { id: row.id, status: "pending" }, data: { status: "expired" } });
+      if (closed.count) sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "expired" } });
+      return { decision: "expired", answer: null };
+    }
     if (!decided || decided.status !== "decided") return { decision: "expired", answer: null };
     return { decision: decided.decision === "allow" ? "allow" : "deny", answer: decided.reason ?? null };
   } finally {
     ctx.signal.removeEventListener("abort", onAbort);
+    withdrawn?.removeEventListener("abort", onAbort);
   }
 }
 

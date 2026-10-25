@@ -51,7 +51,7 @@ export interface HostedClient {
   ask(jobId: string, leaseToken: string, body: Record<string, unknown>): Promise<{ decisionId: string }>;
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
-  closeDecision(decisionId: string, body: { decision: "allow" | "deny"; reason: string | null }): Promise<void>;
+  closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
   complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;

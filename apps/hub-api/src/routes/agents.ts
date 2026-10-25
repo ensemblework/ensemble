@@ -14,6 +14,7 @@ import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.j
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
 import { currentDevice, currentDevices } from "../devices/successor.js";
+import { earlierRuns } from "../devices/earlier.js";
 import { jobOrigin } from "../remote/origin.js";
 import { repeatAssignment, resumeOf } from "../workspace/repeat.js";
 import { MAX_AUTO_RESUMES } from "../remote/contract.js";
@@ -304,8 +305,9 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/workspace/checkouts", async (request) => {
+    const { taskId } = z.object({ taskId: z.string().uuid().optional() }).parse(request.query);
     const jobs = await prisma.workspaceJob.findMany({
-      where: { userId: request.userId, kind: "code" },
+      where: { userId: request.userId, kind: "code", deviceId: null },
       orderBy: { createdAt: "desc" },
       take: 40,
       include: { task: { select: { title: true } } },
@@ -318,9 +320,20 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       if (seen.has(key)) continue;
       seen.add(key);
       if (folder && !(await stat(folder).then(() => true).catch(() => false))) continue;
-      rows.push({ jobId: job.id, title: job.task.title, status: job.status, folder, branch: job.branch, createdAt: job.createdAt.toISOString() });
+      rows.push({ jobId: job.id, taskId: job.taskId, title: job.task.title, status: job.status, folder, branch: job.branch, createdAt: job.createdAt.toISOString() });
     }
-    return { checkouts: rows };
+    // The task's own runs first: carrying on a run of this task is the usual reason to continue.
+    const own = taskId ? rows.filter((row) => row.taskId === taskId) : [];
+    return { checkouts: [...own, ...rows.filter((row) => !own.includes(row))] };
+  });
+
+  // Assign → "Continue an earlier task" on a paired computer (devices/earlier.ts). Not under
+  // /api/workspace: it reads job rows only, never this server's folders.
+  app.get("/api/agent/earlier-runs", async (request) => {
+    const query = z.object({ deviceId: z.string().uuid(), taskId: z.string().uuid().optional() }).parse(request.query);
+    const runner = actorFor(request.userId);
+    const checkouts = await earlierRuns(prisma, { owner: runner ?? request.userId, space: request.userId, runner, deviceId: query.deviceId, taskId: query.taskId ?? null });
+    return { checkouts };
   });
 
   app.post("/api/workspace/resolve-folder", async (request) => {

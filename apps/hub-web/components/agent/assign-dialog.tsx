@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, GitPullRequest, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CODE_ENGINES, ENGINE_LABELS, INCLUDED_LABEL, INCLUDED_PROVIDER, type CodeEngine, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
-import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
+import { api, type AssignInput, type Complexity, type EarlierRun, type HandoffApp } from "@/lib/api";
 import { tierModelName } from "@/lib/included";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
@@ -271,6 +271,22 @@ function folderProblem(folder: string, check: { ok: boolean; text: string } | nu
   return folder.trim() ? "Checking the folder…" : "Choose the folder it works in.";
 }
 
+const EARLIER_STATUS: Record<string, string> = { succeeded: "done", failed: "failed", interrupted: "interrupted", cancelled: "stopped", blocked: "blocked" };
+
+/** One earlier run in the Continue list: which task, how it ended (or that the new run waits for it), its branch and folder. */
+export function earlierRunLabel(row: EarlierRun, taskId: string): string {
+  const waiting = ["queued", "claimed", "running", "waiting_approval", "stopping"].includes(row.status);
+  const where = row.folder ? row.folder.split(/[\\/]/).filter(Boolean).pop() ?? row.folder : "";
+  return [
+    row.taskId && row.taskId === taskId ? `${row.title} (this task)` : row.title,
+    waiting ? "not finished yet, waits for it" : EARLIER_STATUS[row.status] ?? row.status,
+    row.branch,
+    where,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /** The first thing that keeps Assign from going ahead, in words, and the field to fix. Null when it can go. */
 export function assignBlocker(form: {
   taskId: string;
@@ -384,10 +400,15 @@ export function AssignDialog({
   // This server's folders: refused on Ensemble on the web to anyone but its operator.
   const hostCode = useHostCode() === true;
   const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: open && kind === "code" && hostCode });
-  const checkouts = useQuery({ queryKey: ["checkouts"], queryFn: api.checkouts, enabled: open && kind === "code" && hostCode });
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, enabled: open });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: open, refetchInterval: open ? 15_000 : false });
   const selectedDevice = (computers.data?.devices ?? []).find((device) => device.id === runOn) ?? null;
+  // Earlier runs to continue: on the chosen computer (its folders are there), or on this server.
+  const checkouts = useQuery({
+    queryKey: ["checkouts", selectedDevice?.id ?? "server", taskId],
+    queryFn: () => (selectedDevice ? api.earlierRuns(selectedDevice.id, taskId || undefined) : api.checkouts(taskId || undefined)),
+    enabled: open && kind === "code" && place === "continue" && (selectedDevice !== null || hostCode),
+  });
   const agentApps = useQuery({ queryKey: ["agent-apps"], queryFn: api.agentApps, enabled: open, staleTime: 60_000 });
   const apps = agentApps.data?.targets ?? [];
   const appMode = inApp && kind === "code" && !selectedDevice && apps.length > 0;
@@ -399,6 +420,15 @@ export function AssignDialog({
     if (!open || !computers.data) return;
     if ((!computers.data.serverRunner || access.guest) && runOn === "server") setRunOn(computers.data.devices[0]?.id ?? "server");
   }, [open, computers.data, runOn, access.guest]);
+  // The chosen earlier run stays one of the listed ones (the list follows the computer); with none
+  // chosen, this task's own latest run is, as carrying it on is the usual reason to continue.
+  const earlier = checkouts.data?.checkouts;
+  useEffect(() => {
+    if (!earlier || place !== "continue") return;
+    if (continueFrom && earlier.some((row) => row.jobId === continueFrom)) return;
+    const own = taskId ? earlier.find((row) => row.taskId === taskId) : undefined;
+    setContinueFrom(own?.jobId ?? "");
+  }, [earlier, place, continueFrom, taskId]);
   // GitHub Copilot's models, thinking levels and context windows, as the chosen computer listed them.
   const copilot = open && kind === "code" && engine === "copilot-cli" && !appMode;
   const subscriptions = useQuery({ queryKey: ["subscriptions"], queryFn: api.subscriptions, enabled: copilot, staleTime: 30_000 });
@@ -578,7 +608,7 @@ export function AssignDialog({
   const root = board.data?.root ?? "";
   const underRoot = (path: string) => Boolean(root) && (path === root || path.startsWith(`${root}/`));
   const savedTrust = (path: string) => (trustedFolders.data?.folders ?? []).some((row) => path === row.path || path.startsWith(`${row.path}/`));
-  const continueFolder = (checkouts.data?.checkouts ?? []).find((row) => row.jobId === continueFrom)?.folder ?? "";
+  const continueFolder = (earlier ?? []).find((row) => row.jobId === continueFrom)?.folder ?? "";
   const folderTrusted =
     selectedDevice !== null ||
     place === "fresh" ||
@@ -1063,15 +1093,35 @@ export function AssignDialog({
                   </>
                 ) : place === "continue" ? (
                   <>
-                    <select value={continueFrom} onChange={(event) => setContinueFrom(event.target.value)} className="field w-full">
-                      <option value="">Choose an earlier task…</option>
-                      {(checkouts.data?.checkouts ?? []).map((row) => (
+                    <select
+                      aria-label="Earlier task"
+                      value={continueFrom}
+                      onChange={(event) => setContinueFrom(event.target.value)}
+                      className="field w-full"
+                      disabled={!earlier?.length}
+                    >
+                      <option value="">
+                        {checkouts.isLoading
+                          ? "Loading earlier tasks…"
+                          : checkouts.isError
+                            ? "Could not load earlier tasks"
+                            : earlier?.length
+                              ? "Choose an earlier task…"
+                              : `No earlier code task ${selectedDevice ? `on ${computerName(selectedDevice.name)}` : "here"} to continue`}
+                      </option>
+                      {(earlier ?? []).map((row) => (
                         <option key={row.jobId} value={row.jobId}>
-                          {row.title} · {["queued", "running", "waiting_approval"].includes(row.status) ? "not finished yet, waits for it" : row.branch || row.status}
+                          {earlierRunLabel(row, taskId)}
                         </option>
                       ))}
                     </select>
-                    <div className="mt-1 text-[12px] text-muted">Same folder, uncommitted work included. Chain steps like change → analyse → commit; each waits for the one before.</div>
+                    <div className="mt-1 text-[12px] text-muted">
+                      {checkouts.isError
+                        ? (checkouts.error as Error).message
+                        : selectedDevice
+                          ? `Same folder on ${computerName(selectedDevice.name)}, uncommitted work included. Chain steps like change → analyse → commit; each waits for the one before. Only tasks that ran there are listed.`
+                          : "Same folder, uncommitted work included. Chain steps like change → analyse → commit; each waits for the one before."}
+                    </div>
                   </>
                 ) : selectedDevice ? (
                   <>

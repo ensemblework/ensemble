@@ -7,8 +7,10 @@
  * and a typed answer, and returns the answer as the tool result. In a run
  * nobody is watching, the recommended option comes back at once.
  *
- * Started by Claude Code from the run's --mcp-config with ENSEMBLE_ENGINE_URL
- * and ENSEMBLE_RUN set.
+ * Started by the coding agent (Claude Code, Codex, Copilot CLI, Cursor) from
+ * the run's MCP config with ENSEMBLE_ENGINE_URL and ENSEMBLE_RUN set. The
+ * engines give it a day-long tool timeout, as an answer can take that long;
+ * if the agent still stops waiting, the question is withdrawn from Needs me.
  *
  * In Chat with the person's own agent (ENSEMBLE_CHAT=1) it also offers their
  * Ensemble board: ensemble_list_tasks, ensemble_create_task and
@@ -94,20 +96,31 @@ export function questionInput(args) {
   };
 }
 
-function ask(input) {
-  return post("/api/engine/ask", { tool_name: "AskUserQuestion", tool_input: input }, (message) => ({ decision: "deny", message }));
+function ask(input, signal) {
+  return post("/api/engine/ask", { tool_name: "AskUserQuestion", tool_input: input }, (message) => ({ decision: "deny", message }), "POST", signal);
 }
 
-/** One request to this computer's Ensemble with the run's (or the turn's) secret; `failed` shapes the answer when it cannot be reached. */
-function post(path, payload, failed, method = "POST") {
+/** One request to this computer's Ensemble with the run's (or the turn's) secret; `failed` shapes the answer when it cannot be reached. Aborting `signal` hangs up. */
+function post(path, payload, failed, method = "POST", signal) {
   const base = process.env.ENSEMBLE_ENGINE_URL;
   const turn = process.env.ENSEMBLE_ASSISTANT_TURN;
   const run = process.env.ENSEMBLE_RUN;
   if (!base || !(turn || run)) return Promise.resolve(failed("Ensemble is not reachable from this run."));
+  if (signal?.aborted) return Promise.resolve(failed("The agent stopped waiting."));
   const body = payload === undefined ? "" : JSON.stringify(payload);
   const secret = turn ? { "x-ensemble-turn": turn } : { "x-ensemble-run": run };
-  return new Promise((done) => {
-    const req = httpRequest(
+  return new Promise((resolve) => {
+    let req;
+    const hangUp = () => {
+      req?.destroy();
+      done(failed("The agent stopped waiting."));
+    };
+    const done = (value) => {
+      signal?.removeEventListener("abort", hangUp);
+      resolve(value);
+    };
+    signal?.addEventListener("abort", hangUp, { once: true });
+    req = httpRequest(
       new URL(path, base),
       { method, headers: { ...(body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {}), ...secret } },
       (res) => {
@@ -165,6 +178,29 @@ export function answerText(input, verdict) {
   return `No answer: ${verdict?.message ?? "the person did not answer"}`;
 }
 
+/**
+ * Questions still waiting for the person, by JSON-RPC id. The agent cancelling one hangs up its
+ * request, and Ensemble withdraws the Needs me card: an answer would reach nobody. (A client may
+ * close its input and still read the answers, so that alone hangs up nothing; the run's end does.)
+ */
+const waiting = new Map();
+
+export const HEARTBEAT_MS = 20_000;
+
+/**
+ * While a question waits, MCP progress notifications when the agent asked for them (a progress
+ * token), so a client that resets its request timeout on progress keeps waiting for the person.
+ * The engines also give this server a day-long tool timeout (docs/30).
+ */
+export function heartbeat(message, write = send, every = HEARTBEAT_MS) {
+  const token = message.params?._meta?.progressToken;
+  if (token === undefined || token === null) return () => undefined;
+  let beat = 0;
+  const timer = setInterval(() => write({ method: "notifications/progress", params: { progressToken: token, progress: ++beat, message: "Waiting for the person's answer on Needs me." } }), every);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 async function handle(message) {
   if (message.method === "initialize") {
     send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" } } });
@@ -183,8 +219,20 @@ async function handle(message) {
       return;
     }
     const input = questionInput(message.params?.arguments ?? {});
-    const verdict = await ask(input);
-    send({ id: message.id, result: { content: [{ type: "text", text: answerText(input, verdict) }] } });
+    const call = new AbortController();
+    waiting.set(message.id, call);
+    const stop = heartbeat(message);
+    try {
+      const verdict = await ask(input, call.signal);
+      // Cancelled by the agent: MCP sends no reply to a cancelled request.
+      if (call.signal.aborted) return;
+      send({ id: message.id, result: { content: [{ type: "text", text: answerText(input, verdict) }] } });
+    } finally {
+      stop();
+      waiting.delete(message.id);
+    }
+  } else if (message.method === "notifications/cancelled") {
+    waiting.get(message.params?.requestId)?.abort();
   } else if (message.method === "ping") {
     send({ id: message.id, result: {} });
   } else if (message.id !== undefined) {

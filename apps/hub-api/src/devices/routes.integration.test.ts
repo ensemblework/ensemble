@@ -781,6 +781,67 @@ test("run again stores every setting from the original job", async (t) => {
   }
 });
 
+test("Continue an earlier task lists that computer's runs (any pairing of it), the task's first, and refuses another computer's", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({
+    data: { email: `earlier-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Earlier" },
+  });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(agentRoutes);
+  const session = await sessionFor(user.id);
+  const pair = async (name: string, installId: string) => {
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/devices/register",
+      payload: { code: (paired.json() as { code: string }).code, name, platform: "linux", capabilities: { folders: ["Desk"] } },
+    });
+    const id = (registered.json() as { device: { id: string } }).device.id;
+    await prisma.device.update({ where: { id }, data: { capabilities: { folders: ["Desk"], installId } } });
+    return id;
+  };
+  const assign = (payload: Record<string, unknown>) => app.inject({ method: "POST", url: "/api/agent/assign", headers: cookie(session), payload: { kind: "code", instructions: "go", ...payload } });
+  const listed = async (deviceId: string, taskId?: string) => {
+    const res = await app.inject({ method: "GET", url: `/api/agent/earlier-runs?deviceId=${deviceId}${taskId ? `&taskId=${taskId}` : ""}`, headers: cookie(session) });
+    assert.equal(res.statusCode, 200);
+    return (res.json() as { checkouts: Array<{ jobId: string }> }).checkouts.map((row) => row.jobId);
+  };
+  try {
+    const logos = await prisma.task.create({ data: { userId: user.id, title: "Logos", createdBy: "me", status: "todo" } });
+    const other = await prisma.task.create({ data: { userId: user.id, title: "Other", createdBy: "me", status: "todo" } });
+    const before = await pair("Home server", "install-home");
+    const laptop = await pair("Laptop", "install-laptop");
+    const first = await assign({ taskId: logos.id, deviceId: before, folderLabel: "Desk" });
+    assert.equal(first.statusCode, 201);
+    const firstId = (first.json() as { jobId: string }).jobId;
+    // The power went out and the computer was paired again: the same computer, a new device row.
+    await prisma.device.update({ where: { id: before }, data: { revokedAt: new Date() } });
+    const home = await pair("Home server", "install-home");
+
+    assert.deepEqual(await listed(home, logos.id), [firstId]);
+    assert.deepEqual(await listed(laptop, logos.id), []);
+    const elsewhere = await assign({ taskId: logos.id, deviceId: laptop, continueFromJobId: firstId });
+    assert.equal(elsewhere.statusCode, 403);
+    assert.match((elsewhere.json() as { error: string }).error, /ran on Home server/);
+
+    const carried = await assign({ taskId: logos.id, deviceId: home, continueFromJobId: firstId });
+    assert.equal(carried.statusCode, 201, JSON.stringify(carried.json()));
+    const carriedId = (carried.json() as { jobId: string }).jobId;
+    const unrelated = await assign({ taskId: other.id, deviceId: home });
+    const unrelatedId = (unrelated.json() as { jobId: string }).jobId;
+    // One entry per chain (its newest step), this task's first.
+    assert.deepEqual(await listed(home, logos.id), [carriedId, unrelatedId]);
+    assert.deepEqual(await listed(home), [unrelatedId, carriedId]);
+  } finally {
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
 test("pause stops new device claims and assignments", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const user = await prisma.user.create({
@@ -1459,6 +1520,19 @@ test("a chosen option is reason on the device poll and the decision event", asyn
     const decisionId = (asked.json() as { decisionId: string }).decisionId;
     const queued = frames.find((frame) => frame.event === "job.queued" && frame.channel === `device:${device.id}`);
     assert.deepEqual(queued?.data, { id: jobId });
+
+    // A question the agent stopped waiting for is withdrawn by the computer, not left on Needs me.
+    const second = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${body.id}/ask`,
+      headers: bearer(token),
+      payload: { leaseToken: body.leaseToken, title: "Which branch?", event: "question", options: ["main", "testing"] },
+    });
+    const secondId = (second.json() as { decisionId: string }).decisionId;
+    const withdraw = () => app.inject({ method: "POST", url: `/api/devices/self/decisions/${secondId}/close`, headers: bearer(token), payload: { decision: "expired", reason: null } });
+    assert.equal((await withdraw()).statusCode, 204);
+    assert.equal((await prisma.agentDecision.findUniqueOrThrow({ where: { id: secondId } })).status, "expired");
+    assert.equal((await withdraw()).statusCode, 409);
 
     const decided = await app.inject({
       method: "POST",

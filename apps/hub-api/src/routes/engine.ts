@@ -19,8 +19,13 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     const run = engineRunFor(Array.isArray(header) ? header[0] : header);
     if (!run) return reply.code(401).send({ decision: "deny", message: "This run has ended." });
     const body = z.object({ tool_name: z.string().max(200).default(""), tool_input: z.record(z.string(), z.unknown()).default({}) }).passthrough().parse(request.body);
+    // The agent's ask tool hangs up when the agent stops waiting (its call timed out or was cancelled).
+    const gone = new AbortController();
+    reply.raw.on("close", () => {
+      if (!reply.raw.writableFinished) gone.abort();
+    });
     try {
-      return await judge(run, { tool: body.tool_name, input: body.tool_input });
+      return await judge(run, { tool: body.tool_name, input: body.tool_input, signal: gone.signal });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return { decision: "deny", message: "The run was stopped." };
       request.log.error({ err: error }, "engine call could not be judged");
