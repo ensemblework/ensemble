@@ -27,7 +27,7 @@ import { askPerson, type JobContext } from "../tools.js";
 import { claudeFilesystem, type EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
-import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
@@ -151,7 +151,17 @@ export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "truste
 
 export async function runCodex(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; effort?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: {
+    prompt: string;
+    model?: string | null;
+    effort?: string | null;
+    /** The service tier that is the model's fast mode ("priority"), when fast mode was chosen. */
+    serviceTier?: string | null;
+    stopCheck: () => Promise<void>;
+    resume?: string | null;
+    chat?: boolean;
+    trace?: EngineTrace;
+  },
 ): Promise<EngineResult> {
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
@@ -178,8 +188,12 @@ export async function runCodex(
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
 
   server.onRequest = (method, params) => answerCodex(ctx, method, params, files);
+  // Notifications are handled concurrently; the turn ends only after every earlier one is done, so
+  // the reply and the last tool calls are in before the result is read.
+  const handling = new Set<Promise<void>>();
   server.onNotification = (method, params) => {
-    void (async () => {
+    const earlier = [...handling];
+    const work = (async () => {
       if (method === "item/started" || method === "item/completed") {
         const item = (params.item ?? {}) as {
           type?: string;
@@ -196,6 +210,7 @@ export async function runCodex(
           arguments?: unknown;
         };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
+        if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim() && (item.phase === "final_answer" || item.phase === null || item.phase === undefined)) result.text = item.text.trim();
         const isTool = item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall";
         // Trace calls come first, before any await: these handlers run concurrently, and a call's
         // completion can be handled while its start is still waiting on the event write.
@@ -218,7 +233,6 @@ export async function runCodex(
         if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim()) {
           appendLive(ctx.job.id, `${item.text.trim()}\n`);
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));
-          if (item.phase === "final_answer" || item.phase === null || item.phase === undefined) result.text = item.text.trim();
         }
       } else if (method === "thread/tokenUsage/updated") {
         const total = ((params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number } }).total ?? {};
@@ -226,9 +240,13 @@ export async function runCodex(
         result.tokensOut = total.outputTokens ?? result.tokensOut;
       } else if (method === "turn/completed") {
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null };
+        // Bounded: a handler stuck writing an event must not hold the turn open.
+        await Promise.race([Promise.all(earlier), new Promise((resolve) => setTimeout(resolve, 10_000).unref())]);
         finished({ status: turn.status ?? "completed", error: turn.error?.message });
       }
     })().catch(() => undefined);
+    handling.add(work);
+    void work.finally(() => handling.delete(work));
   };
 
   const lines = createInterface({ input: child.stdout });
@@ -280,8 +298,9 @@ export async function runCodex(
       sandbox: ctx.sandboxed ? "workspace-write" : "danger-full-access",
       ...(options.model && options.model !== "default" ? { model: options.model } : {}),
       config: {
-        // The folder's own .codex/ (hooks, rules, MCP servers) does not run, as with Claude Code's --setting-sources user.
-        projects: { [ctx.root]: { trust_level: "untrusted" } },
+        // A folder the person trusted in Ensemble is trusted in Codex too, so its own .codex/ (hooks, rules,
+        // MCP servers) runs as it would in their Codex; any other folder's does not (`engineTrust`).
+        projects: { [ctx.root]: { trust_level: engineTrust(ctx) ? "trusted" : "untrusted" } },
         sandbox_workspace_write: { network_access: ctx.network },
         mcp_servers: {
           ensemble: {
@@ -313,6 +332,7 @@ export async function runCodex(
         ? { type: "workspaceWrite", writableRoots: writable, networkAccess: ctx.network, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
         : { type: "dangerFullAccess" },
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
     })) as { turn?: { id?: string } };
     turnId = turn.turn?.id ?? null;
     result.turns = 1;

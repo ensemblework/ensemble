@@ -55,6 +55,8 @@ export interface JobContext {
   trusted: boolean;
   /** A saved path rule covers this folder, so prompts stay off even if the workspace toggle is off. */
   explicitTrust: boolean;
+  /** A saved path rule names this very folder (not a parent): the engine trusts its own config here too. */
+  exactTrust?: boolean;
   /** `orchestration.runWithoutAsking`. */
   silentWorkspace: boolean;
   accessMode: AccessMode;
@@ -343,9 +345,14 @@ export function outsideArgs(root: string, args: string[], cwd = root): string[] 
       index += 1;
       continue;
     }
-    if (pattern && ["-e", "--regexp", "-f", "--file"].includes(raw)) {
+    if (pattern && ["-e", "--regexp"].includes(raw)) {
       pattern = false;
       index += 1;
+      continue;
+    }
+    // `grep -f FILE` and `jq -f FILE` read FILE: it is checked as a path below.
+    if (pattern && ["-f", "--file", "--from-file"].includes(raw)) {
+      pattern = false;
       continue;
     }
     if (pattern && !raw.startsWith("-")) {
@@ -377,13 +384,121 @@ const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "ls-fil
 /** True when a command only reads: a read-only tool, or a git subcommand that only reads. */
 export function readsOnly(argv: string[]): boolean {
   const program = baseName(argv[0] ?? "");
-  if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"].includes(arg));
-  if (program === "sort") return !argv.some((arg) => arg === "-o" || arg.startsWith("--output"));
+  if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg));
+  if (program === "sort") return !argv.some((arg) => /^-[a-zA-Z]*o/.test(arg) || arg.startsWith("--output"));
   if (program === "sed") return !argv.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith("--in-place"));
   if (program === "curl") return !argv.some((arg) => /^-[a-zA-Z]*[oOD]/.test(arg) || /^--(output|remote-name|dump-header|cookie-jar)/.test(arg) || arg === "-c");
   if (READ_ONLY_PROGRAMS.has(program)) return true;
   if (program === "git") return READ_ONLY_GIT.has(argv.find((arg, index) => index > 0 && !arg.startsWith("-")) ?? "");
   return false;
+}
+
+/** Read-only programs that still reach the network, run commands of their own (`sed`'s `e`), wait for a keyboard, or read a project config that can set a pager (`bat`, `ack`). */
+const NEVER_QUIET = new Set(["curl", "sed", "less", "more", "lsof", "bat", "ack"]);
+/** Options that make an otherwise read-only program start another program, write a file, or follow links out of the folder. */
+const NOT_QUIET_OPTIONS: Record<string, RegExp> = {
+  rg: /^(--pre(-glob)?(=|$)|-[a-zA-Z]*L|--follow)/,
+  grep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
+  egrep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
+  fgrep: /^(-[a-zA-Z]*R|--dereference-recursive)/,
+  ag: /^(--pager|-f$|--follow)/,
+  fd: /^(-x|-X|--exec|--exec-batch|-L|--follow)(=|$)/,
+  diff: /^(-[a-zA-Z]*r|--recursive)/,
+  tree: /^(-o|--fromfile)/,
+  xxd: /^-r/,
+  yq: /^(-[a-zA-Z]*i|--inplace)/,
+  sort: /^(--compress-program|-T|--temporary-directory)/,
+  date: /^(-[a-zA-Z]*s|--set)/,
+  file: /^(-C|--compile)$/,
+  git: /^(--output|-O|--open-files-in-pager|--ext-diff|--textconv)/,
+};
+/** A word the shell would turn into other words: a variable, a command's output, braces. */
+const EXPANDS = /\$|`|\{[^}]*(,|\.\.)[^}]*\}/;
+const GLOB = /[*?[]/;
+/** Git config that makes a read start a program (a pager, diff or filter driver, fsmonitor) or pulls in another file. */
+export const DANGEROUS_GIT_CONFIG = /\b(filter\.|textconv|external|fsmonitor|hookspath|sshcommand|askpass|pager|editor|gpg\.program|credential\.helper)|=\s*!/i;
+
+/**
+ * The argv's own test: it only reads and starts nothing else. Pagers, `sed` (its `w` and `e`
+ * commands), the network, options that run a helper program, write a file or follow links, and
+ * any word the shell would expand are left to the run's mode.
+ */
+export function quietRead(argv: string[]): boolean {
+  if (!argv.length || !readsOnly(argv)) return false;
+  const program = baseName(argv[0]!);
+  if (NEVER_QUIET.has(program)) return false;
+  if (argv.slice(1).some((arg) => EXPANDS.test(arg))) return false;
+  const refused = NOT_QUIET_OPTIONS[program];
+  if (refused && argv.slice(1).some((arg) => refused.test(arg))) return false;
+  // `uniq in out` and `xxd in out` write `out`; `hostname name` renames the computer.
+  const operands = argv.slice(1).filter((arg) => !arg.startsWith("-"));
+  if ((program === "uniq" || program === "xxd") && operands.length > 1) return false;
+  if (program === "hostname" && operands.length > 0) return false;
+  // Git options before the subcommand (`--config-env`, `--paginate`, `-c`) can start programs.
+  if (program === "git") {
+    const at = argv.findIndex((arg, index) => index > 0 && !arg.startsWith("-"));
+    if (argv.slice(1, at).some((arg) => arg !== "--no-pager")) return false;
+  }
+  return true;
+}
+
+/** Whether every name a glob matches in its folder stays in `root`. Globs in a folder name are not followed. */
+async function globInside(realRoot: string, cwd: string, word: string): Promise<boolean> {
+  const cut = word.lastIndexOf("/");
+  const folder = cut >= 0 ? word.slice(0, cut) || "/" : ".";
+  const name = cut >= 0 ? word.slice(cut + 1) : word;
+  if (GLOB.test(folder)) return false;
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(`^${name.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+  } catch {
+    return false;
+  }
+  const dir = resolve(cwd, expandHome(folder));
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  if (entries.length > 5000) return false;
+  for (const entry of entries) {
+    if (!pattern.test(entry)) continue;
+    if (!within(realRoot, await realOutside(join(dir, entry)))) return false;
+  }
+  return true;
+}
+
+/** The repository a git command in `cwd` uses has no config that starts programs, and is in the folder. */
+async function gitConfigSafe(root: string, cwd: string): Promise<boolean> {
+  for (let dir = cwd; within(root, dir); dir = dirname(dir)) {
+    const info = await stat(join(dir, ".git")).catch(() => null);
+    if (info) {
+      if (!info.isDirectory()) return false;
+      const text = await readFile(join(dir, ".git", "config"), "utf8").catch(() => null);
+      return text !== null && !DANGEROUS_GIT_CONFIG.test(text) && !/^\s*\[include/im.test(text);
+    }
+    if (dir === dirname(dir)) break;
+  }
+  return false;
+}
+
+/**
+ * A command that only reads files in the work folder, so it runs without asking, as Claude Code,
+ * Codex and Copilot run `ls`, `cat`, `grep` or `git status` themselves. On top of `quietRead`,
+ * every name it reads is followed through links (a link in the folder may point at a key) and
+ * each glob's matches are checked; read-only git also needs a repository config that starts nothing.
+ */
+export async function quietArgs(root: string, argv: string[], cwd: string): Promise<boolean> {
+  if (!quietRead(argv) || !within(root, cwd)) return false;
+  const realRoot = await realOutside(root);
+  for (const arg of argv.slice(1)) {
+    const word = arg.startsWith("-") ? (arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : "") : arg;
+    if (!word) continue;
+    if (GLOB.test(word)) {
+      if (!(await globInside(realRoot, cwd, word))) return false;
+      continue;
+    }
+    const real = await realOutside(resolve(cwd, expandHome(word)));
+    if (!within(realRoot, real) && !harmlessPath(real)) return false;
+  }
+  if (baseName(argv[0]!) === "git" && !(await gitConfigSafe(root, cwd))) return false;
+  return true;
 }
 
 /** The real path of `full`, following links in the part that exists. */
@@ -1010,7 +1125,8 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
     }
     full = ["git", ...gitHardening(false, ctx.commitAuthor || "Ensemble Agent <agent@ensemble.local>"), ...argv.slice(1)];
   } else {
-    const held = await allowOrRefuse(ctx, "command", true, { toolName: program, title: `Run ${line.slice(0, 140)}`, command: line });
+    // Reading inside the folder (ls, cat, grep…) asks nobody, as in the person's own coding agents.
+    const held = (await quietArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) ? null : await allowOrRefuse(ctx, "command", true, { toolName: program, title: `Run ${line.slice(0, 140)}`, command: line });
     if (held) return held;
     const guarded = ctx.job.delivery === "local" || (ctx.job.askBeforePublish && !ctx.job.unattended);
     if (guarded && ctx.accessMode !== "review") watch = await refTips(ctx);

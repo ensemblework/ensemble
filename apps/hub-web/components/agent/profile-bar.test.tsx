@@ -4,7 +4,7 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CODE_ENGINES, RunProfile, Settings } from "@ensemble/shared-types";
+import { claudeCodeModels, CODE_ENGINES, RunProfile, Settings } from "@ensemble/shared-types";
 import { AssignDialog, ProfileBar } from "./assign-dialog.js";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -95,6 +95,8 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
   const luna = { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", contexts: [{ id: "default", label: "200K (standard)", tokens: 200000 }, { id: "long_context", label: "922K (long context)", tokens: 922000 }], vision: true, cost: "low cost", description: "OpenAI" };
   const haiku = { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", contexts: [{ id: "default", label: "136K", tokens: 136000 }], cost: "0.33× premium requests", description: "Anthropic" };
   const copilot = { id: "copilot-cli", via: "cli", version: "1.0.40", signedIn: false, account: null, models: [{ id: "auto", label: "Auto", isDefault: true }, luna, haiku], checkedAt: "2026-10-20T09:00:00.000Z" };
+  const codex = { id: "codex", via: "cli", version: "0.163.0", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol", isDefault: true, efforts: ["low", "high", "max", "ultra"], defaultEffort: "low", vision: true }], checkedAt: "2026-10-20T09:00:00.000Z" };
+  const claude = { id: "claude-code", via: "cli", version: "2.1.304", signedIn: true, models: claudeCodeModels("2.1.304"), checkedAt: "2026-10-20T09:00:00.000Z" };
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
   const realFetch = globalThis.fetch;
@@ -107,7 +109,7 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     if (path === "/api/settings") return json({ settings: Settings.parse({}) });
     if (path === "/api/tasks/task-1") return json({ task: { id: "task-1", title: "Fix the flaky test", status: "todo", complexity: "medium" } });
     if (path === "/api/devices") return json({ serverRunner: false, devices: [{ id: "device-1", name: "Studio Mac", platform: "macos", appVersion: "cli-0.5.0", capabilities: { engines: [...CODE_ENGINES] }, folders: [], lastSeenAt: null, createdAt: "2026-10-01T09:00:00.000Z" }] });
-    if (path === "/api/subscriptions") return json({ preferred: null, computers: [{ id: "device-1", name: "Studio Mac", platform: "macos", local: false, online: true, lastSeenAt: null, appVersion: "cli-0.5.0", ready: true, agents: [copilot] }] });
+    if (path === "/api/subscriptions") return json({ preferred: null, computers: [{ id: "device-1", name: "Studio Mac", platform: "macos", local: false, online: true, lastSeenAt: null, appVersion: "cli-0.5.0", ready: true, agents: [copilot, codex, claude] }] });
     return json({ error: "not found" }, 404);
   }) as typeof fetch;
   window.localStorage.clear();
@@ -132,15 +134,33 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
     await settle();
     assert.ok(options("Who does the work").includes("GitHub Copilot (your sign-in)"));
+    // Every coding agent offers the models its computer listed, each with its own levels and windows.
+    await choose("Who does the work", "codex");
+    assert.deepEqual(options("Codex model"), ["Codex default (GPT-6.1 Sol)", "GPT-6.1 Sol"]);
+    assert.deepEqual(options("Codex thinking"), ["Default (Low)", "Low", "High", "Max", "Ultra"]);
+    await choose("Who does the work", "claude-code");
+    await choose("Claude Code model", "claude-sonnet-4-6");
+    assert.deepEqual(options("Claude Code thinking"), ["Default (High)", "Low", "Medium", "High", "Max"]);
+    assert.deepEqual(options("Context window"), ["Standard · 200K", "Long context · 1M"]);
+    assert.equal(document.querySelector('[data-testid="engine-fast"]'), null, "Sonnet 4.6 has no fast mode");
+    await choose("Claude Code model", "claude-opus-5-5");
+    assert.equal(select("Context window"), null, "Opus 5.5 has one 1M window");
+    assert.ok(document.querySelector('[data-testid="engine-fast"]'), "Opus 5.5 has fast mode");
+    assert.equal(document.querySelector('[data-testid="engine-no-sandbox"]'), null, "Claude Code has its own sandbox");
+    await choose("Who does the work", "grok-cli");
+    assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there/);
+    await choose("Who does the work", "claude-code");
+    await choose("Claude Code model", "claude-opus-5-5");
+    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "Anthropic · newest · 1M context");
     await choose("Who does the work", "copilot-cli");
     assert.deepEqual(options("Copilot model"), ["Copilot default (Auto)", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);
     assert.equal(select("Copilot thinking"), null, "Auto has no thinking levels");
-    assert.match(document.querySelector('[data-testid="copilot-signed-out"]')?.textContent ?? "", /Copilot CLI is not signed in on Studio Mac: run copilot login there or press Sign in under Settings → Models\./);
+    assert.match(document.querySelector('[data-testid="engine-signed-out"]')?.textContent ?? "", /Copilot CLI is not signed in on Studio Mac: run copilot login there or press Sign in under Settings → Models\./);
 
     await choose("Copilot model", "gpt-5.6-luna");
     assert.deepEqual(options("Copilot thinking"), ["Default (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
     assert.deepEqual(options("Context window"), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
-    assert.equal(document.querySelector('[data-testid="copilot-model-facts"]')?.textContent, "OpenAI · low cost · 200K or 922K context");
+    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "OpenAI · low cost · 200K or 922K context");
     await choose("Copilot thinking", "xhigh");
     await choose("Context window", "long_context");
 

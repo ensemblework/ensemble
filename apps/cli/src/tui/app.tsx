@@ -22,7 +22,7 @@ import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, S
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
 import {
   ago,
-  AGENT_MODELS,
+  agentOf,
   agentChoiceLabel,
   baseLabel,
   buildItems,
@@ -65,6 +65,24 @@ const LOCAL_ONLY_PICK = "\u0000included";
 /** Picker rows for "the agent's own default" and "type a model name". */
 const DEFAULT_PICK = "\u0000default";
 const TYPE_PICK = "\u0000type";
+/** The command that signs each agent in, in a terminal. */
+const SIGN_IN: Record<AgentEngine, string> = {
+  "claude-code": "claude auth login",
+  codex: "codex login",
+  "cursor-agent": "cursor-agent login",
+  "copilot-cli": "copilot login",
+  "grok-cli": "grok login",
+  opencode: "opencode auth login",
+  "gemini-cli": "gemini (then Sign in with Google)",
+  antigravity: "Sign in for Antigravity in Ensemble's Settings → Models",
+};
+/** Where each of the ACP agents comes from, for /agent when this computer does not have it yet. */
+const ACP_INSTALL: Record<"grok-cli" | "opencode" | "gemini-cli" | "antigravity", string> = {
+  "grok-cli": "https://x.ai/cli",
+  opencode: "curl -fsSL https://opencode.ai/install | bash",
+  "gemini-cli": "npm install -g @google/gemini-cli",
+  antigravity: "press Sign in for Antigravity in Settings → Models (Ensemble installs it)",
+};
 /** How long /agent waits for this computer's agent check before it shows what it has. */
 const AGENT_CHECK_WAIT_MS = 3000;
 const MUTED = "gray";
@@ -235,9 +253,10 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   const [detected, setDetected] = useState<SubscriptionAgent[] | null>(null);
   const copilot = copilotOf(detected);
   const copilotChosen = engine === "copilot-cli";
-  // The thinking level and context window are Copilot's only.
-  const agentChoice: AgentChoice = { model: prefs.agentModel, ...(copilotChosen ? { effort: prefs.agentEffort, context: prefs.agentContext } : {}) };
-  const agentModels: SubscriptionModel[] = copilotChosen ? (copilot?.models ?? []) : [];
+  // Each agent's model, with the thinking level and context window that model takes.
+  const chosenAgent = agentChat ? agentOf(detected, engine as AgentEngine) : null;
+  const agentChoice: AgentChoice = { model: prefs.agentModel, ...(agentChat ? { effort: prefs.agentEffort, context: prefs.agentContext } : {}) };
+  const agentModels: SubscriptionModel[] = chosenAgent?.models ?? [];
   const loadAgents = useCallback(
     async (fresh = false) => {
       const agents = await api.localAgents(fresh).catch(() => null);
@@ -247,8 +266,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     [api],
   );
   useEffect(() => {
-    if (copilotChosen) void loadAgents();
-  }, [copilotChosen, loadAgents]);
+    if (agentChat) void loadAgents();
+  }, [agentChat, loadAgents]);
   /** Why Copilot cannot take a message now, with the fix. A problem found earlier is checked again: the person may have just signed in. */
   const copilotBlocked = useCallback(async (): Promise<string | null> => {
     if (!copilotProblem(copilot)) return null;
@@ -531,9 +550,9 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         if (problem) return say(problem, "error");
       }
       const created = await api.json<{ task: { id: string } }>("/api/tasks", { body: { title: titleFrom(text), description: text, owner: "agent", status: "todo" } });
-      // GitHub Copilot runs with the model, thinking level and context window picked in /model.
+      // The agent runs with the model, thinking level and context window picked in /model.
       const started = await api.json<{ jobId: string }>("/api/agent/assign", {
-        body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: copilotChosen ? agentChoice : null }),
+        body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: agentChat ? agentChoice : null }),
       });
       say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${baseLabel(profile.pullRequest.base)}` : ""}.`, "ok");
       setPrefs({ tab: "tasks" });
@@ -582,6 +601,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (the ChatGPT app's)"}` : "not found · the ChatGPT app, or npm i -g @openai/codex" },
       { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not found · curl https://cursor.com/install -fsS | bash" },
       { id: "copilot-cli", note: copilotNote(copilotOf(agents ?? detected), Boolean(has("copilot")?.cli)) },
+      // Grok Build, OpenCode, Gemini CLI and Antigravity, as this computer's agent check found them.
+      ...(["grok-cli", "opencode", "gemini-cli", "antigravity"] as const).map((id) => {
+        const row = (agents ?? detected)?.find((agent) => agent.id === id);
+        const note = !row ? `not found · ${ACP_INSTALL[id]}` : row.signedIn === false ? `not signed in · ${SIGN_IN[id]}` : `your ${ENGINE_LABEL[id]} sign-in`;
+        return { id, note };
+      }),
     ];
     setOverlay({
       kind: "picker",
@@ -605,12 +630,13 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     });
   };
 
-  /** GitHub Copilot's model, from the ones this computer's Copilot reports, then its thinking level and context window where it has them. */
-  const pickCopilotModel = async () => {
-    const label = ENGINE_LABEL["copilot-cli"];
+  /** The agent's model, from the ones this computer's agent reports, then its thinking level and context window where it has them. */
+  const pickAgentModel = async (chosen: AgentEngine) => {
+    const label = ENGINE_LABEL[chosen];
     if (!detected) say(`Asking ${label} for its models…`);
-    const found = copilotOf((await loadAgents()) ?? detected);
-    if (found === null) return say(copilotProblem(null)!, "error");
+    const reported = (await loadAgents()) ?? detected;
+    if (chosen === "copilot-cli" && copilotOf(reported) === null) return say(copilotProblem(null)!, "error");
+    const found = agentOf(reported, chosen);
     const models = found?.models ?? [];
     const current = prefs.agentModel;
     const save = (choice: Required<AgentChoice>) => {
@@ -662,19 +688,19 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       });
     };
     const items = [
-      ...(models.some((model) => model.isDefault) ? [] : [{ id: DEFAULT_PICK, label: "Default", detail: "Copilot's own default", active: !current }]),
+      ...(models.some((model) => model.isDefault) ? [] : [{ id: DEFAULT_PICK, label: "Default", detail: `${label}'s own default`, active: !current }]),
       ...models.map((model) => ({ id: model.isDefault ? DEFAULT_PICK : model.id, label: model.label, detail: modelNote(model), active: model.isDefault ? !current : current === model.id })),
       ...(found?.typedModels ? [{ id: TYPE_PICK, label: "Another model…", detail: "type its id" }] : []),
     ];
     setOverlay({
       kind: "picker",
       title: `${label}'s model`,
-      hint: found?.signedIn === false ? "GitHub Copilot isn't signed in on this computer: run copilot login in a terminal, then /model again for your plan's models." : "Chat and /run use it, on your own Copilot sign-in.",
+      hint: found?.signedIn === false ? `${label} isn't signed in on this computer: run ${SIGN_IN[chosen]} in a terminal, then /model again for your plan's models.` : `Chat and /run use it, on your own ${label} sign-in.`,
       items,
       index: Math.max(0, items.findIndex((item) => item.active)),
       onPick: (id) => {
         if (id === TYPE_PICK) return typeOne();
-        // Copilot's default model is sent as no model at all.
+        // The agent's default model is sent as no model at all.
         const model = id === DEFAULT_PICK ? models.find((row) => row.isDefault) : models.find((row) => row.id === id);
         if (!model) return save({ model: null, effort: null, context: null });
         pickEffort(model, id === DEFAULT_PICK ? null : model.id);
@@ -683,36 +709,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   };
 
   const pickModel = async () => {
-    if (copilotChosen) return pickCopilotModel();
-    if (agentChat) {
-      const listed = AGENT_MODELS[engine as AgentEngine];
-      const typeOne = () =>
-        setOverlay({
-          kind: "input",
-          title: `${ENGINE_LABEL[engine]}'s model`,
-          hint: `A model name ${ENGINE_LABEL[engine]} knows (empty for its default). Enter saves, Esc cancels.`,
-          secret: false,
-          value: prefs.agentModel ?? "",
-          onSubmit: (name) => {
-            setPrefs({ agentModel: name.trim() || null });
-            say(`${ENGINE_LABEL[engine]} uses ${name.trim() || "its default model"}.`, "ok");
-          },
-        });
-      if (!listed) return typeOne();
-      setOverlay({
-        kind: "picker",
-        title: `${ENGINE_LABEL[engine]}'s model`,
-        hint: "Chat and /run use it, on your own sign-in.",
-        items: [...listed.map((name) => ({ id: name, label: name === "default" ? "Default" : name, active: (prefs.agentModel ?? "default") === name })), { id: TYPE_PICK, label: "Another model…", detail: "type its name" }],
-        index: Math.max(0, listed.indexOf(prefs.agentModel ?? "default")),
-        onPick: (id) => {
-          if (id === TYPE_PICK) return typeOne();
-          setPrefs({ agentModel: id === "default" ? null : id });
-          say(`${ENGINE_LABEL[engine]} uses ${id === "default" ? "its default model" : id}.`, "ok");
-        },
-      });
-      return;
-    }
+    if (agentChat) return pickAgentModel(engine as AgentEngine);
     const catalog = await api.models().catch(() => null);
     const rows: ModelRow[] = (catalog?.providers ?? []).filter((row) => row.available && row.chat && row.models.length);
     const localOnly = localOnlyRow(catalog?.providers ?? []);

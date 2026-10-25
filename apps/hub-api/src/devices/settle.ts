@@ -47,3 +47,28 @@ export async function wakeQueuedDevices(db: Db, userId: string): Promise<void> {
     publishDevice(job.deviceId, "job.queued", job.id);
   }
 }
+
+/** How long a computer has to confirm a Stop before Ensemble ends the run here. */
+export const STOP_CONFIRM_MS = 3 * 60_000;
+
+/**
+ * Runs on a computer that is online but has not ended them within `STOP_CONFIRM_MS` of a Stop
+ * (its runtime stuck on a command, say) end here as stopped: the slot frees, Needs me closes and
+ * the task goes back to To do. The computer keeps getting the stop with each heartbeat, and a
+ * result it sends later is not taken.
+ */
+export async function endUnconfirmedStops(db: Db, deviceId: string, deviceName: string, now = new Date()): Promise<string[]> {
+  const late = await db.workspaceJob.findMany({
+    where: { deviceId, cancelRequestedAt: { lt: new Date(now.getTime() - STOP_CONFIRM_MS) }, status: { in: ["claimed", "running", "waiting_approval", "stopping"] } },
+    select: { id: true, taskId: true, userId: true },
+  });
+  if (!late.length) return [];
+  const ids = late.map((job) => job.id);
+  const error = `Stopped. ${deviceName} did not confirm the stop within ${Math.round(STOP_CONFIRM_MS / 60_000)} minutes, so Ensemble ended the run here.`;
+  await db.workspaceJob.updateMany({ where: { id: { in: ids } }, data: { status: "cancelled", finishedAt: now, error, progress: "Stopped", leaseToken: null } });
+  await expireDeviceDecisions(db, ids);
+  await endOpenRuns(db, ids, error);
+  await db.task.updateMany({ where: { id: { in: [...new Set(late.map((job) => job.taskId))] }, owner: "agent", status: "in_progress" }, data: { status: "todo" } });
+  for (const userId of new Set(late.map((job) => job.userId))) await wakeQueuedDevices(db, userId);
+  return ids;
+}

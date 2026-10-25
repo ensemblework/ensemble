@@ -50,14 +50,16 @@ Trust is per computer and path. Ensemble's workspace is always trusted; other fo
 
 Trust sharing (`trust-share.ts`, `ensemble trust share on|off`, on by default per computer) also marks trusted folders as trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI, so a handed-off task does not stop at their own trust prompt. Only installed tools are touched; Ensemble removes only marks it added, and turning sharing off removes them all. The mark list and backups of each edited file sit beside `remote.json`.
 
+A run Ensemble starts carries the same trust: in a folder the person trusted by name (for good or for this task), Claude Code loads the folder's own `.claude/` settings and Codex treats it as trusted, as in their own terminal; in folders inside it, the workspace and fresh clones neither does ([30 §1–§2](30_ENGINES.md)). In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, `git status`…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
+
 | Mode | Behaviour |
 | --- | --- |
-| Ask | Commands and edits can pause for exact permission, per trust and settings; real questions go to Needs me |
+| Ask | Commands and edits can pause for exact permission, per trust and settings; commands that only read inside the folder do not; real questions go to Needs me |
 | Review only | Trusted folder, fewer permission prompts, still asks real decisions. **Can edit files** |
 | Run unattended | Trusted folder; takes configured or recommended answers and lists them in the result; never waits for a person |
 | Read-only access | A separate lower-level grant; tools and OS deny writes and network accordingly |
 
-No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)).
+No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)). Grok Build, OpenCode and Antigravity, and Gemini CLI outside macOS, have no OS sandbox Ensemble can turn on: their runs need Sandbox off, which the Assign dialog says, and the judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-and-antigravity)).
 
 ## 5. Git and credentials
 
@@ -82,6 +84,8 @@ With **No limits** an agent opens and merges pull requests itself when the task 
 ## 6. Commands and processes
 
 `run_command` takes a program and arguments, not a shell string: no pipes, redirects, `&&` or `sh -c`. Allowed interpreters still run code, so the OS sandbox must contain their subprocesses. Never-listed programs, sensitive paths and environment variables have extra guards.
+
+A command is over when its own process exits: output still in the pipes is read for 2 seconds (`DRAIN_MS`), so a process it left running (a server, a stuck test worker) cannot hold the result open; the result notes what is still running, and the run's end stops it. A timeout or Stop kills the command's whole session, including a process that moved to a process group of its own (`timeout`, a shell with job control).
 
 Child environments are scrubbed of provider, session and device credentials. `runner.ts` enforces timeouts and kills the process tree on stop, keeping partial work; it cannot undo a completed remote write. Internet on/off is a per-run choice; there is no per-domain approval proxy for all traffic.
 

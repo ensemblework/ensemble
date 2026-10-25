@@ -56,16 +56,16 @@ test("quick assignment preserves the default profile's permissions and exact pro
   assert.match(input.branch ?? "", /^ensemble\/task-/);
 });
 
-test("subscription engines keep their model string and omit API effort", () => {
+test("subscription engines keep their model string and their own thinking level, never an API provider", () => {
   const input = quickAssignInput("task", { ...quick, engine: "claude-code", model: "sonnet", effort: "high" });
   assert.equal(input.engine, "claude-code");
   assert.equal(input.model, "sonnet");
   assert.equal(input.provider, undefined);
-  assert.equal(input.reasoningEffort, undefined);
+  assert.equal(input.reasoningEffort, "high", "Claude Code checks it against the model's own levels when it runs");
 });
 
 import type { SubscriptionAgent } from "@ensemble/shared-types";
-import { computerRuns, engineAssign, engineModel, fitEngineChoice } from "./engine-models.js";
+import { claudeFallback, computerRuns, engineAssign, engineModel, fitEngineChoice } from "./engine-models.js";
 
 const copilot: SubscriptionAgent = {
   id: "copilot-cli",
@@ -95,11 +95,24 @@ test("GitHub Copilot offers each model's own thinking levels and context windows
   assert.deepEqual(engineAssign("copilot-cli", { model: "gpt-5.6-luna", effort: "xhigh", context: "long_context" }, engineModel(copilot, "gpt-5.6-luna")), { engine: "copilot-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh", contextTier: "long_context" });
   assert.deepEqual(engineAssign("copilot-cli", { model: "gpt-5.6-luna", effort: "default" }, luna), { engine: "copilot-cli", model: "gpt-5.6-luna", contextTier: "default" });
   assert.deepEqual(engineAssign("copilot-cli", { model: "claude-haiku-4.5", effort: "high", context: "long_context" }, haiku), { engine: "copilot-cli", model: "claude-haiku-4.5" });
-  assert.deepEqual(engineAssign("codex", { model: "gpt-6-luna", effort: "high", context: "long_context" }), { engine: "codex", model: "gpt-6-luna" }, "other agents take a model name only");
+  assert.deepEqual(engineAssign("codex", { model: "gpt-6-luna", effort: "high", context: "long_context" }), { engine: "codex", model: "gpt-6-luna", reasoningEffort: "high" }, "Codex takes its own thinking level and has one window");
 
   assert.equal(computerRuns("copilot-cli", { engines: ["claude-code", "codex", "cursor-agent", "copilot-cli"] }), true);
   assert.equal(computerRuns("copilot-cli", {}), false, "a runtime without the engines list predates Copilot");
   assert.equal(computerRuns("codex", {}), true);
+});
+
+test("Claude Code offers each model's own thinking levels and its 1M window, and finds a model by its alias", () => {
+  const claude = claudeFallback();
+  const opus = engineModel(claude, "opus");
+  assert.equal(opus.model?.id, "claude-opus-5-5", "`opus` is the newest Opus");
+  assert.deepEqual(opus.efforts, ["low", "medium", "high", "xhigh", "max"]);
+  assert.equal(opus.defaultEffort, "medium");
+  assert.deepEqual(opus.contexts, [], "a fixed 1M window: nothing to choose");
+  const sonnet = engineModel(claude, "claude-sonnet-4-6");
+  assert.deepEqual(sonnet.contexts.map((row) => row.label), ["200K", "1M"]);
+  assert.deepEqual(fitEngineChoice(sonnet, "xhigh", "long_context"), { effort: "default", context: "long_context" }, "Sonnet 4.6 has no Extra high");
+  assert.deepEqual(engineAssign("claude-code", { model: "claude-sonnet-4-6", effort: "max", context: "long_context" }, sonnet), { engine: "claude-code", model: "claude-sonnet-4-6", reasoningEffort: "max", contextTier: "long_context" });
 });
 
 test("a Copilot profile keeps its model, thinking level and context window", () => {

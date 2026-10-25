@@ -13,6 +13,8 @@ export type ShellSegment = {
   /** The folder the program runs in, after any `cd` earlier in the command. */
   cwd: string;
   redirects: Array<{ path: string; write: boolean }>;
+  /** `VAR=value` or `env` before the program (or alone): it changes what the program loads or runs (`LD_PRELOAD`, `PAGER`). */
+  assigned?: boolean;
 };
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -97,8 +99,9 @@ export function parseShell(command: string, root: string, home = homedir()): She
     pushWord();
     redirect = null;
     const argv = programArgv(words);
-    if (argv.length || redirects.length) {
-      segments.push({ argv, cwd, redirects });
+    const assigned = words.slice(0, words.length - argv.length).some((word) => ASSIGNMENT.test(word) || word.split(/[\\/]/).pop() === "env");
+    if (argv.length || redirects.length || assigned) {
+      segments.push({ argv, cwd, redirects, ...(assigned ? { assigned: true } : {}) });
       const name = argv[0]?.split(/[\\/]/).pop();
       // `bash -c '…'` (or -lc, sh, zsh): the script is shell too, read as commands of its own.
       if (name && SHELLS.has(name)) {

@@ -317,6 +317,7 @@ test("pairing, claim, lease sweep, heartbeat, cancel, and device isolation", asy
       payload: { runningJobIds: [jobId] },
     });
     assert.deepEqual((beatCancel.json() as { cancel: string[] }).cancel, [jobId]);
+    assert.equal((await prisma.workspaceJob.findUniqueOrThrow({ where: { id: jobId } })).status, "waiting_approval", "a fresh stop waits for the computer");
 
     await prisma.workspaceJob.update({ where: { id: jobId }, data: { leaseUntil: new Date(Date.now() - 5_000) } });
     const swept = await sweepExpiredDeviceLeases(app);
@@ -335,6 +336,18 @@ test("pairing, claim, lease sweep, heartbeat, cancel, and device isolation", asy
       payload: { leaseToken: claimedBody.leaseToken, outcome: "succeeded", summary: "too late" },
     });
     assert.equal(late.statusCode, 409);
+
+    // A computer that keeps checking in but never ends a stopped run (its runtime stuck on a command): the run ends here.
+    const stuckTask = await prisma.task.create({ data: { userId: user.id, title: "Stuck", createdBy: "me", owner: "agent", status: "in_progress" } });
+    const stuck = await prisma.workspaceJob.create({
+      data: { userId: user.id, taskId: stuckTask.id, deviceId, kind: "code", status: "running", executionMode: "sandbox", model: "label", instructions: "stuck", leaseOwner: deviceId, leaseUntil: new Date(Date.now() + 60_000), cancelRequestedAt: new Date(Date.now() - 4 * 60_000) },
+    });
+    const forcedBeat = await app.inject({ method: "POST", url: "/api/devices/self/heartbeat", headers: bearer(token), payload: { runningJobIds: [stuck.id] } });
+    assert.ok((forcedBeat.json() as { cancel: string[] }).cancel.includes(stuck.id), "the computer is still told to stop it");
+    const forced = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: stuck.id } });
+    assert.equal(forced.status, "cancelled");
+    assert.match(forced.error ?? "", /did not confirm the stop within 3 minutes/);
+    assert.equal((await prisma.task.findUniqueOrThrow({ where: { id: stuckTask.id } })).status, "todo");
 
     const waiting = await prisma.task.create({ data: { userId: user.id, title: "Waits", createdBy: "me", status: "todo" } });
     const queuedJob = await prisma.workspaceJob.create({

@@ -5,22 +5,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ExternalLink, Laptop, LogIn, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeUpdateNote, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider, type UsageWindow } from "@ensemble/shared-types";
 import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/api";
-import { relative } from "@/lib/format";
+import { relative, untilLabel } from "@/lib/format";
 import { modelFacts } from "@/lib/engine-models";
 import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
 import { ConnectComputerButton } from "./connect-computer";
 import { navigateSettings } from "./url-state";
-import { ProviderLogo } from "../connectors/provider-logo";
+import { modelBrand, ProviderLogo } from "../connectors/provider-logo";
 
 type Patch = (patch: Record<string, unknown>) => void;
 const TIER_IDS = ["easy", "medium", "high", "max"] as const;
 const TIER_NAMES: Record<(typeof TIER_IDS)[number], string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
 export function SubscriptionMark({ id, size = 34 }: { id: SubscriptionProvider; size?: number }) {
-  return <span className="inline-flex shrink-0 items-center justify-center rounded-xl border border-line bg-panel" style={{ width: size, height: size }}><ProviderLogo id={id} size={Math.round(size * .65)} /></span>;
+  // A vendor without a published mark here (Grok) shows its initial.
+  const mark = modelBrand(null, id) ? <ProviderLogo id={id} size={Math.round(size * .65)} /> : <span className="text-[15px] font-semibold text-ink" aria-hidden>{SUBSCRIPTION_INFO[id].label.slice(0, 1)}</span>;
+  return <span className="inline-flex shrink-0 items-center justify-center rounded-xl border border-line bg-panel" style={{ width: size, height: size }}>{mark}</span>;
 }
 
 /** While a check or a sign-in is under way, ask more often; otherwise a calm refresh. */
@@ -34,8 +36,18 @@ export function activeComputer(view: SubscriptionsView | undefined): Subscriptio
   return computers.find((row) => row.id === view?.preferred && row.online) ?? computers.find((row) => row.online) ?? computers[0] ?? null;
 }
 
+const PROGRAM: Record<SubscriptionProvider, string> = {
+  "claude-code": "Claude Code",
+  codex: "the Codex CLI",
+  "cursor-agent": "Cursor's agent",
+  "copilot-cli": "Copilot CLI",
+  "grok-cli": "Grok Build",
+  opencode: "OpenCode",
+  "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity's agent, installed by Ensemble",
+};
 const viaText = (agent: SubscriptionAgent): string => {
-  const program = agent.id === "claude-code" ? (agent.via === "app" ? "the Claude app" : "Claude Code") : agent.id === "codex" ? (agent.via === "app" ? "the ChatGPT app" : "the Codex CLI") : agent.id === "cursor-agent" ? "Cursor's agent" : "Copilot CLI";
+  const program = agent.id === "claude-code" && agent.via === "app" ? "the Claude app" : agent.id === "codex" && agent.via === "app" ? "the ChatGPT app" : PROGRAM[agent.id];
   return `via ${program}${agent.version ? ` ${agent.version}` : ""}`;
 };
 
@@ -54,6 +66,30 @@ export function tiersUsing(settings: Settings, provider: string): string[] {
 
 function defaultModel(agent: SubscriptionAgent): string {
   return agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? "default";
+}
+
+/** The plan's usage windows as the agent reported them: how much is used, and when each starts over. */
+export function UsageBars({ windows, label }: { windows: UsageWindow[]; label: string }) {
+  return (
+    <div className="space-y-1.5" aria-label={`${label} usage`} data-testid="subscription-limits">
+      {windows.map((window) => {
+        const used = Math.round(window.usedPercent);
+        return (
+          <div key={window.id}>
+            <div className="flex items-baseline justify-between gap-2 text-[11.5px]">
+              <span className="text-muted">{window.label}</span>
+              <span className={used >= 90 ? "text-warn" : "text-faint"}>
+                {used}% used{window.resetsAt ? ` · resets in ${untilLabel((Date.parse(window.resetsAt) - Date.now()) / 1000)}` : ""}
+              </span>
+            </div>
+            <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-panel" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={used} aria-label={window.label}>
+              <div className={cx("h-full rounded-full", used >= 90 ? "bg-[var(--warn)]" : "bg-accent")} style={{ width: `${used}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function SubscriptionTile({
@@ -97,6 +133,8 @@ function SubscriptionTile({
         </div>
       </div>
       {agent?.problem ? <p className="text-[12px] text-warn">{agent.problem}</p> : null}
+      {agent && id === "claude-code" && claudeUpdateNote(agent.version) ? <p className="text-[12px] text-muted" data-testid="subscription-update-note">{claudeUpdateNote(agent.version)}</p> : null}
+      {agent?.limits?.length ? <UsageBars windows={agent.limits} label={info.label} /> : null}
       {agent ? (
         <div className="flex flex-wrap gap-1" aria-label={`${info.label} models`}>
           {agent.models.slice(0, 6).map((row) => (
@@ -123,7 +161,12 @@ function SubscriptionTile({
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11.5px] text-faint">{using.length ? `In use: ${using.join(", ")}` : ""}</span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {!agent ? (
+          {!agent && id === "antigravity" ? (
+            // Antigravity has nothing to install by hand: Sign in installs Google's agent, then opens Google's sign-in.
+            <button type="button" className="btn py-0.5 text-[12px]" onClick={onSignIn} disabled={signingIn || !computer?.online || !computer.ready} data-testid="antigravity-install">
+              <LogIn size={11} aria-hidden /> {signingIn ? "Setting up…" : "Install and sign in"}
+            </button>
+          ) : !agent ? (
             <a className="btn py-0.5 text-[12px]" href={info.install.url} target="_blank" rel="noreferrer">
               {info.install.label} <ExternalLink size={11} aria-hidden />
             </a>

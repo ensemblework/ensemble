@@ -10,6 +10,7 @@ import { isPaused, listActivities, requestCancel } from "../lib/activity.js";
 import { git } from "../lib/git.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
+import { OCCUPIED, queueWaitReason } from "../workspace/queue-policy.js";
 import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.js";
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
@@ -22,7 +23,7 @@ import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
 import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
-import { contextTierOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { contextTierOf, fastOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
@@ -108,6 +109,7 @@ function card(job: JobRow, position?: number, options: { paths?: boolean } = {})
     // A run that ends in a pull request (docs/24 §5.1); Run again keeps it.
     pullRequest: pullRequestOf(job.context),
     contextTier: contextTierOf(job.context),
+    fast: fastOf(job.context),
     maxTurns: job.maxTurns,
     folder: job.folderLabel ?? (paths ? job.externalRoot ?? job.repoPath ?? "" : ""),
     runId: job.runId,
@@ -203,7 +205,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         where: { userId, OR: [{ finishedAt: null }, { finishedAt: { gte: since } }] },
         orderBy: { sequence: "asc" },
         take: 200,
-        include: { task: { select: { id: true, title: true, priority: true, status: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
+        include: { task: { select: { id: true, title: true, priority: true, status: true, projectId: true, repoId: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
       }),
       loadSettings(prisma, userId),
       isPaused(app.redis, userId),
@@ -223,7 +225,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       paused,
       sandboxAvailable: host && sandboxAvailable(),
       serverRunner: serverRunnerEnabled(),
-      queued: queued.map((job, index) => card(job, index + 1, { paths: host })),
+      // Why each one has not started: the pause, a running task it must wait for, or every slot in use.
+      queued: queued.map((job, index) => ({ ...card(job, index + 1, { paths: host }), waitingFor: waitReason(job, jobs, settings.orchestration.maxConcurrentJobs, paused) })),
       running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job, undefined, { paths: host })),
       waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job, undefined, { paths: host })),
       stopped: recent(["interrupted", "blocked", "failed", "cancelled"]),
@@ -443,13 +446,14 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/agent/state", async (request) => {
     const userId = request.userId;
     const activities = await listActivities(app.redis, userId);
-    const [paused, jobs] = await Promise.all([
+    const [paused, jobs, settings] = await Promise.all([
       isPaused(app.redis, userId),
       prisma.workspaceJob.findMany({
         where: { userId, status: { in: ["queued", "claimed", "running", "stopping", "waiting_approval"] } },
         orderBy: { sequence: "asc" },
-        include: { task: { select: { id: true, title: true, priority: true, status: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
+        include: { task: { select: { id: true, title: true, priority: true, status: true, projectId: true, repoId: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
       }),
+      loadSettings(prisma, userId),
     ]);
     await onCurrentDevices(prisma, jobs);
     const jobIds = new Set(jobs.map((job) => `job:${job.id}`));
@@ -459,7 +463,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       calls: activities.filter((row) => !jobIds.has(row.id)).sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
       running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job, undefined, { paths: host })),
       waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job, undefined, { paths: host })),
-      queued: jobs.filter((job) => job.status === "queued").map((job, index) => card(job, index + 1, { paths: host })),
+      queued: jobs.filter((job) => job.status === "queued").map((job, index) => ({ ...card(job, index + 1, { paths: host }), waitingFor: waitReason(job, jobs, settings.orchestration.maxConcurrentJobs, paused) })),
     };
   });
 
@@ -478,6 +482,14 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     await appendLedger({ userId: request.userId, actor: "me", action: "activity.stop", payload: { id } });
     return reply.code(204).send();
   });
+}
+
+type QueuedRow = { id: string; status: string; deviceId: string | null; repoUrl: string | null; resourceKeys: string[]; continueFromJobId: string | null; task: { title: string; projectId: string | null; repoId: string | null } };
+
+/** Why a queued job has not started yet (`queueWaitReason`), from the person's other jobs. */
+function waitReason(job: QueuedRow, jobs: QueuedRow[], limit: number, paused: boolean): string | null {
+  const active = jobs.filter((row) => (OCCUPIED as readonly string[]).includes(row.status)).map((row) => ({ ...row, title: row.task.title }));
+  return queueWaitReason({ candidate: job, active, limit, paused });
 }
 
 /** The switch, and per tool whether it is on this computer and how many folders Ensemble marked in it. */
