@@ -145,7 +145,7 @@ pnpm desktop:build      # tauri build
 
 `pnpm desktop:sidecar` runs `scripts/assemble-desktop-sidecar.mjs`; `--dest <dir>` packs the same sidecar for the CLI. Bundles land in `apps/desktop/src-tauri/target/<target>/release/bundle/`.
 
-`.github/workflows/desktop.yml` builds on pull requests, the `desktop` branch, `desktop-v*` tags and manual dispatch (`target`: all, `macos-arm64`, `macos-x64`, `windows`, `linux`). `scripts/desktop-targets.mjs` defines the matrix:
+`.github/workflows/desktop.yml` builds on the `desktop` branch, `desktop-v*` tags and manual dispatch (not on pull requests, [37](37_PAUSED_CHECKS.md)) (`target`: all, `macos-arm64`, `macos-x64`, `windows`, `linux`). `scripts/desktop-targets.mjs` defines the matrix:
 
 | Target | Runner | Bundles | Artifact |
 | --- | --- | --- | --- |
@@ -206,7 +206,7 @@ The official hosted UI is `https://app.ensemblework.com`. An override uses that 
 | Release scripts | `node --test scripts/desktop-release.test.mjs scripts/desktop-targets.test.mjs scripts/package-mac-dmg.test.mjs` |
 | Installed app on a Mac | [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md) |
 
-CI (`ci.yml`) runs sandbox escape tests on macOS Seatbelt, Linux Landlock, Linux bubblewrap and the Windows sandbox account; `desktop.yml` also runs the macOS escape, trust and git-gate tests and verifies the Mac image packager.
+Sandbox escape tests on macOS Seatbelt, Linux Landlock, Linux bubblewrap and the Windows sandbox account, and the macOS escape, trust and git-gate tests with the Mac image packager check, are paused in `full-checks.yml` and run by hand ([37](37_PAUSED_CHECKS.md)).
 
 ## 11. Limits
 

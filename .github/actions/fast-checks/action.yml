@@ -1,0 +1,46 @@
+name: Fast checks
+description: >-
+  The checks every push and pull request into testing and main runs before anything deploys:
+  versions in step, shared/API/web/CLI types, CLI channel isolation, focused web and API
+  regressions, deployment guards, release scripts and the route inventory. About two minutes.
+  The slower suites are paused in full-checks.yml (docs/37_PAUSED_CHECKS.md).
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v5
+      with:
+        version: 12.6.0
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 22
+        cache: pnpm
+    - name: Install
+      shell: bash
+      run: pnpm install --frozen-lockfile
+    - name: Versions and types
+      shell: bash
+      run: |
+        pnpm version:check
+        pnpm db:generate
+        pnpm --filter @ensemble/shared-types typecheck
+        pnpm --filter @ensemble/hub-api typecheck
+        pnpm --filter @ensemble/hub-web typecheck
+        pnpm --filter ensemblework typecheck
+    - name: CLI channel boundaries
+      shell: bash
+      run: |
+        pnpm --filter ensemblework exec node --import tsx --test src/testing-channel.test.ts src/paths.test.ts src/auth-flow.test.ts src/editors.test.ts src/launcher-update-services.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/remote/client-channel.test.ts
+        node --test scripts/testing-cli.test.mjs
+    - name: Focused web and API regressions
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx lib/session-cookie.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/routes/page-boards.integration.test.ts src/routes/cookie-namespace.integration.test.ts src/lib/production.test.ts
+    - name: Deployment guards, release scripts and route inventory
+      shell: bash
+      run: |
+        node --test infra/deploy/testing/deploy.test.mjs
+        node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs scripts/desktop-targets.test.mjs
+        pnpm --filter @ensemble/hub-api route:inventory:check
