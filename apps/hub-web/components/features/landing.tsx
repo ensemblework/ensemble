@@ -213,13 +213,6 @@ function SkillsPreview() {
   return (
     <div>
       <Head title="Skill library" description="Review the agent's guidelines and reuse them on the next job." />
-      <div className="mb-4 flex items-start gap-3 rounded-xl bg-panel px-4 py-3">
-        <Sparkles size={16} className="mt-0.5 text-accent" />
-        <div>
-          <div className="text-[15px] font-semibold">Improve skills from my work</div>
-          <div className="text-[12.5px] text-muted">Coming soon. Nothing is queued yet.</div>
-        </div>
-      </div>
       <div className="grid grid-cols-[240px_minmax(0,1fr)] gap-4">
         <div>
           <div className="mb-2 flex items-center gap-2 rounded-md bg-panel px-2 py-1.5 text-[13px] text-faint">

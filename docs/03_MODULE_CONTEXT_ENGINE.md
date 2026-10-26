@@ -226,6 +226,8 @@ Adapters normalize to `MeetingRecord`; `meetings/ingest.ts` stores the transcrip
 
 `routes/context.ts`, `context/people-view.ts`, `people/identity.ts` and `projects/links.ts` provide the views and relationships. User corrections and hiding a tab never start a provider fetch. Profile records have their own routes and types; not every record is a generic graph node.
 
+Project cards and graph entries open the same page-style component used by `/projects/[id]`, including editable title/summary/notes and the project's associated work ([02 §3.5](02_MODULE_INTERACTION_HUB_UI.md#35-context)). They do not use a separate project input form.
+
 ### 4.5 Changes and live views
 
 Writes publish scoped SSE invalidations for the affected UI data. The database is authoritative.

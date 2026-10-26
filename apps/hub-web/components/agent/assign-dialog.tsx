@@ -9,8 +9,9 @@ import { tierModelName } from "@/lib/included";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
-import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
-import { claudeFallback, computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, engineSandboxes, fitEngineChoice, modelFacts } from "@/lib/engine-models";
+import { computerName, folderPlace } from "@/lib/device-copy";
+import { claudeFallback, computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, engineSandboxes, fitEngineChoice } from "@/lib/engine-models";
+import { ModelLogo } from "../connectors/provider-logo";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
 import { useHostCode, useModuleState } from "@/lib/use-module";
@@ -67,7 +68,7 @@ function Segmented<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="inline-flex rounded-md border border-line bg-raised p-0.5">
+    <div className="inline-flex max-w-full flex-wrap rounded-md border border-line bg-raised p-0.5">
       {options.map((option) => (
         <button
           key={option.id}
@@ -91,7 +92,7 @@ function Label({ children, tip }: { children: React.ReactNode; tip?: string }) {
   return (
     <div className="mb-1.5 flex items-center gap-1.5 text-[12.5px] font-medium text-ink/90">
       {children}
-      {tip ? <InfoTip text={tip} /> : null}
+      {tip ? <InfoTip text={tip} label={typeof children === "string" ? `About ${children}` : "More information"} /> : null}
     </div>
   );
 }
@@ -102,20 +103,9 @@ function WithCode({ text }: { text: string }) {
 }
 
 const MODE_HELP: Record<Mode, string> = {
-  ask: "Asks before commands and file changes unless the folder is trusted. Outside the folder, a sandboxed run follows “Outside the work folder” below; anything more asks. Decision questions come to Needs me.",
-  review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
-  unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
-};
-
-const ENGINE_OPTION: Record<CodeEngine, string> = {
-  "claude-code": "Claude Code (your sign-in)",
-  codex: "Codex (your sign-in, CLI or ChatGPT app)",
-  "cursor-agent": "Cursor agent (your sign-in)",
-  "copilot-cli": "GitHub Copilot (your sign-in)",
-  "grok-cli": "Grok Build (your sign-in)",
-  opencode: "OpenCode (your sign-in)",
-  "gemini-cli": "Gemini CLI (your Google sign-in)",
-  antigravity: "Antigravity (your Google sign-in)",
+  ask: "Asks before commands and edits unless the folder is trusted. Decisions appear in Needs me.",
+  review: "Runs commands and edits; asks you about decisions. Requires a trusted folder.",
+  unattended: "Runs without waiting and chooses recommended answers. Requires a trusted folder.",
 };
 
 /** What each agent is called where it is signed in, and the command that signs it in. */
@@ -130,7 +120,7 @@ const ENGINE_SIGN_IN: Record<CodeEngine, { program: string; login: string; short
   antigravity: { program: "Antigravity", login: "Sign in under Settings → Models", short: "Antigravity" },
 };
 
-const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
+const OUTSIDE_HELP = "Read only: reads other folders, asks before writing. Read and write: may change them. No access: stays in the work folder. Keys and browser data stay private.";
 
 /** Outside the work folder, for this sandboxed run. */
 function OutsideFolder({ value, onChange }: { value: "none" | "read" | "read-write"; onChange: (value: "none" | "read" | "read-write") => void }) {
@@ -767,23 +757,6 @@ export function AssignDialog({
   };
   const attentionProps = (field: string) => ({ "data-assign-field": field, "data-attention": attention === field ? "true" : undefined });
 
-  const summary = useMemo(() => {
-    if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
-    const where = place === "folder" ? (selectedDevice ? `${folderLabel || "a folder"} on ${selectedDevice.name}` : "your folder") : place === "continue" ? "the earlier task's folder" : "its own checkout";
-    const git = prOn ? `may commit, then a pull request into ${pullRequest.base.trim() || "the default branch"}` : delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit, no push" : "no git limits";
-    const asks = (prOn || delivery !== "local") && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
-    const modeLabel = mode === "review" ? " · Review only" : mode === "unattended" ? " · Run unattended" : "";
-    const box = selectedDevice
-      ? `On ${selectedDevice.name}${deviceSandbox?.osSandbox === false ? ", no sandbox" : sandbox ? ", sandboxed" : ", unsandboxed"}`
-      : !osSandbox
-        ? "No sandbox here"
-        : sandbox
-          ? "Sandboxed"
-          : "Unsandboxed";
-    const who = engine === "ensemble" ? "" : `${ENGINE_LABELS[engine]} · `;
-    return `${who}${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
-  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox, prOn, pullRequest]);
-
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
   const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
 
@@ -844,8 +817,8 @@ export function AssignDialog({
 
         <div className="grid grid-cols-2 gap-2">
           {([
-            { id: "research", icon: FileText, title: "Research & writing", text: "Searches papers and the web. Writes the result into the task page." },
-            { id: "code", icon: Code2, title: "Code on your computer", text: "Works in a folder: clone, run, fix, test, and commit if you allow it." },
+            { id: "research", icon: FileText, title: "Research & writing", text: "Web, papers & documents" },
+            { id: "code", icon: Code2, title: "Code", text: "Edit, test & commit" },
           ] as const).map((option) => (
             <button
               key={option.id}
@@ -878,7 +851,7 @@ export function AssignDialog({
               <button key={device.id} type="button" onClick={() => { setRunOn(device.id); setFolderLabel(""); }} className={cx("flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors", runOn === device.id ? "border-accent bg-[var(--accent-soft)]" : "border-line bg-raised hover:border-line-strong")}>
                 <Monitor size={13} className="shrink-0 text-muted" />
                 <span className="min-w-0 flex-1 truncate font-medium">{device.name}</span>
-                <span className="shrink-0 text-[12px] text-muted">{device.lastSeenAt ? `last contact ${new Date(device.lastSeenAt).toLocaleString()}` : "Not seen yet"}</span>
+                <span className={cx("shrink-0 text-[12px]", device.online ? "text-ok" : "text-muted")} title={device.lastSeenAt ? `Last contact ${new Date(device.lastSeenAt).toLocaleString()}` : undefined}>{device.online ? "Online" : "Offline"}</span>
               </button>
             ))}
             {!serverRunner && !(computers.data?.devices.length) ? <div className="text-[12.5px] text-muted">Add a computer with the Ensemble CLI in Settings → Devices, or pair the desktop app. Code tasks run there.</div> : null}
@@ -893,7 +866,7 @@ export function AssignDialog({
 
         {kind === "code" ? (
           <div>
-            <Label tip="Ensemble's agent calls a model with your key. Claude Code, Codex, Cursor and GitHub Copilot run your own copy on the computer, signed in with your own account (Codex from the CLI or the ChatGPT app, Cursor from its `cursor-agent`, GitHub Copilot from its `copilot` CLI); Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and their questions come to Needs me. In its own app opens the task in the Claude app, Codex, Cursor or VS Code for you to send.">
+            <Label tip="Use Ensemble's model or an agent signed in on your computer. Questions appear in Needs me.">
               Who does the work
             </Label>
             <select
@@ -914,10 +887,10 @@ export function AssignDialog({
                 setEngine(value);
               }}
             >
-              <option value="ensemble">Ensemble agent (a model with your key)</option>
+              <option value="ensemble">Ensemble agent</option>
               {CODE_ENGINES.map((id) => (
                 <option key={id} value={id}>
-                  {ENGINE_OPTION[id]}
+                  {ENGINE_LABELS[id]}
                 </option>
               ))}
               {!selectedDevice && apps.length ? <option value="app">In its own app or a terminal</option> : null}
@@ -976,13 +949,13 @@ export function AssignDialog({
               ) : (
                 <input aria-label={`${ENGINE_SIGN_IN[codeEngine].short} model`} value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABELS[codeEngine]} default`} className="field w-full font-mono text-[12.5px]" />
               )}
-              {modelFacts(agentModel.model) ? <div className="mt-1 text-[12px] text-muted" data-testid="engine-model-facts">{modelFacts(agentModel.model)}</div> : null}
+              {agentModel.model ? <div className="mt-1 flex items-center gap-1.5 text-[12px] text-muted" data-testid="engine-model-facts"><ModelLogo model={agentModel.model.id} provider={codeEngine} />{agentModel.model.cost}</div> : null}
             </div>
             {agentModel.efforts.length || agentModel.contexts.length ? (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {agentModel.efforts.length ? (
                   <div>
-                    <Label tip={`The thinking levels ${ENGINE_LABELS[codeEngine]} lists for this model. Default uses the model's own level.`}>Thinking</Label>
+                    <Label tip="Low: faster, less reasoning. High: deeper reasoning, slower.">Thinking</Label>
                     <select aria-label={`${ENGINE_SIGN_IN[codeEngine].short} thinking`} value={(agentModel.efforts as string[]).includes(effort) ? effort : "default"} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
                       <option value="default">Default{agentModel.defaultEffort ? ` (${effortName(agentModel.defaultEffort)})` : ""}</option>
                       {agentModel.efforts.map((level) => (
@@ -995,7 +968,7 @@ export function AssignDialog({
                 ) : null}
                 {agentModel.contexts.length ? (
                   <div>
-                    <Label tip="How much of the work the model can hold at once. Standard is the model's usual size.">Context window</Label>
+                    <Label tip="Standard handles everyday tasks. Long fits more files and conversation, and may cost more.">Context window</Label>
                     <select aria-label="Context window" value={context ?? "default"} onChange={(event) => setContext(event.target.value === "long_context" ? "long_context" : undefined)} className="field w-full">
                       {agentModel.contexts.map((row) => (
                         <option key={row.id} value={row.id}>
@@ -1068,7 +1041,7 @@ export function AssignDialog({
             </select>
           </div>
           <div>
-            <Label tip="The levels this model takes, as its provider lists or documents them. Default uses the tier's level in Settings → Models, or the model's own default for a model picked here.">Thinking</Label>
+            <Label tip="Low: faster, less reasoning. High: deeper reasoning, slower.">Thinking</Label>
             <ThinkingPicker
               label="Thinking"
               provider={model ? provider : (tier?.provider ?? "")}
@@ -1117,7 +1090,6 @@ export function AssignDialog({
                         <option key={path} value={path} />
                       ))}
                     </datalist>
-                    <div className="mt-1 text-[12px] text-muted">{freshCloneHint(selectedDevice?.name, board.data?.root)}</div>
                   </>
                 ) : place === "continue" ? (
                   <>
@@ -1143,13 +1115,7 @@ export function AssignDialog({
                         </option>
                       ))}
                     </select>
-                    <div className="mt-1 text-[12px] text-muted">
-                      {checkouts.isError
-                        ? (checkouts.error as Error).message
-                        : selectedDevice
-                          ? `Same folder on ${computerName(selectedDevice.name)}, uncommitted work included. Chain steps like change → analyse → commit; each waits for the one before. Only tasks that ran there are listed.`
-                          : "Same folder, uncommitted work included. Chain steps like change → analyse → commit; each waits for the one before."}
-                    </div>
+                    {checkouts.isError ? <p role="alert" className="mt-1 text-[12px] text-danger">{checkouts.error.message}</p> : null}
                   </>
                 ) : selectedDevice ? (
                   <>
@@ -1159,11 +1125,7 @@ export function AssignDialog({
                         <option key={label} value={label}>{label}{folderKinds[label] === "repo" ? " · repository" : ""}</option>
                       ))}
                     </select>
-                    <div className="mt-1 text-[12px] text-muted">
-                      {selectedDevice.folders.length
-                        ? `Only names ${computerName(selectedDevice?.name)} already shared (\`ensemble folders add\`). A path typed here is refused.`
-                        : `To work in a folder there, share it on ${computerName(selectedDevice?.name)} with \`ensemble folders add <path>\`. Or pick “Its own checkout” above.`}
-                    </div>
+                    {!selectedDevice.folders.length ? <p className="mt-1 text-[12px] text-muted">Share a folder with <code>ensemble folders add &lt;path&gt;</code>, or choose a fresh checkout.</p> : null}
                   </>
                 ) : (
                   <>
@@ -1187,9 +1149,7 @@ export function AssignDialog({
                       <div className={cx("mt-1 flex items-center gap-1 text-[12px]", folderCheck.ok ? "text-ok" : "text-danger")}>
                         {folderCheck.ok ? <Check size={12} /> : <X size={12} />} {folderCheck.text}
                       </div>
-                    ) : (
-                      <div className="mt-1 text-[12px] text-muted">Worked in place, nothing cloned. The agent cannot leave this folder. System folders, your home folder and Ensemble itself are refused.</div>
-                    )}
+                    ) : null}
                   </>
                 )}
               </div>
@@ -1239,7 +1199,7 @@ export function AssignDialog({
                 )}
               </div>
               <div>
-                <Label tip="Local only and Commit are limits you choose. No limits: the agent commits, pushes any branch and opens or merges pull requests as the task asks, with this computer's git and GitHub sign-in; in Ask mode these wait for you unless the folder is trusted. Pull request: when the run ends, Ensemble pushes its branch, opens the pull request into the branch you name (empty: the default branch) and merges it as you choose.">Git permissions</Label>
+                <Label tip="Local only: no commits. Commit: no push. No limits: commit, push and manage PRs. Pull request: open a PR when the run ends.">Git permissions</Label>
                 <Segmented
                   value={prOn ? "pr" : delivery}
                   onChange={(value) => {
@@ -1255,7 +1215,7 @@ export function AssignDialog({
                 {prOn || delivery !== "local" ? (
                   <label className={cx("mt-2 flex items-center gap-2 text-[12.5px]", mode === "unattended" ? "text-faint" : "text-muted")} title={mode === "unattended" ? "Nobody approves in an unattended run." : undefined}>
                     <input type="checkbox" checked={askFirst && mode !== "unattended"} disabled={mode === "unattended"} onChange={(event) => setAskFirst(event.target.checked)} />
-                    Ask me on Needs me before each commit
+                    Ask before each commit
                   </label>
                 ) : null}
               </div>
@@ -1296,7 +1256,7 @@ export function AssignDialog({
 
             <div className="space-y-2 rounded-lg border border-line bg-raised p-3" {...attentionProps("mode")}>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium">Mode</span>
+                <span className="flex items-center gap-1.5 font-medium">Mode <InfoTip text={MODE_HELP[mode]} label="About run modes" /></span>
                 <Segmented
                   value={mode}
                   onChange={setMode}
@@ -1306,10 +1266,6 @@ export function AssignDialog({
                     { id: "unattended", label: "Run unattended", disabled: !folderTrusted || (askOnly && !selectedDevice), title: !folderTrusted ? trustTip : askOnly && !selectedDevice ? "Run unattended needs an OS sandbox." : undefined },
                   ]}
                 />
-              </div>
-              <div className="text-[12px] text-muted" data-testid="assign-mode-help">
-                {MODE_HELP[mode]}
-                {selectedDevice && mode !== "ask" ? ` ${selectedDevice.name} has to trust the folder; if it does not, the run asks you to trust it first.` : ""}
               </div>
               {selectedDevice ? (
                 <>
@@ -1340,13 +1296,6 @@ export function AssignDialog({
                     ) : (
                       <span className="text-[12px] text-muted">On ({selectedDevice.name} decides)</span>
                     )}
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Lock size={14} className="text-muted" />
-                      <span className="font-medium">Use my git sign-in</span>
-                    </div>
-                    <span className="text-[12px] text-muted">Not yet for tasks on a computer</span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="pl-[22px] font-medium">Internet access</span>
@@ -1479,7 +1428,6 @@ export function AssignDialog({
 
         <div className="flex items-center gap-3 border-t border-line pt-3">
           <div className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
-            <div className="truncate">{summary}</div>
             {(appMode ? handoffBlocker : blocker) ? (
               <div className="mt-0.5 flex items-start gap-1 text-warn" role="status" data-assign-blocker>
                 <AlertTriangle size={12} className="mt-[2px] shrink-0" aria-hidden />
@@ -1488,12 +1436,12 @@ export function AssignDialog({
             ) : (
               <div>
                 {selectedDevice
-                  ? `Runs on ${selectedDevice.name}, not on the server. It waits there until Ensemble is running.`
+                  ? null
                   : board.data?.paused
                     ? "The agent is paused. It will queue until you resume."
                     : startsNow
-                      ? `Starts now · up to ${slots} run at once`
-                      : `Queued behind ${ahead} · up to ${slots} run at once`}
+                      ? "Starts now"
+                      : `Queued behind ${ahead}`}
               </div>
             )}
           </div>

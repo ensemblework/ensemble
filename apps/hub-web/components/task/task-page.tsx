@@ -13,6 +13,7 @@ import {
   FolderKanban,
   Gauge,
   MessageSquare,
+  MoreHorizontal,
   Pin,
   PinOff,
   Tag as TagIcon,
@@ -106,9 +107,10 @@ function ValueButton({ onClick, empty, children }: { onClick: () => void; empty?
       aria-labelledby={label ? `${label} ${id}` : undefined}
       type="button"
       onClick={onClick}
-      className={cx("row-tile -mx-1.5 flex items-center gap-1.5 rounded px-1.5 py-0.5", empty && "text-faint")}
+      title={typeof children === "string" ? children : undefined}
+      className={cx("row-tile inline-flex min-w-0 max-w-full items-center gap-1.5 rounded px-1.5 py-0.5", empty && "text-faint")}
     >
-      {children}
+      <span className="min-w-0 truncate">{children}</span>
     </button>
   );
 }
@@ -205,6 +207,8 @@ export function TaskPage({
       setPropsState(propertiesBusy.current ? "saving" : "saved");
       void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["task", taskId] });
+      void client.invalidateQueries({ queryKey: ["desk-live"] });
+      void client.invalidateQueries({ queryKey: ["home"] });
     },
   });
 
@@ -390,35 +394,22 @@ export function TaskPage({
           <PagePeople kind="task" id={taskId} />
           {!shared && !access.guest ? <><button type="button" className="icon-btn" title="Version history" aria-label="Version history" onClick={() => { void (async () => { if (titleSave.current) await titleSave.current; await sync.flush(); setHistoryOpen(true); })().catch((error: Error) => toast(error.message, { tone: "error" })); }}><History size={14} /></button><PageHistory kind="task" id={taskId} open={historyOpen} onClose={() => setHistoryOpen(false)} /></> : null}
           {shared ? <span className="whitespace-nowrap">{canEdit ? "Shared with you · can edit" : "Shared with you · view only"}</span> : !canEdit ? <span className="whitespace-nowrap">View only</span> : null}
-          {canEditProperties ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
+          {canEditProperties && propsState === "saving" ? <span role="status">Saving…</span> : null}
           {shared || !canEdit ? null : (
           <>
-          <PageBoardPicker kind="task" id={taskId} />
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => update.mutate({ todayFocus: pinned ? "auto" : "keep" })}
-          >
-            {pinned ? <PinOff size={13} /> : <Pin size={13} />}
-            {pinned ? "Unpin from Today" : "Pin to Today"}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            aria-label="Comment on this page"
-            onClick={() => window.dispatchEvent(new CustomEvent("ensemble:page-comment"))}
-          >
-            <MessageSquare size={13} />
-            Comment
-          </button>
-          {!record.description ? <button type="button" className="btn-ghost" onClick={() => setEditingDescription(true)}>Add description</button> : null}
-          <MakeDiagramButton text={taskDiagramPrompt(taskId, record.title)} />
+          <Popover align="right" trigger={(open, toggle) => <button type="button" className="icon-btn" aria-label="More task actions" aria-expanded={open} onClick={toggle}><MoreHorizontal size={16} /></button>}>
+            {close => <>
+              <MenuItem onClick={() => { close(); update.mutate({ todayFocus: pinned ? "auto" : "keep" }); }}>{pinned ? <PinOff size={13} /> : <Pin size={13} />}{pinned ? "Unpin from Today" : "Pin to Today"}</MenuItem>
+              <MenuItem onClick={() => { close(); window.dispatchEvent(new CustomEvent("ensemble:page-comment")); }}><MessageSquare size={13} />Comment</MenuItem>
+              {!record.description ? <MenuItem onClick={() => { close(); setEditingDescription(true); }}>Add description</MenuItem> : null}
+              <div className="px-2 py-1"><PageBoardPicker kind="task" id={taskId} /></div>
+              <div className="px-2 py-1" onClick={close}><MakeDiagramButton text={taskDiagramPrompt(taskId, record.title)} /></div>
+              <MenuItem disabled={remove.isPending} onClick={() => { close(); remove.mutate(); }}><Trash2 size={13} />Move to Trash</MenuItem>
+            </>}
+          </Popover>
           <span className="inline-flex items-center gap-2 whitespace-nowrap">
             <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
               <FileText size={13} /> Convert to page
-            </button>
-            <button type="button" className="icon-btn" title="Delete" onClick={() => remove.mutate()}>
-              <Trash2 size={14} />
             </button>
           </span>
           </>

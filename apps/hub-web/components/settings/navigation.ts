@@ -2,7 +2,7 @@ import type { SettingsTab } from "./url-state";
 
 export type SettingsDestination = { id: string; tab: SettingsTab; section: string; heading?: string; label: string; target: string; keywords: string; ownerOnly?: boolean; dialog?: "keys" | "changes" };
 const groups: Array<[SettingsTab, string, string, Array<string | [string, string, string?]>]> = [
-  ["account", "account", "Account", ["Profile", ["Sign out", "logout log out signout"], ["Full name", "name identity"], ["Gender", "identity optional"], ["Profession", "job role occupation"], "Organization", "How did you hear about Ensemble?", ["Change password", "add password security login", "Change password"], ["Linked login methods", "login google github microsoft oauth authentication"], "Export account data (JSON)", "Delete account"]],
+  ["account", "account", "Account", ["Profile", ["Sign out", "logout log out signout"], ["Full name", "name identity"], ["Gender", "identity optional"], ["Profession", "job role occupation"], "Organization", "How did you hear about Ensemble?", ["Change password", "add password security login", "Change password"], ["Linked login methods", "login google github microsoft oauth authentication"], "Export account data (JSON)"]],
   ["account", "about", "About Ensemble", [["About Ensemble", "version release update desktop web CLI"], "Check for updates"]],
   ["account", "avatar", "Avatar", [["Avatar", "profile picture initials face photo"], "Use initials"]],
   ["account", "you", "Scheduling and confirmations", ["Email", ["Time zone", "timezone scheduling local time"]]],
@@ -37,6 +37,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["data", "failed", "Updates needing attention", [["Updates needing attention", "failed jobs retry errors background jobs sync"]]],
   ["data", "deleted", "Deleted items", [["Deleted items", "restore trash retention"]]],
   ["data", "danger", "Delete my data", [["Delete my data", "erase account data deletion scope"]]],
+  ["data", "danger", "Delete account", [["Delete account", "permanently delete hosted account revoke devices"]]],
 ];
 
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -53,6 +54,7 @@ for (const tier of ["Low model", "Medium model", "High model", "Max model"]) {
 }
 for (const label of ["Code", "Workspace", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}`, ownerOnly:true });
 export const SETTINGS_DESTINATION_BY_ID = new Map(SETTINGS_DESTINATIONS.map((row) => [row.id, row]));
+SETTINGS_DESTINATION_BY_ID.set("jump-account-delete-account", SETTINGS_DESTINATION_BY_ID.get("jump-danger-delete-account")!);
 
 export function settingsDestinationHref(row: SettingsDestination): string {
   return `/settings?tab=${row.tab}${row.dialog ? `&dialog=${row.dialog}` : `#${row.id}`}`;

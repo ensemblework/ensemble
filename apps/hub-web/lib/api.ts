@@ -287,6 +287,19 @@ export type TaskRecord = {
 /** The file a page was converted from. */
 export type PageSourceFile = NonNullable<TaskPageContent["sourceFile"]>;
 
+export type ProjectDetail = {
+  id: string;
+  name: string;
+  summary: string;
+  notes: string;
+  status: "active" | "done";
+  people: Array<{ person: { id: string; name: string; email: string | null } }>;
+  repoLinks: Array<{ repo: { id: string; fullName: string; url: string | null } }>;
+  deliverables: Array<{ id: string; title: string; status: string; due: string | null }>;
+  tasks: Array<{ id: string; title: string; status: TaskStatus; priority: Priority }>;
+  meetingNotes: Array<{ id: string; title: string; askedAt: string }>;
+};
+
 const collabPath = (kind: "page" | "task", id: string) => (kind === "page" ? `/api/pages/${id}/collab` : `/api/tasks/${id}/page/collab`);
 
 export type PageRecord = {
@@ -1368,6 +1381,7 @@ export const api = bindClient({
   patchPerson: (id: string, data: Record<string, unknown>) => patch(`/api/people/${id}`, data),
   deletePerson: (id: string) => del(`/api/people/${id}`),
   projects: () => get<{ projects: ProjectRecord[] }>("/api/projects"),
+  project: (id: string) => get<{ project: ProjectDetail }>(`/api/projects/${id}`),
   createProject: (data: { name: string; summary?: string }) => post<{ project: { id: string } }>("/api/projects", data),
   patchProject: (id: string, data: Record<string, unknown>) => patch(`/api/projects/${id}`, data),
   deleteProject: (id: string) => del(`/api/projects/${id}`),
@@ -1972,6 +1986,7 @@ export type OnboardingTemplateCard = {
 
 export type DeskLive = {
   today: string;
+  pinnedTasks?: Array<{ id: string; title: string }>;
   tasks: Array<{
     id: string;
     title: string;

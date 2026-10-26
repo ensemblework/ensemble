@@ -81,6 +81,8 @@ Included AI is separate: `included/budget.ts` reserves and settles each account'
 
 ## 6. Data erasure
 
+Hosted account deletion is in Settings → Data → Danger zone, not Account. Its button opens a confirmation with the exact `DELETE` phrase and password, or the recent-sign-in requirement for social accounts. It retains the API's active-run checks. Metrics' general reporting explanation is available from About usage rather than a persistent paragraph.
+
 Settings → Data offers erasure scopes through `lib/workspace-data.ts`, driven by current Prisma metadata. **Everything** removes workspace content, metrics, baselines, audit history and plot dataset files, and keeps authentication, devices, connector and model configuration, settings and monthly credit consumption; the ledger keeps only a content-free deletion receipt. Deletion and receipt commit together under the shared `FOR NO KEY UPDATE` user lock. The web client sends the request straight to the API, not through the web rewrite proxy. Active jobs block erasure with a 409. The Danger zone asks for a scope, the typed phrase `delete everything` or `delete people and app information` (paste and drop disabled), then a confirmation dialog; the server checks the exact phrase. Account deletion is a separate, broader action.
 
 `GET /api/metrics/summary` first runs `repairErasedUsage`: once per Everything receipt (tracked in the `hub.usage-erasure-repair` preference) it preserves monthly credit charges, then removes metric events and baselines at or before that receipt. Later usage stays.

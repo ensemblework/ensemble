@@ -137,10 +137,71 @@ export function Spinner({ size = 14, active = true }: { size?: number; active?: 
   return <span data-motion-slot="control.spinner" data-state="running" data-motion-loading="1" aria-hidden><BrandMorph size={size} kind="beacon" state="loop" /></span>;
 }
 
-export function InfoTip({ text }: { text: string }) {
+export function InfoTip({ text, label = "More information" }: { text: React.ReactNode; label?: string }) {
+  const id = useId();
+  const owner = useContext(ModalScope);
+  const z = useLayerZ(130);
+  const anchor = useRef<HTMLSpanElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
+  const keep = () => { clearTimeout(timer.current); setOpen(true); };
+  const leave = () => { timer.current = setTimeout(() => setOpen(false), 120); };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!anchor.current?.contains(event.target as Node) && !panel.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [open]);
+  useLayoutEffect(() => {
+    if (!open) { setBox(null); return; }
+    const place = () => {
+      if (!anchor.current || !panel.current) return;
+      const next = placeAnchoredPanel({
+        anchor: anchor.current.getBoundingClientRect(), panelWidth: 300,
+        panelHeight: panel.current.scrollHeight,
+        viewport: { width: window.innerWidth, height: window.innerHeight }, gap: 6,
+      });
+      setBox({ left: next.left, top: next.top, width: next.width, maxHeight: next.maxHeight });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
   return (
-    <span title={text} className="inline-flex cursor-help text-faint hover:text-muted">
-      <Info size={13} />
+    <span ref={anchor} className="inline-flex shrink-0 align-middle" onMouseEnter={keep} onMouseLeave={leave}>
+      <button type="button" className="inline-flex size-6 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-ink"
+        aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
+        onClick={keep}
+        onFocus={keep}
+        onBlur={() => setOpen(false)}>
+        <Info size={14} />
+      </button>
+      {open && typeof document !== "undefined" ? createPortal(
+        <div ref={panel} id={id} role="tooltip" data-modal-owner={owner} onMouseEnter={keep} onMouseLeave={leave}
+          className="rounded-lg border border-line-strong bg-raised px-3 py-2 text-[12.5px] font-normal leading-5 text-muted shadow-pop [overflow-wrap:anywhere]"
+          style={{ position: "fixed", zIndex: z, ...box, width: box?.width ?? 300, visibility: box ? "visible" : "hidden", overflowY: "auto" }}>
+          {text}
+        </div>, document.body,
+      ) : null}
     </span>
   );
 }
@@ -219,7 +280,7 @@ export function SectionCard({
   className,
 }: {
   title: string;
-  info?: string;
+  info?: React.ReactNode;
   description?: React.ReactNode;
   actions?: React.ReactNode;
   children?: React.ReactNode;
@@ -428,7 +489,7 @@ export function Popover({
     ref.current?.querySelector<HTMLElement>(POPOVER_FOCUSABLE)?.focus({ preventScroll: true });
   }, [open]);
   return (
-    <div ref={ref} className={cx("relative", fill ? "block w-full" : "inline-block", className)}>
+    <div ref={ref} className={cx("relative min-w-0 max-w-full", fill ? "block w-full" : "inline-block", className)}>
       {trigger(open, () => setOpen((value) => !value))}
       {open && typeof document !== "undefined"
         ? createPortal(
@@ -667,17 +728,19 @@ export function Range({
 export function SettingRow({
   title,
   description,
+  info,
   children,
 }: {
   title: React.ReactNode;
   description?: React.ReactNode;
+  info?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     // Wraps instead of squeezing: on a narrow screen the control drops below the text.
     <div data-setting-label={typeof title === "string" ? title : undefined} className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-3">
       <div className="min-w-0 max-w-[560px] flex-[1_1_15rem]">
-        <div className="text-[13.5px] font-medium">{title}</div>
+        <div className="flex items-center gap-1.5 text-[13.5px] font-medium">{title}{info ? <InfoTip text={info} /> : null}</div>
         {description ? <div className="mt-0.5 text-[12.5px] leading-[18px] text-muted">{description}</div> : null}
       </div>
       <div className="max-w-full shrink-0">{children}</div>

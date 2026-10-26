@@ -1,5 +1,6 @@
 "use client";
 import { useAssistantSurface } from "@/lib/assistant-surface";
+import { InfoTip } from "@/components/ui";
 
 import { Fragment } from "react";
 import dynamic from "next/dynamic";
@@ -233,8 +234,8 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             </div>
           ) : null}
           <h1 className="display">Context</h1>
-          <div className="sub">
-            {state === "populated" ? (
+          {state === "populated" ? <div className="sub">
+            {(
               deskId === "chambers" ? (
                 "Everyone and everything behind your 13 matters, grouped by matter."
               ) : deskId === "literature" ? (
@@ -242,12 +243,8 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
               ) : (
                 `A sample of ${desk.name}.`
               )
-            ) : !live.isFetched ? (
-              <span className="sub-skel sk" aria-hidden />
-            ) : (
-              "Connect the people, projects and work you choose to keep in Ensemble."
             )}
-          </div>
+          </div> : null}
         </div>
       </div>
       <div className="flex items-start gap-3"><div className="context-tabs min-w-0 flex-1" role="tablist" aria-label="Context sections">
@@ -264,8 +261,7 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             {label}
           </button>
         ))}
-      </div><CustomizeContext role={role} tabs={tabs} ready={prefs.isSuccess && shell.isSuccess}/></div>
-      <p className="mb-4 text-[13px] leading-5 text-muted" data-context-explanation>{CONTEXT_DESCRIPTIONS[active]}</p>
+      </div><InfoTip label={`About ${active}`} text={CONTEXT_DESCRIPTIONS[active]} /><CustomizeContext role={role} tabs={tabs} ready={prefs.isSuccess && shell.isSuccess}/></div>
       {tabKey(active) === "people" ? (
         <div data-lens-panel="people"><PeopleTab key={`${search}|${who}`} initialSearch={search} who={who} /></div>
       ) : tabKey(active) === "projects" ? (

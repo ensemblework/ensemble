@@ -172,7 +172,6 @@ export default function SettingsPage() {
         <div className="mx-auto w-full max-w-[1060px] px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           <PageHeader
             title="Settings"
-            description="Make Ensemble work your way: your account and spaces, the assistant, connected apps, shortcuts, and your data."
             actions={
               <span className="text-[12px] text-muted" aria-live="polite">
                 {saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}

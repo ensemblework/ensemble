@@ -63,6 +63,7 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   failed: "data",
   deleted: "data",
   danger: "data",
+  "jump-account-delete-account": "data",
 };
 
 /** Dialogs that can be opened from the address: /settings?tab=assistant&dialog=keys. */
@@ -92,7 +93,9 @@ export function parseSettingsLocation(search: string, hash: string): SettingsLoc
   const rawDialog = params.get("dialog");
   const dialog = DIALOGS.includes(rawDialog as SettingsDialog) ? (rawDialog as SettingsDialog) : null;
   const rawTab = params.get("tab");
-  const tab: SettingsTab = rawTab === "account" && anchor && SECTION_TAB[anchor] === "appearance"
+  const tab: SettingsTab = anchor === "jump-account-delete-account"
+    ? "data"
+    : rawTab === "account" && anchor && SECTION_TAB[anchor] === "appearance"
     ? "appearance"
     : isSettingsTab(rawTab)
     ? rawTab

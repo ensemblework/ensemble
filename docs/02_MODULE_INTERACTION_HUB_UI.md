@@ -38,6 +38,8 @@ Native desks store geometry in `desk.layout.<desk>` preferences; Context panels 
 
 Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears in focus. Snooze saves a date/time, not another task status. Private reminders: §14.
 
+Pin to Today is in the task's More menu. Open pinned tasks appear above every native desk, independent of its tiles, through `pinnedTasks` in `/api/desk/live`. Completed, deleted and currently snoozed tasks are excluded; pins are not lost when a task falls outside the recent-task window.
+
 ### 3.2 Board (Kanban)
 
 Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
@@ -56,6 +58,8 @@ Board settings rename/reorder columns and remove empty columns. A column with pa
 
 Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
 
+It is one queue, without overview counters or filter tabs. Empty sections are omitted; a fully empty queue shows All caught up. Failed queries keep an explicit retry.
+
 ### 3.4 Runs (Agent Timeline / Trace)
 
 Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
@@ -64,9 +68,11 @@ Run sheets show Results, Files and Traces, with resize/fullscreen. They keep mod
 
 Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
 
+Projects open the same `components/project/project-page.tsx` in a side peek or at `/projects/[id]`: page-style title, summary and notes, linked people/repos, deliverables, tasks, diagrams and meeting notes. It reuses `PageTitleField` and `HumanDescription`; project notes remain plain text, separate from standalone documents. Graph interaction help is behind its information icon.
+
 ### 3.6 Skills
 
-Skills edits each personal instruction body, its enablement and retained versions. Model previews are explicit. The `/morning-brief` editor uses the same skill versioning. Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
+Skills edits each personal instruction body, its enablement and retained versions. Evidence appears only when present. The page has no preview/scoring form or learning teaser. The `/morning-brief` editor uses the same skill versioning. Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
 
 ### 3.7 Workspace
 
@@ -86,13 +92,13 @@ Settings opens as a page or dialog with URL-addressable tabs (`components/settin
 
 | Tab | Controls |
 | --- | --- |
-| Account | Profile/avatar, login methods/password, profession-relevant Features, computer/account information, export/deletion and About |
+| Account | Profile/avatar, login methods/password, profession-relevant Features, computer/account information, export and About |
 | Appearance | Theme/palette, font, text scale, motion/reduced motion, sidebar/page-panel preferences |
 | Assistant | Allowed actions/write policy, default tier/persona, model profiles/effort, API keys, subscriptions, run profiles/orchestration and prompt transparency |
 | Connections | Connector catalog, suite-product grants, MCP servers/tools, paired computers and supported local integrations |
 | Notifications | In-app/platform notices, permission and quiet hours |
 | Shortcuts | Key bindings, conflict checks and reset |
-| Data | Retention, Trash, downloads and a Danger zone: erasure needs a scope-specific typed phrase (paste/drop disabled), then a separate final confirmation; credit consumption is kept |
+| Data | Retention, Trash, downloads and a Danger zone: scoped data erasure and hosted account deletion. Erasure needs a typed scope phrase and final confirmation; account deletion needs DELETE and password or recent sign-in. Credit consumption is kept |
 | Spaces / Sharing | Owned spaces, settings copy/sync, membership, contacts and outgoing access |
 
 Subcontrols depend on profile, local/hosted mode and permissions. `GET/PATCH /api/settings` takes partial patches, so one save never resets other settings. `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
@@ -115,11 +121,15 @@ Files lists uploaded originals and app content the person explicitly saved or im
 
 Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
 
+`InfoTip` opens bounded, portalled guidance on hover, focus or tap. Escape dismisses help before its containing dialog; a tap outside closes it. Routine explanations belong there rather than under every control; errors, security warnings and destructive-action confirmations stay visible. Workspace cards keep titles, compact status/priority/Git choices, computer/model and live progress or errors; full summaries belong to the task/run.
+
 Below 768 CSS pixels, Context tiles use full-width rows with a horizontally scrollable tab strip; record grids shrink to the available width. Workspace's active queues stack below 1024 pixels and recent history stacks below 768. Runs puts its actions below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code. Desktop panel preferences and saved tile sizes are unchanged.
 
 Phone form fields use at least 16 px text to avoid Safari zooming the page on focus.
 
 The local browser regression `e2e/mobile-layout.mjs` covers 320, 390, 640, 768, 1024 and 1440 pixel widths against the in-memory API fixture `apps/hub-api/scripts/mobile-ui-fixture.ts`. It can include Ensemble Node through `NODE_WEB`; it never targets a hosted account.
+
+`e2e/clean-surfaces.mjs` uses that fixture for help dismissal, compact task actions, persisted Today pins, project peek/full-page editing, blank-page creation and account-deletion guards on phones and desktop.
 
 Notices (`components/toast.tsx`) appear bottom centre and close after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar runs down over that time. Pointing at or focusing a notice pauses it, so Undo stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
 
@@ -212,13 +222,15 @@ The TipTap editor uses the shared page schema (`packages/shared-types/src/page-s
 
 Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning an owner does not run anything. Focus mode gives a reading-width document with save state and an exit control.
 
+Task More holds Pin to Today, Comment, Add description, diagram creation, board assignment and Trash. Convert to page remains visible. Only an in-progress property save needs a status label.
+
 ### Standalone notes
 
 A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` nests pages. Saves and renames lock the row and reject stale revisions, and refresh the saved search text. A note is not a task or project.
 
 Delete soft-deletes the note and its descendants, with Undo, after pending saves finish. Trash keeps content, mentions, discussions and history until purge. A link to a deleted page shows a read-only restore state; a missing or purged ID shows a missing-item screen. Shared and public views hide owner-only recovery controls.
 
-The page header's board picker assigns a standalone or task page to one custom board and column, moves it between boards, or removes the assignment (`components/pages/page-board-picker.tsx`). Membership is stored as `TaskPage.boardId`, `boardColumnId` and `boardOrder`, without rewriting saved content or editor revisions. Custom column moves do not change a task's agent status or runs.
+The page header's board picker (inside More for task pages) assigns a page to one custom board and column, moves it between boards, or removes the assignment (`components/pages/page-board-picker.tsx`). Membership is stored as `TaskPage.boardId`, `boardColumnId` and `boardOrder`, without rewriting saved content or editor revisions. Custom column moves do not change a task's agent status or runs.
 
 Choosing Ensemble board for a standalone note attaches the existing page to a new task and clears any custom-board assignment. Quick assign also uses that task conversion. Convert to page detaches the document and trashes the old task, retaining any custom-board membership. Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
 
@@ -228,7 +240,7 @@ Choosing Ensemble board for a standalone note attaches the existing page to a ne
 
 `pages/history.ts` coalesces checkpoints within five minutes and keeps at most 30. Restore first saves current work and reconciles an open live editor. Versions show their author when recorded. A stale restore fails with 409.
 
-Duplicate creates independent writing. Save as template snapshots the page for the owner's current profile in the space, at most 50 templates. Copies and templates omit discussions, shares and active AI bindings; static AI output becomes text. Embedded resources stay same-space references; source-file export associations are not copied. History, duplication and templates are owner-only.
+New page creates and opens a blank page immediately. More offers duplication and version history, without a template picker or Save as template action. Duplicate creates independent writing and omits discussions, shares and active AI bindings; static AI output becomes text. Embedded resources stay same-space references; source-file export associations are not copied. The owner-only template API and saved templates remain available to API clients, capped at 50 per profile and space.
 
 ### Blocks and mentions
 
