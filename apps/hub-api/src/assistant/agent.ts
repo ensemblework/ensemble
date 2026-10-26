@@ -17,7 +17,8 @@ import { SUBSCRIPTION_INFO } from "@ensemble/shared-types";
  * until something stops it, and the engineer pays for every turn.
  */
 import { hasFileParts } from "../runtime/content-parts.js";
-import { attachedNote, messageAttachments } from "./attachments.js";
+import { attachedListing, attachedNote, messageAttachments, turnFilesFor } from "./attachments.js";
+import { fileOriginal } from "../files/attached.js";
 import { keepRecentAttachments, readableParts, withPictures, type ContentPart } from "../files/model-input.js";
 import { documentsFor, filesRefused, imagesRefused, modelReadsImages, withoutFiles, withoutImages } from "../lib/vision.js";
 import type { FastifyInstance } from "fastify";
@@ -323,7 +324,15 @@ async function drive(
           },
         ]
       : []),
-    { role: "user", content: attached ? withPictures(`${args.message}\n\n${attached.text}`, attached.parts) : args.message },
+    {
+      role: "user",
+      // A person's own agent gets the files themselves through its CLI (runSubscriptionTurn below); the prompt names them.
+      content: !attached
+        ? args.message
+        : isSubscriptionProvider(args.provider) && attached.files.length
+          ? `${args.message}\n\n${attachedListing(attached.files, attached.missing)}`
+          : withPictures(`${args.message}\n\n${attached.text}`, attached.parts),
+    },
   ];
   if (contextRefs.length) args.emit({ type: "refs", refs: contextRefs });
 
@@ -384,6 +393,15 @@ async function drive(
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
         prompt: conversation.prompt,
+        ...(attached?.files.length
+          ? {
+              files: {
+                list: await turnFilesFor(app.prisma, attached.files, userId),
+                read: async (id: string) => (await fileOriginal(app.prisma, userId, id))?.bytes ?? null,
+                fallback: attached.text,
+              },
+            }
+          : {}),
         tools: toolSpecs(),
         maxTurns: MAX_COMPUTER_CALLS + 4,
         call,

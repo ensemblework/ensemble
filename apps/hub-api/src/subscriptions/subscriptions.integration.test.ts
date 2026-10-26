@@ -253,6 +253,39 @@ test("the files on a message reach a computer that takes them, only through that
   }
 });
 
+test("a chat message's attached file reaches the person's agent as the file itself, named in the prompt", async () => {
+  const person = await harness.asUser();
+  const { key, device } = await pairedComputer(person, "Studio Mac", { assistantTurns: 2, agents: [CLAUDE] });
+  const set = await person.inject({ method: "PATCH", url: "/api/settings", payload: { models: { medium: { provider: "claude-code", model: "haiku", effort: "default" } }, assistant: { defaultTier: "medium" } } });
+  assert.equal(set.statusCode, 200, set.body);
+  const notes = Buffer.from("The backup window is Sunday 02:00 UTC.", "utf8");
+  const upload = await person.inject({ method: "POST", url: "/api/documents", payload: { filename: "notes.md", mediaType: "text/markdown", dataBase64: notes.toString("base64"), summarize: false } });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const fileId = upload.json().file.id as string;
+
+  const seen: { spec?: { prompt: string; files?: Array<{ id: string; name: string; kind: string; text?: string }> }; bytes?: Buffer } = {};
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    seen.spec = (await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json().spec;
+    const file = await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}/files/${fileId}` });
+    assert.equal(file.statusCode, 200, file.body);
+    seen.bytes = Buffer.from(file.rawPayload);
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result: { text: "Sunday 02:00 UTC.", model: "claude-haiku-5-5", tokensIn: 1, tokensOut: 1, costUsd: null } } });
+  });
+  try {
+    const turn = await person.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "When is the backup window?", mentions: [{ kind: "file", id: fileId, label: "notes.md" }] } });
+    assert.equal(turn.statusCode, 200, turn.body);
+    assert.deepEqual(simulated.failures, []);
+    assert.deepEqual(seen.spec?.files?.map((file) => [file.id, file.name, file.kind]), [[fileId, "notes.md", "text"]]);
+    assert.match(seen.spec!.prompt, /These come with this message as files: “notes\.md”/);
+    assert.doesNotMatch(seen.spec!.prompt, /02:00/, "the prompt names the file; the agent reads the file");
+    assert.deepEqual(seen.bytes, notes, "the computer fetches the original bytes");
+  } finally {
+    simulated.stop();
+  }
+});
+
 test("the web lists the person's computers and their subscriptions, and asks a computer to check again or sign in", async () => {
   const person = await harness.asUser();
   const stranger = await harness.asUser();
