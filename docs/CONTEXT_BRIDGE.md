@@ -91,7 +91,7 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 
 A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the key's account and space ([28](28_ENSEMBLE_SPACES.md)), and module and sharing checks still apply.
 
-- **Files.** A `document` is a file's extracted text with its name, format and page count ([32](32_FILES.md)); a task or page also lists its files. Original bytes are never sent.
+- **Files.** A `document` is a file's name, format, size, page count and link in Ensemble; its extracted text and summary are not sent, and search excerpts for a file show its name ([32](32_FILES.md), `files/extracted-text-policy.ts`). A task or page also lists its files. Original bytes are never sent.
 - **Pages.** `apps/hub-api/src/pages/agent-context.ts` adds the source of diagrams embedded in task and standalone pages, with space ownership checks. For the bridge, page bodies are bounded at 15,000 characters and diagram source at 20,000, then paginated. Converted source documents appear in the page's file citations (`files/attached.ts`).
 - **Skills.** Only the current body is returned. Older `SkillVersion` bodies are not exposed, and disabled or deleted skills are left out of briefs ([04](04_MODULE_SKILL_FORGE.md)).
 - **Trust labels.** Mail, chat, GitHub text, calendar invites, approval previews and editor tool inputs are labelled `trust: "untrusted"`; skills are `trusted`. The brief repeats that retrieved text is reference material, not instructions.

@@ -2,7 +2,7 @@
 name: plots
 title: Plots and charts
 when: charts and plots from a file in Files, a dataset, a table in a page or numbers pasted in chat; bar, line, scatter, histogram, box, heatmap, pie and combo charts; changing an existing plot
-tools: hub_list_datasets, hub_get_dataset, hub_import_dataset, hub_list_plots, hub_get_plot, hub_create_plot, hub_update_plot, hub_list_files, hub_read_file, hub_manage_record
+tools: hub_list_datasets, hub_get_dataset, hub_import_dataset, hub_list_plots, hub_get_plot, hub_create_plot, hub_update_plot, hub_list_files, hub_view_file, hub_manage_record
 module: plots
 match: \b(plots?|charts?|graphs? of|bar (chart|graph|plot)|histograms?|scatter|line (chart|graph|plot)|pie|donut|heat ?map|box ?plot|violin|waterfall|visuali[sz]e|datasets?|trend)\b
 paths: /plots

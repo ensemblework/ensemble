@@ -79,12 +79,12 @@ def has_attachment_parts(content: Any) -> bool:
 def _anthropic_file_block(name: str, data_url: str) -> dict[str, Any]:
     match = _DATA_URL.match(data_url)
     mime = match.group(1).lower() if match else ""
-    if match and mime == "application/pdf":
-        return {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": match.group(2)}, "title": name}
     if match and _TEXT_MEDIA.match(mime):
         text = base64.b64decode(match.group(2)).decode("utf-8", errors="replace")
         return {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": text}, "title": name}
-    return {"type": "text", "text": f"[{name} could not be given to this model as a file.]"}
+    if match:
+        return {"type": "document", "source": {"type": "base64", "media_type": mime, "data": match.group(2)}, "title": name}
+    return {"type": "text", "text": f"[{name} could not be read from its data.]"}
 
 
 def text_of_parts(content: Any) -> str:

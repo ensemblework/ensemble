@@ -149,14 +149,16 @@ function contents(file: SavedTurnFile): string {
 }
 
 /**
- * A file the agent could not be given in its own form: named, with the reason. Ensemble's text of
- * it goes instead only when EXTRACTED_TEXT_TO_MODELS is on (files/extracted-text-policy.ts).
+ * A file delivered to the agent's computer that its message input cannot carry (putting it in the
+ * message would fail the whole turn): named, with where it is saved and why it is not inside the
+ * message. Ensemble's text of it goes with it only when EXTRACTED_TEXT_TO_MODELS is on
+ * (files/extracted-text-policy.ts).
  */
 export function notGiven(file: SavedTurnFile, why: string): string {
   if (EXTRACTED_TEXT_TO_MODELS && file.text?.trim()) {
-    return `File “${file.name}” (${formatLabel(file)}) could not be given to you in its own format (${why}), so this is Ensemble's text of it:\n\n${clip(file.text)}`;
+    return `File “${file.name}” (${formatLabel(file)}) could not go inside this message (${why}), so this is Ensemble's text of it:\n\n${clip(file.text)}`;
   }
-  return `File “${file.name}” (${formatLabel(file)}) is attached and saved in this turn's files/ folder, but it was not given to you: ${why}. Tell the person you could not open it rather than guess what it contains.`;
+  return `File “${file.name}” (${formatLabel(file)}) is attached: it is saved in this turn's files/ folder. It is not inside this message because ${why}. If you cannot open it, say so.`;
 }
 
 /** Claude Code's content blocks for the files (Anthropic's image and document blocks; nothing else is taken in a message). */
@@ -216,7 +218,7 @@ export function copilotFiles(files: SavedTurnFile[]): { attachments: string[]; s
     const ext = extname(file.path).toLowerCase();
     if (COPILOT_PICTURES.has(ext) || COPILOT_DOCUMENTS.has(ext)) attachments.push(file.path);
     else if (fileForm(file) === "text") sections.push(contents(file));
-    else sections.push(notGiven(file, `Copilot CLI's --attachment takes pictures (PNG, JPEG, GIF, WebP) and PDF, Word, PowerPoint, Excel, OpenDocument text and RTF files, not ${formatLabel(file)} files`));
+    else sections.push(notGiven(file, `Copilot CLI's --attachment takes pictures (PNG, JPEG, GIF, WebP) and PDF, Word, PowerPoint, Excel, OpenDocument text and RTF files, and any other kind (here ${formatLabel(file)}) fails the whole run`));
   }
   return { attachments, sections };
 }

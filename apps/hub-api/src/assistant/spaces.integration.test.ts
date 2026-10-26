@@ -191,7 +191,7 @@ test("every assistant tool stays inside the open space", async () => {
   }
 
   // The control: the same reads do find the other space's records when run inside it.
-  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_read_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections"]) {
+  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_view_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections"]) {
     assert.ok(seenThere.includes(name), `${name} finds the records inside their own space (saw: ${seenThere.join(", ")})`);
   }
   const unchecked = [...TOOLS.values()].filter((tool) => !SKIP.has(tool.name) && !checked.includes(tool.name)).map((tool) => `${tool.name}${tool.isWrite ? "(w)" : ""}`);
@@ -216,21 +216,22 @@ test("every assistant tool stays inside the open space", async () => {
   assert.equal((await db.plot.findUniqueOrThrow({ where: { id: ids.plot } })).title, `${MARK} chart`);
 });
 
-test("trashing a file through the assistant hides its text, and restoring brings it back", async () => {
+test("trashing a file through the assistant hides it, and restoring brings it back", async () => {
   const mira = await harness.asUser();
   await db.user.update({ where: { id: mira.id }, data: { moduleSet: MODULES } });
   const ctx = context(mira.id);
   const upload = await mira.inject({
     method: "POST",
     url: "/api/documents",
-    payload: { filename: "terms.txt", mediaType: "text/plain", dataBase64: Buffer.from("Quillfeather indemnity clause").toString("base64"), summarize: false },
+    payload: { filename: "quillfeather-terms.txt", mediaType: "text/plain", dataBase64: Buffer.from("Quillfeather indemnity clause").toString("base64"), summarize: false },
   });
   assert.equal(upload.statusCode, 201, upload.body);
   const fileId = (upload.json() as { file: { id: string } }).file.id;
-  const found = async () => JSON.stringify((await run(ctx, "hub_search_context", { query: "Quillfeather" })).data).includes("Quillfeather");
+  const found = async () => JSON.stringify((await run(ctx, "hub_list_files", { query: "quillfeather" })).data).includes(fileId);
   assert.equal(await found(), true);
+  assert.doesNotMatch(JSON.stringify((await run(ctx, "hub_search_context", { query: "Quillfeather" })).data), /indemnity/, "a file's extracted text is not read out (files/extracted-text-policy.ts)");
   await run(ctx, "hub_delete_entity", { kind: "document", id: fileId });
-  assert.equal(await found(), false, "a trashed file's text leaves search");
+  assert.equal(await found(), false, "a trashed file leaves the list");
   await run(ctx, "hub_restore_entity", { kind: "document", id: fileId });
-  assert.equal(await found(), true, "restoring the file brings its text back");
+  assert.equal(await found(), true, "restoring the file brings it back");
 });
