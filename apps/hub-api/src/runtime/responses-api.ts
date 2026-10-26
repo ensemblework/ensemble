@@ -10,7 +10,7 @@
  * (`supported_endpoints`), else what a refusal taught this process, else gpt-5 and o-series names go
  * to /responses first.
  */
-import { hasImageParts, responsesUserContent } from "./content-parts.js";
+import { hasAttachmentParts, responsesUserContent } from "./content-parts.js";
 import { ProviderError } from "./errors.js";
 import type { Json } from "./payload.js";
 
@@ -128,7 +128,7 @@ export function cleanItems(items: unknown[]): Json[] {
       continue;
     }
     const role = item.role;
-    if (role === "user" && hasImageParts(item.content)) {
+    if (role === "user" && hasAttachmentParts(item.content)) {
       out.push({ role, content: responsesUserContent(item.content) });
       continue;
     }

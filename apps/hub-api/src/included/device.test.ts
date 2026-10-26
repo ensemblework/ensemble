@@ -9,7 +9,7 @@ import test from "node:test";
 import { INCLUDED_CREDITS_USED, INCLUDED_LOCAL_ONLY } from "@ensemble/shared-types";
 import { completeText } from "../runtime/models.js";
 import { assertIncludedOpen } from "./budget.js";
-import { deviceCredits, deviceIncludedCatalogEntry, forgetDeviceIncluded, setDeviceLinkForTests } from "./device.js";
+import { deviceCredits, deviceIncludedCatalogEntry, deviceIncludedTurn, forgetDeviceIncluded, setDeviceLinkForTests } from "./device.js";
 import { IncludedLimitError } from "./errors.js";
 
 const RESETS = "2026-11-01T00:00:00.000Z";
@@ -80,6 +80,15 @@ test("connected: the server runs the call for this computer's account, with its 
   assert.deepEqual([turn.body?.model, turn.body?.purpose, turn.body?.jsonMode], ["gpt-5-mini", "Assistant", false]);
   assert.equal("userId" in (turn.body ?? {}), false, "the server knows the account from the token");
   assert.equal(seen.filter((row) => row.method === "GET").length, 1, "the status is held between reads");
+});
+
+test("connected: a Responses model's history goes once, as items, so pictures and files are not sent twice", async () => {
+  setDeviceLinkForTests(async () => ({ base: BASE, token: "ens_device_token" }));
+  const seen = server(() => json({ turn: { text: "Read.", model: "gpt-5-mini", tokensIn: 1, tokensOut: 1, credits: 0.1 } }));
+  const file = { type: "file", file: { filename: "memo.pdf", file_data: "data:application/pdf;base64,JVBERi0=" } };
+  await deviceIncludedTurn({}, "gpt-5-mini", [{ role: "user", content: [file] }], { items: [{ role: "user", content: [file] }], timeoutMs: 5_000 });
+  const body = seen.find((row) => row.method === "POST")!.body;
+  assert.deepEqual([body?.messages, body?.items], [[], [{ role: "user", content: [file] }]]);
 });
 
 test("connected: the server's refusals are this computer's, and a removed computer is local only again", async () => {

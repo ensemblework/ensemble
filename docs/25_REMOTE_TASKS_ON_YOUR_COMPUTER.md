@@ -54,7 +54,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output` | The computer's answers to relayed requests |
 | GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
 | GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
-| GET / POST | `/api/devices/self/assistant-turns/:id` and `/tool`, `/stream`, `/done` | Assistant turns on a subscription (§4.9) |
+| GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9) |
 | GET | `/api/devices/self/events` | Wake-up stream |
 
 `scope=device` is not an account token; device routes have their own allowlist and authentication. Pairing does not allow minting other tokens.
@@ -101,7 +101,9 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.9 Subscriptions and included models
 
-The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there. Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
+The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there (`capabilities.assistantTurns` 1 or more, `ASSISTANT_TURNS_MIN`). Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
+
+A computer that reports `assistantTurns: 2` (`ASSISTANT_TURN_FILES`) takes the files attached to the message: the turn's spec lists them (`files`), and the computer downloads each with `GET /api/devices/self/assistant-turns/:id/files/:fileId` (`assistantFile` in `remote/client.ts`, at most the listed size plus 64 KB, stopped with the turn). The route answers only the device the turn went to, only for a file on that turn's list (404 otherwise, or when the file is gone), and 410 once the turn ended; it sends the bytes with the file's media type, `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`. A computer that reports 1 gets no file list; Ensemble's text of the files follows the message instead. How each agent is given the files: [30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant).
 
 A paired desktop app or CLI calls included models through `/api/devices/self/included` and `/api/devices/self/included/turn`. The device token identifies the account; Azure credentials stay on the host, and usage counts against that account's credits and the global ceiling ([33](33_INCLUDED_AI.md)).
 

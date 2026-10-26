@@ -2,8 +2,9 @@
  * Assistant turns that Ensemble on the web hands to the person's paired computer (docs/25 §4.7):
  * the computer's agent does the thinking on the person's own subscription; the tools run here,
  * where the account's data is. The computer is told on its event stream (`assistant.turn {id}`),
- * reads the turn with its device token, calls tools, streams the reply text in small batches and
- * says when it is done. Turns live in this process's memory: the hosted API is one process.
+ * reads the turn with its device token, downloads the files attached to the person's message,
+ * calls tools, streams the reply text in small batches and says when it is done. Turns live in
+ * this process's memory: the hosted API is one process.
  */
 import { randomUUID } from "node:crypto";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
@@ -23,6 +24,8 @@ type Live = {
   deviceId: string;
   spec: AgentTurnSpec;
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
+  /** The bytes of one of `spec.files`, read as the person who asked. */
+  read: ((fileId: string) => Promise<Uint8Array | null>) | null;
   onDelta: (text: string) => void;
   picked: boolean;
   seq: number;
@@ -69,11 +72,14 @@ export function runOnComputer(input: {
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
   onDelta: (text: string) => void;
   signal: AbortSignal;
+  read?: (fileId: string) => Promise<Uint8Array | null>;
 }): Promise<AgentTurnResult> {
   const id = randomUUID();
-  // Tool calls arrive on the computer's own requests; they run as the person who asked, in their space.
+  // Tool calls and file reads arrive on the computer's own requests; they run as the person who asked, in their space.
   const scope = currentScope();
   const call = scope ? (name: string, args: unknown) => runInScope(scope, () => input.call(name, args)) : input.call;
+  const reader = input.read;
+  const read = reader ? (scope ? (fileId: string) => runInScope(scope, () => reader(fileId)) : reader) : null;
   return new Promise<AgentTurnResult>((resolve, reject) => {
     const timers: NodeJS.Timeout[] = [];
     const turn: Live = {
@@ -81,6 +87,7 @@ export function runOnComputer(input: {
       deviceId: input.device.id,
       spec: input.spec,
       call,
+      read,
       onDelta: input.onDelta,
       picked: false,
       seq: 0,

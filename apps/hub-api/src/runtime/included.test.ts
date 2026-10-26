@@ -75,6 +75,7 @@ const CLAUDE: IncludedModel = {
   relativeCost: 1,
   role: "everyday",
   images: true,
+  documents: true,
   offeredByDefault: true,
 };
 const ENV = ["AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY", "ENSEMBLE_INCLUDED_MODELS", "ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS"] as const;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { imagesRefused, IMAGES_REFUSED_NOTE, modelReadsImages, withoutImages } from "./vision.js";
+import { documentsFor, filesRefused, imagesRefused, IMAGES_REFUSED_NOTE, modelReadsImages, withoutFiles, withoutImages } from "./vision.js";
 
 test("included models read images as their catalog says", () => {
   assert.equal(modelReadsImages("ensemble", "gpt-6.1-sol"), true);
@@ -23,4 +23,24 @@ test("a refused picture is replaced by a plain note", () => {
   assert.equal(imagesRefused(new Error("messages.0.content.1.image.source.base64: image exceeds 5 MB maximum: 5592408 bytes > 5242880 bytes")), true);
   const messages = [{ role: "user", content: [{ type: "text", text: "Look" }, { type: "image_url", image_url: { url: "data:image/png;base64,AA" } }] }, { role: "user", content: "plain" }];
   assert.deepEqual(withoutImages(messages), [{ role: "user", content: [{ type: "text", text: "Look" }, { type: "text", text: IMAGES_REFUSED_NOTE }] }, messages[1]]);
+});
+
+test("documents go whole to models that read them: every included model but DeepSeek, Claude's PDFs and text, OpenAI's PDFs", () => {
+  const sol = documentsFor("ensemble", "gpt-6.1-sol");
+  for (const name of ["memo.pdf", "brief.docx", "deck.pptx", "sales.xlsx", "data.csv", "notes.md", "info.json", "main.py"]) assert.equal(sol(name), true, name);
+  for (const name of ["old.doc", "old.ppt", "old.xls", "plan.key", "chart.png", "call.mp3"]) assert.equal(sol(name), false, name);
+  assert.equal(documentsFor("ensemble", "deepseek-v4-flash")("memo.pdf"), false);
+  const claude = documentsFor("anthropic", "claude-sonnet-4-5");
+  assert.deepEqual(["memo.pdf", "notes.md", "brief.docx"].map(claude), [true, true, false]);
+  assert.equal(documentsFor("anthropic", "claude-3-haiku-20240307")("memo.pdf"), false);
+  const openai = documentsFor("openai", "gpt-4.1");
+  assert.deepEqual(["memo.pdf", "notes.md"].map(openai), [true, false]);
+  for (const [provider, model] of [["copilot", "gpt-4.1"], ["google", "gemini-3.5-flash"], ["claude-code", "claude-sonnet-4-5"], [null, "gpt-6.1-sol"]]) assert.equal(documentsFor(provider, model)("memo.pdf"), false, `${provider} ${model}`);
+});
+
+test("a refused file becomes a note that names the text tool", () => {
+  assert.equal(filesRefused(new Error("Invalid file data: 'input[0].content[1].file_data'. Expected a base64-encoded data URL with a valid file MIME type")), true);
+  assert.equal(filesRefused(new Error("The model is overloaded.")), false);
+  const messages = [{ role: "user", content: [{ type: "text", text: "Read" }, { type: "file", file: { filename: "memo.pdf", file_data: "data:application/pdf;base64,AA" } }] }];
+  assert.deepEqual(withoutFiles(messages, "hub_read_file")[0]!.content, [{ type: "text", text: "Read" }, { type: "text", text: "[The model could not open “memo.pdf” as a file. Read its text with hub_read_file.]" }]);
 });
