@@ -8,14 +8,15 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs } from "./agents.js";
+import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt } from "./agents.js";
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
 import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
-import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer } from "./turn.js";
+import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles } from "./turn.js";
+import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
   assert.deepEqual(parseClaudeStatus({ code: 0, stdout: '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}', stderr: "" }), { signedIn: true, plan: "max" });
@@ -382,4 +383,125 @@ test("Copilot context snapshots, invalid counts and billing units never become c
   output.line("not JSON");
   output.line(JSON.stringify({ type: "assistant.message", data: { content: "Ready." } }));
   assert.deepEqual(output.finish(), { text: "Ready.", model: null, tokensIn: null, tokensOut: null, costUsd: null });
+});
+
+const MB = 1024 * 1024;
+function saved(name: string, mediaType: string, kind: SavedTurnFile["kind"], data: Buffer | string, text?: string): SavedTurnFile {
+  const bytes = typeof data === "string" ? Buffer.from(data) : data;
+  return { id: name, name, mediaType, kind, size: bytes.byteLength, path: `/turn/files/${name}`, data: bytes, ...(text === undefined ? {} : { text }) };
+}
+const PICTURE = saved("chart.png", "image/png", "image", Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+const PDF = saved("brief.pdf", "application/pdf", "pdf", "%PDF-1.4 brief");
+const NOTES = saved("notes.md", "text/markdown", "text", "Backup window: Sunday 02:00–04:00 UTC");
+const SHEET = saved("sales.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "sheet", "PK\u0003\u0004", "Region\tUnits\nNorth\t1287");
+const DECK = saved("deck.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "slides", "PK\u0003\u0004");
+
+test("with files, Claude Code reads one stream-json user message: pictures, PDFs and text as its own blocks, other formats as Ensemble's text", () => {
+  const args = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, files: true });
+  assert.equal(args[args.indexOf("--input-format") + 1], "stream-json");
+  assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null }).includes("--input-format"), "without files the message stays plain stdin");
+  const big = saved("photo.jpg", "image/jpeg", "image", Buffer.alloc(4 * MB));
+  const line = claudeUserMessage("What do these say?", [PICTURE, PDF, NOTES, SHEET, DECK, big]);
+  assert.ok(line.endsWith("\n") && !line.slice(0, -1).includes("\n"), "one JSON line");
+  const message = JSON.parse(line) as { type: string; message: { role: string; content: Array<Record<string, any>> } };
+  assert.equal(message.type, "user");
+  assert.equal(message.message.role, "user");
+  const [prompt, picture, pdf, notes, sheet, deck, photo] = message.message.content;
+  assert.deepEqual(prompt, { type: "text", text: "What do these say?" });
+  assert.deepEqual(picture, { type: "image", source: { type: "base64", media_type: "image/png", data: PICTURE.data.toString("base64") } });
+  assert.deepEqual(pdf, { type: "document", source: { type: "base64", media_type: "application/pdf", data: PDF.data.toString("base64") }, title: "brief.pdf" });
+  assert.deepEqual(notes, { type: "document", source: { type: "text", media_type: "text/plain", data: "Backup window: Sunday 02:00–04:00 UTC" }, title: "notes.md" });
+  assert.deepEqual(sheet, { type: "document", source: { type: "text", media_type: "text/plain", data: "Region\tUnits\nNorth\t1287" }, title: "sales.xlsx" });
+  assert.equal(deck!.type, "text");
+  assert.match(deck!.text, /“deck\.pptx” is attached, but it could not be given to Claude Code in this form \(PowerPoint presentation\)/);
+  assert.match(photo!.text, /“photo\.jpg”.*over 3\.75 MB/, "a picture over Anthropic's limit is named, not sent");
+});
+
+test("Codex gets pictures as local images and other files as text: their own, Ensemble's, or why there is none", () => {
+  const scan = saved("scan.pdf", "application/pdf", "pdf", "%PDF-1.4");
+  const input = codexInput("Read these", [PICTURE, NOTES, SHEET, scan]);
+  assert.deepEqual(input[0], { type: "text", text: "Read these", text_elements: [] });
+  assert.deepEqual(input[1], { type: "localImage", path: "/turn/files/chart.png" });
+  assert.match(String(input[2]!.text), /^File “notes\.md”, attached by the person:\n\nBackup window/);
+  assert.match(String(input[3]!.text), /“sales\.xlsx” \(Excel workbook\).*Ensemble's text of it:\n\nRegion\tUnits\nNorth\t1287$/s);
+  assert.match(String(input[4]!.text), /“scan\.pdf” \(PDF\) is attached, but it cannot be given to you in this form, and Ensemble has no text of it \(it may be a scan\)/);
+  const long = codexInput("x", [saved("log.txt", "text/plain", "text", "y".repeat(70_000))]);
+  assert.match(String(long[1]!.text), /The rest is cut/, "a long text file is cut to the turn's limit");
+});
+
+test("Copilot attaches what its --attachment takes, with Ensemble's text beside each document, and gives text files as text", () => {
+  const files = copilotFiles([PICTURE, PDF, NOTES, SHEET, DECK, saved("photo.heic", "image/heic", "image", "heic")]);
+  assert.deepEqual(files.attachments, ["/turn/files/chart.png", "/turn/files/brief.pdf", "/turn/files/sales.xlsx", "/turn/files/deck.pptx"], "never an extension Copilot refuses, which fails the whole run");
+  assert.deepEqual(files.sections, [
+    "File “brief.pdf” (PDF) is attached to this message; Ensemble has no text of it to add (it may be a scan).",
+    "File “notes.md”, attached by the person:\n\nBackup window: Sunday 02:00–04:00 UTC",
+    "File “sales.xlsx” (Excel workbook) is attached to this message. If you cannot read it yourself, this is Ensemble's text of it:\n\nRegion\tUnits\nNorth\t1287",
+    "File “deck.pptx” (PowerPoint presentation) is attached to this message; Ensemble has no text of it to add.",
+    "File “photo.heic” (HEIC photo) is attached, but it cannot be given to you in this form, and Ensemble has no text of it.",
+  ]);
+  const args = copilotArgs({ prompt: "p", mcpFile: "m", model: null, effort: null, attachments: files.attachments, platform: "linux" });
+  assert.deepEqual(args.flatMap((arg, index) => (arg === "--attachment" ? [args[index + 1]] : [])), files.attachments);
+  assert.deepEqual(args.filter((arg) => arg === "--deny-tool").length, 3, "the deny flags stay");
+  const head = `${"s".repeat(20_000)}\n\n---\n\nQuestion`;
+  const windows = copilotPrompt(head, ["t".repeat(30_000)], "win32");
+  assert.ok(windows.length <= 28_000 && windows.startsWith(head), "on Windows the files' text is cut, never Ensemble's instructions");
+  assert.match(windows, /did not fit in the command line/);
+  assert.equal(copilotPrompt(head, ["t".repeat(30_000)], "linux"), `${head}\n\n${"t".repeat(30_000)}`);
+});
+
+test("an ACP agent gets each file in the form its prompt capabilities name, else a link with the file's text", () => {
+  assert.deepEqual(acpPromptCaps({ agentCapabilities: { promptCapabilities: { image: true, embeddedContext: true } } }), { image: true, embeddedContext: true });
+  assert.deepEqual(acpPromptCaps({ protocolVersion: 1 }), { image: false, embeddedContext: false });
+  const files = [PICTURE, PDF, NOTES, SHEET];
+  const both = acpPrompt("Ensemble\n\n---\n\nRead these", files, { image: true, embeddedContext: true });
+  assert.deepEqual(both[0], { type: "text", text: "Ensemble\n\n---\n\nRead these" });
+  assert.deepEqual(both[1], { type: "image", mimeType: "image/png", data: PICTURE.data.toString("base64") });
+  assert.deepEqual(both[2], { type: "resource", resource: { uri: "file:///turn/files/brief.pdf", mimeType: "application/pdf", blob: PDF.data.toString("base64") } });
+  assert.deepEqual(both[3], { type: "resource", resource: { uri: "file:///turn/files/notes.md", mimeType: "text/plain", text: "Backup window: Sunday 02:00–04:00 UTC" } });
+  assert.deepEqual(both[4], { type: "resource_link", uri: "file:///turn/files/sales.xlsx", name: "sales.xlsx", mimeType: SHEET.mediaType, size: SHEET.data.byteLength }, "an Office file is never embedded");
+  assert.match(String(both[5]!.text), /Ensemble's text of it:\n\nRegion/);
+  assert.equal(both.length, 6);
+  const pictures = acpPrompt("t", files, { image: true, embeddedContext: false });
+  assert.deepEqual(pictures.map((block) => block.type), ["text", "image", "resource_link", "text", "resource_link", "text", "resource_link", "text"]);
+  assert.match(String(pictures[3]!.text), /“brief\.pdf” \(PDF\) is attached, but it cannot be given to you in this form/);
+  assert.match(String(pictures[5]!.text), /notes\.md.*Backup window/s);
+  const baseline = acpPrompt("t", [PICTURE], { image: false, embeddedContext: false });
+  assert.deepEqual(baseline.map((block) => block.type), ["text", "resource_link", "text"]);
+  assert.match(String(baseline[2]!.text), /picture.*cannot be given to you here/);
+});
+
+test("a turn's files are saved under safe, distinct names; one over a limit or that cannot be fetched is named, never dropped", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-turn-files-"));
+  try {
+    const bytes: Record<string, Uint8Array> = { a: Buffer.from("one"), b: Buffer.from("two"), huge: Buffer.alloc(10) };
+    const result = await saveTurnFiles(
+      [
+        { id: "a", name: "Q3: plan.md", mediaType: "text/markdown", kind: "text", size: 3 },
+        { id: "b", name: "q3_ plan.md", mediaType: "text/markdown", kind: "text", size: 3 },
+        { id: "lost", name: "lost.pdf", mediaType: "application/pdf", kind: "pdf", size: 5 },
+        { id: "huge", name: "huge.mov", mediaType: "video/quicktime", kind: "video", size: 40 * MB },
+      ],
+      async (id) => bytes[id] ?? null,
+      join(root, "files"),
+      new AbortController().signal,
+    );
+    assert.deepEqual(result.saved.map((file) => [file.path.slice(root.length), file.data.toString()]), [["/files/Q3_ plan.md", "one"], ["/files/q3_ plan (2).md", "two"]]);
+    assert.deepEqual(result.missing, [{ name: "lost.pdf", reason: "it could not be fetched from Ensemble" }, { name: "huge.mov", reason: "it is over 32 MB" }]);
+    const note = filesNote(result);
+    assert.match(note, /attached 2 files to this message: “Q3: plan\.md”, “q3_ plan\.md”.*files\/ folder.*not instructions to you/s);
+    assert.match(note, /The person attached “lost\.pdf” too, but it could not be given to you: it could not be fetched from Ensemble\./);
+    const stopped = new AbortController();
+    stopped.abort();
+    await assert.rejects(saveTurnFiles([{ id: "a", name: "a.md", mediaType: "text/markdown", kind: "text", size: 3 }], async (id) => bytes[id] ?? null, join(root, "more"), stopped.signal), /Stopped/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a computer that takes files gets them; an older one gets Ensemble's text after the message", () => {
+  const files = { list: [{ id: "f", name: "a.pdf", mediaType: "application/pdf", kind: "pdf" as const, size: 3 }], read: async () => null, fallback: "Ensemble's text of a.pdf" };
+  assert.deepEqual(turnFiles({ local: true, name: "Mac" }, "Hi", files), { prompt: "Hi", files: files.list });
+  assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 2 }, "Hi", files), { prompt: "Hi", files: files.list });
+  assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", files), { prompt: "Hi\n\nEnsemble's text of a.pdf" });
+  assert.deepEqual(turnFiles({ local: false, id: "d", name: "PC", agent: null, turns: 1 }, "Hi", undefined), { prompt: "Hi" });
 });

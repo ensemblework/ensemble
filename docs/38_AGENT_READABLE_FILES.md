@@ -34,13 +34,13 @@ In chat, `hub_list_files` finds files by name or text when the person asks for o
 |---|---|
 | Included with Ensemble | The catalog's `images` flag (`packages/shared-types/src/included.ts`): GPT-6 Luna, GPT-6.1 Sol, Grok 4.7, GPT-5 mini and GPT-4.1 mini yes; DeepSeek V4 Flash no |
 | A person's own key (OpenAI, Anthropic, Google, Mistral, OpenRouter, Copilot, Ollama, Kimi, Qwen…) | By model family: GPT-4o/4.1/5/6, o1/o3/o4-mini, Claude 3 and later, Gemini, Gemma 3, Grok 4, Pixtral and recent Mistral Small/Medium, Qwen VL, Llama 3.2 Vision and 4, LLaVA-style local models |
-| Anything else, `cursor`, and the subscription agents in Ensemble chat | No. Unknown is not a yes |
+| Anything else, `cursor`, and the subscription agents in Ensemble chat | No. Unknown is not a yes. Subscription agents get the picture files themselves instead (§2 Transport) |
 
 A model that does not read images is told plainly, for each picture, that it was not shown and that it should say so rather than guess. If a provider still refuses image input ("image_url is only supported by certain models", or a picture over its size limit), the request is sent once more with each picture replaced by a note and the turn says so (`imagesRefused`, `withoutImages`): in chat as a status line, on a task as an engine note.
 
 ### Transport
 
-hub-api writes user content as OpenAI chat parts. Chat-compatible providers take them as they are; `runtime/content-parts.ts` (and `apps/agent-runtime/ensemble_agent/content_parts.py`, its Python mirror) rewrites them for the Anthropic Messages API (`image` blocks with a base64 source, joined to the tool-result turn they follow) and the OpenAI Responses API (`input_image`). Requests to GitHub Copilot that carry a picture add `Copilot-Vision-Request: true` (`withVision`). Subscription agents used as the chat model get text only: `subscriptions/turn.ts` sends them one text prompt.
+hub-api writes user content as OpenAI chat parts. Chat-compatible providers take them as they are; `runtime/content-parts.ts` (and `apps/agent-runtime/ensemble_agent/content_parts.py`, its Python mirror) rewrites them for the Anthropic Messages API (`image` blocks with a base64 source, joined to the tool-result turn they follow) and the OpenAI Responses API (`input_image`). Requests to GitHub Copilot that carry a picture add `Copilot-Vision-Request: true` (`withVision`). Subscription agents used as the chat model get one prompt, and the message's files as files when the turn carries them (`files` on `runSubscriptionTurn`): pictures and documents in the agent's own input form, Ensemble's text for formats it cannot take ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)).
 
 Image bytes go only into the model request: they are not stored with the conversation, the tool call or the run trace.
 
@@ -75,8 +75,7 @@ Text comes from Files' extraction ([32 §7](32_FILES.md)): PDFs with a text laye
 
 ## 6. Not built
 
-- OCR, rendering PDF pages or slides to pictures, and native PDF input to providers. A scanned PDF is read only by a coding agent or as a picture of its pages.
-- Pictures for subscription agents used as the Ensemble chat model.
+- OCR, rendering PDF pages or slides to pictures, and native PDF input to providers. A scanned PDF is read only by an agent that takes the PDF itself (a coding agent, or a subscription agent in chat that takes documents: [30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)) or as a picture of its pages.
 - Audio and video understanding.
 - Version pinning: a file replaced between attaching and reading is read as it is now.
 - The "open in app" handoff (`routes/handoffs.ts`) passes the task's title and description, not its files.

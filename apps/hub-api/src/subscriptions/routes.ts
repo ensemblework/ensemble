@@ -5,12 +5,13 @@
  * start a sign-in there. On the desktop runtime the computer is this one.
  *
  * For a paired computer running an assistant turn the web handed it (device token only): read
- * the turn, call its tools, stream the reply text, say it is done.
+ * the turn and the files attached to the message, call its tools, stream the reply text, say it
+ * is done.
  */
 import { hostname } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { ASSISTANT_TURNS_API, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent } from "@ensemble/shared-types";
+import { ASSISTANT_TURNS_MIN, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { publishDeviceFrame } from "../devices/revoke-notify.js";
 import { ownDevice } from "../devices/routes.js";
@@ -40,6 +41,9 @@ export type SubscriptionComputer = {
 const Target = z.object({ deviceId: z.string().min(1).max(80) });
 const SignIn = Target.extend({ agent: z.enum(SUBSCRIPTION_PROVIDERS) });
 
+/** A plain media type for a turn file's download; anything else goes as bytes. */
+const MEDIA_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
+
 const ToolCall = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) });
 const Stream = z.object({ seq: z.number().int().min(1), text: z.string().max(64 * 1024).default("") });
 const Done = z.object({
@@ -62,7 +66,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     const device = await prisma.device.findFirst({ where: { id: deviceId, userId: { in: deviceOwners(userId) }, revokedAt: null } });
     if (!device) return { ok: false as const, status: 404, error: "That computer is not paired with your account." };
     if (!deviceOnline(device.lastSeenAt)) return { ok: false as const, status: 409, error: `${device.name} is offline. Open Ensemble on it, then try again.` };
-    if (computerAgents(device).turns < ASSISTANT_TURNS_API) return { ok: false as const, status: 409, error: `Update Ensemble on ${device.name} first (the CLI 0.3.10 or the desktop app 0.3.7).` };
+    if (computerAgents(device).turns < ASSISTANT_TURNS_MIN) return { ok: false as const, status: 409, error: `Update Ensemble on ${device.name} first (the CLI 0.3.10 or the desktop app 0.3.7).` };
     return { ok: true as const, device };
   }
 
@@ -84,7 +88,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
         online: deviceOnline(device.lastSeenAt),
         lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
         appVersion: device.appVersion,
-        ready: caps.turns >= ASSISTANT_TURNS_API,
+        ready: caps.turns >= ASSISTANT_TURNS_MIN,
         agents: deviceOnline(device.lastSeenAt) ? caps.agents : [],
       };
     });
@@ -126,6 +130,30 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
     turn.picked = true;
     heard(turn);
     return { spec: turn.spec };
+  });
+
+  app.get("/api/devices/self/assistant-turns/:id/files/:fileId", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const params = request.params as { id: string; fileId: string };
+    const turn = liveTurn(params.id, device.id);
+    if (!turn) return reply.code(410).send({ error: "This turn has ended." });
+    const file = turn.spec.files?.find((row) => row.id === params.fileId);
+    if (!file || !turn.read) return reply.code(404).send({ error: "That file is not part of this turn." });
+    heard(turn);
+    let bytes: Uint8Array | null = null;
+    try {
+      bytes = await turn.read(file.id);
+    } catch (error) {
+      request.log.warn({ err: error }, "relayed assistant file could not be read");
+    }
+    heard(turn);
+    if (!bytes) return reply.code(404).send({ error: "That file is no longer available." });
+    return reply
+      .header("cache-control", "no-store")
+      .header("x-content-type-options", "nosniff")
+      .type(MEDIA_TYPE.test(file.mediaType) ? file.mediaType : "application/octet-stream")
+      .send(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   });
 
   app.post("/api/devices/self/assistant-turns/:id/tool", async (request, reply) => {

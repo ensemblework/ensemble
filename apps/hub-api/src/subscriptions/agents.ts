@@ -3,7 +3,9 @@
  * subscription (docs/30 §8). The agent is told it is the Ensemble assistant (the system prompt
  * Ensemble built for the turn) and gets Ensemble's tools and nothing else: no shell, no files, no
  * web of its own. Its tool calls go through the bridge (bridge.ts) to wherever the turn's data
- * is; writes there wait for Apply exactly as with a model key.
+ * is; writes there wait for Apply exactly as with a model key. Files attached to the person's
+ * message are downloaded into the turn's folder and given to the agent in its own input form
+ * (turn-files.ts).
  *
  * Claude Code: `claude -p` with `--system-prompt-file`, `--tools ""`, only Ensemble's MCP server,
  * the person's own settings (how their Claude Code signs in), no saved session.
@@ -26,6 +28,7 @@ import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
 import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
 import { copilotEnv } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
+import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -38,6 +41,8 @@ export type AgentTurnSpec = {
   maxTurns: number;
   /** A model's long context window where the agent offers one (GitHub Copilot's `--context long_context`). */
   context?: "default" | "long_context" | null;
+  /** Files attached to the person's message, fetched with `AgentTurnIO.readFile`. */
+  files?: TurnFile[];
 };
 
 export type AgentTurnResult = { text: string; model: string | null; tokensIn: number | null; tokensOut: number | null; costUsd: number | null };
@@ -46,6 +51,8 @@ export type AgentTurnIO = {
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
   onDelta: (text: string) => void;
   signal: AbortSignal;
+  /** The bytes of one of `spec.files`; null when it cannot be had. */
+  readFile?: (id: string) => Promise<Uint8Array | null>;
 };
 
 export type AgentTurnProblem = "not_installed" | "signed_out" | "limit" | "failed";
@@ -62,7 +69,7 @@ export class AgentTurnError extends Error {
 
 type McpServer = { command: string; args: string[]; env: Record<string, string> };
 
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; mcp: McpServer }) => Promise<AgentTurnResult>;
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; mcp: McpServer; files: SavedTurnFile[] }) => Promise<AgentTurnResult>;
 
 const chosen = (value: string | null | undefined): string | null => (value && value !== "default" ? value : null);
 
@@ -96,11 +103,13 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
     "-p",
+    // With files the message is one JSON line on stdin, so pictures and documents go as content blocks.
+    ...(input.files ? ["--input-format", "stream-json"] : []),
     "--output-format",
     "stream-json",
     "--verbose",
@@ -129,12 +138,12 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
   ];
 }
 
-const runClaude: Driver = async ({ spec, io, bin, folder, mcp }) => {
+const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   const systemFile = join(folder, "system.md");
   const mcpFile = join(folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0 }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: "600000", ENSEMBLE_RUN: "assistant-turn" }),
@@ -143,7 +152,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, mcp }) => {
     windowsHide: true,
   });
   child.stdin!.on("error", () => undefined);
-  child.stdin!.end(spec.prompt);
+  child.stdin!.end(files.length ? claudeUserMessage(spec.prompt, files) : spec.prompt);
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
   let stderr = "";
@@ -210,7 +219,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: agentEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -286,7 +295,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp }) => {
     const effort = chosen(spec.effort);
     const turn = (await server.request("turn/start", {
       threadId,
-      input: [{ type: "text", text: spec.prompt, text_elements: [] }],
+      input: codexInput(spec.prompt, files),
       sandboxPolicy: { type: "readOnly", networkAccess: false },
       ...(effort ? { effort } : {}),
     })) as { turn?: { id?: string } };
@@ -320,7 +329,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   const model = chosen(spec.model);
   const child = spawn(bin, ["--sandbox", "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
@@ -359,7 +368,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp }) => {
   };
   io.signal.addEventListener("abort", stop, { once: true });
   try {
-    await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+    const caps = acpPromptCaps(await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } }));
     await rpc.request("authenticate", { methodId: "cursor_login" }).catch(() => undefined);
     const session = await rpc.request("session/new", {
       cwd: folder,
@@ -368,7 +377,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp }) => {
     sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
     // ACP has no system prompt: Ensemble's instructions lead the message.
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `${spec.system}\n\n---\n\n${spec.prompt}` }] })) as { stopReason?: string };
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps) })) as { stopReason?: string };
     if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
     if (done.stopReason === "refusal") throw agentProblem("cursor-agent", "it refused the request");
     return { text: reply.trim(), model, tokensIn: null, tokensOut: null, costUsd: null };
@@ -382,9 +391,22 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp }) => {
   }
 };
 
-/** The arguments for Copilot CLI (exported for tests). Windows caps a command line near 32,000 characters. */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform }): string[] {
-  const limit = (input.platform ?? process.platform) === "win32" ? 28_000 : 200_000;
+/** How long Copilot CLI's prompt may be. Windows caps a command line near 32,000 characters. */
+const copilotLimit = (platform: NodeJS.Platform = process.platform) => (platform === "win32" ? 28_000 : 200_000);
+
+/** The prompt with the attached files' text after it, the text cut to the room the command line has (exported for tests). */
+export function copilotPrompt(head: string, sections: string[], platform?: NodeJS.Platform): string {
+  if (!sections.length) return head;
+  const text = sections.join("\n\n");
+  const room = copilotLimit(platform) - head.length - 2;
+  if (text.length <= room) return `${head}\n\n${text}`;
+  const cut = "\n[The rest of the attached files' text did not fit in the command line.]";
+  return room > cut.length ? `${head}\n\n${text.slice(0, room - cut.length)}${cut}` : `${head}${cut}`;
+}
+
+/** The arguments for Copilot CLI (exported for tests). */
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[] }): string[] {
+  const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
     "-p",
@@ -407,16 +429,19 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     "--no-auto-update",
     "--additional-mcp-config",
     `@${input.mcpFile}`,
+    ...(input.attachments ?? []).flatMap((path) => ["--attachment", path]),
     ...(chosen(input.model) ? ["--model", input.model!] : []),
     ...(chosen(input.effort) ? ["--reasoning-effort", input.effort!] : []),
     ...(input.context === "long_context" ? ["--context", "long_context"] : []),
   ];
 }
 
-const runCopilot: Driver = async ({ spec, io, bin, folder, mcp }) => {
+const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   const mcpFile = join(folder, "mcp.json");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"] } } }), "utf8");
-  const child = spawn(bin, copilotArgs({ prompt: `${spec.system}\n\n---\n\n${spec.prompt}`, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null }), {
+  const { attachments, sections } = copilotFiles(files);
+  const prompt = copilotPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, sections);
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments }), {
     cwd: folder,
     env: copilotEnv(mcp.env),
     stdio: ["ignore", "pipe", "pipe"],
@@ -456,7 +481,7 @@ export function answerAcpTurn(method: string, params: Record<string, unknown>): 
 /** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
 const runAcpTurn =
   (id: AcpEngine): Driver =>
-  async ({ spec, io, folder, mcp }) => {
+  async ({ spec, io, folder, mcp, files }) => {
     const model = chosen(spec.model);
     const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
@@ -486,7 +511,9 @@ const runAcpTurn =
     };
     io.signal.addEventListener("abort", stop, { once: true });
     try {
-      await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" }, ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}) });
+      const caps = acpPromptCaps(
+        await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" }, ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}) }),
+      );
       if (launch.authMethod) await rpc.request("authenticate", { methodId: launch.authMethod });
       const session = await rpc.request("session/new", {
         cwd: folder,
@@ -499,7 +526,7 @@ const runAcpTurn =
       if (model && modelOption && optionValues(modelOption).includes(model) && modelOption.currentValue !== model) await rpc.request("session/set_config_option", { sessionId, configId: modelOption.id, value: model });
       if (spec.effort && thought && optionValues(thought).includes(spec.effort)) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: spec.effort });
       // ACP has no system prompt: Ensemble's instructions lead the message.
-      const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: `${spec.system}\n\n---\n\n${spec.prompt}` }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
       if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
       return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null };
@@ -546,7 +573,13 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
     env: { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_ASSISTANT_TURN: bridge.credential },
   };
   try {
-    return await DRIVERS[spec.agent]({ spec, io, bin: found.path, folder, mcp });
+    let files: SavedTurnFile[] = [];
+    if (spec.files?.length) {
+      const fetched = await saveTurnFiles(spec.files, io.readFile, join(folder, "files"), io.signal);
+      files = fetched.saved;
+      spec = { ...spec, prompt: spec.prompt + filesNote(fetched) };
+    }
+    return await DRIVERS[spec.agent]({ spec, io, bin: found.path, folder, mcp, files });
   } finally {
     bridge.close();
     await rm(folder, { recursive: true, force: true }).catch(() => undefined);
