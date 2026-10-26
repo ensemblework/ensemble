@@ -16,9 +16,9 @@ import { ShareButton } from "@/components/sharing/share-dialog";
 function Lane({ title, hint, items, empty, wide }: { title: string; hint?: string; items: AgentJob[]; empty: string; wide?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="text-[13px] font-semibold">{title}</span>
-        <span className="text-[12px] text-muted">{items.length}</span>
+        <span className="shrink-0 text-[12px] text-muted">{items.length}</span>
         {hint ? <span className="truncate text-[12px] text-faint">{hint}</span> : null}
       </div>
       <div className="space-y-2">{items.length ? items.map((job) => <JobCard key={job.id} job={job} wide={wide} />) : <div className="rounded-md border border-dashed border-line px-3 py-4 text-[12.5px] text-muted">{empty}</div>}</div>
@@ -88,12 +88,12 @@ export default function WorkspacePage() {
       ) : <Held pending={board.isLoading || !data} fallback={<SkeletonRows count={4} />}>
         {data ? (
         <>
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" data-workspace-queue>
             <Lane title="Up next" hint={data.queued.length ? "in the order they start" : undefined} items={data.queued} empty="Nothing queued. Assign a task to the agent." />
             <Lane title="Working now" hint={`${data.running.length}/${data.maxConcurrent} slots`} items={data.running} empty="Nothing is running." />
             <Lane title="Needs you" hint={data.waiting.length ? "not using a slot" : undefined} items={data.waiting} empty="The agent is not waiting on you." />
           </div>
-          <div className="mt-10 grid grid-cols-2 gap-6">
+          <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
             <Lane title="Recently done" items={data.completed} empty="Nothing finished in the last 14 days." wide />
             <Lane title="Stopped or failed" hint="no model calls; open to retry or take over" items={data.stopped} empty="Nothing stopped." wide />
           </div>

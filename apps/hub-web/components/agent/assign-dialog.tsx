@@ -1197,7 +1197,7 @@ export function AssignDialog({
 
             {appMode ? null : (
             <>
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div {...attentionProps("branch")}>
                 {prOn ? (
                   <>
@@ -1444,7 +1444,7 @@ export function AssignDialog({
           />
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <label className="flex items-center gap-2 text-[12.5px]">
             <input type="checkbox" checked={markDone} onChange={(event) => setMarkDone(event.target.checked)} />
             Move the task to Done when it finishes

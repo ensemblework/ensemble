@@ -52,6 +52,8 @@ It is an **editor first**. Typing in either view saves automatically: 0.7 s afte
 
 On the computer, binary files are not shown and files over 5 MB are not opened.
 
+Below 768 CSS pixels the editor starts with its side panel closed. Explorer, Find and Source control open a bounded overlay; choosing a file or tapping outside closes it. This does not change the desktop panel preference. The read-only run browser has a Files / Show code switch instead of squeezing the file list and editor side by side. Editor toolbars and code keep their own horizontal scrolling.
+
 ### Folders Code can use
 
 *Settings → Folders Code can use* (`settings.code.roots`) is separate from the terminal's list (`settings.terminal.roots`, §5); neither reads the other (`apps/hub-api/src/lib/code-folders.ts`).

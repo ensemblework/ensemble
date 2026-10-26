@@ -19,7 +19,7 @@ function ReviewRow({ review }: { review: ReviewSummary }) {
   const state = review.completedAt ? { label: "Reviewed", tone: "green" as const } : review.decisions ? { label: "In review", tone: "yellow" as const } : { label: "Not reviewed", tone: "blue" as const };
   const total = Math.max(review.added + review.removed, 1);
   return (
-    <Link href={`/code/review?review=${review.id}`} className="row-tile flex items-center gap-4 rounded-md border-b border-b-line px-3 py-3">
+    <Link href={`/code/review?review=${review.id}`} className="row-tile flex flex-col items-stretch gap-3 rounded-md border-b border-b-line px-3 py-3 sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
         <div className="truncate text-[14.5px] font-semibold">{review.title}</div>
         <div className="mt-0.5 truncate text-[12.5px] text-muted">
@@ -27,7 +27,7 @@ function ReviewRow({ review }: { review: ReviewSummary }) {
           {!review.reachable ? " · checkout not found" : ""}
         </div>
       </div>
-      <div className="flex w-44 flex-col items-end gap-1">
+      <div className="flex w-full flex-col items-end gap-1 sm:w-44 sm:shrink-0">
         <div className="text-[12px]">
           {review.files} file{review.files === 1 ? "" : "s"} <span className="text-ok">+{review.added}</span>{" "}
           <span className="text-danger">−{review.removed}</span>
@@ -111,7 +111,7 @@ export default function CodePage() {
         </>
       ) : (
       <>
-      <div id="reviews" className="mb-3 flex scroll-mt-4 items-center gap-3 text-[13px]">
+      <div id="reviews" className="mb-3 flex scroll-mt-4 flex-wrap items-center gap-3 text-[13px]">
         <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="field py-1">
           <option value="needs">Needs review</option>
           <option value="reviewed">Reviewed</option>

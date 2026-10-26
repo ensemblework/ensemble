@@ -148,6 +148,20 @@ export function CodeIde({ source }: { source: Source }) {
 
   const [panel, setPanel] = usePersistentState<Panel>("ensemble.code.sidebarPanel", "files");
   const [sidebar, setSidebar] = usePersistentState("ensemble.code.panel", true);
+  const [phone, setPhone] = useState(false);
+  const [mobileSidebar, setMobileSidebar] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setPhone(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const sideOpen = phone ? mobileSidebar : sidebar;
+  const setSideOpen = useCallback((open: boolean) => {
+    if (phone) setMobileSidebar(open);
+    else setSidebar(open);
+  }, [phone, setSidebar]);
   const [width, setWidth] = usePersistentState("ensemble.code.sidebarWidth", SIDEBAR_DEFAULT);
   const [fontSize, setFontSize] = usePersistentState("ensemble.code.fontSize", FONT_DEFAULT);
   const [terminal, setTerminal] = usePersistentState("ensemble.code.terminal", false);
@@ -253,6 +267,7 @@ export function CodeIde({ source }: { source: Source }) {
       setTabs(next.tabs);
       if (next.closed) release(next.closed);
       setActive(path);
+      setMobileSidebar(false);
       if (line) setReveal({ path, line, nonce: Date.now() });
     },
     [active, release, save, saveState, tabs, toast],
@@ -305,7 +320,7 @@ export function CodeIde({ source }: { source: Source }) {
         setTerminal(!terminal);
       } else if (mod && !event.shiftKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
-        setSidebar(!sidebar);
+        setSideOpen(!sideOpen);
       } else if (mod && event.shiftKey && (event.key === "+" || event.key === "=")) {
         event.preventDefault();
         setFontSize(Math.min(FONT_MAX, fontSize + 1));
@@ -418,7 +433,7 @@ export function CodeIde({ source }: { source: Source }) {
   const where = target.kind === "device" ? computer?.name ?? "your computer" : null;
 
   return (
-    <IdeSpace className={cx("flex min-h-0 flex-col bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")}>
+    <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")}>
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-2 text-[13px]" data-testid="ide-titlebar">
         <Link href="/code" className="icon-btn" title="Back to Code"><ArrowLeft size={15} /></Link>
@@ -467,7 +482,7 @@ export function CodeIde({ source }: { source: Source }) {
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1">
         {/* Activity bar */}
         <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-line bg-sidebar py-2" aria-label="Code views">
           {(
@@ -482,15 +497,15 @@ export function CodeIde({ source }: { source: Source }) {
               type="button"
               title={label}
               aria-label={label}
-              aria-pressed={sidebar && panel === id}
+              aria-pressed={sideOpen && panel === id}
               onClick={() => {
-                if (sidebar && panel === id) setSidebar(false);
+                if (sideOpen && panel === id) setSideOpen(false);
                 else {
                   setPanel(id);
-                  setSidebar(true);
+                  setSideOpen(true);
                 }
               }}
-              className={cx("flex h-9 w-9 items-center justify-center rounded-md text-muted hover:text-ink", sidebar && panel === id && "bg-hover text-ink")}
+              className={cx("flex h-9 w-9 items-center justify-center rounded-md text-muted hover:text-ink", sideOpen && panel === id && "bg-hover text-ink")}
             >
               <Icon size={17} />
             </button>
@@ -504,8 +519,9 @@ export function CodeIde({ source }: { source: Source }) {
         </nav>
 
         {/* Side panel */}
-        {sidebar ? (
-          <aside className="relative flex shrink-0 flex-col border-r border-line bg-sidebar max-md:absolute max-md:inset-y-0 max-md:left-11 max-md:z-20 max-md:shadow-xl" style={{ width }} aria-label="Side panel">
+        {phone && sideOpen ? <button type="button" className="absolute inset-y-0 left-11 right-0 z-10 bg-black/40" aria-label="Close code panel" onClick={() => setMobileSidebar(false)} /> : null}
+        {sideOpen ? (
+          <aside className="relative flex min-w-0 shrink-0 flex-col border-r border-line bg-sidebar max-md:absolute max-md:inset-y-0 max-md:left-11 max-md:z-20 max-md:max-w-[calc(100%-44px)] max-md:shadow-xl" style={{ width }} aria-label="Side panel">
             {panel === "files" ? (
               <Explorer
                 source={source}
@@ -539,7 +555,7 @@ export function CodeIde({ source }: { source: Source }) {
                 else return;
                 event.preventDefault();
               }}
-              className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-[var(--accent-soft)] focus:bg-[var(--accent-soft)] focus:outline-none"
+              className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-[var(--accent-soft)] focus:bg-[var(--accent-soft)] focus:outline-none max-md:hidden"
             />
           </aside>
         ) : null}
@@ -547,7 +563,7 @@ export function CodeIde({ source }: { source: Source }) {
         {/* Editor column */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-line bg-sidebar text-[12.5px]" role="tablist" aria-label="Open files">
-            <button type="button" className="icon-btn my-auto ml-1 h-7 w-7 shrink-0" title="Show or hide the explorer (Ctrl+B)" onClick={() => setSidebar(!sidebar)}>
+            <button type="button" className="icon-btn my-auto ml-1 h-7 w-7 shrink-0" title="Show or hide the explorer (Ctrl+B)" onClick={() => setSideOpen(!sideOpen)}>
               <PanelLeft size={14} />
             </button>
             {tabs.map((path) => {

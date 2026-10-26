@@ -34,7 +34,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
   return (
     <div className="border-b border-line">
       <div
-        className="row-tile group flex cursor-pointer items-center gap-3 rounded-md px-2 py-2.5"
+        className="row-tile group grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 rounded-md px-2 py-2.5 sm:flex"
         onClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -46,9 +46,9 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
         tabIndex={0}
         aria-label={`Preview the run of ${run.title}`}
       >
-        <PanelRightOpen size={14} className="shrink-0 text-faint" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[14.5px] font-semibold">{run.title}</div>
+        <PanelRightOpen size={14} className="hidden shrink-0 text-faint sm:block" />
+        <div className="col-span-3 min-w-0 flex-1 [overflow-wrap:anywhere]">
+          <div className="text-[14.5px] font-semibold sm:truncate">{run.title}</div>
           {run.sourceRunId && <Link href={`/runs?run=${run.sourceRunId}`} onClick={event=>event.stopPropagation()} className="mt-1 block text-[12px] text-accent hover:underline">From feedback on an earlier run</Link>}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] text-muted">
             <span className="inline-flex items-center gap-1">
@@ -83,7 +83,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
             ) : null}
           </div>
         </div>
-        <Tag tone={outcome.tone}>{outcome.label}</Tag>
+        <Tag tone={outcome.tone} className="justify-self-start">{outcome.label}</Tag>
         <button
           type="button"
           className="btn-ghost shrink-0 gap-1 px-1.5 py-0.5 text-[12px] text-muted opacity-70 hover:text-ink group-hover:opacity-100"
@@ -97,7 +97,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
         </button>
         <button
           type="button"
-          className="icon-btn opacity-0 group-hover:opacity-100"
+          className="icon-btn sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           title="Delete run"
           aria-label="Delete run"
           onClick={(event) => {
@@ -141,7 +141,7 @@ export default function RunsPage() {
                   Show all runs ({runs.data!.total})
                 </button>
               ) : (
-                <span className="text-muted">That is every run. Hover a run to delete it.</span>
+                <span className="text-muted">That is every run.</span>
               )}
             </div>
           </>
