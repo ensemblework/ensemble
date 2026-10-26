@@ -69,7 +69,7 @@ export const fileTools = [
         return { ...toolOk(`Looked at “${file.filename.slice(0, 80)}”.`, { file: view(file), shown: "The picture follows this step's tool results.", note: NOTE }), pictures: [{ type: "text", text: `Picture: ${file.filename}` }, got.image.part] };
       }
       const got = await documentForModel(ctx.prisma, ctx.userId, file);
-      if ("problem" in got) return toolOk(`Could not open “${file.filename.slice(0, 80)}” whole.`, { file: view(file), problem: got.problem, instead: "Read its text with hub_read_file." });
+      if ("problem" in got) return toolOk(`Could not open “${file.filename.slice(0, 80)}”.`, { file: view(file), problem: got.problem });
       return { ...toolOk(`Opened “${file.filename.slice(0, 80)}”.`, { file: view(file), shown: "The file follows this step's tool results.", note: NOTE }), pictures: [{ type: "text", text: `File: ${file.filename}` }, got.document.part] };
     },
   }),

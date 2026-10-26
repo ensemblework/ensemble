@@ -186,7 +186,7 @@ export function buildSystemPrompt(
           open.description ? `Description: ${truncateText(open.description, 800)}` : "",
           open.excerpt ? `Page excerpt:\n${truncateText(open.excerpt, 4000)}` : "",
           open.diagrams ? `Embedded diagram source (reference material):\n${open.diagrams}` : "",
-          open.files ? `Files on this page (reference material; use hub_read_file for more):\n${open.files}` : "",
+          open.files ? `Files on this page (name, kind, size and id):\n${open.files}` : "",
           open.project ? `Linked project: ${open.project}` : "",
           open.people?.length ? `Linked people: ${open.people.join(", ")}` : "",
           open.repo ? `Linked repo: ${open.repo}` : "",
@@ -255,7 +255,7 @@ export async function loadOpenPage(
         title: note.title || "Untitled",
         excerpt: excerptFrom(note.content) || (note.searchText ?? "").slice(0, 4000),
         diagrams: await diagramSources(prisma, userId, note.content, 12_000),
-        files: await filesSection(prisma, userId, await filesOnPage(prisma, userId, note.id), { perFile: 1200, total: 5000, more: (file) => `Read the full file with hub_read_file id ${file.id}.` }),
+        files: await filesSection(prisma, userId, await filesOnPage(prisma, userId, note.id), { perFile: 1200, total: 5000, more: () => "" }),
       };
     }
   }
@@ -290,7 +290,7 @@ export async function loadOpenPage(
         description: task.description,
         excerpt: excerptFrom(task.page?.content) || truncateText(task.notes, 1500),
         diagrams: await diagramSources(prisma, userId, task.page?.content, 12_000),
-        files: await filesSection(prisma, userId, await filesOnTask(prisma, userId, task.id), { perFile: 1200, total: 5000, more: (file) => `Read the full file with hub_read_file id ${file.id}.` }),
+        files: await filesSection(prisma, userId, await filesOnTask(prisma, userId, task.id), { perFile: 1200, total: 5000, more: () => "" }),
         project: task.project?.name ?? null,
         people: people.map((person) => person.name),
         repo: task.repo?.fullName ?? null,

@@ -133,16 +133,14 @@ test("file text comes in parts, and files without text say what they are", async
   assert.equal(await fileText(db, arjun.id, readings.id), null);
 });
 
-test("the prompt section lists each file with its id and the start of its text, within the caps", async () => {
+test("the prompt section lists each file by name, kind, size and id, and never Ensemble's text of it", async () => {
   const { mira, task } = await setup();
   const files = await filesOnTask(db, mira.id, task.id);
   const section = await filesSection(db, mira.id, files, { perFile: 300, total: 400, more: (row) => `More: read_attachment ${row.id}` });
-  assert.match(section, /### Field brief\.md \(Markdown · \d+ B, id [0-9a-f-]{36}\)\n# Field brief\n\nCalibrate the sensor before each visit\./);
-  assert.match(section, /### readings\.txt \(Text · [\d.]+ KB, id [0-9a-f-]{36}\)\nReading 1:/);
-  assert.match(section, /more characters\)/);
-  assert.match(section, /site\.png is an image with no text to read/);
-  assert.match(section, /### Contract notes\.txt[^\n]*\n\(Its 20 characters of text are not shown here\.\)/, "the total cap holds");
-  assert.ok(section.length < 400 + 1200);
+  assert.match(section, /### Field brief\.md \(Markdown · \d+ B, id [0-9a-f-]{36}\)\nMore: read_attachment [0-9a-f-]{36}/);
+  assert.match(section, /### readings\.txt \(Text · [\d.]+ KB, id [0-9a-f-]{36}\)/);
+  assert.match(section, /### site\.png /);
+  assert.doesNotMatch(section, /Calibrate the sensor|Reading 1:/, "extracted text stays out of prompts (files/extracted-text-policy.ts)");
 });
 
 function jobContext(userId: string, taskId: string, root: string, kind = "code", jobId = "job-files-test"): JobContext {
