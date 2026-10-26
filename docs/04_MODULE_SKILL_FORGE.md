@@ -10,6 +10,8 @@ The code is in `apps/hub-api`: `routes/skills.ts`, `jobs/skill-mining.ts`, `cowo
 
 The Skills page (`apps/hub-web/app/(hub)/skills`) autosaves the body 900 ms after typing stops. Each body change adds a version; restoring a version publishes it as a new version (the counter never goes back). Delete moves the skill to Trash. Disabled or deleted skills are never used, even if a task still links them.
 
+The UI keeps the editor, enablement, history and any recorded evidence. It does not expose test/score controls or an unfinished learning promotion. The test and score API routes remain available to clients (§6).
+
 `PATCH /api/skills/:id` locks the row; an optional `expectedVersion` that differs from the current version returns 409 "The skill changed. Read it again before editing." The Markdown body is what agents follow.
 
 ## 2. Using skills

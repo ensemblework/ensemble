@@ -23,10 +23,10 @@ const DeviceTurn = z.object({
 });
 
 /**
- * A long conversation with tool output can pass the default 4 MB, and pictures (up to 8 MB of them,
- * files/model-input.ts) travel as base64 in both `messages` and `items`.
+ * A long conversation with tool output can pass the default 4 MB, and attachments (up to 32 MB of
+ * them, files/model-input.ts) travel as base64; a Responses model's history comes once, as `items`.
  */
-const DEVICE_TURN_BODY_LIMIT = 48 * 1024 * 1024;
+const DEVICE_TURN_BODY_LIMIT = 64 * 1024 * 1024;
 
 const Tokens = z.object({
   inputTokens: z.number().int().nonnegative(),

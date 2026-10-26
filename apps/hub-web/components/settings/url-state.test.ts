@@ -85,3 +85,7 @@ test("old explicit Account appearance bookmarks now select Appearance", () => {
   assert.equal(parseSettingsLocation("?tab=account", "#appearance").tab, "appearance");
   assert.equal(parseSettingsLocation("?tab=account", "#jump-appearance-accent").tab, "appearance");
 });
+
+test("old account-deletion links open Data's danger zone", () => {
+  assert.equal(parseSettingsLocation("?tab=account", "#jump-account-delete-account").tab, "data");
+});

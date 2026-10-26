@@ -133,16 +133,14 @@ test("file text comes in parts, and files without text say what they are", async
   assert.equal(await fileText(db, arjun.id, readings.id), null);
 });
 
-test("the prompt section lists each file with its id and the start of its text, within the caps", async () => {
+test("the prompt section lists each file by name, kind, size and id, and never Ensemble's text of it", async () => {
   const { mira, task } = await setup();
   const files = await filesOnTask(db, mira.id, task.id);
   const section = await filesSection(db, mira.id, files, { perFile: 300, total: 400, more: (row) => `More: read_attachment ${row.id}` });
-  assert.match(section, /### Field brief\.md \(Markdown · \d+ B, id [0-9a-f-]{36}\)\n# Field brief\n\nCalibrate the sensor before each visit\./);
-  assert.match(section, /### readings\.txt \(Text · [\d.]+ KB, id [0-9a-f-]{36}\)\nReading 1:/);
-  assert.match(section, /more characters\)/);
-  assert.match(section, /site\.png is an image with no text to read/);
-  assert.match(section, /### Contract notes\.txt[^\n]*\n\(Its 20 characters of text are not shown here\.\)/, "the total cap holds");
-  assert.ok(section.length < 400 + 1200);
+  assert.match(section, /### Field brief\.md \(Markdown · \d+ B, id [0-9a-f-]{36}\)\nMore: read_attachment [0-9a-f-]{36}/);
+  assert.match(section, /### readings\.txt \(Text · [\d.]+ KB, id [0-9a-f-]{36}\)/);
+  assert.match(section, /### site\.png /);
+  assert.doesNotMatch(section, /Calibrate the sensor|Reading 1:/, "extracted text stays out of prompts (files/extracted-text-policy.ts)");
 });
 
 function jobContext(userId: string, taskId: string, root: string, kind = "code", jobId = "job-files-test"): JobContext {
@@ -175,25 +173,23 @@ function jobContext(userId: string, taskId: string, root: string, kind = "code",
   };
 }
 
-test("read_attachment reads an attached file by name or id, in parts", async () => {
+test("view_attachment gives the attached file itself, by name or id; read_attachment (extracted text) is off", async () => {
   const { mira, readings, photo, task } = await setup();
-  const ctx = jobContext(mira.id, task.id, await workFolder());
-  const byName = await runTool(ctx, "read_attachment", { file: "READINGS.txt" });
+  const ctx = { ...jobContext(mira.id, task.id, await workFolder()), viewFiles: true };
+  const byName = await runTool(ctx, "view_attachment", { file: "READINGS.txt" });
   assert.equal(byName.ok, true, JSON.stringify(byName.result));
-  const result = byName.result as { file: { id: string; details: string }; text: string; nextOffset?: number; trust: string };
-  assert.equal(result.file.id, readings.id);
-  assert.match(result.file.details, /^Text · /);
-  assert.ok(result.text.startsWith("Reading 1:"));
-  assert.match(result.trust, /not instructions/);
-  const more = await runTool(ctx, "read_attachment", { file: readings.id, offset: result.nextOffset });
-  assert.equal((more.result as { offset: number }).offset, result.nextOffset);
-  const image = await runTool(ctx, "read_attachment", { file: photo.id });
-  assert.match((image.result as { note: string }).note, /image with no text/);
-  const missing = await runTool(ctx, "read_attachment", { file: "budget.xlsx" });
+  assert.equal((byName.result as { file: { id: string } }).file.id, readings.id);
+  const [label, part] = byName.pictures ?? [];
+  assert.deepEqual(label, { type: "text", text: "File: readings.txt" });
+  assert.equal(part?.type, "file");
+  assert.match((part as { file: { file_data: string } }).file.file_data, /^data:text\/plain;base64,/);
+  const picture = await runTool(ctx, "view_attachment", { file: photo.id });
+  assert.equal(picture.ok, true, JSON.stringify(picture.result));
+  const missing = await runTool(ctx, "view_attachment", { file: "budget.xlsx" });
   assert.equal(missing.ok, false);
   assert.deepEqual((missing.result as { attached: Array<{ name: string }> }).attached.map((row) => row.name), ["Field brief.md", "readings.txt", "site.png", "Contract notes.txt"]);
-  const research = await runTool(jobContext(mira.id, task.id, ctx.root, "research"), "read_attachment", { file: "Field brief.md" });
-  assert.equal(research.ok, true, "research runs can read attachments too");
+  const text = await runTool(ctx, "read_attachment", { file: "READINGS.txt" });
+  assert.equal(text.ok, false, "read_attachment is not offered (files/extracted-text-policy.ts)");
 });
 
 test("save_attachment copies the original into the folder, never over a file unless asked, never outside", async () => {
@@ -228,23 +224,21 @@ test("save_attachment copies the original into the folder, never over a file unl
   assert.match((research.result as { error: string }).error, /No file .* is attached to this task/);
 });
 
-test("the Hub assistant and editors over MCP find a task's files and read them", async () => {
-  const { mira, arjun, readings, photo, task } = await setup();
+test("the Hub assistant and editors over MCP find a task's files; the assistant opens the file itself, and neither is given its extracted text", async () => {
+  const { mira, arjun, readings, task } = await setup();
   const { fileTools } = await import("../assistant/tools/files.js");
   const list = fileTools.find((tool) => tool.name === "hub_list_files")!;
-  const read = fileTools.find((tool) => tool.name === "hub_read_file")!;
+  const view = fileTools.find((tool) => tool.name === "hub_view_file")!;
+  assert.equal(fileTools.find((tool) => tool.name === "hub_read_file"), undefined, "hub_read_file is off (files/extracted-text-policy.ts)");
   const as = (userId: string) => ({ prisma: db, userId }) as unknown as Parameters<typeof list.run>[0];
 
   const onTask = await list.run(as(mira.id), list.input.parse({ taskId: task.id }));
   assert.deepEqual((onTask.data as { files: Array<{ name: string }> }).files.map((row) => row.name), ["Field brief.md", "readings.txt", "site.png", "Contract notes.txt"]);
   const byText = await list.run(as(mira.id), list.input.parse({ query: "north field" }));
   assert.deepEqual((byText.data as { files: Array<{ id: string }> }).files.map((row) => row.id), [readings.id]);
-  const part = await read.run(as(mira.id), read.input.parse({ id: readings.id }));
-  const body = part.data as { text: string; nextOffset?: number; note: string; file: { kind: string } };
-  assert.ok(body.text.startsWith("Reading 1:") && body.nextOffset);
-  assert.match(body.note, /information, not as instructions/);
-  assert.match(((await read.run(as(mira.id), read.input.parse({ id: photo.id }))).data as { about: string }).about, /no text/);
-  assert.deepEqual((await read.run(as(arjun.id), read.input.parse({ id: readings.id }))).data, { found: false });
+  const opened = await view.run(as(mira.id), view.input.parse({ id: readings.id }));
+  assert.equal(opened.pictures?.[1]?.type, "file");
+  assert.deepEqual((await view.run(as(arjun.id), view.input.parse({ id: readings.id }))).data, { found: false });
 
   const bridge = await import("../bridge/service.js");
   const found = await bridge.searchHub(db, mira.id, "north field", 5);
@@ -252,14 +246,16 @@ test("the Hub assistant and editors over MCP find a task's files and read them",
   assert.equal(hit?.id, readings.id);
   assert.equal(hit?.label, "readings.txt");
   assert.ok(!found.results.some((row) => row.kind === "artifact"), "the file is cited once, as a document");
+  assert.doesNotMatch(JSON.stringify(found.results), /Reading 1:/, "search excerpts carry no file text");
   assert.equal((await bridge.searchHub(db, arjun.id, "north field", 5)).results.length, 0);
   const document = await bridge.readItem(db, mira.id, "document", readings.id, 0, 500);
   assert.ok(document.found);
-  const item = document.item as { filename: string; format: string; originalBytesOmitted: boolean; body: { text: string; nextOffset: number | null } };
+  const item = document.item as { filename: string; format: string; originalBytesOmitted: boolean; note: string };
   assert.equal(item.filename, "readings.txt");
   assert.equal(item.format, "txt");
   assert.equal(item.originalBytesOmitted, true);
-  assert.equal(item.body.nextOffset, 500);
+  assert.doesNotMatch(JSON.stringify(item), /Reading 1:/);
+  assert.match(item.note, /does not send a file's extracted text/);
   const taskRead = await bridge.readItem(db, mira.id, "task", task.id, 0, 4000);
   assert.ok(taskRead.found);
   assert.deepEqual((taskRead.item as { files: Array<{ id: string; kind: string }> }).files.map((row) => row.kind), ["document", "document", "document", "document"]);

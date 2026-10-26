@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
 import { useToast } from "@/components/toast";
 import { usePersistentState } from "@/lib/prefs";
+import Link from "next/link";
 import { resolveExtras } from "@/lib/desk-extras";
 import { DESKS, type DeskId } from "./desks";
 import { LiveBoard, liveLine, ownCount, PreviewTiles, useDeskLayout } from "./live-board";
@@ -59,7 +60,7 @@ export function DeskView({
 
   const samplePref = flagValue(prefs.data?.preferences, SAMPLE_KEY);
   const plots = plotsQuery || flagValue(prefs.data?.preferences, PLOTS_KEY);
-  const liveQuery = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: prefs.isSuccess && !samplePref, staleTime: 15_000 });
+  const liveQuery = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: prefs.isSuccess, staleTime: 15_000 });
 
   useLayoutEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
@@ -148,6 +149,12 @@ export function DeskView({
           <span className="sample-mark">Sample data · not your live desk</span>
           <button type="button" className="btn" onClick={() => void clearSamples()}>Clear samples</button>
         </div>
+      ) : null}
+      {liveData?.pinnedTasks?.length ? (
+        <section className="mb-5" data-today-pins aria-label="Pinned to Today">
+          <h2 className="mb-2 text-[12px] font-medium text-muted">Pinned</h2>
+          <div className="flex flex-wrap gap-2">{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="rounded-lg border border-line bg-panel px-3 py-2 text-[13px] font-medium hover:border-line-strong [overflow-wrap:anywhere]">{task.title}</Link>)}</div>
+        </section>
       ) : null}
       <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk">
         {sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (

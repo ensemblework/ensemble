@@ -35,7 +35,7 @@ function ProjectCard({ project }: { project: ProjectRecord }) {
         <span className="min-w-0 truncate" data-project-name>{project.name}</span>
         {project.status === "done" ? <Tag tone="green">done</Tag> : null}
       </button>
-      <p className="mt-2 line-clamp-3 text-[12.5px] leading-[18px] text-muted">{project.summary || "No summary yet."}</p>
+      {project.summary ? <p className="mt-2 line-clamp-3 text-[12.5px] leading-[18px] text-muted">{project.summary}</p> : null}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {project.people.map((person) => (
           <span key={person.id} className="chip" style={{ ["--chip" as string]: "var(--kind-people)" }}>
@@ -88,7 +88,7 @@ export function ProjectsTab({ ids = "" }: { ids?: string }) {
         <LoadError error={projects.error} onRetry={() => void projects.refetch()} retrying={projects.isFetching} what="your projects" />
       ) : list.length === 0 ? (
         <Empty>
-          {allow ? "No projects on today's work." : "No projects yet. They are inferred from recurring threads and repos, or you can create one."}
+          {allow ? "No projects on today's work." : "No projects yet."}
         </Empty>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3">

@@ -53,7 +53,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
   }, [appearance.theme]);
   const adjusted = custom && /^#[0-9a-fA-F]{6}$/.test(custom) ? resolveAccent(custom, theme, colorThemeSurfaces(appearance.colorTheme, theme)) : null;
   return (
-    <SectionCard title="Appearance" description="Saved with your account and in this browser, so the next page does not flash the default. System follows your device.">
+    <SectionCard title="Appearance">
       <div data-jump-label="Theme"><Segmented
         label="Mode"
         value={appearance.theme}
@@ -146,13 +146,13 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
         ))}
       </div>
       <h3 className="mt-7 text-[15px] font-semibold">Navigation</h3>
-      <SettingRow title="Auto-collapse sidebar" description="Keep the app icons visible. Move to the sidebar or focus its controls to expand it without moving your page.">
+      <SettingRow title="Auto-collapse sidebar" info="Keep an icon rail; hover or focus to expand it.">
         <Toggle label="Auto-collapse sidebar" checked={appearance.sidebarAutoCollapse} onChange={(sidebarAutoCollapse) => update({ sidebarAutoCollapse })} />
       </SettingRow>
-      <SettingRow title="Pages panel position" description="A dedicated browser for pages and their nested pages. On the left, the main navigation becomes an icon rail.">
+      <SettingRow title="Pages panel position" info="The left position keeps main navigation as an icon rail.">
         <Segmented label="Pages panel position" value={appearance.pagesPanelSide} options={[{ id: "left", label: "Left" }, { id: "right", label: "Right" }]} onChange={(pagesPanelSide) => update({ pagesPanelSide })} />
       </SettingRow>
-      <SettingRow title="Reduce motion" description="Match system follows this device. Turn this on to keep motion still even when the device does not ask.">
+      <SettingRow title="Reduce motion" info="Reduce animation, or follow your device's preference.">
         <div className="flex items-center gap-2">
           <span className="text-[12px] text-muted">{appearance.reduceMotion ? "Always" : "Match system"}</span>
           <Toggle

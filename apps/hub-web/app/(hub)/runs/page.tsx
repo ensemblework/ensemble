@@ -126,7 +126,7 @@ export default function RunsPage() {
   const close = () => router.replace("/runs", { scroll: false });
   return (
     <div className="mx-auto max-w-[900px] px-4 pb-24 pt-8 sm:px-10">
-      <PageHeader title="Recent runs" description="Every delegated task leaves a trace: each step and tool call, what it took, the model that answered and what it cost. Click a run to see it." />
+      <PageHeader title="Recent runs" />
       <Held pending={runs.isLoading} fallback={<RunsSkeleton />}>
         {(runs.data?.runs ?? []).length === 0 ? (
           <Empty>No runs yet. Hand a task to the agent from its page or from Today.</Empty>

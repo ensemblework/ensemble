@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AgentIcon as Orbit } from "@/components/agent-icon";
 import { ArrowUpRight, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
@@ -10,7 +9,7 @@ import { usePeek } from "@/components/shell/peek";
 import { useToast } from "@/components/toast";
 
 import { Held } from "@/components/motion/held";
-import { Empty, PageHeader, SkeletonRows } from "@/components/ui";
+import { PageHeader, SkeletonRows } from "@/components/ui";
 import { api, type ApprovalRecord } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { LinkifiedText } from "@/components/linkified-text";
@@ -150,7 +149,6 @@ export default function NeedsMePage() {
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
   const decisions = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000 });
   const peek = usePeek();
-  const [view, setView] = useState<"all" | "requests" | "approvals" | "waiting">("all");
   useWarmEditors("peek");
   const blocked = (tasks.data?.tasks ?? []).filter((task) => task.status === "blocked" || task.status === "waiting_approval").sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const pendingApprovals = approvals.data?.approvals ?? [];
@@ -159,16 +157,12 @@ export default function NeedsMePage() {
   const failed = approvals.isError || tasks.isError || decisions.isError;
   const clear = ready && !blocked.length && !pendingApprovals.length && !requests.length;
   return <div className="page-read review-page mx-auto max-w-[980px] px-6 pb-24 pt-8">
-    <PageHeader title="Needs me" description="Decisions to make, questions to answer, and work ready for a next step." actions={null} />
-    <div className="review-overview">
-      {[{ id: "requests", label: "Questions from Ensemble runs", n: requests.length, icon: Orbit, tone: "violet", note: "Only work started through Ensemble" }, { id: "approvals", label: "Outgoing approvals", n: pendingApprovals.length, icon: ShieldCheck, tone: "amber", note: "Review before anything is sent" }, { id: "waiting", label: "Waiting tasks", n: blocked.length, icon: Clock3, tone: "blue", note: "Find what will move work forward" }].map((item) => <button key={item.id} type="button" data-tone={item.tone} aria-pressed={view === item.id} onClick={() => setView(view === item.id ? "all" : item.id as typeof view)}><span className="review-overview-icon"><item.icon size={18} /></span><div><strong>{ready ? item.n : "—"}</strong><span>{item.label}</span><small>{item.note}</small></div><ArrowUpRight size={14} /></button>)}
-    </div>
-    <div className="work-view-tabs" aria-label="Review queues">{([ ["all", "Everything"], ["requests", "Requests"], ["approvals", "Approvals"], ["waiting", "Waiting tasks"] ] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div>
+    <PageHeader title="Needs me" />
     {failed && <div className="work-load-error" role="alert">Some of your review queue could not load.<button className="btn" type="button" onClick={() => { void approvals.refetch(); void decisions.refetch(); void tasks.refetch(); }}>Try again</button></div>}
-    {clear && view === "all" ? <div className="work-clear-state"><span><CheckCheck size={30} /></span><h2>You're clear to focus.</h2><p>No requests or waiting tasks need a next step right now.</p><a href="/board" className="btn">Back to the board<ArrowUpRight size={13} /></a></div> : <>
-      {(view === "requests" || view === "all" && (requests.length > 0 || decisions.isPending)) && <div className="review-requests"><EditorDecisions hideEmpty={view === "all"} /></div>}
-      {(view === "all" || view === "approvals") && <section className="review-section"><header><span><ShieldCheck size={16} />Outgoing approvals</span><small>{pendingApprovals.length}</small></header><p className="review-section-note">What you approve is exactly what happens. Review the content before sending.</p><Held pending={approvals.isPending} fallback={<SkeletonRows count={2} />}>{pendingApprovals.length ? <div className="space-y-3">{pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div> : !approvals.isError && <div className="work-quiet-state"><Check size={15} />Nothing waiting on your approval.</div>}</Held></section>}
-      {(view === "all" || view === "waiting") && <section className="review-section"><header><span><CircleHelp size={16} />Waiting for a next step</span><small>{blocked.length}</small></header>{tasks.isPending ? <SkeletonRows count={2} /> : blocked.length ? <div className="waiting-grid">{blocked.map((task) => <button key={task.id} type="button" onMouseEnter={() => warmTask(client, task.id)} onFocus={() => warmTask(client, task.id)} onClick={() => peek.open(task.id)} className="waiting-card" data-motion-slot="needs.waiting" data-state="waiting"><span className="waiting-status" data-blocked={task.status === "blocked"}>{task.status === "blocked" ? "Blocked" : "Awaiting approval"}</span><strong>{task.title}</strong><span className="waiting-meta">Updated {relative(task.updatedAt)}<ArrowUpRight size={14} /></span></button>)}</div> : !tasks.isError && <div className="work-quiet-state"><Check size={15} />No tasks are blocked or awaiting approval.</div>}</section>}
+    {clear ? <div className="work-clear-state"><span><CheckCheck size={30} /></span><h2>All caught up</h2></div> : <>
+      {(requests.length > 0 || decisions.isPending) && <div className="review-requests"><EditorDecisions hideEmpty /></div>}
+      {(pendingApprovals.length > 0 || approvals.isPending) && <section className="review-section"><header><span><ShieldCheck size={16} />Approvals</span><small>{pendingApprovals.length || ""}</small></header><Held pending={approvals.isPending} fallback={<SkeletonRows count={2} />}><div className="space-y-3">{pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div></Held></section>}
+      {(blocked.length > 0 || tasks.isPending) && <section className="review-section"><header><span><CircleHelp size={16} />Waiting tasks</span><small>{blocked.length || ""}</small></header>{tasks.isPending ? <SkeletonRows count={2} /> : <div className="waiting-grid">{blocked.map((task) => <button key={task.id} type="button" onMouseEnter={() => warmTask(client, task.id)} onFocus={() => warmTask(client, task.id)} onClick={() => peek.open(task.id)} className="waiting-card" data-motion-slot="needs.waiting" data-state="waiting"><span className="waiting-status" data-blocked={task.status === "blocked"}>{task.status === "blocked" ? "Blocked" : "Awaiting approval"}</span><strong>{task.title}</strong><span className="waiting-meta">{relative(task.updatedAt)}<ArrowUpRight size={14} /></span></button>)}</div>}</section>}
     </>}
   </div>;
 }

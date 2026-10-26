@@ -186,5 +186,9 @@ export function parseSubscriptionAgents(value: unknown): SubscriptionAgent[] {
   });
 }
 
-/** The computer-side protocol for assistant turns (capabilities `assistantTurns`). */
-export const ASSISTANT_TURNS_API = 1;
+/** The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2 also takes the files attached to the person's message. */
+export const ASSISTANT_TURNS_API = 2;
+/** The oldest `assistantTurns` that runs assistant turns at all. */
+export const ASSISTANT_TURNS_MIN = 1;
+/** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
+export const ASSISTANT_TURN_FILES = 2;

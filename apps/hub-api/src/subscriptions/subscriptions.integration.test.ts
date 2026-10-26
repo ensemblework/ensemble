@@ -179,6 +179,124 @@ test("a turn reaches only the person's own computer, and says why when it cannot
   }
 });
 
+test("the files on a message reach a computer that takes them, only through that turn; an older one gets the fallback note", async () => {
+  const FILE_ROUTE = "GET /api/devices/self/assistant-turns/:id/files/:fileId";
+  const person = await harness.asUser();
+  const stranger = await harness.asUser();
+  const mine = await pairedComputer(person, "Studio Mac", { assistantTurns: 2, agents: [CLAUDE] });
+  const theirs = await pairedComputer(stranger, "Their Mac", { assistantTurns: 2, agents: [CLAUDE] });
+  const { runSubscriptionTurn } = await import("./turn.js");
+  const { loadSettings } = await import("../lib/settings.js");
+  const picture = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]);
+  const list = [
+    { id: "file-chart", name: "chart.png", mediaType: "image/png", kind: "image" as const, size: picture.byteLength },
+    { id: "file-gone", name: "brief.pdf", mediaType: "application/pdf", kind: "pdf" as const, size: 900, text: "The brief." },
+  ];
+  const read = async (id: string) => (id === "file-chart" ? picture : null);
+  const ask = async () =>
+    runSubscriptionTurn({
+      userId: person.id,
+      settings: await loadSettings(harness.prisma, person.id),
+      agent: "claude-code",
+      model: "haiku",
+      system: "You are the Ensemble assistant.",
+      prompt: "What does the chart show?",
+      tools: [],
+      call: async () => ({ text: "{}" }),
+      files: { list, read, fallback: "## Attached files\nchart.png: a picture. brief.pdf: The brief." },
+      prisma: harness.prisma,
+    });
+
+  const seen: Array<{ prompt: string; files?: unknown }> = [];
+  let turnId = "";
+  const simulated = computer(mine.device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    turnId = String(data.id);
+    const turn = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}` });
+    const spec = (turn.json() as { spec: { prompt: string; files?: Array<{ id: string }> } }).spec;
+    seen.push(spec);
+    if (spec.files) {
+      const file = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/file-chart` });
+      assert.equal(file.statusCode, 200, file.body);
+      assert.equal(file.headers["content-type"], "image/png");
+      assert.equal(file.headers["cache-control"], "no-store");
+      assert.equal(file.headers["x-content-type-options"], "nosniff");
+      assert.deepEqual(new Uint8Array(file.rawPayload), picture);
+      claim(FILE_ROUTE, "happy-path");
+      const gone = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/file-gone` });
+      assert.equal(gone.statusCode, 404, "a file Ensemble can no longer read");
+      const other = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/some-other-file` });
+      assert.equal(other.statusCode, 404, "only the turn's own files");
+      claim(FILE_ROUTE, "unknown-id");
+      const stolen = await theirs.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/file-chart` });
+      assert.equal(stolen.statusCode, 410, "another computer cannot read the turn's files");
+      claim(FILE_ROUTE, "isolation");
+    }
+    const done = await mine.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${turnId}/done`, payload: { result: { text: "A rising line.", model: "claude-haiku-5-5", tokensIn: 1, tokensOut: 1, costUsd: null } } });
+    assert.equal(done.statusCode, 200, done.body);
+  });
+  try {
+    const answered = await ask();
+    assert.equal(answered.text, "A rising line.");
+    assert.deepEqual(simulated.failures, []);
+    assert.deepEqual(seen[0], { ...seen[0], prompt: "What does the chart show?", files: list }, "the files themselves, no fallback note");
+    const ended = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/file-chart` });
+    assert.equal(ended.statusCode, 410, "an ended turn's files are gone");
+
+    await harness.prisma.device.update({ where: { id: mine.device.id }, data: { capabilities: { assistantTurns: 1, agents: [CLAUDE] } } });
+    await ask();
+    assert.deepEqual(simulated.failures, []);
+    assert.equal(seen[1]!.files, undefined, "an older computer is not sent files it cannot fetch");
+    assert.equal(seen[1]!.prompt, "What does the chart show?\n\n## Attached files\nchart.png: a picture. brief.pdf: The brief.");
+  } finally {
+    simulated.stop();
+  }
+});
+
+test("a chat message's attached file reaches the person's agent as the file itself, named in the prompt", async () => {
+  const person = await harness.asUser();
+  const { key, device } = await pairedComputer(person, "Studio Mac", { assistantTurns: 2, agents: [CLAUDE] });
+  const set = await person.inject({ method: "PATCH", url: "/api/settings", payload: { models: { medium: { provider: "claude-code", model: "haiku", effort: "default" } }, assistant: { defaultTier: "medium" } } });
+  assert.equal(set.statusCode, 200, set.body);
+  const notes = Buffer.from("The backup window is Sunday 02:00 UTC.", "utf8");
+  const upload = await person.inject({ method: "POST", url: "/api/documents", payload: { filename: "notes.md", mediaType: "text/markdown", dataBase64: notes.toString("base64"), summarize: false } });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const fileId = upload.json().file.id as string;
+
+  const seen: { spec?: { prompt: string; files?: Array<{ id: string; name: string; kind: string; text?: string }> }; bytes?: Buffer } = {};
+  const simulated = computer(device.id, async (event, data) => {
+    if (event !== "assistant.turn") return;
+    const id = String(data.id);
+    seen.spec = (await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json().spec;
+    if (seen.spec?.files) {
+      const file = await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}/files/${fileId}` });
+      assert.equal(file.statusCode, 200, file.body);
+      seen.bytes = Buffer.from(file.rawPayload);
+    }
+    await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result: { text: "Sunday 02:00 UTC.", model: "claude-haiku-5-5", tokensIn: 1, tokensOut: 1, costUsd: null } } });
+  });
+  try {
+    const turn = await person.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "When is the backup window?", mentions: [{ kind: "file", id: fileId, label: "notes.md" }] } });
+    assert.equal(turn.statusCode, 200, turn.body);
+    assert.deepEqual(simulated.failures, []);
+    assert.deepEqual(seen.spec?.files?.map((file) => [file.id, file.name, file.kind]), [[fileId, "notes.md", "text"]]);
+    assert.match(seen.spec!.prompt, /These come with this message as files: “notes\.md”/);
+    assert.doesNotMatch(seen.spec!.prompt, /02:00/, "the prompt names the file; the agent reads the file");
+    assert.deepEqual(seen.bytes, notes, "the computer fetches the original bytes");
+
+    await harness.prisma.device.update({ where: { id: device.id }, data: { capabilities: { assistantTurns: 1, agents: [CLAUDE] } } });
+    delete seen.spec;
+    const older = await person.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "When is the backup window?", mentions: [{ kind: "file", id: fileId, label: "notes.md" }] } });
+    assert.equal(older.statusCode, 200, older.body);
+    const olderSpec = seen.spec as { prompt: string; files?: unknown } | undefined;
+    assert.equal(olderSpec?.files, undefined);
+    assert.match(olderSpec!.prompt, /“notes\.md”\) could not be given to you: the Ensemble on the person's computer is too old to receive files/);
+    assert.doesNotMatch(olderSpec!.prompt, /02:00/, "an older computer is told to update, not given Ensemble's text");
+  } finally {
+    simulated.stop();
+  }
+});
+
 test("the web lists the person's computers and their subscriptions, and asks a computer to check again or sign in", async () => {
   const person = await harness.asUser();
   const stranger = await harness.asUser();

@@ -321,7 +321,7 @@ select:focus-visible {
 
 @media (max-width: 767px) {
   input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
-  textarea,
+  textarea:not([data-page-title]),
   select {
     font-size: max(16px, 1em) !important;
   }

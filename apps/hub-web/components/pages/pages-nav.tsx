@@ -14,7 +14,6 @@ import { useToast } from "../toast";
 import { standalonePageHref } from "./page-href";
 import { PAGE_DRAG_TYPE, pageIdFromHref } from "@/lib/page-drag";
 import { PageActions } from "./page-actions";
-import { NewPageDialog } from "./new-page-dialog";
 import { PagesSection, type PageLinkProps } from "./pages-section";
 import { LoadError } from "../load-error";
 
@@ -48,7 +47,6 @@ export function PagesBrowser() {
   const pages = useQuery({ queryKey: ["pages", "directory"], queryFn: api.pageDirectory });
   const access = useSpaceAccess();
   const [importing, setImporting] = useState(false);
-  const [newPage, setNewPage] = useState(false);
   const [creating, setCreating] = useState(false);
   const createPending = useRef(false);
 
@@ -64,7 +62,6 @@ export function PagesBrowser() {
         creating={creating}
         renderActions={!access.guest ? (page, rename, remove) => page.kind === "task" ? <><button type="button" className="icon-btn" aria-label={`Rename ${page.title}`} onClick={rename}><Pencil size={13} /></button><button type="button" className="icon-btn" aria-label={`Delete ${page.title}`} onClick={remove}><Trash2 size={13} /></button></> : <PageActions id={page.id} title={page.title} onRename={rename} onDelete={remove} /> : undefined}
         onCreate={() => {
-          if (!access.guest) { setNewPage(true); return; }
           if (createPending.current) return;
           createPending.current = true; setCreating(true);
           void api.createPage().then(result => { void client.invalidateQueries({ queryKey: ["pages"] }); router.push(standalonePageHref(result.page.id, true)); }).catch((error: Error) => toast(error.message, { tone: "error" })).finally(() => { createPending.current = false; setCreating(false); });
@@ -124,7 +121,6 @@ export function PagesBrowser() {
             .catch((error: Error) => toast(error.message, { tone: "error" }));
         }}
       />
-      {!access.guest ? <NewPageDialog open={newPage} onClose={() => setNewPage(false)} /> : null}
       {importing ? <ImportDialog open onClose={() => setImporting(false)} initialSource="notion" /> : null}
     </>
   );

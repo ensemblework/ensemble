@@ -44,10 +44,6 @@ export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: str
           <RunCode key={open.id} job={open} initialPath={openPath} onClose={onOpen ? () => onOpen(null) : undefined} />
         </div>
       ) : null}
-      <p className="mb-3 text-[12.5px] text-muted">
-        <span className="font-medium text-ink">Review &amp; edit</span> opens a run in the editor on that computer: accept or reject each change, edit, commit and push.{" "}
-        <span className="font-medium text-ink">Open code</span> shows the files the agent changed, and the folder, read from that computer when you open a file.
-      </p>
       <div className="mb-4 flex flex-wrap gap-2">
         {paired.map((device) => (
           <div key={device.id} className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-[12.5px]">

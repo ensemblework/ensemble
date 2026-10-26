@@ -16,7 +16,7 @@ import json
 import re
 from typing import Any, AsyncIterator
 
-from ensemble_agent.content_parts import has_image_parts, responses_user_content
+from ensemble_agent.content_parts import has_attachment_parts, responses_user_content
 from ensemble_agent.provider_error import ProviderError
 
 # Providers whose models may need /responses. Other OpenAI-compatible providers stay on chat.
@@ -164,7 +164,7 @@ def clean_items(items: list[Any]) -> list[dict[str, Any]]:
             out.append({"type": "function_call_output", "call_id": str(item.get("call_id") or ""), "output": output if isinstance(output, str) else _arguments(output)})
             continue
         role = item.get("role")
-        if role == "user" and has_image_parts(item.get("content")):
+        if role == "user" and has_attachment_parts(item.get("content")):
             out.append({"role": role, "content": responses_user_content(item.get("content"))})
             continue
         if role in ("system", "developer", "user", "assistant"):

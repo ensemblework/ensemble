@@ -5,7 +5,7 @@ import { ArrowDownLeft, ArrowUpRight, ChevronDown, Info, RefreshCw, Search } fro
 import { useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
 import { IncludedCreditsCard, IncludedLocalOnly } from "@/components/metrics/included-credits";
-import { Empty, PageHeader, cx } from "@/components/ui";
+import { Empty, InfoTip, PageHeader, cx } from "@/components/ui";
 import { api, type MetricsSummary, type UsageCall } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import { creditAmount, useIncludedUsage } from "@/lib/included";
@@ -72,7 +72,8 @@ export default function MetricsPage() {
   const recent = data?.recent.filter(call => `${call.title} ${call.model} ${call.purpose}`.toLowerCase().includes(search.toLowerCase())) ?? [];
   const maxCalls = Math.max(1, ...data?.byModel.map(row => row.calls) ?? []);
   return <div className="mx-auto max-w-[1200px] px-4 pb-24 pt-8 sm:px-8">
-    <PageHeader title="Metrics" description="Understand the AI you use through Ensemble. Your personal activity in other apps stays private." actions={<div className="flex flex-wrap items-center gap-2">
+    <PageHeader title="Metrics" actions={<div className="flex flex-wrap items-center gap-2">
+      <InfoTip label="About usage" text="Only calls through Ensemble appear here. Token counts come from provider responses. Other apps and AI plan balances are not read. Missing values mean not reported, not zero." />
       <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{providerChoices.map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
       <select aria-label="Usage period" value={windowDays} onChange={event => setWindowDays(Number(event.target.value))} className="field text-sm"><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select>
       <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}><RefreshCw size={15} className={metrics.isFetching ? "animate-spin" : ""} /></button>
@@ -95,7 +96,6 @@ export default function MetricsPage() {
         <section className="tile rounded-xl bg-panel p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Most recent calls</h2><p className="mt-1 text-xs text-muted">Open a call for its time, purpose and how usage is counted.</p></div><label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"><Search size={14} className="shrink-0 text-muted" /><input type="search" aria-label="Search recent calls" placeholder="Find a call…" value={search} onChange={event => setSearch(event.target.value)} className="w-40 min-w-0 bg-transparent text-xs outline-none" /></label></div>
           {!recent.length ? <Empty>{search ? "No recent calls match." : "No calls recorded in this period."}</Empty> : recent.slice(0, more ? 40 : 5).map((call, index) => <RecentCall key={`${call.at}-${index}`} call={call} />)}
           {recent.length > 5 ? <button type="button" className="mt-3 text-xs text-accent" onClick={() => setMore(!more)}>{more ? "Show fewer" : `Show ${recent.length - 5} more calls`}</button> : null}
-          <p className="mt-4 flex items-start gap-2 border-t border-line pt-4 text-xs leading-5 text-muted"><Info size={14} className="mt-0.5 shrink-0" />Only calls routed through Ensemble appear here. Token counts come from each call’s response. AI plan balances and usage in other apps are never fetched. Missing counts or prices mean “not reported”, rather than zero.</p>
         </section>
       </div>
     </div>

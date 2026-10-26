@@ -48,29 +48,40 @@ function configured(model: string): { config: IncludedConfig; entry: IncludedMod
 
 /** Input tokens reserved per picture: providers charge a few thousand at most (OpenAI's largest ≈2,500, Anthropic's ≈1,600). */
 export const IMAGE_INPUT_ALLOWANCE = 8_000;
+/** At most this many input tokens are reserved for one file sent whole (a PDF's pages as text and pictures). */
+export const FILE_INPUT_ALLOWANCE_MAX = 150_000;
+
+/** A file sent whole: its bytes, at most FILE_INPUT_ALLOWANCE_MAX, plus room for the model's own framing. */
+export function fileInputAllowance(base64Length: number): number {
+  return Math.min(Math.ceil((base64Length * 3) / 4), FILE_INPUT_ALLOWANCE_MAX) + 3_000;
+}
 
 /**
  * The UTF-8 bytes of the request as sent: a byte-level BPE tokenizer never makes more tokens than
- * bytes, so a reservation is never short on input. A picture's base64 is not tokenized as text, so
- * each counts as IMAGE_INPUT_ALLOWANCE instead of its length.
+ * bytes, so a reservation is never short on input. A picture's or file's base64 is not tokenized as
+ * text, so each picture counts as IMAGE_INPUT_ALLOWANCE and each file as fileInputAllowance.
  */
 export function estimateInputTokens(payload: Json): number {
-  let images = 0;
+  let attached = 0;
+  const DATA = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i;
   const text = JSON.stringify(payload, (_key, value: unknown) => {
-    if (typeof value === "string" && /^data:image\//i.test(value)) {
-      images += 1;
-      return "";
+    if (typeof value === "string") {
+      const data = DATA.exec(value.slice(0, 200));
+      if (data) {
+        attached += /^image\//i.test(data[1]!) ? IMAGE_INPUT_ALLOWANCE : fileInputAllowance(value.length - data[0].length);
+        return "";
+      }
     }
     if (value && typeof value === "object" && !Array.isArray(value)) {
       const source = value as Json;
-      if (source.type === "base64" && typeof source.data === "string" && /^image\//i.test(String(source.media_type ?? ""))) {
-        images += 1;
+      if (source.type === "base64" && typeof source.data === "string") {
+        attached += /^image\//i.test(String(source.media_type ?? "")) ? IMAGE_INPUT_ALLOWANCE : fileInputAllowance(source.data.length);
         return { ...source, data: "" };
       }
     }
     return value;
   });
-  return Buffer.byteLength(text, "utf8") + images * IMAGE_INPUT_ALLOWANCE;
+  return Buffer.byteLength(text, "utf8") + attached;
 }
 
 function count(value: unknown): number {

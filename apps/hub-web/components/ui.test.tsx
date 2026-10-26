@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { StrictMode, act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Dialog, Popover, QueryError, Tabs } from "./ui.js";
+import { Dialog, InfoTip, Popover, QueryError, Tabs } from "./ui.js";
 import { CreateTaskDialog } from "./board/create-task-dialog.js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -40,6 +40,29 @@ async function unmount(mounted: { root: Root; host: HTMLDivElement }) {
   });
   mounted.host.remove();
 }
+
+test("information opens on hover, keyboard focus and tap; Escape closes help without closing its dialog", async () => {
+  let closed = 0;
+  const mounted = await render(<Dialog open title="Help test" onClose={() => closed++}><InfoTip text="Low is faster; high reasons longer." label="Thinking help" /></Dialog>);
+  try {
+    const button = document.querySelector<HTMLButtonElement>('button[aria-label="Thinking help"]')!;
+    await act(async () => button.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+    assert.match(document.querySelector('[role="tooltip"]')?.textContent ?? "", /Low is faster/);
+    await act(async () => button.click());
+    assert.ok(document.querySelector('[role="tooltip"]'), "clicking a hovered icon keeps help open");
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.equal(closed, 0);
+    assert.equal(document.querySelector('[role="tooltip"]'), null);
+    await act(async () => { button.blur(); button.focus(); });
+    assert.ok(document.querySelector('[role="tooltip"]'), "keyboard focus opens help");
+    await act(async () => button.blur());
+    assert.equal(document.querySelector('[role="tooltip"]'), null);
+    await act(async () => button.click());
+    assert.equal(button.getAttribute("aria-describedby"), document.querySelector('[role="tooltip"]')?.id);
+    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    assert.equal(document.querySelector('[role="tooltip"]'), null);
+  } finally { await unmount(mounted); }
+});
 
 test("modal focus wraps, background is inert, Escape closes once, and opener is restored", async () => {
   let closed = 0;

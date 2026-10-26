@@ -15,8 +15,13 @@ function fakeClient(options: { spec?: unknown; stopAfter?: number } = {}) {
   const streamed: Array<{ seq: number; text: string }> = [];
   const tools: Array<{ name: string; input: unknown }> = [];
   const done: unknown[] = [];
+  const downloads: Array<{ fileId: string; maxBytes: number; signal: AbortSignal }> = [];
   const client = {
     assistantTurn: async () => (options.spec === null ? null : { spec: options.spec ?? SPEC }),
+    assistantFile: async (_id: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }) => {
+      downloads.push({ fileId, ...options });
+      return new Uint8Array([1, 2, 3]);
+    },
     assistantTool: async (_id: string, body: { name: string; input: unknown }) => {
       tools.push(body);
       return { text: `{"ok":true,"name":"${body.name}"}` };
@@ -29,7 +34,7 @@ function fakeClient(options: { spec?: unknown; stopAfter?: number } = {}) {
       done.push(body);
     },
   } as unknown as HostedClient;
-  return { client, streamed, tools, done };
+  return { client, streamed, tools, done, downloads };
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -111,4 +116,18 @@ test("a computer answers a few turns at once and refuses more with a reason", as
   for (const resolve of release) resolve();
   await Promise.all(runs);
   assert.equal(fake.done.length, MAX_TURNS_AT_ONCE + 1);
+});
+
+test("the files on the turn are read from the web, each only up to the size the turn gave", async () => {
+  const files = [{ id: "file-1", name: "chart.png", mediaType: "image/png", kind: "image", size: 3, text: "ignored for pictures" }];
+  const fake = fakeClient({ spec: { ...SPEC, files, futureField: true } });
+  let seen: AgentTurnSpec | null = null;
+  await answerAssistantTurn(fake.client, { id: "turn-files" }, async (spec, io) => {
+    seen = spec;
+    assert.deepEqual(await io.readFile?.("file-1"), new Uint8Array([1, 2, 3]));
+    assert.equal(await io.readFile?.("not-on-this-turn"), null, "only the turn's own files are fetched");
+    return { text: "ok", model: null, tokensIn: null, tokensOut: null, costUsd: null };
+  });
+  assert.deepEqual(seen!.files, files);
+  assert.deepEqual(fake.downloads.map((row) => [row.fileId, row.maxBytes, row.signal.aborted]), [["file-1", 3 + 64 * 1024, false]]);
 });

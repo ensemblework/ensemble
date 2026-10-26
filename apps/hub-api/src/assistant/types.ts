@@ -44,7 +44,7 @@ export interface ToolContext {
 export interface ToolResult {
   summary: string;
   data?: unknown;
-  /** Pictures for the model, shown after this step's tool results (files/model-input.ts). */
+  /** Pictures and files for the model, shown after this step's tool results (files/model-input.ts). */
   pictures?: ContentPart[];
   href?: string;
   undoEntryId?: string;

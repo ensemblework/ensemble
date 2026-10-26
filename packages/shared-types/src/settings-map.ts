@@ -77,7 +77,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "account.logins", label: "Linked login methods", keywords: "google github microsoft oauth sign in login", about: "Sign in with Google, GitHub or Microsoft; link or unlink them.", href: at("account", "jump-account-linked-login-methods") },
     { id: "account.sign-out", label: "Sign out", keywords: "logout log out signout", about: "Sign out of Ensemble on this browser.", href: at("account", "jump-account-sign-out") },
     { id: "account.export", label: "Export account data (JSON)", keywords: "download export backup gdpr", about: "Download everything in your account as JSON.", href: at("account", "jump-account-export-account-data-json") },
-    { id: "account.delete", label: "Delete account", keywords: "close remove account erase", about: "Deletes your account and every space. It cannot be undone.", href: at("account", "jump-account-delete-account") },
+    { id: "account.delete", tab: "data", section: "Danger zone", label: "Delete account", keywords: "close remove account erase", about: "Deletes your account and every space. It cannot be undone.", href: at("data", "jump-danger-delete-account") },
   ]),
   ...group("account", "Avatar", [
     { id: "account.avatar", label: "Avatar", keywords: "profile picture photo initials face", about: "The picture or initials shown for you.", href: at("account", "jump-avatar-avatar") },

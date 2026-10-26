@@ -49,7 +49,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
 | [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
 | [37 · Fast pipeline and paused checks](37_PAUSED_CHECKS.md) | What runs on testing, main and release tags; the slower suites paused in `full-checks.yml` and how to bring them back |
-| [38 · Agents reading files](38_AGENT_READABLE_FILES.md) | What chat, Ensemble Node and task agents are given of attached files, pictures, plots and diagrams; which models get pictures; limits and gaps |
+| [38 · Agents and attached files](38_AGENT_READABLE_FILES.md) | How every attached file, picture, plot and diagram reaches models and agents in chat, Ensemble Node and tasks; retries after a provider's refusal; each subscription agent's input form; extracted text off |
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
 Operator-specific hosting, accounts and credentials are in the git-ignored `private/` folder.

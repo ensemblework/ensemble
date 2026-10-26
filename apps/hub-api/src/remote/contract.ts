@@ -41,6 +41,8 @@ export const ROUTES = {
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
+  /** A file attached to the turn's message (`assistantTurns` 2). */
+  assistantFile: (turnId: string, fileId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/files/${encodeURIComponent(fileId)}`,
   assistantTool: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/tool`,
   assistantStream: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/stream`,
   assistantDone: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/done`,

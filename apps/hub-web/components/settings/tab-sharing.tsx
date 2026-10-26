@@ -170,7 +170,7 @@ export function SharingTab() {
       <ContactLimitDialog open={contactLimit} onClose={() => setContactLimit(false)} />
       <SectionCard
         title="Contacts"
-        description={`The people you share with: up to ${data.limits.contacts}. Removing someone takes back everything you shared with them, at once.`}
+        info={`Up to ${data.limits.contacts} contacts. Removing a contact revokes everything you shared with them.`}
         actions={<Meter label="contacts" used={data.contacts.length} limit={data.limits.contacts} />}
       >
         {contactsFull ? <button type="button" className="btn mb-3" onClick={() => setContactLimit(true)}><UserPlus size={14} />Add contact</button> : null}
@@ -215,7 +215,7 @@ export function SharingTab() {
         {contactsFull ? <p className="mt-2 text-2xs text-faint">All slots are used. Remove someone to share with a new person.</p> : null}
       </SectionCard>
 
-      <SectionCard title="Spaces you share" description={`A whole space, shared with up to ${data.limits.members} people. They see its work; your settings, keys, connected apps and computers stay yours.`}>
+      <SectionCard title="Spaces you share" info={`Share work with up to ${data.limits.members} people. Settings, credentials and computers stay private.`}>
         <div className="divide-y divide-line">
           {data.spaces.map((space) => (
             <div key={space.id} className="flex flex-wrap items-center gap-3 py-2.5">
@@ -246,7 +246,7 @@ export function SharingTab() {
         </div>
       </SectionCard>
 
-      <SectionCard actions={<Link className="btn" href="/shared-by-me" target={native ? undefined : "_blank"} rel="noopener">Manage all sharing <ExternalLink size={13} /></Link>} title="Items you shared" description="Single pages, tasks, diagrams, plots and more. Each link opens only for the person it was shared with.">
+      <SectionCard actions={<Link className="btn" href="/shared-by-me" target={native ? undefined : "_blank"} rel="noopener">Manage all sharing <ExternalLink size={13} /></Link>} title="Items you shared" info="Private links open only for their named recipient.">
         {data.items.length ? (
           <div className="divide-y divide-line">
             {data.items.slice(0, 5).map((item) => (
@@ -272,7 +272,7 @@ export function SharingTab() {
 
       <PublicLinks />
 
-      <SectionCard actions={<Link className="btn" href="/shared" target={native ? undefined : "_blank"} rel="noopener">View all <ExternalLink size={13} /></Link>} title="Shared with you" description="Spaces and items other people shared with you. Leaving or removing one never touches their copy.">
+      <SectionCard actions={<Link className="btn" href="/shared" target={native ? undefined : "_blank"} rel="noopener">View all <ExternalLink size={13} /></Link>} title="Shared with you" info="Leaving never changes the owner's copy.">
         {data.withMe.spaces.length + data.withMe.items.length ? (
           <div className="divide-y divide-line">
             {data.withMe.spaces.slice(0, 5).map((space) => (
@@ -344,7 +344,7 @@ function PublicLinks() {
   return (
     <SectionCard
       title="Public links"
-      description="Pages, tasks, diagrams and meeting notes anyone with the link can open, no account needed. A whole space is never public."
+      info="Anyone with the link can open the item, without an account. Create one from Share → Anyone with the link. Whole spaces cannot be public."
       actions={links.data ? <Meter label="public links" used={rows.length} limit={links.data.limit} /> : undefined}
     >
       {rows.length ? (
@@ -377,7 +377,7 @@ function PublicLinks() {
           ))}
         </div>
       ) : (
-        <p className="text-[12.5px] text-muted">None yet. Open Share on a page, task, diagram or meeting notes and choose "Anyone with the link".</p>
+        <p className="text-[12.5px] text-muted">No public links.</p>
       )}
     </SectionCard>
   );

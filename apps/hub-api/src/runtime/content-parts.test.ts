@@ -3,7 +3,7 @@ import test from "node:test";
 import { anthropicPayload, buildChatPayload, toAnthropic } from "./payload.js";
 import { cleanItems, itemsFromChat } from "./responses-api.js";
 import { withVision } from "./models.js";
-import { estimateInputTokens, IMAGE_INPUT_ALLOWANCE } from "./included.js";
+import { estimateInputTokens, FILE_INPUT_ALLOWANCE_MAX, IMAGE_INPUT_ALLOWANCE } from "./included.js";
 
 const picture = { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } };
 const asked = [{ type: "text", text: "What does this chart show?" }, picture];
@@ -55,4 +55,43 @@ test("an included-model reservation counts a picture as a fixed allowance, not i
   const plain = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_text", text: "hi" }, { type: "input_image", image_url: "" }] }] });
   assert.equal(estimateInputTokens(responses), plain + IMAGE_INPUT_ALLOWANCE);
   assert.ok(estimateInputTokens(claude) < 20_000);
+});
+
+test("a file goes whole: input_file for Responses, a document block for Anthropic, unchanged for chat", () => {
+  const pdf = { type: "file", file: { filename: "memo.pdf", file_data: "data:application/pdf;base64,JVBERi0=" } };
+  const notes = { type: "file", file: { filename: "notes.md", file_data: `data:text/markdown;base64,${Buffer.from("# Notes", "utf8").toString("base64")}` } };
+  const asked = [{ type: "text", text: "Summarise" }, pdf, notes];
+  assert.deepEqual(itemsFromChat([{ role: "user", content: asked }]), [
+    { role: "user", content: [{ type: "input_text", text: "Summarise" }, { type: "input_file", filename: "memo.pdf", file_data: "data:application/pdf;base64,JVBERi0=" }, { type: "input_file", filename: "notes.md", file_data: notes.file.file_data }] },
+  ]);
+  assert.deepEqual(toAnthropic([{ role: "user", content: asked }]).messages[0], {
+    role: "user",
+    content: [
+      { type: "text", text: "Summarise" },
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" }, title: "memo.pdf" },
+      { type: "document", source: { type: "text", media_type: "text/plain", data: "# Notes" }, title: "notes.md" },
+    ],
+  });
+  const chat = buildChatPayload("gpt-4.1", "openai", [{ role: "user", content: asked }]);
+  assert.deepEqual((chat.messages as Array<{ content: unknown }>)[0]!.content, asked);
+  assert.deepEqual(cleanItems([{ role: "user", content: [{ type: "input_file", filename: "memo.pdf", file_data: "data:application/pdf;base64,JVBERi0=" }] }])[0], {
+    role: "user",
+    content: [{ type: "input_file", filename: "memo.pdf", file_data: "data:application/pdf;base64,JVBERi0=" }],
+  });
+});
+
+test("an included-model reservation counts a file as its bytes, capped, not its base64 length", () => {
+  const data = "A".repeat(4_000_000);
+  const sent = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_file", filename: "big.pdf", file_data: `data:application/pdf;base64,${data}` }] }] });
+  const empty = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_file", filename: "big.pdf", file_data: "" }] }] });
+  assert.equal(sent, empty + FILE_INPUT_ALLOWANCE_MAX + 3_000);
+  const small = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_file", filename: "big.pdf", file_data: `data:text/csv;base64,${"A".repeat(400)}` }] }] });
+  assert.equal(small, empty + 300 + 3_000);
+});
+
+test("Anthropic gets any other file as a base64 document with its own media type: the API decides", () => {
+  const docx = { type: "file", file: { filename: "brief.docx", file_data: "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsDBA==" } };
+  assert.deepEqual(toAnthropic([{ role: "user", content: [docx] }]).messages[0]!.content, [
+    { type: "document", source: { type: "base64", media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data: "UEsDBA==" }, title: "brief.docx" },
+  ]);
 });

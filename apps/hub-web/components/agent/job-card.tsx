@@ -151,7 +151,7 @@ function RunnerLock({ job, compact }: { job: AgentJob; compact?: boolean }) {
   );
 }
 
-export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
+export function JobCard({ job }: { job: AgentJob }) {
   const peek = usePeek();
   const live = job.status === "claimed" || job.status === "running" || job.status === "stopping" || job.status === "waiting_approval";
   const showProgress = useDelayedFlag(Boolean(live && job.progress));
@@ -173,9 +173,9 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
         {job.position ? <span className="shrink-0 rounded bg-raised px-1.5 text-[11px] text-muted">#{job.position}</span> : null}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Tag tone={state.tone}>{state.label}</Tag>
+        <Tag tone={state.tone} className="shrink-0">{JOB_STATE[job.status].label}</Tag>
+        {job.deviceName ? <span className="min-w-0 max-w-[12rem] truncate text-[11.5px] text-muted" title={state.label}>{job.deviceName}</span> : null}
         <RunnerTag job={job} />
-        {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
         {job.resume ? <span title={`Carried on by itself: ${job.resume.reason}`}><Tag tone="orange">{`resumed ${job.resume.attempt}/${job.resume.of}`}</Tag></span> : null}
         <PriorityTag priority={job.priority} />
         {job.kind === "code" ? (
@@ -199,13 +199,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
           {job.waitingFor}
         </div>
       ) : null}
-      {job.kind === "code" && (job.folder || job.repoUrl) ? (
-        <div className="flex items-center gap-1 truncate font-mono text-[11.5px] text-faint">
-          {job.branch ? <GitBranch size={11} /> : null}
-          <span className="truncate">{(job.folder || job.repoUrl || "").split("/").slice(-2).join("/")}{job.branch ? ` · ${job.branch}` : ""}</span>
-        </div>
-      ) : null}
-      {wide && (job.error || job.summary) ? <div className="line-clamp-2 text-muted">{job.error ?? job.summary}</div> : null}
+      {job.error ? <div className="line-clamp-2 text-danger" title={job.error}>{job.error}</div> : null}
       <JobResults job={job} />
       {job.status === "interrupted" && job.deviceId && !job.deviceRevoked && job.yours !== false ? <RunAgain job={job} /> : null}
       <div className="flex items-center justify-between gap-2 pt-0.5 text-[11.5px] text-faint">

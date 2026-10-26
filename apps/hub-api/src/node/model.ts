@@ -7,7 +7,7 @@
  */
 import type { PrismaClient } from "@prisma/client";
 import {
-  ASSISTANT_TURNS_API,
+  ASSISTANT_TURNS_MIN,
   INCLUDED_PROVIDER,
   SUBSCRIPTION_INFO,
   includedModelName,
@@ -120,7 +120,7 @@ export async function nodeModelOptions(prisma: PrismaClient, accountId: string):
   for (const device of devices) {
     if (!deviceOnline(device.lastSeenAt)) continue;
     const caps = computerAgents(device);
-    if (caps.turns < ASSISTANT_TURNS_API) continue;
+    if (caps.turns < ASSISTANT_TURNS_MIN) continue;
     for (const agent of caps.agents) {
       if (agent.signedIn === false) continue;
       for (const model of agent.models.slice(0, MAX_PER_PROVIDER)) {

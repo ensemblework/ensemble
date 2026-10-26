@@ -12,7 +12,7 @@ import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { Modal } from "./modal";
 import { BrandLogo } from "../connectors/brand-logo";
-import { SectionCard } from "../ui";
+import { InfoTip, SectionCard } from "../ui";
 import { hasUnsaved, markUnsaved } from "./unsaved";
 
 export function AccountSection() {
@@ -64,7 +64,6 @@ export function AccountSection() {
   const [repeatError, setRepeatError] = useState<string | null>(null);
   const [securityPassword,setSecurityPassword]=useState("");
   const [unlinking,setUnlinking]=useState<string|null>(null);
-  const [confirmation, setConfirmation] = useState("");
   // Mutation state reaches the button a render later; these refuse a second click in between.
   const profileBusy = useRef(false);
   const passwordBusy = useRef(false);
@@ -132,11 +131,6 @@ export function AccountSection() {
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     },
-    onError: (error) => toast(error.message, { tone: "error" }),
-  });
-  const deletion = useMutation({
-    mutationFn: () => api.deleteAccount(securityPassword || undefined),
-    onSuccess: () => { clearBrowserTabSession(); client.clear(); window.location.href = "/signup"; },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   if (!me.data) return null;
@@ -281,8 +275,7 @@ export function AccountSection() {
       {!local ? (
         <div className="mt-5 space-y-4">
           <div>
-            <h3 className="text-[13px] font-medium">Linked login methods</h3>
-            <p className="mt-1 text-[12px] text-muted">Login does not connect your mail or repositories. Removing a method or adding a password may require signing in again.</p>
+            <h3 className="flex items-center gap-1.5 text-[13px] font-medium">Linked login methods <InfoTip text="Sign-in methods do not connect mail or repositories. Changes may require a recent sign-in." /></h3>
             {identities.error ? <p role="alert" className="mt-2 text-[13px] text-muted">{identities.error.message}</p> : null}
             <div className="mt-2 flex flex-wrap gap-2">
               {identities.data?.providers.map((provider) => {
@@ -298,20 +291,42 @@ export function AccountSection() {
             <button type="button" className="btn" disabled={exported.isPending} onClick={() => exported.mutate()}>{exported.isPending ? "Exporting..." : "Export account data (JSON)"}</button>
             <p className="mt-2 text-[12px] text-muted">Exports your data, not API tokens, connector secrets, or model keys.</p>
           </div>
-          <div className="border-t border-line pt-4">
-            <h3 className="text-[13px] font-medium">Delete account</h3>
-            <p className="mt-1 text-[12px] text-muted">Stop active agent runs first. This permanently removes hosted account data and revokes connected devices. It does not delete files on your computer.</p>
-            <label className="mt-2 block text-[12px] text-muted">Type DELETE to confirm
-              <input className="field mt-1 w-full" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" />
-            </label>
-            {me.data.user.hasPassword ? <PasswordField className="mt-3" label="Password to delete account" autoComplete="current-password" value={securityPassword} onChange={setSecurityPassword}/> : <p className="mt-2 text-[12px] text-muted">If your sign-in is older than 10 minutes, sign in again before deleting your account.</p>}
-            <button type="button" className="btn mt-2" disabled={confirmation !== "DELETE" || deletion.isPending} onClick={() => deletion.mutate()}>
-              {deletion.isPending ? "Deleting..." : "Permanently delete account"}
-            </button>
-          </div>
         </div>
       ) : null}
       <Modal open={Boolean(unlinking)} onClose={()=>{setUnlinking(null);setSecurityPassword("");}} title="Remove this sign-in method?" width={440}><p className="mb-3 text-[13px] text-muted">Your work stays in Ensemble. You can sign in with your other methods.</p>{me.data.user.hasPassword ? <PasswordField label="Password to remove this method" autoComplete="current-password" value={securityPassword} onChange={setSecurityPassword}/> : <p className="text-[13px] text-muted">For an older session, sign in again before removing a login method.</p>}<div className="mt-4 flex justify-end gap-2"><button className="btn" onClick={()=>setUnlinking(null)}>Cancel</button><button className="btn btn-danger" disabled={unlink.isPending||(me.data.user.hasPassword&&!securityPassword)} onClick={()=>unlinking&&unlink.mutate(unlinking)}>Remove method</button></div></Modal>
+    </SectionCard>
+  );
+}
+
+export function DeleteAccountSection() {
+  const client = useQueryClient();
+  const toast = useToast();
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const [open, setOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [password, setPassword] = useState("");
+  const deletion = useMutation({
+    mutationFn: () => api.deleteAccount(password || undefined),
+    onSuccess: () => { clearBrowserTabSession(); client.clear(); window.location.href = "/signup"; },
+    onError: (error) => toast(error.message, { tone: "error" }),
+  });
+  if (!me.data || me.data.via === "bypass" || me.data.via === "desktop") return null;
+  const close = () => { if (!deletion.isPending) { setOpen(false); setConfirmation(""); setPassword(""); } };
+  return (
+    <SectionCard title="Delete account" description="Permanently delete your hosted account." actions={<button type="button" className="btn text-danger" onClick={() => setOpen(true)}>Delete account…</button>}>
+      <Modal open={open} onClose={close} title="Delete your account?" width={440}>
+        <p className="text-[13px] leading-5 text-muted">This cannot be undone. Hosted data is removed and paired devices are revoked; files on your computer stay. Stop active runs first.</p>
+        <label className="mt-4 block text-[13px]">Type DELETE to confirm
+          <input aria-label="Type DELETE to confirm" className="field mt-1 w-full" value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" />
+        </label>
+        {me.data.user.hasPassword ? <PasswordField className="mt-3" label="Password to delete account" autoComplete="current-password" value={password} onChange={setPassword} /> : <p className="mt-3 text-[12px] text-muted">Sign in again if your session is older than 10 minutes.</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="btn" disabled={deletion.isPending} onClick={close}>Cancel</button>
+          <button type="button" className="btn text-danger" disabled={confirmation !== "DELETE" || (me.data.user.hasPassword && !password) || deletion.isPending} onClick={() => deletion.mutate()}>
+            {deletion.isPending ? "Deleting…" : "Permanently delete account"}
+          </button>
+        </div>
+      </Modal>
     </SectionCard>
   );
 }

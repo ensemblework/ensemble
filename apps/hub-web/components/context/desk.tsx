@@ -10,6 +10,7 @@ import { useSpaceAccess } from "@/lib/access";
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { emitToast } from "@/lib/toast-bus";
 import { useShellLabels } from "@/lib/shell-labels";
+import { usePeek } from "@/components/shell/peek";
 
 const GraphTab = dynamic(() => import("./graph").then((mod) => mod.GraphTab), {
   ssr: false,
@@ -154,6 +155,7 @@ function projectLanes(data: BoardPayload): Array<{ id: string; label: string; ki
 }
 
 export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
+  const pagePeek = usePeek();
   const params = useSearchParams();
   const router = useRouter();
   const toast = emitToast;
@@ -355,7 +357,10 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
 
   const allCards = data?.lanes.flatMap((lane) => lane.cards) ?? [];
   const open = openId ? (allCards.find((row) => row.id === openId) ?? null) : null;
-  const showCard = (card: BoardCard) => setOpenId(card.id);
+  const showCard = (card: BoardCard) => {
+    if (card.kind === "project") { setOpenId(null); pagePeek.open(card.id, "project"); }
+    else setOpenId(card.id);
+  };
   const shown = lanes.flatMap((lane) => lane.cards);
   const neighbours = new Set<string>();
   const hovered = !open && hoverId ? allCards.find((row) => row.id === hoverId) : undefined;

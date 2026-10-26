@@ -18,11 +18,13 @@ await h.prisma.user.update({ where: { id: user.id }, data: { profileCompletedAt:
 await h.prisma.preference.upsert({
   where: { userId_key: { userId: user.id, key: ONBOARDING_TOUR_KEY } },
   create: { userId: user.id, key: ONBOARDING_TOUR_KEY, value: { ...READY_ONBOARDING_TOUR, status: "completed" } },
-  update: {},
+  update: { value: { ...READY_ONBOARDING_TOUR, status: "completed" } },
 });
+let projectId = "";
 for (let index = 0; index < 12; index++) {
   await request("/api/people", { name: `Research collaborator ${index} ${"LongName".repeat(6)}`, email: `person${index}@fieldnote.example` });
-  await request("/api/projects", { name: `Mobile project ${index} ${"LongTitle".repeat(8)}` });
+  const result = await request("/api/projects", { name: `Mobile project ${index} ${"LongTitle".repeat(8)}`, summary: "Project summary" });
+  if (!index) projectId = result.project.id;
 }
 const { node, room } = await request("/api/node/nodes", { name: "Mobile research assistant with a long name", role: "Research and implementation" });
 const token = await h.asToken(user, "device");
@@ -30,7 +32,10 @@ const device = await h.prisma.device.create({ data: {
   userId: user.id, tokenId: token.id, name: "Fieldnote-development-computer-with-a-long-name", platform: "linux",
   lastSeenAt: new Date(), capabilities: { code: true, browseFiles: true, webEdit: true, webTerminal: true, codeApi: 2, folders: ["mobile-project"] },
 } });
-const { task } = await request("/api/tasks", { title: "Plan and implement mobile usability across the workspace and every run", status: "todo" });
+const { task } = await request("/api/tasks", { title: "Plan and implement mobile usability across the workspace and every run", status: "todo", projectId });
+await h.prisma.deliverable.create({ data: { userId: user.id, projectId, title: "Mobile release" } });
+await h.prisma.project.update({ where: { id: projectId }, data: { notes: "Keep the release focused." } });
+await request("/api/skills", { name: "Clear release notes", body: "Write clear release notes." });
 const job = await h.prisma.workspaceJob.create({ data: {
   userId: user.id, taskId: task.id, deviceId: device.id, kind: "code", status: "running", executionMode: "sandbox",
   model: "a-very-long-model-name-for-responsive-layout-regressions", delivery: "push", startedAt: new Date(),
@@ -75,7 +80,7 @@ for (let index = 1; index <= 24; index++) {
 await h.prisma.nodeRoom.update({ where: { id: room.id }, data: { lastSeq: 24, lastMessageAt: new Date() } });
 await h.app.listen({ host: "127.0.0.1", port });
 writeFileSync(process.env.MOBILE_FIXTURE_PATH ?? "/tmp/ensemble-mobile-ui.json", JSON.stringify({
-  cookie: user.cookie, roomId: room.id, nodeId: node.id, deviceId: device.id, jobId: job.id, taskId: task.id, runId: firstRunId,
+  cookie: user.cookie, roomId: room.id, nodeId: node.id, deviceId: device.id, jobId: job.id, taskId: task.id, runId: firstRunId, projectId,
 }));
 console.log(`Isolated mobile UI fixture ready on ${port}.`);
 const stop = async () => { await h.close(); process.exit(0); };

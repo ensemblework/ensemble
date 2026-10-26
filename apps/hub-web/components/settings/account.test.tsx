@@ -4,7 +4,7 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AccountSection } from "./account.js";
+import { AccountSection, DeleteAccountSection } from "./account.js";
 import { hasUnsaved } from "./unsaved.js";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -21,7 +21,7 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 }
 
-async function mount(initialPassword = true) {
+async function mount(initialPassword = true, danger = false) {
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   let name = "Mira Chen";
   const realFetch = globalThis.fetch;
@@ -50,7 +50,7 @@ async function mount(initialPassword = true) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  await act(async () => root.render(<QueryClientProvider client={client}><AccountSection /></QueryClientProvider>));
+  await act(async () => root.render(<QueryClientProvider client={client}>{danger ? <DeleteAccountSection /> : <AccountSection />}</QueryClientProvider>));
   await settle();
   return {
     host,
@@ -66,6 +66,21 @@ async function mount(initialPassword = true) {
 }
 
 const CSS = { escape: (value: string) => value.replace(/([^a-zA-Z0-9_-])/g, "\\$1") };
+
+test("account deletion is absent from Account and opens a guarded confirmation in the danger section", async () => {
+  const account = await mount();
+  try { assert.doesNotMatch(account.host.textContent ?? "", /Delete account/); } finally { await account.done(); }
+  const danger = await mount(true, true);
+  try {
+    assert.equal(document.querySelector('[aria-label="Type DELETE to confirm"]'), null);
+    await act(async () => [...danger.host.querySelectorAll("button")].find(button => button.textContent === "Delete account…")!.click());
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.trim() === "Permanently delete account")!;
+    assert.ok(confirm.disabled);
+    await act(async () => typeInput(document.querySelector<HTMLInputElement>('[aria-label="Type DELETE to confirm"]')!, "DELETE"));
+    assert.ok(confirm.disabled, "password is required too");
+    assert.equal(danger.writes.length, 0, "opening and typing never delete anything");
+  } finally { await danger.done(); }
+});
 
 test("changing the password needs it typed twice, shows the rule first, and a double click sends it once", async () => {
   const view = await mount();
