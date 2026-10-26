@@ -31,7 +31,8 @@ setAskRuntimeStreamForTests(async (args) => {
   const messages = args.messages as Array<{ role?: string; content?: unknown }>;
   const system = messages.filter((row) => row.role === "system").map((row) => String(row.content)).join("\n");
   const slug = /You are .+? \(@([a-z0-9-]+)\), an Ensemble Node/.exec(system)?.[1] ?? "?";
-  const transcript = String(messages.filter((row) => row.role === "user").at(-1)?.content ?? "");
+  const last = messages.filter((row) => row.role === "user").at(-1)?.content;
+  const transcript = Array.isArray(last) ? last.map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "")).join("\n") : String(last ?? "");
   const second = messages.at(-1)?.role === "tool";
   const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);

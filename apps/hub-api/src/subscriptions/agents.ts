@@ -377,7 +377,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
     sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
     // ACP has no system prompt: Ensemble's instructions lead the message.
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps) })) as { stopReason?: string };
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps, "Cursor's agent") })) as { stopReason?: string };
     if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
     if (done.stopReason === "refusal") throw agentProblem("cursor-agent", "it refused the request");
     return { text: reply.trim(), model, tokensIn: null, tokensOut: null, costUsd: null };
@@ -526,7 +526,7 @@ const runAcpTurn =
       if (model && modelOption && optionValues(modelOption).includes(model) && modelOption.currentValue !== model) await rpc.request("session/set_config_option", { sessionId, configId: modelOption.id, value: model });
       if (spec.effort && thought && optionValues(thought).includes(spec.effort)) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: spec.effort });
       // ACP has no system prompt: Ensemble's instructions lead the message.
-      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
       if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
       return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null };

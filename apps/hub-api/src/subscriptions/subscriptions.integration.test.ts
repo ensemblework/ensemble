@@ -179,7 +179,7 @@ test("a turn reaches only the person's own computer, and says why when it cannot
   }
 });
 
-test("the files on a message reach a computer that takes them, only through that turn; an older one gets Ensemble's text", async () => {
+test("the files on a message reach a computer that takes them, only through that turn; an older one gets the fallback note", async () => {
   const FILE_ROUTE = "GET /api/devices/self/assistant-turns/:id/files/:fileId";
   const person = await harness.asUser();
   const stranger = await harness.asUser();
@@ -239,7 +239,7 @@ test("the files on a message reach a computer that takes them, only through that
     const answered = await ask();
     assert.equal(answered.text, "A rising line.");
     assert.deepEqual(simulated.failures, []);
-    assert.deepEqual(seen[0], { ...seen[0], prompt: "What does the chart show?", files: list }, "the files themselves, not Ensemble's text");
+    assert.deepEqual(seen[0], { ...seen[0], prompt: "What does the chart show?", files: list }, "the files themselves, no fallback note");
     const ended = await mine.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}/files/file-chart` });
     assert.equal(ended.statusCode, 410, "an ended turn's files are gone");
 
@@ -268,9 +268,11 @@ test("a chat message's attached file reaches the person's agent as the file itse
     if (event !== "assistant.turn") return;
     const id = String(data.id);
     seen.spec = (await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` })).json().spec;
-    const file = await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}/files/${fileId}` });
-    assert.equal(file.statusCode, 200, file.body);
-    seen.bytes = Buffer.from(file.rawPayload);
+    if (seen.spec?.files) {
+      const file = await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}/files/${fileId}` });
+      assert.equal(file.statusCode, 200, file.body);
+      seen.bytes = Buffer.from(file.rawPayload);
+    }
     await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result: { text: "Sunday 02:00 UTC.", model: "claude-haiku-5-5", tokensIn: 1, tokensOut: 1, costUsd: null } } });
   });
   try {
@@ -281,6 +283,15 @@ test("a chat message's attached file reaches the person's agent as the file itse
     assert.match(seen.spec!.prompt, /These come with this message as files: “notes\.md”/);
     assert.doesNotMatch(seen.spec!.prompt, /02:00/, "the prompt names the file; the agent reads the file");
     assert.deepEqual(seen.bytes, notes, "the computer fetches the original bytes");
+
+    await harness.prisma.device.update({ where: { id: device.id }, data: { capabilities: { assistantTurns: 1, agents: [CLAUDE] } } });
+    delete seen.spec;
+    const older = await person.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "When is the backup window?", mentions: [{ kind: "file", id: fileId, label: "notes.md" }] } });
+    assert.equal(older.statusCode, 200, older.body);
+    const olderSpec = seen.spec as { prompt: string; files?: unknown } | undefined;
+    assert.equal(olderSpec?.files, undefined);
+    assert.match(olderSpec!.prompt, /“notes\.md”\) could not be given to you: the Ensemble on the person's computer is too old to receive files/);
+    assert.doesNotMatch(olderSpec!.prompt, /02:00/, "an older computer is told to update, not given Ensemble's text");
   } finally {
     simulated.stop();
   }

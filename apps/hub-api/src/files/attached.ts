@@ -5,6 +5,7 @@
  * scoped to the owner. Used by Ensemble's agent, the engines, paired computers, the Hub
  * assistant and the Context Bridge.
  */
+import { EXTRACTED_TEXT_TO_MODELS } from "./extracted-text-policy.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileFormat, type FileKind, type FileTextStatus } from "@ensemble/shared-types";
@@ -186,9 +187,9 @@ export async function copyOriginals(db: Db, userId: string, files: AttachedFile[
 }
 
 /**
- * The prompt section listing attached files: name, kind, size and id, with the start of each
- * file's text (capped per file and in total), and how to read more (`more`: a tool, or the
- * copied originals' paths).
+ * The prompt section listing attached files: name, kind, size and id, and `more` for each (how it
+ * reaches the model, or the copied original's path). The start of each file's text is added only
+ * when EXTRACTED_TEXT_TO_MODELS is on (files/extracted-text-policy.ts).
  */
 export async function filesSection(
   db: Db,
@@ -205,6 +206,10 @@ export async function filesSection(
     let body = "";
     // A file given whole (the file itself, to a model that reads it) needs no excerpt.
     if (options.whole?.(file)) {
+      parts.push([head, options.more(file)].filter(Boolean).join("\n"));
+      continue;
+    }
+    if (!EXTRACTED_TEXT_TO_MODELS) {
       parts.push([head, options.more(file)].filter(Boolean).join("\n"));
       continue;
     }

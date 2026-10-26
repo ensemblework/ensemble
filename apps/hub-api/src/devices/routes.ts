@@ -426,7 +426,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       const fromApps = await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "");
-      // The computer cannot fetch the originals, so it gets each file's name and the start of its text.
+      // The computer downloads the originals (the attachments route); the brief names them.
       const filesAttached = await filesOnTask(prisma, next.userId, next.taskId);
       const diagramsAttached = await prisma.blockDiagram.findMany({ where: { userId: next.userId, deletedAt: null, id: { in: diagramIds(next.task.page?.content) } }, select: { id: true, title: true, source: true } });
       const attachments = [...filesAttached.map(({ id, filename, byteSize }) => ({ id, filename, byteSize, kind: "file" as const })), ...diagramsAttached.filter((diagram) => diagram.source.length > 0).map((diagram) => ({ id: diagram.id, kind: "diagram" as const, filename: `${diagram.title || "Diagram"}.ensemble-diagram.txt`, byteSize: Buffer.byteLength(diagram.source) }))].slice(0, 100);

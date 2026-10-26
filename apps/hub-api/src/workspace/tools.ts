@@ -723,7 +723,7 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
           };
         }
         const got = await documentForModel(ctx.prisma, ctx.userId, file);
-        if ("problem" in got) return { ok: false, result: { error: got.problem, instead: "Read its text with read_attachment." }, summary: `Could not open ${file.filename} whole` };
+        if ("problem" in got) return { ok: false, result: { error: got.problem }, summary: `Could not open ${file.filename}` };
         await ctx.progress(`Reading ${file.filename}`);
         return {
           ok: true,

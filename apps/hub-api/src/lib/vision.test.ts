@@ -38,9 +38,9 @@ test("documents go whole to models that read them: every included model but Deep
   for (const [provider, model] of [["copilot", "gpt-4.1"], ["google", "gemini-3.5-flash"], ["claude-code", "claude-sonnet-4-5"], [null, "gpt-6.1-sol"]]) assert.equal(documentsFor(provider, model)("memo.pdf"), false, `${provider} ${model}`);
 });
 
-test("a refused file becomes a note that names the text tool", () => {
+test("a refused file becomes a note saying it was not given, with no text in its place", () => {
   assert.equal(filesRefused(new Error("Invalid file data: 'input[0].content[1].file_data'. Expected a base64-encoded data URL with a valid file MIME type")), true);
   assert.equal(filesRefused(new Error("The model is overloaded.")), false);
   const messages = [{ role: "user", content: [{ type: "text", text: "Read" }, { type: "file", file: { filename: "memo.pdf", file_data: "data:application/pdf;base64,AA" } }] }];
-  assert.deepEqual(withoutFiles(messages, "hub_read_file")[0]!.content, [{ type: "text", text: "Read" }, { type: "text", text: "[The model could not open “memo.pdf” as a file. Read its text with hub_read_file.]" }]);
+  assert.deepEqual(withoutFiles(messages)[0]!.content, [{ type: "text", text: "Read" }, { type: "text", text: "[The model's provider refused “memo.pdf” as a file, so it was not given. Say you could not open it rather than guess.]" }]);
 });

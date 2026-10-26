@@ -80,14 +80,14 @@ export function withoutImages<T extends Record<string, unknown>>(messages: T[]):
   });
 }
 
-/** The provider refused a file in the request (its type, size or page count): it can go again with the files as notes. */
+/** The provider refused a file in the request (its type, size or page count): it can go again with each file as a note. */
 export function filesRefused(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error ?? "");
   return /\b(input_file|file_data|files?|documents?|pdf)\b/i.test(text) && /\b(invalid|unsupported|not supported|not allowed|cannot|can't|exceeds?|too large|too big|maximum|too many pages)\b/i.test(text);
 }
 
-/** The same messages with every file part replaced by a note naming it and the tool that reads its text. */
-export function withoutFiles<T extends Record<string, unknown>>(messages: T[], textTool: string): T[] {
+/** The same messages with every file part replaced by a note naming the file the provider refused. */
+export function withoutFiles<T extends Record<string, unknown>>(messages: T[]): T[] {
   return messages.map((message) => {
     const content = message.content;
     if (!hasFileParts(content)) return message;
@@ -96,7 +96,7 @@ export function withoutFiles<T extends Record<string, unknown>>(messages: T[], t
       if (!record || !["file", "input_file", "document"].includes(String(record.type))) return part;
       const file = (record.file ?? record) as Record<string, unknown>;
       const name = String(file.filename ?? record.title ?? "the file");
-      return { type: "text", text: `[The model could not open “${name}” as a file. Read its text with ${textTool}.]` };
+      return { type: "text", text: `[The model's provider refused “${name}” as a file, so it was not given. Say you could not open it rather than guess.]` };
     });
     return { ...message, content: parts };
   });

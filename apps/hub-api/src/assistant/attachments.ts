@@ -3,6 +3,7 @@
  * mentions, and the model gets their text and, when it reads images, the pictures themselves.
  * Earlier messages are replayed with a note naming their files, not the files again.
  */
+import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { CHAT_FILES_MAX, fileFormat } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { describeFile, filesByIds, type AttachedFile } from "../files/attached.js";
@@ -30,7 +31,8 @@ export async function messageAttachments(
 ): Promise<{ text: string; parts: ContentPart[]; files: AttachedFile[]; missing: number } | null> {
   const ids = attachedFileIds(mentions);
   if (!ids.length) return null;
-  await settleFileText(db, userId, ids, options.settleMs ?? 20_000, options.signal);
+  // Waiting for Files' text only matters when that text is sent (files/extracted-text-policy.ts).
+  if (EXTRACTED_TEXT_TO_MODELS) await settleFileText(db, userId, ids, options.settleMs ?? 20_000, options.signal);
   const files = await filesByIds(db, userId, ids);
   const read = await filesForModel(db, userId, files, {
     images: options.images,
@@ -38,7 +40,7 @@ export async function messageAttachments(
     perFile: 4000,
     total: 16_000,
     viewTool: options.images || options.documents?.("file.pdf") ? "hub_view_file" : undefined,
-    more: (file) => (file.textStatus === "ready" && file.textCharacters > 4000 ? "Read the rest with hub_read_file." : ""),
+    more: (file) => (EXTRACTED_TEXT_TO_MODELS && file.textStatus === "ready" && file.textCharacters > 4000 ? "Read the rest with hub_read_file." : ""),
   });
   const missing = ids.length - files.length;
   const text = [
@@ -53,13 +55,14 @@ export async function messageAttachments(
 
 /**
  * The message's files for the person's own agent (subscriptions/turn-files.ts): name, type and
- * size, with Ensemble's extracted text for formats an agent may not take as a file.
+ * size. Ensemble's extracted text is added only when EXTRACTED_TEXT_TO_MODELS is on.
  */
 export async function turnFilesFor(db: Db, files: readonly AttachedFile[], userId: string): Promise<TurnFile[]> {
   const rows = await db.document.findMany({ where: { id: { in: files.map((file) => file.id) }, userId, deletedAt: null }, select: { id: true, artifact: { select: { text: true } } } });
   const texts = new Map(rows.map((row) => [row.id, row.artifact?.text ?? ""]));
   return files.map((file) => {
-    const text = file.kind === "image" ? "" : (texts.get(file.id) ?? "").slice(0, TURN_FILE_TEXT_MAX);
+    // Ensemble's text goes with a file only when that is switched on (files/extracted-text-policy.ts).
+    const text = !EXTRACTED_TEXT_TO_MODELS || file.kind === "image" ? "" : (texts.get(file.id) ?? "").slice(0, TURN_FILE_TEXT_MAX);
     return { id: file.id, name: file.filename, mediaType: fileFormat(file.filename).mime, kind: file.kind, size: file.byteSize, ...(text.trim() ? { text } : {}) };
   });
 }
@@ -82,4 +85,9 @@ export function attachedNote(mentions: unknown): string {
   if (!files.length) return "";
   const names = files.map((file) => `[${String(file.label ?? "file").replace(/[[\]]/g, "")}](ensemble://file/${String(file.id)})`).join(", ");
   return `(Attached: ${names}. Read them again with hub_read_file, or hub_view_file for a picture.)`;
+}
+
+/** For a computer whose Ensemble cannot receive files: what it is told instead of the files. */
+export function filesNotReceived(files: readonly AttachedFile[]): string {
+  return `The attached ${files.length === 1 ? "file" : "files"} (${files.map((file) => `“${file.filename}”`).join(", ")}) could not be given to you: the Ensemble on the person's computer is too old to receive files. Say so, and that updating Ensemble there (ensemble update) fixes it.`;
 }
