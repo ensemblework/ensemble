@@ -69,6 +69,8 @@ export interface HostedClient {
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
   /** An assistant turn the web handed this computer; null when it has already ended. */
   assistantTurn(turnId: string): Promise<unknown | null>;
+  /** A file attached to the turn's message, at most `maxBytes`; null when the turn ended or the file is gone. */
+  assistantFile(turnId: string, fileId: string, options: { maxBytes: number; signal: AbortSignal }): Promise<Uint8Array | null>;
   assistantTool(turnId: string, body: { name: string; input: unknown }): Promise<unknown>;
   /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
   assistantStream(turnId: string, body: { seq: number; text: string }): Promise<{ stop: boolean }>;
@@ -243,6 +245,44 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (res.status === 404 || res.status === 410) return null;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The turn could not be read."));
       return res.body;
+    },
+    async assistantFile(turnId, fileId, options) {
+      let response: Response;
+      try {
+        response = await fetch(`${base}${ROUTES.assistantFile(turnId, fileId)}`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal: AbortSignal.any([options.signal, AbortSignal.timeout(120_000)]),
+          redirect: "error",
+        });
+      } catch (error) {
+        if (options.signal.aborted) throw error;
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      if (response.status === 401 || response.status === 403) {
+        const text = await response.text();
+        throw authError(response.status, text ? safeJson(text) : null);
+      }
+      if (response.status === 404 || response.status === 410) {
+        await response.body?.cancel().catch(() => undefined);
+        return null;
+      }
+      if (!response.ok) throw new RemoteError(response.status, "The attached file could not be downloaded.");
+      const reader = response.body?.getReader();
+      if (!reader) return new Uint8Array();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > options.maxBytes) throw new RemoteError(413, "The attached file is larger than the turn said.");
+          chunks.push(value);
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      return new Uint8Array(Buffer.concat(chunks));
     },
     async assistantTool(turnId, body) {
       const res = await call("POST", ROUTES.assistantTool(turnId), body);

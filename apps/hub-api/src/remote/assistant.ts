@@ -1,18 +1,22 @@
 /**
  * Assistant turns the web hands this computer (docs/25 §4.7): the person chose one of their own
  * AI subscriptions as the model, and this computer has that agent. The turn is read with the
- * device token, run by the agent here (subscriptions/agents.ts), its tool calls go back to the
- * web where the account's data is, and its reply text is sent in small batches as it is written.
+ * device token, run by the agent here (subscriptions/agents.ts) with the files attached to the
+ * person's message downloaded from the web, its tool calls go back to the web where the account's
+ * data is, and its reply text is sent in small batches as it is written.
  */
 import { z } from "zod";
 import { SUBSCRIPTION_PROVIDERS } from "@ensemble/shared-types";
 import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
+import { TURN_FILES_MAX, TurnFileShape } from "../subscriptions/turn-files.js";
 import type { HostedClient } from "./client.js";
 
 /** Turns at once on one computer; more are refused with a reason. */
 export const MAX_TURNS_AT_ONCE = 3;
 const FLUSH_MS = 200;
+/** A download may run this far past the size the turn gave. */
+const FILE_SLACK = 64 * 1024;
 
 const ToolSpecShape = z.object({ name: z.string().min(1).max(200), description: z.string().max(8000).default(""), inputSchema: z.record(z.string(), z.unknown()).default({ type: "object" }) });
 const Spec = z.object({
@@ -25,6 +29,8 @@ const Spec = z.object({
   maxTurns: z.number().int().min(1).max(64),
   /** GitHub Copilot's long context window, when the tier chose it. Older servers omit it. */
   context: z.enum(["default", "long_context"]).nullish(),
+  /** Files attached to the person's message (`assistantTurns` 2). Older servers omit it. */
+  files: z.array(TurnFileShape).max(TURN_FILES_MAX).optional(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 
@@ -77,6 +83,10 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
           pending += text;
         },
         signal: controller.signal,
+        async readFile(fileId) {
+          const file = spec.files?.find((row) => row.id === fileId);
+          return file ? client.assistantFile(id, fileId, { maxBytes: file.size + FILE_SLACK, signal: controller.signal }) : null;
+        },
       });
       clearInterval(timer);
       await flushing;

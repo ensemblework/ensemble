@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import Fastify from "fastify";
 import { engineRoutes } from "../routes/engine.js";
 import { setLocalPort } from "../workspace/engines/registry.js";
@@ -135,15 +135,23 @@ test("Claude Code runs an assistant turn with only Ensemble's tools, called thro
   }
 });
 
-test("Copilot streams its own JSON events and reports only the token usage for the Ensemble turn", async () => {
-  const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-output-"));
-  const bin = join(root, "bin"); mkdirSync(bin);
+// One stand-in `copilot` for the file: the computer remembers where it found the program.
+let copilotRoot = "";
+function copilotStandIn(): string {
+  if (copilotRoot) return join(copilotRoot, "bin");
+  copilotRoot = mkdtempSync(join(tmpdir(), "ensemble-copilot-output-"));
+  const bin = join(copilotRoot, "bin"); mkdirSync(bin);
   const program = join(bin, "copilot");
   writeFileSync(program, `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require('node:fs');
 const args = process.argv.slice(2);
 if (args.includes('--help')) { console.log('Copilot'); process.exit(0); }
 if (args.includes('--version')) { console.log('1.0.89'); process.exit(0); }
 if (args[args.indexOf('--output-format') + 1] !== 'json') process.exit(7);
+if (process.env.STANDIN_LOG) {
+  const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
+  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ cwd: process.cwd(), prompt: args[args.indexOf('-p') + 1], attached: attached.map((path) => ({ path, data: readFileSync(path).toString('base64') })) }));
+}
 const say = (type, data) => console.log(JSON.stringify({type, data}));
 say('session.usage_info', {currentTokens:999999, tokenLimit:1000000});
 say('assistant.message_delta', {deltaContent:'Plan '});
@@ -153,14 +161,54 @@ say('assistant.usage', {model:'gpt-copilot-test', inputTokens:123, outputTokens:
 say('assistant.usage', {model:'gpt-copilot-test', inputTokens:10, outputTokens:2, cost:1});
 `);
   chmodSync(program, 0o755);
+  return bin;
+}
+after(() => {
+  if (copilotRoot) rmSync(copilotRoot, { recursive: true, force: true });
+});
+
+test("Copilot streams its own JSON events and reports only the token usage for the Ensemble turn", async () => {
   const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP };
-  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
   process.env.ENSEMBLE_DESKTOP = "1";
   const deltas: string[] = [];
   try {
     const result = await runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Ensemble", prompt: "Plan my task", tools: [], maxTurns: 8 }, { call: async () => ({ text: "{}" }), onDelta: text => deltas.push(text), signal: new AbortController().signal });
     assert.deepEqual(result, { text: "Plan ready.", model: "gpt-copilot-test", tokensIn: 133, tokensOut: 14, costUsd: null });
     assert.equal(deltas.join(""), "Plan ready.");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test("a turn's files are fetched into its folder and attached to Copilot; one that cannot be fetched is named in the message", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-files-"));
+  const log = join(root, "standin.json");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_LOG: process.env.STANDIN_LOG };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_LOG = log;
+  const bytes: Record<string, Buffer> = { chart: Buffer.from([0x89, 0x50, 0x4e, 0x47]), notes: Buffer.from("Backup window: Sunday 02:00") };
+  const asked: string[] = [];
+  try {
+    const result = await runAgentTurn(
+      {
+        agent: "copilot-cli", model: "default", effort: null, system: "Ensemble", prompt: "What do these say?", tools: [], maxTurns: 8,
+        files: [
+          { id: "chart", name: "chart.png", mediaType: "image/png", kind: "image", size: 4 },
+          { id: "notes", name: "notes.md", mediaType: "text/markdown", kind: "text", size: 27 },
+          { id: "lost", name: "lost.pdf", mediaType: "application/pdf", kind: "pdf", size: 9 },
+        ],
+      },
+      { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal, readFile: async (id) => (asked.push(id), bytes[id] ?? null) },
+    );
+    assert.equal(result.text, "Plan ready.");
+    assert.deepEqual(asked, ["chart", "notes", "lost"]);
+    const seen = JSON.parse(readFileSync(log, "utf8")) as { cwd: string; prompt: string; attached: Array<{ path: string; data: string }> };
+    assert.deepEqual(seen.attached.map((file) => [file.path.slice(seen.cwd.length), file.data]), [["/files/chart.png", bytes.chart!.toString("base64")]], "the picture, saved in the turn's files/ folder");
+    assert.match(seen.prompt, /What do these say\?\n\nThe person attached 2 files to this message: “chart\.png”, “notes\.md”/);
+    assert.match(seen.prompt, /The person attached “lost\.pdf” too, but it could not be given to you: it could not be fetched from Ensemble\./, "a file that could not be fetched is named, not dropped");
+    assert.match(seen.prompt, /File “notes\.md”, attached by the person:\n\nBackup window: Sunday 02:00$/, "a text file Copilot cannot attach goes as its own text");
   } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(root, { recursive: true, force: true });
