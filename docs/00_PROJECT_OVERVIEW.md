@@ -94,7 +94,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 - There is no native email, Slack or Teams send. Calendar invitations can notify guests; some connected-item updates and vendor MCP tools write after Apply.
 - Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
 - Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button uploads into Files or lists saved Files and searches no connector.
-- Files attached in chat, in Ensemble Node or to a task reach the model whole when it reads them (pictures; PDFs, scans and Office files for the included models; each subscription agent in its own input form); otherwise the model is told it was not given, never handed Ensemble's text; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
+- Files attached in chat, in Ensemble Node or to a task go to the model as the files themselves, whatever their kind; a provider that refuses one gets the request again without it. A person's own subscription agent gets them in its own input form. Ensemble's extracted text of a file is not given to models; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
 - Replies, receipts and previews name records by title and link to them; ids stay in tool data and link targets, and show only when the person asks ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)).
 
 ## 6. Connected apps and imports

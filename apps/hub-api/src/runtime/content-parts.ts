@@ -66,13 +66,13 @@ export function hasAttachmentParts(content: unknown): boolean {
 
 const TEXT_MEDIA = /^(text\/|application\/(json|xml|x-ndjson))/i;
 
-/** A file as an Anthropic block: PDFs as base64 documents, text as text documents, anything else named. */
+/** A file as an Anthropic block: text as a text document, anything else as a base64 document with its own media type (the API decides). */
 function anthropicFileBlock(file: { filename: string; data: string }): Json {
   const data = DATA_URL.exec(file.data);
   const mime = data?.[1]?.toLowerCase() ?? "";
-  if (data && mime === "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data: data[2] }, title: file.filename };
   if (data && TEXT_MEDIA.test(mime)) return { type: "document", source: { type: "text", media_type: "text/plain", data: Buffer.from(data[2]!, "base64").toString("utf8") }, title: file.filename };
-  return { type: "text", text: `[${file.filename} could not be given to this model as a file.]` };
+  if (data) return { type: "document", source: { type: "base64", media_type: mime, data: data[2] }, title: file.filename };
+  return { type: "text", text: `[${file.filename} could not be read from its data.]` };
 }
 
 /** User content for the Anthropic Messages API: text and image blocks, or the plain string. */

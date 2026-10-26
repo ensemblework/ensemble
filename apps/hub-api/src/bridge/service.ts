@@ -1,4 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { NOT_UPLOADED } from "../context/artifacts.js";
+import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { fileFormat, hasModule, PageDocument } from "@ensemble/shared-types";
 import { describeFile, filesOnPage, filesOnTask, type AttachedFile } from "../files/attached.js";
 import { pageAgentText } from "../pages/agent-context.js";
@@ -84,7 +86,7 @@ function taskCard(task: {
   };
 }
 
-/** Files on a task or page, as citations an editor can read with ensemble_read kind "document". */
+/** Files on a task or page, as citations; ensemble_read kind "document" gives a file's details and link. */
 function fileCitations(files: AttachedFile[]) {
   return files.map((file) => ({
     id: file.id,
@@ -679,7 +681,8 @@ export async function readItem(
       };
     }
     case "artifact": {
-      const artifact = await db.artifact.findFirst({ where: { id, userId, deletedAt: null, AND: [visibleArtifacts(userId)] } });
+      // An uploaded file's extracted text is not read out to models (files/extracted-text-policy.ts).
+      const artifact = await db.artifact.findFirst({ where: { id, userId, deletedAt: null, AND: [visibleArtifacts(userId), ...(EXTRACTED_TEXT_TO_MODELS ? [] : [NOT_UPLOADED])] } });
       if (!artifact) return { found: false };
       const trust = trustForIngested(artifact.kind, artifact.authoredByMe);
       return {
@@ -707,7 +710,7 @@ export async function readItem(
         select: { id: true, filename: true, mediaType: true, byteSize: true, pageCount: true, textCharacters: true, parseStatus: true, summary: true, artifact: { select: { text: true } } },
       });
       if (!document) return { found: false };
-      const text = document.artifact?.text || document.summary || "";
+      const text = EXTRACTED_TEXT_TO_MODELS ? document.artifact?.text || document.summary || "" : "";
       const format = fileFormat(document.filename);
       const silent = ["image", "audio", "video"].includes(format.kind);
       return {
@@ -723,17 +726,19 @@ export async function readItem(
           byteSize: document.byteSize,
           pages: document.pageCount,
           textCharacters: document.textCharacters,
-          summary: document.summary,
+          summary: EXTRACTED_TEXT_TO_MODELS ? document.summary : null,
           url: hubUrl(`/files/${document.id}`),
           body: body(text),
           ...(text
             ? {}
             : {
-                note: silent
-                  ? `This ${format.label} has no text to read.`
-                  : document.parseStatus === "queued" || document.parseStatus === "running"
-                    ? "Ensemble is still reading this file's text. Try again in a minute."
-                    : "No text was found in this file.",
+                note: !EXTRACTED_TEXT_TO_MODELS
+                  ? "Ensemble does not send a file's extracted text; open the file itself (url)."
+                  : silent
+                    ? `This ${format.label} has no text to read.`
+                    : document.parseStatus === "queued" || document.parseStatus === "running"
+                      ? "Ensemble is still reading this file's text. Try again in a minute."
+                      : "No text was found in this file.",
               }),
           originalBytesOmitted: true,
           ...trustForIngested("document"),
@@ -929,7 +934,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       where: {
         userId,
         deletedAt: null,
-        AND: [visibleArtifacts(userId)],
+        AND: [visibleArtifacts(userId), ...(EXTRACTED_TEXT_TO_MODELS ? [] : [NOT_UPLOADED])],
         OR: [{ title: { contains: q, mode: "insensitive" } }, { text: { contains: q, mode: "insensitive" } }],
       },
       take: limit,
@@ -1063,7 +1068,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       label: document.filename,
       when: document.updatedAt.toISOString(),
       url: hubUrl(`/files/${document.id}`),
-      ...matchExcerpt(document.filename.toLowerCase().includes(q.toLowerCase()) || !document.artifact?.text ? document.filename : document.artifact.text, q),
+      ...matchExcerpt(!EXTRACTED_TEXT_TO_MODELS || document.filename.toLowerCase().includes(q.toLowerCase()) || !document.artifact?.text ? document.filename : document.artifact.text, q),
       ...trustForIngested("file"),
     })),
     ...notes.map((note) => ({
@@ -1434,7 +1439,7 @@ export async function buildBrief(
     notes: nothing
       ? `Nothing relevant was found. ${REFERENCE_NOTE}`
       : REFERENCE_NOTE,
-    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest; files attached to the task are kind document.",
+    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest; files attached to the task are listed with links to open them in Ensemble.",
     gaps: DATA_GAPS,
   };
 }

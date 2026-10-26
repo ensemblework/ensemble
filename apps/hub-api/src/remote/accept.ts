@@ -29,7 +29,7 @@ export async function attachClaimedFiles(prisma: PrismaClient, userId: string, t
     if (attachment.kind === "diagram") {
       notes = notes.replaceAll(`ensemble://diagram/${attachment.id}`, `ensemble://file/${file.id}`)
         .replaceAll(`diagram id ${attachment.id}`, `diagram source file id ${file.id}`)
-        .replace(/\[Source truncated;[^\]]+\]/g, "[Read the attached diagram source file with read_attachment for the rest.]");
+        .replace(/\[Source truncated;[^\]]+\]/g, "[The full source is in the attached diagram source file; open it with view_attachment.]");
     }
   }
   return notes;

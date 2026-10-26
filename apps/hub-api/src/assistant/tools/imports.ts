@@ -125,7 +125,7 @@ export const importTools = [
         text: file.textStatus,
         existing,
         href: `/files/${file.id}`,
-        ...(file.textStatus === "queued" ? { note: "Ensemble is still reading its text; hub_read_file works in a minute." } : {}),
+        note: "Open it with hub_view_file.",
       }, { href: `/files/${file.id}`, invalidate: ["documents"] });
     },
   }),

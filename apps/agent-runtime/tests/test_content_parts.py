@@ -76,3 +76,11 @@ def test_included_reservation_counts_a_file_as_its_bytes_capped():
     empty = estimate_input_tokens({"input": [{"role": "user", "content": [{"type": "input_file", "filename": "big.pdf", "file_data": ""}]}]})
     big = estimate_input_tokens({"input": [{"role": "user", "content": [{"type": "input_file", "filename": "big.pdf", "file_data": "data:application/pdf;base64," + "A" * 4_000_000}]}]})
     assert big == empty + FILE_INPUT_ALLOWANCE_MAX + 3_000
+
+
+def test_anthropic_gets_any_other_file_as_a_base64_document():
+    docx = {"type": "file", "file": {"filename": "brief.docx", "file_data": "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsDBA=="}}
+    _, messages = _to_anthropic([{"role": "user", "content": [docx]}])
+    assert messages[0]["content"] == [
+        {"type": "document", "source": {"type": "base64", "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "data": "UEsDBA=="}, "title": "brief.docx"}
+    ]

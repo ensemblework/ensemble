@@ -162,7 +162,7 @@ export const pageTools = [
     name: "hub_read_page",
     area: "projects",
     description:
-      "Read a page as Markdown by pageId, or a task's page by taskId. Long pages come in parts: pass nextOffset as offset. Mentions show as [@Label](ensemble://kind/id) and images as ![description](ensemble://file/id) with {width align} after; a file's id there works with hub_read_file.",
+      "Read a page as Markdown by pageId, or a task's page by taskId. Long pages come in parts: pass nextOffset as offset. Mentions show as [@Label](ensemble://kind/id) and images as ![description](ensemble://file/id) with {width align} after; a file's id there works with hub_view_file.",
     input: z.object({ ...Target, offset: z.number().int().min(0).default(0) }),
     isWrite: false,
     risk: "low",

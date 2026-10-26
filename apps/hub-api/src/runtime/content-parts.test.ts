@@ -88,3 +88,10 @@ test("an included-model reservation counts a file as its bytes, capped, not its 
   const small = estimateInputTokens({ input: [{ role: "user", content: [{ type: "input_file", filename: "big.pdf", file_data: `data:text/csv;base64,${"A".repeat(400)}` }] }] });
   assert.equal(small, empty + 300 + 3_000);
 });
+
+test("Anthropic gets any other file as a base64 document with its own media type: the API decides", () => {
+  const docx = { type: "file", file: { filename: "brief.docx", file_data: "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsDBA==" } };
+  assert.deepEqual(toAnthropic([{ role: "user", content: [docx] }]).messages[0]!.content, [
+    { type: "document", source: { type: "base64", media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data: "UEsDBA==" }, title: "brief.docx" },
+  ]);
+});

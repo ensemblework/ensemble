@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { EXTRACTED_TEXT_TO_MODELS } from "../../files/extracted-text-policy.js";
+import { NOT_UPLOADED } from "../../context/artifacts.js";
 import type { Prisma } from "@prisma/client";
 import { clip } from "../../lib/office/text.js";
 import { defineTool, toolOk } from "../types.js";
@@ -115,6 +117,8 @@ export const contextTools = [
         where: {
           userId: ctx.userId,
           deletedAt: null,
+          // An uploaded file's extracted text is not read out to models (files/extracted-text-policy.ts).
+          ...(EXTRACTED_TEXT_TO_MODELS ? {} : { AND: [NOT_UPLOADED] }),
           ...(input.taskId ? { taskId: input.taskId } : {}),
           ...(input.projectId ? { projectId: input.projectId } : {}),
           ...(query ? { OR: [{ title: { contains: query, mode: "insensitive" } }, { text: { contains: query, mode: "insensitive" } }] } : {}),
@@ -145,10 +149,14 @@ export const contextTools = [
     risk: "low",
     async run(ctx, input) {
       const row = await ctx.prisma.artifact.findFirst({
-        where: { id: input.id, userId: ctx.userId, deletedAt: null },
+        where: { id: input.id, userId: ctx.userId, deletedAt: null, ...(EXTRACTED_TEXT_TO_MODELS ? {} : { AND: [NOT_UPLOADED] }) },
         select: { kind: true, title: true, url: true, ts: true, text: true, metadata: true, participants: true },
       });
-      if (!row) return toolOk("That item is no longer available.", { found: false });
+      if (!row) {
+        const file = EXTRACTED_TEXT_TO_MODELS ? null : await ctx.prisma.document.findFirst({ where: { artifactId: input.id, userId: ctx.userId, deletedAt: null }, select: { id: true, filename: true } });
+        if (file) return toolOk(`“${file.filename.slice(0, 80)}” is a file in Files.`, { file: { id: file.id, name: file.filename }, open: "Open the file itself with hub_view_file." });
+        return toolOk("That item is no longer available.", { found: false });
+      }
       const part = clip(row.text, input.offset, 6000);
       return toolOk(`Read “${row.title.slice(0, 80)}”.`, {
         from: originOf(row.kind, row.metadata),
