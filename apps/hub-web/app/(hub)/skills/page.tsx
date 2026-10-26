@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Sparkles } from "lucide-react";
+import { ChevronRight, Plus, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
@@ -19,7 +19,6 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
   const [body, setBody] = useState(skill.body);
   const [state, setState] = useState<"saved" | "saving" | "dirty">("saved");
   const [history, setHistory] = useState(false);
-  const [draft, setDraft] = useState("");
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -43,8 +42,6 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
     mutationFn: (version: number) => api.restoreSkill(skill.id, version),
     onSuccess: () => client.invalidateQueries({ queryKey: ["skills"] }),
   });
-  const preview = useMutation({ mutationFn: () => api.testSkill(skill.id, draft || undefined) });
-  const score = useMutation({ mutationFn: () => api.scoreSkill(skill.id, draft) });
 
   return (
     <div className="tile min-w-0 rounded-lg bg-panel p-5">
@@ -68,15 +65,12 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
         className="field mt-3 h-[340px] w-full resize-y font-mono text-[12.5px] leading-5"
       />
       <div className="mt-1.5 text-[12.5px] text-muted">
-        {state === "saved" ? "All skill changes saved." : state === "saving" ? "Saving…" : "Unsaved changes"}
+        {state === "saved" ? "Saved" : state === "saving" ? "Saving…" : "Unsaved changes"}
       </div>
-      <p className="mt-1 text-[12.5px] text-muted">
-        Body edits save automatically after a short pause and create a new version. Regeneration and testing run only when you click.
-      </p>
 
       <button type="button" onClick={() => setHistory(!history)} className="mt-3 flex items-center gap-1 text-[13px] font-medium">
         <ChevronRight size={13} className={cx("transition-transform", history && "rotate-90")} />
-        Version history · latest three, including current
+        Version history
       </button>
       {history ? (
         <div className="mt-2 space-y-1">
@@ -97,48 +91,14 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
         </div>
       ) : null}
 
-      <h3 className="mt-6 text-[15px] font-semibold">Test this skill</h3>
-      <button type="button" className="btn mt-2" disabled={state !== "saved" || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending ? "Generating…" : "Generate a preview"}</button>
-      {preview.error ? <p role="alert" className="mt-2 text-danger">{preview.error.message}</p> : null}
-      {preview.data ? <div className="mt-3 whitespace-pre-wrap rounded-lg border border-line p-3 text-[13px]">{preview.data.body}</div> : null}
-      <p className="text-[12.5px] text-muted">Paste a draft. It is scored against this skill&apos;s machine-checkable rules.</p>
-      <textarea
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        rows={4}
-        placeholder="Paste a draft reply or PR body…"
-        className="field mt-2 w-full"
-      />
-      <button type="button" className="btn mt-2" disabled={!draft.trim() || score.isPending} onClick={() => score.mutate()}>
-        Score draft
-      </button>
-      {score.data ? (
-        <div className="mt-3 space-y-1 text-[13px]">
-          <div className="font-medium">
-            {score.data.score === null ? "No rules to check." : `${Math.round(score.data.score * 100)}% of rules pass`} · {score.data.words} words
-          </div>
-          {score.data.note ? <div className="text-muted">{score.data.note}</div> : null}
-          {score.data.results.map((row) => (
-            <div key={row.rule} className="flex items-center gap-2">
-              <Tag tone={row.pass ? "green" : "red"}>{row.pass ? "pass" : "fail"}</Tag>
-              <span className="font-mono text-[12px]">{row.rule}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <h3 className="mt-6 text-[15px] font-semibold">Evidence</h3>
-      {skill.evidence.length ? (
+      {skill.evidence.length ? (<>
+        <h3 className="mt-6 text-[15px] font-semibold">Evidence</h3>
         <ul className="mt-1 list-disc pl-5 text-[13px] text-muted">
           {skill.evidence.map((row) => (
             <li key={row}>{row}</li>
           ))}
-        </ul>
-      ) : (
-        <p className="mt-1 text-[12.5px] text-muted">
-          Nothing mined yet, this skill is a starting point. It improves from your feedback even before any history is connected.
-        </p>
-      )}
+        </ul></>
+      ) : null}
     </div>
   );
 }
@@ -176,17 +136,7 @@ export default function SkillsPage() {
     <div className="mx-auto max-w-[1180px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Skill library"
-        description="Make the agent's work feel like yours. Review its guidelines, test a draft, and build on what it learns from your feedback."
       />
-      <div className="tile mb-6 flex w-full items-start gap-3 rounded-xl bg-panel px-4 py-3 text-left">
-        <Sparkles size={16} className="mt-0.5 shrink-0 text-accent" />
-        <span className="min-w-0">
-          <span className="block text-[15px] font-semibold">Improve skills from my work</span>
-          <span className="mt-0.5 block text-[12.5px] font-normal leading-5 text-muted">
-            Coming soon. Completed work is saved as a compact record so a future skill miner can learn from it. Nothing is queued yet.
-          </span>
-        </span>
-      </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
         <div>
           <div className="tile flex items-center gap-1.5 rounded-md bg-panel px-2 py-1.5">
@@ -232,9 +182,7 @@ export default function SkillsPage() {
                     <span>v{skill.version}</span>
                     <Tag tone="gray">{Math.round(skill.confidence * 100)}%</Tag>
                   </div>
-                  <div className="mt-1 text-[12px] text-faint">
-                    {skill.minedFrom ? `mined from ${skill.minedFrom} examples` : "no history mined yet"}
-                  </div>
+                  {skill.minedFrom ? <div className="mt-1 text-[12px] text-faint">{skill.minedFrom} examples</div> : null}
                 </div>
               ))}
             </div>

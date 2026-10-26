@@ -35,7 +35,7 @@ export function RunProfilesSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Run profiles"
-      description="Saved Assign to agent settings. Quick assign and the assistant use the starred one unless you name another, for example “assign it with my Careful profile”."
+      info="Saved assignment settings. Quick assign and the assistant use the starred default."
     >
       {saved.length ? (
         <ul className="divide-y divide-[var(--line)]" role="radiogroup" aria-label="Default run profile">
@@ -101,7 +101,7 @@ export function RunProfilesSection({ settings, patch }: Props) {
           })}
         </ul>
       ) : (
-        <p className="text-[13px] text-muted">No profiles yet. In Assign to agent on any task, choose how the agent should work and press Save as profile (up to three).</p>
+        <p className="text-[13px] text-muted">No profiles. Save one from Assign to agent.</p>
       )}
     </SectionCard>
   );

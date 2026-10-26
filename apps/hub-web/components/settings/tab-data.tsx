@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ArrowUpRight, Trash2 } from "lucide-react";
 import { SectionCard } from "../ui";
 import { SpaceExportSection } from "./space-export";
+import { DeleteAccountSection } from "./account";
 import { DeleteDataSection, FailedJobsSection, RetentionSection, TerminalSection } from "./sections";
 
 type Plain = Record<string, unknown>;
@@ -22,9 +23,11 @@ export function DataTab({ settings, patch }: { settings: Settings; patch: (value
       <div id="deleted" className="scroll-mt-6"><span id="trash" /><SectionCard title="Trash" description="Restore deleted pages, files, tasks and comments. Open Trash to see all deleted items or empty it."><Link href="/trash" target={native ? undefined : "_blank"} rel="noopener" className="btn mt-2"><Trash2 size={14} /> Open Trash <ArrowUpRight size={14} /></Link></SectionCard></div>
       <div id="terminal" className="scroll-mt-6"><TerminalSection {...props} /></div>
       <div id="danger" className="scroll-mt-6 space-y-5">
+        <h2 className="text-[17px] font-semibold text-danger">Danger zone</h2>
         <div id="failed" className="scroll-mt-6"><FailedJobsSection /></div>
 
         <DeleteDataSection settings={settings} />
+        <DeleteAccountSection />
       </div>
     </>
   );

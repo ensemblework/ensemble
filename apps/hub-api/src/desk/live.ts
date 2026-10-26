@@ -66,7 +66,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
   const holidayFrom = new Date(now.getTime() - 400 * 86_400_000);
   const holidayTo = new Date(now.getTime() + 500 * 86_400_000);
   const datedBefore = new Date(Date.parse(`${today}T00:00:00.000Z`) + 8 * 86_400_000);
-  const [recent, dated, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects] =
+  const [recent, dated, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects, pinnedTasks] =
     await Promise.all([
       db.task.findMany({ where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" }, take: TASKS, select: TASK_SELECT }),
       db.task.findMany({
@@ -131,6 +131,10 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       db.gradingRow.findMany({ where: { userId }, take: 12 }),
       db.repo.findMany({ where: { userId, deletedAt: null }, orderBy: { fullName: "asc" }, take: 12, select: { id: true, fullName: true } }),
       db.project.findMany({ where: { userId, deletedAt: null }, orderBy: { name: "asc" }, take: 12, select: { id: true, name: true } }),
+      db.task.findMany({
+        where: { userId, deletedAt: null, todayFocus: "keep", status: { in: [...OPEN] }, OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] },
+        orderBy: { updatedAt: "desc" }, select: { id: true, title: true },
+      }),
     ]);
 
   const tasks = withDated(recent, dated, TASKS);
@@ -155,6 +159,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
 
   return {
     today,
+    pinnedTasks,
     tasks: merged.slice(0, TASKS).map((row) => ({
       id: row.id,
       title: row.title,

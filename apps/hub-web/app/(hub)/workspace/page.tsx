@@ -13,7 +13,7 @@ import { ApiError, api, type AgentJob } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { ShareButton } from "@/components/sharing/share-dialog";
 
-function Lane({ title, hint, items, empty, wide }: { title: string; hint?: string; items: AgentJob[]; empty: string; wide?: boolean }) {
+function Lane({ title, hint, items, empty }: { title: string; hint?: string; items: AgentJob[]; empty: string }) {
   return (
     <div className="min-w-0">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -21,7 +21,7 @@ function Lane({ title, hint, items, empty, wide }: { title: string; hint?: strin
         <span className="shrink-0 text-[12px] text-muted">{items.length}</span>
         {hint ? <span className="truncate text-[12px] text-faint">{hint}</span> : null}
       </div>
-      <div className="space-y-2">{items.length ? items.map((job) => <JobCard key={job.id} job={job} wide={wide} />) : <div className="rounded-md border border-dashed border-line px-3 py-4 text-[12.5px] text-muted">{empty}</div>}</div>
+      <div className="space-y-2">{items.length ? items.map((job) => <JobCard key={job.id} job={job} />) : <div className="rounded-md border border-dashed border-line px-3 py-4 text-[12.5px] text-muted">{empty}</div>}</div>
     </div>
   );
 }
@@ -49,14 +49,6 @@ export default function WorkspacePage() {
     <div className="mx-auto max-w-[1240px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Workspace"
-        description={
-          <>
-            {data && data.root === null
-              ? "The agent's queue. Tasks run on your paired computers, each within its own limits; the rest wait here in order. Tasks on the same folder, and steps that continue an earlier task, wait their turn."
-              : `The agent's queue. Up to ${data?.maxConcurrent ?? 3} tasks run at once; the rest wait here in order. Tasks on the same folder, and steps that continue an earlier task, wait their turn.`}
-            {data?.root ? <div className="mt-1 font-mono text-[12px] text-faint">{data.root}</div> : null}
-          </>
-        }
         actions={
           <>
             {shell.data?.space ? <ShareButton target={{ kind: "workspace", resourceId: shell.data.space.id, title: "Workspace" }} /> : null}
@@ -89,13 +81,13 @@ export default function WorkspacePage() {
         {data ? (
         <>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3" data-workspace-queue>
-            <Lane title="Up next" hint={data.queued.length ? "in the order they start" : undefined} items={data.queued} empty="Nothing queued. Assign a task to the agent." />
+            <Lane title="Up next" items={data.queued} empty="Nothing queued." />
             <Lane title="Working now" hint={`${data.running.length}/${data.maxConcurrent} slots`} items={data.running} empty="Nothing is running." />
-            <Lane title="Needs you" hint={data.waiting.length ? "not using a slot" : undefined} items={data.waiting} empty="The agent is not waiting on you." />
+            <Lane title="Needs you" items={data.waiting} empty="Nothing waiting." />
           </div>
           <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
-            <Lane title="Recently done" items={data.completed} empty="Nothing finished in the last 14 days." wide />
-            <Lane title="Stopped or failed" hint="no model calls; open to retry or take over" items={data.stopped} empty="Nothing stopped." wide />
+            <Lane title="Recently done" items={data.completed} empty="Nothing finished in the last 14 days." />
+            <Lane title="Stopped or failed" items={data.stopped} empty="Nothing stopped." />
           </div>
         </>
         ) : null}

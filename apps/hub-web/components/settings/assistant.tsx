@@ -37,16 +37,16 @@ export function AssistantSection({ settings, patch }: Props) {
   const assistant = settings.assistant;
   const location = useSettingsLocation();
   return (
-    <SectionCard title="The assistant" description="How the chat in the corner talks to you, and what it may change on its own.">
+    <SectionCard title="The assistant">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="When it wants to change something" description="Just do it makes the change at once; Undo in the top bar reverts it. Preview waits for you to press Apply in the chat. Changes in connected apps and settings always wait for Apply.">
+        <SettingRow title="When it wants to change something" info="Apply changes immediately with Undo, preview them in chat, or queue them in Needs me. Connected-app and settings changes always need Apply.">
           <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field">
             <option value="immediate">Just do it (undoable)</option>
             <option value="preview">Show me a preview first</option>
             <option value="needs-me">Queue it on Needs me</option>
           </select>
         </SettingRow>
-        <SettingRow title="Default model preset" description="The tier the chat starts on. Pick another one per message in the chat.">
+        <SettingRow title="Default model preset" info="Starting model for chat. Override it per message.">
           <select aria-label="Default complexity" value={assistant.defaultTier} onChange={(event) => patch({ assistant: { defaultTier: event.target.value } })} className="field">
             {TIERS.map((tier) => (
               <option key={tier.id} value={tier.id}>
@@ -108,7 +108,7 @@ export function ChangesDialog({ open, onClose, settings, patch }: Props & { open
       <div className="mt-4 border-t border-line pt-2">
         <SettingRow
           title="Connected apps"
-          description="Propose changes in Google, Microsoft and other connected apps: calendar invites, documents, issues. Each one waits for your Apply, whatever the setting above says."
+          info="Allow changes in connected apps. Each still needs your Apply."
         >
           <Toggle label="Connected apps" checked={assistant.connectedAppWrites !== false} onChange={(connectedAppWrites) => patch({ assistant: { connectedAppWrites } })} />
         </SettingRow>

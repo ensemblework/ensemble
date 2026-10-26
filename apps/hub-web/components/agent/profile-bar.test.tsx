@@ -133,7 +133,7 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
     await settle();
-    assert.ok(options("Who does the work").includes("GitHub Copilot (your sign-in)"));
+    assert.ok(options("Who does the work").includes("GitHub Copilot"));
     // Every coding agent offers the models its computer listed, each with its own levels and windows.
     await choose("Who does the work", "codex");
     assert.deepEqual(options("Codex model"), ["Codex default (GPT-6.1 Sol)", "GPT-6.1 Sol"]);
@@ -151,7 +151,8 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there/);
     await choose("Who does the work", "claude-code");
     await choose("Claude Code model", "claude-opus-5-5");
-    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "Anthropic · newest · 1M context");
+    assert.ok(document.querySelector('[data-testid="engine-model-facts"] [data-provider-logo="claude"]'));
+    assert.doesNotMatch(document.querySelector('[data-testid="engine-model-facts"]')?.textContent ?? "", /context/);
     await choose("Who does the work", "copilot-cli");
     assert.deepEqual(options("Copilot model"), ["Copilot default (Auto)", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);
     assert.equal(select("Copilot thinking"), null, "Auto has no thinking levels");
@@ -160,7 +161,8 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     await choose("Copilot model", "gpt-5.6-luna");
     assert.deepEqual(options("Copilot thinking"), ["Default (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
     assert.deepEqual(options("Context window"), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
-    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "OpenAI · low cost · 200K or 922K context");
+    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "low cost");
+    assert.ok(document.querySelector('[data-testid="engine-model-facts"] [data-provider-logo="openai"]'));
     await choose("Copilot thinking", "xhigh");
     await choose("Context window", "long_context");
 
@@ -247,7 +249,7 @@ test("Git starts on No limits; Pull request: any base typed (empty: the default 
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
     await settle();
-    assert.match(document.body.textContent ?? "", /· no git limits/, "Git starts on No limits");
+    assert.ok([...document.querySelectorAll("button")].find(node => node.textContent === "No limits")?.className.includes("bg-panel"), "Git starts on No limits");
     await click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Pull request")!);
     assert.ok(field('[data-testid="assign-pull-request"]'), "the pull request panel opens");
 

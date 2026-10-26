@@ -34,6 +34,7 @@ import { MobileGraph } from "./mobile-graph";
 import type { MockService } from "../desk/context-customize";
 import { useModuleOn } from "@/lib/use-module";
 import { Held } from "@/components/motion/held";
+import { InfoTip } from "@/components/ui";
 import { GraphSkeleton } from "@/components/motion/skeletons";
 import { Empty, cx } from "../ui";
 
@@ -1007,9 +1008,7 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
       )}
       </Held>
       {compact ? null : (
-      <p className="mt-2 text-[12px] text-muted">
-        Threads are saved relationships. Dashed threads are @mentions. Click a node to highlight it and its neighbours; double-click to open it. Drag a node to pin it, drag the background to pan, scroll or pinch to zoom, and use Fit to frame the graph. Arrow keys pan, plus and minus zoom. Escape clears the highlight, then leaves full screen.
-      </p>
+      <div className="mt-2 flex justify-end"><InfoTip label="Graph controls" text="Click to highlight; double-click to open. Drag to pan or move nodes. Scroll or pinch to zoom; Fit resets the view. Arrow keys pan, +/− zoom, Esc clears. Dashed links are mentions." /></div>
       )}
     </div>
   </>);

@@ -54,6 +54,7 @@ export function PageTitleField({
   return (
     <>
     <textarea
+      data-page-title
       ref={ref}
       rows={1}
       value={draft}

@@ -171,8 +171,7 @@ export function ModelsSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Models"
-      info="Use an AI subscription from your connected computer, or add an API key. Ensemble uses the provider you choose for each level."
-      description="Power the assistant with the AI plan you already have, or with API keys. A task's complexity picks the tier, and the chat starts on the default preset above."
+      info="Use an AI plan or API keys. Task complexity selects a tier; chat starts with your default preset."
     >
       <SubscriptionsCard settings={settings} patch={patch} />
       {usage ? <IncludedCreditsLine usage={usage} /> : includedLocalOnly(catalog.data) ? <IncludedLocalOnly /> : null}

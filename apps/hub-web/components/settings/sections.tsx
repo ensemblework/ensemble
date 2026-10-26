@@ -31,7 +31,7 @@ export function AutonomySection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   return (
-    <SectionCard title="Autonomy" description="The default for newly delegated tasks. You can still choose per task when you delegate.">
+    <SectionCard title="Autonomy" info="Default for new tasks; override it when assigning.">
       <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-full">
         <option value="assist">Assist, every external write needs your approval</option>
         <option value="supervised">Supervised, reversible writes proceed; sends need you</option>
@@ -46,13 +46,13 @@ export function AutonomySection({ settings, patch }: Props) {
         </SettingRow>
         <SettingRow
           title="Network for sandboxed commands"
-          description="Commands the model runs in a sandbox can reach the network, so it can read a PR, call an API or fetch a page. The sandbox still limits what they can change on this computer. Off is safer when a task reads untrusted input."
+          info="Allow sandboxed commands to fetch pages, install packages and call APIs. Turn off for untrusted tasks."
         >
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
         <SettingRow
           title="Run commands in the Ensemble workspace without asking"
-          description="The workspace folder is trusted on this device. Commands inside it run without an Allow prompt. A folder you have not trusted asks before each command, unless you pick Review only, which asks only when the agent wants more access. Run unattended only works in a trusted folder, and a path outside that folder is blocked."
+          info="Skip command prompts in the trusted Ensemble workspace. Other folders keep their own trust rules."
         >
           <Toggle label="Run without asking" checked={orchestration.runWithoutAsking} onChange={(runWithoutAsking) => set({ runWithoutAsking })} />
         </SettingRow>
@@ -76,7 +76,7 @@ function TrustSharingRow() {
   return (
     <SettingRow
       title="Trust folders in your other AI tools too"
-      description={`A folder you trust here is also trusted in ${found.length ? found.join(", ") : "Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI"} on this computer, in their apps and their command lines, so they do not ask again. Untrusting it here removes only what Ensemble added. Off removes all of it.`}
+      info={`Share folder trust with ${found.length ? found.join(", ") : "your installed AI tools"}. Turning off removes only trust Ensemble added.`}
     >
       <Toggle label="Share folder trust" checked={sharing.data.enabled} onChange={(enabled) => toggle.mutate(enabled)} />
     </SettingRow>
@@ -96,7 +96,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
     />
   );
   return (
-    <SectionCard title="Orchestration" description="Tasks start in assignment order. Tasks sharing a project, repository or folder wait their turn. After a Needs me request waits an hour, one extra task can start; the queue then waits until fewer than your limit remain.">
+    <SectionCard title="Orchestration" info="Tasks queue in assignment order. Work in the same folder runs sequentially. A long-waiting question can release one extra slot.">
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Tasks that run at once" description="Independent tasks run in parallel. Tasks sharing a project, repository or folder wait their turn.">
           {number("maxConcurrentJobs", 1, 8)}
@@ -107,7 +107,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
         <SettingRow title="Minutes per task" description="A task that takes longer is stopped; its folder and partial work are kept.">
           {number("maxMinutes", 5, 480)}
         </SettingRow>
-        <SettingRow title="Sandbox by default" description="New code tasks start with this computer's own sandbox on: files change only inside the work folder, keys and browser data cannot be read, Ensemble's own API cannot be reached. You can turn it off per task.">
+        <SettingRow title="Sandbox by default" info="Isolate commands with this computer's OS sandbox. Override per task; keys and browser data stay private.">
           <Toggle label="Sandbox by default" checked={orchestration.defaultExecution === "sandbox"} onChange={(on) => set({ defaultExecution: on ? "sandbox" : "native" })} />
         </SettingRow>
         <SettingRow title="Internet for agent commands by default" description="Needed to clone, install packages or read the web. Turn it off for tasks whose inputs you do not trust.">
@@ -115,7 +115,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
         </SettingRow>
         <SettingRow
           title="Outside the work folder, in sandboxed tasks"
-          description="Read only lets the agent read your other folders (never keys or browser data) and asks before it writes there; when nobody is there to answer, a write is refused and the task carries on. Read and write lets it change them too. No access keeps it inside the work folder. Tasks without the sandbox are not affected. You can change it per task."
+          info="Read only asks before writes outside the work folder. Read and write permits both; No access confines the task. Applies to sandboxed runs."
         >
           <select
             aria-label="Outside the work folder"
@@ -137,7 +137,7 @@ export function PromptsSection() {
   const [open, setOpen] = useState(false);
   const prompts = useQuery({ queryKey: ["prompts"], queryFn: api.prompts, enabled: open });
   return (
-    <SectionCard title="Prompts" description="Every instruction Ensemble sends to a model on your behalf, what each one is for, and when it is sent. Worth a look before you trust an agent with a repository.">
+    <SectionCard title="Prompts" info="Inspect the instructions Ensemble sends to models.">
       <button type="button" className="text-[13px] text-accent underline-offset-2 hover:underline" onClick={() => setOpen(!open)}>
         {open ? "Hide prompts" : "Open prompts"}
       </button>

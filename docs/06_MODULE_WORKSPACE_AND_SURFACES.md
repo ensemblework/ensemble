@@ -25,6 +25,8 @@ The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.t
 
 Some per-run controls, such as outside access, are not stored in the profile. The dialog and API validate the combination rather than invent a missing folder, engine or model. Code work without a repository can use a fresh empty folder.
 
+The dialog shows a model's vendor mark and reported cost; context sizes appear only in the context selector. Thinking, context, mode, branch and Git guidance use hover/focus/tap information popovers. Repeated folder descriptions and the footer's configuration recap are omitted; validation and safety warnings stay visible.
+
 ## 2. Context and preparation
 
 `brief()` in `workspace/agent.ts` assembles the title, description, instructions, task page, linked project/repo, source link, selected skills and the relevant earlier attempt. `pages/agent-context.ts` adds owned embedded diagram source under its own bound. Source IDs distinguish a saved task from a live connected-app item.
