@@ -2,7 +2,7 @@
 
 People bring common files into Ensemble, uploaded from their computer or imported from a connected app, then preview them, edit them where that makes sense, turn them into pages, attach them inside pages, and let the assistant and agents read them. Tests cover specific contracts with generated files and mocked providers, not perfect fidelity for every document or vendor account.
 
-Code: `apps/hub-api/src/files/` (store, originals, extract and its worker, office-edit, page, import, attached), routes `apps/hub-api/src/routes/files.ts` and `routes/file-imports.ts`, web `apps/hub-web/components/files/`, `apps/hub-web/lib/files/`, `apps/hub-web/lib/api-files.ts`, `app/(hub)/files`. Formats: `packages/shared-types/src/files.ts`.
+Code: `apps/hub-api/src/files/` (store, originals, extract and its worker, office-edit, page, page-image, import, attached), routes `apps/hub-api/src/routes/files.ts` and `routes/file-imports.ts`, web `apps/hub-web/components/files/`, `apps/hub-web/lib/files/`, `apps/hub-web/lib/api-files.ts`, `app/(hub)/files`, and in the page editor `components/editor/file-attach.ts` and `page-image.ts`. Formats: `packages/shared-types/src/files.ts`; images in pages: `packages/shared-types/src/page-images.ts`.
 
 ## 1. What each kind of file can do
 
@@ -38,6 +38,7 @@ Every file, previewable or not, can be attached to pages and downloaded.
 - **Text for agents and search** is one file `Artifact` per document (`externalId = file:<documentId>`), up to 400,000 characters, secret-redacted (`redact`).
 - **Pages made from a file** keep the link in `task_pages.source_file_id`; page reads return `sourceFile: { id, filename, format, hasStyle }`.
 - **Attachments in pages** are mention nodes `{ type: "mention", attrs: { kind: "file", id, label, height } }`. They render as preview cards; `pageText` shows them to agents as `[file: <name> (id <id>)]`.
+- **Images in pages** are `image` nodes whose `attrs.fileId` names the file ([§6](#images-in-pages)).
 
 **Blob storage.** By default the bytes sit on the row. With `ENSEMBLE_FILE_STORAGE=azure-blob`, `AZURE_STORAGE_CONNECTION_STRING` and optionally `AZURE_STORAGE_CONTAINER` (default `ensemble-files`), the server's blob store is on (`lib/blob-store.ts`, shared with plot tables, [20 §2](20_PLOTS_DESIGN.md#2-data-ingestion)):
 
@@ -58,6 +59,7 @@ The hosted site uses blob storage; the desktop app and local servers keep the de
 | One file | 25 MB | 100 MB |
 
 - Removed files do not count.
+- An image shown in a page can be up to 2 MB (2,097,152 bytes) whatever the plan ([§6](#images-in-pages)); larger images can still be kept as files.
 - Every upload and import refuses an empty file (400 "This file is empty, so there is nothing to keep.") and programs and raw binaries (415; `.exe`, `.msi`, `.dll`, `.bin`, `.dmg`, `.pkg`, `.apk`, `.jar`, `.iso` and the rest of `fileTypeProblem` in `packages/shared-types/src/files.ts`). A replacement cannot rename a file to one of them (`assertNewFile` in `files/store.ts`). An import from Gmail or Outlook keeps `.bin`, the name mail apps give attachments they cannot type (`ATT00001.bin`). `.com` and `.app` are not refused, because a name ending in a domain ("Invoice from acme.com") reads as one. Other formats Ensemble cannot show, such as `.zip`, are kept. Copies of files already kept (a paired computer's task attachments) are not checked again.
 - The file travels as base64 inside JSON, so a request is about 4/3 of the file. `POST /api/documents` and `PUT /api/documents/:id/content` accept a body that fits the one-file limit (`uploadLimit()` in `routes/files.ts`); a larger one is refused from its `Content-Length` before it is read, with 413 and the same "Files can be up to … MB" message.
 - The Hub's `/api` rewrite passes bodies through Next.js, which cuts them off past `experimental.middlewareClientMaxBodySize` (10 MB unless set) and leaves the API waiting; `apps/hub-web/next.config.ts` sets it to 140 MB, above the largest body the API reads.
@@ -96,7 +98,7 @@ Each state comes with one plain sentence, short numbered steps and a button to t
 
 ## 6. Pages
 
-- **Attach:** type `@` and a file name, use `/file` (upload, choose from Files, or from your apps), or drop or paste files into the editor; files upload first, then appear as cards. Cards are resizable and show a compact preview with Open; on a page you can edit, the card's × takes it off the page (the file stays in Files).
+- **Attach:** type `@` and a file name, use `/file` (upload, choose from Files, or from your apps), or drop or paste files into the editor; files upload first, then appear as cards. Dropped and pasted PNG, JPEG, GIF and WebP images become images in the page instead (below); `/file` makes a card of any file, images included. Cards are resizable and show a compact preview with Open; on a page you can edit, the card's × takes it off the page (the file stays in Files).
 - **Shared pages and public links** preview their files: the sharing gate allows reading a file (`GET /api/documents/:id`, `/original`, `/text`) only while the shared page mentions it (`sharing/gate.ts`). Nothing else about files is reachable through a share or link.
 - **Converted pages** show "Made from report.pdf" with **Export back** (PDF or Word), also in the page's Download menu under "With the original's formatting". Right after converting, a notice says for a few seconds that export back keeps the original's formatting.
 - **Download** (the menu on pages, tasks, meeting notes and skills, `components/export-menu.tsx`) builds a PDF, Word, Markdown, web page or plain-text file in the browser (`apps/hub-web/lib/export/`); the server only answers the reads.
@@ -105,21 +107,96 @@ Each state comes with one plain sentence, short numbered steps and a button to t
   - Markdown tables in task descriptions, meeting recaps, skills and Ensemble answers on a page count with or without pipes at the ends (`blocksFromMarkdown` in `lib/export/document.ts`; pages read Markdown the same way, `packages/shared-types/src/page-markdown.ts`).
   - A PDF whose text the standard PDF fonts cannot draw (Hindi, Chinese, emoji and so on) opens the browser's print dialog on the web-page version instead (`pdfCanDraw`, `printDocument`).
 
+### Images in pages
+
+PNG, JPEG, GIF (animated too) and WebP images show inside a page as images, not file cards.
+
+**Adding one** (`components/editor/file-attach.ts`):
+
+- `/image` opens the system file picker (several at once); `/file` still attaches any image as a card, which is how to keep one over 2 MB on a page.
+- Drop or paste image files, such as a screenshot. Other files, SVG included, become cards as before.
+- HTML pasted or dropped with `data:` images (`<img src="data:…">`): the rest goes in as usual and each image is uploaded where it was, under the same rules, so image bytes never go into the page. One that is refused is left out with a message.
+- Each image gets a placeholder where it will land: a dimmed preview, a progress bar and a percentage (`filesApi.upload` with `onProgress`). The finished image replaces it as one undoable step; placeholders are not saved and are not in undo history. An image placed at the start or end of a line goes above or below it; in the middle of a line it splits the line.
+- A refusal says why in a toast. For a size or format refusal the toast offers **Attach as file**, which uploads the same file as a card at the same spot.
+- People a single page is shared with, and public-link visitors, cannot add images: uploads are not part of a share (`sharing/policy.ts`). The editor says so before sending.
+
+**Adjusting one** (`components/editor/page-image.ts`; pages you can edit only; read-only pages, viewers and links show the image without controls):
+
+- Drag the handles on the image's left and right edges; the height follows, so the aspect ratio is kept. The right handle is a keyboard slider (`role="slider"`, in the tab order): arrow keys change the width by 5%, Home and End go to 10% and 100%.
+- The toolbar (on hover, keyboard focus, or when the image is selected): align left, center or right; width 25%, 50%, 75%, 100% or Original (its own size, at most the page width); **Alt** edits the alt text (Enter saves, Esc cancels); × removes the image. Every button has an `aria-label`.
+- Backspace and Delete remove a selected image like any block. Each change is one undo step and reaches co-editors as an attribute step.
+
+**The limit** is 2 MB (2,097,152 bytes): `PAGE_IMAGE_MAX_BYTES` in `packages/shared-types/src/page-images.ts`, used by the editor and the API. An image of exactly 2,097,152 bytes is accepted; one byte more is refused, before sending and again on the server. Nothing is compressed or resized: "photo.jpg is 3.4 MB. Images in pages can be up to 2 MB: make it smaller, or attach it as a file with /file."
+
+**What the server checks** for `POST /api/documents` with `purpose: "page-image"` (`files/page-image.ts`, `checkPageImage` in shared-types), whatever the client did:
+
+| Check | Refusal |
+|---|---|
+| Over 2 MiB; a body whose base64 alone is larger is refused before decoding | 413 |
+| The bytes, read without an image library (`readImageHeader`): PNG with a valid IHDR checksum, chunks inside the file, an IDAT and IEND; JPEG segments up to a frame header and the scan, then an end marker; GIF blocks with at least one whole image; WebP's whole RIFF container with VP8, VP8L or VP8X image data. Pixels are not decoded | 400 "looks damaged" |
+| Zero width or height | 400 |
+| More than 16,384 pixels a side or 40 megapixels | 413 |
+| SVG, by content, name or type: it can carry scripts and links, and an image in a page must be inert | 415 |
+| AVIF, HEIC, BMP, TIFF, ICO or anything else. AVIF is not taken because checking it needs a full ISOBMFF box walk; the four formats cover screenshots and the web | 415 |
+| A name or media type that says another image format than the bytes (a JPEG named `.png`) | 415 |
+
+The editor runs the same checks before sending and renames a file whose extension is wrong for its bytes; a name without an image extension gets one on the server too. The width and height read from the header (turned for EXIF orientations 5–8) come back as `image: { format, width, height }`. No summary is requested and images are never parsed for text.
+
+**Page writes** (`assertNewPageImages`): saving a page (`PUT /api/pages/:id`, `PUT /api/tasks/:id/page`), writes by the assistant and agents through `writePageContent` and `hub_create_page`, and the content sent to `POST /api/documents/:id/page` refuse an image they add when it is a `data:` URL over 2 MiB (413), or a file in this space over 2 MiB or not PNG, JPEG, GIF or WebP (413 or 415, naming the `[@name](ensemble://file/<id>)` link that attaches it instead). Images the page already held are kept, so pages saved before the limit still save; restoring a saved version is not checked. Live co-editing (`pages/collab-core.ts`) refuses a step that adds a `data:` image over 2 MiB; moving one the page already holds is fine. Co-editing steps and an agent run's output block (`writeAgentBlock`) are not checked against Files; an image there of a file that breaks the rules shows as unavailable (below).
+
+**Storage and access.** An image is an ordinary Files `Document` (§2), and the page's node names it:
+
+```json
+{ "type": "image", "attrs": { "fileId": "<document id>", "src": null, "alt": "North field", "width": 60, "align": "left", "naturalWidth": 1200, "naturalHeight": 800 } }
+```
+
+- `width` is a percentage of the page column (10–100); null shows the image at its own size, at most the column. `align` is `left`, `center` (default) or `right`. `naturalWidth` and `naturalHeight` come from the upload and keep the image's shape while it loads. All of it saves with the page, so it survives reloads and co-editing.
+- `src` holds a web address instead, for images from Notion imports and pasted HTML; those render as before. Old `{ src, alt }` nodes still read.
+- The node view reads `GET /api/documents/:id/original` with the share or public-link headers (`itemViewHeaders()`), because an `<img src>` cannot send them, and shows it from an object URL that is revoked when the image leaves the page. The bytes are kept for the session by file id and asked for again with `If-None-Match`, so an unchanged file answers 304 while access is checked every time. A file over 2 MB or not a PNG, JPEG, GIF or WebP is not shown.
+- Who can see it follows file cards: a shared page or public link reads a file only while the page's current content places it (`contentHasFile` in `sharing/gate.ts` reads `attrs.fileId`); any other file answers 403. Space members read it as shared content.
+- Agents: `attrs.fileId` makes it one of the task's attached files (`mentionedFileIds`, `filesOnTask` in `files/attached.ts`), so briefs, `read_attachment`, engine copies and paired-computer downloads include it. Page Markdown writes it as `![alt](ensemble://file/<id>){width=60% align=left natural=1200x800}`, leaving out defaults, and reads that back as the same node (`imageMarkdown` and `markdownToNodes` in `page-markdown.ts`), so an agent rewriting a page keeps its images. Web images stay `![alt](https://…)`. `pageText` shows `[image: <alt> (file id <id>)]`.
+
+**Why a Files row and not bytes in the page.** Images as base64 `data:` URLs in the page JSON were considered and rejected: every save, co-editing step, version checkpoint (up to 30 per page) and search-text rebuild would carry the bytes, a large photo would pass the 1,000,000-character step and 4 MB save limits, and agents and the sharing gate could not refer to an image by id. A Files row reuses what exists: the `original` column or private blob storage (`ENSEMBLE_FILE_STORAGE`), the hosted caps, Trash and purge, backups, reading through a shared page, and attachment for agents. The costs: each image is a file in Files and counts toward the hosted plan's 10 files and 50 MB, and an image copied into a page in another space shows as unavailable there.
+
+**Lifecycle.**
+
+- Removing an image from a page leaves its file in Files, so Undo, page history and other pages that show it keep working. Nothing removes files no page uses; delete them in Files.
+- Deleting the file in Files leaves the node, and the page shows "Image unavailable" with "Its file was deleted from Files." Restoring the file from Trash brings the image back.
+- Duplicating a page or saving it as a template keeps the same file id.
+- Backups: an image is a Files original, so it is in the database dump while kept in the `original` column, or in the blob container (which the nightly backup does not copy again) when blob storage is on ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)). Page JSON and its versions hold only the id.
+
+**Known limitations.**
+
+- Download (PDF, Word, Markdown, web page, text) leaves images out.
+- Images on task pages opened through a shared board are unavailable to its viewers, as file cards are.
+- A mixed drop puts file cards in the line and images below it; pasted HTML keeps each image in place.
+- The editor has no picker for an image already in Files (an agent can place one with Markdown), and no captions, cropping, rotation or replacing an image in place.
+
+**Future work (not built yet).** This is a plan, not current behaviour: today an image over 2 MB is refused. The plan is to accept source images up to 10 MB, compress or resize them before saving so the stored image is close to 2 MB, keep 2 MiB (2,097,152 bytes) as the enforced final limit, and then insert the result into the page. To settle first:
+
+- quality settings: the JPEG/WebP quality to start from and how far to step down;
+- transparency: PNG and WebP alpha would be lost as JPEG, so images with alpha need a format that keeps it;
+- EXIF orientation: apply it before re-encoding, then drop the tag;
+- animated GIFs: re-encoding keeps one frame, so refuse them or keep them as they are;
+- failure: when compression cannot reach the limit, refuse with the same message and never store more than 2 MiB;
+- resource safeguards: check pixel limits before decoding, cap memory and CPU per image, and decide where it runs: in the browser (canvas or `createImageBitmap`, keeping the server light) or on the server (a bounded worker and an image library the server does not have today).
+
 ## 7. Agents, the assistant and editors
 
-File text is always passed on as information, not instructions.
+File text is always passed on as information, not instructions. Which files each agent gets, how pictures reach models that read images, and the limits are in [38](38_AGENT_READABLE_FILES.md).
 
 **What counts as attached.** `files/attached.ts` collects the files on the task's page, its project's page and files tagged with the task, plus the original a page was converted from (`sourceFileId`), even after that page becomes a task. Originals stay attached through nested page content and bulk Trash/Undo.
 
-- **Ensemble's agent:** its brief lists the attached files with up to 2,000 characters of each (10,000 in total). `read_attachment` reads a file in parts; `save_attachment` (research and code runs) copies the original into the work folder (`attachments/<name>`).
+- **Ensemble's agent:** its brief lists the attached files with up to 2,000 characters of each (10,000 in total), followed by up to 4 attached pictures when its model reads images. `read_attachment` reads a file in parts; `view_attachment` (models that read images) opens another picture; `save_attachment` (research and code runs) copies the original into the work folder (`attachments/<name>`).
 - **The coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity):** the originals are copied for the job and their paths listed in the prompt: to `<workspace>/files/<jobId>/` when the run may read outside its folder, otherwise to `<folder>/.ensemble/attachments/<jobId>/` (git-ignored). Copies are removed when the job ends. GitHub Copilot also gets them with its first message: images inline (up to 3 MB, for models that take images), other files as links ([30 §3](30_ENGINES.md)).
 - **Paired computers:** the claim's task description gets a "Files attached" section with short excerpts. Before queueing the local job, the computer downloads originals through `GET /api/devices/self/jobs/:id/attachments/:fileId` with the owning device token and the active `x-ensemble-job-lease` header. The route checks that the file is still attached to this task; it is not a general Files download. It also supplies the full source of diagrams embedded in the page, saved as `.ensemble-diagram.txt` files. The runner remaps page references to the copies' local ids before starting. Transfers are capped at 100 MB per run (`remote/accept.ts`). Receiving originals needs CLI 0.3.11+ or desktop 0.3.8+ on the computer.
 - **The assistant:**
-  - `hub_list_files` and `hub_read_file` list and read files. `hub_import_app_file` brings a file or attachment in from a connected app like `POST /api/documents/import`, after Apply (its preview says when the app is not ready or the hosted plan's 10 files are used). `hub_create_page` and `hub_update_page` attach a file with a `[@name](ensemble://file/<id>)` link. `hub_import_dataset` with `fileId` makes a Plots dataset from a CSV, TSV or `.xlsx` sheet ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
+  - `hub_list_files` and `hub_read_file` list and read files. `hub_import_app_file` brings a file or attachment in from a connected app like `POST /api/documents/import`, after Apply (its preview says when the app is not ready or the hosted plan's 10 files are used). `hub_create_page` and `hub_update_page` attach a file with a `[@name](ensemble://file/<id>)` link and show an image with `![alt](ensemble://file/<id>)` on its own line ([§6](#images-in-pages)). `hub_import_dataset` with `fileId` makes a Plots dataset from a CSV, TSV or `.xlsx` sheet ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
   - `hub_file_edit_info` and `hub_edit_file` (`assistant/tools/file-edits.ts`): read the current SHA-256, then replace one unique passage in a Word, PowerPoint, text, code or CSV file, or edit supported spreadsheet cells and rows. Office edits keep the rest of the package and run in the bounded worker (`files/office-edit.ts`, `files/extract-worker.ts`). File ids stay fixed. `PUT /api/documents/:id/content` and cell patches accept `expectedSha256`; `replaceFileBytes` checks it under the storage lock and refuses a stale write (409 "The file changed. Read it again before editing.").
   - `hub_file_to_page` makes a supported file into a page; PDF and Word need Markdown from the text the assistant read. `hub_export_page_file` writes Word, PDF, Markdown or text into Files, or replaces a named file given its current hash. Server export rebuilds formatting instead of using the browser's original-template export; its PDF uses jsPDF's standard fonts and refuses characters they cannot draw (Word is the alternative). Every original-file edit and export waits for Apply.
-  - There is no OCR, image, audio or video understanding, or slide redesign.
-  - **Attaching to a message** (`components/files/add-to-message.tsx`) lists saved `/api/documents` records filtered by filename; choosing one inserts an `@file:` token and its `PageMention` id into the draft, and the turn reads the saved file. It does not browse connectors or import remote files; bring those into Files first.
+  - `hub_view_file` opens a picture for a model that reads images. There is no OCR, audio or video understanding, or slide redesign.
+  - **Attaching to a message:** the dock's attach button uploads files into Files or chooses saved ones (`components/files/add-to-message.tsx`, filtered by filename); files can also be dropped or pasted. Up to 8 per message travel as file mentions, and the turn gets their text and pictures ([38](38_AGENT_READABLE_FILES.md)). It does not browse connectors or import remote files; bring those into Files first.
+- **Ensemble Node:** a message can carry up to 8 of the sender's files (`files` on `POST /api/node/rooms/:id/messages`); a node reads those on its owner's messages ([35](35_ENSEMBLE_NODE.md)).
 - **Editors over MCP** (Context Bridge and hosted `/mcp`): search finds files, the brief lists a task's files, and `ensemble_read` reads a file's text in parts. Original bytes are never sent over MCP.
 
 ## 8. API
@@ -127,7 +204,7 @@ File text is always passed on as information, not instructions.
 | Method | Path | Body → Response |
 |---|---|---|
 | GET | `/api/documents?q=` | → `{ files: FileRecord[], usage: FileUsage }` |
-| POST | `/api/documents` | `{ filename, mediaType, dataBase64, summarize?, tags? }` → 201 `{ file, document }`; 400 empty, 413 over the size limit, 415 a program (§3) |
+| POST | `/api/documents` | `{ filename, mediaType, dataBase64, summarize?, tags?, purpose? }` → 201 `{ file, document }`; 400 empty, 413 over the size limit, 415 a program (§3). `purpose: "page-image"` applies the page-image checks and adds `image: { format, width, height }` ([§6](#images-in-pages)) |
 | GET | `/api/documents/:id` | → `{ file }` |
 | GET | `/api/documents/:id/original` | Bytes; Content-Type from the format table (HTML as text/plain, unknown as octet-stream), `nosniff`, a sandbox CSP, `attachment` with `filename*`, `ETag`/304, ranges |
 | GET | `/api/documents/:id/text?offset=&limit=` | → `{ text, offset, total, nextOffset? }` (6,000 characters by default, at most 20,000) |
@@ -149,7 +226,7 @@ File text is always passed on as information, not instructions.
 
 ## 9. Limitations
 
-- PDFs without a text layer (scans) have no text for agents and say so; there is no OCR.
+- PDFs without a text layer (scans) have no text for agents and say so; there is no OCR. A model that reads images can read a picture (PNG or JPEG) of the page instead.
 - Spreadsheet cell edits are refused for workbooks with charts, pivot tables, slicers, macros, form controls, comments or links to other workbooks, because saving would drop them. Values that depend on edited cells refresh when Excel next opens the file.
 - Typing into a formula cell saves the value typed, not a formula. New rows are added at the end of a sheet. Sheets over 50,000 rows show their first 50,000 rows and cannot be edited here.
 - "Make an editable .xlsx copy" (for .xls, .ods and .numbers) replaces the file in Ensemble; values, formulas and every sheet come across, some formatting, charts and pictures may not.
@@ -160,12 +237,15 @@ File text is always passed on as information, not instructions.
 
 | Test | Covers |
 |---|---|
-| `apps/hub-api/src/routes/files.integration.test.ts` | Upload, list, usage, hosted caps and the server guard, refusals (§3), original headers, text paging, replace, cell edits, pages from files, delete, isolation, the shared-page rule |
+| `apps/hub-api/src/routes/files.integration.test.ts` | Upload, list, usage, hosted caps and the server guard, refusals (§3), original headers, text paging, replace, cell edits, pages from files, delete, isolation, the shared-page rule; page images: 2,097,152 bytes kept and 2,097,153 refused, damaged, SVG and misnamed files, a shared page's viewer and link reading only the images placed on it, page writes refusing new oversized images |
+| `packages/shared-types/src/page-images.test.ts`, `page-markdown.test.ts` | The header reader per format, the limit and refusal messages, image Markdown |
+| `apps/hub-api/src/pages/collab.test.ts`, `files/attached.integration.test.ts` | Co-editing steps with oversized `data:` images; an image on a task page as an attached file, in agent text, and through a Markdown round trip |
 | `apps/hub-api/src/files/originals.integration.test.ts` | Blob storage (§2): key-only rows, reads, replace/purge and the sweep, 503 when unreachable, rows that keep their bytes, the storage settings check |
 | `apps/hub-api/src/files/extract.test.ts` | Extraction per format and its limits |
 | `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts` | Import sources and states, downloads per app, attached files for agents, `read_attachment` / `save_attachment` |
 | `apps/hub-api/src/routes/artifacts.integration.test.ts` | §11: the list, reader, Remove and suppression, re-attach, the 409 for uploads, isolation, members refused |
 | `apps/hub-web/components/files/*.test.tsx`, `components/editor/file-attach.test.tsx`, `lib/files/*.test.ts` | From your apps, duplicates (Skip, Replace), refusals on rows, search and Retry, Present and Full screen (keys, clicks, hidden slides, the in-page layer), attaching in the editor |
+| `apps/hub-web/components/editor/page-image.test.tsx` | `/image`, drop and paste, progress, refusals before sending and Attach as file, pasted `data:` images, attributes through save and HTML, the controls by keyboard and button, read-only, loading with share headers and the unavailable state |
 | `apps/hub-web/lib/export/*.test.ts` | Markdown table parsing and tables in every Download format |
 
 ## 11. Connected items opened explicitly

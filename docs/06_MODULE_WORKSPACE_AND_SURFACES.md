@@ -29,7 +29,7 @@ Some per-run controls, such as outside access, are not stored in the profile. Th
 
 `brief()` in `workspace/agent.ts` assembles the title, description, instructions, task page, linked project/repo, source link, selected skills and the relevant earlier attempt. `pages/agent-context.ts` adds owned embedded diagram source under its own bound. Source IDs distinguish a saved task from a live connected-app item.
 
-Connected-app items attached to the task or project are included as reference text, up to 12,000 characters (a device claim has its own bound). File attachments are listed with excerpts; `read_attachment` reads them in parts and `save_attachment` copies an original into the folder under the folder rules. External engines get authorized temporary copies. Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
+Connected-app items attached to the task or project are included as reference text, up to 12,000 characters (a device claim has its own bound). File attachments are listed with excerpts; `read_attachment` reads them in parts and `save_attachment` copies an original into the folder under the folder rules. When the run's model reads images, attached pictures follow the brief and `view_attachment` opens more. Plots and datasets mentioned on the page come with their settings and a data preview. External engines get authorized temporary copies ([38](38_AGENT_READABLE_FILES.md)). Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
 
 Fresh code work gets a new folder under the workspace; a requested repository is cloned by the trusted helper with the person's configured Git credential, never handed to the agent. An existing user folder is never initialized or reset to run a task. Continuations reuse the earlier folder, branch and context; they do not recover uncommitted work from a fresh clone. Paths and permissions are rechecked, and a missing, moved or refused folder blocks the job.
 
@@ -52,6 +52,8 @@ Job cards and the task's Agent output link to the Run. `RunStep` stores the engi
 `routes/job-files.ts` serves authorized job files. For a paired job only the person who ran it reads file text; other shared-space members see metadata. Code opens the run's review on that computer ([16](16_CODE_TAB.md), [25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web)).
 
 Run feedback is a tag or a linked follow-up attempt; it never edits recorded output. Run sheets show Results, Files and Traces with resizing, fullscreen and bounded history.
+
+Workspace queues stack vertically below 1024 CSS pixels; recent completed and stopped work uses one column below 768. On phones, Runs keeps titles and metadata above the status and actions. Its sheet fills the available width, with scrolling content and fixed header controls. Needs me buttons wrap the full answer, including unbroken words, without overlapping the recommendation.
 
 ## 5. Related interfaces
 

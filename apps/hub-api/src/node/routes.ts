@@ -3,6 +3,8 @@
  * account (sharing class `personal`), whichever space is open; messages are read through
  * visibility, and only a room's people reach it.
  */
+import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
+import { filesByIds } from "../files/attached.js";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { NodeAgent, NodeRoom, Prisma, PrismaClient } from "@prisma/client";
@@ -226,6 +228,15 @@ export async function nodeOverview(prisma: PrismaClient, accountId: string) {
     runs,
     credits: await credits(accountId),
   };
+}
+
+/** The sender's own files for a message: name, kind and size, in the order given. Another account's id is refused. */
+async function messageFiles(prisma: PrismaClient, accountId: string, ids: string[]): Promise<Array<{ id: string; name: string; kind: string; size: number }>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  const found = await filesByIds(prisma, accountId, unique);
+  if (found.length !== unique.length) throw fail(404, "One of those files is not in your Files.");
+  return found.map((file) => ({ id: file.id, name: file.filename, kind: file.kind, size: file.byteSize }));
 }
 
 export async function nodeRoutes(app: FastifyInstance): Promise<void> {
@@ -709,13 +720,16 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
     const body = z.object({
-      body: z.string().min(1).max(8000),
+      body: z.string().max(8000).default(""),
       clientId: z.string().min(1).max(80).optional(),
       private: z.boolean().optional(),
       replyToId: z.string().uuid().optional(),
+      files: z.array(z.string().uuid()).max(MESSAGE_FILES_MAX).optional(),
     }).strict().parse(request.body);
     const text = stripLoneSurrogates(body.body).trim();
-    if (!text) throw fail(400, "That message is empty.");
+    // Files ride on a message by reference: they stay in the sender's Files (src/files).
+    const files = await messageFiles(prisma, accountId, body.files ?? []);
+    if (!text && !files.length) throw fail(400, "That message is empty.");
     // Nodes spend model credits on the account's behalf: same rule as the assistant.
     await requireVerifiedUser(accountId);
     const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
@@ -734,7 +748,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       userId: accountId,
       authorKind: "human",
       body: text,
-      ...(replyTo ? { data: { replyTo } } : {}),
+      ...(replyTo || files.length ? { data: { ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}) } } : {}),
       visibleTo,
       mentions: mentionsFor(text, members, visibleTo),
       clientId: body.clientId ?? null,
@@ -770,6 +784,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (messageDeleted(message)) return reply.code(204).send();
     const data: Record<string, unknown> = { ...((message.data ?? {}) as Record<string, unknown>), deleted: true, deletedAt: new Date().toISOString() };
     delete data.reactions;
+    delete data.files;
     const updated = await prisma.nodeMessage.update({ where: { id: message.id }, data: { body: "", mentions: [], data: data as Prisma.InputJsonValue } });
     const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
     if (room && roomSettings(room).pinned.includes(message.id)) {

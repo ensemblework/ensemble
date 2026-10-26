@@ -9,6 +9,7 @@ import { z } from "zod";
 import { internalHeaders } from "./brain.js";
 import { dispatchMessage, enqueueTurn } from "./queue.js";
 import { mentionsFor, postMessage, updateMessageData } from "./store.js";
+import { refsNote, savedRefs } from "../assistant/refs.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -146,7 +147,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     headers: { ...internalHeaders(spaceId), "content-type": "application/json" },
     payload: { conversationId: parsed.conversationId, calls: chosen.map((call) => ({ name: call.name, input: call.input, callId: call.callId })) },
   });
-  let result: { summary?: string; href?: string | null; partial?: boolean; failed?: Array<{ name: string; error: string }>; error?: string } = {};
+  let result: { summary?: string; href?: string | null; partial?: boolean; failed?: Array<{ name: string; error: string }>; error?: string; refs?: unknown } = {};
   try {
     result = response.json();
   } catch {
@@ -172,7 +173,8 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     nodeId: node.id,
     roomId: card.roomId,
     reason: "approval",
-    note: `Your owner approved and it was applied: ${(result.summary || "done").replace(/\.+$/, "")}.${failures ? ` These failed: ${failures}.` : ""}${assigned.length ? " The computer run started; you will hear when it ends." : ""} Continue the plan if there is more to do; otherwise reply ${"(no reply)"}.`,
+    // The summary names records by title; their ids follow as links for the node's next calls.
+    note: `Your owner approved and it was applied: ${(result.summary || "done").replace(/\.+$/, "")}.${refsNote(savedRefs(result.refs)) ? ` ${refsNote(savedRefs(result.refs))}` : ""}${failures ? ` These failed: ${failures}.` : ""}${assigned.length ? " The computer run started; you will hear when it ends." : ""} Continue the plan if there is more to do; otherwise reply ${"(no reply)"}.`,
     private: parsed.private === true,
   });
   return updated;

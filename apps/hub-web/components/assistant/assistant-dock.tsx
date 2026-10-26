@@ -11,10 +11,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Unplug, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { assistantErrorText, ASSISTANT_UNAVAILABLE, CONNECT_COMPUTER_HREF, formatChord, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
+import { asksForIds, assistantErrorText, ASSISTANT_UNAVAILABLE, CHAT_FILES_MAX, CONNECT_COMPUTER_HREF, formatChord, formatEntityText, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type AssistantRef, type PageMention } from "@ensemble/shared-types";
+import { callRefs, replyContext, savedRefs, type ReplyContext } from "@/lib/assistant-refs";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -39,8 +40,8 @@ import { useToast } from "../toast";
 import { BrandMorph } from "@/components/motion/brand-morph";
 import { ThinkingStatus } from "@/components/motion/slot";
 import { cx } from "../ui";
-import { AddFileToMessage } from "../files/add-to-message";
-import { mentionToken } from "@ensemble/shared-types";
+import { pastedFiles } from "@/lib/files/pasted";
+import { AttachMenu, AttachmentShelf, MessageFiles, attachmentMentions, attachmentsOnlyMessage, fileCount, useChatAttachments, withAttachedFiles, type ChatAttachment } from "./chat-attachments";
 import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
 /** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
@@ -79,7 +80,7 @@ const ASSISTANT_LAYER = 2000;
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
-function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; conversationId: string | null }) {
+function ToolCall({ call, conversationId, refs }: { call: AssistantToolCallRecord; conversationId: string | null; refs?: readonly AssistantRef[] }) {
   const toast = useToast();
   const client = useQueryClient();
   const [local, setLocal] = useState<{ phase: "applied" | "undone"; entryId: string | null } | null>(null);
@@ -148,7 +149,7 @@ function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; con
     <div className="assistant-tool tile m-tool flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]" data-motion-slot="tool.call" data-state={motion}>
       {icon}
       <span className="assistant-tool-name" title={call.name}>{call.name.replace(/^(hub_|apps_)/, "").replace(/_/g, " ")}</span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{call.error ?? call.summary}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{formatEntityText(call.error ?? call.summary ?? "", [...(call.refs ?? []), ...(refs ?? [])], { plain: true })}</span>
       {phase === "applied" ? <span className="text-faint">{call.isWrite === false ? "Read" : "Applied"}</span> : null}
       {phase === "undone" ? <span className="text-faint">Undone</span> : null}
       {call.href ? (
@@ -228,23 +229,31 @@ export function Message({
   conversationId,
   onChoose,
   onRetry,
+  context,
 }: {
   message: AssistantMessageRecord;
   conversationId: string | null;
   onChoose?: (text: string) => void;
   onRetry?: () => void;
+  /** The records this reply may name by id, and whether its question asked for ids. Default: its own. */
+  context?: ReplyContext;
 }) {
   if (message.role === "user") {
     return (
       <div className="assistant-turn assistant-user-turn">
         <div className="assistant-user-message"><LinkifiedText text={message.content} mentions={message.mentions} /></div>
+        <MessageFiles content={message.content} mentions={message.mentions} />
       </div>
     );
   }
   if (message.role === "error" || /^The model runtime (?:is not running|could not be reached)/i.test(message.content)) return <AssistantFailure message={message.content} onRetry={onRetry} />;
   const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
   const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
-  const answer = splitCutOffReply(message.content);
+  // Records show by title; the saved text keeps the model's words.
+  const { refs, showIds } = context ?? replyContext([message], 0);
+  const shown = formatEntityText(message.content, refs, { showIds });
+  const plainText = formatEntityText(message.content, refs, { showIds, plain: true });
+  const answer = splitCutOffReply(plainText);
   // Replies saved before 18 Oct 2026 named included credits as an API key.
   const included = message.credentialSource === INCLUDED_SOURCE || message.credentialSource === `API key · ${INCLUDED_PROVIDER}`;
   const source = included ? INCLUDED_SOURCE : message.credentialSource;
@@ -259,12 +268,12 @@ export function Message({
             <ApplyAll calls={pending} conversationId={conversationId} />
           ) : null}
           {message.toolCalls.map((call) => (
-            <ToolCall key={call.id} call={call} conversationId={conversationId} />
+            <ToolCall key={call.id} call={call} conversationId={conversationId} refs={refs} />
           ))}
           </div>
         </details>
       ) : null}
-      <div className="assistant-answer-body"><AssistantAnswer content={message.content} /></div>
+      <div className="assistant-answer-body"><AssistantAnswer content={shown} /></div>
       {onChoose
         ? choiceLines(answer.body).map((choice) => (
             <button key={choice} type="button" className="btn mr-1 mt-1" onClick={() => onChoose(choice)}>
@@ -275,7 +284,7 @@ export function Message({
       <div className="assistant-message-footer">
         {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} provider={included ? INCLUDED_PROVIDER : undefined} size={11} />{included ? includedModelName(message.model) : message.model}</span> : null}
         {source ? <span className="min-w-0 break-words">{source}</span> : null}
-        <CopyReply content={message.content} />
+        <CopyReply content={plainText} />
       </div>
     </article>
   );
@@ -388,6 +397,8 @@ export function AssistantDock() {
   const [includedPick, setIncludedPick] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
   const [liveTools, setLiveTools] = useState<AssistantToolCallRecord[]>([]);
+  /** Records the turn showed the model by id, sent before its text (the `refs` frame). */
+  const [turnRefs, setTurnRefs] = useState<AssistantRef[]>([]);
   const [pending, setPending] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const [draft, setDraft] = useState("");
@@ -396,6 +407,10 @@ export function AssistantDock() {
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const mention = useMentionMenu({ value: draft, onValue: setDraft, inputRef: input });
+  const attachments = useChatAttachments();
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
+  const uploadHint = useId();
   useAutoGrow(input, open ? draft : "", 8);
   const [history, setHistory] = useState(false);
   const closeHistory = useCallback(() => setHistory(false), []);
@@ -448,7 +463,7 @@ export function AssistantDock() {
     if (open) window.setTimeout(() => input.current?.focus(), 30);
   }, [open]);
 
-  const lastRequest = useRef<{ text: string; mentions: PageMention[] } | null>(null);
+  const lastRequest = useRef<{ text: string; mentions: PageMention[]; sent?: { draft: string; files: ChatAttachment[] } } | null>(null);
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: KeyboardEvent) => {
@@ -459,9 +474,10 @@ export function AssistantDock() {
     window.addEventListener("keydown", dismiss);
     return () => window.removeEventListener("keydown", dismiss);
   }, [open, setOpen]);
-  const sendText = async (text: string, mentions: PageMention[] = []) => {
+  /** `sent`: what the person had written and attached, put back when the turn never reached the assistant. */
+  const sendText = async (text: string, mentions: PageMention[] = [], sent?: { draft: string; files: ChatAttachment[] }) => {
     if (abortRef.current) return;
-    lastRequest.current = { text, mentions };
+    lastRequest.current = { text, mentions, sent };
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
@@ -469,10 +485,11 @@ export function AssistantDock() {
     setTurnError(null);
     setStreaming("");
     setLiveTools([]);
+    setTurnRefs([]);
     setWorking("Assistant is thinking…");
     setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, mentions, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
     let nextId = conversationId;
-    const held: { reply: { messageId?: string; content: string; failed?: boolean } | null } = { reply: null };
+    const held: { reply: { messageId?: string; content: string; failed?: boolean; refs?: AssistantRef[] } | null } = { reply: null };
     try {
       const response = await fetch(`${API}/api/assistant/turn`, {
         method: "POST",
@@ -530,6 +547,7 @@ export function AssistantDock() {
           resetsAt?: string;
           saveFailed?: boolean;
           failed?: boolean;
+          refs?: AssistantRef[];
         };
         if (event === "status") {
           if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
@@ -541,6 +559,7 @@ export function AssistantDock() {
           }
         }
         if (event === "delta") setStreaming((value) => value + (frame.text ?? ""));
+        if (event === "refs") setTurnRefs(savedRefs(frame.refs));
         if ((event === "tool" || event === "pending") && frame.call) {
           const call = frame.preview ? { ...frame.call, summary: frame.preview } : frame.call;
           setLiveTools((rows) => [...rows.filter((row) => row.id !== call.id), call]);
@@ -563,7 +582,7 @@ export function AssistantDock() {
         }
         if (event === "done" && frame.conversationId) {
           nextId = frame.conversationId;
-          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed };
+          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed, refs: savedRefs(frame.refs) };
         }
       });
       if (nextId) setConversationId(nextId);
@@ -588,6 +607,7 @@ export function AssistantDock() {
                 id: kept.messageId || `unsaved-${Date.now()}`,
                 role: kept.failed ? "error" : "assistant",
                 content: kept.content,
+                ...(kept.refs?.length ? { mentions: kept.refs as PageMention[] } : {}),
                 toolCalls: [],
                 model: null,
                 createdAt: new Date().toISOString(),
@@ -599,9 +619,12 @@ export function AssistantDock() {
       setOptimistic([]);
       setStreaming("");
       setLiveTools([]);
+      if (sent) attachments.release(sent.files);
+      setTurnRefs([]);
     } catch (error) {
       if (isSilentCancellation(error, controller.signal)) {
         setTurnError(null);
+        if (sent) attachments.release(sent.files);
         if (nextId) {
           setConversationId(nextId);
           setOptimistic([
@@ -621,7 +644,8 @@ export function AssistantDock() {
           setOptimistic([]);
         }
       } else {
-        setDraft((current) => current || text);
+        setDraft((current) => current || (sent ? sent.draft : text));
+        if (sent) attachments.restore(sent.files);
         setTurnError((error as Error).message);
         setOptimistic([]);
       }
@@ -640,17 +664,53 @@ export function AssistantDock() {
 
   const saved = messages.data?.messages ?? [];
   const all = [...saved, ...optimistic.filter((row) => !saved.some((message) => message.id === row.id))];
+  // While a reply streams: the records its calls returned, the ones the turn showed the model, and the question's mentions.
+  const liveRefs = [...callRefs(liveTools), ...turnRefs, ...(lastRequest.current?.mentions ?? [])];
+  const liveShowIds = asksForIds(lastRequest.current?.text);
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [all.length, pending, streaming]);
 
+  /** Sends `text` with the files on the shelf. False when it could not go yet, with the reason on the shelf. */
+  const send = (text: string, typed: PageMention[] = []): boolean => {
+    if (abortRef.current) return false;
+    if (attachments.uploading) {
+      attachments.setNotice("Wait for the uploads to finish, or cancel them, then send.");
+      return false;
+    }
+    const files = attachments.take();
+    const mentions = withAttachedFiles(typed, attachmentMentions(files));
+    if (fileCount(mentions) > CHAT_FILES_MAX) {
+      attachments.restore(files);
+      attachments.setNotice(`A message can carry up to ${CHAT_FILES_MAX} files, counting @file mentions. Remove some, then send.`);
+      return false;
+    }
+    const message = text || (files.length ? attachmentsOnlyMessage(files.length) : "");
+    if (!message) return false;
+    void sendText(message, mentions, { draft: text, files });
+    return true;
+  };
+
+  /**
+   * The failed turn again. Files that came back to the shelf after it failed leave it again; one the
+   * person removed from the shelf meanwhile is not sent.
+   */
+  const retryLast = () => {
+    const request = lastRequest.current;
+    if (!request) return;
+    const sent = request.sent;
+    if (!sent) return void sendText(request.text, request.mentions);
+    const attached = new Set(sent.files.flatMap((file) => (file.fileId ? [file.fileId] : [])));
+    const typed = request.mentions.filter((mention) => !(mention.kind === "file" && attached.has(mention.id)));
+    const taken = sent.files.length ? attachments.take(sent.files) : [];
+    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken });
+  };
+
   const submit = () => {
     const text = draft.trim();
-    if (!text || pending) return;
-    const mentions = mention.takeMentions(text);
-    mention.clear();
-    void sendText(text, mentions);
+    if ((!text && !attachments.ready.length) || pending) return;
+    if (send(text, mention.takeMentions(text))) mention.clear();
   };
 
   const tiers = settings.data?.settings.models;
@@ -667,6 +727,8 @@ export function AssistantDock() {
   );
   if (!open) return launcher;
 
+  const filesDragged = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
   return createPortal(
     <LayerFloor.Provider value={ASSISTANT_LAYER}>
     {launcher}
@@ -675,6 +737,32 @@ export function AssistantDock() {
       data-assistant-surface
       style={{ zIndex: ASSISTANT_LAYER, ...panelSize.style }}
       onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]')?.focus()); } }}
+      // The whole window takes dropped files, so one dropped beside the box is attached, not opened by the browser.
+      onDragEnter={(event) => {
+        if (!filesDragged(event)) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setDropping(true);
+      }}
+      onDragOver={(event) => {
+        if (!filesDragged(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(event) => {
+        if (!filesDragged(event)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (!dragDepth.current) setDropping(false);
+      }}
+      onDrop={(event) => {
+        dragDepth.current = 0;
+        setDropping(false);
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.length) return;
+        event.preventDefault();
+        attachments.add(files);
+        input.current?.focus();
+      }}
       className={cx(
         "assistant-window pop-in fixed flex flex-col overflow-hidden border border-line-strong shadow-pop",
         expanded ? "inset-x-[5vw] bottom-6 top-[5vh]" : "bottom-5 right-5 h-[min(720px,85vh)] w-[min(660px,94vw)]",
@@ -726,16 +814,16 @@ export function AssistantDock() {
 
       <div ref={scroller} className="assistant-conversation min-h-0 flex-1 overflow-y-auto">
         {all.length === 0 ? (
-          <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void sendText(text)} />
+          <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void send(text)} />
         ) : (
           all.map((message, index) => (
-            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
+            <Message key={message.id} message={message} context={replyContext(all, index)} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
           ))
         )}
         {pending ? (
           <div className="assistant-turn space-y-2">
             {liveTools.map((call) => (
-              <ToolCall key={call.id} call={call} conversationId={conversationId} />
+              <ToolCall key={call.id} call={call} conversationId={conversationId} refs={liveRefs} />
             ))}
             <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
               <div className={streaming ? "mb-3 flex justify-center" : "flex flex-col items-center gap-3 py-4"}>
@@ -746,7 +834,7 @@ export function AssistantDock() {
                 <div className="flex items-start gap-2">
                   <BrandMorph size={16} state="loop" />
                   <div className="min-w-0 flex-1">
-                    <MarkdownText text={streaming} />
+                    <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
                   </div>
                 </div>
               ) : null}
@@ -757,32 +845,45 @@ export function AssistantDock() {
 
       <div className="assistant-composer-area relative shrink-0">
         <MentionPopover menu={mention} />
-        {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : () => { const request = lastRequest.current; if (request) void sendText(request.text, request.mentions); }} /> : null}
-        <div className="assistant-composer tile flex items-end gap-2 px-4 py-3">
-          <MentionTextarea
-            menu={mention}
-            rows={1}
-            value={draft}
-            onKeyDown={(event) => {
-              if (mention.onKeyDown(event)) return;
-              if (event.key === "Enter" && !event.shiftKey) {
+        {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : retryLast} /> : null}
+        <div className="assistant-composer tile flex flex-col gap-2 px-4 py-3" data-dropping={dropping ? "" : undefined}>
+          <AttachmentShelf attachments={attachments} hintId={uploadHint} />
+          <div className="flex items-end gap-2">
+            <AttachMenu attachments={attachments} onAttached={() => window.setTimeout(() => input.current?.focus(), 30)} />
+            <MentionTextarea
+              menu={mention}
+              rows={1}
+              value={draft}
+              onKeyDown={(event) => {
+                if (mention.onKeyDown(event)) return;
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+              onPaste={(event) => {
+                const files = pastedFiles(event.clipboardData);
+                if (!files.length) return;
                 event.preventDefault();
-                submit();
-              }
-            }}
-            placeholder="Ask, or tell me what to change. @ to mention…"
-            fieldClassName="flex-1"
-            className="box-border min-h-6 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
-          />
-          <button
-            type="button"
-            className="assistant-send icon-btn"
-            onClick={pending ? stop : submit}
-            disabled={!pending && !draft.trim()}
-            aria-label={pending ? "Stop" : "Send"}
-          >
-            {pending ? <span className="text-[11px] font-semibold">Stop</span> : <ArrowUp size={15} />}
-          </button>
+                attachments.add(files);
+              }}
+              placeholder="Ask, or tell me what to change. @ to mention…"
+              fieldClassName="flex-1"
+              className="box-border min-h-6 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
+            />
+            <button
+              type="button"
+              className="assistant-send icon-btn"
+              onClick={pending ? stop : submit}
+              disabled={!pending && (attachments.uploading > 0 || (!draft.trim() && !attachments.ready.length))}
+              aria-label={pending ? "Stop" : "Send"}
+              title={pending ? "Stop" : attachments.uploading ? "Send is available when the files finish uploading" : "Send"}
+              aria-describedby={!pending && attachments.uploading ? uploadHint : undefined}
+            >
+              {pending ? <span className="text-[11px] font-semibold">Stop</span> : <ArrowUp size={15} />}
+            </button>
+          </div>
+          {dropping ? <div className="assistant-drop-target" aria-hidden="true">Drop files to attach them to this message</div> : null}
         </div>
         <div className="assistant-composer-options mt-2 flex flex-wrap items-center gap-3 text-[12px] text-faint">
           <Popover width={360} trigger={(open, toggle) => <button type="button" className="btn min-w-0 max-w-full" aria-label="Complexity" aria-haspopup="listbox" aria-expanded={open} onClick={toggle}><span className="truncate">{picked ? `${includedModelName(picked)} · Included` : `${TIER_LABEL[tier]} · ${tiers ? tierModelName(tiers[tier].provider, tiers[tier].model) : "Automatic"}`}</span><ChevronDown size={13} /></button>}>
@@ -798,14 +899,6 @@ export function AssistantDock() {
                 {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
               </div> : null}</div>}
           </Popover>
-          <AddFileToMessage
-            onInsert={(file) => {
-              mention.remember(file);
-              const line = mentionToken(file.kind, file.label);
-              setDraft((current) => (current.trim() ? `${current.trimEnd()} ${line} ` : `${line} `));
-              window.setTimeout(() => input.current?.focus(), 30);
-            }}
-          />
           <span className="assistant-key-hint">Enter to send · ⇧ Enter for a new line</span>
         </div>
       </div>

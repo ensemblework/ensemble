@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ContentPart } from "../files/model-input.js";
 import type { AssistantPageContext, AssistantToolArea, CodeEngine, Settings } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
@@ -43,6 +44,8 @@ export interface ToolContext {
 export interface ToolResult {
   summary: string;
   data?: unknown;
+  /** Pictures for the model, shown after this step's tool results (files/model-input.ts). */
+  pictures?: ContentPart[];
   href?: string;
   undoEntryId?: string;
   invalidate?: string[];

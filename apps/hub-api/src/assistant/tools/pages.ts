@@ -13,6 +13,7 @@ import { sseHub } from "../../lib/sse.js";
 import { lastUndoId, recordUndoInTransaction } from "../../lib/undo.js";
 import { diagramSources } from "../../pages/agent-context.js";
 import { filesOnPage } from "../../files/attached.js";
+import { assertNewPageImages } from "../../files/page-image.js";
 import { markdownToNodes, pageMarkdown } from "../../pages/markdown.js";
 import { createStandalonePage, editablePage, trashStandalonePage, trashStandalonePages, writePageContent, type PageTarget } from "../../pages/store.js";
 import { titlesMatch } from "../../services/tasks.js";
@@ -161,7 +162,7 @@ export const pageTools = [
     name: "hub_read_page",
     area: "projects",
     description:
-      "Read a page as Markdown by pageId, or a task's page by taskId. Long pages come in parts: pass nextOffset as offset. Mentions show as [@Label](ensemble://kind/id); a file's id there works with hub_read_file.",
+      "Read a page as Markdown by pageId, or a task's page by taskId. Long pages come in parts: pass nextOffset as offset. Mentions show as [@Label](ensemble://kind/id) and images as ![description](ensemble://file/id) with {width align} after; a file's id there works with hub_read_file.",
     input: z.object({ ...Target, offset: z.number().int().min(0).default(0) }),
     isWrite: false,
     risk: "low",
@@ -190,7 +191,7 @@ export const pageTools = [
     name: "hub_create_page",
     area: "projects",
     description:
-      "Create a page (standalone note) from a title and Markdown: headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Returns the page id and link.",
+      "Create a page (standalone note) from a title and Markdown: headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id and link.",
     input: z.object({
       title: z.string().trim().min(1).max(200),
       markdown: z.string().max(MAX_MARKDOWN).default("").describe("The page body in Markdown."),
@@ -205,6 +206,7 @@ export const pageTools = [
     async run(ctx, input) {
       const created = await inTransaction(ctx, async (tx) => {
         const { doc, dropped } = await keepOwnMentions(tx, ctx.userId, markdownPage(input.markdown));
+        await assertNewPageImages(tx, ctx.userId, doc, null);
         const page = await createStandalonePage(tx, ctx.userId, { title: input.title, content: doc, sourceFileId: null });
         const op = { op: "create" as const, model: "taskPage" as const, id: page.id, data: { updatedAt: page.updatedAt } };
         await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Created “${page.title}”`, kind: "create", actor: "agent", subject: "page", href: `/pages/${page.id}`, inverse: op, forward: op });
@@ -222,7 +224,7 @@ export const pageTools = [
     name: "hub_update_page",
     area: "projects",
     description:
-      "Add to or rewrite a page (pageId) or a task's page (taskId) with Markdown. mode append adds at the end; replace rewrites the whole page, so read it first and keep its [@Label](ensemble://kind/id) links. matchTitle must be the page's current title (for a task page, the task title); the write is refused when it differs. title renames a standalone page.",
+      "Add to or rewrite a page (pageId) or a task's page (taskId) with Markdown. mode append adds at the end; replace rewrites the whole page, so read it first and keep its [@Label](ensemble://kind/id) links and ![…](ensemble://file/id){…} image lines as they are. matchTitle must be the page's current title (for a task page, the task title); the write is refused when it differs. title renames a standalone page.",
     input: z.object({
       ...Target,
       matchTitle: z.string().trim().min(1).max(200).describe("The page's current title. Refused when it is not the title of that page."),

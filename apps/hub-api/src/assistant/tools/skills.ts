@@ -40,7 +40,15 @@ export const skillTools = [
     name: "hub_manage_skill", area: "skills", description: "Create a personal skill with name/body, update its body/name/description/enabled using expectedVersion from hub_read_skill, restore a retained version, or delete it. Changes standing instructions after Apply; no test/model call is started.",
     input: z.object({ action: z.enum(["create", "update", "restore", "delete"]), skillId: z.string().uuid().optional(), name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), body: z.string().max(100_000).optional(), enabled: z.boolean().optional(), expectedVersion: z.number().int().positive().optional(), version: z.number().int().positive().optional() }),
     isWrite: true, risk: "medium", alwaysHold: true, outsideTransaction: true,
-    preview(_ctx, input) { if (input.action === "create" && (!input.name || !input.body)) throw new Error("Create needs name and body."); if (input.action !== "create" && !input.skillId) throw new Error("Read the skill first and send skillId."); if (input.action === "update" && !input.expectedVersion) throw new Error("Send expectedVersion from hub_read_skill."); return `${input.action} personal skill ${input.name ?? input.skillId}${input.body ? `: ${input.body.slice(0, 700)}` : ""}${input.enabled !== undefined ? `; enabled ${input.enabled}` : ""}.`; },
+    async preview(ctx, input) {
+      if (input.action === "create" && (!input.name || !input.body)) throw new Error("Create needs name and body.");
+      if (input.action !== "create" && !input.skillId) throw new Error("Read the skill first and send skillId.");
+      if (input.action === "update" && !input.expectedVersion) throw new Error("Send expectedVersion from hub_read_skill.");
+      const current = input.skillId ? await ctx.prisma.skill.findFirst({ where: { id: input.skillId, userId: ctx.userId }, select: { name: true } }) : null;
+      if (input.skillId && !current) throw new Error("That skill is not in this space. Call hub_list_skills and use an id it returns.");
+      const name = current && input.name && input.name !== current.name ? `“${current.name}” (renamed “${input.name}”)` : `“${current?.name ?? input.name}”`;
+      return `${input.action.charAt(0).toUpperCase()}${input.action.slice(1)} personal skill ${name}${input.body ? `: ${input.body.slice(0, 700)}` : ""}${input.enabled !== undefined ? `; ${input.enabled ? "turn it on" : "turn it off"}` : ""}.`;
+    },
     async run(ctx, input) {
       let result;
       if (input.action === "create") result = await assistantRequest(ctx, "POST", "/api/skills", { name: input.name, description: input.description, body: input.body });
@@ -48,7 +56,8 @@ export const skillTools = [
       else if (input.action === "restore") result = await assistantRequest(ctx, "POST", `/api/skills/${input.skillId}/restore`, { version: input.version });
       else result = await assistantRequest(ctx, "DELETE", `/api/skills/${input.skillId}`);
       const skill = result.skill;
-      return toolOk(`Skill ${input.action} completed.`, skill ? { id: skill.id, name: skill.name, version: skill.version, enabled: skill.enabled } : result, { href: "/skills", invalidate: ["skills"] });
+      const verb = { create: "Created", update: "Updated", restore: "Restored", delete: "Deleted" }[input.action];
+      return toolOk(skill?.name ? `${verb} personal skill “${skill.name}”.` : `Skill ${input.action} completed.`, skill ? { id: skill.id, name: skill.name, version: skill.version, enabled: skill.enabled } : result, { href: "/skills", invalidate: ["skills"] });
     }
   }),
 ];

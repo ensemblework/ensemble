@@ -26,7 +26,8 @@ import { replyAfterApply, type ReplyCall } from "../assistant/reply.js";
 import { friendlyModelError, parseRuntimeBody } from "../lib/model-error.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
-import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
+import { formatEntityText, INCLUDED_PROVIDER, type AssistantRef } from "@ensemble/shared-types";
+import { mergeRefs, MAX_CALL_REFS, refsFromResult } from "../assistant/refs.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
 import { ModelUnreachableError } from "../lib/model-reach.js";
@@ -211,9 +212,12 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const pieces: AppliedPiece[] = outcomes.map((outcome, index) => {
       const item = pending[index]!;
       if (!outcome.ok) return { state: "failed", error: outcome.error, attempted: outcome.attempted };
+      const refs = refsFromResult(item.tool.name, outcome.result.data, outcome.result.summary);
       return {
         state: "ok",
-        summary: withPastScheduleWarning(outcome.result.summary, item.input, settings.timezone),
+        // Display text names records by title; their ids stay in `refs` and the result's data.
+        summary: withPastScheduleWarning(formatEntityText(outcome.result.summary, refs, { plain: true }), item.input, settings.timezone),
+        refs,
         href: outcome.result.href ?? null,
         // An outside write cannot be undone; only Hub writes share the batch's undo entry.
         undoEntryId: isOutsideWrite(item.tool) ? null : undoEntryId,
@@ -230,7 +234,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const notApplied = failed.map((row) => ({ name: row.name, state: "failed", error: row.error, isWrite: true }));
     const mark = (call: Record<string, unknown>, piece: AppliedPiece): Record<string, unknown> =>
       piece.state === "ok"
-        ? { ...call, state: "ok", summary: piece.summary, undoEntryId: piece.undoEntryId, ...(piece.href ? { href: piece.href } : {}) }
+        ? { ...call, state: "ok", summary: piece.summary, undoEntryId: piece.undoEntryId, ...(piece.href ? { href: piece.href } : {}), ...(piece.refs.length ? { refs: piece.refs } : {}) }
         : { ...call, state: "failed", error: piece.error, summary: piece.error };
     // Recorded before anything else, so a later failure cannot leave a landed call looking unapplied.
     const replies: Array<{ id: string; content: string; toolCalls: unknown }> = [];
@@ -311,7 +315,8 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       event: "assistant.acted",
       data: { tool: pending[0]!.tool.name, keys: landed.flatMap((piece) => piece.invalidate) },
     });
-    return { summary, href, undoEntryId, replies, ...(partial ? { partial: true, failed } : {}) };
+    const refs = mergeRefs(landed.map((piece) => piece.refs), MAX_CALL_REFS);
+    return { summary, href, undoEntryId, replies, ...(refs.length ? { refs } : {}), ...(partial ? { partial: true, failed } : {}) };
   });
 
   app.post("/api/assistant/conversations/:id/stop", async (request, reply) => {
@@ -500,6 +505,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       messageId: persisted.id,
       content: persisted.shown,
       toolCalls: result.toolCalls,
+      ...(result.refs?.length ? { refs: result.refs } : {}),
       model: result.model,
       credentialSource: result.credentialSource,
       tier: tierName,
@@ -539,6 +545,8 @@ async function saveAssistantReply(
           role: result.failed ? "error" : "assistant",
           content,
           toolCalls: result.toolCalls as never,
+          // The records the reply names by id, so it shows their titles after a reload.
+          ...(result.refs?.length && !result.failed ? { mentions: result.refs as never } : {}),
           model: result.failed ? null : result.model,
           credentialSource: result.credentialSource,
           credits: result.credits ?? undefined,
@@ -553,7 +561,7 @@ async function saveAssistantReply(
 }
 
 type AppliedPiece =
-  | { state: "ok"; summary: string; href: string | null; undoEntryId: string | null; invalidate: string[] }
+  | { state: "ok"; summary: string; href: string | null; undoEntryId: string | null; invalidate: string[]; refs: AssistantRef[] }
   | { state: "failed"; error: string; attempted: boolean };
 
 /** Tool calls saved on this conversation's replies and page answers, by call id; an "ok" copy wins. */

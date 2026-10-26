@@ -45,7 +45,7 @@ export function SourcesTab() {
         <p className="mb-3 text-[12.5px] text-muted">
           Every item links back to where it lives, the email in your mail client, the thread in Teams, the PR on GitHub.
         </p>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))] gap-2">
           {(connections.data?.connections ?? []).map((row) => (
             <div key={row.id} className="tile rounded-md bg-panel px-3 py-2.5 text-[13px]">
               <div className="flex items-center justify-between">

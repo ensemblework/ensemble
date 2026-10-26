@@ -62,7 +62,8 @@ export function mentionedFileIds(content: unknown): string[] {
   return [...new Set(ids)];
 }
 
-async function filesByIds(db: Db, userId: string, ids: string[]): Promise<AttachedFile[]> {
+/** These files, in the order given, leaving out any that are gone or not this person's. */
+export async function filesByIds(db: Db, userId: string, ids: string[]): Promise<AttachedFile[]> {
   const unique = [...new Set(ids)].slice(0, MAX_FILES);
   if (!unique.length) return [];
   const rows = await db.document.findMany({ where: { id: { in: unique }, userId, deletedAt: null }, select: FILE_FIELDS });

@@ -13,7 +13,8 @@ import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { includedRefusal } from "@/lib/included";
 import { readSse } from "@/lib/sse";
 import { beginPageEnsemble, publishEnsemble, readEnsemble, subscribeEnsemble, type EnsembleLive } from "./ensemble-bus";
-import type { PageDocument, PageMention } from "@ensemble/shared-types";
+import { formatEntityText, type PageDocument, type PageMention } from "@ensemble/shared-types";
+import { callRefs } from "@/lib/assistant-refs";
 import { attachEnsembleArtifacts, retargetEnsembleReply } from "./ensemble-artifacts";
 import { markdownFragment } from "../editor/clipboard";
 import { Selection } from "@tiptap/pm/state";
@@ -102,7 +103,7 @@ export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps
               <ThinkingStatus real={live?.note && live.note !== "Working…" ? live.note : null} active />
             ) : (
               <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
-                <MarkdownText text={text || "…"} />
+                <MarkdownText text={formatEntityText(text, callRefs(calls), { streaming }) || "…"} />
               </div>
             )}
             {live?.error || saved?.error ? (
@@ -175,7 +176,7 @@ function InlineToolCall({ call, conversationId, threadId }: { call: AssistantToo
   });
   return (
     <div className="flex items-center gap-2 rounded-md border border-line px-2 py-1 text-[12px]">
-      <span className={call.state === "failed" ? "text-danger" : "text-muted"}>{call.error || call.summary || call.name}</span>
+      <span className={call.state === "failed" ? "text-danger" : "text-muted"}>{formatEntityText(call.error || call.summary || call.name, call.refs ?? [], { plain: true })}</span>
       {call.state === "awaiting_approval" ? <button type="button" className="btn ml-auto" disabled={apply.isPending} onClick={() => apply.mutate()}>Apply</button> : call.state === "ok" ? <span className="ml-auto text-muted">Done</span> : null}
     </div>
   );

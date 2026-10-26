@@ -122,6 +122,24 @@ test("Apply replaces the stale prompt on a full and a partial batch", async (t) 
     const messages = (again.json() as { messages: Array<{ id: string; content: string }> }).messages;
     const shown = messages.find((row) => row.id === partial.id);
     assert.equal(shown?.content.includes("Nothing has changed yet"), false);
+
+    // The rest of the batch: the receipt and the saved reply name the task; its id stays in refs.
+    const rest = await app.inject({
+      method: "POST",
+      url: "/api/assistant/apply",
+      payload: { conversationId: conversation.id, calls: [{ name: "hub_create_tasks", callId: "call-task", input: { tasks: [{ title: `Brief ${stamp}`, projectName: `Second ${stamp}` }] } }] },
+    });
+    assert.equal(rest.statusCode, 200, rest.body);
+    const task = await prisma.task.findFirst({ where: { userId: owner.id, title: `Brief ${stamp}` }, select: { id: true } });
+    assert.ok(task);
+    const restBody = rest.json() as { summary: string; refs?: Array<{ kind: string; id: string; label: string }> };
+    assert.equal(restBody.summary, `Added “Brief ${stamp}”.`);
+    assert.deepEqual(restBody.refs, [{ kind: "task", id: task.id, label: `Brief ${stamp}` }]);
+    const settled = await prisma.assistantMessage.findUnique({ where: { id: partial.id } });
+    assert.equal(settled?.content.includes(task.id), false, "the saved reply shows the title, not the id");
+    assert.match(settled?.content ?? "", new RegExp(`Applied\\. Created “Second ${stamp}”; Added “Brief ${stamp}”\\.`));
+    const receipt = (settled?.toolCalls as Array<{ id: string; summary?: string; refs?: Array<{ id: string }> }>).find((call) => call.id === "call-task");
+    assert.equal(receipt?.refs?.[0]?.id, task.id);
   } finally {
     await app.close();
     await prisma.task.deleteMany({ where: { userId: owner.id } });

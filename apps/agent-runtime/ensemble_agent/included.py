@@ -294,10 +294,39 @@ async def _settled(
     return turn
 
 
+# Input tokens reserved per picture: providers charge a few thousand at most. Mirrors hub-api's IMAGE_INPUT_ALLOWANCE.
+IMAGE_INPUT_ALLOWANCE = 8_000
+
+
+def _without_images(value: Any) -> tuple[Any, int]:
+    """The value with each picture's base64 emptied, and how many pictures there were."""
+    if isinstance(value, str):
+        return ("", 1) if value[:11].lower() == "data:image/" else (value, 0)
+    if isinstance(value, list):
+        out, images = [], 0
+        for item in value:
+            clean, found = _without_images(item)
+            out.append(clean)
+            images += found
+        return out, images
+    if isinstance(value, dict):
+        if value.get("type") == "base64" and isinstance(value.get("data"), str) and str(value.get("media_type") or "").lower().startswith("image/"):
+            return {**value, "data": ""}, 1
+        out_dict, images = {}, 0
+        for key, item in value.items():
+            clean, found = _without_images(item)
+            out_dict[key] = clean
+            images += found
+        return out_dict, images
+    return value, 0
+
+
 def estimate_input_tokens(payload: dict[str, Any]) -> int:
     """The UTF-8 bytes of the request as sent: a byte-level BPE tokenizer never makes more tokens than
-    bytes, so a reservation is never short on input. The same count as hub-api's JSON.stringify."""
-    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    bytes, so a reservation is never short on input. The same count as hub-api's JSON.stringify. A
+    picture's base64 is not tokenized as text, so each counts as IMAGE_INPUT_ALLOWANCE instead."""
+    clean, images = _without_images(payload)
+    return len(json.dumps(clean, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + images * IMAGE_INPUT_ALLOWANCE
 
 
 # ── usage ───────────────────────────────────────────────────────────────────

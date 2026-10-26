@@ -54,9 +54,9 @@ function ComputerCode({ device, terminalOpen, onTerminal }: { device: Computer; 
         : null;
   return (
     <section className="rounded-lg border border-line" data-testid={`computer-code-${device.id}`}>
-      <header className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <Laptop size={14} className="text-muted" />
-        <span className="font-semibold">{device.name}</span>
+      <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+        <Laptop size={14} className="shrink-0 text-muted" />
+        <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{device.name}</span>
         <span className={device.online ? "text-[12px] text-ok" : "text-[12px] text-faint"}>{device.online ? "online" : "offline"}</span>
         {usable && caps.webEdit === false ? <Tag tone="gray">view only</Tag> : null}
         <div className="flex-1" />
@@ -70,7 +70,7 @@ function ComputerCode({ device, terminalOpen, onTerminal }: { device: Computer; 
         <div className="px-3 py-2.5 text-[12.5px] text-muted">{why}</div>
       ) : (
         <div className="grid gap-4 p-3 md:grid-cols-2">
-          <div>
+          <div className="min-w-0">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Agent changes to review</div>
             {reviews.isLoading ? (
               <SkeletonRows count={2} />
@@ -97,7 +97,7 @@ function ComputerCode({ device, terminalOpen, onTerminal }: { device: Computer; 
               </ul>
             )}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Repositories</div>
             {repos.isLoading ? (
               <SkeletonRows count={2} />

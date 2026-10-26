@@ -60,7 +60,7 @@ export function PageHeader({
         <h1 className="display text-[32px] leading-none">{title}</h1>
         {description ? <div className="mt-2 max-w-2xl text-[14px] leading-5 text-muted">{description}</div> : null}
       </div>
-      {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex min-w-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
 }

@@ -177,7 +177,8 @@ export const diagramTools = [
     undoable: true,
     async preview(ctx, input) {
       const row = await ctx.prisma.blockDiagram.findFirst({ where: { id: input.diagramId, userId: ctx.userId, deletedAt: null }, select: { title: true } });
-      return `Update diagram “${row?.title ?? input.diagramId}”`;
+      if (!row) throw Object.assign(new Error("That diagram is not in this space. Call hub_list_diagrams and use an id it returns."), { statusCode: 404 });
+      return `Update diagram “${row.title}”`;
     },
     async run(ctx, input) {
       const current = await ownedDiagram(ctx, input.diagramId);

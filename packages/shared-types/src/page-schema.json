@@ -231,6 +231,21 @@
           },
           "alt": {
             "default": ""
+          },
+          "fileId": {
+            "default": null
+          },
+          "width": {
+            "default": null
+          },
+          "align": {
+            "default": "center"
+          },
+          "naturalWidth": {
+            "default": null
+          },
+          "naturalHeight": {
+            "default": null
           }
         }
       }

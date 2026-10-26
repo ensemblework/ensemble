@@ -20,7 +20,8 @@ const db = harness.prisma;
 const { saveFile } = await import("./store.js");
 const { fileTextSettled } = await import("./extract.js");
 const { filesOnPage, filesOnTask, fileText, filesSection, mentionedFileIds } = await import("./attached.js");
-const { pageSearchText, pageText } = await import("../pages/markdown.js");
+const { markdownToNodes, pageMarkdown, pageSearchText, pageText } = await import("../pages/markdown.js");
+const { pageAgentText } = await import("../pages/agent-context.js");
 const { runTool } = await import("../workspace/tools.js");
 type JobContext = import("../workspace/tools.js").JobContext;
 
@@ -97,6 +98,24 @@ test("a task's files: its page, its project's page and files tagged with it, nev
   assert.deepEqual((await filesOnPage(db, mira.id, page.id)).map((row) => row.id), [readings.id]);
   const taskPage = await db.taskPage.findFirstOrThrow({ where: { taskId: task.id } });
   assert.equal((await filesOnPage(db, mira.id, taskPage.id)).length, 4, "a task's page counts as its task");
+});
+
+test("an image in a task's page is one of its files, and agents read and rewrite it without losing it", async () => {
+  const { mira } = await setup();
+  const photo = await file(mira.id, "north field.png", PNG);
+  const task = await db.task.create({ data: { userId: mira.id, title: "Describe the site" } });
+  const image: PageNode = { type: "image", attrs: { src: null, alt: "North field [after rain]", fileId: photo.id, width: 60, align: "left", naturalWidth: 1200, naturalHeight: 800 } };
+  const web: PageNode = { type: "image", attrs: { src: "https://example.com/map.png", alt: "Map", width: 40 } };
+  const page = doc(para(text("Before")), image, web);
+  await db.taskPage.create({ data: { userId: mira.id, taskId: task.id, content: page as never } });
+
+  assert.deepEqual((await filesOnTask(db, mira.id, task.id)).map((row) => row.id), [photo.id]);
+  const agentText = await pageAgentText(db, mira.id, page, "");
+  assert.ok(agentText.includes(`![North field \\[after rain\\]](ensemble://file/${photo.id}){width=60% align=left natural=1200x800}`), agentText);
+  assert.match(agentText, /!\[Map\]\(https:\/\/example\.com\/map\.png\)\{width=40%\}/);
+  assert.match(pageText(page, ""), new RegExp(`\\[image: North field \\[after rain\\] \\(file id ${photo.id}\\)\\]`));
+  // A rewrite through Markdown keeps both images, their files, sizes and alignment.
+  assert.deepEqual(markdownToNodes(pageMarkdown(page, "")), page.content);
 });
 
 test("file text comes in parts, and files without text say what they are", async () => {
