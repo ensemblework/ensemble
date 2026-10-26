@@ -53,6 +53,8 @@ Job cards and the task's Agent output link to the Run. `RunStep` stores the engi
 
 Run feedback is a tag or a linked follow-up attempt; it never edits recorded output. Run sheets show Results, Files and Traces with resizing, fullscreen and bounded history.
 
+Workspace queues stack vertically below 1024 CSS pixels; recent completed and stopped work uses one column below 768. On phones, Runs keeps titles and metadata above the status and actions. Its sheet fills the available width, with scrolling content and fixed header controls. Needs me buttons wrap the full answer, including unbroken words, without overlapping the recommendation.
+
 ## 5. Related interfaces
 
 The Hub assistant has its own typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). The Context Bridge is read-only ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)). Engine MCP/chat tools use a run-scoped credential ([30](30_ENGINES.md)). Assigning a task does not send mail, Teams or Slack messages, run arbitrary routines or replay crashed commands.

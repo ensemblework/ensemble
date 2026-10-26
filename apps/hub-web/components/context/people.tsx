@@ -203,7 +203,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
           </div>
         )
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-3">
           {list.map((person) => (
             <PersonCard key={person.id} person={person} focused={person.id === focusId} />
           ))}

@@ -172,7 +172,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           />
           <SeasonBanner />
           <VerificationBanner />
-          <main id="main-content" tabIndex={-1} data-theme-canvas className="relative min-h-0 flex-1 overflow-y-auto focus:outline-none">
+          <main id="main-content" tabIndex={-1} data-theme-canvas className="relative min-h-0 min-w-0 flex-1 overflow-y-auto focus:outline-none">
             <FeatureGate>{children}</FeatureGate>
           </main>
           <AssistantDock />

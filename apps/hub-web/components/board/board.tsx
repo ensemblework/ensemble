@@ -567,7 +567,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       {!collapsed && <div id="ensemble-kanban">{tasks.isError && !tasks.data ? <LoadError className="mx-6" error={tasks.error} what="the board" retrying={tasks.isFetching} onRetry={() => void tasks.refetch()} /> : <Held
         pending={tasks.isLoading}
         fallback={
-        <div className="flex gap-3 px-5" aria-hidden>
+        <div className="flex min-w-0 gap-3 overflow-x-hidden px-5" aria-hidden>
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className="w-[272px] shrink-0 space-y-2">
               <Skeleton className="h-6 w-24" />

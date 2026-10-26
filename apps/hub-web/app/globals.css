@@ -319,6 +319,14 @@ select:focus-visible {
   }
 }
 
+@media (max-width: 767px) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
 /* ── the tiling effect ───────────────────────────────────────────────────
    Whatever the cursor rests on gets a faint white edge, so you always know
    which card, row or cell you are about to act on. */
@@ -436,7 +444,8 @@ select:focus-visible {
   }
 
   .tag {
-    @apply inline-flex items-center rounded-md px-1.5 py-px text-[11.5px] font-medium leading-4;
+    @apply inline-flex min-w-0 max-w-full items-center rounded-md px-1.5 py-px text-[11.5px] font-medium leading-4;
+    overflow-wrap: anywhere;
   }
 
   .kbd {
@@ -1884,6 +1893,15 @@ span.mention:not(.mention-off) {
   padding-bottom: 0.85rem;
   border-bottom: 1px solid var(--line);
 }
+.page-head > * { min-width: 0; overflow-wrap: anywhere; }
+.decision-option {
+  max-width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.decision-option > .tag { flex-shrink: 0; }
+.decision-option > span.flex-1 { flex-basis: 12rem; }
 @media (max-width: 640px) {
   .page-head { grid-template-columns: minmax(0, 1fr); }
 }

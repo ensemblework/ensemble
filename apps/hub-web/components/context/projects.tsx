@@ -91,7 +91,7 @@ export function ProjectsTab({ ids = "" }: { ids?: string }) {
           {allow ? "No projects on today's work." : "No projects yet. They are inferred from recurring threads and repos, or you can create one."}
         </Empty>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,290px),1fr))] gap-3">
           {list.map((project) => (
             <ProjectCard key={project.id} project={project} />
           ))}

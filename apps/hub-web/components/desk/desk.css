@@ -287,7 +287,7 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .lens-reset:hover { color: var(--ink); border-color: var(--line-strong); }
 .desk .lens-reset { margin-left: auto; border-color: transparent; }
 /* Phones: Context tiles take the full row. Their saved sizes are for wider screens and are left as they are. */
-@media (max-width: 639px) {
+@media (max-width: 767px) {
   .desk[data-context-lens] .bento > .tile,
   .desk[data-context-lens] .bento > .tile.skel { grid-column: 1 / -1 !important; }
 }
@@ -566,4 +566,7 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
   .desk .bento { grid-auto-rows: auto; }
   .desk .bento > .tile { grid-row: auto !important; min-height: 220px; }
   .desk .bento .visual-body { overflow: visible; }
+  .desk[data-context-lens] .bento { grid-template-columns: minmax(0, 1fr); }
+  .desk[data-context-lens] .context-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .desk[data-context-lens] .context-tab { flex-shrink: 0; white-space: nowrap; }
 }

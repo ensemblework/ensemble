@@ -163,7 +163,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
       role="button"
       onClick={() => peek.open(job.taskId)}
       data-active={peek.peekId === job.taskId || undefined}
-      className={cx("tile cursor-pointer space-y-1.5 rounded-md bg-panel px-3 py-2.5 text-[12.5px]", job.status === "failed" && "m-tool")}
+      className={cx("tile min-w-0 cursor-pointer space-y-1.5 rounded-md bg-panel px-3 py-2.5 text-[12.5px] [overflow-wrap:anywhere]", job.status === "failed" && "m-tool")}
       data-motion-slot={job.status === "waiting_approval" ? "needs.waiting" : job.status === "failed" ? "state.error" : job.status === "running" || job.status === "queued" ? "run.progress" : undefined}
       data-state={job.status === "waiting_approval" ? "waiting" : job.status === "failed" ? "error" : job.status === "queued" ? "queued" : job.status === "running" ? "running" : "done"}
     >

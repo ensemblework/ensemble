@@ -54,6 +54,7 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
   const [full, setFull] = useState(false);
   const [selected, setSelected] = useState<Selected | null>(initialPath ? { path: initialPath, live: false } : null);
   const [browsing, setBrowsing] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
   const files = useQuery({ queryKey: ["job-files", job.id], queryFn: () => api.jobFiles(job.id) });
   const changed = files.data?.files ?? [];
   const live = files.data?.live;
@@ -88,7 +89,10 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
       role={full ? "dialog" : undefined}
       aria-label={full ? `Code of ${job.title}` : undefined}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-line bg-raised px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-2">
+        <button type="button" className="btn md:hidden" aria-expanded={showFiles} onClick={() => setShowFiles(!showFiles)}>
+          <Folder size={13} /> {showFiles ? "Show code" : "Files"}
+        </button>
         <FileCode2 size={15} className="shrink-0 text-muted" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13.5px] font-semibold">{job.title}</div>
@@ -118,8 +122,8 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
           </button>
         ) : null}
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(200px,280px)_1fr]">
-        <aside className="min-h-0 overflow-y-auto border-r border-line bg-panel py-2 text-[12.5px]" aria-label="Files">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]">
+        <aside className={cx("min-h-0 min-w-0 overflow-y-auto border-r border-line bg-panel py-2 text-[12.5px]", !showFiles && "max-md:hidden")} aria-label="Files">
           <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Changed by the agent{changed.length ? ` · ${changed.length}` : ""}</div>
           {textBlocked ? <div className="px-3 pb-1.5 text-[11.5px] text-muted">{textBlocked}</div> : null}
           {files.isLoading ? (
@@ -141,7 +145,7 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
                   <li key={file.path}>
                     <button
                       type="button"
-                      onClick={() => file.status !== "deleted" && setSelected({ path: file.path, live: false })}
+                      onClick={() => { if (file.status !== "deleted") { setSelected({ path: file.path, live: false }); setShowFiles(false); } }}
                       className={cx("flex w-full min-w-0 items-center gap-1.5 px-3 py-[3px] text-left hover:bg-hover", active && "bg-[var(--accent-soft)]", file.status === "deleted" && "cursor-default opacity-60")}
                       title={`${status.label}: ${file.path}${file.skipped ? ` (${file.skipped})` : ""}`}
                     >
@@ -174,14 +178,16 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
               live && !live.available ? (
                 <div className="px-3 py-1 text-[12px] text-muted">{live.reason}</div>
               ) : (
-                <FolderNode jobId={job.id} path="" depth={0} selected={selected} onOpen={(path) => setSelected({ path, live: true })} />
+                <FolderNode jobId={job.id} path="" depth={0} selected={selected} onOpen={(path) => { setSelected({ path, live: true }); setShowFiles(false); }} />
               )
             ) : (
               <div className="px-3 text-[11.5px] text-faint">Read from {where} when you open it. Git's own files and secrets files are never shown.</div>
             )}
           </div>
         </aside>
-        <FileView jobId={job.id} selected={selected} where={where} liveAvailable={live?.available ?? false} onReadLive={(path) => setSelected({ path, live: true })} />
+        <div className={cx("flex min-h-0 min-w-0 flex-col", showFiles && "max-md:hidden")}>
+          <FileView jobId={job.id} selected={selected} where={where} liveAvailable={live?.available ?? false} onReadLive={(path) => setSelected({ path, live: true })} />
+        </div>
       </div>
     </div>
   );
@@ -261,10 +267,10 @@ function FileView({ jobId, selected, where, liveAvailable, onReadLive }: { jobId
   }
   return (
     <div className="flex min-h-0 min-w-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-[12px]">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-[12px] [overflow-wrap:anywhere]">
         <span className="min-w-0 flex-1 truncate font-mono">{selected.path}</span>
         {file.data ? (
-          <span className="shrink-0 text-faint">
+          <span className="min-w-0 text-faint">
             {file.data.source === "stored" ? "as the run left it" : `read from ${where}`}
             {file.data.file.size ? ` · ${size(file.data.file.size)}` : ""}
             {lines ? ` · ${lines} lines` : ""}

@@ -115,6 +115,12 @@ Files lists uploaded originals and app content the person explicitly saved or im
 
 Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
 
+Below 768 CSS pixels, Context tiles use full-width rows with a horizontally scrollable tab strip; record grids shrink to the available width. Workspace's active queues stack below 1024 pixels and recent history stacks below 768. Runs puts its actions below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code. Desktop panel preferences and saved tile sizes are unchanged.
+
+Phone form fields use at least 16 px text to avoid Safari zooming the page on focus.
+
+The local browser regression `e2e/mobile-layout.mjs` covers 320, 390, 640, 768, 1024 and 1440 pixel widths against the in-memory API fixture `apps/hub-api/scripts/mobile-ui-fixture.ts`. It can include Ensemble Node through `NODE_WEB`; it never targets a hosted account.
+
 Notices (`components/toast.tsx`) appear bottom centre and close after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar runs down over that time. Pointing at or focusing a notice pauses it, so Undo stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
 
 Confirmations are specific to the action. Moving pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Ordinary autosave has none.

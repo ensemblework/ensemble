@@ -52,7 +52,7 @@ export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: str
         {paired.map((device) => (
           <div key={device.id} className="flex min-w-0 items-center gap-2 rounded-md border border-line px-2.5 py-1.5 text-[12.5px]">
             <Laptop size={13} className="shrink-0 text-muted" />
-            <span className="font-medium">{device.name}</span>
+            <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{device.name}</span>
             <span className={device.online ? "text-ok" : "text-faint"}>{device.online ? "online" : "offline"}</span>
             {device.folders.length ? <span className="truncate text-faint">· {device.folders.slice(0, 3).join(", ")}{device.folders.length > 3 ? ` +${device.folders.length - 3}` : ""}</span> : null}
           </div>
@@ -78,8 +78,8 @@ function DeviceJobRow({ job, active, onOpenTask, onOpenCode }: { job: AgentJob; 
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
   return (
     <div className={`px-3 py-2.5 ${active ? "bg-[var(--accent-soft)]" : ""}`}>
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-start gap-3 [overflow-wrap:anywhere]">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
           {onOpenCode ? (
             <button type="button" className="block max-w-full truncate text-left text-[14px] font-semibold hover:underline" onClick={onOpenCode}>
               {job.title}

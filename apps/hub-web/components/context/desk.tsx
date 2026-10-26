@@ -454,7 +454,7 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
       ) : view === "list" ? (
         <List cards={shown} onOpen={showCard} />
       ) : view === "grid" ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))] gap-3">
           {shown.map((card) => (
             <Card key={card.id} card={card} neighbour={neighbours.has(card.id)} hovered={hoverId === card.id} onOpen={showCard} onHover={open ? undefined : setHoverId} />
           ))}

@@ -9,6 +9,13 @@ import { CodeIde } from "./ide.js";
 // next/link schedules its prefetch with self.requestIdleCallback.
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 (globalThis as { React?: typeof React }).React = React;
+Object.defineProperty(globalThis, "Window", { configurable: true, value: window.Window });
+let phone = false;
+Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({
+  matches: phone,
+  addEventListener() {},
+  removeEventListener() {},
+}) });
 
 const REVIEW = "5f1c2a7c-5b3c-4f4e-9a21-3d1c2b4a5e6f";
 const START = ["export const name = 'old';", "export const kept = true;", "// end", ""].join("\n");
@@ -189,5 +196,27 @@ test("at most ten files stay open: the eleventh closes the oldest saved one", as
   } finally {
     await view.done();
     fake.restore();
+  }
+});
+
+test("on a phone the editor opens unobstructed, and choosing a file closes the panel without changing the desktop preference", async () => {
+  window.localStorage.clear();
+  phone = true;
+  const fake = server();
+  const view = await mount();
+  try {
+    assert.equal(view.host.querySelector('aside[aria-label="Side panel"]'), null);
+    const explorer = view.host.querySelector<HTMLButtonElement>('button[aria-label="Explorer (Ctrl+B)"]')!;
+    await act(async () => explorer.click());
+    await settle();
+    assert.ok(view.host.querySelector('aside[aria-label="Side panel"]'));
+    const file = [...view.host.querySelectorAll<HTMLButtonElement>("aside button")].find(button => button.textContent?.includes("name.ts"))!;
+    await act(async () => file.click());
+    assert.equal(view.host.querySelector('aside[aria-label="Side panel"]'), null);
+    assert.notEqual(window.localStorage.getItem("ensemble.code.panel"), "false");
+  } finally {
+    await view.done();
+    fake.restore();
+    phone = false;
   }
 });

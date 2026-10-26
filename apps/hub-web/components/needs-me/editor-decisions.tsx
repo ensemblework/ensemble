@@ -77,7 +77,7 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
           {decision.detail.options?.length ? (
             <div className="mt-3 grid gap-1.5">
               {decision.detail.options.map((option, index) => (
-                <button key={option} type="button" className="btn justify-start text-left" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: option })}>
+                <button key={option} type="button" className="btn decision-option justify-start text-left" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: option })}>
                   <span className="w-4 shrink-0 font-mono text-[11px] text-faint">{String.fromCharCode(65 + index)}</span>
                   <span className="min-w-0 flex-1">{option}</span>
                   {decision.detail.recommended === option ? <Tag tone="purple">Recommended</Tag> : null}
@@ -209,7 +209,7 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
             <button
               key={`${index}-${option}`}
               type="button"
-              className="btn min-h-[44px] w-full justify-start text-left"
+              className="btn decision-option min-h-[44px] w-full justify-start text-left"
               disabled={busy}
               onClick={() => allow(option)}
             >

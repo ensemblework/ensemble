@@ -92,8 +92,8 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop" style={{ width: fullscreen.active ? "100%" : "var(--page-width, 50%)" }}>
-        {!fullscreen.active && <div role="separator" aria-orientation="vertical" aria-label="Run panel width" tabIndex={0} aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.width} onPointerDown={resize.onPointerDown} onKeyDown={resize.onKeyDown} onDoubleClick={resize.reset} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/30 focus-visible:bg-accent/30"/>}
+      <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop max-md:!w-full [overflow-wrap:anywhere]" style={{ width: fullscreen.active ? "100%" : "var(--page-width, 50%)" }}>
+        {!fullscreen.active && <div role="separator" aria-orientation="vertical" aria-label="Run panel width" tabIndex={0} aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.width} onPointerDown={resize.onPointerDown} onKeyDown={resize.onKeyDown} onDoubleClick={resize.reset} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/30 focus-visible:bg-accent/30 max-md:hidden"/>}
         {detail.isLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <Spinner />
@@ -134,8 +134,8 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
   ];
   return (
     <>
-      <div className="flex shrink-0 items-start gap-3 border-b border-line px-5 pb-3 pt-4">
-        <div className="min-w-0 flex-1">
+      <div className="flex shrink-0 flex-wrap items-start gap-3 border-b border-line px-3 pb-3 pt-4 sm:px-5">
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
             <Tag tone={outcome.tone}>{outcome.label}</Tag>
             {job ? <span className="font-medium text-ink">{job.engineName}</span> : <span>{run.worker === "workspace" ? "Agent" : "Delegated run"}</span>}
@@ -159,7 +159,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
           <X size={16} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 pb-10 pt-4 sm:px-5">
         <Facts run={run} job={job} entries={entries} />
         {run.error ? (
           <div className="mt-3 flex gap-2 rounded-md border border-danger/35 bg-danger/[0.07] px-3 py-2 text-[13px]">
