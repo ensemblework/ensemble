@@ -25,7 +25,7 @@ export async function messageAttachments(
   db: Db,
   userId: string,
   mentions: readonly Mention[] | null | undefined,
-  options: { images: boolean; signal?: AbortSignal; settleMs?: number },
+  options: { images: boolean; documents?: (filename: string) => boolean; signal?: AbortSignal; settleMs?: number },
 ): Promise<{ text: string; parts: ContentPart[]; files: number } | null> {
   const ids = attachedFileIds(mentions);
   if (!ids.length) return null;
@@ -33,9 +33,10 @@ export async function messageAttachments(
   const files = await filesByIds(db, userId, ids);
   const read = await filesForModel(db, userId, files, {
     images: options.images,
+    documents: options.documents,
     perFile: 4000,
     total: 16_000,
-    viewTool: options.images ? "hub_view_file" : undefined,
+    viewTool: options.images || options.documents?.("file.pdf") ? "hub_view_file" : undefined,
     more: (file) => (file.textStatus === "ready" && file.textCharacters > 4000 ? "Read the rest with hub_read_file." : ""),
   });
   const missing = ids.length - files.length;

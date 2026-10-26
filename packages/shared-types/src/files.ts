@@ -253,3 +253,26 @@ export interface FileImportSource {
 
 /** Files one chat message can carry, in Ensemble chat and Ensemble Node (hub-api assistant/attachments.ts). */
 export const CHAT_FILES_MAX = 8;
+
+const MODEL_FILE_MIME: Readonly<Record<string, string>> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  json: "application/json",
+};
+
+/**
+ * The media type a file is sent with to a model that reads documents itself (OpenAI's `input_file`),
+ * or null when Ensemble sends its extracted text instead: legacy and Apple formats (.doc, .ppt,
+ * .xls, .key…), pictures (sent as images), audio and video.
+ */
+export function modelFileMime(filename: string): string | null {
+  const format = fileFormat(filename);
+  if (MODEL_FILE_MIME[format.ext]) return MODEL_FILE_MIME[format.ext]!;
+  if (format.kind === "text" || format.kind === "code" || format.ext === "tsv") return "text/plain";
+  return null;
+}

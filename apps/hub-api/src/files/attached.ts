@@ -194,7 +194,7 @@ export async function filesSection(
   db: Db,
   userId: string,
   files: AttachedFile[],
-  options: { perFile?: number; total?: number; more: (file: AttachedFile) => string; intro?: string },
+  options: { perFile?: number; total?: number; more: (file: AttachedFile) => string; intro?: string; whole?: (file: AttachedFile) => boolean },
 ): Promise<string> {
   if (!files.length) return "";
   const perFile = options.perFile ?? 2000;
@@ -203,6 +203,11 @@ export async function filesSection(
   for (const file of files) {
     const head = `### ${file.filename} (${describeFile(file)}, id ${file.id})`;
     let body = "";
+    // A file given whole (the file itself, to a model that reads it) needs no excerpt.
+    if (options.whole?.(file)) {
+      parts.push([head, options.more(file)].filter(Boolean).join("\n"));
+      continue;
+    }
     if (left > 200 && file.textStatus === "ready") {
       const read = await fileText(db, userId, file.id, 0, Math.min(perFile, left));
       const excerpt = read?.text.trim() ?? "";

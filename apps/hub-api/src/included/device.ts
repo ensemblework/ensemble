@@ -6,7 +6,7 @@
  * refused with INCLUDED_LOCAL_ONLY, which the app shows with a way to connect.
  */
 import { createHash } from "node:crypto";
-import { INCLUDED_CREDITS_USED, INCLUDED_LOCAL_ONLY, INCLUDED_PAUSED, INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE, includedPeriod, includedResetsAt, type IncludedUsage } from "@ensemble/shared-types";
+import { INCLUDED_CREDITS_USED, INCLUDED_LOCAL_ONLY, INCLUDED_PAUSED, INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE, includedModel, includedPeriod, includedResetsAt, type IncludedUsage } from "@ensemble/shared-types";
 import { IncludedLimitError, includedErrorFrom } from "./errors.js";
 import { ProviderError } from "../runtime/errors.js";
 import { loadSettings, readDeviceToken } from "../remote/store.js";
@@ -191,10 +191,12 @@ export async function deviceIncludedTurn(
   if (!link) throw new IncludedLimitError(INCLUDED_LOCAL_ONLY);
   const timeout = AbortSignal.timeout(options.timeoutMs + 15_000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  // Pictures and files travel as base64: send the history only in the shape this model's API reads.
+  const responses = includedModel(model)?.api === "responses" && Boolean(options.items?.length);
   const request = {
     model,
-    messages,
-    items: options.items ?? null,
+    messages: responses ? [] : messages,
+    items: responses ? options.items : null,
     jsonMode: Boolean(options.jsonMode),
     reasoningEffort: typeof body.reasoningEffort === "string" ? body.reasoningEffort : null,
     chatTools: Array.isArray(body.chatTools) ? body.chatTools : null,

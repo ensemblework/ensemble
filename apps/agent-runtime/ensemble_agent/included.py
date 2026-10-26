@@ -294,39 +294,52 @@ async def _settled(
     return turn
 
 
-# Input tokens reserved per picture: providers charge a few thousand at most. Mirrors hub-api's IMAGE_INPUT_ALLOWANCE.
+# Input tokens reserved per picture, and at most per file sent whole. Mirrors hub-api's runtime/included.ts.
 IMAGE_INPUT_ALLOWANCE = 8_000
+FILE_INPUT_ALLOWANCE_MAX = 150_000
+_DATA = re.compile(r"^data:([a-z0-9.+-]+/[a-z0-9.+-]+);base64,", re.IGNORECASE)
 
 
-def _without_images(value: Any) -> tuple[Any, int]:
-    """The value with each picture's base64 emptied, and how many pictures there were."""
+def file_input_allowance(base64_length: int) -> int:
+    """A file sent whole: its bytes, at most FILE_INPUT_ALLOWANCE_MAX, plus room for the model's own framing."""
+    return min(-(-base64_length * 3 // 4), FILE_INPUT_ALLOWANCE_MAX) + 3_000
+
+
+def _without_attachments(value: Any) -> tuple[Any, int]:
+    """The value with each picture's and file's base64 emptied, and the tokens reserved for them."""
     if isinstance(value, str):
-        return ("", 1) if value[:11].lower() == "data:image/" else (value, 0)
+        match = _DATA.match(value[:200])
+        if not match:
+            return value, 0
+        is_image = match.group(1).lower().startswith("image/")
+        return "", IMAGE_INPUT_ALLOWANCE if is_image else file_input_allowance(len(value) - len(match.group(0)))
     if isinstance(value, list):
-        out, images = [], 0
+        out, tokens = [], 0
         for item in value:
-            clean, found = _without_images(item)
+            clean, found = _without_attachments(item)
             out.append(clean)
-            images += found
-        return out, images
+            tokens += found
+        return out, tokens
     if isinstance(value, dict):
-        if value.get("type") == "base64" and isinstance(value.get("data"), str) and str(value.get("media_type") or "").lower().startswith("image/"):
-            return {**value, "data": ""}, 1
-        out_dict, images = {}, 0
+        if value.get("type") == "base64" and isinstance(value.get("data"), str):
+            is_image = str(value.get("media_type") or "").lower().startswith("image/")
+            return {**value, "data": ""}, IMAGE_INPUT_ALLOWANCE if is_image else file_input_allowance(len(value["data"]))
+        out_dict, tokens = {}, 0
         for key, item in value.items():
-            clean, found = _without_images(item)
+            clean, found = _without_attachments(item)
             out_dict[key] = clean
-            images += found
-        return out_dict, images
+            tokens += found
+        return out_dict, tokens
     return value, 0
 
 
 def estimate_input_tokens(payload: dict[str, Any]) -> int:
     """The UTF-8 bytes of the request as sent: a byte-level BPE tokenizer never makes more tokens than
     bytes, so a reservation is never short on input. The same count as hub-api's JSON.stringify. A
-    picture's base64 is not tokenized as text, so each counts as IMAGE_INPUT_ALLOWANCE instead."""
-    clean, images = _without_images(payload)
-    return len(json.dumps(clean, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + images * IMAGE_INPUT_ALLOWANCE
+    picture's or file's base64 is not tokenized as text, so each picture counts as
+    IMAGE_INPUT_ALLOWANCE and each file as file_input_allowance."""
+    clean, tokens = _without_attachments(payload)
+    return len(json.dumps(clean, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + tokens
 
 
 # ── usage ───────────────────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
 /**
- * Whether a model reads images sent in a message. Included models say so in their catalog entry
- * (packages/shared-types/src/included.ts); for a person's own keys it follows the model family.
- * A model not known to read images gets text only: unknown is not a yes. Subscription agents run
- * through their own CLI, which Ensemble chat sends text (subscriptions/turn.ts).
+ * Whether a model reads pictures and documents sent in a message. Included models say so in their
+ * catalog entry (packages/shared-types/src/included.ts); for a person's own keys it follows the
+ * model family. A model not known to read something gets Ensemble's text instead: unknown is not
+ * a yes. Subscription agents get the files through their own CLI (subscriptions/agents.ts).
  */
-import { INCLUDED_PROVIDER, includedModel, isSubscriptionProvider } from "@ensemble/shared-types";
-import { hasImageParts } from "../runtime/content-parts.js";
+import { INCLUDED_PROVIDER, includedModel, isSubscriptionProvider, modelFileMime } from "@ensemble/shared-types";
+import { hasFileParts, hasImageParts } from "../runtime/content-parts.js";
 
 /** Model ids, after any vendor prefix (OpenRouter's "openai/…", Gemini's "models/…") is removed. */
 const FAMILIES: RegExp[] = [
@@ -33,6 +33,29 @@ export function modelReadsImages(provider: string | null | undefined, model: str
   return FAMILIES.some((family) => family.test(id));
 }
 
+/** Claude models that take PDFs (3.5 and later). */
+const CLAUDE_DOCUMENTS = /^claude-(3[-.][5-9]|(opus|sonnet|haiku)-[4-9]|[4-9])/;
+const TEXT_MEDIA = /^(text\/|application\/json$)/;
+
+/**
+ * Which documents a model takes as the file itself (a `file` part), by file name. Included models
+ * read PDF, Word, PowerPoint, Excel, CSV, Markdown, JSON and text (checked against each Foundry
+ * deployment); Claude reads PDFs and text; OpenAI's own models read PDFs. Others get Ensemble's text.
+ */
+export function documentsFor(provider: string | null | undefined, model: string | null | undefined): (filename: string) => boolean {
+  const none = () => false;
+  if (!model || !provider) return none;
+  const mime = (filename: string) => modelFileMime(filename);
+  if (provider === INCLUDED_PROVIDER) return includedModel(model)?.documents === true ? (filename) => mime(filename) !== null : none;
+  const id = modelId(model);
+  if (provider === "anthropic" && CLAUDE_DOCUMENTS.test(id)) return (filename) => {
+    const type = mime(filename);
+    return type === "application/pdf" || (type !== null && TEXT_MEDIA.test(type));
+  };
+  if (provider === "openai" && modelReadsImages(provider, model)) return (filename) => mime(filename) === "application/pdf";
+  return none;
+}
+
 /** The provider refused image input for this model: the request can go again without images. */
 export function imagesRefused(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error ?? "");
@@ -52,6 +75,28 @@ export function withoutImages<T extends Record<string, unknown>>(messages: T[]):
     const parts = (content as unknown[]).map((part) => {
       const kind = part && typeof part === "object" ? (part as Record<string, unknown>).type : null;
       return kind === "image_url" || kind === "input_image" || kind === "image" ? { type: "text", text: IMAGES_REFUSED_NOTE } : part;
+    });
+    return { ...message, content: parts };
+  });
+}
+
+/** The provider refused a file in the request (its type, size or page count): it can go again with the files as notes. */
+export function filesRefused(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error ?? "");
+  return /\b(input_file|file_data|files?|documents?|pdf)\b/i.test(text) && /\b(invalid|unsupported|not supported|not allowed|cannot|can't|exceeds?|too large|too big|maximum|too many pages)\b/i.test(text);
+}
+
+/** The same messages with every file part replaced by a note naming it and the tool that reads its text. */
+export function withoutFiles<T extends Record<string, unknown>>(messages: T[], textTool: string): T[] {
+  return messages.map((message) => {
+    const content = message.content;
+    if (!hasFileParts(content)) return message;
+    const parts = (content as unknown[]).map((part) => {
+      const record = part && typeof part === "object" ? (part as Record<string, unknown>) : null;
+      if (!record || !["file", "input_file", "document"].includes(String(record.type))) return part;
+      const file = (record.file ?? record) as Record<string, unknown>;
+      const name = String(file.filename ?? record.title ?? "the file");
+      return { type: "text", text: `[The model could not open “${name}” as a file. Read its text with ${textTool}.]` };
     });
     return { ...message, content: parts };
   });

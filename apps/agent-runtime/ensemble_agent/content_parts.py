@@ -1,13 +1,15 @@
-"""Image input in model messages. Mirror of apps/hub-api/src/runtime/content-parts.ts.
+"""Pictures and files in model messages. Mirror of apps/hub-api/src/runtime/content-parts.ts.
 
-hub-api writes user content as OpenAI chat parts (``{"type": "text"}`` and
-``{"type": "image_url", "image_url": {"url": "data:…;base64,…"}}``); chat-compatible providers
-take them as they are, and these helpers rewrite them for the Anthropic Messages and OpenAI
-Responses APIs.
+hub-api writes user content as OpenAI chat parts (``{"type": "text"}``,
+``{"type": "image_url", "image_url": {"url": "data:…;base64,…"}}`` and
+``{"type": "file", "file": {"filename": …, "file_data": "data:…;base64,…"}}``); chat-compatible
+providers take them as they are, and these helpers rewrite them for the Anthropic Messages and
+OpenAI Responses APIs.
 """
 
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any
 
@@ -46,6 +48,45 @@ def has_image_parts(content: Any) -> bool:
     )
 
 
+_TEXT_MEDIA = re.compile(r"^(text/|application/(json|xml|x-ndjson))", re.IGNORECASE)
+
+
+def _file(part: dict[str, Any]) -> tuple[str, str] | None:
+    """A file part (chat ``file``, Responses ``input_file``, Anthropic ``document``) as name and data URL."""
+    if part.get("type") == "file" and isinstance(part.get("file"), dict) and isinstance(part["file"].get("file_data"), str):
+        return str(part["file"].get("filename") or "file"), part["file"]["file_data"]
+    if part.get("type") == "input_file" and isinstance(part.get("file_data"), str):
+        return str(part.get("filename") or "file"), part["file_data"]
+    if part.get("type") == "document" and isinstance(part.get("source"), dict):
+        source = part["source"]
+        name = str(part.get("title") or "file")
+        if source.get("type") == "base64" and isinstance(source.get("data"), str):
+            return name, f"data:{source.get('media_type')};base64,{source['data']}"
+        if source.get("type") == "text" and isinstance(source.get("data"), str):
+            return name, "data:text/plain;base64," + base64.b64encode(source["data"].encode("utf-8")).decode("ascii")
+    return None
+
+
+def has_file_parts(content: Any) -> bool:
+    return isinstance(content, list) and any(isinstance(part, dict) and _file(part) is not None for part in content)
+
+
+def has_attachment_parts(content: Any) -> bool:
+    """Pictures or files: content that must keep its parts on the way to a provider."""
+    return has_image_parts(content) or has_file_parts(content)
+
+
+def _anthropic_file_block(name: str, data_url: str) -> dict[str, Any]:
+    match = _DATA_URL.match(data_url)
+    mime = match.group(1).lower() if match else ""
+    if match and mime == "application/pdf":
+        return {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": match.group(2)}, "title": name}
+    if match and _TEXT_MEDIA.match(mime):
+        text = base64.b64decode(match.group(2)).decode("utf-8", errors="replace")
+        return {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": text}, "title": name}
+    return {"type": "text", "text": f"[{name} could not be given to this model as a file.]"}
+
+
 def text_of_parts(content: Any) -> str:
     if isinstance(content, list):
         return "".join(_text_part(part) or "" for part in content)
@@ -54,12 +95,16 @@ def text_of_parts(content: Any) -> str:
 
 def anthropic_user_content(content: Any) -> str | list[dict[str, Any]]:
     """User content for the Anthropic Messages API: text and image blocks, or the plain string."""
-    if not has_image_parts(content):
+    if not has_attachment_parts(content):
         return text_of_parts(content)
     blocks: list[dict[str, Any]] = []
     for part in content:
-        if isinstance(part, dict) and part.get("type") == "image":
+        if isinstance(part, dict) and part.get("type") in ("image", "document"):
             blocks.append(part)
+            continue
+        found = _file(part) if isinstance(part, dict) else None
+        if found:
+            blocks.append(_anthropic_file_block(*found))
             continue
         url = _image_url(part) if isinstance(part, dict) else None
         if url:
@@ -77,10 +122,14 @@ def anthropic_user_content(content: Any) -> str | list[dict[str, Any]]:
 
 def responses_user_content(content: Any) -> str | list[dict[str, Any]]:
     """User content for the Responses API: input_text and input_image parts, or the plain string."""
-    if not has_image_parts(content):
+    if not has_attachment_parts(content):
         return text_of_parts(content)
     parts: list[dict[str, Any]] = []
     for part in content:
+        found = _file(part) if isinstance(part, dict) else None
+        if found:
+            parts.append({"type": "input_file", "filename": found[0], "file_data": found[1]})
+            continue
         if isinstance(part, dict) and part.get("type") == "image":
             source = part.get("source") or {}
             if source.get("type") == "base64":
