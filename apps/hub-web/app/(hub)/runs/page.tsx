@@ -10,10 +10,12 @@ import { usePeek } from "@/components/shell/peek";
 import { Held } from "@/components/motion/held";
 import { RunsSkeleton } from "@/components/motion/skeletons";
 import { RUN_OUTCOME, RunPreview, RunWhere } from "@/components/runs/run-preview";
-import { Empty, PageHeader, Tag } from "@/components/ui";
+import { RunQueue } from "@/components/runs/run-queue";
+import { Empty, PageHeader, QueryError, Tag } from "@/components/ui";
 import { api, type RunSummary } from "@/lib/api";
-import { credits, dateTime, plural, shortDate } from "@/lib/format";
+import { credits, plural, shortDate } from "@/lib/format";
 import { duration, usd } from "@/lib/run-trace";
+import { useModuleOn } from "@/lib/use-module";
 
 const LIVE_JOB = new Set(["queued", "claimed", "running", "stopping", "waiting_approval"]);
 
@@ -115,39 +117,47 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
 export default function RunsPage() {
   const params = useSearchParams();
   const router = useRouter();
+  const queueOn = useModuleOn("workspace");
+  const historyOn = useModuleOn("runs");
   const [all, setAll] = useState(false);
   const runs = useQuery({
     queryKey: ["runs", all],
     queryFn: () => api.runs(all ? 200 : 10),
+    enabled: historyOn,
     refetchInterval: (query) => (query.state.data?.runs.some((run) => !run.endedAt && (!run.jobStatus || LIVE_JOB.has(run.jobStatus))) ? 5000 : false),
   });
   const openId = params.get("run");
   const open = (id: string) => router.replace(`/runs?run=${id}`, { scroll: false });
   const close = () => router.replace("/runs", { scroll: false });
   return (
-    <div className="mx-auto max-w-[900px] px-4 pb-24 pt-8 sm:px-10">
-      <PageHeader title="Recent runs" />
-      <Held pending={runs.isLoading} fallback={<RunsSkeleton />}>
-        {(runs.data?.runs ?? []).length === 0 ? (
-          <Empty>No runs yet. Hand a task to the agent from its page or from Today.</Empty>
-        ) : (
-          <>
-            {runs.data!.runs.map((run) => (
-              <RunRow key={run.id} run={run} onOpen={() => open(run.id)} />
-            ))}
-            <div className="mt-4 text-[13px]">
-              {runs.data!.total > runs.data!.runs.length ? (
-                <button type="button" className="text-accent underline-offset-2 hover:underline" onClick={() => setAll(true)}>
-                  Show all runs ({runs.data!.total})
-                </button>
-              ) : (
-                <span className="text-muted">That is every run.</span>
-              )}
-            </div>
-          </>
-        )}
-      </Held>
-      {openId ? <RunPreview key={openId} runId={openId} onClose={close} /> : null}
+    <div className="mx-auto max-w-[1240px] px-4 pb-24 pt-8 sm:px-10">
+      {queueOn ? <RunQueue /> : <PageHeader title="Runs" />}
+      {historyOn ? (
+        <section className={queueOn ? "mt-10 border-t border-line pt-6" : ""} aria-label="Recent runs">
+          <h2 className="mb-3 text-[16px] font-semibold">Recent runs</h2>
+          {runs.error ? <QueryError error={runs.error} retry={() => void runs.refetch()} /> : <Held pending={runs.isLoading} fallback={<RunsSkeleton />}>
+            {(runs.data?.runs ?? []).length === 0 ? (
+              <Empty>No runs yet. Hand a task to the agent from its page or from Today.</Empty>
+            ) : (
+              <>
+                {runs.data!.runs.map((run) => (
+                  <RunRow key={run.id} run={run} onOpen={() => open(run.id)} />
+                ))}
+                <div className="mt-4 text-[13px]">
+                  {runs.data!.total > runs.data!.runs.length ? (
+                    <button type="button" className="text-accent underline-offset-2 hover:underline" onClick={() => setAll(true)}>
+                      Show all runs ({runs.data!.total})
+                    </button>
+                  ) : (
+                    <span className="text-muted">That is every run.</span>
+                  )}
+                </div>
+              </>
+            )}
+          </Held>}
+        </section>
+      ) : null}
+      {historyOn && openId ? <RunPreview key={openId} runId={openId} onClose={close} /> : null}
     </div>
   );
 }

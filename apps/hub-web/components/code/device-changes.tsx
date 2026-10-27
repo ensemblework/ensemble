@@ -55,7 +55,7 @@ export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: str
         ))}
       </div>
       {jobs.length === 0 ? (
-        <Empty>No code runs on your computers in the last two weeks. Assign a code task from a task page or the Workspace.</Empty>
+        <Empty>No code runs on your computers in the last two weeks. Assign a code task from a task page or Runs.</Empty>
       ) : (
         <div className="divide-y divide-[var(--line)] rounded-md border border-line">
           {jobs.map((job) => (

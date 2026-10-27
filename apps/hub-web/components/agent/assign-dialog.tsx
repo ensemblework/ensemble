@@ -695,7 +695,7 @@ export function AssignDialog({
         selectedDevice
           ? `Queued for ${selectedDevice.name}. If it is asleep or Ensemble is not running there, it starts when it is back.`
           : startsNow
-            ? "The agent started. Follow it in the top bar or Workspace."
+            ? "The agent started. Follow it in the top bar or Runs."
             : "Queued. It starts when a slot frees up.",
         { tone: "ok" },
       );
@@ -766,8 +766,8 @@ export function AssignDialog({
       <Dialog open={open} onClose={onClose} title="Turn on agents for this space?" width={520}>
         <div className="space-y-3 text-[13.5px]">
           <p>
-            This space was set up from a template without agents. Turning them on adds <span className="font-medium">Workspace</span> (agent runs, their questions and
-            logs) and <span className="font-medium">Code review</span> to this space. Your tasks and pages stay as they are, and you can turn them off again in Settings → Account → Features.
+            Turn on the agent queue in <span className="font-medium">Runs</span> and <span className="font-medium">Code review</span>.
+            Your tasks and pages stay as they are. Turn these off in Settings → Account → Features.
           </p>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-ghost" onClick={onClose}>

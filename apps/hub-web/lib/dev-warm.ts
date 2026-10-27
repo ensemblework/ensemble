@@ -4,7 +4,7 @@
  * nothing. Ask the dev server for each route once, after Today has painted,
  * so a later click is already compiled.
  */
-const ROUTES = ["/metrics", "/settings", "/board", "/needs-me", "/code", "/workspace", "/runs", "/context", "/meetings", "/recap", "/diagrams", "/skills", "/plots", "/marketplace"];
+const ROUTES = ["/metrics", "/settings", "/board", "/needs-me", "/code", "/runs", "/context", "/meetings", "/recap", "/diagrams", "/skills", "/plots", "/marketplace"];
 
 export function startDevWarm(): () => void {
   if (process.env.NODE_ENV !== "development") return () => {};

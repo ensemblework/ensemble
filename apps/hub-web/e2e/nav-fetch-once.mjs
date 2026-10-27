@@ -1,5 +1,5 @@
 /**
- * Client-side navigation fetches runs, skills, and workspace once.
+ * Client-side navigation fetches run history, queue and skills once.
  * React StrictMode double-invokes effects in dev, so this runs against
  * `next start`, not `next dev`.
  *
@@ -18,9 +18,8 @@ const CHROME =
   (existsSync("/usr/bin/google-chrome") ? "/usr/bin/google-chrome" : "/usr/local/bin/google-chrome");
 
 const HOPS = [
-  { href: "/runs", path: "/api/runs" },
-  { href: "/skills", path: "/api/skills" },
-  { href: "/workspace", path: "/api/workspace" },
+  { href: "/runs", paths: ["/api/runs", "/api/workspace"] },
+  { href: "/skills", paths: ["/api/skills"] },
 ];
 
 function cookieHeader(setCookie) {
@@ -47,7 +46,7 @@ async function main() {
   const onboard = await fetch(`${API}/api/onboarding`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie: `ensemble_session=${session}` },
-    body: JSON.stringify({ role: "lawyer", templateId: "matter-desk" }),
+    body: JSON.stringify({ role: "engineer", templateId: "branch-desk" }),
   });
   if (!onboard.ok) throw new Error(`onboarding ${onboard.status} ${await onboard.text()}`);
   for (const id of ["runs", "skills", "workspace"]) {
@@ -70,7 +69,7 @@ async function main() {
       const hits = [];
       const onRequest = (request) => {
         if (request.method() !== "GET") return;
-        if (isDataGet(request.url(), hop.path)) hits.push(request.url());
+        if (hop.paths.some(path => isDataGet(request.url(), path))) hits.push(request.url());
       };
       page.on("request", onRequest);
       await page.locator(`aside.app-sidebar nav a[href="${hop.href}"]`).click();
@@ -79,8 +78,10 @@ async function main() {
       // Long enough for a duplicate mount fetch, short of the workspace poll.
       await page.waitForTimeout(600);
       page.off("request", onRequest);
-      assert.equal(hits.length, 1, `${hop.href} requested ${hop.path} ${hits.length} times:\n${hits.join("\n")}`);
-      console.log(`${hop.href} ${hop.path} once`);
+      for (const path of hop.paths) {
+        assert.equal(hits.filter(url => isDataGet(url, path)).length, 1, `${hop.href} requested ${path} more or less than once:\n${hits.join("\n")}`);
+        console.log(`${hop.href} ${path} once`);
+      }
     }
   } finally {
     await browser.close();

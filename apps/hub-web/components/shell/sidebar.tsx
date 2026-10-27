@@ -5,7 +5,6 @@ import {
   Activity,
   BarChart3,
   BookOpen,
-  Briefcase,
   CalendarDays,
   CalendarCheck,
   CircleCheck,
@@ -28,6 +27,7 @@ import { useEffect, useRef } from "react";
 import { hasModule, moduleFitsProfile, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
 import { shellProfile } from "@/components/desk/tile-catalog";
 import { api } from "@/lib/api";
+import { runsModule } from "@/lib/run-modules";
 import { startDevWarm } from "@/lib/dev-warm";
 import { prefetchHref } from "@/lib/prefetch";
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
@@ -51,7 +51,6 @@ const GROUPS: Array<Array<{ href: string; label: string; icon: typeof Activity }
   ],
   [
     { href: "/code", label: "Code", icon: Code2 },
-    { href: "/workspace", label: "Workspace", icon: Briefcase },
     { href: "/runs", label: "Runs", icon: Activity },
     { href: "/skills", label: "Skills", icon: BookOpen },
   ],
@@ -73,7 +72,6 @@ const WARM = [
   "/context",
   "/meetings",
   "/code",
-  "/workspace",
   "/runs",
   "/skills",
   "/metrics",
@@ -155,7 +153,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
           if (cancelled) return;
           const data = client.getQueryData<Awaited<ReturnType<typeof api.shell>>>(["shell"]);
           if (data?.space?.shared && (href === "/today" || href === "/metrics")) continue;
-          const gate = moduleForPath(href);
+          const gate = href === "/runs" ? runsModule(data?.modules) : moduleForPath(href);
           // An off module answers 404, and one the profile is not offered has no link. Don't warm either.
           if (gate && !(hasModule(data?.modules, gate) && moduleFitsProfile(gate, shellProfile(data)))) continue;
           prefetchHref(client, href);
@@ -173,7 +171,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const guest = Boolean(shell.data?.space?.shared);
   const visible = (href: string) => {
     if (guest && (href === "/today" || href === "/metrics")) return false;
-    const gate = moduleForPath(href);
+    const gate = href === "/runs" ? runsModule(modules) : moduleForPath(href);
     if (!gate) return true;
     // Optional modules wait for the shell: when it fails, a link the space has
     // turned off must not appear and lead to a 404.

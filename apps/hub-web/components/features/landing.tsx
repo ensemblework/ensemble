@@ -3,9 +3,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, Boxes, ChartSpline, ChevronRight, Code2, FolderGit2, Gauge, Plus, Search, Sparkles, TerminalSquare, Workflow, type LucideIcon } from "lucide-react";
-import { FEATURES } from "@ensemble/shared-types/features";
 import type { OptionalModule } from "@ensemble/shared-types/modules";
-import { setFeature } from "@/lib/features";
+import { featureCopy, setFeature } from "@/lib/features";
 
 function Head({ title, description, action }: { title: string; description: string; action?: string }) {
   return (
@@ -96,15 +95,11 @@ function Lane({ title, count, cards, empty }: { title: string; count: string; ca
 function WorkspacePreview() {
   return (
     <div>
-      <Head title="Workspace" description="The agent's queue. Up to 3 tasks run at once." action="Assign task" />
-      <div className="grid grid-cols-3 gap-4">
+      <Head title="Runs" description="Queued, working and waiting on you." action="Assign task" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Lane title="Up next" count="2" cards={["Index the notes", "Draft the reply"]} />
         <Lane title="Working now" count="1/3" cards={["Review the diff"]} />
         <Lane title="Needs you" count="0" cards={[]} empty="The agent is not waiting on you." />
-      </div>
-      <div className="mt-8 grid grid-cols-2 gap-4">
-        <Lane title="Recently done" count="1" cards={["Morning summary"]} />
-        <Lane title="Stopped or failed" count="0" cards={[]} empty="Nothing stopped." />
       </div>
     </div>
   );
@@ -242,7 +237,7 @@ function SkillsPreview() {
 
 const POINTS: Record<OptionalModule, readonly string[]> = {
   code: ["Review a change one file at a time", "Edit the files on this machine", "Open a terminal beside the diff"],
-  workspace: ["Queue work for the agent", "Watch up to three jobs at once", "See what is waiting on you"],
+  workspace: ["Queue work for the agent", "Set how many jobs run at once", "See what is waiting on you"],
   runs: ["Every job keeps its plan and steps", "See the model and the cost", "Stop a run that goes too far"],
   metrics: ["Calls and tokens over the last 14 days", "Cost kept beside the desk", "A ledger you can check"],
   skills: ["Guidelines the agent can reuse", "Search and edit them in one place", "Start the next job from a skill"],
@@ -289,7 +284,7 @@ function PlotsPreview() {
 }
 
 export function FeatureLanding({ id }: { id: OptionalModule }) {
-  const feature = FEATURES[id];
+  const feature = featureCopy(id);
   const Icon = ICONS[id];
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);

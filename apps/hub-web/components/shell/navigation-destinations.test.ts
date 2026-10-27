@@ -42,7 +42,7 @@ test("deep Settings navigation resolves a rendered label without jumping to its 
   assert.equal(findSettingsTarget(root,"Time zone")?.tagName,"LABEL");
   assert.equal(findSettingsTarget(root,"Full name")?.tagName,"INPUT");
 });
-test("Jump to offers Code, Workspace, Runs and Skills only to profiles that build software",()=>{
+test("Jump to offers Code, Runs and Skills only to profiles that build software",()=>{
   const code=(profile:string|null)=>navigationDestinations("code",{...options,profile}).some(row=>row.href.startsWith("/code"));
   assert.equal(code("engineer"),true);
   assert.equal(code("vibe"),true);
@@ -51,4 +51,14 @@ test("Jump to offers Code, Workspace, Runs and Skills only to profiles that buil
     assert.equal(code(profile),false,profile);
     assert.ok(navigationDestinations("diagrams",{...options,profile})[0]?.href==="/diagrams",`${profile} keeps Diagrams`);
   }
+});
+test("queue and history share Runs without dropping queue-only accounts or keeping a Workspace tab", () => {
+  for (const modules of ["workspace", "runs", "workspace,runs"]) {
+    const destinations = navigationDestinations("", { modules, profile: "engineer" });
+    assert.ok(destinations.some(row => row.href === "/runs"), modules);
+    assert.ok(!destinations.some(row => row.href === "/workspace"), modules);
+    assert.ok(navigationDestinations("workspace", { modules, profile: "engineer" }).some(row => row.href === "/runs"));
+  }
+  assert.ok(!navigationDestinations("", { modules: "" }).some(row => row.href === "/runs"));
+  assert.ok(!navigationDestinations("workspace", { modules: "workspace", profile: "lawyer" }).some(row => row.href === "/runs"));
 });

@@ -123,7 +123,7 @@ export default function CodePage() {
       ) : reviews.isLoading ? (
         <SkeletonRows count={3} />
       ) : (reviews.data?.reviews ?? []).length === 0 ? (
-        <Empty>No agent changes waiting. Repository jobs from the Workspace land here when they finish.</Empty>
+        <Empty>No agent changes waiting. Repository jobs from Runs land here when they finish.</Empty>
       ) : (
         <div>{reviews.data!.reviews.map((review) => <ReviewRow key={review.id} review={review} />)}</div>
       )}

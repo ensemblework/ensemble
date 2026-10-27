@@ -47,7 +47,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion | Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
 | Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
-| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Workspace, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`) | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
+| Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Agent queue, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |
 | Appearance | Brand assets, light/dark/system, fonts, text scale, reduced motion, avatars, backgrounds | [BRAND](BRAND.md) |
 
 ## 4. Work surfaces
@@ -66,7 +66,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Diagrams | Source language, layout, visual editing, Mermaid import, SVG export | Editing needs a 1024 × 640 CSS-pixel window; smaller windows get a read-only preview | [21](21_BLOCK_DIAGRAMS_DSL.md) |
 | Plots | Datasets, figure specs, code, exports; browser runtime on the web, server/native worker elsewhere | Uploads up to 20 MB | [20](20_PLOTS_DESIGN.md) |
 | Skills and morning brief | Versioned personal instructions, brief personalization, completed-work learning | Learning writes validated versions after a notice; no review-first flow | [04](04_MODULE_SKILL_FORGE.md) |
-| Workspace, Runs, Code, Needs me | Agent jobs, run evidence, pending decisions, code review, source control, passkey-unlocked terminal; stacked phone queues, wrapping answers, full-width run sheets and switchable Code panels | §9 | [06](06_MODULE_WORKSPACE_AND_SURFACES.md), [16](16_CODE_TAB.md), [02 §4](02_MODULE_INTERACTION_HUB_UI.md#4-interaction-patterns) |
+| Runs, Code, Needs me | Runs combines Up next, Working now and Needs you above run history and evidence. Code review, source control, passkey-unlocked terminal; stacked phone queues, wrapping answers, full-width run sheets and switchable Code panels | §9 | [06](06_MODULE_WORKSPACE_AND_SURFACES.md), [16](16_CODE_TAB.md), [02 §4](02_MODULE_INTERACTION_HUB_UI.md#4-interaction-patterns) |
 | Completed and Trash | Review, reopen, restore, pin; retirement and purge | Separate retention windows | [07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention) |
 | Metrics | Model calls, credits and recorded events, filtered by provider and date | Calls without token reports stay visible; external plan balances are not read | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Search and navigation | Compact search, Jump to, shortcuts, phone navigation | Bounded, access-scoped results | [02](02_MODULE_INTERACTION_HUB_UI.md) |

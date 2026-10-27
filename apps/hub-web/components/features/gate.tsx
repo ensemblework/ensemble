@@ -3,12 +3,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
-import { FEATURES } from "@ensemble/shared-types/features";
 import { hasModule, moduleFitsProfile, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
 import { shellProfile } from "@/components/desk/tile-catalog";
 import { SkeletonRows } from "@/components/ui";
 import { api } from "@/lib/api";
 import { readModuleCache, syncModuleCache } from "@/lib/tab-session";
+import { runsModule } from "@/lib/run-modules";
+import { featureCopy } from "@/lib/features";
 import { FeatureLanding } from "./landing";
 
 function Closed({ title, detail, onRetry }: { title: string; detail: string; onRetry?: () => void }) {
@@ -47,8 +48,9 @@ export function FeatureGate({ children }: { children: React.ReactNode }) {
   } catch {
     return <Closed title="That address isn't valid." detail="Check the link and try again." />;
   }
-  if (!gate) return children;
+  if (!gate || /^\/workspace\/?$/.test(pathname)) return children;
   const modules = shell.data ? (shell.data.modules ?? "") : cached;
+  if (gate === "runs") gate = runsModule(modules);
   if (modules == null) {
     if (shell.isError) {
       return (
@@ -65,10 +67,10 @@ export function FeatureGate({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  // Code, Workspace, Runs and Skills are for people who build software: a lawyer's or teacher's
+  // Code, agent execution, Runs and Skills are for people who build software: a lawyer's or teacher's
   // profile is not offered them, so there is nothing to turn on here.
   if (shell.data && !moduleFitsProfile(gate, shellProfile(shell.data))) {
-    return <Closed title={`${FEATURES[gate].label} isn't part of your profile`} detail={`${FEATURES[gate].label} is for people who build software. The rest of Ensemble works the same without it.`} />;
+    return <Closed title={`${featureCopy(gate).label} isn't part of your profile`} detail={`${featureCopy(gate).label} is for people who build software. The rest of Ensemble works the same without it.`} />;
   }
   if (!hasModule(modules, gate)) return <FeatureLanding id={gate} />;
   return children;
