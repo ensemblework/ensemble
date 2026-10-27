@@ -49,7 +49,10 @@ test("inside the trusted folder an unattended run goes ahead; Local only refuses
 test("keys and Never programs are always refused", async () => {
   assert.equal((await judgeEngineCall(ctx(), { tool: "Read", input: { file_path: join(homedir(), ".ssh", "id_rsa") } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "sudo rm -rf /" } })).decision, "deny");
+  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "crontab -l" } })).decision, "deny");
+  // ssh is the run's mode to decide, and needs the internet.
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "curl x | ssh host" } })).decision, "deny");
+  assert.equal((await judgeEngineCall(ctx({ network: true }), { tool: "Bash", input: { command: "ssh host uptime" } })).decision, "allow");
 });
 
 test("with No limits the engine pushes any branch and opens or merges pull requests itself; only the internet setting and the person's git choice stop it", async () => {
@@ -63,13 +66,77 @@ test("with No limits the engine pushes any branch and opens or merges pull reque
   assert.match(commitOnly.message ?? "", /Commit/);
 });
 
-test("outside the folder: refused when sandboxed, allowed when the person turned the sandbox off", async () => {
-  const outside = join(homedir(), "ensemble-workspace", "runs", "other", "notes.md");
-  const sandboxed = await judgeEngineCall(ctx(), { tool: "Write", input: { file_path: outside } });
-  assert.equal(sandboxed.decision, "deny");
-  assert.match(sandboxed.message ?? "", /sandboxed/);
-  const direct = await judgeEngineCall(ctx({ sandboxed: false, strength: "advisory" }), { tool: "Write", input: { file_path: outside } });
-  assert.equal(direct.decision, "allow");
+/** A run whose Needs me questions are answered at once with `answer`, recording each question's title. */
+function answering(answer: "allow" | "deny", over: Omit<Partial<Ctx>, "job"> & { job?: Partial<WorkspaceJob> } = {}) {
+  const asked: string[] = [];
+  const saved: string[] = [];
+  const prisma = {
+    decisionRule: { findFirst: async () => null, create: async ({ data }: { data: { pattern: string } }) => (saved.push(data.pattern), data) },
+    agentDecision: { create: async ({ data }: { data: { title: string } }) => (asked.push(data.title), { id: `d${asked.length}` }), updateMany: async () => ({ count: 0 }) },
+    notification: { create: async () => ({}) },
+  };
+  const run = ctx({
+    workspace,
+    prisma,
+    signal: new AbortController().signal,
+    waitForPerson: async () => ({ status: "decided", decision: answer, reason: null }),
+    ...over,
+  } as never);
+  return { run, asked, saved };
+}
+
+const workspace = join(homedir(), "ensemble-workspace");
+
+test("unattended works anywhere in the workspace and the person's folders, sandboxed or not; the floor still holds", async () => {
+  const other = join(workspace, "runs", "other", "notes.md");
+  const beyond = join(homedir(), "ensemble-judge-test", "proj", "notes.md");
+  for (const run of [ctx({ workspace }), ctx({ workspace, sandboxed: false, strength: "advisory" })]) {
+    assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: other } })).decision, "allow");
+    assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: beyond } })).decision, "allow");
+    assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `pwd && ls ${join(workspace, "runs")} && cp a.txt ${other}` } })).decision, "allow");
+    assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(workspace, ".askpass", "git-askpass.sh") } })).decision, "deny");
+  }
+  // The person's own No access beyond the workspace holds when nobody can be asked.
+  assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: beyond } })).decision, "deny");
+  assert.equal((await judgeEngineCall(ctx({ workspace, outsideAccess: "none" }), { tool: "Write", input: { file_path: other } })).decision, "allow");
+});
+
+test("Review only asks once per folder before changing it, then works there freely; reading never asks", async () => {
+  const { run, asked, saved } = answering("allow", { accessMode: "auto", job: { unattended: false } });
+  const other = join(workspace, "runs", "other");
+  assert.equal((await judgeEngineCall(run, { tool: "Read", input: { file_path: join(homedir(), "ensemble-judge-test", "x.md") } })).decision, "allow");
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `ls ${other} && cat ${join(other, "a.md")}` } })).decision, "allow");
+  assert.equal(asked.length, 0);
+  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(other, "notes.md") } })).decision, "allow");
+  assert.equal(asked.length, 1);
+  assert.match(asked[0]!, /runs\/other/);
+  assert.deepEqual(saved, [other]);
+  assert.equal((await judgeEngineCall(run, { tool: "Edit", input: { file_path: join(other, "src", "b.ts") } })).decision, "allow");
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cp a.txt ${join(other, "c.txt")} && npm test` } })).decision, "allow");
+  assert.equal(asked.length, 1, "the same folder is not asked about again");
+  // A command outside the sandbox whose outside paths are all in an allowed folder needs no question either.
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `touch ${join(other, "d.txt")}`, dangerouslyDisableSandbox: true } })).decision, "allow");
+  assert.equal(asked.length, 1);
+  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(workspace, "runs", "third", "x.md") } })).decision, "allow");
+  assert.equal(asked.length, 2, "a new folder asks once");
+  const no = answering("deny", { accessMode: "auto", job: { unattended: false } });
+  const refused = await judgeEngineCall(no.run, { tool: "Write", input: { file_path: join(other, "notes.md") } });
+  assert.equal(refused.decision, "deny");
+  assert.match(refused.message ?? "", /did not allow/);
+});
+
+test("Ask asks before changing another folder and asks one question for a command that does", async () => {
+  const { run, asked } = answering("allow", { trusted: false, silentWorkspace: false, job: { unattended: false } });
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cp a.txt ${join(workspace, "runs", "other", "a.txt")}` } })).decision, "allow");
+  assert.equal(asked.length, 1);
+  assert.match(asked[0]!, /^Run cp a\.txt/);
+  // Commands still ask in Ask; never refused for being outside.
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: "npm test" } })).decision, "allow");
+  assert.equal(asked.length, 2);
+  // Another computer asks too.
+  const online = answering("allow", { network: true, job: { unattended: false }, accessMode: "auto" });
+  assert.equal((await judgeEngineCall(online.run, { tool: "Bash", input: { command: "ssh build-box uptime" } })).decision, "allow");
+  assert.match(online.asked[0] ?? "", /another computer/);
 });
 
 test("the internet setting holds for web tools; read-only runs make no changes", async () => {
@@ -132,7 +199,7 @@ test("Claude Code gets the hook on every tool, a strict sandbox, and the run's i
   assert.equal(settings.hooks.PreToolUse[0]!.hooks[0]!.command, "node hook --engine");
   assert.equal(settings.sandbox.enabled, true);
   assert.equal(settings.sandbox.failIfUnavailable, true);
-  assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
+  assert.equal(settings.sandbox.allowUnsandboxedCommands, true);
   assert.deepEqual(settings.sandbox.filesystem.allowWrite, ["/w"]);
   assert.deepEqual(settings.sandbox.network, { allowedDomains: [], strictAllowlist: true });
   assert.ok(settings.permissions.deny?.includes("WebFetch"));
@@ -141,17 +208,19 @@ test("Claude Code gets the hook on every tool, a strict sandbox, and the run's i
   assert.ok(online.permissions.allow?.includes("WebFetch(domain:*)"));
 });
 
-test("outside the folder, reading goes ahead with the default setting and writing does not", async () => {
-  const outside = join(homedir(), "ensemble-workspace", "runs", "other", "notes.md");
-  const run = ctx({ outsideAccess: "read" });
-  assert.equal((await judgeEngineCall(run, { tool: "Read", input: { file_path: outside } })).decision, "allow");
-  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cat ${outside}` } })).decision, "allow");
-  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cp a.txt ${outside}` } })).decision, "deny");
-  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: outside } })).decision, "deny");
-  const open = ctx({ outsideAccess: "read-write" });
-  assert.equal((await judgeEngineCall(open, { tool: "Write", input: { file_path: outside } })).decision, "allow");
+test("outside the folder, reading goes ahead with the default setting; read and write lets Ask change folders beyond the workspace", async () => {
+  const beyond = join(homedir(), "ensemble-judge-test", "proj", "notes.md");
+  const asking = answering("deny", { outsideAccess: "read", job: { unattended: false } });
+  assert.equal((await judgeEngineCall(asking.run, { tool: "Read", input: { file_path: beyond } })).decision, "allow");
+  assert.equal((await judgeEngineCall(asking.run, { tool: "Bash", input: { command: `cat ${beyond}` } })).decision, "allow");
+  assert.equal(asking.asked.length, 0);
+  assert.equal((await judgeEngineCall(asking.run, { tool: "Write", input: { file_path: beyond } })).decision, "deny");
+  assert.equal(asking.asked.length, 1);
+  const open = answering("deny", { outsideAccess: "read-write", job: { unattended: false } });
+  assert.equal((await judgeEngineCall(open.run, { tool: "Write", input: { file_path: beyond } })).decision, "allow");
+  assert.equal(open.asked.length, 0);
   // Keys stay closed whatever the setting.
-  assert.equal((await judgeEngineCall(open, { tool: "Read", input: { file_path: join(homedir(), ".aws", "credentials") } })).decision, "deny");
+  assert.equal((await judgeEngineCall(open.run, { tool: "Read", input: { file_path: join(homedir(), ".aws", "credentials") } })).decision, "deny");
 });
 
 test("read-only programs are recognised, and anything that can write is not", () => {
@@ -240,5 +309,62 @@ test("in Ask in an untrusted folder, commands that only read files in the folder
   } finally {
     rmSync(folder, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test("a read the person allowed where reading asks never lets the run write there", async () => {
+  const { run, asked, saved } = answering("allow", { accessMode: "auto", outsideAccess: "none", job: { unattended: false } });
+  const folder = join(homedir(), "ensemble-judge-test", "notes");
+  assert.equal((await judgeEngineCall(run, { tool: "Read", input: { file_path: join(folder, "a.md") } })).decision, "allow");
+  assert.equal((await judgeEngineCall(run, { tool: "Read", input: { file_path: join(folder, "b.md") } })).decision, "allow");
+  assert.equal(asked.length, 1, "one question for reading the folder");
+  assert.deepEqual([run.grants ?? [], run.readGrants], [[], [folder]]);
+  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(folder, "a.md") } })).decision, "allow");
+  assert.equal(asked.length, 2, "changing it is a question of its own");
+  assert.deepEqual(saved, [folder, folder]);
+});
+
+const { grantFolder, granted } = await import("../tools.js");
+const { checkProgram, holdsProtected } = await import("../guard.js");
+const { openRoots } = await import("./claude-code.js");
+
+test("a folder that holds keys, Ensemble's git helper or its code is never handed over whole", async () => {
+  const home = homedir();
+  assert.equal(await grantFolder(join(home, ".codex", "config.toml"), workspace), join(home, ".codex", "config.toml"), "~/.codex holds auth.json");
+  assert.equal(await grantFolder(join(home, ".claude", "settings.json"), workspace), join(home, ".claude", "settings.json"));
+  assert.equal(await grantFolder(workspace, workspace), workspace, "the workspace root narrows to itself, and is never kept");
+  assert.equal(holdsProtected(workspace), true);
+  assert.equal(holdsProtected(join(workspace, "runs", "x")), false);
+  assert.equal(await grantFolder(join(workspace, "runs", "other", "src", "a.ts"), workspace), join(workspace, "runs", "other"));
+  // A run allowed the workspace root this once does not keep it.
+  const { run } = answering("allow", { accessMode: "auto", job: { unattended: false } });
+  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: workspace } })).decision, "allow");
+  assert.deepEqual(run.grants ?? [], []);
+  assert.equal(granted({ root, grants: [], readGrants: [workspace] }, join(workspace, "runs", "x"), true), false);
+});
+
+test("wrappers do not hide a never-run program, a remote shell or a shell outside the sandbox", () => {
+  const agent = { who: "agent" as const, sandboxed: false, network: true };
+  for (const line of [["env", "sudo", "id"], ["nohup", "pkill", "node"], ["timeout", "5", "crontab", "-r"], ["env", "FOO=1", "bash", "-c", "x"], ["env", "-u", "PATH", "sudo", "id"], ["env", "-S", "sudo id"], ["timeout", "-s", "KILL", "5", "crontab", "-r"], ["xargs", "sudo", "id"], ["xargs", "-n", "1", "sudo"], ["setsid", "pkill", "node"]]) {
+    assert.throws(() => checkProgram(line, agent), /./, line.join(" "));
+  }
+  assert.throws(() => checkProgram(["env", "ssh", "host"], { ...agent, network: false }), /network/);
+  assert.throws(() => checkProgram(["env", "-u", "X", "ssh", "host"], { ...agent, network: false }), /network/);
+  assert.equal(checkProgram(["pwd"], agent), "pwd");
+  assert.equal(checkProgram(["timeout", "30", "npm", "test"], agent), "timeout");
+});
+
+test("a sandbox without a deny list never gets a writable root that holds a closed path", async () => {
+  const base = mkdtempSync(join(tmpdir(), "ensemble-roots-"));
+  try {
+    for (const name of ["code/ensemble", "code/other", "code/more", "ws/.askpass", "ws/runs", "plain"]) mkdirSync(join(base, name), { recursive: true });
+    const closed = [join(base, "code", "ensemble"), join(base, "ws", ".askpass")];
+    const open = await openRoots([join(base, "code"), join(base, "ws"), join(base, "plain"), join(base, "code", "ensemble", "x")], closed);
+    assert.deepEqual(open.sort(), [join(base, "code", "more"), join(base, "code", "other"), join(base, "plain"), join(base, "ws", "runs")].sort());
+    // A link to a folder holding Ensemble's code is followed, not trusted by its name.
+    symlinkSync(join(base, "code"), join(base, "linked"));
+    assert.deepEqual((await openRoots([join(base, "linked")], closed)).sort(), [join(base, "code", "more"), join(base, "code", "other")].sort());
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });

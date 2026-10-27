@@ -1,35 +1,30 @@
 /**
- * Folder trust and unattended checks (doc 24 §4).
+ * Run modes and folder trust (docs/24 §4).
  *
- * Trust is a path, on this device, stored as a DecisionRule with toolName
- * `path`. The workspace root is trusted without a row. A folder
- * `resolveWorkFolder` refuses can never be trusted, because the caller has to
- * pass that check before a rule is saved. Trust does not cover domains.
+ * Choosing a mode is the person's trust: no mode needs a folder trusted first, and nothing a mode
+ * covers is refused. A tool call is refused only by the hard floor (`outsideRefusal`, the
+ * never-run programs in guard.ts) or by a limit the person chose (Local only, Commit, the internet
+ * off, a read-only folder, "No access" outside the workspace). Everything else goes ahead or asks.
  *
- * Three run modes (the Assign dialog, the CLI and run profiles):
- * - Ask (`read-write`): commands and edits ask unless the folder is trusted.
- * - Review only (`auto`): commands and edits in the folder run without asking;
- *   only decision questions reach the person. Needs a trusted folder.
- * - Run unattended (`unattended` flag): nothing asks; decisions are made by the
- *   agent and reported. Needs a trusted folder.
- * Outside the folder, the sandbox and the person's setting decide. With the OS
- * sandbox on, Settings → "Outside the work folder" (read only by default, or
- * read and write, or no access) says what goes ahead without asking; the rest
- * asks in Ask and is refused back to the model in Review only and Run
- * unattended (the run continues). With the sandbox off the person chose to run
- * directly, so Review only and Run unattended use outside paths without
- * asking; Ask still asks. Secrets, app data and Ensemble's own code stay
- * refused either way (`outsideRefusal`).
- * `review` is the older read-only grant (no writes, no network), kept for a
- * folder shared read-only from a paired computer.
+ * - Ask (`read-write`): commands and edits ask unless the folder is trusted (a saved path rule, or
+ *   the workspace with "run without asking" on). Reads go ahead. Changing another folder asks once
+ *   per folder.
+ * - Review only (`auto`): commands and edits in the run's folder go ahead; only decision questions
+ *   reach the person. Changing another folder, inside the Ensemble workspace or beyond it, asks
+ *   once per folder; after that the run works there freely.
+ * - Run unattended (`unattended` flag): nothing asks. The run may work anywhere the floor allows:
+ *   its folder, the whole workspace and the person's own folders. Decisions are made by the agent
+ *   and reported.
+ * Reading outside the folder goes ahead in every mode (Settings → "Outside the Ensemble workspace": read,
+ * the default, or read and write; "No access" asks first, and refuses when nobody answers).
+ * Trust is a path, on this device, stored as a DecisionRule with toolName `path`; the workspace
+ * root is trusted without a row. It quiets Ask and lets an engine load the folder's own config.
+ * `review` is the read-only grant (no writes, no network), for a folder shared read-only from a
+ * paired computer.
  */
 
 export const PATH_RULE_SOURCE = "ensemble";
 export const PATH_RULE_TOOL = "path";
-
-export const UNATTENDED_CODE = "UNATTENDED_REQUIRES_TRUST";
-export const UNATTENDED_MESSAGE =
-  "Run unattended can't be used with a folder you haven't trusted. Trust this folder, or turn off Run unattended.";
 
 /** `auto` is the dialog's "Review only". `review` is the read-only grant. */
 export type AccessMode = "review" | "read-write" | "auto";
@@ -46,18 +41,16 @@ export function runModeOf(job: { accessMode: string; unattended: boolean }): Run
   if (job.unattended) return "unattended";
   return job.accessMode === "auto" ? "review" : "ask";
 }
-export type GateAction = "command" | "write" | "network" | "credential" | "outside" | "push";
+/** `remote`: a program that opens a session on another computer (ssh, scp, nc). `escape`: a command run outside the OS sandbox. */
+export type GateAction = "command" | "write" | "network" | "credential" | "outside" | "push" | "remote" | "escape";
 export type GateResult = "allow" | "block" | "prompt";
 
-export class UnattendedTrustError extends Error {
-  readonly statusCode = 400;
-  readonly expose = true;
-  readonly code = UNATTENDED_CODE;
-  constructor() {
-    super(UNATTENDED_MESSAGE);
-    this.name = "UnattendedTrustError";
-  }
-}
+/**
+ * Where a path outside the run's folder lies: elsewhere in the Ensemble workspace, in the
+ * computer's temporary folders, or beyond both. A folder the person let the run work in counts as
+ * the run's own and never reaches the gate.
+ */
+export type OutsideZone = "workspace" | "temp" | "outside";
 
 export function rulesForJob(
   rows: Array<{ pattern: string; sessionId: string | null; decision: string; toolName: string; source?: string }>,
@@ -80,59 +73,17 @@ export function isFolderTrusted(input: { folder: string; workspaceRoot: string; 
 }
 
 /**
- * Assignment and run time share this. `when` is recorded by the caller;
- * the rejection is the same either way, so a revoked rule cannot slip through
- * by having been trusted at assignment.
- */
-export function checkUnattended(input: { unattended: boolean; trusted: boolean }): UnattendedTrustError | null {
-  if (input.unattended && !input.trusted) return new UnattendedTrustError();
-  return null;
-}
-
-export const REVIEW_CODE = "REVIEW_REQUIRES_TRUST";
-export const REVIEW_MESSAGE =
-  "Review only runs commands without asking, so it needs a folder you trust. Trust this folder, or choose Ask.";
-
-export class ReviewTrustError extends Error {
-  readonly statusCode = 400;
-  readonly expose = true;
-  readonly code = REVIEW_CODE;
-  constructor() {
-    super(REVIEW_MESSAGE);
-    this.name = "ReviewTrustError";
-  }
-}
-
-/** Review only and Run unattended need a trusted folder; Ask works anywhere. */
-export function checkModeTrust(input: { accessMode: string; unattended: boolean; trusted: boolean }): UnattendedTrustError | ReviewTrustError | null {
-  if (input.trusted) return null;
-  if (input.unattended) return new UnattendedTrustError();
-  if (input.accessMode === "auto") return new ReviewTrustError();
-  return null;
-}
-
-export const UNATTENDED_ASK_MODE =
-  "Run unattended needs an OS sandbox, and this system runs agents in Ask mode. Choose Ask or Review only.";
-
-export class UnattendedAskModeError extends Error {
-  readonly statusCode = 400;
-  readonly expose = true;
-  readonly code = "UNATTENDED_NEEDS_SANDBOX";
-  constructor() {
-    super(UNATTENDED_ASK_MODE);
-    this.name = "UnattendedAskModeError";
-  }
-}
-
-/**
  * `strong`: the run's commands are inside the OS sandbox (Seatbelt, Landlock,
  * bubblewrap or the Windows sandbox account). `advisory`: the sandbox is off
- * for this run, so only the argv allow-list and the folder jail apply. `ask`:
- * kept for runtimes that report no sandbox at all; every command asks and
- * unattended is refused.
+ * for this run, so the judge's path checks and the floor apply. `ask`: kept
+ * for runtimes that report no sandbox at all; Ask asks before every command.
  */
 export type SandboxStrength = "strong" | "advisory" | "ask";
 
+/**
+ * What the run's mode does with one action. "block" comes only from a limit the person chose
+ * (the read-only grant, "No access" with nobody to ask); the floor is checked before this.
+ */
 export function commandGate(input: {
   trusted: boolean;
   /** `orchestration.runWithoutAsking`. An explicit path rule stays silent either way. */
@@ -145,31 +96,40 @@ export function commandGate(input: {
   strength?: SandboxStrength;
   /** The OS sandbox is on for this run. Unset means on. */
   sandboxed?: boolean;
-  /** For an outside path: whether it would be written, not only read. */
+  /** For an outside path: whether it would be written, not only read. Unset means written. */
   outsideWrite?: boolean;
-  /** Settings → outside the work folder, for sandboxed runs. Unset means no access. */
+  /** Settings → outside the work folder (beyond the workspace). Unset means read only. */
   outsideAccess?: "none" | "read" | "read-write";
+  /** For an outside path: where it lies. Unset means beyond the workspace. */
+  zone?: OutsideZone;
 }): GateResult {
   const strength = input.strength ?? "strong";
-  if (input.unattended && (!input.trusted || strength === "ask")) return "block";
-  const free = input.trusted && (input.unattended || input.accessMode === "auto");
+  const readOnly = input.accessMode === "review";
   if (!input.inside || input.action === "outside") {
-    if (input.accessMode === "review" && input.outsideWrite) return "block";
-    // Unsandboxed, the person chose to run directly: Review only and Run unattended go ahead, Ask asks.
-    if (input.sandboxed === false) return free ? "allow" : "prompt";
-    // Sandboxed, the person's outside-folder setting says what goes ahead without asking.
-    const access = input.outsideAccess ?? "none";
-    if (access === "read-write" || (access === "read" && !input.outsideWrite)) return "allow";
-    // Anything else asks in Ask, and is refused (the run continues) in Review only and Run unattended.
-    return free ? "block" : "prompt";
+    const write = input.outsideWrite ?? true;
+    if (readOnly && write) return "block";
+    if (!write) {
+      // "No access" is the person's own limit; it covers reads beyond the workspace where the sandbox enforces it.
+      if (input.zone !== "workspace" && input.zone !== "temp" && input.sandboxed !== false && input.outsideAccess === "none") return input.unattended ? "block" : "prompt";
+      return "allow";
+    }
+    if (input.unattended) {
+      return input.zone !== "workspace" && input.zone !== "temp" && input.sandboxed !== false && input.outsideAccess === "none" ? "block" : "allow";
+    }
+    if (input.zone === "temp") return input.accessMode === "auto" ? "allow" : "prompt";
+    if (input.zone !== "workspace" && input.outsideAccess === "read-write") return "allow";
+    return "prompt";
   }
-  if (input.accessMode === "review") {
+  if (readOnly) {
     // Read-only: never a write, never the network. Commands run under a read-only grant.
-    if (input.action === "write" || input.action === "network" || input.action === "push" || input.action === "credential") return "block";
+    if (input.action === "write" || input.action === "network" || input.action === "push" || input.action === "credential" || input.action === "remote" || input.action === "escape") return "block";
     if (strength === "strong") return "allow";
     return input.unattended ? "block" : "prompt";
   }
-  if (free) return strength === "ask" ? "prompt" : "allow";
+  if (input.unattended) return "allow";
+  // Another computer, or a command outside the OS sandbox: worth a question unless nobody is there to answer.
+  if (input.action === "remote" || input.action === "escape") return "prompt";
+  if (input.accessMode === "auto") return "allow";
   // A push the run's git permission allows goes ahead in a folder the person trusts.
   if (input.action === "push") return input.trusted && (input.explicitTrust || input.silentWorkspace) ? "allow" : "prompt";
   if (input.action === "credential" || input.action === "network") return "prompt";

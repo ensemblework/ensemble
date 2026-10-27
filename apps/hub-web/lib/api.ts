@@ -754,7 +754,8 @@ export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<
 
 export type AssignInput = {
   taskId: string;
-  kind: "research" | "code";
+  /** Unset: the server decides from the agent and where it runs. */
+  kind?: "research" | "code";
   /** Ensemble's own agent, or the person's own coding agent on their computer (Claude Code, Codex, Cursor, GitHub Copilot). */
   engine?: "ensemble" | CodeEngine;
   provider?: string;

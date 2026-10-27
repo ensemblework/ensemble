@@ -19,7 +19,16 @@ export type ShellSegment = {
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** Words in front of the real program that only change how it runs. */
-const WRAPPERS = new Set(["time", "nice", "nohup", "command", "builtin", "exec", "stdbuf", "timeout", "caffeinate"]);
+const WRAPPERS = new Set(["time", "nice", "nohup", "command", "builtin", "exec", "stdbuf", "timeout", "caffeinate", "xargs", "setsid", "ionice", "chrt", "taskset", "unbuffer"]);
+/** A wrapper's options that take the next word as their value. */
+const VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
+  env: new Set(["-u", "--unset", "-C", "--chdir"]),
+  timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
+  nice: new Set(["-n", "--adjustment"]),
+  stdbuf: new Set(["-i", "-o", "-e"]),
+  ionice: new Set(["-c", "--class", "-n", "--classdata"]),
+  xargs: new Set(["-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--arg-file", "--delimiter", "--max-args", "--max-lines", "--max-procs", "--max-chars", "--eof"]),
+};
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 
 /** The index of the `)` that closes the `(` at `open`, quotes respected; the end of the text when there is none. */
@@ -59,18 +68,21 @@ export function programArgv(words: string[]): string[] {
     const word = words[start];
     if (word === undefined) return [];
     const name = word.split(/[\\/]/).pop()!;
-    if (name === "env") {
-      start += 1;
-      while (start < words.length && (words[start]!.startsWith("-") || ASSIGNMENT.test(words[start]!))) start += 1;
-      continue;
+    if (name !== "env" && !WRAPPERS.has(name)) return words.slice(start);
+    const takesValue = VALUE_OPTIONS[name] ?? new Set<string>();
+    start += 1;
+    // env -u X cmd, env -S 'cmd args', timeout -s KILL 30 cmd, nice -n 5 cmd, stdbuf -oL cmd, xargs -n 1 cmd
+    while (start < words.length) {
+      const option = words[start]!;
+      if (name === "env" && (option === "-S" || option.startsWith("--split-string"))) {
+        const value = option.includes("=") ? option.slice(option.indexOf("=") + 1) : (words[start + 1] ?? "");
+        return programArgv([...value.split(/\s+/).filter(Boolean), ...words.slice(start + (option.includes("=") ? 1 : 2))]);
+      }
+      if (name === "env" && /^-S./.test(option)) return programArgv([...option.slice(2).split(/\s+/).filter(Boolean), ...words.slice(start + 1)]);
+      if (takesValue.has(option)) start += 2;
+      else if (option.startsWith("-") || (name === "env" && ASSIGNMENT.test(option)) || /^\d+(\.\d+)?[smhd]?$/.test(option)) start += 1;
+      else break;
     }
-    if (WRAPPERS.has(name)) {
-      start += 1;
-      // timeout 30 cmd, nice -n 5 cmd, stdbuf -oL cmd
-      while (start < words.length && (words[start]!.startsWith("-") || /^\d+[smhd]?$/.test(words[start]!))) start += 1;
-      continue;
-    }
-    return words.slice(start);
   }
 }
 

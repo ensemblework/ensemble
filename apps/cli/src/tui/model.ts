@@ -26,7 +26,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "agent", args: "[name]", description: "Who you work with: Claude Code, Codex, Cursor, GitHub Copilot (your sign-in) or Ensemble agent" },
   { name: "model", args: "[model]", description: "Your agent's model" },
   { name: "folder", description: "The folder your agent works in" },
-  { name: "trust", description: "Trust this folder (Review only and Run unattended need it)" },
+  { name: "trust", description: "Trust this folder (Ask runs commands here without asking)" },
   { name: "keys", args: "[provider]", description: "Add a model key on this computer" },
   { name: "sandbox", description: "This computer's sandbox, and set it up" },
   { name: "hooks", description: "Send Claude, Codex, Copilot and Cursor prompts to Needs me" },
@@ -112,7 +112,7 @@ export function decisionActions(decision: Decision): Action[] {
     { id: "session", label: "Allow for this task", answer: { decision: "allow", scope: "session" }, tone: "normal" },
   ];
   // A path outside the folder is never turned into a standing rule.
-  if (decision.toolName !== "outside") actions.push({ id: "always", label: "Always", answer: { decision: "allow", scope: "always" }, tone: "normal" });
+  if (!decision.toolName?.startsWith("outside")) actions.push({ id: "always", label: "Always", answer: { decision: "allow", scope: "always" }, tone: "normal" });
   actions.push({ id: "deny", label: "Deny", answer: { decision: "deny" }, tone: "danger" });
   return actions;
 }
@@ -131,7 +131,7 @@ export function commandAnswer(decision: Decision, name: "allow" | "deny" | "answ
   }
   const scope = !args || args === "once" ? "once" : args === "task" || args === "session" ? "session" : args === "always" ? "always" : null;
   if (!scope) return "Use /allow once, /allow task or /allow always.";
-  if (scope === "always" && decision.toolName === "outside") return "A path outside the folder is allowed once or for this task, never always.";
+  if (scope === "always" && decision.toolName?.startsWith("outside")) return "A folder outside the task's is allowed once or for this task, never always.";
   return { decision: "allow", scope };
 }
 

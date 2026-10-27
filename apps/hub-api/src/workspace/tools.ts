@@ -4,6 +4,7 @@
  * plain result, so it can report it instead of retrying around it.
  */
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
 import { decisionBus, waitFor } from "../lib/decisions.js";
@@ -17,8 +18,8 @@ import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
-import { expandWord } from "./shell-parse.js";
+import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
+import { expandWord, programArgv } from "./shell-parse.js";
 import type { RunChanges } from "./outside-changes.js";
 import { ghSandboxRefusal, runTrustedGh, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
@@ -26,7 +27,7 @@ import { pushWithSignIn, remoteUrl, webPushNeedsComputer } from "./publish.js";
 import { fetchUrl, searchPapers, webSearch } from "./research.js";
 import { runCommand } from "./runner.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
-import { commandGate, type AccessMode, type SandboxStrength } from "./trust.js";
+import { commandGate, type AccessMode, type GateAction, type OutsideZone, type SandboxStrength } from "./trust.js";
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
@@ -67,8 +68,14 @@ export interface JobContext {
   accessMode: AccessMode;
   /** Branch the app will fast-forward. Empty when this checkout has none. */
   runBranch: string;
-  /** Paths unattended mode refused. Listed on the task summary. */
+  /** Paths a limit the person chose refused. Listed on the task summary. */
   blockedOutside: string[];
+  /** The Ensemble workspace folder on this computer (`workspaceRoot()`). */
+  workspace?: string;
+  /** Folders beyond its own the person let this run change (asked once each), and an earlier task's it continues. */
+  grants?: string[];
+  /** Folders the person let this run read where reading asks (Settings → No access). Never writable. */
+  readGrants?: string[];
   strength: SandboxStrength;
   /** Re-reads folder trust after the person answered (an "Always" may have trusted it). */
   refreshTrust?: () => Promise<void>;
@@ -86,6 +93,8 @@ export interface JobContext {
 export const RUN_RULE_SOURCE = "ensemble-run";
 export const WRITE_TOOL = "write";
 export const OUTSIDE_TOOL = "outside";
+/** A question about reading a folder where reading asks: an answer to it never lets the run write there. */
+export const OUTSIDE_READ_TOOL = "outside-read";
 
 type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
 
@@ -302,7 +311,7 @@ function refuseGitInternals(root: string, full: string): void {
   if (parts.includes(".git")) throw new GuardError("Files inside .git are off limits. Use git commands instead.");
 }
 
-function gate(ctx: JobContext, action: "command" | "write" | "network" | "credential" | "outside" | "push", inside: boolean, outsideWrite = true) {
+function gate(ctx: JobContext, action: GateAction, inside: boolean, outsideWrite = true, zone?: OutsideZone) {
   return commandGate({
     trusted: ctx.trusted,
     silentWorkspace: ctx.silentWorkspace,
@@ -315,21 +324,145 @@ function gate(ctx: JobContext, action: "command" | "write" | "network" | "creden
     sandboxed: ctx.sandboxed,
     outsideWrite,
     outsideAccess: ctx.outsideAccess,
+    zone,
   });
 }
 
-/** True when this run reads paths outside its folder without asking anyone (the sandbox's outside setting, or a free mode without it). */
+/** True when this run reads paths outside its folder without asking anyone. */
 export function outsideReadAllowed(ctx: JobContext): boolean {
   return gate(ctx, "outside", false, false) === "allow";
 }
 
 /** "Allow for this run" / "Deny for this run" answers, saved by the decide route. */
 async function runRule(ctx: JobContext, toolName: string, command: string | undefined): Promise<"allow" | "deny" | null> {
+  if (!ctx.prisma) return null;
   const rule = await ctx.prisma.decisionRule.findFirst({
     where: { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName, pattern: { in: [command ?? "*", "*"] } },
     orderBy: { createdAt: "desc" },
   });
   return rule ? (rule.decision === "deny" ? "deny" : "allow") : null;
+}
+
+/** Where a path outside the run's folder lies, for the mode's rules. */
+export function zoneOf(ctx: Pick<JobContext, "workspace">, real: string): OutsideZone {
+  if (within(ctx.workspace ?? knownWorkspace(), real)) return "workspace";
+  return inTemp(real) ? "temp" : "outside";
+}
+
+/** The path is in the run's folder or in one the person let it change (or, for a read, read). */
+export function granted(ctx: Pick<JobContext, "root" | "grants" | "readGrants">, real: string, write = true): boolean {
+  return within(ctx.root, real) || (ctx.grants ?? []).some((folder) => within(folder, real)) || (!write && (ctx.readGrants ?? []).some((folder) => within(folder, real)));
+}
+
+/**
+ * The folder a "work here?" question names for a path: its project folder in the workspace
+ * (`runs/<id>`, `files/<id>` or a top-level folder), else the repository it is in, else its own
+ * folder. A folder too broad to hand over (the home folder, a disk, Desktop) or one that holds keys,
+ * Ensemble's data, its git helper or its code narrows to the path.
+ */
+export async function grantFolder(real: string, workspace: string, home = homedir()): Promise<string> {
+  if (within(workspace, real, false)) {
+    const parts = relative(workspace, real).split(/[\\/]/);
+    const folder = join(workspace, ...parts.slice(0, parts[0] === "runs" || parts[0] === "files" ? 2 : 1));
+    return holdsProtected(folder, home) ? real : folder;
+  }
+  const own = (await stat(real).catch(() => null))?.isDirectory() ? real : dirname(real);
+  let folder = own;
+  for (let probe = own; ; probe = dirname(probe)) {
+    if (await stat(join(probe, ".git")).then(() => true, () => false)) {
+      folder = probe;
+      break;
+    }
+    if (probe === dirname(probe) || probe === home) break;
+  }
+  return blockedReason(folder) || folder === home || holdsProtected(folder, home) ? real : folder;
+}
+
+/**
+ * Adds a folder to the run's grants and keeps it for the run, so a resumed run and a continued task
+ * have it too. A path that holds something protected is allowed this once, never kept.
+ */
+export async function grantFolderToRun(ctx: JobContext, folder: string, write = true): Promise<void> {
+  if (holdsProtected(folder)) return;
+  const list = write ? (ctx.grants ?? []) : (ctx.readGrants ?? []);
+  if (list.some((row) => within(row, folder))) return;
+  if (write) ctx.grants = [...list, folder];
+  else ctx.readGrants = [...list, folder];
+  await ctx.event("folder_granted", { folder, write });
+  await ctx.prisma?.decisionRule
+    .create({ data: { userId: ctx.userId, source: RUN_RULE_SOURCE, toolName: write ? OUTSIDE_TOOL : OUTSIDE_READ_TOOL, pattern: folder, decision: "allow", sessionId: ctx.job.id } })
+    .catch(() => undefined);
+}
+
+/** Folders a run was let change or read: its own saved answers, and the earlier task's when it continues one. */
+export async function loadGrants(prisma: PrismaClient, userId: string, jobIds: string[]): Promise<{ write: string[]; read: string[] }> {
+  const rows = await prisma.decisionRule.findMany({
+    where: { userId, source: RUN_RULE_SOURCE, toolName: { in: [OUTSIDE_TOOL, OUTSIDE_READ_TOOL] }, decision: "allow", sessionId: { in: jobIds } },
+    select: { pattern: true, toolName: true },
+  });
+  const usable = (pattern: string) => (pattern.startsWith("/") || /^[A-Za-z]:[\\/]/.test(pattern)) && !holdsProtected(pattern);
+  const pick = (tool: string) => [...new Set(rows.filter((row) => row.toolName === tool && usable(row.pattern)).map((row) => row.pattern))];
+  return { write: pick(OUTSIDE_TOOL), read: pick(OUTSIDE_READ_TOOL) };
+}
+
+export type Held = { ok: false; result: unknown; summary: string };
+
+/**
+ * A path outside the run's folder, by name. The hard floor first (keys, Ensemble's own data and
+ * code, system folders), then the mode: reading goes ahead, a folder the run was let into is its
+ * own, and changing a new one asks once for that whole folder (`grantFolder`). Nothing the mode
+ * covers is refused. `command`: the command that names it, shown in the question.
+ */
+export async function outsidePath(
+  ctx: JobContext,
+  real: string,
+  write: boolean,
+  options: { command?: string; withdrawn?: AbortSignal } = {},
+): Promise<{ held: Held | null; asked: boolean }> {
+  if (harmlessPath(real)) return { held: null, asked: false };
+  const floor = outsideRefusal(real, write);
+  if (floor) return { held: refusal(`${real}: ${floor}`, "Refused: off limits"), asked: false };
+  if (granted(ctx, real, write)) return { held: null, asked: false };
+  const zone = zoneOf(ctx, real);
+  const decision = gate(ctx, "outside", false, write, zone);
+  if (decision === "allow") {
+    if (write) await ctx.event(ctx.job.unattended ? "unattended" : "outside", { action: "outside", path: real, zone });
+    return { held: null, asked: false };
+  }
+  if (decision === "block") {
+    ctx.blockedOutside.push(real);
+    return {
+      held: refusal(
+        ctx.accessMode === "review"
+          ? `This run is read-only: no changes outside the folder. ${real}`
+          : `${real} is beyond the Ensemble workspace, and Settings → “Outside the Ensemble workspace” is set to No access; nobody can approve more in an unattended run.`,
+        "Blocked by the run's setting",
+      ),
+      asked: false,
+    };
+  }
+  const folder = await grantFolder(real, ctx.workspace ?? knownWorkspace());
+  const tool = write ? OUTSIDE_TOOL : OUTSIDE_READ_TOOL;
+  const saved = await runRule(ctx, tool, folder);
+  if (saved === "allow") {
+    await grantFolderToRun(ctx, folder, write);
+    return { held: null, asked: false };
+  }
+  if (saved === "deny") return { held: refusal(`The person said no to this run working in ${folder}. Carry on without it and say so in your summary.`, "Not allowed (this run)"), asked: false };
+  await ctx.progress(`Waiting for approval: work in ${folder}`);
+  const title = options.command
+    ? `Run ${options.command.slice(0, 120)}? It ${write ? "changes" : "reads"} ${folder}, outside this run's folder.`
+    : `Let the agent ${write ? "work in" : "read"} ${folder} for this run? It is outside the run's folder.`;
+  const answer = await askPerson(ctx, { event: "permission", toolName: tool, title, command: folder }, options.withdrawn);
+  if (answer.decision !== "allow") {
+    return { held: refusal(`The person did not allow ${write ? "working in" : "reading"} ${folder}.${answer.answer ? ` They said: ${answer.answer}` : ""} Carry on without it.`, "Not allowed"), asked: true };
+  }
+  await grantFolderToRun(ctx, folder, write);
+  return { held: null, asked: true };
+}
+
+function refusal(error: string, summary: string): Held {
+  return { ok: false, result: { error, refused: true, note: "This is the run's setting, not an error to work around. Carry on and mention it in your summary." }, summary };
 }
 
 /** Programs that take code as an argument after `-e`, `-c`, `--eval`…: that code is not a path. */
@@ -534,27 +667,18 @@ export async function realOutside(full: string): Promise<string> {
 }
 
 /**
- * A file tool's path. Inside the folder it goes through the jail. Outside, the
- * hard floor applies, then the run's mode and sandbox (`commandGate`): asked in
- * Ask, used in Review only and Run unattended without the sandbox, and refused
- * back to the model with the sandbox on. A refusal never ends the run.
+ * A file tool's path. Inside the folder it goes through the jail. Outside, `outsidePath` applies
+ * the floor and the run's mode; a refusal never ends the run.
  */
 async function toolPath(
   ctx: JobContext,
   input: string,
   options: { write: boolean; mustExist?: boolean },
-): Promise<{ full: string; outside: boolean; held: null } | { full: null; outside: true; held: { ok: false; result: unknown; summary: string } }> {
+): Promise<{ full: string; outside: boolean; held: null } | { full: null; outside: true; held: Held }> {
   const candidate = resolve(ctx.root, expandHome(input || "."));
   if (within(ctx.root, candidate)) return { full: await jailPath(ctx.root, input || ".", options.mustExist), outside: false, held: null };
   const real = await realOutside(candidate);
-  const refused = outsideRefusal(real, options.write);
-  if (refused) throw new GuardError(refused);
-  const held = await allowOrRefuse(ctx, "outside", false, {
-    toolName: OUTSIDE_TOOL,
-    title: `${options.write ? "Change" : "Read"} ${real}, outside the folder?`,
-    command: real,
-    write: options.write,
-  });
+  const { held } = await outsidePath(ctx, real, options.write);
   if (held) return { full: null, outside: true, held };
   if (options.mustExist) await stat(real).catch(() => {
     throw new GuardError(`${input} does not exist.`);
@@ -565,35 +689,23 @@ async function toolPath(
 /** The run's mode, trust and sandbox applied to one action: null when it may go ahead, else the refusal to hand back. */
 export async function allowOrRefuse(
   ctx: JobContext,
-  action: "command" | "write" | "network" | "credential" | "outside" | "push",
+  action: GateAction,
   inside: boolean,
   prompt: { toolName: string; title: string; command?: string; write?: boolean },
-): Promise<{ ok: false; result: unknown; summary: string } | null> {
+  withdrawn?: AbortSignal,
+): Promise<Held | null> {
+  if (action === "outside" && prompt.command) {
+    const real = await realOutside(resolve(ctx.root, expandHome(prompt.command)));
+    return (await outsidePath(ctx, real, prompt.write ?? true, { withdrawn })).held;
+  }
   const decision = gate(ctx, action, inside, prompt.write ?? true);
   if (decision === "allow") {
-    if (action === "outside") await ctx.event("outside", { path: prompt.command ?? prompt.title, sandboxed: ctx.sandboxed });
-    if (ctx.job.unattended && (action === "push" || action === "write" || action === "command" || action === "outside")) {
-      await ctx.event("unattended", { action, command: prompt.command ?? prompt.title });
-    }
+    if (ctx.job.unattended && action !== "network") await ctx.event("unattended", { action, command: prompt.command ?? prompt.title });
     return null;
   }
   if (decision === "block") {
     const target = prompt.command ?? prompt.title;
-    const readOnly = ctx.accessMode === "review" && action !== "outside";
-    if (!readOnly) ctx.blockedOutside.push(target);
-    return {
-      ok: false,
-      result: {
-        error: readOnly
-          ? `Blocked. This run is read-only: no file changes and no network. ${target}`
-          : ctx.sandboxed
-            ? `Blocked. This run is sandboxed to ${ctx.root}; outside it the person's setting allows ${ctx.outsideAccess === "read-write" ? "reading and writing" : ctx.outsideAccess === "read" ? "reading only" : "nothing"}, and nobody approves more in this run. ${target}`
-            : `Blocked. Nobody approves commands in this run, so it stays inside the trusted folder. ${target}`,
-        refused: true,
-        note: "This is the run's setting, not an error to work around. Carry on inside the folder and mention what you could not reach in your summary.",
-      },
-      summary: readOnly ? "Blocked: read-only run" : "Blocked outside the trusted folder",
-    };
+    return refusal(`Blocked. This run is read-only: no file changes, no network and nothing outside its sandbox. ${target}`, "Blocked: read-only run");
   }
   const saved = await runRule(ctx, prompt.toolName, prompt.command);
   if (saved === "allow") return null;
@@ -601,7 +713,7 @@ export async function allowOrRefuse(
     return { ok: false, result: { error: "The person denied this for the rest of the run.", refused: true }, summary: "Not allowed (this run)" };
   }
   await ctx.progress(`Waiting for approval: ${prompt.title.slice(0, 80)}`);
-  const answer = await askPerson(ctx, { event: "permission", toolName: prompt.toolName, title: prompt.title, command: prompt.command });
+  const answer = await askPerson(ctx, { event: "permission", toolName: prompt.toolName, title: prompt.title, command: prompt.command }, withdrawn);
   await ctx.refreshTrust?.();
   if (answer.decision === "allow") return null;
   return {
@@ -1060,6 +1172,15 @@ export async function undoUnapprovedCommits(ctx: JobContext, before: Map<string,
     : "That command created a commit without the person's approval, and every commit in this run needs it. Ensemble undid the commit; the changes are still in the folder. Commit with `git commit` so the person can approve it.";
 }
 
+/**
+ * What the OS sandbox lets a run's commands write beyond its folder: the folders the person let it
+ * work in, and in an unattended run the whole Ensemble workspace (its dot-folders excepted).
+ */
+export async function runWritable(ctx: Pick<JobContext, "grants" | "job" | "accessMode">): Promise<string[]> {
+  if (ctx.accessMode === "review") return [];
+  return [...(ctx.grants ?? []), ...(ctx.job.unattended ? await workspaceFolders() : [])].filter((folder) => !holdsProtected(folder));
+}
+
 async function command(ctx: JobContext, line: string, cwdInput: string, timeoutSeconds: number) {
   const left = ctx.remainingMs?.();
   if (left !== undefined) timeoutSeconds = Math.max(5, Math.min(timeoutSeconds, Math.floor(left / 1000)));
@@ -1068,23 +1189,23 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
   const cwdForArgs = resolve(ctx.root, cwdInput || ".");
   const outside: string[] = [];
   for (const path of outsideArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) outside.push(await realOutside(path));
-  // Granted to the sandbox for this command once the person (or an unsandboxed free mode) allows them.
+  // Granted to the sandbox for this command once the mode (or the person) allows them.
   const grants: { readWrite: string[]; readOnly: string[] } = { readWrite: [], readOnly: [] };
-  if (outside.length) {
-    for (const path of outside) {
-      const refused = outsideRefusal(path, false);
-      if (refused) throw new GuardError(`${path}: ${refused}`);
-    }
-    // A program that only reads (cat, ls, grep, git log…) reads outside paths; anything else might write them.
-    const write = !readsOnly(argv);
-    const held = await allowOrRefuse(ctx, "outside", false, {
-      toolName: OUTSIDE_TOOL,
-      title: `${write ? "Use" : "Read"} ${outside[0]}${outside.length > 1 ? ` and ${outside.length - 1} more` : ""}, outside the folder?`,
-      command: outside[0],
-      write,
-    });
+  // A program that only reads (cat, ls, grep, git log…) reads outside paths; anything else might write them.
+  const write = !readsOnly(argv);
+  let asked = false;
+  for (const path of outside) {
+    const verdict = await outsidePath(ctx, path, write, { command: line });
+    if (verdict.held) return verdict.held;
+    asked ||= verdict.asked;
+    // A folder that holds keys or Ensemble's own files is never opened to the sandbox, not even to read: the command sees only what it may.
+    if (holdsProtected(path)) continue;
+    (!write || outsideRefusal(path, true) || ctx.accessMode === "review" ? grants.readOnly : grants.readWrite).push(path);
+  }
+  if (isRemoteProgram(programArgv(argv)[0] ?? program) && !asked) {
+    const held = await allowOrRefuse(ctx, "remote", true, { toolName: program, title: `Run ${line.slice(0, 140)}? It connects to another computer.`, command: line });
     if (held) return held;
-    for (const path of outside) (!write || outsideRefusal(path, true) || ctx.accessMode === "review" ? grants.readOnly : grants.readWrite).push(path);
+    asked = true;
   }
   let full = argv;
   let watch: Map<string, string> | null = null;
@@ -1163,8 +1284,8 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
     }
     full = ["git", ...gitHardening(false, ctx.commitAuthor || "Ensemble Agent <agent@ensemble.local>"), ...argv.slice(1)];
   } else {
-    // Reading inside the folder (ls, cat, grep…) asks nobody, as in the person's own coding agents.
-    const held = (await quietArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) ? null : await allowOrRefuse(ctx, "command", true, { toolName: program, title: `Run ${line.slice(0, 140)}`, command: line });
+    // Reading inside the folder (ls, cat, grep…) asks nobody, as in the person's own coding agents; a command the person just approved is not asked again.
+    const held = asked || (await quietArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) ? null : await allowOrRefuse(ctx, "command", true, { toolName: program, title: `Run ${line.slice(0, 140)}`, command: line });
     if (held) return held;
     const guarded = ctx.job.delivery === "local" || (ctx.job.askBeforePublish && !ctx.job.unattended);
     if (guarded && ctx.accessMode !== "review") watch = await refTips(ctx);
@@ -1183,7 +1304,7 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
     useCredentials: false,
     who: "agent",
     readOnly: review ? [ctx.root, ...grants.readOnly, ...grants.readWrite] : grants.readOnly,
-    readWrite: review ? [] : [ctx.root, ...grants.readWrite],
+    readWrite: review ? [] : [ctx.root, ...(await runWritable(ctx)), ...grants.readWrite],
     timeoutMs: timeoutSeconds * 1000,
     signal: ctx.signal,
     group: ctx.job.id,

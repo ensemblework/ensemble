@@ -10,7 +10,7 @@ import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
 import { deviceEngines, deviceOpensPullRequests, folderLabels, repositoryLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
 import { actorFor } from "../../sharing/context.js";
-import { Assign, createJob } from "../../workspace/assign.js";
+import { Assign, autoKind, createJob } from "../../workspace/assign.js";
 import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
 import { engineName, profileLine } from "./code.js";
 
@@ -78,7 +78,8 @@ async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.i
   }
   const profiled = profile.deviceId ? computers.find((row) => row.id === profile.deviceId) : undefined;
   if (profiled) return { deviceId: profiled.id, computer: profiled };
-  if (!named && serverRunnerEnabled() && engine === "ensemble") return {};
+  // Ensemble's agent with no computer to go to researches and writes on the server.
+  if (!named && engine === "ensemble" && (serverRunnerEnabled() || !computers.length)) return {};
   const picked = computers.find((row) => row.online) ?? computers[0];
   if (!picked) throw new ToolBlockedError(`No computer is paired, so there is nowhere to run ${engineName(engine)}. ${PAIR_A_COMPUTER}`);
   return { deviceId: picked.id, computer: picked };
@@ -120,9 +121,9 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
   const task = await ctx.prisma.task.findFirst({ where: { id: input.taskId, userId: ctx.userId, deletedAt: null }, select: { id: true, title: true } });
   if (!task) throw new ToolBlockedError("That task is not on the board. Use the @task mention's id or hub_list_tasks.");
   const profile = chooseProfile(ctx, input.profile);
-  const engine = input.agent ?? (profile.kind === "research" ? "ensemble" : profile.engine);
-  const kind = engine === "ensemble" ? profile.kind : "code";
+  const engine = input.agent ?? profile.engine;
   const where = await chooseComputer(ctx, profile, engine, input.computer);
+  const kind = autoKind({ engine, deviceId: where.deviceId, folder: input.folder, repoUrl: input.repoUrl, pullRequest: input.pullRequest }, serverRunnerEnabled() && !actorFor(ctx.userId));
   if (input.folder && where.computer && !where.computer.folders.includes(input.folder.trim())) {
     throw new ToolBlockedError(
       `“${where.computer.name}” has no shared folder called “${input.folder}”.${where.computer.folders.length ? ` Its folders: ${where.computer.folders.map((name) => `“${name}”`).join(", ")}.` : " It has not shared any folders."}`,

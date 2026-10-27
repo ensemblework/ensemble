@@ -10,7 +10,7 @@ import { decisionBus, expireStale, matchingRule, normalize, publicDecision, wait
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
-import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
+import { OUTSIDE_READ_TOOL, OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { trustChanged } from "../workspace/trust-share.js";
 import { handoffFor } from "../workspace/handoff.js";
@@ -332,8 +332,8 @@ async function saveEnsembleAnswer(
 ): Promise<void> {
   if (row.event === "question" || body.scope === "once") return;
   if (row.toolName === "git push") throw new AnswerError(400, "A push is confirmed each time. Choose Allow once.");
-  if (row.toolName === OUTSIDE_TOOL && body.scope === "always") {
-    throw new AnswerError(400, "A path outside the folder can be allowed once or for this run, not always.");
+  if ((row.toolName === OUTSIDE_TOOL || row.toolName === OUTSIDE_READ_TOOL) && body.scope === "always") {
+    throw new AnswerError(400, "A folder outside the run's is allowed for this run, not always.");
   }
   const command = (row.detail as { command?: string | null }).command ?? "*";
   if (body.scope === "session" || body.decision === "deny") {

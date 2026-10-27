@@ -75,7 +75,7 @@ test("/run with a profile that ends in a pull request runs in a clone of this fo
 
   const plain = runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile: { ...profile, pullRequest: null }, engine: null });
   assert.deepEqual([plain.pullRequest, plain.repoUrl, plain.folder, plain.delivery, plain.branchMode], [undefined, undefined, "/work/app", "push", "new"]);
-  assert.match(profileSummary({ ...profile, pullRequest: null }), /Ask · No limits \(commit, push, pull requests\) ·/);
+  assert.match(profileSummary({ ...profile, pullRequest: null }), /Review only · No limits \(commit, push, pull requests\) ·/);
 });
 
 test("a chat message runs the agent in this folder under the profile; later ones continue the first, on the same branch", () => {

@@ -77,7 +77,8 @@ export function deviceDecisionView(input: {
 export function confirmCopy(toolName: string | null | undefined, deviceName: string | null | undefined): string {
   const where = computerName(deviceName);
   if (toolName === "git push") return `Allow pushing on ${where}?`;
-  if (toolName === "outside") return `Allow the agent on ${where} to use a path outside its folder?`;
+  if (toolName === "outside") return `Allow the agent on ${where} to work in a folder outside its own for this run?`;
+  if (toolName === "outside-read") return `Allow the agent on ${where} to read a folder outside its own for this run?`;
   if (toolName === "trust") return `Trust this folder on ${where}? Agents can then run commands there without asking.`;
   return `Allow this on ${where}?`;
 }

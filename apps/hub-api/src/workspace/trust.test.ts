@@ -1,19 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  UNATTENDED_CODE,
-  UNATTENDED_MESSAGE,
-  UnattendedTrustError,
-  checkUnattended,
-  ReviewTrustError,
-  checkModeTrust,
-  commandGate,
-  isFolderTrusted,
-  pathCovers,
-  rulesForJob,
-  runModeOf,
-  storedMode,
-} from "./trust.js";
+import { commandGate, isFolderTrusted, pathCovers, rulesForJob, runModeOf, storedMode } from "./trust.js";
 
 const root = "/Users/person/ensemble-workspace";
 const project = "/Users/person/src/fieldnote";
@@ -38,16 +25,6 @@ test("path rules are device rules or this job only", () => {
   assert.deepEqual(rulesForJob(rows, "job-1"), [project, "/tmp/once"]);
 });
 
-test("unattended on an untrusted folder is rejected with the fixed message", () => {
-  const error = checkUnattended({ unattended: true, trusted: false });
-  assert.ok(error instanceof UnattendedTrustError);
-  assert.equal(error?.statusCode, 400);
-  assert.equal(error?.code, UNATTENDED_CODE);
-  assert.equal(error?.message, UNATTENDED_MESSAGE);
-  assert.equal(checkUnattended({ unattended: true, trusted: true }), null);
-  assert.equal(checkUnattended({ unattended: false, trusted: false }), null);
-});
-
 test("Ask: commands inside trust stay quiet, everything else asks", () => {
   const base = { trusted: true, silentWorkspace: true, explicitTrust: false, unattended: false, accessMode: "read-write" as const, inside: true };
   assert.equal(commandGate({ ...base, action: "command" }), "allow");
@@ -69,51 +46,54 @@ test("a push the git permission allows does not ask in a trusted folder", () => 
   assert.equal(commandGate({ ...base, accessMode: "auto" }), "allow");
 });
 
-test("Review only runs freely inside a trusted folder and refuses paths outside it", () => {
+test("Review only runs freely in its folder, trusted or not, and asks once before changing another folder", () => {
   const base = { trusted: true, silentWorkspace: false, explicitTrust: false, unattended: false, accessMode: "auto" as const, inside: true };
-  for (const action of ["command", "write", "network", "credential"] as const) assert.equal(commandGate({ ...base, action }), "allow", action);
-  assert.equal(commandGate({ ...base, action: "outside", inside: false }), "block");
-  // Untrusted: Review only falls back to asking (assignment refuses it first).
-  assert.equal(commandGate({ ...base, trusted: false, action: "command" }), "prompt");
-  assert.equal(commandGate({ ...base, trusted: false, action: "outside", inside: false }), "prompt");
+  for (const action of ["command", "write", "network", "credential", "push"] as const) {
+    assert.equal(commandGate({ ...base, action }), "allow", action);
+    assert.equal(commandGate({ ...base, trusted: false, action }), "allow", `${action} untrusted`);
+  }
+  // Another computer, or a command outside the OS sandbox, is worth a question.
+  assert.equal(commandGate({ ...base, action: "remote" }), "prompt");
+  assert.equal(commandGate({ ...base, action: "escape" }), "prompt");
+  const outside = { ...base, inside: false, action: "outside" as const };
+  for (const zone of ["workspace", "outside"] as const) {
+    assert.equal(commandGate({ ...outside, zone, outsideWrite: false }), "allow", `${zone} read`);
+    assert.equal(commandGate({ ...outside, zone, outsideWrite: true }), "prompt", `${zone} write`);
+  }
+  assert.equal(commandGate({ ...outside, zone: "temp", outsideWrite: true }), "allow");
 });
 
-test("Run unattended never asks: inside is allowed, outside and untrusted are blocked", () => {
-  const base = { trusted: true, silentWorkspace: false, explicitTrust: false, unattended: true, accessMode: "read-write" as const, inside: true };
-  for (const action of ["command", "write", "network", "credential", "push"] as const) assert.equal(commandGate({ ...base, action }), "allow", action);
-  assert.equal(commandGate({ ...base, action: "outside", inside: false }), "block");
-  assert.equal(commandGate({ ...base, trusted: false, action: "command" }), "block");
+test("Run unattended never asks and needs no trusted folder or sandbox: it works across the workspace and the person's folders", () => {
+  const base = { trusted: false, silentWorkspace: false, explicitTrust: false, unattended: true, accessMode: "read-write" as const, inside: true };
+  for (const action of ["command", "write", "network", "credential", "push", "remote", "escape"] as const) {
+    assert.equal(commandGate({ ...base, action }), "allow", action);
+    assert.equal(commandGate({ ...base, action, strength: "ask" }), "allow", `${action} without a sandbox`);
+  }
+  const outside = { ...base, inside: false, action: "outside" as const };
+  for (const zone of ["workspace", "temp", "outside"] as const) {
+    for (const sandboxed of [true, false]) assert.equal(commandGate({ ...outside, zone, sandboxed, outsideWrite: true }), "allow", `${zone} ${sandboxed}`);
+  }
 });
 
-test("with the sandbox off, Review only and Run unattended use outside paths without asking", () => {
-  const free = { trusted: true, silentWorkspace: false, explicitTrust: false, accessMode: "read-write" as const, inside: false, action: "outside" as const };
-  assert.equal(commandGate({ ...free, unattended: true, sandboxed: false }), "allow");
-  assert.equal(commandGate({ ...free, unattended: true, sandboxed: true }), "block");
-  assert.equal(commandGate({ ...free, unattended: false, accessMode: "auto", sandboxed: false }), "allow");
-  assert.equal(commandGate({ ...free, unattended: false, accessMode: "auto", sandboxed: true }), "block");
-  // Ask always asks; an untrusted folder never runs unattended.
-  assert.equal(commandGate({ ...free, unattended: false, sandboxed: false }), "prompt");
-  assert.equal(commandGate({ ...free, unattended: true, trusted: false, sandboxed: false }), "block");
-});
-
-test("sandboxed: the outside-folder setting says what goes ahead (read only by default)", () => {
+test("outside the workspace, the person's outside-folder setting holds; inside the workspace it does not apply", () => {
   const outside = { trusted: true, silentWorkspace: false, explicitTrust: false, inside: false, action: "outside" as const, sandboxed: true };
   const free = { ...outside, unattended: true, accessMode: "read-write" as const };
   const ask = { ...outside, unattended: false, accessMode: "read-write" as const };
-  // Read only (default): reading goes ahead in every mode; writing asks in Ask and is refused when nobody answers.
-  assert.equal(commandGate({ ...free, outsideAccess: "read", outsideWrite: false }), "allow");
-  assert.equal(commandGate({ ...free, outsideAccess: "read", outsideWrite: true }), "block");
+  // Read only (default): reading goes ahead in every mode; writing asks in Ask.
   assert.equal(commandGate({ ...ask, outsideAccess: "read", outsideWrite: false }), "allow");
   assert.equal(commandGate({ ...ask, outsideAccess: "read", outsideWrite: true }), "prompt");
   // Read and write: both go ahead.
-  assert.equal(commandGate({ ...free, outsideAccess: "read-write", outsideWrite: true }), "allow");
-  // No access: the folder is the edge.
+  assert.equal(commandGate({ ...ask, outsideAccess: "read-write", outsideWrite: true }), "allow");
+  // No access: asks in Ask, and is the edge when nobody answers.
   assert.equal(commandGate({ ...free, outsideAccess: "none", outsideWrite: false }), "block");
+  assert.equal(commandGate({ ...free, outsideAccess: "none", outsideWrite: true }), "block");
   assert.equal(commandGate({ ...ask, outsideAccess: "none", outsideWrite: false }), "prompt");
+  assert.equal(commandGate({ ...free, zone: "workspace", outsideAccess: "none", outsideWrite: true }), "allow");
   // A read-only run never writes outside, whatever the setting.
   assert.equal(commandGate({ ...ask, accessMode: "review", outsideAccess: "read-write", outsideWrite: true }), "block");
-  // Unsandboxed runs ignore the setting.
+  // Unsandboxed runs ignore No access.
   assert.equal(commandGate({ ...free, sandboxed: false, outsideAccess: "none", outsideWrite: true }), "allow");
+  assert.equal(commandGate({ ...ask, sandboxed: false, outsideAccess: "none", outsideWrite: false }), "allow");
 });
 
 test("read-only never writes and never uses the network", () => {
@@ -125,20 +105,13 @@ test("read-only never writes and never uses the network", () => {
   assert.equal(commandGate({ ...base, unattended: true, action: "command", strength: "advisory" }), "block");
 });
 
-test("without an OS sandbox Ask still follows trust, and Windows asks before everything", () => {
+test("without an OS sandbox Ask still follows trust, and a runtime with none asks before everything", () => {
   const base = { trusted: true, silentWorkspace: true, explicitTrust: true, unattended: false, accessMode: "read-write" as const, inside: true };
   assert.equal(commandGate({ ...base, action: "command", strength: "advisory" }), "allow");
   assert.equal(commandGate({ ...base, action: "command", strength: "ask" }), "prompt");
   assert.equal(commandGate({ ...base, action: "write", strength: "ask" }), "prompt");
-  assert.equal(commandGate({ ...base, accessMode: "auto", action: "command", strength: "ask" }), "prompt");
-  assert.equal(commandGate({ ...base, unattended: true, action: "command", strength: "ask" }), "block");
-});
-
-test("Review only and Run unattended need a trusted folder; Ask does not", () => {
-  assert.ok(checkModeTrust({ accessMode: "auto", unattended: false, trusted: false }) instanceof ReviewTrustError);
-  assert.ok(checkModeTrust({ accessMode: "read-write", unattended: true, trusted: false }) instanceof UnattendedTrustError);
-  assert.equal(checkModeTrust({ accessMode: "read-write", unattended: false, trusted: false }), null);
-  assert.equal(checkModeTrust({ accessMode: "auto", unattended: false, trusted: true }), null);
+  assert.equal(commandGate({ ...base, accessMode: "auto", action: "command", strength: "ask" }), "allow");
+  assert.equal(commandGate({ ...base, action: "remote" }), "prompt");
 });
 
 test("run modes map to the stored pair and back", () => {
