@@ -167,7 +167,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "orchestration.minutes", label: "Minutes per task", keywords: "timeout minutes duration time limit", about: "A task that takes longer is stopped; its work is kept.", href: at("assistant", "jump-orchestration-minutes-per-task") },
     { id: "orchestration.sandbox", label: "Sandbox by default", keywords: "sandbox native isolation execution", about: "New code tasks start inside this computer's sandbox.", href: at("assistant", "jump-orchestration-sandbox-by-default") },
     { id: "orchestration.network", label: "Internet for agent commands by default", keywords: "network internet sandbox commands", about: "Whether agent commands can reach the internet.", href: at("assistant", "jump-orchestration-internet-for-agent-commands-by-default") },
-    { id: "orchestration.outside", label: "Outside the work folder, in sandboxed tasks", keywords: "outside access other folders read write", about: "Whether sandboxed tasks may read or write your other folders.", href: at("assistant", "orchestration") },
+    { id: "orchestration.outside", label: "Outside the Ensemble workspace", keywords: "outside access other folders read write work folder", about: "Whether tasks may read or change your folders beyond the Ensemble workspace without asking.", href: at("assistant", "orchestration") },
   ]),
   ...group("assistant", "Quiet hours", [
     { id: "quiet.enabled", label: "Quiet hours", keywords: "quiet hours do not disturb notifications night", about: "Notifications wait until morning during these hours.", href: at("assistant", "jump-quiet-quiet-hours"), key: "quietHours.enabled", rule: bool },

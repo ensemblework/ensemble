@@ -8,13 +8,14 @@
  * bubblewrap, Landlock or the Windows sandbox account), so a script the agent
  * writes cannot reach outside its folder either.
  */
-import { lstat, mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { env } from "../config.js";
 import { compileSeatbeltProfile, SECRET_HOME_PATHS } from "./sandbox/seatbelt.js";
+import { programArgv } from "./shell-parse.js";
 import { capabilities } from "./sandbox/spawn.js";
 
 export class GuardError extends Error {
@@ -40,10 +41,33 @@ export function expandHome(input: string): string {
   return input;
 }
 
+/** The workspace folder as configured, without creating it or following links. */
+export function configuredWorkspace(): string {
+  return resolve(expandHome(env.ENSEMBLE_WORKSPACE_ROOT || join(HOME, "ensemble-workspace")));
+}
+
+let realWorkspace: string | null = null;
+
 export async function workspaceRoot(): Promise<string> {
-  const root = resolve(expandHome(env.ENSEMBLE_WORKSPACE_ROOT || join(HOME, "ensemble-workspace")));
+  const root = configuredWorkspace();
   await mkdir(root, { recursive: true });
-  return realpath(root);
+  realWorkspace = await realpath(root);
+  return realWorkspace;
+}
+
+/** The workspace folder for checks that cannot wait: the real path once it was resolved, else the configured one. */
+export function knownWorkspace(): string {
+  return realWorkspace ?? configuredWorkspace();
+}
+
+/**
+ * The workspace's own folders a run may write beside its own: `runs` and every folder the person or
+ * an agent made there, never Ensemble's dot-folders (`.askpass`, `.cache`) or the attachment copies in `files`.
+ */
+export async function workspaceFolders(): Promise<string[]> {
+  const root = await workspaceRoot();
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "files").map((entry) => join(root, entry.name));
 }
 
 export function within(root: string, candidate: string, allowEqual = true): boolean {
@@ -157,7 +181,7 @@ export function harmlessPath(real: string): boolean {
 }
 
 /** The computer's temporary folders, where tools write scratch files. */
-function inTemp(real: string): boolean {
+export function inTemp(real: string): boolean {
   return ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders", tmpdir()].some((root) => within(root, real));
 }
 
@@ -177,6 +201,10 @@ export function outsideRefusal(real: string, write: boolean, home = HOME): strin
   if (harmlessPath(real)) return null;
   const appData = desktopDataDir({ platform: process.platform, home });
   if (within(appData, real)) return "Ensemble's own data is off limits.";
+  // Ensemble's git helper runs with the person's GitHub token: nothing a run starts may touch it.
+  if ([knownWorkspace(), configuredWorkspace()].some((workspace) => within(join(workspace, ".askpass"), real))) return "Ensemble's git sign-in helper is off limits.";
+  // Copies of the files attached to tasks, made for the run to read.
+  if (write && [knownWorkspace(), configuredWorkspace()].some((workspace) => within(join(workspace, "files"), real))) return "Attached files are read-only copies. Save your work in your own folder.";
   if (write && (within(ENSEMBLE_SOURCE, real) || within(real, ENSEMBLE_SOURCE))) return "This is Ensemble's own code: a run does not change it.";
   if (within(home, real, false)) {
     const secret = underHome(home, real, SECRET_PATHS);
@@ -199,6 +227,22 @@ export function outsideRefusal(real: string, write: boolean, home = HOME): strin
   }
   if (write && (real === "/" || real === dirname(home))) return "Writing at the top of the disk is refused.";
   return null;
+}
+
+/**
+ * A folder that holds something no run may reach (keys and sign-ins, Ensemble's data, its git
+ * helper, its own code): reading or writing inside it may be fine, but it is never handed to a run
+ * as a whole folder, and never opened for writing in a sandbox.
+ */
+export function holdsProtected(real: string, home = HOME): boolean {
+  const protectedPaths = [
+    desktopDataDir({ platform: process.platform, home }),
+    join(knownWorkspace(), ".askpass"),
+    join(configuredWorkspace(), ".askpass"),
+    ENSEMBLE_SOURCE,
+    ...SECRET_PATHS.map((name) => join(home, name)),
+  ];
+  return protectedPaths.some((path) => within(real, path));
 }
 
 function windowsSystemRoots(): string[] {
@@ -315,19 +359,29 @@ const NEVER = new Set([
 ]);
 
 /**
- * What a coding agent's command never starts: privilege, persistence, the keychain, remote shells,
- * the machine's power and disks, and killing programs by name (`pkill node` would stop Ensemble
+ * What a coding agent's command never starts: privilege, persistence, the keychain, the machine's
+ * power, disks and system settings, and killing programs by name (`pkill node` would stop Ensemble
  * itself). Everyday developer tools (docker, nohup, tmux, open, kill with a process id) are the run's.
  */
 const AGENT_NEVER = new Set([
   "sudo", "su", "doas", "launchctl", "defaults", "security", "systemsetup", "networksetup", "scutil", "dscl", "crontab",
   "shutdown", "reboot", "halt", "poweroff", "diskutil", "mount", "umount", "csrutil", "tccutil", "spctl", "pmset", "osascript",
-  "killall", "pkill", "ssh", "scp", "sftp", "ssh-add", "telnet", "nc", "ncat",
+  "killall", "pkill",
 ]);
 
-/** A program a coding agent's command may never start, by name or path (sudo, ssh, crontab, …). */
+/** Programs that reach another computer: the run's mode decides (asked in Ask and Review only, allowed unattended). */
+const REMOTE_PROGRAMS = new Set(["ssh", "scp", "sftp", "ssh-add", "telnet", "nc", "ncat"]);
+
+const programName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+
+/** A program a coding agent's command may never start, by name or path (sudo, crontab, shutdown, …). */
 export function isNeverProgram(program: string): boolean {
-  return AGENT_NEVER.has(program.split(/[\\/]/).pop()!.replace(/\.exe$/i, ""));
+  return AGENT_NEVER.has(programName(program));
+}
+
+/** A program that opens a session on another computer (ssh, scp, nc, …). */
+export function isRemoteProgram(program: string): boolean {
+  return REMOTE_PROGRAMS.has(programName(program));
 }
 
 export interface CommandPolicy {
@@ -336,12 +390,17 @@ export interface CommandPolicy {
   network: boolean;
 }
 
-/** Throws unless argv[0] is allowed. Returns the program name. */
+/**
+ * Throws unless argv[0] may start. Returns the program name. An agent may start any program on the
+ * PATH except the never-list (privilege, persistence, system settings); the person's terminal keeps
+ * its allow-list.
+ */
 export function checkProgram(argv: string[], policy: CommandPolicy): string {
   const program = argv[0]!;
   if (program.includes("/") || program.includes("\\")) {
-    throw new GuardError("Run programs by name (python, node, git…). Scripts run through their interpreter: python script.py.");
+    throw new GuardError("Run programs by name (python, node, git…). Scripts run through their interpreter: python script.py, bash run.sh.");
   }
+  if (policy.who === "agent") return checkAgentProgram(argv, policy);
   if (NEVER.has(program)) throw new GuardError(`${program} is not allowed here.`);
   if (program === "git") return program;
   if (program === "gh") {
@@ -359,6 +418,21 @@ export function checkProgram(argv: string[], policy: CommandPolicy): string {
     return program;
   }
   throw new GuardError(`${program} is not on the allow-list. Allowed: git, ${DEV_TOOLS.slice(0, 10).join(", ")}, and common file tools.`);
+}
+
+function checkAgentProgram(argv: string[], policy: CommandPolicy): string {
+  // `env sudo …`, `nohup pkill …`, `timeout 5 ssh …`: the program that actually runs is judged.
+  const inner = programArgv(argv);
+  if (inner.length && inner[0] !== argv[0]) checkAgentProgram(inner, policy);
+  const program = argv[0]!;
+  if (isNeverProgram(program)) throw new GuardError(`${program} is not run by agents in Ensemble (privilege, persistence or system settings).${/pkill|killall/.test(program) ? " Stop a process with kill and its process id instead." : ""}`);
+  if ((program === "gh" || NETWORK_TOOLS.includes(program) || isRemoteProgram(program)) && !policy.network) {
+    throw new GuardError(`${program} needs network access, which is off for this job.`);
+  }
+  if (["bash", "sh", "zsh", "dash", "fish"].includes(program) && !policy.sandboxed) {
+    throw new GuardError("Shell scripts and shell -c run in the sandbox. Run the programs one at a time, or turn the sandbox on for this run.");
+  }
+  return program;
 }
 
 export interface GitLimits {

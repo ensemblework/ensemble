@@ -3,14 +3,14 @@
  * default for Quick assign. The schema and the limit live in shared-types
  * (`RunProfile`, `MAX_RUN_PROFILES`); the API refuses a fourth.
  */
-import { ENGINE_LABELS, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { ENGINE_LABELS, INCLUDED_PROVIDER, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { pullRequestLine } from "./pull-request";
 
 export type ProfileFields = Omit<RunProfile, "id" | "name">;
 
 export const QUICK_ID = QUICK_PROFILE_ID;
 
-/** The built-in profile while none is saved: code in its own checkout, git without limits, Ask. */
+/** The built-in profile while none is saved: its own checkout, git without limits, Review only. */
 export const quickProfile = quickRunProfile;
 
 export function profileFields(profile: RunProfile): ProfileFields {
@@ -19,7 +19,6 @@ export function profileFields(profile: RunProfile): ProfileFields {
 }
 
 const KEYS: Array<keyof ProfileFields> = [
-  "kind",
   "deviceId",
   "engine",
   "model",
@@ -84,13 +83,35 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
   return (saved ?? []).filter((row) => row.id !== id);
 }
 
+/** Who does the work, as the agent picker holds it: null follows the task's complexity tier. */
+export type ProfileAgent = { provider: string; model: string; effort: string; context?: ContextTier; fast?: boolean } | null;
+
+/** A profile's agent and model as a picker choice. */
+export function profileAgent(profile: Pick<RunProfile, "engine" | "model" | "effort" | "context" | "fast">): ProfileAgent {
+  if (isCodeEngine(profile.engine)) {
+    return { provider: profile.engine, model: profile.model, effort: profile.effort, ...(profile.context === "long_context" ? { context: "long_context" as const } : {}), ...(profile.fast ? { fast: true } : {}) };
+  }
+  const [provider, model] = profile.model.includes("::") ? (profile.model.split("::", 2) as [string, string]) : ["", ""];
+  return provider && model ? { provider, model, effort: profile.effort } : null;
+}
+
+/** The profile fields for a picker choice. */
+export function agentFields(choice: ProfileAgent): Pick<ProfileFields, "engine" | "model" | "effort" | "context" | "fast"> {
+  if (!choice) return { engine: "ensemble", model: "", effort: "default", context: undefined, fast: undefined };
+  if (isCodeEngine(choice.provider)) {
+    return { engine: choice.provider, model: choice.model, effort: choice.effort as ReasoningEffort, context: choice.context === "long_context" ? "long_context" : undefined, fast: choice.fast ? true : undefined };
+  }
+  return { engine: "ensemble", model: `${choice.provider}::${choice.model}`, effort: choice.effort as ReasoningEffort, context: undefined, fast: undefined };
+}
+
 /** One line that says what a profile does, for its tooltip. */
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   // A run that ends in a pull request may commit; Ensemble pushes its branch when it ends.
   const delivery = profile.pullRequest ? "commit" : profile.delivery;
   const git = profile.pullRequest ? "may commit" : delivery === "local" ? "local only" : delivery === "commit" ? "may commit, no push" : "no git limits";
-  const engine = isCodeEngine(profile.engine) ? `${ENGINE_LABELS[profile.engine]} · ` : "";
+  const chosen = profileAgent(profile);
+  const agent = isCodeEngine(profile.engine) ? ENGINE_LABELS[profile.engine] : chosen ? (chosen.provider === INCLUDED_PROVIDER ? "Included model" : chosen.model) : "Matches the task";
   const pull = profile.pullRequest ? ` · ${pullRequestLine(profile.pullRequest)}` : "";
-  return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}`;
+  return `${agent} · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}`;
 }

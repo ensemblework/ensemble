@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
 import type { WorkspaceJob } from "@prisma/client";
@@ -212,9 +212,15 @@ test("save_attachment copies the original into the folder, never over a file unl
   const named = await runTool(ctx, "save_attachment", { file: "Field brief.md", path: "docs/" });
   assert.equal((named.result as { saved: string }).saved, "docs/Field brief.md");
 
-  const outside = await runTool(ctx, "save_attachment", { file: "site.png", path: "../escaped.png" });
-  assert.equal(outside.ok, false);
-  assert.equal((outside.result as { refused?: boolean }).refused, true);
+  // Outside the folder the run's mode decides: Review only writes the computer's temporary folders without asking.
+  const scratch = `../escaped-${Date.now().toString(36)}.png`;
+  const outside = await runTool(ctx, "save_attachment", { file: "site.png", path: scratch });
+  assert.equal(outside.ok, true, JSON.stringify(outside.result));
+  await rm(join(ctx.root, scratch), { force: true });
+  // Keys and the attachment copies themselves are never written.
+  const key = await runTool(ctx, "save_attachment", { file: "site.png", path: join(homedir(), ".ssh", "authorized_keys") });
+  assert.equal(key.ok, false);
+  assert.equal((key.result as { refused?: boolean }).refused, true, JSON.stringify(key.result));
   const git = await runTool(ctx, "save_attachment", { file: "site.png", path: ".git/hooks/pre-commit" });
   assert.equal(git.ok, false);
 

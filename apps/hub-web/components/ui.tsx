@@ -396,6 +396,7 @@ export function Popover({
   width = 240,
   className,
   fill = false,
+  maxHeight = 340,
 }: {
   trigger: (open: boolean, toggle: () => void) => React.ReactNode;
   children: (close: () => void) => React.ReactNode;
@@ -403,6 +404,8 @@ export function Popover({
   width?: number;
   className?: string;
   fill?: boolean;
+  /** The tallest the panel grows before it scrolls. */
+  maxHeight?: number;
 }) {
   const owner = useContext(ModalScope);
   const z = useLayerZ(120);
@@ -445,7 +448,7 @@ export function Popover({
       const next = placeAnchoredPanel({
         anchor,
         panelWidth: width,
-        panelHeight: Math.min(panel.scrollHeight, 340),
+        panelHeight: Math.min(panel.scrollHeight, maxHeight),
         viewport: { width: window.innerWidth, height: window.innerHeight },
         align,
         previousSide: side.current,
@@ -457,7 +460,7 @@ export function Popover({
       setBox((prev) =>
         prev && prev.top === next.top && prev.left === left && prev.width === usedWidth && prev.maxHeight === next.maxHeight
           ? prev
-          : { top: next.top, left, width: usedWidth, maxHeight: Math.min(next.maxHeight, 340) },
+          : { top: next.top, left, width: usedWidth, maxHeight: Math.min(next.maxHeight, maxHeight) },
       );
     };
     place();
@@ -467,7 +470,7 @@ export function Popover({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open, align, width]);
+  }, [open, align, width, maxHeight]);
   const visible = box !== null;
   useEffect(() => {
     const panel = panelRef.current;
@@ -503,7 +506,7 @@ export function Popover({
                 top: box?.top ?? 0,
                 left: box?.left ?? 0,
                 width: box?.width ?? width,
-                maxHeight: box ? Math.min(box.maxHeight, 340) : 340,
+                maxHeight: box ? Math.min(box.maxHeight, maxHeight) : maxHeight,
                 zIndex: z,
                 visibility: box ? "visible" : "hidden",
               }}

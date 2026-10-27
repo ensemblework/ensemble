@@ -18,13 +18,12 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
-import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
+import { askpassPath, ENSEMBLE_SOURCE, SECRET_PATHS, workspaceRoot } from "../guard.js";
 import { bundledCodex } from "../handoff.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
-import { SECRET_HOME_PATHS } from "../sandbox/seatbelt.js";
 import { askPerson, type JobContext } from "../tools.js";
-import { claudeFilesystem, type EngineResult } from "./claude-code.js";
+import { claudeFilesystem, engineSandboxPaths, openRoots, type EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
@@ -288,9 +287,10 @@ export async function runCodex(
       throw new Error("Codex is not signed in on this computer. Open the ChatGPT app (or run `codex login`) and sign in, then Run again.");
     }
     const home = homedir();
-    const closed = [...SECRET_HOME_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
-    const access = ctx.outsideAccess ?? "none";
-    const writable = claudeFilesystem({ access, home, writable: [ctx.root, await cacheDir()], closed, homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite;
+    const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files")];
+    const paths = await engineSandboxPaths(ctx);
+    // Codex's sandbox has no deny list: no writable root may hold a closed path (a home folder holding Ensemble's code, the workspace holding its git helper).
+    const writable = await openRoots(claudeFilesystem({ access: paths.access, home, writable: paths.writable, closed, homeEntries: paths.access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite, closed);
     const settings = {
       cwd: ctx.root,
       approvalPolicy: codexApprovalPolicy(ctx),

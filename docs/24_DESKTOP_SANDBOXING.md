@@ -6,9 +6,9 @@ These controls live in `apps/hub-api/src/workspace` and are shared by the deskto
 
 | Layer | Source | Responsibility |
 | --- | --- | --- |
-| Assignment | `assign.ts`, route/dialog validation | Persist mode, folder, model, network/Git/sandbox choices and budgets |
+| Assignment | `assign.ts`, route/dialog validation | Persist mode, folder, agent and model, network/Git/sandbox choices and budgets |
 | Folder and argument checks | `guard.ts`, `folder-read.ts` | Canonical paths, blocked roots and secret areas, program/argv rules |
-| Trust and prompts | `trust.ts`, `trust-share.ts`, `tools.ts` | Trusted paths, pending decisions, outside-folder grants |
+| Trust and prompts | `trust.ts`, `trust-share.ts`, `tools.ts` | Run modes, trusted paths, pending decisions, per-run folder grants |
 | Git | `git-gate.ts`, trusted clone/publish helpers | Allowed operations and branches, credentials kept out of the agent |
 | Child processes | `runner.ts`, `sandbox/spawn.ts`, `sandbox/scrub.ts` | Scrubbed environment, OS confinement, timeouts, process-tree cleanup |
 | Backend | `sandbox/seatbelt.ts`, `linux.ts`, `windows.ts` | The per-OS filesystem and network boundary |
@@ -28,42 +28,56 @@ A prompt or argv allowlist alone is not a sandbox. The API and runtime are trust
 | Windows | Anthropic's `sandbox-runtime` | Commands run as the hidden local account `srt-sandbox` with a restricted token in a job object; it cannot read the person's profile, writes only the work folder and cache, reads toolchain folders on PATH. Internet on goes through a loopback proxy; internet off has no proxy and the firewall rule blocks everything | One admin prompt per computer (`ensemble sandbox setup`, Set up in Settings, or offered at `ensemble login`); shared by CLI and desktop app. No Docker, VM or Hyper-V. Tools installed only for the user must be on PATH; the work folder must be on a local drive |
 | Anything else, or no working backend | none | `advisory` | Reported with the reason |
 
-Nothing falls back silently: `startSandboxed` refuses a confined spawn when no backend works. Callers that pass `advisoryOk` (plots) run unsandboxed and say so. The Assign dialog can run with sandbox off when none is available. The web terminal refuses to run without its OS boundary.
+Nothing falls back silently: `startSandboxed` refuses a confined spawn when no backend works. Callers that pass `advisoryOk` (plots) run unsandboxed and say so. The Assign dialog sends the sandbox off, and says so, when the computer or the agent has none. The web terminal refuses to run without its OS boundary.
 
 ## 3. Work folder and outside access
 
 The work folder is canonicalized (symlinks resolved), checked against blocked roots and held by resource and checkout locks. Fresh checkouts, continuation folders and user-picked folders are prepared differently but share enforcement. Broad home, system and app-data folders cannot be trusted by path string.
 
-With the sandbox on, `outsideAccess` is:
+A path outside the run's folder falls in one of three zones (`zoneOf`, `outsidePath` in `workspace/tools.ts`; `commandGate` in `workspace/trust.ts`):
+
+| Zone | Reading | Changing |
+| --- | --- | --- |
+| Elsewhere in the Ensemble workspace | Goes ahead | Run unattended: goes ahead. Review only and Ask: asks once for that folder |
+| Temporary folders | Goes ahead | Goes ahead, except in Ask |
+| Beyond the workspace | Per `outsideAccess` below | Run unattended: goes ahead (unless `none`). Otherwise per `outsideAccess` |
+
+"Asks once for that folder" names the folder, not the file (`grantFolder`): a workspace project (`runs/<id>`, `files/<id>` or a top-level folder), else the repository the path is in, else its own folder. A folder too broad to hand over (the home folder, a disk, Desktop) or one that holds keys, Ensemble's data, its git helper or its code (`holdsProtected`, e.g. `~/.codex` or the workspace root) narrows to the path and is allowed that once only. Once allowed, the run works there freely for the rest of the run, the grant is kept as a run rule (`RUN_RULE_SOURCE`, tool `outside`) and a task that continues this one inherits it. A read the person allowed where reading asks (`none`) is kept apart (tool `outside-read`) and never lets the run write there. A command that changes the folder asks one question naming the command and the folder; Needs me answers it with **Allow for this run** or **Deny**. Nothing a mode covers is refused: a folder question the person answers no is the only refusal.
+
+`outsideAccess` (Settings → Assistant, or per run under Assign → More options) covers folders beyond the workspace:
 
 | Value | Behaviour |
 | --- | --- |
-| `read` (default) | Outside reads allowed within guard rules; a new outside write asks in Ask mode and is refused when nobody may answer |
-| `read-write` | Outside reads and writes allowed, except hard-denied secret, app and system areas |
-| `none` | Only the granted folder and toolchains |
+| `read` (default) | Reads go ahead; changing a folder asks once per folder (Run unattended: goes ahead) |
+| `read-write` | Reads and changes go ahead |
+| `none` | Where the OS sandbox enforces it, reads ask too, and Run unattended refuses (nobody can answer) |
 
-None of these grants keys, browser data, app database or discovery files, or control of another process. Whatever the setting and mode, `outsideRefusal` (`workspace/guard.ts`) refuses keys, sign-ins and browser data (`SECRET_PATHS`), another account's files and Ensemble's own data, and refuses writes to start-up files (shell profiles, `.gitconfig`, launch agents), system folders, Ensemble's own code and the home folder itself. Device files such as `/dev/null`, temporary folders, tool caches and other projects are ordinary outside paths. With the sandbox off there is no OS boundary; only the application and tool checks remain.
+None of these grants keys, browser data, app database or discovery files, or control of another process. Whatever the setting and mode, `outsideRefusal` (`workspace/guard.ts`) refuses keys, sign-ins and browser data (`SECRET_PATHS`), another account's files, Ensemble's own data and its git sign-in helper (`<workspace>/.askpass`), and refuses writes to the read-only copies of attached files (`<workspace>/files`), start-up files (shell profiles, `.gitconfig`, launch agents), system folders, Ensemble's own code and the home folder itself. Device files such as `/dev/null`, temporary folders, tool caches and other projects are ordinary outside paths.
+
+The OS sandbox follows the same rules (`runWritable` in `tools.ts`, `engineSandboxPaths` in `engines/claude-code.ts`): a run's commands may write its folder, the cache and every folder the person let it work in; a Run unattended also writes the workspace's own folders (never its dot-folders or `files`) and the person's own folders in the home folder (never dotfiles or app folders). No sandbox grant, for reading or writing, covers a folder that holds a protected path (`holdsProtected`); Claude Code's sandbox denies them, and Codex, whose sandbox has no deny list, gets those roots split into the folders beside them (`openRoots`, links followed). When Claude Code's sandbox stops a command, Claude may retry it outside the sandbox; the judge allows that retry in Run unattended, in Review only when every outside path it names is in an allowed folder, and otherwise asks. Codex asks for more access the same way. With the sandbox off there is no OS boundary; only the application and tool checks remain.
 
 ## 4. Trust and run modes
 
-Trust is per computer and path. Ensemble's workspace is always trusted; other folders need a local trust decision. System folders, the home folder and Ensemble's source are refused. `ensemble trust` manages the list.
+Choosing a mode is the person's trust: no mode needs a trusted folder or an OS sandbox, and assignment never refuses a mode for either. The floor in §3, the never-run programs in §6 and the limits the person chose (Git choice, internet off, read-only folder, `none`) are the only refusals; everything else goes ahead or asks on Needs me.
+
+| Mode | Behaviour |
+| --- | --- |
+| Ask | Commands and edits ask, unless the folder is trusted (a saved path rule, or the workspace with Settings → *Run commands in the Ensemble workspace without asking*); commands that only read inside the folder do not; internet use asks; changing another folder asks once for it |
+| Review only | Commands, edits and the internet go ahead in the run's folder; only real decisions reach Needs me, plus one question per other folder it changes and before a command to another computer (`ssh`, `scp`, `nc`…) or a command outside the OS sandbox |
+| Run unattended | Never waits for a person: works across the workspace and the person's own folders, takes recommended answers and lists them in the result |
+| Read-only access | A separate lower-level grant; tools and OS deny writes and network accordingly |
+
+Trust is per computer and path. Ensemble's workspace is always trusted; other folders are trusted by a local decision (`ensemble trust`). System folders, the home folder and Ensemble's source are refused. Trust quiets Ask in that folder and lets an engine load the folder's own settings.
 
 Trust sharing (`trust-share.ts`, `ensemble trust share on|off`, on by default per computer) also marks trusted folders as trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI, so a handed-off task does not stop at their own trust prompt. Only installed tools are touched; Ensemble removes only marks it added, and turning sharing off removes them all. The mark list and backups of each edited file sit beside `remote.json`.
 
 A run Ensemble starts carries the same trust: in a folder the person trusted by name (for good or for this task), Claude Code loads the folder's own `.claude/` settings and Codex treats it as trusted, as in their own terminal; in folders inside it, the workspace and fresh clones neither does ([30 §1–§2](30_ENGINES.md)). In every mode, a command that only reads files inside the folder (`ls`, `cat`, `grep`, `git status`…; links and globs followed) runs without asking, for Ensemble's agent and the engines alike (`quietArgs`, [30 §1](30_ENGINES.md#1-claude-code-as-the-engine)).
 
-| Mode | Behaviour |
-| --- | --- |
-| Ask | Commands and edits can pause for exact permission, per trust and settings; commands that only read inside the folder do not; real questions go to Needs me |
-| Review only | Trusted folder, fewer permission prompts, still asks real decisions. **Can edit files** |
-| Run unattended | Trusted folder; takes configured or recommended answers and lists them in the result; never waits for a person |
-| Read-only access | A separate lower-level grant; tools and OS deny writes and network accordingly |
-
-No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)). Grok Build, OpenCode and Antigravity, and Gemini CLI outside macOS, have no OS sandbox Ensemble can turn on: their runs need Sandbox off, which the Assign dialog says, and the judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-and-antigravity)).
+Tool-call gates apply to Ensemble and in-process external engines; a handoff into a tool's own app or terminal uses that tool's controls ([30](30_ENGINES.md)). Grok Build, OpenCode and Antigravity, and Gemini CLI outside macOS, have no OS sandbox Ensemble can turn on: the Assign dialog runs them with the sandbox off and says so, and the judge still answers every call they ask about ([30 §3.3](30_ENGINES.md#33-grok-build-opencode-gemini-cli-and-antigravity)).
 
 ## 5. Git and credentials
 
-Ensemble puts no limit of its own on git or GitHub work: any branch, commit, push (force and deletes included), rebase, pull request or merge is the person's and their agent's call, approved like any other command by the run's mode. The run's **Git** choice is the person's own limit: **No limits** (`delivery: "push"`, the default), **Commit** (no push), **Local only** (no commits), or **Pull request** (§5.1). Local only also refuses commit-producing `merge`, `rebase`, `cherry-pick`, `revert`, `tag`, `am`, `notes` and a non-fast-forward `pull`; a commit made another way (a script, say) is undone at the end while file changes stay. Ask before each commit parks the exact operation; Unattended cannot combine with it.
+Ensemble puts no limit of its own on git or GitHub work: any branch, commit, push (force and deletes included), rebase, pull request or merge is the person's and their agent's call, approved like any other command by the run's mode. The run's **Git** choice is the person's own limit: **No limits** (`delivery: "push"`, the default), **Commit** (no push), **Local only** (no commits), or **Pull request** (§5.1). Local only also refuses commit-producing `merge`, `rebase`, `cherry-pick`, `revert`, `tag`, `am`, `notes` and a non-fast-forward `pull`; a commit made another way (a script, say) is undone at the end while file changes stay. Ask before each commit (off by default, under Assign → More options) parks the exact operation; Unattended cannot combine with it.
 
 Ensemble's agent never holds a credential: its `git push`, its fetch and pull with *Use my git sign-in*, and its `gh` commands are run by Ensemble outside the sandbox with the computer's sign-in, exactly as asked (`pushWithSignIn` in `workspace/publish.ts`, `runTrustedGh` in `workspace/git-gate.ts`; the GitHub token from `githubApiToken`: the token saved in Settings, the GitHub connection, or `gh auth token`). It never receives `ENSEMBLE_GIT_TOKEN`, an askpass that prints it, or an SSH agent socket. Git runs hardened against hooks and fsmonitor (also for the git `gh` runs). Only what would start a program on the computer is refused there: `git push --receive-pack|--exec`, `git fetch --upload-pack`, git options before the subcommand, and, in a sandboxed run, `gh extension|alias|codespace` and a push into a folder outside the run other than the one it was cloned from. Claude Code, Codex, Cursor and GitHub Copilot run `git` and `gh` themselves with the computer's sign-in ([30 §1](30_ENGINES.md)); with the sandbox on, the sandbox hides sign-in files (`~/.config/gh`, `~/.ssh`, `~/.git-credentials`), so turn it off for runs that push or open pull requests themselves. In a sandboxed run `checkGit` (`workspace/guard.ts`) also refuses `git config` (or `git -c`) keys outside a safe list (identity, branch and remote settings, push and pull defaults), because hooks, filters, editors, helpers and aliases would run outside the sandbox later.
 
@@ -83,7 +97,7 @@ With **No limits** an agent opens and merges pull requests itself when the task 
 
 ## 6. Commands and processes
 
-`run_command` takes a program and arguments, not a shell string: no pipes, redirects, `&&` or `sh -c`. Allowed interpreters still run code, so the OS sandbox must contain their subprocesses. Never-listed programs, sensitive paths and environment variables have extra guards.
+Ensemble's agent's `run_command` takes a program and arguments, not a shell string: no pipes, redirects or `&&`; `sh -c` and shell scripts run only in the OS sandbox. An agent may start any program on the PATH (`checkProgram` in `workspace/guard.ts`; wrappers such as `env`, `nohup` and `timeout` are judged by the program they start) except the never-run list: privilege (`sudo`, `su`, `doas`), persistence and system settings (`crontab`, `launchctl`, `defaults`, `security`, `osascript`…), the machine's power and disks, and killing programs by name (`pkill`, `killall`). The person's terminal keeps its allow-list ([16](16_CODE_TAB.md)). Programs that reach another computer (`ssh`, `scp`, `sftp`, `nc`…) need the internet and follow the mode (§4). Interpreters still run code, so the OS sandbox must contain their subprocesses.
 
 A command is over when its own process exits: output still in the pipes is read for 2 seconds (`DRAIN_MS`), so a process it left running (a server, a stuck test worker) cannot hold the result open; the result notes what is still running, and the run's end stops it. A timeout or Stop kills the command's whole session, including a process that moved to a process group of its own (`timeout`, a shell with job control).
 

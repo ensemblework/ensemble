@@ -107,7 +107,7 @@ test("/run starts an agent on a new task in this folder, with the run profile", 
   assert.equal(assign.folder, "/work/app");
   assert.equal(assign.kind, "code");
   assert.equal(assign.engine, "ensemble");
-  assert.equal(assign.mode, "ask");
+  assert.equal(assign.mode, "review", "the built-in profile runs in Review only");
   assert.match(await screenWith(app.lastFrame, /Started Ensemble agent/), /Started Ensemble agent/);
   app.unmount();
 });

@@ -780,12 +780,7 @@ export function TaskPage({
         )}
       </PageContent>
 
-      <AssignDialog
-        open={assigning}
-        onClose={() => setAssigning(false)}
-        taskId={taskId}
-        defaultKind={record.repoId || record.taskType === "code_change" ? "code" : undefined}
-      />
+      <AssignDialog open={assigning} onClose={() => setAssigning(false)} taskId={taskId} />
     </div>
   );
 }

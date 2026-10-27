@@ -54,9 +54,9 @@ import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkModeTrust, contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
-import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
+import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, loadGrants, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
   signal: AbortSignal;
@@ -181,26 +181,20 @@ ${limits}`;
         : "You may not commit or push, and that includes merge, rebase, cherry-pick, revert and tag. Leave your changes uncommitted in the folder. A commit made any other way, for example by a script, is undone.";
   const askCommit = ctx.job.askBeforePublish && ctx.job.delivery !== "local" && !ctx.job.unattended;
   const mode = runModeOf(ctx.job);
-  const outsideText = ctx.sandboxed
-    ? ctx.outsideAccess === "read-write"
-      ? "Paths outside the folder may be read and written when the task needs them (the person allows it); keys and app data are still refused."
-      : ctx.outsideAccess === "read"
-        ? "Paths outside the folder may be read when the task needs them, not written (the sandbox is on); keys and app data are still refused."
-        : "Paths outside the folder are refused (the sandbox is on); carry on inside it."
-    : "Paths outside the folder may be used without asking when the task needs them (the sandbox is off); keys, app data and system folders are still refused.";
+  const outsideText = outsideRule(ctx);
   const modeText =
     ctx.accessMode === "review"
       ? "Read-only: you may read and run commands, but not change files or use the network. Anything that would write is refused."
       : mode === "unattended"
-        ? `Run unattended: nobody is watching and nobody will answer. Commands and edits inside the folder run without approval. ${outsideText} When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”.`
+        ? `Run unattended: nobody is watching and nobody will answer. Commands and edits run without approval. ${outsideText} When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”.`
         : mode === "review"
           ? `Review only: commands and edits inside the folder run without asking. ${outsideText} Do not ask for permission; ask only real decisions (an unclear requirement, a choice between approaches) with ask_user, giving 2–5 options and the one you recommend.`
-          : `Ask: commands and edits may wait for the person's approval unless the folder is trusted; ${ctx.sandboxed && ctx.outsideAccess !== "none" ? `outside the folder, ${ctx.outsideAccess === "read-write" ? "reading and writing go ahead" : "reading goes ahead and writing asks first"}` : "a path outside the folder asks first"}. When you need a decision, use ask_user with 2–5 options and the one you recommend.`;
+          : `Ask: commands and edits may wait for the person's approval unless the folder is trusted. ${outsideText} When you need a decision, use ask_user with 2–5 options and the one you recommend.`;
   return `You are Ensemble's coding agent, working for ${name} on one task from their board.
 
 Where you work: ${ctx.root}
-- Paths are relative to this folder. Work inside it.
-- ${ctx.sandboxed ? `Commands run in ${ctx.sandboxName ?? "the OS sandbox"}: writes outside the folder and reading keys and credentials are blocked${ctx.network ? "" : ", and so is the network"}.` : "Commands run directly on the person's computer, not in a sandbox."}
+- Paths are relative to this folder. Work here first; use other folders when the task needs them (the Ensemble workspace is ${ctx.workspace ?? "the folder above runs/"}).
+- ${ctx.sandboxed ? `Commands run in ${ctx.sandboxName ?? "the OS sandbox"}: reading keys and credentials is blocked${ctx.network ? "" : ", and so is the network"}; a command writes beyond this folder once that folder is allowed.` : "Commands run directly on the person's computer, not in a sandbox."}
 - Network: ${ctx.network ? "on" : "off"}.
 - Mode: ${modeText}
 - Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${pullRequestText(ctx)}
@@ -211,8 +205,8 @@ How to work:
 - Look before you change: list_dir and read_file first. Use edit_file for small changes, write_file for new files.
 - Files the person attached follow the brief as the files themselves; save_attachment copies an original into the folder when a program needs the file there.
 - Verify once, then change the code if it is wrong. Do not run the same command again unless you edited a file first. \`python file.py\` only checks the test if that file calls the test under \`if __name__\`; use \`python -m pytest\` or \`python -m unittest\`.
-- A refusal from a tool is policy, not a bug. Do not try another route to the same thing. Mention it in your summary.
-- Do not touch anything outside the task.
+- A refusal from a tool is the person's limit or Ensemble's floor (keys, system folders, Ensemble's own code), not a bug. Do not try another route to the same thing. Mention it in your summary.
+- Do not touch anything the task does not need.
 - If the task asks for an analysis or a report, save it with write_page as well.
 - A refused git command is a limit the person chose for this run (or the sandbox): finish without that step and say so.
 - End with finish(summary): what changed (files), what you ran and the results, and anything left open.
@@ -242,6 +236,24 @@ function pullRequestText(ctx: JobContext): string {
   return ` You are on branch ${ctx.runBranch || "this run's branch"}, made from ${base}; commit your work there. When you finish, Ensemble pushes this branch and opens a pull request into ${base}${merge}, unless you already did it yourself.`;
 }
 
+/** What the run may do beyond its folder, in the agent's terms (trust.ts `commandGate`). */
+function outsideRule(ctx: Pick<JobContext, "job" | "accessMode" | "outsideAccess" | "sandboxed" | "workspace">): string {
+  const workspace = ctx.workspace ? ` (${ctx.workspace})` : "";
+  if (ctx.accessMode === "review") return "You may read other folders, never change them.";
+  const none = ctx.sandboxed && ctx.outsideAccess === "none";
+  if (runModeOf(ctx.job) === "unattended") {
+    return none
+      ? `You may read and change other folders in the Ensemble workspace${workspace}; beyond it, nothing (the person's setting).`
+      : `You may read and change other folders in the Ensemble workspace${workspace} and the person's own folders when the task needs them.`;
+  }
+  const reads = none ? `You may read other folders in the Ensemble workspace${workspace}; reading beyond it asks first.` : "You may read other folders, anywhere the floor allows.";
+  const writes =
+    !none && ctx.outsideAccess === "read-write"
+      ? ` You may change folders beyond the workspace; changing another workspace folder asks the person once for that folder, then it is yours for the run.`
+      : " Changing another folder asks the person once for that whole folder; once they allow it, work there freely for the rest of the run.";
+  return `${reads}${writes}`;
+}
+
 function engineRules(ctx: JobContext): string[] {
   const mode = runModeOf(ctx.job);
   const git =
@@ -252,20 +264,12 @@ function engineRules(ctx: JobContext): string[] {
         : "Do not commit (that includes merge, rebase, cherry-pick, revert and tag). Leave your changes uncommitted.") + pullRequestText(ctx);
   const modeText =
     mode === "unattended"
-      ? "Nobody is watching. When you face a choice, call the ask_person tool (from the ensemble MCP server) with options and the one you recommend; it returns the recommended option at once. List every such decision at the end under \"Decisions I made\"."
+      ? "Nobody is watching and nothing waits for approval. When you face a choice, call the ask_person tool (from the ensemble MCP server) with options and the one you recommend; it returns the recommended option at once. List every such decision at the end under \"Decisions I made\"."
       : mode === "review"
-        ? "Commands and edits inside the folder run without asking. Ask only real decisions with the ask_person tool (from the ensemble MCP server), giving 2–5 options and the one you recommend; it waits for the person's answer."
+        ? "Commands and edits run without asking. Do not ask for permission; ask only real decisions with the ask_person tool (from the ensemble MCP server), giving 2–5 options and the one you recommend; it waits for the person's answer."
         : "Some actions wait for the person's approval in Ensemble. When you need a decision, call the ask_person tool (from the ensemble MCP server) with 2–5 options and the one you recommend; it waits for the person's answer.";
   return [
-    `- Work inside this folder. ${
-      ctx.sandboxed
-        ? ctx.outsideAccess === "read-write"
-          ? "You may read and write paths outside it when the task needs them."
-          : ctx.outsideAccess === "read"
-            ? "You may read paths outside it, not change them."
-            : "Paths outside it are refused."
-        : "Use paths outside it only when the task needs them."
-    } Keys and app data are always refused.`,
+    `- Work in this folder first. ${outsideRule(ctx)} Keys, sign-ins, system folders and Ensemble's own code are always refused.`,
     `- Internet: ${ctx.network ? "on" : "off"}.`,
     `- Git: ${git}`,
     ...(ctx.network && ctx.sandboxed && ctx.job.provider === "claude-code"
@@ -694,42 +698,12 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     ctx.trusted = isFolderTrusted({ folder: ctx.root, workspaceRoot: base, rules });
   };
   ctx.refreshTrust = readTrust;
-  /**
-   * At start and before every turn. A trust rule revoked mid-run pauses an
-   * unattended job on Needs me instead of letting it carry on unprompted.
-   */
+  /** At start and before every turn: trust can change while a run waits (it quiets Ask and lets an engine load the folder's config). */
   const ensureTrust = async (starting: boolean) => {
     if (job.kind !== "code" || !ctx.root) return;
     const wasTrusted = ctx.trusted;
     await readTrust();
-    const refused = checkModeTrust({ accessMode: ctx.accessMode, unattended: job.unattended, trusted: ctx.trusted });
-    if (!refused) return;
-    if (!starting && wasTrusted) await ctx.event("trust_revoked", { root: ctx.root });
-    await ctx.progress(starting ? "Waiting: this folder is not trusted" : "Paused: trust for this folder was removed");
-    const message = job.unattended ? UNATTENDED_MESSAGE : REVIEW_MESSAGE;
-    const fallback = job.unattended ? "Turn off Run unattended" : "Switch to Ask";
-    const answer = await askPerson(ctx, {
-      event: "question",
-      toolName: TRUST_TOOL,
-      title: starting ? message : `Trust for this folder was removed while the task ran. ${message}`,
-      options: ["Trust this folder", fallback],
-      allowCustom: false,
-    });
-    if (answer.answer === "Trust this folder") {
-      const folder = within(await workspaceRoot(), ctx.root) ? ctx.root : await resolveWorkFolder(ctx.root);
-      await prisma.decisionRule.create({
-        data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
-      });
-      trustChanged(prisma);
-      await readTrust();
-    } else if (answer.answer === fallback) {
-      job.unattended = false;
-      job.accessMode = ctx.accessMode === "review" ? "review" : "read-write";
-      ctx.accessMode = ctx.accessMode === "review" ? "review" : "read-write";
-      await prisma.workspaceJob.update({ where: { id: job.id }, data: { unattended: false, accessMode: job.accessMode } });
-    } else {
-      throw refused;
-    }
+    if (!starting && wasTrusted && !ctx.trusted) await ctx.event("trust_revoked", { root: ctx.root });
   };
 
   try {
@@ -753,6 +727,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       const branch = pulled ? pulled.branch : git ? await prepareBranch(ctx) : "";
       ctx.runBranch = branch;
       await ensureTrust(true);
+      // Folders the person already let this run (or the earlier task it continues) work in.
+      ctx.workspace = await workspaceRoot();
+      const chain = [job.id];
+      for (let id = job.continueFromJobId, hops = 0; id && hops < 20; hops += 1) {
+        chain.push(id);
+        id = (await prisma.workspaceJob.findUnique({ where: { id }, select: { continueFromJobId: true } }))?.continueFromJobId ?? null;
+      }
+      const grants = await loadGrants(prisma, userId, chain);
+      ctx.grants = grants.write.filter((folder) => !within(folder, ctx.root));
+      ctx.readGrants = grants.read.filter((folder) => !within(folder, ctx.root));
       if (git) {
         const head = await gitIn(ctx, ["rev-parse", "HEAD"]);
         initialHead = head.exitCode === 0 ? head.output.trim() : "";
@@ -1140,7 +1124,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   if (engineTrace && outcome !== "success") await engineTrace.stop(outcome === "failed" || outcome === "blocked" ? "failed" : "skipped", error ?? "The run stopped.");
   if (copies) await removeCopies(ctx, copies).catch((failure: unknown) => app.log.warn({ err: failure }, "could not remove attachment copies"));
   const blockedNote = ctx.blockedOutside.length
-    ? `Blocked outside the trusted folder: ${[...new Set(ctx.blockedOutside)].join(", ")}.`
+    ? `Blocked by the run's settings: ${[...new Set(ctx.blockedOutside)].join(", ")}.`
     : "";
   const decided = ctx.decisions?.length
     ? `Decisions it made without asking (unattended):\n${ctx.decisions.map((row) => `- ${row.question} → ${row.recommended ?? "its own choice (see above)"}`).join("\n")}`

@@ -128,7 +128,7 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     assert.equal(outside.status, 201, JSON.stringify(outside.body));
     const outsideId = outside.body.jobId!;
     const ask = await pendingFor(side, outsideId);
-    assert.equal(ask.toolName, "outside");
+    assert.equal(ask.toolName, "outside-read", "reading where reading asks: never a write grant");
     const always = await side.api<{ error: string }>(`/api/decisions/${ask.id}/decide`, { json: { decision: "allow", scope: "always" } });
     assert.equal(always.status, 400, "an outside path is never turned into a trusted folder");
     const trusted = await side.api<{ folders: Array<{ path: string }> }>("/api/workspace/trust");
@@ -138,17 +138,16 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     await waitStatus(side, outsideId, ["succeeded"]);
     assert.deepEqual((await side.api<{ folders: unknown[] }>("/api/workspace/trust")).body.folders, []);
 
-    // ── unattended on an untrusted folder is refused at assignment ──────
+    // ── choosing Run unattended or Review only is the trust: a folder nobody trusted is accepted ──────
     const folder = join(root, "project");
     mkdirSync(folder);
-    const unattendedTask = await newTask(side, "[edit] Unattended elsewhere");
-    const refused = await assign(side, { taskId: unattendedTask, folder, unattended: true, trust: "none", accessMode: "read-write" });
-    assert.equal(refused.status, 400);
-    assert.equal(refused.body.code, "UNATTENDED_REQUIRES_TRUST");
-    // Review only runs commands without asking, so it needs a trusted folder too.
-    const reviewRefused = await assign(side, { taskId: unattendedTask, folder, mode: "review", trust: "none" });
-    assert.equal(reviewRefused.status, 400);
-    assert.equal(reviewRefused.body.code, "REVIEW_REQUIRES_TRUST");
+    for (const [title, extra] of [["[slow] Unattended elsewhere", { unattended: true, accessMode: "read-write" }], ["[slow] Review elsewhere", { mode: "review" }]] as const) {
+      const elsewhere = await assign(side, { taskId: await newTask(side, title), folder, trust: "none", ...extra });
+      assert.equal(elsewhere.status, 201, JSON.stringify(elsewhere.body));
+      assert.equal((await side.api(`/api/agent/jobs/${elsewhere.body.jobId}/stop`, { json: {} })).status, 204);
+      await waitStatus(side, elsewhere.body.jobId!, ["cancelled"]);
+    }
+    assert.deepEqual((await side.api<{ folders: unknown[] }>("/api/workspace/trust")).body.folders, [], "no trust rule was saved for it");
 
     // ── Local only holds for a commit a script makes, and the files stay ──
     const scriptTask = await newTask(side, "[script-commit] Commit behind the run's back");

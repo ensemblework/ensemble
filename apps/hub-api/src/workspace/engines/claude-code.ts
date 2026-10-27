@@ -19,17 +19,17 @@
  * sign-in.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { claudeLaunch } from "@ensemble/shared-types";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
-import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
+import { askpassPath, cacheDir, ENSEMBLE_SOURCE, holdsProtected, SECRET_PATHS, within, workspaceFolders, workspaceRoot } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { claudeBinary } from "../../subscriptions/detect.js";
 import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
-import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
+import { TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
@@ -65,29 +65,69 @@ export async function detectClaudeCode(): Promise<{ path: string; version: strin
 export type ClaudeFilesystem = { allowWrite: string[]; denyWrite?: string[]; denyRead: string[]; allowRead?: string[] };
 
 /**
- * Claude Code's sandbox paths for the run's "Outside the work folder" setting, so a script it runs
- * gets the same answer as a named path does from the hook. Keys, browser data and Ensemble's own
- * data (`closed`) stay shut in every case; read and write opens the person's own folders in the
- * home folder, never its dotfiles or app folders.
+ * Claude Code's sandbox paths for the run, so a script it runs gets the same answer as a named path
+ * does from the hook. `writable` is the run's folder, the cache, the workspace's folders and any
+ * folder the person let the run work in. Keys, browser data, Ensemble's own data and its git helper
+ * (`closed`) stay shut in every case; read and write (and every unattended run) also opens the
+ * person's own folders in the home folder, never its dotfiles or app folders.
  */
 export function claudeFilesystem(input: {
   access: OutsideAccess;
   home: string;
   writable: string[];
   closed: string[];
+  /** Readable, never written (the copies of attached files). */
+  readOnly?: string[];
   /** Names in the home folder (read and write only). */
   homeEntries?: string[];
   /** Toolchains under the home folder that commands still need to read (no access only). */
   toolchain?: string[];
 }): ClaudeFilesystem {
+  const denyWrite = [...input.closed, ...(input.readOnly ?? [])];
   if (input.access === "none") {
     // Claude Code sources its shell snapshot from its own folder before each command.
-    const allowRead = [...input.writable, ...(input.toolchain ?? []), join(input.home, ".claude", "shell-snapshots")];
-    return { allowWrite: input.writable, denyRead: [input.home, ...input.closed], allowRead };
+    const allowRead = [...input.writable, ...(input.readOnly ?? []), ...(input.toolchain ?? []), join(input.home, ".claude", "shell-snapshots")];
+    return { allowWrite: input.writable, denyWrite, denyRead: [input.home, ...input.closed], allowRead };
   }
-  if (input.access === "read") return { allowWrite: input.writable, denyRead: input.closed };
+  if (input.access === "read") return { allowWrite: input.writable, denyWrite, denyRead: input.closed };
   const own = (input.homeEntries ?? []).filter((name) => !name.startsWith(".") && !HOME_APP_FOLDERS.has(name)).map((name) => join(input.home, name));
-  return { allowWrite: [...input.writable, ...own], denyWrite: input.closed, denyRead: input.closed };
+  return { allowWrite: [...new Set([...input.writable, ...own])], denyWrite, denyRead: input.closed };
+}
+
+/**
+ * What an engine's own OS sandbox opens for this run: the outside setting it applies (every unattended
+ * run may write the person's own folders, unless they chose No access) and the folders it may write.
+ */
+export async function engineSandboxPaths(ctx: Pick<JobContext, "root" | "job" | "accessMode" | "outsideAccess" | "grants">): Promise<{ access: OutsideAccess; writable: string[] }> {
+  const chosen = ctx.outsideAccess ?? "read";
+  const access: OutsideAccess = ctx.job.unattended && chosen !== "none" && ctx.accessMode !== "review" ? "read-write" : chosen;
+  // As Ensemble's own agent (`runWritable`): folders the person allowed, and in an unattended run the whole workspace.
+  const shared = ctx.accessMode === "review" ? [] : [...(ctx.job.unattended ? await workspaceFolders() : []), ...(ctx.grants ?? [])].filter((folder) => !holdsProtected(folder));
+  return { access, writable: [...new Set([ctx.root, await cacheDir(), ...shared])] };
+}
+
+/**
+ * Writable roots with nothing closed under them, for a sandbox that has no deny list (Codex): a
+ * root that holds a closed path is replaced by its folders that do not, two levels down at most.
+ */
+export async function openRoots(given: string[], closedGiven: string[]): Promise<string[]> {
+  // Compared as real paths: a home folder that is a link to a disk holding Ensemble's code is still caught.
+  const real = (path: string) => realpath(path).catch(() => path);
+  const roots = await Promise.all(given.map(real));
+  const closed = [...new Set([...closedGiven, ...(await Promise.all(closedGiven.map(real)))])];
+  const open: string[] = [];
+  const visit = async (root: string, depth: number) => {
+    if (closed.some((path) => within(path, root))) return;
+    if (!closed.some((path) => within(root, path))) {
+      open.push(root);
+      return;
+    }
+    if (depth >= 2) return;
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) if (entry.isDirectory()) await visit(join(root, entry.name), depth + 1);
+  };
+  for (const root of roots) await visit(root, 0);
+  return [...new Set(open)];
 }
 
 /** Folders in the home folder that belong to apps, not to the person's work. */
@@ -103,7 +143,9 @@ export function claudeSettings(input: { hookCommand: string; sandboxed: boolean;
       ? {
           enabled: true,
           failIfUnavailable: true,
-          allowUnsandboxedCommands: false,
+          // A command the sandbox stopped may be retried outside it; Ensemble's hook judges that retry
+          // like any command (asked in Ask and Review only unless the person already allowed its folder).
+          allowUnsandboxedCommands: true,
           // Ensemble's hook decides every command first; the sandbox is the floor under it.
           autoAllowBashIfSandboxed: true,
           // Claude Code's sandbox reads broadly by default: keys, browser data and Ensemble's own data stay closed.
@@ -144,13 +186,14 @@ export async function runClaudeCode(
   const credential = registerEngineRun(ctx);
   const hookCommand = `"${process.execPath}" "${hookScriptPath()}" --source claude --engine`;
   const home = homedir();
-  const closed = [...SECRET_HOME_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
-  const access = ctx.outsideAccess ?? "none";
+  const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
+  const { access, writable } = await engineSandboxPaths(ctx);
   const filesystem = claudeFilesystem({
     access,
     home,
-    writable: [ctx.root, await cacheDir()],
+    writable,
     closed,
+    readOnly: [join(await workspaceRoot(), "files")],
     homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [],
     toolchain: (process.platform === "darwin" ? TOOLCHAIN_HOME_READS : process.platform === "linux" ? LINUX_TOOLCHAIN_HOME : []).map((name) => join(home, name)),
   });

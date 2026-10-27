@@ -114,11 +114,11 @@ export function OrchestrationSection({ settings, patch }: Props) {
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
         <SettingRow
-          title="Outside the work folder, in sandboxed tasks"
-          info="Read only asks before writes outside the work folder. Read and write permits both; No access confines the task. Applies to sandboxed runs."
+          title="Outside the Ensemble workspace"
+          info="Inside the workspace a task may read any folder, and asks once before changing one (Run unattended does not ask). Beyond it: Read only reads freely and asks once per folder before changing it; Read and write permits both; No access asks before reading too. Keys, system files and Ensemble's own code stay off limits."
         >
           <select
-            aria-label="Outside the work folder"
+            aria-label="Outside the Ensemble workspace"
             value={orchestration.outsideAccess}
             onChange={(event) => set({ outsideAccess: event.target.value as Settings["orchestration"]["outsideAccess"] })}
             className="field"

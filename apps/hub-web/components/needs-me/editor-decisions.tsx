@@ -54,7 +54,8 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
   });
   const busy = decide.isPending;
   const push = decision.toolName === "git push";
-  const outside = decision.toolName === "outside";
+  // A folder outside the run's: allowed for the rest of the run once, never trusted for good.
+  const outside = decision.toolName === "outside" || decision.toolName === "outside-read";
   return (
     <div className="tile rounded-lg bg-panel p-4" data-testid="ensemble-decision">
       <div className="flex flex-wrap items-center gap-2">
@@ -105,10 +106,16 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
         </>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", scope: "once" })}>
-            <Check size={13} /> Allow once
-          </button>
-          {push ? null : (
+          {outside ? (
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", scope: "session" })}>
+              <Check size={13} /> Allow for this run
+            </button>
+          ) : (
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", scope: "once" })}>
+              <Check size={13} /> Allow once
+            </button>
+          )}
+          {push || outside ? null : (
             <button type="button" className="btn" disabled={busy} onClick={() => decide.mutate({ decision: "allow", scope: "session" })}>
               Allow for this run
             </button>

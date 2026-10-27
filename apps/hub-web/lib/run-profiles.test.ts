@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canAddProfile, defaultProfile, differs, profileChoices, profileFields, profileSummary, quickProfile, removeProfile, upsertProfile } from "./run-profiles";
+import { agentFields, canAddProfile, defaultProfile, differs, profileAgent, profileChoices, profileFields, profileSummary, quickProfile, removeProfile, upsertProfile } from "./run-profiles";
 
 const quick = quickProfile({ defaultExecution: "sandbox", sandboxNetwork: false });
 
-test("Quick is the default until a profile is saved", () => {
+test("Quick is the default until a profile is saved: Review only, no git limits, no approval per commit", () => {
   assert.equal(quick.network, false);
+  assert.deepEqual([quick.mode, quick.delivery, quick.askBeforePublish], ["review", "push", false]);
   assert.deepEqual(profileChoices([], quick), [quick]);
   assert.equal(defaultProfile(undefined, null, quick).id, "quick");
 });
@@ -31,13 +32,26 @@ test("at most three profiles; updating one keeps its place", () => {
 test("a changed field marks the form as modified", () => {
   const fields = profileFields(quick);
   assert.equal(differs(quick, fields), false);
-  assert.equal(differs(quick, { ...fields, mode: "review" }), true);
+  assert.equal(differs(quick, { ...fields, mode: "ask" }), true);
   assert.equal(differs(quick, { ...fields, maxMinutes: 30 }), true);
 });
 
-test("the summary names the mode and git permission", () => {
-  assert.equal(profileSummary(quick), "Code · Ask · no git limits (asks before each commit)");
-  assert.equal(profileSummary({ ...quick, mode: "unattended", delivery: "commit" }), "Code · Run unattended · may commit, no push");
+test("the summary names who does the work, the mode and git permission", () => {
+  assert.equal(profileSummary(quick), "Matches the task · Review only · no git limits");
+  assert.equal(profileSummary({ ...quick, mode: "ask", askBeforePublish: true }), "Matches the task · Ask · no git limits (asks before each commit)");
+  assert.equal(profileSummary({ ...quick, mode: "unattended", delivery: "commit" }), "Matches the task · Run unattended · may commit, no push");
+  assert.equal(profileSummary({ ...quick, model: "openai::gpt-6-luna" }), "gpt-6-luna · Review only · no git limits");
+});
+
+test("the agent picker's choice and a profile's fields map both ways", () => {
+  assert.equal(profileAgent(quick), null, "no model named: the task's tier picks");
+  const copilot = { provider: "copilot-cli", model: "gpt-5.6-luna", effort: "high", context: "long_context" as const };
+  assert.deepEqual(agentFields(copilot), { engine: "copilot-cli", model: "gpt-5.6-luna", effort: "high", context: "long_context", fast: undefined });
+  assert.deepEqual(profileAgent({ ...quick, ...agentFields(copilot) }), copilot);
+  const included = { provider: "ensemble", model: "gemini-3.5-flash", effort: "low" };
+  assert.deepEqual(agentFields(included), { engine: "ensemble", model: "ensemble::gemini-3.5-flash", effort: "low", context: undefined, fast: undefined });
+  assert.deepEqual(profileAgent({ ...quick, ...agentFields(included) }), included);
+  assert.deepEqual(agentFields(null), { engine: "ensemble", model: "", effort: "default", context: undefined, fast: undefined });
 });
 
 import { quickAssignInput } from "./quick-assign.js";
@@ -119,7 +133,7 @@ test("a Copilot profile keeps its model, thinking level and context window", () 
   const profile = { ...quick, id: "copilot", name: "Copilot", engine: "copilot-cli" as const, model: "gpt-5.6-luna", effort: "high" as const, context: "long_context" as const };
   const input = quickAssignInput("task", profile);
   assert.deepEqual([input.engine, input.model, input.reasoningEffort, input.contextTier, input.provider], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", undefined]);
-  assert.equal(profileSummary(profile), "GitHub Copilot · Code · Ask · no git limits (asks before each commit)");
+  assert.equal(profileSummary(profile), "GitHub Copilot · Review only · no git limits");
   const fields = profileFields(profile);
   assert.equal(differs(profile, { ...fields, context: undefined }), true);
   assert.equal(differs({ ...profile, context: "default" }, { ...fields, context: undefined }), false, "unset and Standard are the same window");
@@ -128,8 +142,8 @@ test("a Copilot profile keeps its model, thinking level and context window", () 
 import { pullRequestNotices, pullRequestProblem, runPullRequest, runPullRequestLabel } from "./pull-request.js";
 
 test("a profile that ends in a pull request says where it goes and what happens after, keeps it in Quick assign, and counts as a change", () => {
-  const pr = { ...quick, id: "pr", name: "PR", delivery: "local" as const, network: false, pullRequest: { base: "testing", merge: "ask" as const } };
-  assert.equal(profileSummary(pr), "Code · Ask · may commit (asks before each commit) · PR → testing (ask to merge)");
+  const pr = { ...quick, id: "pr", name: "PR", mode: "ask" as const, askBeforePublish: true, delivery: "local" as const, network: false, pullRequest: { base: "testing", merge: "ask" as const } };
+  assert.equal(profileSummary(pr), "Matches the task · Ask · may commit (asks before each commit) · PR → testing (ask to merge)");
   assert.match(profileSummary({ ...pr, pullRequest: { base: "testing", merge: "auto" } }), /PR → testing \(merge when checks pass\)$/);
   assert.match(profileSummary({ ...pr, pullRequest: { base: "staging", merge: "never" } }), /PR → staging \(left open\)$/);
   assert.match(profileSummary({ ...pr, pullRequest: { base: "", merge: "ask" } }), /PR → default branch \(ask to merge\)$/);

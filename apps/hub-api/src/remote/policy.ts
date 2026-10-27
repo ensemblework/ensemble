@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { CODE_ENGINES, PullRequestPlan, pullRequestHeadRefusal } from "@ensemble/shared-types";
 import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
-import { OUTSIDE_TOOL } from "../workspace/tools.js";
+import { OUTSIDE_READ_TOOL, OUTSIDE_TOOL } from "../workspace/tools.js";
 import { TRUST_TOOL } from "../workspace/trust.js";
 import { withoutPageSection, type HostedAnswer, type JobSpec } from "./contract.js";
 import type { RemoteSettings, SharedFolder } from "./store.js";
@@ -65,9 +65,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
   if (refusal) return { code: "PULL_REQUEST_INVALID", message: refusal };
   // The branch the person picked on the web: as it is, a new one with that name, or an existing one.
   const branchMode = !named ? "as-is" : pullRequest ? "new" : spec.branchMode === "new" || spec.branchMode === "existing" ? spec.branchMode : "as-is";
-  // Trust stays "none": a label from the web is not a trust grant. Review only and
-  // unattended are checked against trust that exists here (doc 25 §6); when it is
-  // missing, the run asks "Trust this folder?", which the person may answer from the web.
+  // Trust stays "none": a label from the web is not a trust grant. No mode needs one;
+  // trust here only quiets Ask and lets an engine load the folder's own settings.
   const web = settings.acceptWebApprovals;
   const mode = spec.mode ?? (spec.unattended ? "unattended" : "ask");
   const assign: LocalPlan["assign"] = {
@@ -160,7 +159,7 @@ export function actionHash(row: LocalDecision): string {
  * questions are not, whatever their wording.
  */
 export function riskOf(row: Pick<LocalDecision, "toolName">): "ordinary" | "high" {
-  return row.toolName === "git push" || row.toolName === OUTSIDE_TOOL || row.toolName === TRUST_TOOL ? "high" : "ordinary";
+  return row.toolName === "git push" || row.toolName === OUTSIDE_TOOL || row.toolName === OUTSIDE_READ_TOOL || row.toolName === TRUST_TOOL ? "high" : "ordinary";
 }
 
 export type AnswerVerdict =

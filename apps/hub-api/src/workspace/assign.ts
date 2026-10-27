@@ -6,7 +6,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, ENGINE_LABELS, PullRequestPlan, pullRequestHeadRefusal, type CodeEngine } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, isCodeEngine, PullRequestPlan, pullRequestHeadRefusal, type CodeEngine, type ModelTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -17,15 +17,15 @@ import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
-import { capabilities } from "./sandbox/spawn.js";
-import { checkModeTrust, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, storedMode, UnattendedAskModeError, type RunMode } from "./trust.js";
+import { PATH_RULE_SOURCE, PATH_RULE_TOOL, storedMode, type RunMode } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
 
 export const Assign = z.object({
   taskId: z.string().uuid(),
-  kind: z.enum(["research", "code"]),
+  /** Unset: decided from who does the work and where (`autoKind`). */
+  kind: z.enum(["research", "code"]).optional(),
   provider: z.string().optional(),
   model: z.string().optional(),
   reasoningEffort: z.string().optional(),
@@ -37,7 +37,7 @@ export const Assign = z.object({
   branch: z.string().max(200).optional(),
   /** `push`: no limits on git (commit, push any branch, pull requests). `local` and `commit` are limits the person picks. */
   delivery: z.enum(["local", "commit", "push"]).default("push"),
-  askBeforePublish: z.boolean().default(true),
+  askBeforePublish: z.boolean().default(false),
   useCredentials: z.boolean().default(false),
   sandbox: z.boolean().default(true),
   network: z.boolean().optional(),
@@ -47,7 +47,7 @@ export const Assign = z.object({
   mode: z.enum(["ask", "review", "unattended"]).optional(),
   /** `review` is the read-only grant (no writes, no network), for a folder shared read-only. */
   accessMode: z.enum(["review", "read-write"]).optional(),
-  /** always saves a device path rule. task trusts only this job. none asks. */
+  /** always saves a device path rule. task trusts only this job. none: the folder is not trusted (Ask asks there). */
   trust: z.enum(["always", "task", "none"]).optional(),
   maxMinutes: z.number().int().min(1).max(480).optional(),
   maxToolCalls: z.number().int().min(5).max(500).optional(),
@@ -86,7 +86,7 @@ function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: 
 }
 
 /** A request that ends in a pull request, made consistent: a code task with commits, pushes and the internet. */
-export function withPullRequest(body: AssignInput): AssignInput {
+export function withPullRequest<T extends AssignInput>(body: T): T {
   const plan = body.pullRequest;
   if (!plan) return body;
   if (body.kind !== "code") throw new GuardError("A pull request comes from a code task.");
@@ -99,6 +99,35 @@ export function withPullRequest(body: AssignInput): AssignInput {
   return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "push", network: true };
 }
 export type AssignInput = z.infer<typeof Assign>;
+/** A request with its kind decided. */
+export type ResolvedAssign = AssignInput & { kind: "research" | "code" };
+
+/**
+ * The kind of run when the request does not say. Work by a coding agent, on a paired computer, in a
+ * folder, or on a server that runs code happens in a folder (`code`: the agent can research too);
+ * otherwise Ensemble's agent researches and writes on the server.
+ */
+export function autoKind(body: Pick<AssignInput, "kind" | "engine" | "deviceId" | "folder" | "folderLabel" | "repoUrl" | "continueFromJobId" | "pullRequest" | "chat">, serverRunsCode: boolean): "research" | "code" {
+  if (body.kind) return body.kind;
+  const somewhere = Boolean(body.deviceId || body.folder?.trim() || body.folderLabel?.trim() || body.repoUrl?.trim() || body.continueFromJobId || body.pullRequest || body.chat);
+  return body.engine !== "ensemble" || somewhere || serverRunsCode ? "code" : "research";
+}
+
+/**
+ * A request that leaves the model to the task's tier, when that tier (Settings → Models) names one of
+ * the person's own coding agents: the run uses that agent, with the tier's model, thinking level and
+ * context window.
+ */
+export function withTierAgent(body: AssignInput, tier: Pick<ModelTier, "provider" | "model" | "effort" | "context">): AssignInput {
+  if (body.engine !== "ensemble" || body.model?.trim() || !isCodeEngine(tier.provider)) return body;
+  return {
+    ...body,
+    engine: tier.provider,
+    model: tier.model && tier.model !== "default" ? tier.model : undefined,
+    ...(body.reasoningEffort || tier.effort === "default" ? {} : { reasoningEffort: tier.effort }),
+    ...(body.contextTier || tier.context !== "long_context" ? {} : { contextTier: "long_context" as const }),
+  };
+}
 
 /** The stored mode for a request: `mode` when given, else the older `unattended` flag; a read-only grant stays read-only. */
 export function requestedMode(body: Pick<AssignInput, "kind" | "mode" | "unattended" | "accessMode">): { accessMode: "review" | "read-write" | "auto"; unattended: boolean } {
@@ -127,7 +156,7 @@ async function createDeviceJob(
   prisma: PrismaClient,
   userId: string,
   task: AssignTask,
-  body: AssignInput,
+  body: ResolvedAssign,
   provider: string,
   model: string,
   tierEffort: string | null,
@@ -222,11 +251,12 @@ async function createDeviceJob(
 
 export async function createJob(prisma: PrismaClient, userId: string, input: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
   await requireVerifiedUser(keysFor(userId));
-  const body = { ...withPullRequest(input) };
-  const task = await prisma.task.findFirst({ where: { id: body.taskId, userId, deletedAt: null } });
+  const task = await prisma.task.findFirst({ where: { id: input.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
+  const tiered = withTierAgent(input, tier);
+  const body: ResolvedAssign = { ...withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) }) };
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
@@ -258,7 +288,6 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   // A sandboxed run needs this computer's OS sandbox. Without one it is refused with the reason and the fix,
   // never run unsandboxed behind the person's back.
   if (body.kind === "code" && body.sandbox && !sandboxAvailable()) throw new GuardError(sandboxRefusal());
-  if (body.kind === "code" && requestedMode(body).unattended && capabilities().strength === "ask") throw new UnattendedAskModeError();
 
   let externalRoot: string | null = null;
   let repoUrl: string | null = null;
@@ -304,22 +333,6 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
 
   const { accessMode, unattended } = requestedMode(body);
   const review = accessMode === "review";
-  const grantingNow = body.trust === "always" || body.trust === "task";
-  if (body.kind === "code" && (unattended || accessMode === "auto")) {
-    const root = await workspaceRoot();
-    const folder = externalRoot ?? root;
-    const rows = await prisma.decisionRule.findMany({
-      where: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, decision: "allow" },
-    });
-    const trusted = isFolderTrusted({
-      folder,
-      workspaceRoot: root,
-      rules: rulesForJob(rows, "assign"),
-      grantingNow,
-    });
-    const rejection = checkModeTrust({ accessMode, unattended, trusted });
-    if (rejection) throw rejection;
-  }
 
   const job = await createCappedJob(prisma, userId, {
     data: {
