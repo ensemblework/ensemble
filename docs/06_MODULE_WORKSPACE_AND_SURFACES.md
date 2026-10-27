@@ -1,8 +1,10 @@
 # 06 · Workspace and assigned agents
 
-Workspace is where work assigned from a task, deliverable, Today, the assistant or the CLI runs and is reviewed. The runner is `workspace/agent.ts` behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). [24](24_DESKTOP_SANDBOXING.md) owns sandboxing and permissions; [30](30_ENGINES.md) owns external engines and handoff.
+Runs is where work assigned from a task, deliverable, Today, the assistant or the CLI is tracked and reviewed. Up next, Working now and Needs you sit above recent run history; `/workspace` opens `/runs`. The runner is `workspace/agent.ts` behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). [24](24_DESKTOP_SANDBOXING.md) owns sandboxing and permissions; [30](30_ENGINES.md) owns external engines and handoff.
 
 Hosted accounts see their own job board. Running in host folders or checkouts is operator-only; other verified users target their own paired computer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). `GET /api/workspace` can return a null host root or unavailable host sandbox without hiding device jobs. A failed query shows Retry and device guidance.
+
+`components/runs/run-queue.tsx` keeps the `workspace` query and live invalidations, Assign task, Pause all/Resume, sharing and limits. Queue and history retain separate feature/API permissions. The slot count includes waiting jobs; its information popover explains the one-hour, one-extra-slot rule in [05 §4](05_MODULE_TASK_ORCHESTRATOR.md#4-queue-slots-and-limits).
 
 ## 1. Assigning
 
@@ -55,7 +57,7 @@ Job cards and the task's Agent output link to the Run. `RunStep` stores the engi
 
 Run feedback is a tag or a linked follow-up attempt; it never edits recorded output. Run sheets show Results, Files and Traces with resizing, fullscreen and bounded history.
 
-Workspace queues stack vertically below 1024 CSS pixels; recent completed and stopped work uses one column below 768. On phones, Runs keeps titles and metadata above the status and actions. Its sheet fills the available width, with scrolling content and fixed header controls. Needs me buttons wrap the full answer, including unbroken words, without overlapping the recommendation.
+Runs queues stack vertically below 1024 CSS pixels; recent history stays below them. On phones, Runs keeps titles and metadata above the status and actions. Its sheet fills the available width, with scrolling content and fixed header controls. Needs me buttons wrap the full answer, including unbroken words, without overlapping the recommendation.
 
 ## 5. Related interfaces
 

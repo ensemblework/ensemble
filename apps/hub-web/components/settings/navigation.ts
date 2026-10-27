@@ -52,8 +52,9 @@ SETTINGS_DESTINATIONS.push(
 for (const tier of ["Low model", "Medium model", "High model", "Max model"]) {
   for (const control of ["provider", "model", "thinking"]) SETTINGS_DESTINATIONS.push({ id:`jump-${slug(tier)}-${control}`, tab:"assistant", section:"models", heading:"Models", label:control === "model" ? tier : `${tier} ${control}`, target:`${tier} ${control}`, keywords:`model tier preset reasoning thinking effort ${tier} ${control}` });
 }
-for (const label of ["Code", "Workspace", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}`, ownerOnly:true });
+for (const label of ["Code", "Agent queue", "Runs", "Metrics", "Skills", "Diagrams", "Plots", "Deadlines", "Learning"]) SETTINGS_DESTINATIONS.push({ id:`jump-feature-${slug(label)}`, tab:"account", section:"features", heading:"Features", label:`${label} feature`, target:label, keywords:`enable disable toggle module tiles ${label}`, ownerOnly:true });
 export const SETTINGS_DESTINATION_BY_ID = new Map(SETTINGS_DESTINATIONS.map((row) => [row.id, row]));
+SETTINGS_DESTINATION_BY_ID.set("jump-feature-workspace", SETTINGS_DESTINATION_BY_ID.get("jump-feature-agent-queue")!);
 SETTINGS_DESTINATION_BY_ID.set("jump-account-delete-account", SETTINGS_DESTINATION_BY_ID.get("jump-danger-delete-account")!);
 
 export function settingsDestinationHref(row: SettingsDestination): string {

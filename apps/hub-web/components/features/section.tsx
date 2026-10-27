@@ -2,11 +2,10 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { FEATURES } from "@ensemble/shared-types/features";
 import { OPTIONAL_MODULES, hasModule, moduleFitsProfile, type OptionalModule } from "@ensemble/shared-types/modules";
 import { SectionCard, SettingRow, Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
-import { setFeature } from "@/lib/features";
+import { featureCopy, setFeature } from "@/lib/features";
 import { deskIdFromTemplate } from "@/components/desk/desks";
 import { DESK_EXTRAS, defaultExtras, extrasForProfile, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
 import { layoutKey, readLayout } from "@/components/desk/layout";
@@ -73,7 +72,7 @@ export function FeaturesSection() {
     >
       <div data-features>
         {modules.map((id) => {
-          const feature = FEATURES[id];
+          const feature = featureCopy(id);
           const on = hasModule(shell.data?.modules, id);
           return (
             <SettingRow key={id} title={feature.label} description={feature.line}>

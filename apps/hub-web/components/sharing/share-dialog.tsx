@@ -31,11 +31,11 @@ const KIND_LABEL: Record<ShareKind, string> = {
   plot: "plot",
   meeting: "meeting notes",
   skill: "skill",
-  workspace: "workspace",
+  workspace: "agent queue",
   code: "code",
 };
 
-const SPACE_GETS = ["Boards and tasks", "Pages", "Meeting notes", "Context", "Skills", "Runs and the workspace", "Code (view only)", "Diagrams and plots", "Weekly recap", "Needs me (view; only the runner answers)"];
+const SPACE_GETS = ["Boards and tasks", "Pages", "Meeting notes", "Context", "Skills", "Runs and the agent queue", "Code (view only)", "Diagrams and plots", "Weekly recap", "Needs me (view; only the runner answers)"];
 const STAYS_PRIVATE = ["Today", "Metrics", "Settings", "Model keys", "Connected apps", "Your computers"];
 
 function useDebounced<T>(value: T, ms: number): T {

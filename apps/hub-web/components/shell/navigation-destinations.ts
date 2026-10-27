@@ -4,6 +4,7 @@ import { contextTabs, tabKey } from "../desk/context-tabs";
 import { deskIdFromTemplate } from "../desk/desks";
 import { SETTINGS_TABS } from "../settings/url-state";
 import { SETTINGS_DESTINATIONS, settingsDestinationHref } from "../settings/navigation";
+import { runsModule } from "@/lib/run-modules";
 
 export type NavigationDestination = { href:string; label:string; hint:string; keywords?:string; ownerOnly?:boolean };
 const VIEWS: NavigationDestination[] = [
@@ -12,10 +13,9 @@ const VIEWS: NavigationDestination[] = [
   {href:"/needs-me",label:"Needs me",hint:"Approvals & questions",keywords:"blocked waiting review permissions agent requests"},
   {href:"/meetings",label:"Meeting notes",hint:"Conversations & recaps",keywords:"meetings notes meeting library"},
   {href:"/recap",label:"Weekly recap",hint:"Done, decided, slipped",keywords:"week summary progress"},
-  {href:"/runs",label:"Runs",hint:"Agent history",keywords:"what the agent did execution jobs"},
+  {href:"/runs",label:"Runs",hint:"Live work & history",keywords:"workspace queue up next working needs you what the agent did execution jobs"},
   {href:"/context",label:"Context",hint:"People, projects & graph",keywords:"knowledge connected data"},
   {href:"/skills",label:"Skills",hint:"Saved instructions",keywords:"agent conventions how to work"},
-  {href:"/workspace",label:"Workspace",hint:"Agent queue",keywords:"jobs agent tasks queue"},
   {href:"/code",label:"Code",hint:"Reviews & repositories",keywords:"git review diffs uncommitted changes"},
   {href:"/code#local-repositories",label:"Local repositories",hint:"Code › Local repositories",keywords:"local repos git checkouts folders"},
   {href:"/code#reviews",label:"Code reviews",hint:"Code › Agent changes",keywords:"diff review accept reject agent changes"},
@@ -52,7 +52,7 @@ export function navigationDestinations(query:string, options:{modules?:string|nu
   const seen=new Set<string>();
   return all.filter(row=>{
     if (options.guest&&row.ownerOnly) return false;
-    const gate=moduleForPath(row.href); if (gate&&(!hasModule(options.modules,gate)||!moduleFitsProfile(gate,options.profile))) return false;
+    const gate=row.href==="/runs"?runsModule(options.modules):moduleForPath(row.href); if (gate&&(!hasModule(options.modules,gate)||!moduleFitsProfile(gate,options.profile))) return false;
     const key=`${row.href}:${row.label}`; if (seen.has(key)) return false; seen.add(key); return true;
   }).map(row=>row.href==="/board"&&options.boardLabel?{...row,label:options.boardLabel,keywords:`board ${row.keywords}`}:row).map(row=>({row,score:navigationScore(query,row.label,row.hint,row.keywords)})).filter(hit=>hit.score>0).sort((a,b)=>b.score-a.score).map(hit=>hit.row).filter((row,i,list)=>list.findIndex(other=>other.href===row.href)===i);
 }

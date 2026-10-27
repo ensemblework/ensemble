@@ -9,7 +9,7 @@ export function useQuickAssign(onOptions: (taskId: string) => void, onAssigned?:
   const toast = useToast();
   return useMutation({
     mutationFn: quickAssignTask,
-    onSuccess: (result) => { void client.invalidateQueries(); toast(`Assigned with ${result.profile}. Follow the run in Workspace.`, { tone: "ok" }); onAssigned?.(); },
+    onSuccess: (result) => { void client.invalidateQueries(); toast(`Assigned with ${result.profile}. Follow the run in Runs.`, { tone: "ok" }); onAssigned?.(); },
     onError: (error: Error, taskId) => { toast(error.message, { tone: "error" }); onOptions(taskId); },
   });
 }

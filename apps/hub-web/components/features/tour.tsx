@@ -3,16 +3,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { FEATURES } from "@ensemble/shared-types/features";
 import { OPTIONAL_MODULES, hasModule, type OptionalModule } from "@ensemble/shared-types/modules";
 import { isWidgetId, WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
 import { appendDeskTile } from "@/lib/desk-added";
+import { featureCopy } from "@/lib/features";
 
 type Step = { kind: "intro" } | { kind: "tile"; id: WidgetId } | { kind: "note" };
 
 function stepsFor(id: OptionalModule): Step[] {
-  const starters = FEATURES[id].starters.filter((item): item is WidgetId => isWidgetId(item));
+  const starters = featureCopy(id).starters.filter((item): item is WidgetId => isWidgetId(item));
   if (starters.length === 0) return [{ kind: "note" }];
   return [{ kind: "intro" }, ...starters.map((widgetId) => ({ kind: "tile" as const, id: widgetId }))];
 }
@@ -73,7 +73,7 @@ export function FeatureTour() {
   }, [feature]);
 
   if (!feature || !current) return null;
-  const copy = FEATURES[feature];
+  const copy = featureCopy(feature);
   const place = async (id: WidgetId) => {
     setBusy(true);
     setError("");

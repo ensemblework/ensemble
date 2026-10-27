@@ -10,7 +10,7 @@ Tasks, pages and records keep one identity across views. Saved, pending, failed 
 
 `app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while keeping its add action.
 
-Navigation follows the signup profession, enabled modules and access. Code, Workspace, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
+Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 
 | Route | Purpose |
 | --- | --- |
@@ -19,7 +19,7 @@ Navigation follows the signup profession, enabled modules and access. Code, Work
 | `/context`, `/projects`, `/projects/[id]` | People, projects, repositories, preferences, graph and profile records |
 | `/meetings`, `/files`, `/files/[id]` | Notes shelf, file library and original-file preview |
 | `/diagrams`, `/diagrams/[id]`, `/plots`, `/plots/[id]` | Diagrams, datasets and figures |
-| `/needs-me`, `/runs`, `/workspace`, `/code`, `/code/review` | Decisions, attempts, agent workboard and code review |
+| `/needs-me`, `/runs`, `/code`, `/code/review` | Decisions, live agent queue and run history, code review. `/workspace` opens `/runs` |
 | `/skills`, `/morning-brief`, `/recap`, `/metrics` | Personal instructions, briefing preferences, recap and usage |
 | `/completed`, `/trash` | Completed work and recoverable deletion |
 | `/connect`, `/connect/[app]`, `/settings` | Editor connection guides and settings |
@@ -62,6 +62,8 @@ It is one queue, without overview counters or filter tabs. Empty sections are om
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
+Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. Up next, Working now and Needs you retain job actions, queue order and waiting reasons. Assign task, Pause all/Resume, sharing and run-limit settings stay available. Completed and stopped work appears in run history, not separate lanes. Queue errors and history errors retry independently.
+
 Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
 
 ### 3.5 Context
@@ -74,11 +76,7 @@ Projects open the same `components/project/project-page.tsx` in a side peek or a
 
 Skills edits each personal instruction body, its enablement and retained versions. Evidence appears only when present. The page has no preview/scoring form or learning teaser. The `/morning-brief` editor uses the same skill versioning. Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
 
-### 3.7 Workspace
-
-Workspace is the agent workboard: queued, active, waiting, stopped and recently completed work. Every account sees its own jobs, including paired-device jobs; server folder/checkout access is operator-only. Errors offer Retry or paired-computer guidance. Assignment uses saved run profiles and explicit execution choices ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)). Opening a run-profile name editor focuses and selects the name synchronously, so a character typed at once is not lost (`components/agent/assign-dialog.tsx`).
-
-#### 3.7.1 Code
+### 3.7 Code
 
 Code opens a review or folder with changed-file diff, editor and Source control. On the hosted app ordinary users work on their paired computer. The terminal is for the person only, needs passkey unlock, and is not an assistant tool. Details: [16](16_CODE_TAB.md).
 
@@ -121,9 +119,9 @@ Files lists uploaded originals and app content the person explicitly saved or im
 
 Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
 
-`InfoTip` opens bounded, portalled guidance on hover, focus or tap. Escape dismisses help before its containing dialog; a tap outside closes it. Routine explanations belong there rather than under every control; errors, security warnings and destructive-action confirmations stay visible. Workspace cards keep titles, compact status/priority/Git choices, computer/model and live progress or errors; full summaries belong to the task/run.
+`InfoTip` opens bounded, portalled guidance on hover, focus or tap. Escape dismisses help before its containing dialog; a tap outside closes it. Routine explanations belong there rather than under every control; errors, security warnings and destructive-action confirmations stay visible. Run queue cards keep titles, compact status/priority/Git choices, computer/model and live progress or errors; full summaries belong to the task/run.
 
-Below 768 CSS pixels, Context tiles use full-width rows with a horizontally scrollable tab strip; record grids shrink to the available width. Workspace's active queues stack below 1024 pixels and recent history stacks below 768. Runs puts its actions below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code. Desktop panel preferences and saved tile sizes are unchanged.
+Below 768 CSS pixels, Context tiles use full-width rows with a horizontally scrollable tab strip; record grids shrink to the available width. Runs stacks its live queues below 1024 pixels, with recent history below. History actions sit below each title and metadata on phones; run sheets fill the phone width and scroll their content separately from their controls. Needs me choices wrap long answers and keep the recommendation badge inside the button. Code uses a dismissible Explorer/Find/Source control panel on phones, and the read-only run browser switches between Files and code. Desktop panel preferences and saved tile sizes are unchanged.
 
 Phone form fields use at least 16 px text to avoid Safari zooming the page on focus.
 

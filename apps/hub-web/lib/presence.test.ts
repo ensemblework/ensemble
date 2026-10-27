@@ -7,6 +7,7 @@ test("Go to uses where someone is, or the one shared item they opened", () => {
   assert.equal(hrefOf({ route: null, resource: { kind: "page", id: "p1" } }), "/pages/p1");
   assert.equal(hrefOf({ route: null, resource: { kind: "plot_space", id: "w 1" } }), "/plots/w%201");
   assert.equal(hrefOf({ route: null, resource: { kind: "board", id: "space-1" } }), "/board");
+  assert.equal(hrefOf({ route: null, resource: { kind: "workspace", id: "space-1" } }), "/runs");
   assert.equal(hrefOf({ route: null, resource: { kind: "plot", id: "c1" } }), null);
   assert.equal(hrefOf({ route: null, resource: null }), null);
 });
