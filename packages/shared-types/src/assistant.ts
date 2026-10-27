@@ -234,11 +234,12 @@ export const OrchestrationSettings = z.object({
   requireTestsBeforeCommit: z.boolean().default(true),
   defaultExecution: z.enum(["sandbox", "native"]).default("sandbox"),
   /**
-   * In a sandboxed run, what the agent may do with a path outside its work
-   * folder without asking: read it (default), read and write it, or nothing.
-   * Anything not covered asks in Ask mode and is refused in Review only and
-   * Run unattended. Keys, dotfiles, Ensemble's data and code stay refused.
-   * Unsandboxed runs are not affected.
+   * Beyond the Ensemble workspace, what the agent may do with a path outside
+   * its work folder without asking: read it (default), read and write it, or
+   * nothing (applied where the OS sandbox enforces it). Changing a folder that
+   * is not covered asks once per folder; Run unattended may change the
+   * person's own folders unless this is "none". Keys, dotfiles, Ensemble's
+   * data and code stay refused.
    */
   outsideAccess: OutsideAccess.default("read"),
   /**
@@ -289,6 +290,7 @@ export function pullRequestHeadRefusal(branch: string, base: string): string | n
 export const RunProfile = z.object({
   id: z.string().min(1).max(40),
   name: z.string().trim().min(1).max(40),
+  /** Kept for older clients; the kind of run follows from the agent and where it runs. */
   kind: z.enum(["research", "code"]).default("code"),
   /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
   deviceId: z.string().max(100).nullable().default(null),
@@ -304,8 +306,8 @@ export const RunProfile = z.object({
   branchMode: z.enum(["as-is", "new"]).default("as-is"),
   /** Git for the run: `push` lets the agent commit, push any branch and work with pull requests; `local` and `commit` are limits the person picks. */
   delivery: z.enum(["local", "commit", "push"]).default("push"),
-  askBeforePublish: z.boolean().default(true),
-  mode: RunMode.default("ask"),
+  askBeforePublish: z.boolean().default(false),
+  mode: RunMode.default("review"),
   sandbox: z.boolean().default(true),
   useCredentials: z.boolean().default(false),
   network: z.boolean().default(true),
@@ -321,7 +323,7 @@ export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
 export const QUICK_PROFILE_ID = "quick";
 
-/** The built-in profile while none is saved: code in its own checkout, git without limits, Ask. */
+/** The built-in profile while none is saved: its own checkout, git without limits, Review only. */
 export function quickRunProfile(orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null): RunProfile {
   return {
     id: QUICK_PROFILE_ID,
@@ -333,8 +335,8 @@ export function quickRunProfile(orchestration?: { defaultExecution?: string; san
     effort: "default",
     branchMode: "as-is",
     delivery: "push",
-    askBeforePublish: true,
-    mode: "ask",
+    askBeforePublish: false,
+    mode: "review",
     sandbox: orchestration?.defaultExecution !== "native",
     useCredentials: false,
     network: orchestration?.sandboxNetwork ?? true,

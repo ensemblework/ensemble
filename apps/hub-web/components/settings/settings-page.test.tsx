@@ -223,22 +223,25 @@ test("a GitHub Copilot tier shows the account, each model's cost and size, its o
   const settings = Settings.parse({ email: "mira@fieldnote.example", timezone: "Europe/London", models: { easy: { provider: "copilot-cli", model: "gpt-5.6-luna", effort: "default" } } });
   const view = await mount("http://localhost/settings?tab=assistant", { "/api/settings": { settings } });
   try {
-    await until(() => Boolean(document.querySelector('[data-tier="easy"] [data-context-window]')), "the context window choice");
+    await until(() => Boolean(document.querySelector('[data-tier="easy"] [data-picker="tuning"]')), "the thinking and context button");
     const tile = document.querySelector<HTMLElement>('[data-subscription="copilot-cli"]')!;
     assert.match(tile.textContent ?? "", /Signed in as mira-chen/);
     assert.match(tile.querySelector('[data-testid="subscription-model-facts"]')?.textContent ?? "", /GPT-5\.6 Luna: OpenAI · low cost · 200K or 922K context/);
 
     const tier = document.querySelector<HTMLElement>('[data-tier="easy"]')!;
-    const radios = (group: string) => Array.from(tier.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] [role="radio"]`)) as HTMLElement[];
-    assert.equal(radios("Low model thinking")[0]?.textContent, "Automatic (Medium)", "the model's own default level");
-    assert.deepEqual(radios("Low model context window").map((node) => node.textContent), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
-    assert.equal(document.querySelector('[data-tier="medium"] [data-context-window]'), null, "other providers have no context choice");
+    assert.match(tier.querySelector('[data-picker="agent"]')?.textContent ?? "", /GitHub Copilot · GPT-5\.6 Luna/, "agent and model in one picker");
     await act(async () => {
-      radios("Low model context window")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      tier.querySelector<HTMLElement>('[data-picker="tuning"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const radios = (group: string) => Array.from(document.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] [role="radio"]`)) as HTMLElement[];
+    assert.equal(radios("Low model: thinking and context: thinking")[0]?.textContent, "Auto (Medium)", "the model's own default level");
+    assert.deepEqual(radios("Low model: thinking and context: context window").map((node) => node.textContent), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    await act(async () => {
+      radios("Low model: thinking and context: context window")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await settle(45);
     const patch = view.bodies.find((row) => row.path === "/api/settings" && row.method === "PATCH");
-    assert.deepEqual(patch?.body, { models: { easy: { context: "long_context" } } });
+    assert.deepEqual(patch?.body, { models: { easy: { effort: "default", context: "long_context" } } });
   } finally {
     await view.done();
   }
@@ -332,16 +335,19 @@ const USAGE = {
   days: [],
 };
 
-const tabNames = () => Array.from(document.querySelectorAll('[role="tablist"][aria-label="Model source"] [role="tab"]')).map((node) => node.textContent);
+const tabNames = () => Array.from(document.querySelectorAll('[role="tablist"][aria-label="Where the model comes from"] [role="tab"]')).map((node) => node.textContent);
+const openLowPicker = async () => {
+  await act(async () => {
+    document.querySelector('[aria-label="Low model: agent and model"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+};
 
 test("without included models there is no Included tab and nothing about credits", async () => {
   const view = await mount("http://localhost/settings?tab=assistant");
   try {
-    await until(() => Boolean(document.querySelector('[aria-label="Low model provider"]')), "the tier pickers");
-    await act(async () => {
-      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    assert.deepEqual(tabNames(), ["AI app subscriptions", "API keys"]);
+    await until(() => Boolean(document.querySelector('[aria-label="Low model: agent and model"]')), "the tier pickers");
+    await openLowPicker();
+    assert.deepEqual(tabNames(), ["Your AI plans", "API keys"]);
     assert.equal(document.querySelector('[data-testid="included-credits"]'), null);
     assert.ok(!view.calls.includes("/api/metrics/credits"), "credits are not asked for");
   } finally {
@@ -357,49 +363,52 @@ test("included models: a first Included tab with credits left, the credits line,
     assert.match(line.textContent ?? "", /Included with Ensemble: 12,345 of 20,000 credits left this month · resets Nov 1/);
     assert.equal(line.dataset.state, "ok");
     assert.equal(line.querySelector("a")?.getAttribute("href"), "/metrics");
-    await act(async () => {
-      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    assert.deepEqual(tabNames(), ["Included", "AI app subscriptions", "API keys"]);
+    await openLowPicker();
+    assert.deepEqual(tabNames(), ["Included", "Your AI plans", "API keys"]);
     const included = Array.from(document.querySelectorAll('[role="tab"]')).find((node) => node.textContent === "Included")!;
     await act(async () => {
       included.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    const option = document.querySelector<HTMLElement>('[role="listbox"][aria-label="Low model provider"] [role="option"]')!;
-    assert.match(option.textContent ?? "", /Included with Ensemble12,345 credits left/);
-    assert.equal(option.querySelector('[data-provider-logo="ensemble"]') !== null, true);
+    assert.match(document.querySelector("[data-agent-picker]")?.textContent ?? "", /Included with Ensemble: 12,345 credits left/);
+    const option = Array.from(document.querySelectorAll<HTMLElement>('[data-agent-picker] [role="option"]')).find((node) => /GPT-6 Luna \(2026-09-22\)/.test(node.textContent ?? ""))!;
+    assert.ok(option.querySelector("[data-provider-logo]"), "the vendor's logo");
     await act(async () => {
       option.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await settle(2);
     const tier = document.querySelector<HTMLElement>('[data-tier="easy"]')!;
-    assert.match(tier.querySelector('[data-picker="model"]')?.textContent ?? "", /GPT-6 Luna \(2026-09-22\)/);
-    assert.deepEqual(
-      Array.from(tier.querySelectorAll('[role="radio"]')).map((node) => node.textContent),
-      ["Auto (Medium)", "Low", "Medium", "High"],
-    );
-    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "Auto (Medium)");
+    assert.match(tier.querySelector('[data-picker="agent"]')?.textContent ?? "", /Included · GPT-6 Luna \(2026-09-22\)/);
+    const openTuning = async () => {
+      if (document.querySelector("[data-tuning-picker]")) return;
+      await act(async () => {
+        tier.querySelector<HTMLElement>('[data-picker="tuning"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    };
+    const levels = () => Array.from(document.querySelectorAll('[aria-label="Low model: thinking and context: thinking"] [role="radio"]'));
+    await openTuning();
+    assert.deepEqual(levels().map((node) => node.textContent), ["Auto (Medium)", "Low", "Medium", "High"]);
+    assert.equal(levels().find((node) => node.getAttribute("aria-checked") === "true")?.textContent, "Auto (Medium)");
     await settle(45);
     const patch = view.bodies.find((row) => row.path === "/api/settings" && row.method === "PATCH");
     assert.ok(patch, "the tier is saved");
     const easy = (patch.body as { models: Record<string, { provider: string; model: string; effort: string }> }).models.easy!;
     assert.deepEqual({ provider: easy.provider, model: easy.model, effort: easy.effort }, { provider: "ensemble", model: "gpt-6-luna", effort: "default" });
 
-    const high = Array.from(tier.querySelectorAll('[role="radio"]')).find((node) => node.textContent === "High")!;
+    const high = levels().find((node) => node.textContent === "High")!;
     await act(async () => {
       high.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "High");
-    await act(async () => {
-      tier.querySelector('[data-picker="model"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const deepseek = Array.from(document.querySelectorAll('[data-model-picker] [role="option"]')).find((node) => /DeepSeek V4 Flash/.test(node.textContent ?? ""))!;
+    await settle(2);
+    assert.equal(levels().find((node) => node.getAttribute("aria-checked") === "true")?.textContent, "High");
+    await openLowPicker();
+    const deepseek = Array.from(document.querySelectorAll('[data-agent-picker] [role="option"]')).find((node) => /DeepSeek V4 Flash/.test(node.textContent ?? ""))!;
     await act(async () => {
       deepseek.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    await settle(2);
-    assert.deepEqual(Array.from(tier.querySelectorAll('[role="radio"]')).map((node) => node.textContent), ["Auto"], "DeepSeek offers Auto only");
-    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "Auto", "the level goes back to Auto");
+    await settle(45);
+    assert.equal(tier.querySelector('[data-picker="tuning"]'), null, "DeepSeek decides how much to think: nothing to tune");
+    const last = view.bodies.filter((row) => row.path === "/api/settings" && row.method === "PATCH").at(-1)!.body as { models: Record<string, { model: string; effort: string }> };
+    assert.deepEqual({ model: last.models.easy!.model, effort: last.models.easy!.effort }, { model: "deepseek-v4-flash", effort: "default" }, "the level goes back to Auto");
   } finally {
     await view.done();
   }
@@ -422,14 +431,12 @@ test("the credits line warns when this account's credits are used or included AI
     const line = document.querySelector<HTMLElement>('[data-testid="included-credits"]')!;
     assert.equal(line.dataset.state, "paused");
     assert.match(line.textContent ?? "", /Paused for everyone until Nov 1/);
-    await act(async () => {
-      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    await openLowPicker();
     const included = Array.from(document.querySelectorAll('[role="tab"]')).find((node) => node.textContent === "Included")!;
     await act(async () => {
       included.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    assert.match(document.querySelector('[role="listbox"][aria-label="Low model provider"]')?.textContent ?? "", /paused until Nov 1/);
+    assert.match(document.querySelector("[data-agent-picker]")?.textContent ?? "", /paused until Nov 1/);
   } finally {
     await paused.done();
   }

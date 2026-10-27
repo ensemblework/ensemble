@@ -911,7 +911,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       case "folder":
         return say(`Ensemble Code reads and works in ${folder}. Open \`ensemble\` in another folder to change it.`);
       case "trust":
-        await api.trust(folder).then((row) => say(`Trusted ${row.path}. Review only and Run unattended can use it.`, "ok")).catch((error: Error) => say(error.message, "error"));
+        await api.trust(folder).then((row) => say(`Trusted ${row.path}. In Ask, agents run commands there without asking.`, "ok")).catch((error: Error) => say(error.message, "error"));
         return;
       case "keys":
         return addKey(args || undefined);

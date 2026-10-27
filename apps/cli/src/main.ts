@@ -94,7 +94,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
     "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
-  trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
+  trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
   hooks:
     "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
@@ -528,7 +528,7 @@ async function commandTrust(args: string[]): Promise<void> {
   if (subcommand === "add") {
     const folder = args[1] ?? process.cwd();
     const row = await withAdminApi({ sidecarDir, run: (discovery) => trustFolder(discovery, folder) });
-    console.log(`Trusted ${row.path}. Agents can run commands there without asking, and Review only and Run unattended can use it.`);
+    console.log(`Trusted ${row.path}. In Ask, agents run commands there without asking, and coding agents load its own settings.`);
     return;
   }
   if (!args[1]) throw new Error("Usage: ensemble trust remove <path>");

@@ -12,22 +12,15 @@ The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.t
 
 | Choice | Behaviour |
 | --- | --- |
-| Run profile | Up to three saved profiles plus built-in Quick. The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named. Settings → Assistant → Run profiles also sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it |
-| Kind | Research & writing (web/paper tools, writes the task page) or Code (works in a folder) |
-| Run on | Permitted server execution or a paired computer; an offline computer keeps the job queued |
-| Engine | Ensemble, Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity ([30](30_ENGINES.md)). Opening the work in the tool's own app or a terminal is a separate option that uses that tool's controls |
-| Model / thinking | Task tier or an available override; engine-specific models where applicable. GitHub Copilot lists the plan's models from the computer with each model's thinking levels and, where it has two, its context window (standard or long; `contextTier`) |
-| Place | Fresh run folder or clone, continuation of earlier work, or an explicitly granted folder |
-| Branch | As is, existing or new, by exact name, also in a folder worked in place and from the web ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)) |
-| Git | No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); optional Ask before each commit |
-| Mode | Ask, Review only or Run unattended; trusted-folder rules apply |
-| Sandbox / network / outside access | The OS capability actually present, internet on/off, and read / read-write / none outside the work folder |
-| Completion | Move the task to Done or leave it for the person |
-| Budgets | Minutes, tool calls, model turns; time waiting on a person is excluded |
+| Run profile | Up to three saved profiles plus built-in Quick (Review only, Git No limits, the task's tier). The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named. **+ New profile** in the dialog saves the current choices as a profile; Settings → Assistant → Run profiles creates one too, edits its agent, computer, mode, Git, sandbox and internet, sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it |
+| Agent | One picker (`components/agent/agent-picker.tsx`): **Auto** (Settings → Models for the task's complexity), Ensemble's included models, the person's own AI plans signed in on the run's computer (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity; [30](30_ENGINES.md)) with their usage, or a model on an API key. Each model lists its cost and context sizes; the button beside it sets the thinking level, context window (standard or long; `contextTier`) and fast mode that model takes |
+| Runs on | Permitted server execution or a paired computer (an offline computer keeps the job queued); a coding agent goes to a computer that has it signed in. Without either, Ensemble's agent researches and writes on the server |
+| Kind | Not chosen: work by a coding agent, on a computer or on a server that runs code happens in a folder (`code`, which can also research); otherwise Ensemble's agent researches and writes the task page (`research`; `autoKind` in `workspace/assign.ts`) |
+| Where it works | Its own checkout (a new folder in the workspace; the agent clones or creates what the task needs), an earlier task's folder, or a folder of the person's |
+| Mode | Ask, Review only or Run unattended; none needs a trusted folder ([24 §4](24_DESKTOP_SANDBOXING.md#4-trust-and-run-modes)) |
+| More options | Instructions for this attempt; Git: No limits (default: commit, push any branch, open and merge pull requests with the computer's sign-in), Commit (no push), Local only (no commits), or Pull request (Ensemble opens it into any branch, from a repository named there for its own checkout, then asks before merging, merges when checks pass, or leaves it open; [24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)); Ask before each commit (off by default); Branch: the agent decides, or an existing or new one by exact name ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); sandbox (the OS capability actually present), internet, outside the workspace (read / read-write / none) and *Use my git sign-in*; opening in the tool's own app or a terminal; budgets (minutes, tool calls, model turns; time waiting on a person is excluded); Move the task to Done |
 
-Some per-run controls, such as outside access, are not stored in the profile. The dialog and API validate the combination rather than invent a missing folder, engine or model. Code work without a repository can use a fresh empty folder.
-
-The dialog shows a model's vendor mark and reported cost; context sizes appear only in the context selector. Thinking, context, mode, branch and Git guidance use hover/focus/tap information popovers. Repeated folder descriptions and the footer's configuration recap are omitted; validation and safety warnings stay visible.
+Outside access is per run, not stored in a profile. The dialog and API validate the combination rather than invent a missing folder, engine or model; an agent or computer with no OS sandbox runs with it off, and the dialog says so. Settings → Assistant → Models uses the same picker for each complexity tier (Low, Medium, High, Max), so a tier can name a coding agent on the person's plan; Auto then runs that agent (`withTierAgent` in `workspace/assign.ts`).
 
 ## 2. Context and preparation
 

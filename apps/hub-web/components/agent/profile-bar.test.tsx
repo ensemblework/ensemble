@@ -40,7 +40,7 @@ function render(onSave: (value: { id?: string; name: string }) => void, onDefaul
 test("a new profile name keeps every letter typed, not only the last one", async () => {
   const saved: Array<{ id?: string; name: string }> = [];
   const { host, root } = render((value) => saved.push(value));
-  const add = [...host.querySelectorAll("button")].find((button) => button.textContent === "Save as profile")!;
+  const add = [...host.querySelectorAll("button")].find((button) => button.textContent?.trim() === "New profile")!;
   act(() => add.click());
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Profile name"]')!;
   act(() => press(input, "X"));
@@ -91,11 +91,44 @@ test("every saved profile has a star; the default's is pressed and another's mak
   host.remove();
 });
 
-test("GitHub Copilot on a paired computer offers its models, thinking levels and context windows, and Assign sends them", async () => {
+/** The agent picker and its thinking panel, as a person uses them. */
+function pickerDriver(settle: () => Promise<void>) {
+  const click = async (node: HTMLElement | undefined | null, what: string) => {
+    assert.ok(node, `no ${what}`);
+    await act(async () => node.click());
+    await settle();
+  };
+  const panel = () => document.querySelector<HTMLElement>("[data-agent-picker]");
+  const options = () => [...(panel()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((node) => node.querySelector("span span")?.textContent?.trim() ?? node.textContent?.trim() ?? "");
+  return {
+    trigger: () => document.querySelector<HTMLButtonElement>('button[aria-label="Agent and model"]')!,
+    open: async () => {
+      if (!panel()) await click(document.querySelector<HTMLButtonElement>('button[aria-label="Agent and model"]'), "agent picker");
+    },
+    tab: async (name: string) => click([...(panel()?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])].find((node) => node.textContent?.trim() === name), `${name} tab`),
+    chip: async (name: string) => click([...(panel()?.querySelectorAll<HTMLButtonElement>('[role="radiogroup"] [role="radio"]') ?? [])].find((node) => node.textContent?.trim() === name), `${name} chip`),
+    options,
+    note: () => panel()?.querySelector("span.text-warn, span.text-muted")?.textContent ?? "",
+    pick: async (label: string) => click([...(panel()?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].find((node) => (node.querySelector("span span")?.textContent?.trim() ?? node.textContent?.trim()) === label), `${label} option`),
+    tuning: async () => {
+      if (!document.querySelector("[data-tuning-picker]")) await click(document.querySelector<HTMLButtonElement>('button[aria-label="Thinking and context"]'), "thinking button");
+      return {
+        levels: () => [...document.querySelectorAll<HTMLElement>('[aria-label="Thinking and context: thinking"] [role="radio"]')].map((node) => node.textContent?.trim()),
+        windows: () => [...document.querySelectorAll<HTMLElement>('[aria-label="Thinking and context: context window"] [role="radio"]')].map((node) => node.textContent?.trim()),
+        choose: async (group: "thinking" | "context window", text: string) => click([...document.querySelectorAll<HTMLElement>(`[aria-label="Thinking and context: ${group}"] [role="radio"]`)].find((node) => node.textContent?.trim() === text), `${text} level`),
+      };
+    },
+    closeTuning: async () => {
+      if (document.querySelector("[data-tuning-picker]")) await click(document.querySelector<HTMLButtonElement>('button[aria-label="Thinking and context"]'), "thinking button");
+    },
+  };
+}
+
+test("one picker: the person's own AI plans on a paired computer, each model with its own thinking levels and context windows; Assign sends them", async () => {
   const luna = { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", contexts: [{ id: "default", label: "200K (standard)", tokens: 200000 }, { id: "long_context", label: "922K (long context)", tokens: 922000 }], vision: true, cost: "low cost", description: "OpenAI" };
   const haiku = { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", contexts: [{ id: "default", label: "136K", tokens: 136000 }], cost: "0.33× premium requests", description: "Anthropic" };
   const copilot = { id: "copilot-cli", via: "cli", version: "1.0.40", signedIn: false, account: null, models: [{ id: "auto", label: "Auto", isDefault: true }, luna, haiku], checkedAt: "2026-10-20T09:00:00.000Z" };
-  const codex = { id: "codex", via: "cli", version: "0.163.0", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol", isDefault: true, efforts: ["low", "high", "max", "ultra"], defaultEffort: "low", vision: true }], checkedAt: "2026-10-20T09:00:00.000Z" };
+  const codex = { id: "codex", via: "cli", version: "0.163.0", signedIn: true, models: [{ id: "gpt-6.1-sol", label: "GPT-6.1 Sol", isDefault: true, efforts: ["low", "high", "max", "ultra"], defaultEffort: "low", vision: true }], checkedAt: "2026-10-20T09:00:00.000Z", limits: [{ id: "week", label: "Weekly limit", usedPercent: 40 }] };
   const claude = { id: "claude-code", via: "cli", version: "2.1.304", signedIn: true, models: claudeCodeModels("2.1.304"), checkedAt: "2026-10-20T09:00:00.000Z" };
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -120,65 +153,76 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
   const settle = async () => {
     for (let i = 0; i < 6; i += 1) await act(async () => { await wait(15); });
   };
-  const select = (label: string) => document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
-  const choose = async (label: string, value: string) => {
-    await act(async () => {
-      const node = select(label);
-      node.value = value;
-      node.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await settle();
-  };
-  const options = (label: string) => [...select(label).options].map((option) => option.textContent);
+  const picker = pickerDriver(settle);
   try {
-    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
+    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" /></QueryClientProvider>));
     await settle();
-    assert.ok(options("Who does the work").includes("GitHub Copilot"));
-    // Every coding agent offers the models its computer listed, each with its own levels and windows.
-    await choose("Who does the work", "codex");
-    assert.deepEqual(options("Codex model"), ["Codex default (GPT-6.1 Sol)", "GPT-6.1 Sol"]);
-    assert.deepEqual(options("Codex thinking"), ["Default (Low)", "Low", "High", "Max", "Ultra"]);
-    await choose("Who does the work", "claude-code");
-    await choose("Claude Code model", "claude-sonnet-4-6");
-    assert.deepEqual(options("Claude Code thinking"), ["Default (High)", "Low", "Medium", "High", "Max"]);
-    assert.deepEqual(options("Context window"), ["Standard · 200K", "Long context · 1M"]);
+    assert.equal(document.querySelector('[aria-label="Mode"] [aria-checked="true"]')?.textContent?.includes("Review only"), true, "Quick starts in Review only");
+    assert.match(picker.trigger().textContent ?? "", /^Auto/, "the task's tier picks until the person chooses");
+    assert.equal(document.querySelector("textarea"), null, "instructions wait under More options");
+    assert.equal(document.querySelector('input[aria-label="Repository"]'), null, "its own checkout needs no repository");
+
+    await picker.open();
+    assert.match(picker.options()[0] ?? "", /Auto: match the task/);
+    await picker.tab("Your AI plans");
+    await picker.chip("Codex");
+    assert.match(document.querySelector('[data-testid="agent-usage"]')?.textContent ?? "", /Weekly limit/, "the plan's usage shows beside its models");
+    assert.deepEqual(picker.options().slice(1), ["Codex default", "GPT-6.1 Sol"]);
+    await picker.pick("GPT-6.1 Sol");
+    assert.match(picker.trigger().textContent ?? "", /Codex · GPT-6.1 Sol/);
+    assert.deepEqual((await picker.tuning()).levels(), ["Auto (Low)", "Low", "High", "Max", "Ultra"]);
+    await picker.closeTuning();
+
+    await picker.open();
+    await picker.chip("Claude Code");
+    await picker.pick("Claude Sonnet 4.6");
+    let tuning = await picker.tuning();
+    assert.deepEqual(tuning.levels(), ["Auto (High)", "Low", "Medium", "High", "Max"]);
+    assert.deepEqual(tuning.windows(), ["Standard · 200K", "Long context · 1M"]);
     assert.equal(document.querySelector('[data-testid="engine-fast"]'), null, "Sonnet 4.6 has no fast mode");
-    await choose("Claude Code model", "claude-opus-5-5");
-    assert.equal(select("Context window"), null, "Opus 5.5 has one 1M window");
+    await picker.closeTuning();
+    await picker.open();
+    await picker.pick("Claude Opus 5.5");
+    tuning = await picker.tuning();
+    assert.deepEqual(tuning.windows(), [], "Opus 5.5 has one 1M window");
     assert.ok(document.querySelector('[data-testid="engine-fast"]'), "Opus 5.5 has fast mode");
+    await picker.closeTuning();
     assert.equal(document.querySelector('[data-testid="engine-no-sandbox"]'), null, "Claude Code has its own sandbox");
-    await choose("Who does the work", "grok-cli");
-    assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there/);
-    await choose("Who does the work", "claude-code");
-    await choose("Claude Code model", "claude-opus-5-5");
-    assert.ok(document.querySelector('[data-testid="engine-model-facts"] [data-provider-logo="claude"]'));
-    assert.doesNotMatch(document.querySelector('[data-testid="engine-model-facts"]')?.textContent ?? "", /context/);
-    await choose("Who does the work", "copilot-cli");
-    assert.deepEqual(options("Copilot model"), ["Copilot default (Auto)", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);
-    assert.equal(select("Copilot thinking"), null, "Auto has no thinking levels");
+
+    await picker.open();
+    await picker.chip("Grok Build");
+    await picker.pick("Grok Build default");
+    assert.match(document.querySelector('[data-testid="engine-no-sandbox"]')?.textContent ?? "", /Grok Build has no OS sandbox Ensemble can turn on there, so it runs directly/);
+
+    await picker.open();
+    await picker.chip("GitHub Copilot");
+    assert.match(picker.note(), /not signed in/);
+    assert.deepEqual(picker.options().slice(1), ["GitHub Copilot default", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);
+    await picker.pick("GPT-5.6 Luna");
     assert.match(document.querySelector('[data-testid="engine-signed-out"]')?.textContent ?? "", /Copilot CLI is not signed in on Studio Mac: run copilot login there or press Sign in under Settings → Models\./);
+    tuning = await picker.tuning();
+    assert.deepEqual(tuning.levels(), ["Auto (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
+    assert.deepEqual(tuning.windows(), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    await tuning.choose("thinking", "Extra high");
+    await tuning.choose("context window", "Long context · 922K (long context)");
+    await picker.closeTuning();
 
-    await choose("Copilot model", "gpt-5.6-luna");
-    assert.deepEqual(options("Copilot thinking"), ["Default (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
-    assert.deepEqual(options("Context window"), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
-    assert.equal(document.querySelector('[data-testid="engine-model-facts"]')?.textContent, "low cost");
-    assert.ok(document.querySelector('[data-testid="engine-model-facts"] [data-provider-logo="openai"]'));
-    await choose("Copilot thinking", "xhigh");
-    await choose("Context window", "long_context");
-
-    await choose("Copilot model", "claude-haiku-4.5");
-    assert.equal(select("Copilot thinking"), null);
-    assert.equal(select("Context window"), null, "one fixed size: no choice");
-    await choose("Copilot model", "gpt-5.6-luna");
-    assert.equal(select("Copilot thinking").value, "default", "Haiku dropped the level it lacks");
-    await choose("Copilot thinking", "high");
-    await choose("Context window", "long_context");
+    await picker.open();
+    await picker.pick("Claude Haiku 4.5");
+    assert.equal(document.querySelector('button[aria-label="Thinking and context"]'), null, "one fixed size and no thinking setting: nothing to tune");
+    await picker.open();
+    await picker.pick("GPT-5.6 Luna");
+    tuning = await picker.tuning();
+    assert.equal(document.querySelector('[aria-label="Thinking and context: thinking"] [aria-checked="true"]')?.textContent?.trim(), "Auto (Medium)", "Haiku dropped the level it lacks");
+    await tuning.choose("thinking", "High");
+    await tuning.choose("context window", "Long context · 922K (long context)");
+    await picker.closeTuning();
 
     const assign = [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;
     await act(async () => assign.click());
     await settle();
     const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
-    assert.deepEqual([body?.engine, body?.model, body?.reasoningEffort, body?.contextTier, body?.deviceId, body?.provider], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", "device-1", undefined]);
+    assert.deepEqual([body?.engine, body?.model, body?.reasoningEffort, body?.contextTier, body?.deviceId, body?.provider, body?.kind, body?.mode], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", "device-1", undefined, "code", "review"]);
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -187,7 +231,7 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
   }
 });
 
-test("Git starts on No limits; Pull request: any base typed (empty: the default branch), a too-old computer, a folder worked in place; Assign sends the plan and saving keeps it", async () => {
+test("Git starts on No limits under More options; Pull request: any base typed (empty: the default branch), a too-old computer, a folder worked in place; Assign sends the plan and a new profile keeps it", async () => {
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const sent: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
   const studio = {
@@ -247,16 +291,18 @@ test("Git starts on No limits; Pull request: any base typed (empty: the default 
   const notices = () => [...document.querySelectorAll("[data-pull-request-notice]")].map((node) => node.textContent?.trim());
   const assignButton = () => [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;
   try {
-    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
+    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" /></QueryClientProvider>));
     await settle();
+    assert.equal(document.querySelector('[data-testid="assign-more"]'), null, "git and branches wait under More options");
+    await click(button("More options"));
     assert.ok([...document.querySelectorAll("button")].find(node => node.textContent === "No limits")?.className.includes("bg-panel"), "Git starts on No limits");
+    assert.ok([...document.querySelectorAll("button")].find(node => node.textContent === "Agent decides")?.className.includes("bg-panel"), "the agent decides the branch");
     await click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Pull request")!);
     assert.ok(field('[data-testid="assign-pull-request"]'), "the pull request panel opens");
 
     // The base is free text, empty for the default branch; any branch git accepts goes.
     const base = field<HTMLInputElement>('input[aria-label="Into branch"]');
     assert.deepEqual([base.tagName, base.value, base.placeholder], ["INPUT", "", "default branch"]);
-    assert.equal(document.querySelector("[data-pull-request-bases]"), null, "no list of bases");
     await type("Into branch", "bad..name");
     assert.ok(notices().includes("“bad..name” is not a branch name git accepts."));
     await type("Into branch", "main");
@@ -266,10 +312,11 @@ test("Git starts on No limits; Pull request: any base typed (empty: the default 
     assert.ok(notices().includes("Ensemble on Old Laptop is too old to open pull requests. Update it there (ensemble update), then assign."));
 
     await click(button("Studio Mac"));
-    assert.equal(document.querySelector('select[aria-label="Into branch"]'), null);
     assert.deepEqual(notices(), ["A pull request needs a repository. Give its GitHub address, or pick a folder Studio Mac shares."]);
+    assert.ok(field('input[aria-label="Repository"]'), "its own checkout takes the repository inside the pull request panel");
 
     await click(button("A folder on Studio Mac"));
+    assert.equal(document.querySelector('input[aria-label="Repository"]'), null);
     assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="Shared folder"]').options].map((option) => option.textContent), ["Choose a folder Studio Mac has shared…", "ensemble · repository", "notes"]);
     await choose("Shared folder", "notes");
     assert.deepEqual(notices(), [], "a folder worked in place can end in a pull request");
@@ -280,20 +327,21 @@ test("Git starts on No limits; Pull request: any base typed (empty: the default 
     assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="After opening"]').options].map((option) => option.textContent), ["Ask me before merging", "Merge when checks pass", "Leave it open"]);
     await choose("After opening", "auto");
 
-    await click(button("Save as profile"));
+    await click(button("New profile"));
     await type("Profile name", "PR to main");
     await act(async () => field<HTMLInputElement>('input[aria-label="Profile name"]').form!.requestSubmit());
     await settle();
     const saved = sent.find((row) => row.path === "/api/settings")?.body.runProfiles as Array<Record<string, unknown>> | undefined;
     assert.deepEqual(saved?.[0]?.pullRequest, { base: "main", merge: "auto" });
     assert.equal(saved?.[0]?.delivery, "commit");
+    assert.equal(saved?.[0]?.mode, "review");
 
     assert.equal(assignButton().getAttribute("aria-disabled"), null);
     await click(assignButton());
     const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
     assert.deepEqual(
-      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder },
-      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "notes", deviceId: "device-1", folder: undefined },
+      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder, trust: body?.trust },
+      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "notes", deviceId: "device-1", folder: undefined, trust: undefined },
     );
   } finally {
     await act(async () => root.unmount());

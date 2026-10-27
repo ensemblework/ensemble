@@ -35,7 +35,7 @@ test("agent limits and quiet-hour fields have contextual accessible labels", asy
     for (const input of host.querySelectorAll("input,select")) {
       assert.ok(input.getAttribute("aria-label") || input.getAttribute("aria-labelledby"), input.outerHTML);
     }
-    for (const name of ["Daily action safety limit", "Tasks that run at once", "Outside the work folder", "Quiet hours start", "Quiet hours end"]) {
+    for (const name of ["Daily action safety limit", "Tasks that run at once", "Outside the Ensemble workspace", "Quiet hours start", "Quiet hours end"]) {
       assert.ok(host.querySelector(`[aria-label="${name}"]`), name);
     }
   } finally {

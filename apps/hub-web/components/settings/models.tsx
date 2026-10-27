@@ -6,18 +6,18 @@ import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import Link from "next/link";
-import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type IncludedUsage, type ModelContext, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
+import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, type IncludedUsage, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
 import { api, type Complexity, type ModelCatalog } from "@/lib/api";
 import { relative } from "@/lib/format";
-import { contextChoice, contextSizes } from "@/lib/engine-models";
+import { contextSizes } from "@/lib/engine-models";
 import { includedBlocked, includedLocalOnly, includedNote, resetDay, useIncludedUsage, wholeCredits } from "@/lib/included";
 import { IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
 import { ProviderLogo } from "../connectors/provider-logo";
 import { useToast } from "../toast";
-import { InfoTip, SectionCard, Tag, cx } from "../ui";
-import { ModelPicker, ProviderPicker, ThinkingPicker, effortFor, type ProviderChoice } from "./model-picker";
+import { InfoTip, SectionCard, Tag } from "../ui";
+import { AgentPicker, TuningPicker, agentOptions, modelOf } from "../agent/agent-picker";
 import { KEY_PROVIDERS } from "./setup";
 import { ApiKeysDialog } from "./api-keys-dialog";
 import { activeComputer, SubscriptionsCard, useSubscriptions } from "./subscriptions";
@@ -69,11 +69,6 @@ export function subscriptionModels(agent: SubscriptionAgent | null): { models: s
   return { models: agent.models.map((model) => model.id), meta, cheapest: agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? null, hints };
 }
 
-/** The context windows a subscription model offers, when it offers a long one to choose. */
-export function contextWindows(agent: SubscriptionAgent | null, model: string): ModelContext[] {
-  const contexts = agent?.models.find((row) => row.id === model)?.contexts ?? [];
-  return contexts.length > 1 && contexts.some((row) => row.id === "long_context") ? contexts : [];
-}
 
 /** "Gemini and Claude have keys" — the one line the Models card shows instead of the whole key list. */
 export function keySummary(credentials: ReadonlyArray<{ provider: string; source: string }> | undefined): string {
@@ -102,9 +97,6 @@ export function useRefreshModels() {
   });
 }
 
-function includedChoice(usage: IncludedUsage | null): ProviderChoice {
-  return { id: INCLUDED_PROVIDER, label: INCLUDED_LABEL, status: usage && includedBlocked(usage) ? "included-out" : "included", ...(usage ? { note: includedNote(usage) } : {}) };
-}
 
 /** "Included with Ensemble: 12,345 of 20,000 credits left this month · resets Nov 1", and whether included calls stop now. */
 function IncludedCreditsLine({ usage }: { usage: IncludedUsage }) {
@@ -126,28 +118,7 @@ function IncludedCreditsLine({ usage }: { usage: IncludedUsage }) {
   );
 }
 
-function providerChoices(catalog: ModelCatalog | undefined, agents: SubscriptionAgent[] | null, computerName: string | null): ProviderChoice[] {
-  const plans: ProviderChoice[] = SUBSCRIPTION_PROVIDERS.map((id) => {
-    const agent = agents?.find((row) => row.id === id) ?? null;
-    const ready = Boolean(agent && agent.signedIn !== false && !agent.problem);
-    return {
-      id,
-      label: `${SUBSCRIPTION_INFO[id].label} (your plan)`,
-      status: ready ? "plan" : "plan-missing",
-      note: !agent ? "not on your computer" : agent.signedIn === false ? "not signed in" : computerName ? `on ${computerName}` : "your plan",
-    };
-  });
-  return [...plans, ...providerKeyChoices(catalog)];
-}
 
-function providerKeyChoices(catalog: ModelCatalog | undefined): ProviderChoice[] {
-  return PROVIDERS.map((row) => {
-    const entry = catalog?.providers.find((item) => item.provider === row.id);
-    const status: ProviderChoice["status"] =
-      row.id === "ollama" ? "local" : entry?.source === "you" ? "key" : entry?.source === "account" ? "account" : entry?.source === "env" || entry?.source === "cli" ? "server" : "none";
-    return { id: row.id, label: row.label, status, ...(row.id === "ollama" ? { note: entry?.available ? `${entry.models.length} models` : "not running" } : {}) };
-  });
-}
 
 export function ModelsSection({ settings, patch }: Props) {
   const quotas = useQuotaMarks();
@@ -161,10 +132,7 @@ export function ModelsSection({ settings, patch }: Props) {
   const includedOffered = Boolean(catalog.data?.providers.some((row) => row.provider === INCLUDED_PROVIDER && row.available));
   const credits = useIncludedUsage(includedOffered);
   const usage = includedOffered && credits.data?.available ? credits.data : null;
-  const choices = [
-    ...(includedOffered ? [includedChoice(usage)] : []),
-    ...providerChoices(catalog.data, agents, computer?.name ?? null).map((choice) => isSubscriptionProvider(choice.id) && computer && !computer.online ? { ...choice, note: `${computer.name} is offline` } : choice),
-  ];
+  const pickerAgents = agentOptions({ catalog: catalog.data, computer: computer && computer.online && computer.ready ? computer : null, includedNote: usage ? includedNote(usage) : null });
   const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available && row.provider !== INCLUDED_PROVIDER ? row.models.length : 0), 0);
   const runtimeDown = catalog.data && !catalog.data.runtime;
   const noKeys = keys.data && !keys.data.credentials.some((row) => row.source !== "none");
@@ -213,10 +181,7 @@ export function ModelsSection({ settings, patch }: Props) {
           const provider = plan ? undefined : catalog.data?.providers.find((row) => row.provider === value.provider);
           const meta = plan ? (planModels.meta[value.model] ?? null) : (provider?.meta?.[value.model] ?? null);
           const providerName = label(value.provider);
-          const contexts = plan ? contextWindows(agent, value.model) : [];
-          const context = value.context ?? "default";
-          // A long context window goes back to the standard one with a model that lacks it.
-          const keepContext = (next: string | null) => (value.context === "long_context" && !(next && contextWindows(agent, next).length) ? { context: "default" } : {});
+          const tierModel = modelOf(pickerAgents, { provider: value.provider, model: value.model });
           return (
             <div key={tier.id} data-tier={tier.id}>
               <div className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium">
@@ -230,68 +195,34 @@ export function ModelsSection({ settings, patch }: Props) {
                 {value.provider === INCLUDED_PROVIDER && catalog.data && !includedOffered ? <Tag tone="orange">included models are not set up here</Tag> : null}
                 {value.provider === INCLUDED_PROVIDER && usage && includedBlocked(usage) ? <Tag tone="orange">{usage.paused ? `paused until ${resetDay(usage.resetsAt)}` : "no credits left"}</Tag> : null}
               </div>
-              <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-[190px_minmax(0,1fr)]">
-                <ProviderPicker
-                  label={`${tier.label} provider`}
-                  value={value.provider}
-                  choices={choices}
-                  onPick={(next) => {
-                    if (next === value.provider) return;
-                    if (next === INCLUDED_PROVIDER) {
-                      const entry = catalog.data?.providers.find((row) => row.provider === next);
-                      patch({ models: { [tier.id]: { provider: next, model: entry?.cheapest ?? entry?.models[0] ?? value.model, effort: "default", ...keepContext(null) } } });
-                      return;
-                    }
-                    if (isSubscriptionProvider(next)) {
-                      const nextAgent = agents?.find((row) => row.id === next) ?? null;
-                      patch({ models: { [tier.id]: { provider: next, model: subscriptionModels(nextAgent).cheapest ?? "default", effort: "default", ...keepContext(null) } } });
-                      return;
-                    }
-                    const entry = catalog.data?.providers.find((row) => row.provider === next);
-                    const model = entry?.cheapest ?? value.model;
-                    patch({ models: { [tier.id]: { provider: next, model, effort: effortFor(next, model, entry?.meta?.[model], value.effort), ...keepContext(null) } } });
-                  }}
-                />
-                <ModelPicker
-                  label={`${tier.label} model`}
-                  value={value.model}
-                  provider={value.provider}
-                  providerLabel={providerName}
-                  models={plan ? planModels.models : (provider?.models ?? [])}
-                  cheapest={plan ? planModels.cheapest : (provider?.cheapest ?? null)}
-                  meta={plan ? planModels.meta : provider?.meta}
-                  notes={plan ? undefined : provider?.notes}
-                  hints={plan ? planModels.hints : undefined}
-                  hasKey={plan ? Boolean(agent) : Boolean(provider?.available)}
-                  onPick={(model) => {
-                    if (model === value.model) return;
-                    const modelMeta = plan ? planModels.meta[model] : provider?.meta?.[model];
-                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, modelMeta, value.effort), ...keepContext(model) } } });
-                  }}
-                />
-              </div>
-              <div className="mt-2">
-                <ThinkingPicker
-                  label={`${tier.label} thinking`}
-                  provider={value.provider}
-                  providerLabel={providerName}
-                  model={value.model}
-                  meta={meta}
-                  fallback={plan ? (agent?.models.find((row) => row.id === value.model)?.defaultEffort ?? null) : null}
-                  value={value.effort}
-                  onChange={(effort) => patch({ models: { [tier.id]: { effort } } })}
-                />
-              </div>
-              {contexts.length ? (
-                <div className="mt-2" data-context-window>
-                  <div role="radiogroup" aria-label={`${tier.label} context window`} className="thinking-levels">
-                    {contexts.map((row) => (
-                      <button key={row.id} type="button" role="radio" aria-checked={context === row.id} onClick={() => patch({ models: { [tier.id]: { context: row.id } } })} className={cx("thinking-level", context === row.id && "is-on")}>
-                        {contextChoice(row)}
-                      </button>
-                    ))}
-                  </div>
+              <div className="mt-1.5 flex gap-2" data-tier-picker>
+                <div className="min-w-0 flex-1">
+                  <AgentPicker
+                    label={`${tier.label}: agent and model`}
+                    agents={pickerAgents}
+                    value={{ provider: value.provider, model: value.model, effort: value.effort, ...(value.context === "long_context" ? { context: "long_context" as const } : {}) }}
+                    onChange={(next) => {
+                      if (!next) return;
+                      patch({ models: { [tier.id]: { provider: next.provider, model: next.model || (isSubscriptionProvider(next.provider) ? "default" : value.model), effort: next.effort, context: next.context ?? "default" } } });
+                    }}
+                  />
                 </div>
+                <TuningPicker
+                  label={`${tier.label}: thinking and context`}
+                  allowFast={false}
+                  value={{ provider: value.provider, model: value.model, effort: value.effort, ...(value.context === "long_context" ? { context: "long_context" as const } : {}) }}
+                  model={tierModel}
+                  onChange={(next) => patch({ models: { [tier.id]: { effort: next.effort, context: next.context ?? "default" } } })}
+                />
+              </div>
+              {meta === null && !tierModel?.levels.length && value.effort !== "default" ? (
+                <p className="mt-1 text-[12px] text-warn" role="status">
+                  {value.model} does not take a thinking level here, so “{value.effort}” is not sent.
+                </p>
+              ) : tierModel?.levels.length && value.effort !== "default" && !(tierModel.levels as string[]).includes(value.effort) ? (
+                <p className="mt-1 text-[12px] text-warn" role="status">
+                  {tierModel.label} does not take “{value.effort}”. Pick one of its levels.
+                </p>
               ) : null}
               {(() => {
                 const mark = quotas.get(value.model);
