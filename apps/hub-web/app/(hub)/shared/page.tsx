@@ -32,7 +32,7 @@ const LABEL: Record<ShareKind, string> = {
   plot: "Plot",
   meeting: "Meeting notes",
   skill: "Skill",
-  workspace: "Workspace",
+  workspace: "Agent queue",
   code: "Code",
 };
 

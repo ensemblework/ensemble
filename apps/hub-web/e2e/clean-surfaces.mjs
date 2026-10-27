@@ -19,7 +19,7 @@ try {
     const page = await context.newPage();
     page.on("pageerror", error => errors.push(error.message));
 
-    await page.goto(`${WEB}/workspace`);
+    await page.goto(`${WEB}/runs`);
     await page.getByRole("button", { name: "Assign task", exact: true }).click();
     const assign = page.getByRole("dialog", { name: "Assign to agent", exact: true });
     await assign.waitFor();

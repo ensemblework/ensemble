@@ -3,6 +3,7 @@ import { api } from "./api";
 import { isoDate } from "./format";
 import { loadToday, seedToday, workWeek } from "./home";
 import { hostCodeFrom } from "./use-module";
+import { hasModule } from "@ensemble/shared-types/modules";
 
 const recent = new Map<string, number>();
 const RECENT_MAX = 32;
@@ -12,7 +13,7 @@ const API_PATHS: Record<string, string[]> = {
   "/today": ["/api/today/home"],
   "/board": ["/api/tasks"],
   "/needs-me": ["/api/tasks", "/api/approvals", "/api/decisions"],
-  "/runs": ["/api/runs"],
+  "/runs": ["/api/runs", "/api/workspace"],
   "/context": ["/api/people"],
   "/skills": ["/api/skills"],
   "/workspace": ["/api/workspace"],
@@ -66,7 +67,7 @@ function jobsFor(client: QueryClient, href: string): Array<[unknown[], () => Pro
       : href === "/board" || href === "/needs-me"
         ? [[["tasks"], api.tasks]]
         : href === "/runs"
-          ? [[["runs", false], () => api.runs(10)]]
+          ? []
           : href === "/context"
             ? [[["people"], api.people]]
             : href === "/skills"
@@ -96,6 +97,11 @@ function jobsFor(client: QueryClient, href: string): Array<[unknown[], () => Pro
                         : [];
   if (href === "/needs-me") {
     jobs.push([["approvals"], api.approvals], [["decisions"], () => api.decisions()]);
+  }
+  if (href === "/runs") {
+    const shell = client.getQueryData<{ modules?: string | null }>(["shell"]);
+    if (hasModule(shell?.modules, "workspace")) jobs.push([["workspace"], api.workspace]);
+    if (hasModule(shell?.modules, "runs")) jobs.push([["runs", false], () => api.runs(10)]);
   }
   return jobs;
 }

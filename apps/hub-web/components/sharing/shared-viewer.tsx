@@ -30,7 +30,7 @@ const KIND: Record<ShareKind, { label: string; icon: typeof FileText }> = {
   plot: { label: "Plot", icon: LineChart },
   meeting: { label: "Meeting notes", icon: CalendarCheck },
   skill: { label: "Skill", icon: BookOpen },
-  workspace: { label: "Workspace", icon: Briefcase },
+  workspace: { label: "Agent queue", icon: Briefcase },
   code: { label: "Code", icon: FolderGit2 },
 };
 
@@ -290,7 +290,7 @@ function SharedWorkspace() {
   ];
   return (
     <div className="mx-auto w-full max-w-[900px] px-6 py-8">
-      <h1 className="text-[24px] font-semibold tracking-tight">Agent workspace</h1>
+      <h1 className="text-[24px] font-semibold tracking-tight">Agent queue</h1>
       <p className="mt-1 text-[13px] text-muted">What the agents are doing in this space, live. View only.</p>
       {groups.map(([label, jobs]) => (
         <section key={label} className="mt-6">

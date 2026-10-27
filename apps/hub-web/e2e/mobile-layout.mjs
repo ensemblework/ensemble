@@ -83,13 +83,13 @@ try {
     await page.route("**/api/agent/jobs/*/files", route => route.fulfill({ json: { files: [{ path: "mobile.ts", status: "added", added: 1, removed: 0, stored: true }], live: { available: true } } }));
     await page.route("**/api/agent/jobs/*/file?*", route => route.fulfill({ json: { source: "live", file: { path: "mobile.ts", content, size: content.length, binary: false } } }));
 
-    await page.goto(`${WEB}/workspace`);
-    await page.locator("[data-workspace-queue] .tile").first().waitFor();
-    await fits(page, `Workspace ${width}`, "#main-content");
-    const columns = await page.locator("[data-workspace-queue]").evaluate(el => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+    await page.goto(`${WEB}/runs`);
+    await page.locator("[data-run-queue] .tile").first().waitFor();
+    await fits(page, `Run queue ${width}`, "#main-content");
+    const columns = await page.locator("[data-run-queue]").evaluate(el => getComputedStyle(el).gridTemplateColumns.split(" ").length);
     assert.equal(columns, width < 1024 ? 1 : 3);
-    await scrolls(page, "#main-content", "Workspace");
-    await snap(page, `hub-workspace-${width}`);
+    await scrolls(page, "#main-content", "Runs");
+    await snap(page, `hub-run-queue-${width}`);
     await page.getByRole("button", { name: "Assign task", exact: true }).click();
     await page.getByRole("dialog", { name: "Assign to agent", exact: true }).waitFor();
     await fits(page, `Assignment dialog ${width}`, "[role=dialog]");

@@ -86,7 +86,7 @@ const PLACES: Array<[RegExp, string]> = [
   [/^\/context/, "Context"],
   [/^\/needs-me/, "Needs me"],
   [/^\/runs/, "runs"],
-  [/^\/workspace/, "the workspace"],
+  [/^\/workspace/, "runs"],
   [/^\/code/, "code"],
   [/^\/skills/, "skills"],
   [/^\/meetings/, "meetings"],
@@ -110,7 +110,7 @@ const ITEM_ROUTES: Partial<Record<ShareKind, (id: string) => string>> = {
   board: () => "/board",
   meeting: () => "/meetings",
   skill: (id) => `/skills?skill=${id}`,
-  workspace: () => "/workspace",
+  workspace: () => "/runs",
   code: () => "/code",
 };
 

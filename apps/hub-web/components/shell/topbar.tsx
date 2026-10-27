@@ -28,7 +28,7 @@ const TITLES: Array<[string, string]> = [
   ["/runs", "Runs"],
   ["/context", "Context"],
   ["/skills", "Skills"],
-  ["/workspace", "Workspace"],
+  ["/workspace", "Runs"],
   ["/code", "Code"],
   ["/diagrams", "Diagrams"],
   ["/plots", "Plots"],
