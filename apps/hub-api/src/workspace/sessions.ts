@@ -174,6 +174,9 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
   const first = ordered[0]!;
   const last = [...ordered].reverse().find(ran) ?? ordered[ordered.length - 1]!;
   const finished = [...ordered].reverse().find((row) => row.summary?.trim());
+  // A new task continues the end of the chain, which a steer (Ensemble Node) may have moved off the newest run.
+  const continued = new Set(ordered.map((row) => row.continueFromJobId).filter((id): id is string => Boolean(id)));
+  const tail = [...ordered].reverse().find((row) => !continued.has(row.id) && ran(row)) ?? last;
   const live = statusOf(last.status);
   const summary = live === "idle" ? summaryLine(last.summary || last.error || finished?.summary) : summaryLine(last.progress || finished?.summary) || "Starting";
   const agent = first.provider as CodeEngine;
@@ -187,13 +190,14 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
     fast: contextOf(last.context).fast === true,
     deviceId: last.deviceId,
     computer: last.device?.name ?? null,
-    folder: folderOf(last),
+    // A continued run carries no folder label of its own: the session's folder is its nearest run's.
+    folder: folderOf([...ordered].reverse().find((row) => row.folderLabel || row.externalRoot) ?? last),
     title: first.task.title,
     latestTask: { id: last.taskId, title: last.task.title },
     summary,
     status: live,
     lastStatus: last.status,
-    lastJobId: last.id,
+    lastJobId: tail.id,
     runs: ordered.length,
     tasks: new Set(ordered.map((row) => row.taskId)).size,
     resumable: ordered.some((row) => resumable.has(row.id)),
@@ -245,16 +249,16 @@ export async function listSessions(
  * continues from. Null when it is not the scope's, or not a coding agent's run.
  */
 export async function resolveSession(prisma: PrismaClient, scope: SessionScope, id: string): Promise<AgentSession | null> {
-  // Any run, as listSessions roots a chain at its first run even when that one never started.
-  const byId = await sessionRuns(prisma, scope, { id }, 1, false);
-  if (!byId.has(id)) return null;
-  return sessionFrom(prisma, scope, rootOf(byId, id));
+  // Any run, as listSessions roots a chain at its first run even when that one never started; walked to the real root however long the chain.
+  const job = await prisma.workspaceJob.findFirst({ where: { id, userId: scope.space, runnerAccountId: scope.runner }, select: { id: true, userId: true, runnerAccountId: true, provider: true, kind: true } });
+  const root = job ? await sessionOfJob(prisma, job) : null;
+  return root ? sessionFrom(prisma, scope, root.id) : null;
 }
 
-/** Every run of the session that starts at `root` (the runs that continue it by the same agent, transitively). */
-async function sessionFrom(prisma: PrismaClient, scope: SessionScope, root: string): Promise<AgentSession | null> {
+/** The runs of the session that starts at `root`: it and the runs that continue it by the same agent, transitively. */
+async function chainFrom(prisma: PrismaClient, scope: SessionScope, root: string): Promise<Row[]> {
   const first = (await prisma.workspaceJob.findFirst({ where: { id: root, userId: scope.space, runnerAccountId: scope.runner }, select: SELECT })) as Row | null;
-  if (!first || !isCodeEngine(first.provider)) return null;
+  if (!first || !isCodeEngine(first.provider)) return [];
   const runs: Row[] = [first];
   let frontier = [root];
   for (let round = 0; frontier.length && round < 200 && runs.length < 500; round += 1) {
@@ -262,9 +266,54 @@ async function sessionFrom(prisma: PrismaClient, scope: SessionScope, root: stri
     runs.push(...next);
     frontier = next.map((row) => row.id);
   }
+  return runs;
+}
+
+async function sessionFrom(prisma: PrismaClient, scope: SessionScope, root: string): Promise<AgentSession | null> {
+  const runs = await chainFrom(prisma, scope, root);
+  if (!runs.length) return null;
   const [session] = await onCurrentPairing(prisma, [build(root, runs, await resumableJobs(prisma, runs.map((row) => row.id)))]);
   return session ?? null;
 }
+
+export type SessionRun = {
+  id: string;
+  taskId: string;
+  title: string;
+  status: string;
+  continueFromJobId: string | null;
+  summary: string | null;
+  progress: string | null;
+  error: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  claimedAt: Date | null;
+  finishedAt: Date | null;
+};
+
+/** Every run of a session (`root` is its id), oldest first: what Ensemble Node steers, queues behind and stops. */
+export async function runsOfSession(prisma: PrismaClient, scope: SessionScope, root: string): Promise<SessionRun[]> {
+  const runs = await chainFrom(prisma, scope, root);
+  return runs
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      title: row.task.title,
+      status: row.status,
+      continueFromJobId: row.continueFromJobId,
+      summary: row.summary,
+      progress: row.progress,
+      error: row.error,
+      createdAt: row.createdAt,
+      startedAt: row.startedAt,
+      claimedAt: row.claimedAt,
+      finishedAt: row.finishedAt,
+    }));
+}
+
+/** Still to finish: queued, or on its computer (working, waiting on Needs me, stopping). */
+export const LIVE_RUN = new Set<string>(WAITING);
 
 /** The session a run belongs to, for its detail view: its id, and whether the agent's own conversation is known. */
 export async function sessionOfJob(prisma: PrismaClient, job: { id: string; userId: string; runnerAccountId: string | null; provider: string | null; kind: string }): Promise<{ id: string; resumable: boolean } | null> {

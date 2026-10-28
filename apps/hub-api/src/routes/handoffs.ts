@@ -11,6 +11,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
+import { grantedFolderOf } from "../workspace/agent.js";
 import { codexBinary } from "../workspace/engines/codex.js";
 import { agentPresence, bundledCodex, HANDOFF_APPS, handoffOpen, handoffPrompt, handoffTargets, isCliHandoff, newMarker, openLink, type HandoffApp } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
@@ -52,11 +53,14 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
     let folder: string;
     if (body.folder?.trim()) folder = await resolveWorkFolder(body.folder);
     else if (body.continueFromJobId) {
-      const previous = await prisma.workspaceJob.findFirst({ where: { id: body.continueFromJobId, userId: request.userId }, select: { externalRoot: true, repoPath: true } });
-      const found = previous?.externalRoot ?? previous?.repoPath;
+      const previous = await prisma.workspaceJob.findFirst({ where: { id: body.continueFromJobId, userId: request.userId }, select: { externalRoot: true, repoPath: true, continueFromJobId: true } });
+      const grant = previous?.externalRoot ?? (previous ? await grantedFolderOf(prisma, previous.continueFromJobId) : null);
+      const granted = grant ? await resolveWorkFolder(grant) : null;
+      const external = Boolean(granted && (!previous?.repoPath || previous.repoPath === granted));
+      const found = external ? granted : previous?.repoPath;
       if (!found) throw new GuardError("That earlier task never got a folder.");
-      folder = previous?.externalRoot ? await resolveWorkFolder(found) : found;
-      if (!previous?.externalRoot && !within(base, folder)) throw new GuardError("The earlier task's folder is outside the workspace.");
+      folder = found;
+      if (!external && !within(base, folder)) throw new GuardError("The earlier task's folder is outside the workspace.");
     } else {
       folder = join(base, "runs", `app-${task.id.slice(0, 8)}-${Date.now().toString(36)}`);
       await mkdir(folder, { recursive: true });

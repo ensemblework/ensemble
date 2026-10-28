@@ -178,7 +178,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     if (!shell.data) return false;
     return hasModule(modules, gate as OptionalModule) && moduleFitsProfile(gate as OptionalModule, shellProfile(shell.data));
   };
-  const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
+  const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0) + (shell.data?.nodeApprovals ?? 0);
   const withMe = useQuery({ queryKey: ["shared-with-me"], queryFn: api.sharedWithMe, staleTime: 60_000, enabled: Boolean(shell.data) });
   const sharedCount = (withMe.data?.spaces.length ?? 0) + (withMe.data?.items.length ?? 0);
   const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;

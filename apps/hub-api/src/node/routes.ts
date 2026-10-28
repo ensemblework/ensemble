@@ -20,6 +20,10 @@ import { ApprovalError, settleApproval } from "./approvals.js";
 import { mirrorNeedsMe, nodeEventStream, publishTo } from "./events.js";
 import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } from "./model.js";
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
+import { pausedNotice, stopNodeRuns } from "./sessions.js";
+import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
+import { ON_BOARD } from "../lib/node-tasks.js";
+import { nodeWebOrigin } from "../lib/node-origin.js";
 import {
   addNode,
   addPerson,
@@ -34,6 +38,7 @@ import {
   roomPeople,
   roomSettings,
   roomTitleTaken,
+  takenHandles,
   visibleWhere,
   wireMessage,
   wireNode,
@@ -184,6 +189,32 @@ async function pendingApprovals(prisma: PrismaClient, accountId: string) {
   return rows.map(wireMessage);
 }
 
+/** Pending approval cards with the node that asks and the conversation they are in: Needs me on Node, the Hub and the CLI. */
+export async function approvalCards(prisma: PrismaClient, accountId: string) {
+  const rows = await pendingApprovals(prisma, accountId);
+  const [nodes, rooms] = await Promise.all([
+    prisma.nodeAgent.findMany({ where: { id: { in: rows.map((row) => row.authorNodeId).filter((id): id is string => Boolean(id)) } } }),
+    prisma.nodeRoom.findMany({ where: { id: { in: rows.map((row) => row.roomId) } }, select: { id: true, title: true, kind: true } }),
+  ]);
+  const nodeById = new Map(nodes.map((row) => [row.id, row]));
+  const roomById = new Map(rooms.map((row) => [row.id, row]));
+  return rows.map((row) => {
+    const node = row.authorNodeId ? nodeById.get(row.authorNodeId) : undefined;
+    return { ...row, node: node ? publicNode(node) : null, room: roomById.get(row.roomId) ?? null };
+  });
+}
+
+/** Board tasks blocked or waiting for an approval: the same list as the Hub's Needs me. */
+async function waitingTasks(prisma: PrismaClient, accountId: string) {
+  const rows = await prisma.task.findMany({
+    where: { userId: accountId, deletedAt: null, status: { in: ["blocked", "waiting_approval"] }, ...ON_BOARD },
+    orderBy: { updatedAt: "asc" },
+    take: 50,
+    select: { id: true, title: true, status: true, updatedAt: true },
+  });
+  return rows.map((row) => ({ id: row.id, title: row.title, status: row.status, updatedAt: row.updatedAt.toISOString() }));
+}
+
 async function runList(prisma: PrismaClient, accountId: string, take = 30) {
   const runs = await prisma.nodeRun.findMany({ where: { userId: accountId }, orderBy: { createdAt: "desc" }, take });
   const jobs = await prisma.workspaceJob.findMany({
@@ -215,7 +246,7 @@ export async function nodeOverview(prisma: PrismaClient, accountId: string) {
   const [nodes, rooms, approvals, runs, turns, invites] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { userId: accountId }, orderBy: { createdAt: "asc" } }),
     roomList(prisma, accountId),
-    pendingApprovals(prisma, accountId),
+    approvalCards(prisma, accountId),
     runList(prisma, accountId, 10),
     prisma.nodeTurn.findMany({ where: { userId: accountId }, orderBy: { createdAt: "desc" }, take: 10 }),
     incomingInvites(prisma, accountId),
@@ -223,7 +254,7 @@ export async function nodeOverview(prisma: PrismaClient, accountId: string) {
   return {
     nodes: nodes.map((node) => ({ id: node.id, slug: node.slug, name: node.name, role: node.role, status: node.status, busy: turns.some((turn) => turn.nodeId === node.id && (turn.status === "running" || turn.status === "queued")) })),
     rooms: rooms.map((room) => ({ id: room.id, kind: room.kind, title: room.title, unread: room.unread, lastMessageAt: room.lastMessageAt, last: room.last ? { author: room.last.authorKind, body: room.last.body } : null })),
-    approvals: approvals.map((row) => ({ id: row.id, roomId: row.roomId, body: truncateText(row.body, 200) })),
+    approvals: approvals.map((row) => ({ id: row.id, roomId: row.roomId, body: truncateText(row.body, 200), type: (row.data as { type?: unknown } | null)?.type ?? null, node: row.node ? { slug: row.node.slug, name: row.node.name } : null, room: row.room?.title ?? null })),
     invites: invites.map((row) => ({ id: row.id, room: row.room.title, from: row.from.name })),
     runs,
     credits: await credits(accountId),
@@ -314,23 +345,28 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
     const body = z.object({
       name: z.string().min(1).max(60).optional(),
+      slug: Slug.optional(),
       role: z.string().min(1).max(40).optional(),
       charter: z.string().max(8000).optional(),
       avatar: Avatar.optional(),
       provider: ProviderPick.optional(),
       model: ModelPick.optional(),
       runProfileId: z.string().max(60).nullable().optional(),
-      autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional() }).optional(),
+      autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional(), computerWork: z.enum(["auto", "ask"]).optional() }).optional(),
       status: z.enum(["active", "paused"]).optional(),
     }).strict().parse(request.body ?? {});
     const provider = body.model ? (body.provider ?? INCLUDED_PROVIDER) : null;
     if (body.model !== undefined) await checkModel(prisma, accountId, provider, body.model);
     if (body.name !== undefined && (await nodeNameTaken(prisma, accountId, body.name, node.id))) throw fail(409, `You already have a node called “${body.name.trim()}”. Pick another name.`);
+    const slug = body.slug !== undefined && body.slug !== node.slug ? body.slug : null;
+    if (slug && (await prisma.nodeAgent.findFirst({ where: { userId: accountId, slug, id: { not: node.id } }, select: { id: true } }))) throw fail(409, `Another of your nodes is already @${slug}. Pick another handle.`);
+    if (slug && (SPECIAL_MENTIONS as readonly string[]).includes(slug)) throw fail(400, `@${slug} mentions every node. Pick another handle.`);
     const autonomy = body.autonomy ? { ...((node.autonomy ?? {}) as Record<string, unknown>), ...body.autonomy } : null;
     const updated = await prisma.nodeAgent.update({
       where: { id: node.id },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+        ...(slug ? { slug } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.charter !== undefined ? { charter: body.charter } : {}),
         ...(body.avatar ? { avatar: body.avatar } : {}),
@@ -340,8 +376,57 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         ...(body.status ? { status: body.status } : {}),
       },
     });
+    if (slug) await renameHandle(updated);
+    if (body.name !== undefined && body.name.trim() !== node.name) {
+      // A DM is named after its node.
+      await prisma.nodeRoom.updateMany({ where: { userId: accountId, kind: "dm", members: { some: { nodeId: node.id } } }, data: { title: body.name.trim() } });
+    }
+    if (body.status === "paused" && node.status !== "paused") await pause(updated);
+    if (slug || body.name !== undefined || body.status) publishTo([accountId], "node.room", { nodeId: node.id });
     return { node: wireNode(updated) };
   });
+
+  /** A new handle: each room it is in uses it, unless someone there has it (then owner-handle). Mentions already sent keep their node. */
+  async function renameHandle(node: NodeAgent): Promise<void> {
+    const memberships = await prisma.nodeRoomMember.findMany({ where: { nodeId: node.id } });
+    for (const member of memberships) {
+      const taken = await takenHandles(prisma, member.roomId);
+      taken.delete(member.handle);
+      let handle = node.slug;
+      if (taken.has(handle)) {
+        const owner = await prisma.nodeRoomMember.findFirst({ where: { roomId: member.roomId, userId: node.userId, nodeId: null }, select: { handle: true } });
+        handle = uniqueHandle(`${owner?.handle ?? "my"}-${node.slug}`, taken);
+      }
+      if (handle !== member.handle) await prisma.nodeRoomMember.update({ where: { id: member.id }, data: { handle } });
+    }
+  }
+
+  /**
+   * Pausing stops everything the node is doing: its reply, its queued turns and every run it started
+   * on the owner's computer. Then it says so in its DM, naming only the work that was still going on.
+   */
+  async function pause(node: NodeAgent): Promise<void> {
+    const memberships = await prisma.nodeRoomMember.findMany({ where: { nodeId: node.id } });
+    for (const member of memberships) {
+      for (const conversationId of [member.conversationId, member.privateConversationId]) if (conversationId) abortAssistantTurn(conversationId);
+    }
+    await stopTurns(app, [node.id], null);
+    const stopped = await stopNodeRuns(app, node);
+    const dm = memberships.length
+      ? await prisma.nodeRoom.findFirst({ where: { id: { in: memberships.map((row) => row.roomId) }, kind: "dm", userId: node.userId, archivedAt: null } })
+      : null;
+    if (dm) {
+      await postMessage(prisma, {
+        roomId: dm.id,
+        userId: node.userId,
+        authorKind: "node",
+        authorNodeId: node.id,
+        body: pausedNotice(stopped),
+        data: { notice: "paused", stopped: stopped.length },
+        visibleTo: [node.userId],
+      });
+    }
+  }
 
   app.delete("/api/node/nodes/:id", async (request, reply) => {
     const accountId = nodeAccount(request);
@@ -929,17 +1014,22 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/node/runs", async (request) => ({ runs: await runList(prisma, nodeAccount(request)) }));
 
+  /** My nodes' pending approval cards, with the node and conversation: Needs me on Node and in the Hub. */
+  app.get("/api/node/approvals", async (request) => ({ approvals: await approvalCards(prisma, nodeAccount(request)), nodeUrl: nodeWebOrigin() }));
+
   app.get("/api/node/activity", async (request) => {
     const accountId = nodeAccount(request);
-    const [approvals, runs, turns, devices, usage] = await Promise.all([
+    const [approvals, runs, turns, devices, usage, waiting] = await Promise.all([
       pendingApprovals(prisma, accountId),
       runList(prisma, accountId, 20),
       prisma.nodeTurn.findMany({ where: { userId: accountId }, orderBy: { createdAt: "desc" }, take: 30 }),
       computers(prisma, accountId),
       credits(accountId),
+      waitingTasks(prisma, accountId),
     ]);
     return {
       approvals,
+      waitingTasks: waiting,
       runs,
       turns: turns.map((turn) => ({ id: turn.id, nodeId: turn.nodeId, roomId: turn.roomId, reason: turn.reason, status: turn.status, model: turn.model, credits: turn.credits, error: turn.error, private: turn.private, createdAt: turn.createdAt.toISOString(), finishedAt: turn.finishedAt?.toISOString() ?? null })),
       computers: devices,

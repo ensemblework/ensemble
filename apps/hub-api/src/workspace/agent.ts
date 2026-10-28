@@ -48,13 +48,13 @@ import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
-import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, watchEngine } from "./engine-watch.js";
+import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, type SandboxStrength } from "./trust.js";
+import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, loadGrants, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -441,24 +441,43 @@ async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, 
   return parts.filter(Boolean).join("\n\n");
 }
 
+/**
+ * The folder the person granted to a chain of continued runs: the nearest run's `externalRoot`, from
+ * `jobId` back. A run that continues one keeps working there without a grant of its own.
+ */
+export async function grantedFolderOf(prisma: PrismaClient, jobId: string | null): Promise<string | null> {
+  let id = jobId;
+  for (let hops = 0; id && hops < 200; hops += 1) {
+    const row: { externalRoot: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { externalRoot: true, continueFromJobId: true } });
+    if (!row) return null;
+    if (row.externalRoot) return row.externalRoot;
+    id = row.continueFromJobId;
+  }
+  return null;
+}
+
 /** Chooses and prepares the folder: a fresh checkout, a folder the person granted, or an earlier job's. */
 async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ root: string; git: boolean }> {
   const job = ctx.job;
   const base = await workspaceRoot();
   if (job.externalRoot) return { root: await resolveWorkFolder(job.externalRoot), git: await isGitRepo(job.externalRoot) };
   if (job.continueFromJobId) {
-    const previous = await app.prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { repoPath: true, externalRoot: true } });
-    const folder = previous?.externalRoot ?? previous?.repoPath;
+    const previous = await app.prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { repoPath: true, externalRoot: true, continueFromJobId: true } });
+    const grant = previous?.externalRoot ?? (previous ? await grantedFolderOf(app.prisma, previous.continueFromJobId) : null);
+    const granted = grant ? await resolveWorkFolder(grant) : null;
+    // A run that continued a granted folder worked in that folder.
+    const external = Boolean(granted && (!previous?.repoPath || previous.repoPath === granted));
+    const folder = external ? granted : previous?.repoPath;
     if (!folder) throw new GuardError("The earlier task never got a folder, so there is nothing to continue from.");
-    const root = previous?.externalRoot ? await resolveWorkFolder(folder) : folder;
-    if (!previous?.externalRoot && !within(base, root)) throw new GuardError("The earlier task's folder is outside the workspace.");
+    const root = folder;
+    if (!external && !within(base, root)) throw new GuardError("The earlier task's folder is outside the workspace.");
     await stat(root).catch(() => {
       throw new GuardError("The earlier task's folder no longer exists.");
     });
     const git = await isGitRepo(root);
     // An Ensemble folder created before the empty-commit fix has a repo and no HEAD.
     // User-attached folders and clones (anything with a remote or an existing commit) stay as they are.
-    if (git && !previous?.externalRoot) {
+    if (git && !external) {
       const remote = await gitIn({ ...ctx, root }, ["remote"]);
       if (remote.exitCode !== 0 || !remote.output.trim()) await commitUnbornHead({ ...ctx, root });
     }
@@ -821,7 +840,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           // A task that continues an earlier run by the same agent goes on in that agent's own session
           // (workspace/sessions.ts): it remembers the earlier work, and the provider can reuse its cache.
           resume = (await earlierSession(prisma, job)).session;
-          if (resume) enginePromptText = sessionTaskPrompt(fullPrompt);
+          // A change to the run it interrupted (Ensemble Node's steer) goes on with just the change.
+          const steer = steerOf(job.context);
+          if (resume) enginePromptText = steer ? steerPrompt(steer.update) : sessionTaskPrompt(fullPrompt);
         }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.

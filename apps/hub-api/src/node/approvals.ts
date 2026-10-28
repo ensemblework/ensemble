@@ -10,6 +10,8 @@ import { internalHeaders } from "./brain.js";
 import { dispatchMessage, enqueueTurn } from "./queue.js";
 import { mentionsFor, postMessage, updateMessageData } from "./store.js";
 import { refsNote, savedRefs } from "../assistant/refs.js";
+import { sessionOfJob } from "../workspace/sessions.js";
+import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -22,6 +24,11 @@ const ToolsCard = z.object({
 }).passthrough();
 
 const PostCard = z.object({ type: z.literal("post"), status: z.string(), fromNonOwner: z.boolean().optional() }).passthrough();
+
+const SessionCard = z.union([
+  z.object({ type: z.literal("session"), status: z.string(), action: z.literal("start"), input: StartInput, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("session"), status: z.string(), action: z.literal("send"), input: SendInput, private: z.boolean().optional() }).passthrough(),
+]);
 
 export class ApprovalError extends Error {
   constructor(message: string, readonly statusCode: 404 | 409 | 400) {
@@ -81,6 +88,7 @@ async function followRuns(app: FastifyInstance, node: NodeAgent, card: NodeMessa
       include: { task: { select: { title: true } }, device: { select: { name: true } } },
     });
     if (!job || (await prisma.nodeRun.findUnique({ where: { jobId: job.id }, select: { id: true } }))) continue;
+    const sessionId = (await sessionOfJob(prisma, job))?.id ?? null;
     const { message } = await postMessage(prisma, {
       roomId: card.roomId,
       userId: node.userId,
@@ -88,12 +96,12 @@ async function followRuns(app: FastifyInstance, node: NodeAgent, card: NodeMessa
       authorNodeId: node.id,
       kind: "run",
       body: job.task.title,
-      data: { jobId: job.id, taskId, status: job.status, computer: job.device?.name ?? null, progress: job.progress, summary: null, error: null, private: isPrivate },
+      data: { jobId: job.id, taskId, sessionId, status: job.status, computer: job.device?.name ?? null, progress: job.progress, summary: null, error: null, private: isPrivate },
       visibleTo,
       rootMessageId: card.rootMessageId,
       botDepth: card.botDepth,
     });
-    await prisma.nodeRun.create({ data: { userId: node.userId, nodeId: node.id, roomId: card.roomId, messageId: message.id, jobId: job.id, taskId, status: job.status } });
+    await prisma.nodeRun.create({ data: { userId: node.userId, nodeId: node.id, roomId: card.roomId, messageId: message.id, jobId: job.id, taskId, status: job.status, sessionId } });
   }
 }
 
@@ -129,6 +137,8 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     await dispatchMessage(app, message);
     return updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "posted", postedMessageId: message.id }, body);
   }
+
+  if (type === "session") return settleSession(app, card, node, input);
 
   const parsed = ToolsCard.parse(card.data);
   const chosen = input.callIds?.length ? parsed.calls.filter((call) => input.callIds!.includes(call.callId)) : parsed.calls;
@@ -175,6 +185,48 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     reason: "approval",
     // The summary names records by title; their ids follow as links for the node's next calls.
     note: `Your owner approved and it was applied: ${(result.summary || "done").replace(/\.+$/, "")}.${refsNote(savedRefs(result.refs)) ? ` ${refsNote(savedRefs(result.refs))}` : ""}${failures ? ` These failed: ${failures}.` : ""}${assigned.length ? " The computer run started; you will hear when it ends." : ""} Continue the plan if there is more to do; otherwise reply ${"(no reply)"}.`,
+    private: parsed.private === true,
+  });
+  return updated;
+}
+
+/**
+ * A session call the node held for its owner (node/sessions.ts): run exactly as shown once approved,
+ * as the owner's own request, then the node hears what came of it.
+ */
+async function settleSession(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = SessionCard.parse(card.data);
+  const data = await claim(app, card);
+  const current = { ...card, data: data as Prisma.JsonValue };
+  if (input.decision === "discard") return updateMessageData(prisma, current, { status: "discarded" });
+  const room = await prisma.nodeRoom.findUnique({ where: { id: card.roomId } });
+  if (!room) throw new ApprovalError("That conversation is gone.", 404);
+  const call = { action: parsed.action, input: parsed.input } as SessionCall;
+  let done;
+  try {
+    done = await runSessionCall(
+      {
+        ctx: await ownerContext(app, node.userId),
+        prisma,
+        app,
+        node,
+        room,
+        lineage: { rootMessageId: card.rootMessageId, botDepth: card.botDepth, fromNonOwner: false },
+        privateTo: parsed.private ? [node.userId] : null,
+      },
+      call,
+    );
+  } catch (error) {
+    // Nothing started: the owner can try again or discard.
+    return updateMessageData(prisma, current, { status: "pending", error: error instanceof Error ? error.message : String(error) });
+  }
+  const updated = await updateMessageData(prisma, current, { status: "applied", error: null, result: { summary: done.summary, href: null, failed: [] } });
+  await enqueueTurn(app, {
+    nodeId: node.id,
+    roomId: card.roomId,
+    reason: "approval",
+    note: `Your owner approved and it started: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
     private: parsed.private === true,
   });
   return updated;

@@ -345,6 +345,17 @@ export type ApprovalRecord = {
   requestedAt: string;
 };
 
+/** An approval card one of the person's Ensemble Node nodes is waiting on (GET /api/node/approvals). */
+export type NodeApprovalCard = {
+  id: string;
+  roomId: string;
+  body: string;
+  createdAt: string;
+  data: { type?: "tools" | "post" | "session"; status?: string; error?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
+  node: { id: string; slug: string; name: string; role: string } | null;
+  room: { id: string; title: string; kind: string } | null;
+};
+
 export type DeliverableRecord = {
   id: string;
   title: string;
@@ -1199,6 +1210,8 @@ export const api = bindClient({
       via: Me["via"];
       approvals: number;
       decisions: number;
+      /** Ensemble Node approval cards waiting for the signed-in person. */
+      nodeApprovals?: number;
       attention: number;
       canUndo: boolean;
       canRedo: boolean;
@@ -1371,6 +1384,9 @@ export const api = bindClient({
   approvals: () => get<{ approvals: ApprovalRecord[] }>("/api/approvals"),
   decide: (id: string, data: { decision: "approved" | "edited" | "rejected"; editedPayload?: unknown; reason?: string }) =>
     post(`/api/approvals/${id}/decide`, data),
+  /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
+  nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
+  settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),
 
   // context
   entities: () => get<{ entities: Entity[] }>("/api/entities"),

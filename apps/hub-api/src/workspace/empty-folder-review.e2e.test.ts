@@ -229,6 +229,17 @@ test("an unborn Ensemble folder gets the empty commit, and signing stays off whe
   await waitStatus(side, left.body.jobId!, ["succeeded"]);
   assert.deepEqual(fingerprint(userRepo), before, "a repository that already has commits is not given an empty commit");
 
+  // A session in a granted folder: a run continuing a continuation still works in that folder.
+  let previous = left.body.jobId!;
+  for (const title of ["Continue in the attached repo", "Continue it once more"]) {
+    const next = await assign(side, { taskId: await newTask(side, title), continueFromJobId: previous });
+    assert.equal(next.status, 201, JSON.stringify(next.body));
+    const ended = await waitStatus(side, next.body.jobId!, ["succeeded", "failed"]);
+    assert.equal(ended.status, "succeeded", ended.error ?? "");
+    previous = next.body.jobId!;
+  }
+  assert.deepEqual(fingerprint(userRepo), before);
+
   const unborn = join(root, "user-unborn");
   mkdirSync(unborn);
   gitAt(unborn, ["init", "--quiet"]);

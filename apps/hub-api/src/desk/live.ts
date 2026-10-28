@@ -6,6 +6,7 @@ import { TASK_SELECT } from "./entries.js";
 import { isListedArtifact } from "./artifacts.js";
 import { artifactOrigin } from "../context/artifacts.js";
 import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
+import { ON_BOARD } from "../lib/node-tasks.js";
 
 const TASKS = 48;
 const MATTERS = 24;
@@ -68,9 +69,9 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
   const datedBefore = new Date(Date.parse(`${today}T00:00:00.000Z`) + 8 * 86_400_000);
   const [recent, dated, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects, pinnedTasks] =
     await Promise.all([
-      db.task.findMany({ where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" }, take: TASKS, select: TASK_SELECT }),
+      db.task.findMany({ where: { userId, deletedAt: null, ...ON_BOARD }, orderBy: { updatedAt: "desc" }, take: TASKS, select: TASK_SELECT }),
       db.task.findMany({
-        where: { userId, deletedAt: null, status: { in: [...OPEN] }, due: { not: null, lt: datedBefore } },
+        where: { userId, deletedAt: null, status: { in: [...OPEN] }, due: { not: null, lt: datedBefore }, ...ON_BOARD },
         orderBy: { due: "asc" },
         take: DATED,
         select: TASK_SELECT,
@@ -132,7 +133,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       db.repo.findMany({ where: { userId, deletedAt: null }, orderBy: { fullName: "asc" }, take: 12, select: { id: true, fullName: true } }),
       db.project.findMany({ where: { userId, deletedAt: null }, orderBy: { name: "asc" }, take: 12, select: { id: true, name: true } }),
       db.task.findMany({
-        where: { userId, deletedAt: null, todayFocus: "keep", status: { in: [...OPEN] }, OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] },
+        where: { userId, deletedAt: null, todayFocus: "keep", status: { in: [...OPEN] }, OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }], ...ON_BOARD },
         orderBy: { updatedAt: "desc" }, select: { id: true, title: true },
       }),
     ]);

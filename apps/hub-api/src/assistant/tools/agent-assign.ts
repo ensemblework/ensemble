@@ -18,10 +18,10 @@ import { engineName, profileLine } from "./code.js";
 const Engine = z.enum(["ensemble", ...CODE_ENGINES]);
 const PAIR_A_COMPUTER = "Pair a computer first: Settings → Connected computers (/settings?tab=connections#devices), or install the desktop app or the CLI and sign in.";
 
-type Computer = { id: string; name: string; platform: string; online: boolean; folders: string[]; repositories: string[]; engines: string[]; pullRequests: boolean };
+export type Computer = { id: string; name: string; platform: string; online: boolean; folders: string[]; repositories: string[]; engines: string[]; pullRequests: boolean };
 
 /** The person's paired computers, most recently seen first. In a shared space, their own ones. */
-async function pairedComputers(ctx: ToolContext): Promise<Computer[]> {
+export async function pairedComputers(ctx: ToolContext): Promise<Computer[]> {
   const owner = actorFor(ctx.userId) ?? ctx.userId;
   const rows = await ctx.prisma.device.findMany({
     where: { userId: owner, revokedAt: null },
@@ -60,10 +60,10 @@ export function chooseProfile(ctx: ToolContext, wanted?: string): RunProfile {
   );
 }
 
-type Where = { deviceId?: string; computer?: Computer };
+export type Where = { deviceId?: string; computer?: Computer };
 
 /** Where the run happens: the computer named, the profile's computer, this server when it can, else a paired computer. */
-async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string): Promise<Where> {
+export async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.infer<typeof Engine>, wanted?: string): Promise<Where> {
   const computers = await pairedComputers(ctx);
   const named = wanted?.trim();
   if (named && named.toLowerCase() !== "any") {
@@ -86,7 +86,7 @@ async function chooseComputer(ctx: ToolContext, profile: RunProfile, engine: z.i
   return { deviceId: picked.id, computer: picked };
 }
 
-const AssignInput = z
+export const AssignInput = z
   .object({
     taskId: z.string().uuid().describe("The task: from an @task mention, the open task, or hub_list_tasks."),
     profile: z.string().min(1).max(60).optional().describe("A run profile's name or id when the person names one. Leave out for their default profile."),
@@ -119,11 +119,12 @@ const AssignInput = z
       .describe("When the person wants the work to end in a pull request Ensemble opens (and merges if they say so) after the agent finishes. Without it the agent can still push, open and merge pull requests itself when the instructions ask (git choice No limits)."),
   })
   .strict();
-type AssignInput = z.infer<typeof AssignInput>;
+export type AssignInput = z.infer<typeof AssignInput>;
 
-type Plan = { title: string; profile: RunProfile; engine: z.infer<typeof Engine>; where: Where; body: z.infer<typeof Assign>; session: AgentSession | null };
+export type Plan = { title: string; profile: RunProfile; engine: z.infer<typeof Engine>; where: Where; body: z.infer<typeof Assign>; session: AgentSession | null };
 
-async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
+/** The request hub_assign_to_agent sends, under the person's run profile; Ensemble Node's session tools use it too (node/sessions.ts). */
+export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
   const task = await ctx.prisma.task.findFirst({ where: { id: input.taskId, userId: ctx.userId, deletedAt: null }, select: { id: true, title: true } });
   if (!task) throw new ToolBlockedError("That task is not on the board. Use the @task mention's id or hub_list_tasks.");
   const profile = chooseProfile(ctx, input.profile);
@@ -187,7 +188,7 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
   return { title: task.title, profile, engine, where, body, session };
 }
 
-function describePlan(found: Plan): string {
+export function describePlan(found: Plan): string {
   const place = found.where.computer ? `on ${found.where.computer.name}${found.where.computer.online ? "" : " (offline now: it starts when that computer is back)"}` : "on Ensemble's server";
   const work = found.session
     ? `, in its session “${found.session.title}” (${found.session.folder})`

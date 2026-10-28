@@ -13,6 +13,7 @@ import { runNodeTurn } from "./brain.js";
 import type { Mention } from "./mentions.js";
 import { defaultChatModel } from "./model.js";
 import { MAX_BOT_STREAK, botStreak, parseRelevance, relevancePrompt, whoSpeaks, type RelevanceCandidate, type RouteNode } from "./router.js";
+import { publishTo } from "./events.js";
 import { postMessage, roomSettings } from "./store.js";
 
 const PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_PARALLEL ?? 4) || 4);
@@ -207,9 +208,12 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
   if (!room || room.archivedAt) return;
   const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true } });
+  // A paused node wakes only for its owner's own message to it (its DM, or a mention), which also resumes it; nothing else wakes it.
+  const mentioned = new Set(((Array.isArray(message.mentions) ? message.mentions : []) as Mention[]).filter((row) => row.kind === "node").map((row) => row.id));
+  const wakes = (node: { id: string; userId: string }) => message.authorKind === "human" && message.userId === node.userId && (room.kind === "dm" || mentioned.has(node.id));
   const nodes: RouteNode[] = members
     .filter((row) => row.node)
-    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active", representative: row.representative, role: row.node!.role }));
+    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active" || wakes(row.node!), representative: row.representative, role: row.node!.role }));
   const recent = await prisma.nodeMessage.findMany({
     where: { roomId: room.id, seq: { lte: message.seq }, ...(message.visibleTo.length ? {} : { visibleTo: { isEmpty: true } }) },
     orderBy: { seq: "desc" },
@@ -253,6 +257,15 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
     return;
   }
   for (const nodeId of ids) {
+    const node = members.find((row) => row.nodeId === nodeId)?.node;
+    if (node?.status === "paused" && wakes(node)) await resumeNode(app, node);
     await enqueueTurn(app, { nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: message.visibleTo.length > 0 });
   }
+}
+
+/** Back to work: by the owner's Resume, or by their message to it. Its pages and lists refresh. */
+export async function resumeNode(app: FastifyInstance, node: { id: string; userId: string }): Promise<boolean> {
+  const resumed = await app.prisma.nodeAgent.updateMany({ where: { id: node.id, status: "paused" }, data: { status: "active" } });
+  if (resumed.count) publishTo([node.userId], "node.room", { nodeId: node.id, status: "active" });
+  return resumed.count > 0;
 }

@@ -3,6 +3,7 @@
  * `visibleTo` is the whole room, otherwise only the accounts listed (and their nodes).
  */
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, Prisma, PrismaClient } from "@prisma/client";
+import { sseHub } from "../lib/sse.js";
 import { publishTo } from "./events.js";
 import { handleFrom, resolveMentions, uniqueHandle, type DirectoryEntry, type Mention } from "./mentions.js";
 import { nodeTemplate, type NodeAvatar } from "./templates.js";
@@ -115,7 +116,16 @@ export async function postMessage(prisma: PrismaClient, input: PostInput): Promi
     throw error;
   }
   await announce(prisma, message, "node.message");
+  if (message.kind === "approval") needsMeChanged(message);
   return { message, duplicate: false };
+}
+
+/**
+ * A node's approval card is in Needs me everywhere (the Hub, Node, the CLI): a change to one goes to
+ * the owner's own Ensemble stream as `approval`, like a run approval, without its content.
+ */
+function needsMeChanged(card: Pick<NodeMessage, "id" | "userId">): void {
+  sseHub.publish(card.userId, { event: "approval", data: { source: "node", id: card.id } });
 }
 
 /** Sends a message (new or changed) to the people in its room who may see it. */
@@ -128,6 +138,7 @@ export async function updateMessageData(prisma: PrismaClient, message: NodeMessa
   const data = { ...(message.data as Record<string, unknown>), ...patch };
   const next = await prisma.nodeMessage.update({ where: { id: message.id }, data: { data: data as Prisma.InputJsonValue, ...(body !== undefined ? { body } : {}) } });
   await announce(prisma, next, "node.message.updated");
+  if (next.kind === "approval" && "status" in patch) needsMeChanged(next);
   return next;
 }
 

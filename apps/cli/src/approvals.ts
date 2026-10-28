@@ -5,6 +5,9 @@
  * except what the runner already relays.
  */
 import { resolve } from "node:path";
+import { loadConfig, loadToken } from "./config.js";
+import { bearerHeaders, fetchJson } from "./http.js";
+import type { CliPaths } from "./paths.js";
 import { localJson, type Discovery } from "./sidecar.js";
 
 export type PendingDecision = {
@@ -84,6 +87,32 @@ export function answerFor(row: PendingDecision, input: string): Answer {
   }
   if (["allow", "yes", "y", "ok"].includes(lower)) return { decision: "allow", scope: "once" };
   throw new Error("Answer allow or deny.");
+}
+
+/** An Ensemble Node approval card, as `GET /api/bridge/node` lists it. */
+export type NodeCard = { id: string; roomId: string; body: string; type?: string | null; node?: { slug: string; name: string } | null; room?: string | null };
+
+const NODE_WANTS: Record<string, string> = { tools: "wants to act for you", post: "wants to post for you", session: "wants to start work on your computer" };
+
+/** The signed-in person's Ensemble Node cards, which are part of Needs me everywhere. Empty when signed out or the server has no Node. */
+export async function nodeCards(paths?: CliPaths): Promise<NodeCard[]> {
+  const token = await loadToken(paths);
+  if (!token) return [];
+  const { apiBase } = await loadConfig(paths);
+  const overview = await fetchJson<{ approvals?: NodeCard[] }>(`${apiBase}/api/bridge/node`, { headers: bearerHeaders(token) }).catch(() => null);
+  return overview?.approvals ?? [];
+}
+
+/** Node cards after this computer's own list. This key reads them; they are answered on Node or in Ensemble. */
+export function formatNodeCards(rows: NodeCard[], nodeUrl: string): string {
+  if (!rows.length) return "";
+  const lines = [`From your nodes (${rows.length}):`];
+  for (const row of rows) {
+    const who = row.node ? `@${row.node.slug}` : "A node";
+    lines.push(`- ${who} ${NODE_WANTS[row.type ?? "tools"] ?? NODE_WANTS.tools}${row.room ? ` in “${row.room}”` : ""}: ${row.body.replace(/\s+/g, " ").slice(0, 160)}`);
+  }
+  lines.push(`  Approve or discard on ${nodeUrl}/needs-me or in Ensemble's Needs me.`);
+  return lines.join("\n");
 }
 
 export async function answerPending(discovery: Discovery, row: PendingDecision, answer: Answer): Promise<void> {
