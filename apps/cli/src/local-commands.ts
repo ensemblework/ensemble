@@ -98,3 +98,18 @@ export async function withAdminApi<T>(input: {
 }): Promise<T> {
   return withLocalApi({ sidecarDir: input.sidecarDir, apiBase: input.apiBase, adminOnly: true, run: input.run });
 }
+
+export type SavedSecret = { name: string; updatedAt: string };
+
+/** The run secrets saved on this computer: names only. */
+export async function listSecrets(discovery: Discovery): Promise<SavedSecret[]> {
+  return (await localJson<{ secrets?: SavedSecret[] }>(discovery, "/api/run-secrets")).secrets ?? [];
+}
+
+export async function setSecret(discovery: Discovery, name: string, value: string): Promise<void> {
+  await localJson<unknown>(discovery, `/api/run-secrets/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value }) });
+}
+
+export async function removeSecret(discovery: Discovery, name: string): Promise<void> {
+  await localJson<unknown>(discovery, `/api/run-secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
+}

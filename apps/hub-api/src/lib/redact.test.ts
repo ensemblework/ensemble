@@ -41,3 +41,21 @@ test("cloud keys, private keys, JWTs, URL passwords and .env secret lines are re
   assert.match(out, /TIMEOUT=30 and the README says hello/);
 });
 
+
+test("saved run secrets are hidden everywhere once known, and names that would change how agents sign in are refused", async () => {
+  const { rememberSecretValues, hideSecretsDeep } = await import("./redact.js");
+  const { secretNameProblem, secretRules } = await import("./run-secrets.js");
+  const value = "zq9-remembered-value-77";
+  assert.equal(redactText(`curl -H "X: ${value}"`).includes(value), true, "unknown values are left alone");
+  rememberSecretValues([value, "abc"]);
+  assert.equal(redactText(`curl -H "X: ${value}"`), 'curl -H "X: [redacted secret]"');
+  assert.deepEqual(hideSecretsDeep({ log: [`got ${value}`], n: 2, nested: { summary: value } }), { log: ["got [redacted secret]"], n: 2, nested: { summary: "[redacted secret]" } });
+  assert.equal(redactText("abc"), "abc", "very short values are not remembered");
+
+  assert.equal(secretNameProblem("STRIPE_API_KEY"), null);
+  for (const name of ["GITHUB_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "PATH", "ENSEMBLE_TOKEN", "LD_PRELOAD"]) assert.ok(secretNameProblem(name), `${name} is refused`);
+  assert.match(secretNameProblem("GITHUB_TOKEN")!, /GITHUB_PAT/);
+  assert.ok(secretNameProblem("stripe key"), "an environment variable name");
+  assert.deepEqual(secretRules([]), []);
+  assert.match(secretRules(["STRIPE_API_KEY"])[0]!, /\$STRIPE_API_KEY.*Never print/);
+});

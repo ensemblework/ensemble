@@ -2,8 +2,8 @@
  * Which chat model a node talks with (docs/35 §5). A node may use any model its owner can: the
  * included models this server offers (credits shared with every Ensemble app), models on the owner's
  * own API keys, and AI plans (Claude Code, Codex, Cursor, Copilot) on a paired computer, which run the
- * turn there. Default: the included gpt-5-mini, else another included everyday model, else the
- * owner's own medium tier.
+ * turn there. Default: a fast included model (gpt-6-luna, else gpt-5-mini, else another everyday
+ * model) at low thinking (`node.effort`), else the owner's own medium tier.
  */
 import type { PrismaClient } from "@prisma/client";
 import {
@@ -22,14 +22,24 @@ import { modelCatalog } from "../lib/model-catalog.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { computerAgents, deviceOwners } from "../subscriptions/turn.js";
 
-export const NODE_DEFAULT_MODEL = "gpt-5-mini";
+export const NODE_DEFAULT_MODEL = "gpt-6-luna";
+/** Fast first: a node mostly routes work, so the cheapest everyday model it can get. */
+const DEFAULT_ORDER = [NODE_DEFAULT_MODEL, "gpt-5-mini"];
+
+function defaultIncluded<T extends { id: string; role: string }>(models: readonly T[]): T | undefined {
+  for (const id of DEFAULT_ORDER) {
+    const found = models.find((row) => row.id === id);
+    if (found) return found;
+  }
+  return models.find((row) => row.role === "everyday") ?? models[0];
+}
 
 export type ChatModel = { provider: string; model: string };
 
 export function defaultChatModel(settings: Pick<Settings, "models">): ChatModel | null {
   const included = includedConfig();
   if (included) {
-    const pick = included.models.find((row) => row.id === NODE_DEFAULT_MODEL) ?? included.models.find((row) => row.role === "everyday") ?? included.models[0];
+    const pick = defaultIncluded(included.models);
     if (pick) return { provider: INCLUDED_PROVIDER, model: pick.id };
   }
   const tier = settings.models.medium;
@@ -72,7 +82,7 @@ export type NodeModelOption = {
 export function includedOptions(): NodeModelOption[] {
   const included = includedConfig();
   if (!included) return [];
-  const fallback = included.models.find((row) => row.id === NODE_DEFAULT_MODEL) ?? included.models.find((row) => row.role === "everyday") ?? included.models[0];
+  const fallback = defaultIncluded(included.models);
   return included.models.map((row) => ({
     provider: INCLUDED_PROVIDER,
     model: row.id,

@@ -21,6 +21,8 @@ import { mirrorNeedsMe, nodeEventStream, publishTo } from "./events.js";
 import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } from "./model.js";
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import { pausedNotice, stopNodeRuns } from "./sessions.js";
+import { saveSecret, SecretError, secretStuck } from "./node-secrets.js";
+import { createCrew, deleteNode, MAX_NODES } from "./helpers.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
@@ -182,11 +184,17 @@ async function credits(accountId: string) {
 
 async function pendingApprovals(prisma: PrismaClient, accountId: string) {
   const rows = await prisma.nodeMessage.findMany({
-    where: { kind: "approval", userId: accountId, visibleTo: { equals: [accountId] }, data: { path: ["status"], equals: "pending" } },
+    where: {
+      kind: "approval",
+      userId: accountId,
+      visibleTo: { equals: [accountId] },
+      // A secret card a restart left saving can be answered again (node-secrets.ts).
+      OR: [{ data: { path: ["status"], equals: "pending" } }, { AND: [{ data: { path: ["type"], equals: "secret" } }, { data: { path: ["status"], equals: "saving" } }] }],
+    },
     orderBy: { createdAt: "desc" },
     take: 50,
   });
-  return rows.map(wireMessage);
+  return rows.filter((row) => (row.data as { status?: unknown }).status === "pending" || secretStuck(row.data)).map(wireMessage);
 }
 
 /** Pending approval cards with the node that asks and the conversation they are in: Needs me on Node, the Hub and the CLI. */
@@ -244,7 +252,7 @@ async function runList(prisma: PrismaClient, accountId: string, take = 30) {
 /** The read-only overview the CLI's Node tab shows. */
 export async function nodeOverview(prisma: PrismaClient, accountId: string) {
   const [nodes, rooms, approvals, runs, turns, invites] = await Promise.all([
-    prisma.nodeAgent.findMany({ where: { userId: accountId }, orderBy: { createdAt: "asc" } }),
+    prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" } }),
     roomList(prisma, accountId),
     approvalCards(prisma, accountId),
     runList(prisma, accountId, 10),
@@ -282,7 +290,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const [user, nodes, rooms, devices, usage, invites] = await Promise.all([
       prisma.user.findUnique({ where: { id: accountId }, select: { id: true, name: true, email: true, emailVerifiedAt: true } }),
-      prisma.nodeAgent.findMany({ where: { userId: accountId }, orderBy: { createdAt: "asc" } }),
+      prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" } }),
       roomList(prisma, accountId),
       computers(prisma, accountId),
       credits(accountId),
@@ -314,7 +322,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   // ── nodes ────────────────────────────────────────────────────────────────────────────────
   app.get("/api/node/nodes", async (request) => {
     const accountId = nodeAccount(request);
-    const nodes = await prisma.nodeAgent.findMany({ where: { userId: accountId }, orderBy: { createdAt: "asc" } });
+    const nodes = await prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" } });
     return { nodes: nodes.map(wireNode) };
   });
 
@@ -334,7 +342,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const provider = body.model ? (body.provider ?? INCLUDED_PROVIDER) : null;
     await checkModel(prisma, accountId, provider, body.model);
     if (body.name?.trim() && (await nodeNameTaken(prisma, accountId, body.name))) throw fail(409, `You already have a node called “${body.name.trim()}”. Pick another name.`);
-    if ((await prisma.nodeAgent.count({ where: { userId: accountId } })) >= 24) throw fail(409, "You have 24 nodes, the most one account can have.");
+    if ((await prisma.nodeAgent.count({ where: { userId: accountId, parentNodeId: null } })) >= MAX_NODES) throw fail(409, `You have ${MAX_NODES} nodes, the most one account can have.`);
     const { node, room } = await createNode(prisma, accountId, { ...body, provider });
     publishTo([accountId], "node.room", { roomId: room.id });
     return reply.code(201).send({ node: wireNode(node), room: await roomView(prisma, accountId, room) });
@@ -354,6 +362,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       runProfileId: z.string().max(60).nullable().optional(),
       autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional(), computerWork: z.enum(["auto", "ask"]).optional() }).optional(),
       status: z.enum(["active", "paused"]).optional(),
+      effort: z.enum(["low", "medium", "high"]).optional(),
     }).strict().parse(request.body ?? {});
     const provider = body.model ? (body.provider ?? INCLUDED_PROVIDER) : null;
     if (body.model !== undefined) await checkModel(prisma, accountId, provider, body.model);
@@ -367,6 +376,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
         ...(slug ? { slug } : {}),
+        ...(body.effort ? { effort: body.effort } : {}),
         ...(body.role !== undefined ? { role: body.role } : {}),
         ...(body.charter !== undefined ? { charter: body.charter } : {}),
         ...(body.avatar ? { avatar: body.avatar } : {}),
@@ -406,11 +416,13 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
    * on the owner's computer. Then it says so in its DM, naming only the work that was still going on.
    */
   async function pause(node: NodeAgent): Promise<void> {
-    const memberships = await prisma.nodeRoomMember.findMany({ where: { nodeId: node.id } });
+    // Its helpers stop with it.
+    const helpers = (await prisma.nodeAgent.findMany({ where: { parentNodeId: node.id }, select: { id: true } })).map((row) => row.id);
+    const memberships = await prisma.nodeRoomMember.findMany({ where: { nodeId: { in: [node.id, ...helpers] } } });
     for (const member of memberships) {
       for (const conversationId of [member.conversationId, member.privateConversationId]) if (conversationId) abortAssistantTurn(conversationId);
     }
-    await stopTurns(app, [node.id], null);
+    await stopTurns(app, [node.id, ...helpers], null);
     const stopped = await stopNodeRuns(app, node);
     const dm = memberships.length
       ? await prisma.nodeRoom.findFirst({ where: { id: { in: memberships.map((row) => row.roomId) }, kind: "dm", userId: node.userId, archivedAt: null } })
@@ -431,17 +443,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   app.delete("/api/node/nodes/:id", async (request, reply) => {
     const accountId = nodeAccount(request);
     const node = await ownNode(prisma, accountId, (request.params as { id: string }).id);
-    const memberships = await prisma.nodeRoomMember.findMany({ where: { nodeId: node.id }, include: { room: true } });
-    const conversations = memberships.flatMap((row) => [row.conversationId, row.privateConversationId]).filter((id): id is string => Boolean(id));
-    const dms = memberships.filter((row) => row.room.kind === "dm" && row.room.userId === accountId).map((row) => row.roomId);
-    await stopTurns(app, [node.id], null);
-    await prisma.$transaction([
-      prisma.nodeRoom.deleteMany({ where: { id: { in: dms } } }),
-      prisma.nodeAgent.delete({ where: { id: node.id } }),
-      prisma.nodeRun.deleteMany({ where: { nodeId: node.id } }),
-      prisma.assistantConversation.deleteMany({ where: { id: { in: conversations }, userId: accountId, startedOn: "node" } }),
-    ]);
-    publishTo([accountId], "node.room", { deleted: dms });
+    // Its helpers go with it.
+    for (const helper of await prisma.nodeAgent.findMany({ where: { parentNodeId: node.id } })) await deleteNode(app, helper);
+    await deleteNode(app, node);
     return reply.code(204).send();
   });
 
@@ -484,16 +488,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (!title) throw fail(400, "Give the crew a name.");
     if (await roomTitleTaken(prisma, accountId, title)) throw fail(409, `You already have a crew or room called “${title}”. Pick another name.`);
     const ids = [...new Set(body.nodeIds)];
-    const found = await prisma.nodeAgent.findMany({ where: { id: { in: ids }, userId: accountId } });
+    const found = await prisma.nodeAgent.findMany({ where: { id: { in: ids }, userId: accountId, parentNodeId: null } });
     if (found.length !== ids.length) throw fail(404, "That node is not available.");
     const nodes = ids.map((id) => found.find((node) => node.id === id)!);
     const lead = nodes.find((node) => node.id === body.leadNodeId) ?? nodes.find((node) => node.role === "manager") ?? nodes[0]!;
-    const room = await prisma.$transaction(async (tx) => {
-      const created = await tx.nodeRoom.create({ data: { userId: accountId, kind: "crew", title, settings: { leadNodeIds: [lead.id] } } });
-      await addPerson(tx, created.id, accountId, "owner");
-      for (const node of nodes) await addNode(tx, created.id, node);
-      return created;
-    });
+    const room = await createCrew(prisma, accountId, title, nodes, lead);
     publishTo([accountId], "node.room", { roomId: room.id });
     return reply.code(201).send({ room: await roomView(prisma, accountId, room) });
   });
@@ -576,6 +575,13 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
     if (room.userId !== accountId) throw fail(403, "Only the person who made this room can delete it. You can leave it.");
+    if (room.kind === "task") {
+      // A helper's room goes with its helper.
+      const helper = await prisma.nodeAgent.findFirst({ where: { userId: accountId, parentNodeId: { not: null }, memberships: { some: { roomId: room.id } } } });
+      if (helper) await deleteNode(app, helper);
+      else await prisma.nodeRoom.delete({ where: { id: room.id } });
+      return reply.code(204).send();
+    }
     const people = await roomPeople(prisma, room.id);
     await prisma.$transaction([
       prisma.nodeRoom.update({ where: { id: room.id }, data: { archivedAt: new Date() } }),
@@ -696,9 +702,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
     if (room.kind === "dm") throw fail(400, "A direct chat has one node. Make a crew for more.");
+    if (room.kind === "task") throw fail(400, "A helper's room holds the node and its helper only.");
     if (room.kind === "crew" && room.userId !== accountId) throw fail(403, "Only the person who made this crew can add nodes to it.");
     const body = z.object({ nodeId: z.string().uuid(), lead: z.boolean().optional() }).strict().parse(request.body);
     const node = await ownNode(prisma, accountId, body.nodeId);
+    if (node.parentNodeId) throw fail(400, "A helper stays in its own room.");
     if (await prisma.nodeRoomMember.findFirst({ where: { roomId: room.id, nodeId: node.id }, select: { id: true } })) throw fail(409, `@${node.slug} is already here.`);
     if (room.kind === "crew" && (await prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: { not: null } } })) >= MAX_CREW_NODES) {
       throw fail(409, `A crew holds at most ${MAX_CREW_NODES} nodes.`);
@@ -815,6 +823,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     // Files ride on a message by reference: they stay in the sender's Files (src/files).
     const files = await messageFiles(prisma, accountId, body.files ?? []);
     if (!text && !files.length) throw fail(400, "That message is empty.");
+    if (room.kind === "task") throw fail(403, "This is a helper's room: you read along, and talk to the node that made it in your chat with it.");
     // Nodes spend model credits on the account's behalf: same rule as the assistant.
     await requireVerifiedUser(accountId);
     const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
@@ -1007,12 +1016,24 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const message = await settleApproval(app, accountId, (request.params as { messageId: string }).messageId, body);
       return { message: wireMessage(message) };
     } catch (error) {
-      if (error instanceof ApprovalError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof ApprovalError || error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
   });
 
   app.get("/api/node/runs", async (request) => ({ runs: await runList(prisma, nodeAccount(request)) }));
+
+  /** The value for a node's secret request: relayed to the card's computer, never stored or logged here (node/node-secrets.ts). */
+  app.post("/api/node/secrets/:messageId", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    const { value } = z.object({ value: z.string().min(1).max(16 * 1024) }).strict().parse(request.body);
+    try {
+      return { message: wireMessage(await saveSecret(app, accountId, (request.params as { messageId: string }).messageId, value)) };
+    } catch (error) {
+      if (error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
 
   /** My nodes' pending approval cards, with the node and conversation: Needs me on Node and in the Hub. */
   app.get("/api/node/approvals", async (request) => ({ approvals: await approvalCards(prisma, nodeAccount(request)), nodeUrl: nodeWebOrigin() }));

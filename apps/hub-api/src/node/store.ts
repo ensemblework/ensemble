@@ -142,6 +142,17 @@ export async function updateMessageData(prisma: PrismaClient, message: NodeMessa
   return next;
 }
 
+/** `updateMessageData` only while the card still matches `when` (a compare-and-set); null when it changed meanwhile. */
+export async function updateMessageDataIf(prisma: PrismaClient, message: NodeMessage, when: Prisma.NodeMessageWhereInput, patch: Record<string, unknown>): Promise<NodeMessage | null> {
+  const data = { ...(message.data as Record<string, unknown>), ...patch };
+  const changed = await prisma.nodeMessage.updateMany({ where: { AND: [{ id: message.id }, when] }, data: { data: data as Prisma.InputJsonValue } });
+  if (changed.count !== 1) return null;
+  const next = await prisma.nodeMessage.findUniqueOrThrow({ where: { id: message.id } });
+  await announce(prisma, next, "node.message.updated");
+  if (next.kind === "approval" && "status" in patch) needsMeChanged(next);
+  return next;
+}
+
 /** A person's handle in a room, from their name or email. */
 export async function personHandle(prisma: Db, accountId: string, taken: ReadonlySet<string>): Promise<string> {
   const user = await prisma.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } });
@@ -240,13 +251,15 @@ export function wireNode(node: NodeAgent) {
     autonomy: node.autonomy,
     status: node.status,
     templateId: node.templateId,
+    effort: node.effort ?? "low",
+    parentNodeId: node.parentNodeId,
     createdAt: node.createdAt.toISOString(),
   };
 }
 
 /** What other people in a room may know about someone else's node. */
 export function publicNode(node: NodeAgent) {
-  return { id: node.id, ownerId: node.userId, slug: node.slug, name: node.name, role: node.role, avatar: node.avatar, status: node.status };
+  return { id: node.id, ownerId: node.userId, slug: node.slug, name: node.name, role: node.role, avatar: node.avatar, status: node.status, parentNodeId: node.parentNodeId };
 }
 
 export type RoomSettings = { leadNodeIds: string[]; responsibilities: Record<string, string>; pinned: string[] };
