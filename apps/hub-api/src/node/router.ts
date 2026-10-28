@@ -4,11 +4,13 @@
  *
  *   - Cards and system lines never wake anyone.
  *   - A node sees only what its owner may see, so a private message wakes only that person's nodes.
- *   - A node's message wakes only the nodes it mentions, under two brakes: consecutive node
- *     messages in the room, and the depth of the bot chain under one person's message.
+ *   - In a crew one node answers a person: the one node they mention, else the lead, which
+ *     coordinates the others through a plan (node/plans.ts). Nodes' messages there wake nobody.
+ *   - Elsewhere a node's message wakes only the nodes it mentions, under two brakes: consecutive
+ *     node messages in the room, and the depth of the bot chain under one person's message.
  *   - A person's message wakes the nodes it mentions; mentioning only people wakes nobody;
- *     otherwise the DM's node, the crew's lead, or in a group the one representative (several:
- *     a small relevance call picks at most two).
+ *     otherwise the DM's node, or in a group the one representative (several: a small relevance
+ *     call picks at most two).
  */
 import type { Mention } from "./mentions.js";
 
@@ -57,21 +59,26 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 
   if (message.authorKind === "node") {
+    if (room.kind === "crew") return none();
     // A helper's room is nodes only: the depth limit (reset by each owner message) is its brake.
     if (room.kind !== "task" && streak >= MAX_BOT_STREAK) return none("streak");
     if (message.botDepth >= MAX_BOT_DEPTH) return none("depth");
     return mentioned.length ? { reason: "mentioned", nodeIds: mentioned.slice(0, MAX_NODE_FANOUT) } : none();
   }
 
+  const lead = room.leadNodeIds.find((id) => eligibleIds.has(id));
+  if (room.kind === "crew") {
+    if (mentioned.length === 1) return { reason: "mentioned", nodeIds: mentioned };
+    // Talking only to people (or only to nodes that cannot answer) wakes nobody.
+    if (!mentioned.length && message.mentions.length) return none();
+    if (!eligible.length) return none();
+    const pick = lead ?? eligible.find((node) => node.role === "manager")?.id ?? eligible[0]!.id;
+    return { reason: "lead", nodeIds: [pick] };
+  }
   if (mentioned.length) return { reason: "mentioned", nodeIds: mentioned.slice(0, MAX_HUMAN_FANOUT) };
   if (message.mentions.length) return none();
   if (!eligible.length) return none();
   if (room.kind === "dm") return { reason: "dm", nodeIds: [eligible[0]!.id] };
-  const lead = room.leadNodeIds.find((id) => eligibleIds.has(id));
-  if (room.kind === "crew") {
-    const pick = lead ?? eligible.find((node) => node.role === "manager")?.id ?? eligible[0]!.id;
-    return { reason: "lead", nodeIds: [pick] };
-  }
   if (lead) return { reason: "lead", nodeIds: [lead] };
   const representatives = eligible.filter((node) => node.representative);
   const pool = representatives.length ? representatives : eligible;

@@ -2497,7 +2497,7 @@ model NodeMessage {
   /// human | node | system
   authorKind    String   @map("author_kind")
   authorNodeId  String?  @map("author_node_id")
-  /// text | approval | run | status | error
+  /// text | approval | run | status | error | plan
   kind          String   @default("text")
   body          String   @default("")
   /// Card data: tool chips, held proposals, run state.
@@ -2510,6 +2510,8 @@ model NodeMessage {
   rootMessageId String?  @map("root_message_id")
   botDepth      Int      @default(0) @map("bot_depth")
   clientId      String?  @map("client_id")
+  /// A card that belongs inside a plan card (node/plans.ts): shown there, not in the timeline or unread counts.
+  planId        String?  @map("plan_id")
   createdAt     DateTime @default(now()) @map("created_at")
   room          NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
@@ -2537,6 +2539,9 @@ model NodeRun {
   direct     Boolean   @default(false)
   /// The job status last seen; `steered` when a newer message in the session took over.
   status     String    @default("queued")
+  /// The plan step this run does (node/plans.ts): its end wakes the node for that step.
+  planId     String?   @map("plan_id")
+  planStep   String?   @map("plan_step")
   reportedAt DateTime? @map("reported_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
@@ -2546,6 +2551,7 @@ model NodeRun {
   @@index([userId, createdAt])
   @@index([sessionId])
   @@index([nodeId, status])
+  @@index([planId])
   @@map("node_runs")
 }
 
@@ -2555,13 +2561,20 @@ model NodeTurn {
   userId           String    @map("user_id")
   nodeId           String    @map("node_id")
   roomId           String?   @map("room_id")
-  /// mentioned | dm | lead | relevance | run | approval
+  /// mentioned | dm | lead | relevance | run | approval | plan
   reason           String
   /// The owner's private thread in the room rather than the shared one.
   private          Boolean   @default(false)
   triggerMessageId String?   @map("trigger_message_id")
   /// Extra text for the turn (a finished run's result).
   note             String?
+  /// The plan (its card's message id) this turn works on, and the step when it is a worker's.
+  planId           String?   @map("plan_id")
+  planStep         String?   @map("plan_step")
+  /// Earlier tries of the same turn that the model's rate limit cut off.
+  attempt          Int       @default(0)
+  /// A retry waits until then.
+  runAfter         DateTime? @map("run_after")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?

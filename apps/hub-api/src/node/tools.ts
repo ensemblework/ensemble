@@ -16,6 +16,7 @@ import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
 import { helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
+import { addStep, finishStep, PlanError, planVisibility, type PlanLink } from "./plans.js";
 
 export const MAX_MEMORIES = 200;
 
@@ -33,6 +34,10 @@ export type NodeScope = {
   /** For questions to the owner's paired computer (devices/file-relay.ts). */
   redis: Parameters<typeof askDeviceFor>[0];
   dispatch: (message: NodeMessage) => Promise<void>;
+  /** The turn: a plan made in it opens with its reply (node/plans.ts). */
+  turnId: string;
+  /** A plan's turn: a step's node doing its step, or the lead reporting (planStep null). */
+  plan: PlanLink | null;
 };
 
 /** Whether the owner let this node read files on their paired computers (off unless they turned it on). */
@@ -210,24 +215,63 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   // A temporary helper only answers the node that made it, with the read-only assistant tools.
   if (node.parentNodeId) return [];
+  const remember = defineTool({
+    name: "node_remember",
+    area: "tasks",
+    description: "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Your owner can see and delete every memory.",
+    input: z.object({ content: z.string().min(1).max(500) }).strict(),
+    isWrite: false,
+    risk: "low",
+    async run(_ctx, input) {
+      if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can ask you to remember something.");
+      await prisma.nodeMemory.create({ data: { userId: node.userId, nodeId: node.id, content: input.content.trim() } });
+      const extra = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" }, skip: MAX_MEMORIES, select: { id: true } });
+      if (extra.length) await prisma.nodeMemory.deleteMany({ where: { id: { in: extra.map((row) => row.id) } } });
+      return toolOk("Remembered.");
+    },
+  });
+  const own = [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope)];
+  // A step of a plan: the node does its own step and reports it; it hands nothing on and posts nothing.
+  const step = scope.plan?.planStep ? { planId: scope.plan.planId, stepId: scope.plan.planStep } : null;
+  if (step) {
+    return [
+      ...own,
+      defineTool({
+        name: "node_step_blocked",
+        area: "tasks",
+        description:
+          "Your step cannot be finished: a decision only your owner can make, access you do not have, or a failure you cannot fix. Ends your step with why; the plan's lead tells your owner. Do not use it while an agent run of yours is still going on.",
+        input: z.object({ reason: z.string().min(1).max(2000).describe("What stopped it and what would unblock it, in a few lines.") }).strict(),
+        isWrite: false,
+        risk: "low",
+        async run(ctx, input) {
+          await finishStep(ctx.app, step.planId, step.stepId, { status: "blocked", result: input.reason });
+          return toolOk("Your step ended as blocked; the plan's lead tells your owner. Reply exactly (no reply).");
+        },
+      }),
+      remember,
+    ];
+  }
   return [
-    ...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []),
-    ...sessionTools(scope),
-    ...secretTools(scope),
+    ...own,
     ...helperTools({ ...scope, postBrief: (room, body) => postAsNode(scope, room, body, null) }),
     defineTool({
       name: "node_delegate",
       area: "tasks",
       description:
-        "Hand a piece of work to one of your owner's other nodes (for example @tester or @builder): posts a self-contained brief that mentions it, which wakes it. " +
-        "If it is not in this room, the brief goes to the crew room you lead. Include the Ensemble task, what done looks like, and ask it to mention you when finished.",
+        "Add a step for one of your owner's other nodes (for example @builder) to your plan. Call it once per piece of work, in order; pass after for what must finish first (testing after building, docs last). " +
+        "Nothing is posted: when your turn ends your reply opens the plan as one card, its steps run in order as quiet work of those nodes, and you hear back once, with every result, when the plan ends. " +
+        "The brief must stand alone: the task or page, where to work, what done looks like, and any model, agent or folder your owner named.",
       input: z.object({
         to: Handle.describe("The node's handle, for example tester."),
         brief: z.string().min(1).max(4000).describe("What to do, with links to the task or page, and what done looks like."),
+        after: z.array(Handle).max(11).optional().describe("Handles of nodes already in this plan whose steps must be done before this one starts, for example [\"builder\", \"swe-2\"]."),
       }).strict(),
       isWrite: false,
       risk: "low",
       async run(_ctx, input) {
+        // Only the owner hands their nodes work: a request from anyone else is answered, not planned.
+        if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can have work handed to their other nodes.", "Answer the request yourself, or ask your owner.");
         let here = await prisma.nodeRoomMember.findFirst({ where: { roomId: scope.room.id, handle: input.to, nodeId: { not: null } } });
         const target = here?.nodeId
           ? await prisma.nodeAgent.findUnique({ where: { id: here.nodeId } })
@@ -245,16 +289,43 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         if (target.userId !== node.userId) {
           throw new ToolBlockedError(`@${input.to} belongs to someone else. Mention it in your reply instead; your owner sees that first.`);
         }
-        if (target.status !== "active") throw new ToolBlockedError(`@${target.slug} is paused.`);
-        const room = here ? (here.roomId === scope.room.id ? scope.room : await prisma.nodeRoom.findUniqueOrThrow({ where: { id: here.roomId } })) : await crewRoomFor(prisma, node);
-        const member = here ?? (await addNode(prisma, room.id, target));
-        const people = await roomPeople(prisma, room.id);
-        // Crew chatter stays between the owner and their nodes when other people are in the room.
-        const privateTo = room.id === scope.room.id && scope.privateTo ? scope.privateTo : people.some((id) => id !== node.userId) ? [node.userId] : null;
-        const { message } = await postAsNode(scope, room, `@${member.handle} ${input.brief}`, privateTo, {
-          data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } },
-        });
-        return toolOk(`Asked @${member.handle} in “${room.title}”.`, { roomId: room.id, messageId: message.id });
+        if (target.status !== "active") throw new ToolBlockedError(`@${target.slug} is paused.`, "Your owner resumes it in its settings or by messaging it. Tell them; do not give its work to another node unless they say so.");
+        if (target.parentNodeId) {
+          // Your own helper works in its task room, by mention (node/helpers.ts).
+          const room = await prisma.nodeRoom.findUniqueOrThrow({ where: { id: here!.roomId } });
+          const { message } = await postAsNode(scope, room, `@${here!.handle} ${input.brief}`, null, { data: { delegation: { fromRoomId: scope.room.id, fromNodeId: node.id } } });
+          return toolOk(`Asked @${here!.handle} in “${room.title}”.`, { roomId: room.id, messageId: message.id });
+        }
+        // A step in this turn's plan, run in a crew: this one, the plan's when continuing it, else the crew you lead.
+        const continuing = scope.plan && !scope.plan.planStep ? scope.plan.planId : null;
+        const planCard = continuing ? await prisma.nodeMessage.findUnique({ where: { id: continuing }, select: { roomId: true } }) : null;
+        const room = planCard
+          ? await prisma.nodeRoom.findUniqueOrThrow({ where: { id: planCard.roomId } })
+          : scope.room.kind === "crew"
+            ? scope.room
+            : await crewRoomFor(prisma, node);
+        const member = (await prisma.nodeRoomMember.findFirst({ where: { roomId: room.id, nodeId: target.id } })) ?? (await addNode(prisma, room.id, target));
+        const visibleTo = await planVisibility(prisma, node.userId, room, room.id === scope.room.id ? scope.privateTo : null);
+        try {
+          const added = await addStep(prisma, {
+            lead: node,
+            turnId: scope.turnId,
+            continuing,
+            room,
+            originRoomId: scope.room.id,
+            originPrivate: Boolean(scope.privateTo),
+            visibleTo,
+            step: { node: target, handle: member.handle, brief: input.brief, after: input.after ?? [] },
+          });
+          const after = input.after?.length ? ` after ${input.after.map((handle) => `@${handle}`).join(", ")}` : "";
+          return toolOk(
+            `Step ${added.position} for @${member.handle}${after} is in your plan. It starts when your turn ends; you hear back once, when the whole plan has ended. Do not post or repeat the brief: your reply opens the plan, so keep it to a line or two.`,
+            { planId: added.planId, step: added.step.id },
+          );
+        } catch (error) {
+          if (error instanceof PlanError) throw new ToolBlockedError(error.message);
+          throw error;
+        }
       },
     }),
     defineTool({
@@ -276,25 +347,11 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         if (!hit || hit.room.archivedAt) {
           throw new ToolBlockedError(`You are not in a room called “${input.room}”.`, `Your rooms: ${memberships.map((row) => `“${row.room.title}”`).join(", ")}.`);
         }
-        const privateTo = hit.roomId === scope.room.id ? scope.privateTo : null;
-        const { drafted } = await postAsNode(scope, hit.room, input.body, privateTo);
+        if (hit.roomId === scope.room.id) throw new ToolBlockedError("That is this conversation: your reply is posted here. Say it in your reply, once.");
+        const { drafted } = await postAsNode(scope, hit.room, input.body, null);
         return toolOk(drafted ? `Drafted for your owner to approve in “${hit.room.title}”.` : `Posted in “${hit.room.title}”.`);
       },
     }),
-    defineTool({
-      name: "node_remember",
-      area: "tasks",
-      description: "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Your owner can see and delete every memory.",
-      input: z.object({ content: z.string().min(1).max(500) }).strict(),
-      isWrite: false,
-      risk: "low",
-      async run(_ctx, input) {
-        if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can ask you to remember something.");
-        await prisma.nodeMemory.create({ data: { userId: node.userId, nodeId: node.id, content: input.content.trim() } });
-        const extra = await prisma.nodeMemory.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "desc" }, skip: MAX_MEMORIES, select: { id: true } });
-        if (extra.length) await prisma.nodeMemory.deleteMany({ where: { id: { in: extra.map((row) => row.id) } } });
-        return toolOk("Remembered.");
-      },
-    }),
+    remember,
   ];
 }

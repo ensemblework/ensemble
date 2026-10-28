@@ -32,12 +32,14 @@ test("handles are lowercase, unique in the room, and never a special mention", (
 const message = (patch: Partial<RouteMessage> = {}): RouteMessage => ({ kind: "text", authorKind: "human", authorNodeId: null, visibleTo: [], mentions: [], botDepth: 0, ...patch });
 const node = (id: string, ownerId: string, patch: Partial<RouteNode> = {}): RouteNode => ({ id, ownerId, active: true, representative: false, role: "assistant", ...patch });
 
-test("a DM's node answers its person; a crew's lead answers when nobody is mentioned", () => {
+test("a DM's node answers its person; in a crew one node answers: the one mentioned, else the lead", () => {
   assert.deepEqual(whoSpeaks(message(), { kind: "dm", leadNodeIds: [] }, [node("n1", "mira")], 0), { reason: "dm", nodeIds: ["n1"] });
   const crew = [node("n1", "mira"), node("n2", "mira", { role: "manager" }), node("n3", "mira")];
   assert.deepEqual(whoSpeaks(message(), { kind: "crew", leadNodeIds: [] }, crew, 0), { reason: "lead", nodeIds: ["n2"] });
   assert.deepEqual(whoSpeaks(message(), { kind: "crew", leadNodeIds: ["n3"] }, crew, 0), { reason: "lead", nodeIds: ["n3"] });
   assert.deepEqual(whoSpeaks(message({ mentions: [{ kind: "node", id: "n1" }] }), { kind: "crew", leadNodeIds: ["n3"] }, crew, 0), { reason: "mentioned", nodeIds: ["n1"] });
+  const several = message({ mentions: [{ kind: "node", id: "n1" }, { kind: "node", id: "n2" }, { kind: "node", id: "n3" }] });
+  assert.deepEqual(whoSpeaks(several, { kind: "crew", leadNodeIds: ["n3"] }, crew, 0), { reason: "lead", nodeIds: ["n3"] }, "several named: only the lead answers, and plans for the rest");
   assert.deepEqual(whoSpeaks(message({ mentions: [{ kind: "human", id: "asha" }] }), { kind: "crew", leadNodeIds: ["n3"] }, crew, 0).reason, "none", "talking to a person wakes no node");
   assert.deepEqual(whoSpeaks(message(), { kind: "crew", leadNodeIds: [] }, [node("n1", "mira", { active: false })], 0).reason, "none", "a paused node is never woken");
 });
@@ -62,13 +64,14 @@ test("in a group, one representative answers; several go to the relevance call",
   assert.deepEqual(parseRelevance("not json", candidates), []);
 });
 
-test("node messages wake only mentioned nodes, under the streak and depth brakes", () => {
+test("node messages wake only mentioned nodes, under the streak and depth brakes, and none in a crew", () => {
   const nodes = [node("a", "mira"), node("b", "mira"), node("c", "ben")];
   const fromNode = message({ authorKind: "node", authorNodeId: "a", mentions: [{ kind: "node", id: "b" }, { kind: "node", id: "a" }] });
-  assert.deepEqual(whoSpeaks(fromNode, { kind: "crew", leadNodeIds: ["a"] }, nodes, 1), { reason: "mentioned", nodeIds: ["b"] }, "never itself");
-  assert.deepEqual(whoSpeaks(message({ authorKind: "node", authorNodeId: "a" }), { kind: "crew", leadNodeIds: ["b"] }, nodes, 1).reason, "none", "no lead fallback for nodes");
-  assert.deepEqual(whoSpeaks(fromNode, { kind: "crew", leadNodeIds: [] }, nodes, MAX_BOT_STREAK), { reason: "none", nodeIds: [], brake: "streak" });
-  assert.deepEqual(whoSpeaks({ ...fromNode, botDepth: MAX_BOT_DEPTH }, { kind: "crew", leadNodeIds: [] }, nodes, 1), { reason: "none", nodeIds: [], brake: "depth" });
+  assert.deepEqual(whoSpeaks(fromNode, { kind: "room", leadNodeIds: ["a"] }, nodes, 1), { reason: "mentioned", nodeIds: ["b"] }, "never itself");
+  assert.deepEqual(whoSpeaks(message({ authorKind: "node", authorNodeId: "a" }), { kind: "room", leadNodeIds: ["b"] }, nodes, 1).reason, "none", "no lead fallback for nodes");
+  assert.deepEqual(whoSpeaks(fromNode, { kind: "room", leadNodeIds: [] }, nodes, MAX_BOT_STREAK), { reason: "none", nodeIds: [], brake: "streak" });
+  assert.deepEqual(whoSpeaks({ ...fromNode, botDepth: MAX_BOT_DEPTH }, { kind: "room", leadNodeIds: [] }, nodes, 1), { reason: "none", nodeIds: [], brake: "depth" });
+  assert.deepEqual(whoSpeaks(fromNode, { kind: "crew", leadNodeIds: ["a"] }, nodes, 1), { reason: "none", nodeIds: [] }, "in a crew nodes never wake each other: they work through plans");
   assert.equal(whoSpeaks(message({ kind: "approval" }), { kind: "dm", leadNodeIds: [] }, nodes, 0).reason, "none", "cards never wake anyone");
   assert.equal(botStreak([{ authorKind: "node", kind: "text" }, { authorKind: "node", kind: "run" }, { authorKind: "node", kind: "text" }, { authorKind: "human", kind: "text" }, { authorKind: "node", kind: "text" }]), 2);
 });
