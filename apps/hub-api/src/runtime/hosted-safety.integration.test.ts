@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHttpHarness } from "../test/http.js";
+import { sseHub, type Frame } from "../lib/sse.js";
 
 test("hosted gates preserve core data and paired execution, with durable transactional quotas", { timeout: 180_000 }, async (t) => {
   const before = { ...process.env };
@@ -62,7 +63,7 @@ test("hosted gates preserve core data and paired execution, with durable transac
   });
 
   await t.test("verification blocks assignment, but verified BYOK users can assign to paired devices", async () => {
-    const task = await prisma.task.create({ data: { userId: member.id, title: "Paired execution", createdBy: "me" } });
+    const task = await prisma.task.create({ data: { userId: member.id, title: "Paired execution", createdBy: "me", status: "todo" } });
     const token = await harness.asToken(member, "device");
     const device = await prisma.device.create({ data: { userId: member.id, name: "Test computer", platform: "linux", tokenId: token.id, capabilities: { folders: ["Project"] } } });
     const payload = { taskId: task.id, kind: "code", deviceId: device.id, folderLabel: "Project", provider: "openai", model: "gpt-test" };
@@ -74,8 +75,26 @@ test("hosted gates preserve core data and paired execution, with durable transac
     await assert.rejects(createJob(prisma, member.id, Assign.parse({ ...payload, deviceId: undefined })), { statusCode: 403 });
     const otherTask = await prisma.task.create({ data: { userId: unverified.id, title: "Unverified", createdBy: "me" } });
     await assert.rejects(createJob(prisma, unverified.id, Assign.parse({ ...payload, taskId: otherTask.id })), { statusCode: 403 });
-    const claim = await token.inject({ method: "POST", url: "/api/devices/self/claim" });
-    assert.equal(claim.statusCode, 200, claim.body);
+    assert.equal((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status, "todo", "queued work stays in To do");
+    const frames: Array<{ userId: string; frame: Frame }> = [];
+    const stop = sseHub.onFrame((event) => frames.push(event));
+    try {
+      const claim = await token.inject({ method: "POST", url: "/api/devices/self/claim" });
+      assert.equal(claim.statusCode, 200, claim.body);
+      assert.equal(claim.json<{ id: string }>().id, job.id);
+      assert.ok(frames.some(({ userId, frame }) => userId === member.id && frame.event === "task" && (frame.data as { id?: string }).id === task.id), "claim must invalidate the board's task queries, not just the run queue");
+      assert.ok(frames.some(({ userId, frame }) => userId === member.id && frame.event === "workspace"), "the run queue still refreshes");
+      const board = await member.inject({ method: "GET", url: "/api/tasks?board=default" });
+      assert.equal(board.statusCode, 200, board.body);
+      assert.equal(board.json<{ tasks: Array<{ id: string; status: string }> }>().tasks.find((row) => row.id === task.id)?.status, "in_progress");
+
+      frames.length = 0;
+      const idle = await token.inject({ method: "POST", url: "/api/devices/self/claim" });
+      assert.equal(idle.statusCode, 204, idle.body);
+      assert.equal(frames.some(({ frame }) => frame.event === "task"), false, "an idle claim does not refresh the board");
+    } finally {
+      stop();
+    }
     await prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "queued", leaseToken: null, leaseUntil: null, leaseOwner: null } });
     await prisma.user.update({ where: { id: member.id }, data: { emailVerifiedAt: null } });
     try {

@@ -44,6 +44,8 @@ Pin to Today is in the task's More menu. Open pinned tasks appear above every na
 
 Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
 
+Assigned tasks move to In progress live when the agent claims the work; queued tasks stay in To do. Paired-computer claims publish task and run events so the board and task details update without reloading ([25 §1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#1-execution-and-ownership)).
+
 The Ensemble Kanban collapses independently of Board overview. Its columns are Proposed, To do, In progress and Done. Blocked and awaiting-approval tasks appear in In progress while retaining their task status and approval controls. Flow, WIP counts and the In progress overview filter use the same grouping; the attention tile can still isolate blocked and awaiting-approval work. `/api/tasks?board=default` excludes task pages assigned to custom boards; `/api/tasks` remains the complete task list.
 
 Automatic moves to Done play once per observed completion, scoped to the open space or share for the browser tab. Returning from another screen can show a new completion, but opening a peek, the assistant, or resizing the board does not replay one. Animation clones are excluded from card measurements; system motion uses a viewport layer below active peeks, menus and the assistant (`components/motion/board-drag/board-drag-dnd-kit.tsx`).
