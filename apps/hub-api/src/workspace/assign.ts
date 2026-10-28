@@ -19,6 +19,8 @@ import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL, storedMode, type RunMode } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
+import { resolveSession } from "./sessions.js";
+import { currentDevice } from "../devices/successor.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
 
@@ -75,6 +77,11 @@ export const Assign = z.object({
    * `continueFromJobId` the agent's own session continues. Claude Code, Codex or Cursor only.
    */
   chat: z.boolean().optional(),
+  /**
+   * An agent session (workspace/sessions.ts) to do the task in: its agent, computer and folder, and
+   * the agent's own conversation, continued from the session's latest run.
+   */
+  session: z.string().uuid().optional(),
 });
 
 const ENGINE_NAME: Record<"ensemble" | CodeEngine, string> = { ensemble: "Ensemble's agent", ...ENGINE_LABELS, "cursor-agent": "Cursor's agent" };
@@ -99,6 +106,47 @@ export function withPullRequest<T extends AssignInput>(body: T): T {
   return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "push", network: true };
 }
 export type AssignInput = z.infer<typeof Assign>;
+
+/**
+ * A request into an agent session: the session's agent (and, unless one is named, its model with its
+ * thinking level, context window and fast mode), its computer under the current pairing, and a
+ * continuation of its latest run, so the work happens in that folder and the agent's own
+ * conversation goes on.
+ */
+export async function inSession(prisma: PrismaClient, userId: string, body: AssignInput): Promise<AssignInput> {
+  const session = await resolveSession(prisma, { space: userId, runner: actorFor(userId) }, body.session!);
+  if (!session) throw new GuardError("That agent session is not one of yours, or it no longer exists. List the sessions and pick another.");
+  if (body.engine !== "ensemble" && body.engine !== session.agent) {
+    throw new GuardError(`That session is ${session.agentName}'s. Leave the agent out to continue it, or start a new session with ${ENGINE_NAME[body.engine]}.`);
+  }
+  let deviceId: string | undefined;
+  if (session.deviceId) {
+    const ranOn = await prisma.device.findUnique({ where: { id: session.deviceId } });
+    deviceId = (ranOn ? await currentDevice(prisma, ranOn) : null)?.id;
+    if (!deviceId) throw new GuardError(`The computer that session ran on (${session.computer ?? "a paired computer"}) is no longer paired.`);
+    if (body.deviceId && body.deviceId !== deviceId) throw new GuardError(`That session runs on ${session.computer ?? "another computer"}. Leave the computer out to continue it there.`);
+  }
+  const named = body.engine === session.agent && body.model?.trim();
+  return {
+    ...body,
+    kind: "code",
+    engine: session.agent,
+    ...(named
+      ? {}
+      : {
+          model: session.model && session.model !== "default" ? session.model : undefined,
+          reasoningEffort: body.reasoningEffort ?? session.effort ?? undefined,
+          contextTier: body.contextTier ?? session.contextTier ?? undefined,
+          fast: body.fast ?? (session.fast || undefined),
+        }),
+    continueFromJobId: session.lastJobId,
+    deviceId,
+    folder: undefined,
+    folderLabel: undefined,
+    repoUrl: undefined,
+  };
+}
+
 /** A request with its kind decided. */
 export type ResolvedAssign = AssignInput & { kind: "research" | "code" };
 
@@ -255,7 +303,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
-  const tiered = withTierAgent(input, tier);
+  const tiered = withTierAgent(input.session ? await inSession(prisma, userId, input) : input, tier);
   const body: ResolvedAssign = { ...withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) }) };
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];

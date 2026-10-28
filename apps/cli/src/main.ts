@@ -1,4 +1,5 @@
 import { answerFor, answerPending, browseFiles, connectedHooks, webAccess, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { formatSessions, listSessions } from "./sessions.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -74,6 +75,7 @@ Usage:
   ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
+  ensemble sessions [list] [--json]
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
   ensemble browse [status] | on | off
@@ -94,6 +96,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
     "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
+  sessions: "Usage: ensemble sessions [list] [--json]\nThe coding-agent sessions on this computer, newest first: one conversation with Claude Code, Codex, Copilot or another agent, carried across the tasks continued in it (Continue an earlier task resumes it).",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
   hooks:
     "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
@@ -479,6 +482,16 @@ async function commandKeys(args: string[]): Promise<void> {
   console.log(`${subcommand === "set" ? "Saved" : "Removed"} ${result.positionals[0]}.`);
 }
 
+async function commandSessions(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.sessions);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (subcommand !== "list") throw new Error(HELP_BY_COMMAND.sessions);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const rows = await withAdminApi({ sidecarDir, run: (discovery) => listSessions(discovery) });
+  console.log(args.includes("--json") ? JSON.stringify(rows, null, 2) : formatSessions(rows));
+}
+
 async function commandNeeds(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.needs);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
@@ -818,6 +831,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandKeys(rest);
     case "needs":
       return commandNeeds(rest);
+    case "sessions":
+      return commandSessions(rest);
     case "trust":
       return commandTrust(rest);
     case "approvals":

@@ -43,6 +43,8 @@ export type PickerModel = {
   label: string;
   /** Cost and context sizes, as the agent or catalog reports them. */
   hint: string | null;
+  /** What a request costs, as the agent reports it ("high cost", "1× premium requests"). */
+  cost: string | null;
   badge: string | null;
   levels: EffortLevel[];
   /** The level the model uses when none is chosen. */
@@ -91,6 +93,7 @@ function planModels(agent: SubscriptionAgent): PickerModel[] {
       id: model.id,
       label: model.label,
       hint: [model.cost, contextSizes(model.contexts)].filter(Boolean).join(" · ") || null,
+      cost: model.cost ?? null,
       badge: null,
       levels: orderLevels(model.efforts ?? agent.efforts ?? []),
       defaultEffort: model.defaultEffort ? (orderLevels([model.defaultEffort])[0] ?? null) : null,
@@ -119,7 +122,7 @@ export function agentOptions(input: { catalog?: ModelCatalog | null; computer?: 
       typed: false,
       models: included.models.map((id) => {
         const efforts = modelEfforts(INCLUDED_PROVIDER, id, included.meta?.[id]);
-        return { id, label: includedModelName(id), hint: null, badge: relativeCost(id)?.badge ?? null, levels: efforts.levels, defaultEffort: efforts.fallback ?? null, contexts: [], fast: false, unavailable: null, isDefault: id === included.cheapest };
+        return { id, label: includedModelName(id), hint: null, cost: null, badge: relativeCost(id)?.badge ?? null, levels: efforts.levels, defaultEffort: efforts.fallback ?? null, contexts: [], fast: false, unavailable: null, isDefault: id === included.cheapest };
       }),
     });
   }
@@ -158,14 +161,9 @@ export function agentOptions(input: { catalog?: ModelCatalog | null; computer?: 
         models: models.map((id) => {
           const efforts = modelEfforts(row.provider, id, row.meta?.[id]);
           const note = row.notes?.[id];
-          return { id, label: id, hint: null, badge: id === row.cheapest ? "cheapest" : null, levels: efforts.levels, defaultEffort: efforts.fallback ?? null, contexts: [], fast: false, unavailable: note?.available === false ? note.reason || "This key cannot use it." : null, isDefault: false };
+          return { id, label: id, hint: null, cost: null, badge: id === row.cheapest ? "cheapest" : null, levels: efforts.levels, defaultEffort: efforts.fallback ?? null, contexts: [], fast: false, unavailable: note?.available === false ? note.reason || "This key cannot use it." : null, isDefault: false };
         }),
       });
-    }
-    // Providers the catalog did not list yet still show, so the person sees where a key would go.
-    for (const [id, label] of Object.entries(KEY_PROVIDER_LABEL)) {
-      if (agents.some((row) => row.id === id)) continue;
-      agents.push({ id, label, source: "keys", ready: false, note: id === "ollama" ? "not running" : "no key: add one under Settings → Models", typed: true, models: [] });
     }
   }
   return agents;
@@ -244,7 +242,9 @@ export function AgentPicker({
 }) {
   const shownChoice = value ?? auto?.choice ?? null;
   const current = shownChoice ? agents.find((row) => row.id === shownChoice.provider) : undefined;
-  const sources = (["included", "plans", "keys"] as const).filter((source) => agents.some((row) => row.source === source));
+  // Only what can run now: a plan signed in on the computer, a key that works. The current choice stays so it can be seen and changed.
+  const usable = agents.filter((row) => row.ready || row.id === current?.id);
+  const sources = (["included", "plans", "keys"] as const).filter((source) => usable.some((row) => row.source === source));
   const [tab, setTab] = useState<AgentSource>(current?.source ?? sources[0] ?? "plans");
   const [browsing, setBrowsing] = useState<string>(current?.id ?? "");
   const [query, setQuery] = useState("");
@@ -256,7 +256,7 @@ export function AgentPicker({
       setBrowsing(current.id);
     }
   }, [current?.id, current?.source]);
-  const inTab = agents.filter((row) => row.source === tab).sort((a, b) => Number(b.ready) - Number(a.ready));
+  const inTab = usable.filter((row) => row.source === tab).sort((a, b) => Number(b.ready) - Number(a.ready));
   const agent = inTab.find((row) => row.id === browsing) ?? inTab.find((row) => row.ready) ?? inTab[0];
   const needle = query.trim().toLowerCase();
   const models = useMemo(() => (agent?.models ?? []).filter((row) => !needle || row.id.toLowerCase().includes(needle) || row.label.toLowerCase().includes(needle) || Boolean(row.hint?.toLowerCase().includes(needle))), [agent, needle]);
@@ -264,7 +264,8 @@ export function AgentPicker({
   const custom = agent && needle && agent.typed && !agent.models.some((row) => row.id.toLowerCase() === needle) ? query.trim() : null;
   const rows: Array<{ key: string; pick: () => AgentChoice | null }> = [
     ...(auto && !needle ? [{ key: "\0auto", pick: () => null }] : []),
-    ...(plan && agent && !needle ? [{ key: "\0default", pick: () => ({ provider: agent.id, model: "", effort: "default" }) }] : []),
+    // "<Agent> default" only when no listed model is the agent's own default (Copilot's Auto is listed already).
+    ...(plan && agent && !needle && !agent.models.some((row) => row.isDefault) ? [{ key: "\0default", pick: () => ({ provider: agent.id, model: "", effort: "default" }) }] : []),
     ...models.map((row) => ({ key: row.id, pick: () => ({ provider: agent!.id, model: row.id, effort: shownChoice?.effort ?? "default", context: shownChoice?.context, fast: shownChoice?.fast }) })),
     ...(custom && agent ? [{ key: `\0custom:${custom}`, pick: () => ({ provider: agent.id, model: custom, effort: "default" }) }] : []),
   ];
@@ -294,7 +295,7 @@ export function AgentPicker({
             )}
           </span>
           {current && value !== null ? <span className="hidden shrink-0 rounded-full bg-hover px-1.5 py-px text-[10.5px] text-muted sm:inline">{current.source === "plans" ? "your plan" : current.source === "included" ? "credits" : "API key"}</span> : null}
-          {chosenModel?.hint && value !== null ? <span className="hidden max-w-[11rem] shrink-0 truncate text-[11px] text-faint md:inline">{chosenModel.hint}</span> : null}
+          {chosenModel?.cost && value !== null ? <span className="hidden max-w-[9rem] shrink-0 truncate text-[11px] text-faint md:inline">{chosenModel.cost}</span> : null}
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>
       )}
@@ -385,7 +386,7 @@ export function AgentPicker({
               {rows.map((row, index) => {
                 if (row.key === "\0auto" && auto) {
                   return (
-                    <button key="auto" type="button" role="option" aria-selected={value === null} data-index={index} className={cx("picker-option", index === active && "is-active", value === null && "is-current")} onMouseEnter={() => setActive(index)} onClick={() => choose(null)}>
+                    <button key=":auto" type="button" role="option" aria-selected={value === null} data-index={index} className={cx("picker-option", index === active && "is-active", value === null && "is-current")} onMouseEnter={() => setActive(index)} onClick={() => choose(null)}>
                       <Sparkles size={14} className="shrink-0 text-accent" aria-hidden />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] font-medium">Auto: match the task</span>
@@ -398,7 +399,7 @@ export function AgentPicker({
                 if (row.key === "\0default" && agent) {
                   const fallback = agent.models.find((model) => model.isDefault);
                   return (
-                    <button key="default" type="button" role="option" aria-selected={isCurrent(agent.id, "")} data-index={index} className={cx("picker-option", index === active && "is-active", isCurrent(agent.id, "") && "is-current")} onMouseEnter={() => setActive(index)} onClick={() => choose(row.pick())}>
+                    <button key=":default" type="button" role="option" aria-selected={isCurrent(agent.id, "")} data-index={index} className={cx("picker-option", index === active && "is-active", isCurrent(agent.id, "") && "is-current")} onMouseEnter={() => setActive(index)} onClick={() => choose(row.pick())}>
                       <ProviderLogo id={agent.id} size={14} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px]">{agent.label} default</span>
@@ -434,7 +435,7 @@ export function AgentPicker({
                   </button>
                 );
               })}
-              {!rows.length ? <p className="px-2.5 py-2 text-[12.5px] text-muted">{agent ? (agent.ready ? `${agent.label} listed no models here.` : `${agent.label}: ${agent.note}.`) : "Nothing to choose here yet."}</p> : null}
+              {!rows.length ? <p className="px-2.5 py-2 text-[12.5px] text-muted">{agent ? (agent.ready ? `${agent.label} listed no models here.` : `${agent.label}: ${agent.note}.`) : "Nothing is connected yet: sign in to an AI plan or add a key under Settings → Models."}</p> : null}
             </div>
           </div>
         );

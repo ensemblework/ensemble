@@ -910,7 +910,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
 
         {codeRun ? (
           <div {...attentionProps("place")}>
-            <Label tip="Its own checkout: a new folder in your Ensemble workspace; the agent clones or creates what the task needs. It may also work in other workspace folders, as the mode allows.">Where it works</Label>
+            <Label tip="Its own checkout: a new folder in your Ensemble workspace; the agent clones or creates what the task needs. Continue an earlier task: that folder, and the same agent picks up its own conversation from it.">Where it works</Label>
             <Segmented
               value={place}
               onChange={setPlace}

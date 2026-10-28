@@ -48,7 +48,7 @@ import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
-import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, STALL_MS, watchEngine } from "./engine-watch.js";
+import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, watchEngine } from "./engine-watch.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
@@ -300,13 +300,27 @@ export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | 
     .join("\n");
 }
 
-/** The agent session an earlier chat turn ran in (Claude Code's session, Codex's thread, Cursor's session), if the same agent. */
+/**
+ * The agent session the run this one continues ran in (Claude Code's session, Codex's thread, an ACP
+ * session), if the same agent: that run's, else the nearest earlier run's in the same chain, for a
+ * run that stopped before its agent started (workspace/sessions.ts).
+ */
 async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null }): Promise<{ session: string | null; summary: string | null }> {
   if (!job.continueFromJobId) return { session: null, summary: null };
   const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
   if (!previous) return { session: null, summary: null };
   if (previous.provider !== job.provider) return { session: null, summary: previous.summary };
-  return { session: await engineSession(prisma, job.continueFromJobId), summary: previous.summary };
+  let id: string | null = job.continueFromJobId;
+  for (let hops = 0; id && hops < 20; hops += 1) {
+    const session = await engineSession(prisma, id);
+    if (session) return { session, summary: previous.summary };
+    const earlier: { provider: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { provider: true, continueFromJobId: true } });
+    if (!earlier?.continueFromJobId) break;
+    const parent: { provider: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id: earlier.continueFromJobId }, select: { provider: true } });
+    if (parent?.provider !== job.provider) break;
+    id = earlier.continueFromJobId;
+  }
+  return { session: null, summary: previous.summary };
 }
 
 /** The engine session a job's run started (each engine records it on its `engine` event). */
@@ -803,6 +817,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           resume = (await earlierSession(prisma, job)).session;
           if (resume) enginePromptText = continuePrompt(carryOn.reason);
           await ctx.event("resumed", { reason: carryOn.reason, attempt: carryOn.attempt, session: Boolean(resume) });
+        } else if (job.continueFromJobId) {
+          // A task that continues an earlier run by the same agent goes on in that agent's own session
+          // (workspace/sessions.ts): it remembers the earlier work, and the provider can reuse its cache.
+          resume = (await earlierSession(prisma, job)).session;
+          if (resume) enginePromptText = sessionTaskPrompt(fullPrompt);
         }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
@@ -838,7 +857,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
                   model: job.model,
                   effort: job.reasoningEffort,
                   context: contextTierOf(job.context),
-                  attachments: session ? [] : [...(copies?.paths.values() ?? [])],
+                  // A resumed chat or carry-on already has its files; a new task in the session brings its own.
+                  attachments: session && (chat || carryOn) ? [] : [...(copies?.paths.values() ?? [])],
                   vision: copilotModel?.vision !== false,
                   efforts: copilotModel?.efforts,
                   longWindow: copilotModel?.contexts?.find((row) => row.id === "long_context")?.tokens ?? null,
