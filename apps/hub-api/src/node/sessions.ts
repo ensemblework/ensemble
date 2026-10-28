@@ -26,6 +26,7 @@ import { truncateText } from "../lib/text.js";
 import { computerAgents } from "../subscriptions/turn.js";
 import { createJob, inSession, type AssignInput as JobRequest } from "../workspace/assign.js";
 import { LIVE_RUN, listSessions, resolveSession, runsOfSession, summaryLine, type AgentSession, type SessionRun } from "../workspace/sessions.js";
+import { steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
 
@@ -335,78 +336,143 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   };
 }
 
+const byCreated = (a: SessionRun, b: SessionRun) => a.createdAt.getTime() - b.createdAt.getTime();
+const ranOnComputer = (run: SessionRun) => Boolean(run.startedAt || run.claimedAt);
+
+/**
+ * The session's runs still to finish, in the order they will run: along `continueFromJobId`, since a
+ * steer moves what was queued behind it and creation order then no longer says what runs next.
+ */
+export function liveChain(runs: readonly SessionRun[]): SessionRun[] {
+  const live = runs.filter((row) => LIVE_RUN.has(row.status));
+  const ids = new Set(live.map((row) => row.id));
+  const after = new Map<string, SessionRun[]>();
+  for (const row of live) if (row.continueFromJobId && ids.has(row.continueFromJobId)) after.set(row.continueFromJobId, [...(after.get(row.continueFromJobId) ?? []), row]);
+  const out: SessionRun[] = [];
+  const seen = new Set<string>();
+  const walk = (row: SessionRun) => {
+    if (seen.has(row.id)) return;
+    seen.add(row.id);
+    out.push(row);
+    for (const next of [...(after.get(row.id) ?? [])].sort(byCreated)) walk(next);
+  };
+  for (const head of live.filter((row) => !row.continueFromJobId || !ids.has(row.continueFromJobId)).sort(byCreated)) walk(head);
+  return out;
+}
+
+/**
+ * Adds a change to a run that has not been claimed yet: a steer's change, or the brief of any other
+ * run (both are read when the computer claims it). False when it was claimed meanwhile.
+ */
+async function amendQueued(prisma: PrismaClient, jobId: string, text: string): Promise<boolean> {
+  const job = await prisma.workspaceJob.findUnique({ where: { id: jobId }, select: { instructions: true, context: true, status: true } });
+  if (!job || job.status !== "queued") return false;
+  const context = (job.context && typeof job.context === "object" ? job.context : {}) as Record<string, unknown>;
+  const steer = steerOf(context);
+  const data = steer
+    ? { context: { ...context, steer: { update: truncateText(`${steer.update}\n\nAlso: ${text}`, 8000) } } as never }
+    : { instructions: truncateText([job.instructions, `Update from your owner: ${text}`].filter((part) => part.trim()).join("\n\n"), 8000) };
+  const changed = await prisma.workspaceJob.updateMany({ where: { id: jobId, status: "queued" }, data });
+  if (changed.count !== 1) return false;
+  const run = await prisma.nodeRun.findFirst({ where: { jobId }, select: { id: true, prompt: true } });
+  if (run) await prisma.nodeRun.update({ where: { id: run.id }, data: { prompt: truncateText(`${run.prompt ?? ""}\n\nUpdate: ${text}`.trim(), 4000) } });
+  return true;
+}
+
 /** The next message for one of this node's sessions: queued, steering the run going on, or replacing it. */
 export async function sendToSession(env: SessionEnv, input: SendInput): Promise<Started> {
   const { prisma, node } = env;
   await refuseWhenPaused(env);
   const session = await usableSession(prisma, node, input.session);
   const runs = await runsOfSession(prisma, scopeOf(node), session.id);
-  const live = runs.filter((row) => LIVE_RUN.has(row.status));
-  const active = live[0];
+  const chain = liveChain(runs);
+  const active = chain[0];
   let delivery: Delivery = input.delivery;
   if (delivery === "steer" && !active) delivery = "queue";
+  const where = `${session.agentName}${session.computer ? ` on ${session.computer}` : ""}, ${session.folder}`;
 
-  if (delivery === "steer" && active!.status === "queued") {
-    // Not started yet: the update goes into its brief, read when the computer claims it.
-    const job = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: active!.id }, select: { instructions: true } });
-    const amended = truncateText([job.instructions, `Update from your owner: ${input.prompt}`].filter((part) => part.trim()).join("\n\n"), 8000);
-    const changed = await prisma.workspaceJob.updateMany({ where: { id: active!.id, status: "queued" }, data: { instructions: amended } });
-    if (changed.count === 1) {
-      const run = await prisma.nodeRun.findFirst({ where: { jobId: active!.id }, select: { id: true, prompt: true } });
-      if (run) await prisma.nodeRun.update({ where: { id: run.id }, data: { prompt: truncateText(`${run.prompt ?? ""}\n\nUpdate: ${input.prompt}`.trim(), 4000) } });
-      return { summary: `“${active!.title}” had not started yet, so the update is in its brief.`, data: { session: session.id, jobId: active!.id } };
+  if (delivery === "steer") {
+    // Not started yet: the change goes into its brief.
+    if (active!.status === "queued" && (await amendQueued(prisma, active!.id, input.prompt))) {
+      return { summary: `“${active!.title}” had not started yet, so the change is in its brief (${where}).`, data: { session: session.id, jobId: active!.id } };
+    }
+    // A change already waiting to go on after the interrupted run: this one joins it, in order.
+    const pending = chain[1];
+    if (pending && pending.continueFromJobId === active!.id && steerOf((await prisma.workspaceJob.findUnique({ where: { id: pending.id }, select: { context: true } }))?.context) && (await amendQueued(prisma, pending.id, input.prompt))) {
+      return { summary: `Added to the change already going in to “${active!.title}” (${where}).`, data: { session: session.id, jobId: pending.id } };
     }
   }
 
   const steering = delivery === "steer";
-  const anchor = steering ? active! : null;
   const fallbackTitle = input.title ?? truncateText(input.prompt.split("\n")[0]!.trim(), 80);
   // A steer is the same task going on; anything else is a new task in the session.
   const task = steering
-    ? { id: anchor!.taskId, direct: (await prisma.nodeRun.findFirst({ where: { jobId: anchor!.id }, select: { direct: true } }))?.direct ?? false, made: false }
+    ? { id: active!.taskId, direct: (await prisma.nodeRun.findFirst({ where: { jobId: active!.id }, select: { direct: true } }))?.direct ?? false, made: false }
     : await taskFor(env, { taskId: input.taskId, title: fallbackTitle, prompt: input.prompt });
   const cleanup = task.made ? () => prisma.task.delete({ where: { id: task.id } }) : undefined;
-  const taskId = task.id;
 
-  if (delivery === "replace") {
-    // Cancelled in order, newest first, so nothing queued starts on the way.
-    for (const row of [...live].reverse()) await stopJob(env.app, node.userId, row.id);
-    await quiet(prisma, live.map((row) => row.id), "replaced");
-  }
-
-  let found: Plan;
+  let body: JobRequest;
   try {
-    found = await plan(env.ctx, {
-      taskId,
+    const found = await plan(env.ctx, {
+      taskId: task.id,
       session: session.id,
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.mode ? { mode: input.mode } : {}),
       ...(steering || !task.direct ? { instructions: input.prompt } : {}),
     });
+    body = await inSession(prisma, node.userId, found.body).catch((error: unknown) => {
+      throw new ToolBlockedError(error instanceof Error ? error.message : String(error));
+    });
   } catch (error) {
     await cleanup?.().catch(() => undefined);
     throw error;
   }
-  let jobId: string;
-  if (steering) {
-    // The update continues the run it interrupts; what was queued behind that run moves behind the update.
-    const body = { ...(await inSession(prisma, node.userId, found.body).catch((error: unknown) => { throw new ToolBlockedError(error instanceof Error ? error.message : String(error)); })), continueFromJobId: anchor!.id };
-    delete (body as { session?: string }).session;
-    jobId = await queueJob(env, body, { steer: { update: input.prompt } });
-    await prisma.workspaceJob.updateMany({ where: { continueFromJobId: anchor!.id, status: "queued", id: { not: jobId } }, data: { continueFromJobId: jobId } });
-    if (anchor!.status !== "stopping") await stopJob(env.app, node.userId, anchor!.id);
-    await quiet(prisma, [anchor!.id], "steered");
-  } else {
-    jobId = await queueJob(env, found.body, {}, cleanup);
+  delete (body as { session?: string }).session;
+
+  // What the new run continues: a steer, the run it interrupts; a queued message, the end of the chain;
+  // a replacement, the last run that reached the computer (a run never claimed has no folder there).
+  const fresh = delivery === "replace" && !chain.some(ranOnComputer) && !runs.some((row) => !LIVE_RUN.has(row.status) && ranOnComputer(row));
+  if (steering) body.continueFromJobId = active!.id;
+  else if (delivery === "queue" && chain.length) body.continueFromJobId = chain[chain.length - 1]!.id;
+  else if (delivery === "replace") {
+    const anchor = chain.find(ranOnComputer) ?? [...runs].reverse().find((row) => !LIVE_RUN.has(row.status) && ranOnComputer(row));
+    if (anchor) body.continueFromJobId = anchor.id;
+    else if (fresh) {
+      // Nothing of the session reached the computer: start over where it was to work.
+      const first = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: session.id }, select: { folderLabel: true, repoUrl: true } });
+      delete body.continueFromJobId;
+      if (first.folderLabel) body.folderLabel = first.folderLabel;
+      if (first.repoUrl) body.repoUrl = first.repoUrl;
+    }
   }
-  const title = steering ? `Update: ${anchor!.title}` : fallbackTitle;
-  await followRun(env, { jobId, taskId, title: truncateText(title, 200), prompt: input.prompt, sessionId: session.id, direct: task.direct, delivery });
-  const waiting = delivery === "queue" && live.length ? ` It starts after ${live.length === 1 ? `“${live[0]!.title}”` : `the ${live.length} runs ahead of it`}.` : "";
-  const verb = steering ? `Steered “${anchor!.title}”: it goes on with your update` : delivery === "replace" ? `Stopped what the session was doing${live.length ? ` (${live.length} run${live.length === 1 ? "" : "s"})` : ""} and started this instead` : live.length ? "Queued in the session" : "Sent to the session";
+  const jobId = await queueJob(env, body, steering ? { steer: { update: input.prompt } } : {}, cleanup);
+
+  // Only once the new run exists does anything stop.
+  if (steering) {
+    await prisma.workspaceJob.updateMany({ where: { continueFromJobId: active!.id, status: "queued", id: { not: jobId } }, data: { continueFromJobId: jobId } });
+    const now = await prisma.workspaceJob.findUnique({ where: { id: active!.id }, select: { status: true, cancelRequestedAt: true } });
+    if (now && now.status !== "stopping" && !now.cancelRequestedAt) await stopJob(env.app, node.userId, active!.id);
+    await quiet(prisma, [active!.id], "steered");
+  } else if (delivery === "replace" && chain.length) {
+    // Newest first, so nothing queued starts on the way.
+    for (const row of [...chain].reverse()) await stopJob(env.app, node.userId, row.id);
+    await quiet(prisma, chain.map((row) => row.id), "replaced");
+  }
+
+  const title = steering ? `Update: ${active!.title}` : fallbackTitle;
+  await followRun(env, { jobId, taskId: task.id, title: truncateText(title, 200), prompt: input.prompt, sessionId: fresh ? jobId : session.id, direct: task.direct, delivery });
+  const waiting = delivery === "queue" && chain.length ? ` It starts after ${chain.length === 1 ? `“${chain[0]!.title}”` : `the ${chain.length} runs ahead of it`}.` : "";
+  const verb = steering
+    ? `Steered “${active!.title}”: it goes on with your change`
+    : delivery === "replace"
+      ? `Stopped what the session was doing${chain.length ? ` (${chain.length} run${chain.length === 1 ? "" : "s"})` : ""} and started this instead`
+      : chain.length
+        ? "Queued in the session"
+        : "Sent to the session";
   return {
-    summary: `${verb} (${session.agentName}${session.computer ? ` on ${session.computer}` : ""}, ${session.folder}).${waiting} You hear when it ends.`,
-    data: { session: session.id, jobId, delivery, queuedBehind: delivery === "queue" ? live.length : 0 },
+    summary: `${verb} (${where}).${waiting} You hear when it ends.`,
+    data: { session: fresh ? jobId : session.id, jobId, delivery, queuedBehind: delivery === "queue" ? chain.length : 0 },
   };
 }
 
@@ -414,14 +480,14 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
 export async function stopSession(env: SessionEnv, input: z.infer<typeof StopInput>): Promise<Started> {
   const { prisma, node } = env;
   const session = await usableSession(prisma, node, input.session);
-  const live = (await runsOfSession(prisma, scopeOf(node), session.id)).filter((row) => LIVE_RUN.has(row.status));
-  const targets = input.queued === "keep" ? live.filter((row) => row.status !== "queued") : live;
+  const chain = liveChain(await runsOfSession(prisma, scopeOf(node), session.id));
+  const targets = input.queued === "keep" ? chain.filter((row) => row.status !== "queued") : chain;
   if (!targets.length) return { summary: "Nothing is running in that session.", data: { session: session.id, stopped: 0 } };
   for (const row of [...targets].reverse()) await stopJob(env.app, node.userId, row.id);
   await quiet(prisma, targets.map((row) => row.id), "stopped");
-  const kept = live.length - targets.length;
+  const kept = chain.length - targets.length;
   return {
-    summary: `Stopped ${targets.map((row) => `“${row.title}”`).join(", ")}. What it changed so far stays in the folder.${kept ? ` ${kept} queued message${kept === 1 ? "" : "s"} will run next.` : ""}`,
+    summary: `Stopped ${targets.map((row) => `“${row.title}”`).join(", ")}. What it changed so far stays.${kept ? ` ${kept} queued message${kept === 1 ? "" : "s"} will run next.` : ""}`,
     data: { session: session.id, stopped: targets.length },
   };
 }
@@ -462,15 +528,25 @@ export async function ownerContext(app: FastifyInstance, ownerId: string): Promi
   return { app, prisma: app.prisma, userId: ownerId, actor: "agent", settings: await loadSettings(app.prisma, ownerId) };
 }
 
-export type SessionToolScope = { prisma: PrismaClient; node: NodeAgent; room: NodeRoom; lineage: SessionLineage; privateTo: string[] | null };
+export type SessionToolScope = {
+  prisma: PrismaClient;
+  node: NodeAgent;
+  room: NodeRoom;
+  lineage: SessionLineage;
+  privateTo: string[] | null;
+  /** Only the owner reads this turn's thread and only the owner started it (a DM, a crew, their private thread). */
+  ownerOnly: boolean;
+};
 
 /**
- * The session tools for a node turn. A turn its owner started gets them all; they act at once unless
- * the owner asked this node to check first. A turn anyone else started may only ask to start work,
- * which waits for the owner, and never sees the owner's sessions.
+ * The session tools for a node turn. Where only the owner reads and the owner started the turn, it
+ * gets them all, acting at once unless the owner asked this node to check first. Anywhere other
+ * people read (a room's shared thread, even in a turn a run's report started) it may only ask to
+ * start work or send a session a message, which waits for the owner's card, and never lists the
+ * owner's sessions.
  */
 export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
-  const fromOwner = !scope.lineage.fromNonOwner;
+  const fromOwner = scope.ownerOnly && !scope.lineage.fromNonOwner;
   const asks = !fromOwner || computerWorkAsks(scope.node);
   const env = (ctx: ToolContext): SessionEnv => ({ ctx, prisma: scope.prisma, app: ctx.app, node: scope.node, room: scope.room, lineage: scope.lineage, privateTo: scope.privateTo });
   const result = (done: Started) => toolOk(done.summary, done.data);
@@ -490,7 +566,22 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
       return result(await startSession(env(ctx), input));
     },
   });
-  if (!fromOwner) return [start];
+  const send = defineTool({
+    name: "node_session_send",
+    area: "tasks",
+    description:
+      "Send the next message to one of your sessions (node_sessions): the same agent goes on in its own conversation, in the same folder, remembering what it did, and the provider reuses its cache. " +
+      "delivery queue: after what it is doing (“then do Y”); steer: change the run going on (“do X this way instead”); replace: drop what it is doing and queued, do this instead (“stop X, do Y”).",
+    input: SendInput,
+    isWrite: false,
+    risk: "medium",
+    async run(ctx, input) {
+      if (asks) return holdForOwner(env(ctx), { action: "send", input });
+      return result(await sendToSession(env(ctx), input));
+    },
+  });
+  if (scope.lineage.fromNonOwner) return [start];
+  if (!fromOwner) return [start, send];
 
   return [
     defineTool({
@@ -523,20 +614,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
       },
     }),
     start,
-    defineTool({
-      name: "node_session_send",
-      area: "tasks",
-      description:
-        "Send the next message to one of your sessions (node_sessions): the same agent goes on in its own conversation, in the same folder, remembering what it did, and the provider reuses its cache. " +
-        "delivery queue: after what it is doing (“then do Y”); steer: change the run going on (“do X this way instead”); replace: drop what it is doing and queued, do this instead (“stop X, do Y”).",
-      input: SendInput,
-      isWrite: false,
-      risk: "medium",
-      async run(ctx, input) {
-        if (asks) return holdForOwner(env(ctx), { action: "send", input });
-        return result(await sendToSession(env(ctx), input));
-      },
-    }),
+    send,
     defineTool({
       name: "node_session_stop",
       area: "tasks",

@@ -51,7 +51,7 @@ async function namesFor(app: FastifyInstance, room: NodeRoom, members: NodeRoomM
   };
 }
 
-async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean): Promise<{ text: string; rooms: AssistantRef[] }> {
+async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean, ownerOnly: boolean): Promise<{ text: string; rooms: AssistantRef[] }> {
   const prisma = app.prisma;
   const [nodes, rooms, memories, people] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: members.filter((row) => row.nodeId).map((row) => row.nodeId!) } } }),
@@ -94,7 +94,7 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     "- Use node_remember for lasting facts your owner tells you.",
     "- Look things up with the Ensemble tools before answering: search the workspace for notes, pages and tasks, read connected apps (Notion, Linear, Zotero and the rest your owner connected), and search the web when the answer is outside Ensemble.",
     computerFilesOn(node) ? "- In a chat with only your owner you may read files in the folders their paired computer shares (node_computer_files). Never quote a file in a room with other people." : "",
-    ...sessionRules(fromNonOwner, computerWorkAsks(node)),
+    ...sessionRules(fromNonOwner, computerWorkAsks(node), !ownerOnly),
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
     memories.length ? `\nWhat you remember (newest first):\n${memories.map((row) => `- ${row.content}`).join("\n")}` : "",
   ];
@@ -227,7 +227,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
   let result: AssistantTurnResult;
   try {
-    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner);
+    const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
+    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly);
     result = await runAssistantTurn({
       app,
       userId: spaceId,
@@ -243,7 +244,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       agentPersona: nodePersona.text,
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
-      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly: !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner)), redis: app.redis as never, dispatch: deps.dispatch }),
+      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly, redis: app.redis as never, dispatch: deps.dispatch }),
       purpose: "Ensemble Node",
       signal: deps.signal,
       emit(frame) {
@@ -323,7 +324,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
 }
 
 /** How a node chooses and drives its agent sessions (node/sessions.ts). */
-export function sessionRules(fromNonOwner: boolean, asks: boolean): string[] {
+export function sessionRules(fromNonOwner: boolean, asks: boolean, othersRead = false): string[] {
   if (fromNonOwner) return ["- Only your owner can have work done on their computer: node_session_start sends them a request to approve, and you never share what their sessions did here."];
   return [
     "- Work on the computer: choose the session first (node_sessions lists yours; another node's sessions are never yours to use).",
@@ -333,6 +334,10 @@ export function sessionRules(fromNonOwner: boolean, asks: boolean): string[] {
     "  - Write the agent's message as your owner would to their agent: what to do and where, how to check it, what done looks like. Then tell your owner in a line what you started; the run card shows the rest.",
     "  - Runs stay off the Ensemble board unless your owner wants a task there: then make it (hub_create_tasks) and pass its taskId.",
     "  - Asked what you worked on: read node_sessions and answer per session, one line per task in it.",
-    asks ? "  - Your owner asked you to check with them first: starting work or sending a session a message makes an approval card for them." : "",
+    othersRead
+      ? "  - Other people read this thread: starting work or sending a session a message makes an approval card for your owner, and you cannot list or stop sessions here. To manage them, your owner talks to you privately (Only me) or in your DM."
+      : asks
+        ? "  - Your owner asked you to check with them first: starting work or sending a session a message makes an approval card for them."
+        : "",
   ].filter(Boolean);
 }

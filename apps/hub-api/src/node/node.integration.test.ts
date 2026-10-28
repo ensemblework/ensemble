@@ -195,20 +195,40 @@ test("a node queues, steers, replaces and stops work in its own session, and the
   assert.equal((await cardOf(mira, room.id, first.id)).data.quiet, "steered");
   assert.equal((await cardOf(mira, room.id, steer.id)).body, "Update: Add the export button");
 
+  const jobsBefore = await h.prisma.workspaceJob.count({ where: { userId: mira.id } });
+  script = () => sendCall(first.id, "Add a header row too.", "steer");
+  await say(mira, room.id, "and a header row");
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), jobsBefore, "a second change while the first waits joins it");
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } })).continueFromJobId, steer.id, "what was queued stays behind the changes");
+
   await h.prisma.workspaceJob.update({ where: { id: first.id }, data: { status: "cancelled", finishedAt: new Date() } });
   const claim = await key.inject({ method: "POST", url: "/api/devices/self/claim" });
   assert.equal(claim.statusCode, 200, claim.body);
   const spec = (json(claim).job ?? json(claim)) as { id: string; continueFromJobId: string; steer?: { update: string } };
   assert.equal(spec.id, steer.id, "the update runs before what was queued");
   assert.equal(spec.continueFromJobId, first.id);
-  assert.deepEqual(spec.steer, { update: "Export CSV, not JSON." });
+  assert.deepEqual(spec.steer, { update: "Export CSV, not JSON.\n\nAlso: Add a header row too." });
   await pollRuns(h.app);
   await settleTurns();
   assert.ok(!seen.some((row) => row.transcript.includes("session run for “Add the export button”")), "a steered run does not wake the node");
 
+  script = () => sendCall(first.id, "Then deploy it.", "queue", "Deploy");
+  await say(mira, room.id, "then deploy it");
+  const deploy = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, task: { title: "Deploy" } } });
+  assert.equal(deploy.continueFromJobId, queued.id, "a queued message follows the end of the chain, not the newest run");
+
+  const device = await h.prisma.device.findFirstOrThrow({ where: { userId: mira.id } });
+  await h.prisma.device.update({ where: { id: device.id }, data: { capabilities: { folders: ["ensemble"], engines: ["codex"] } } });
+  script = () => sendCall(first.id, "Drop that; make the export a PDF.", "replace", "PDF export");
+  await say(mira, room.id, "scrap that, do a PDF export instead");
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } })).status, "queued", "a replacement that cannot start stops nothing");
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: steer.id } })).cancelRequestedAt, null);
+  await h.prisma.device.update({ where: { id: device.id }, data: { capabilities: { folders: ["ensemble"], engines: ["claude-code", "codex"] } } });
+
   script = () => sendCall(first.id, "Drop that; make the export a PDF.", "replace", "PDF export");
   await say(mira, room.id, "scrap that, do a PDF export instead");
   assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } })).status, "cancelled", "replace drops what was queued");
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: deploy.id } })).status, "cancelled");
   assert.ok((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: steer.id } })).cancelRequestedAt, "and stops the run going on");
   const replacement = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, task: { title: "PDF export" } } });
   assert.equal(replacement.continueFromJobId, steer.id, "the session goes on from the last run that ran");
@@ -239,10 +259,19 @@ test("one node never sees or touches another node's session; a session from else
   assert.equal(forTester.find((row) => row.id === elsewhere.id)?.yours, false, "a session started elsewhere shows as nobody's");
   assert.equal((await sessionsForNode(h.prisma, { id: builder.id, userId: mira.id })).find((row) => row.id === owned.id)?.yours, true);
 
+  // A long session: the tester cannot get in through a run deep in it either.
+  let deep = owned;
+  for (let step = 0; step < 8; step += 1) {
+    deep = await h.prisma.workspaceJob.create({
+      data: { userId: mira.id, taskId: owned.taskId, kind: "code", provider: owned.provider, model: "default", executionMode: "sandbox", deviceId: laptop.id, status: "succeeded", continueFromJobId: deep.id, startedAt: new Date(), finishedAt: new Date() },
+    });
+  }
   const before = await h.prisma.workspaceJob.count({ where: { userId: mira.id } });
-  script = (turn) => (turn.slug === tester.slug ? sendCall(owned.id, "Test the importer.", "queue", "Test the importer") : { text: "ok" });
-  await say(mira, testerDm.id, "test what the builder made in its session");
-  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), before, "the builder's session is refused to the tester");
+  for (const target of [owned.id, deep.id]) {
+    script = (turn) => (turn.slug === tester.slug ? sendCall(target, "Test the importer.", "queue", "Test the importer") : { text: "ok" });
+    await say(mira, testerDm.id, "test what the builder made in its session");
+  }
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), before, "the builder's session is refused to the tester, by any of its runs");
 
   script = (turn) => (turn.slug === tester.slug ? sendCall(elsewhere.id, "Also update the changelog.", "queue", "Update the changelog") : { text: "ok" });
   await say(mira, testerDm.id, "continue the session that bumped the version");
@@ -280,6 +309,13 @@ test("pausing a node stops everything it is doing and says what, without a model
   await settleTurns();
   assert.equal(seen.length, calls, "another node's message does not wake a paused node");
   assert.equal((await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: node.id } })).status, "paused");
+
+  const crew = await mira.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Parser crew", nodeIds: [node.id, other.id], leadNodeId: node.id } });
+  assert.equal(crew.statusCode, 201, crew.body);
+  script = (turn) => ({ text: turn.slug === other.slug ? "I can take it." : "unexpected" });
+  await say(mira, json(crew).room.id, "who can look at the parser?");
+  assert.equal((await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: node.id } })).status, "paused", "a message not addressed to it does not wake a paused lead");
+  assert.ok(!seen.some((row) => row.slug === node.slug && seen.indexOf(row) >= calls), "the paused node did not take a turn");
 
   script = () => ({ text: "I'm back. Want me to pick the parser up again?" });
   await say(mira, room.id, "are you there?");
@@ -321,6 +357,21 @@ test("with Ask me first, work on the computer waits for the owner's card, which 
   const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id } });
   assert.ok((await read(mira, room.id)).some((row) => row.kind === "run" && row.data.jobId === job.id), "the run card follows the approved run");
   assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 0);
+
+  // Where other people read along, even the owner's request waits for a card, and sessions are not listed.
+  await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { autonomy: { computerWork: "auto" } } });
+  const { node: bensNode } = await createNode(ben, "assistant");
+  const made = json(await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Release room", nodeIds: [node.id], invite: [ben.email] } })).room as { id: string };
+  const invite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } })).statusCode, 201);
+  const jobs = await h.prisma.workspaceJob.count({ where: { userId: mira.id } });
+  seen.length = 0;
+  script = (turn) => (turn.slug === node.slug ? startCall("Tag the release", "Tag the release.") : { text: "(no reply)" });
+  await say(mira, made.id, `@${node.slug} tag the release`);
+  const turn = seen.find((row) => row.slug === node.slug)!;
+  assert.ok(turn.tools.includes("node_session_start") && turn.tools.includes("node_session_send") && !turn.tools.includes("node_sessions") && !turn.tools.includes("node_session_stop"));
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), jobs, "nothing starts in a thread others read");
+  assert.ok((await read(mira, made.id)).some((row) => row.kind === "approval" && row.data.type === "session"), "it waits for Mira's card");
 });
 
 test("a node's handle and name change everywhere it is, and stay unique", async () => {
