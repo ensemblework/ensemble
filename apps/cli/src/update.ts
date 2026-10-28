@@ -39,7 +39,7 @@ export function detectInstallMethod(input: {
 }
 
 export function upgradeInstruction(method: InstallMethod): string {
-  return method === "homebrew" ? "brew upgrade ensemble" : "Choose Update Ensemble to install the latest version. Your work and settings are kept.";
+  return method === "homebrew" ? "brew update && brew upgrade ensemble" : "Choose Update Ensemble to install the latest version. Your work and settings are kept.";
 }
 
 type Release = {
@@ -154,7 +154,14 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
   const temp = await mkdtemp(join(tmpdir(), "ensemble-update-"));
   try {
     const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, [TESTING ? "ENSEMBLE_TEST_VERSION" : "ENSEMBLE_VERSION"]: latest.replace(/^cli-v/, "") } };
-    if (method === "homebrew") await run("brew", ["upgrade", "ensemble"], options);
+    if (method === "homebrew") {
+      // Homebrew upgrades only to what its tap knows: refresh the tap first, then check the new version landed.
+      await run("brew", ["update"], options);
+      await run("brew", ["upgrade", "ensemble"], options);
+      const wanted = latest.replace(/^cli-v/, "");
+      const { stdout } = await run("brew", ["list", "--versions", "ensemble"], options);
+      if (!stdout.split(/\s+/).includes(wanted)) throw new Error(`Homebrew does not offer ${wanted} yet.`);
+    }
     else if (method === "scoop") await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "scoop update ensemble"], options);
     else {
       const windows = process.platform === "win32";
@@ -166,6 +173,9 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
     }
     if (runner && runner.owner !== "desktop") await stopRunner(paths);
     return "Update installed. Reopen Ensemble to use the new version. Your work and settings are kept.";
-  } catch { throw new Error(method === "homebrew" ? "Could not update automatically. You can also use brew upgrade ensemble." : "Could not install the update right now. Try again in a moment."); }
+  } catch (error) {
+    const said = error instanceof Error && /does not offer/.test(error.message) ? `${error.message} Try again in a few minutes. ` : "";
+    throw new Error(method === "homebrew" ? `${said || "Could not update automatically. "}You can also run brew update && brew upgrade ensemble.` : "Could not install the update right now. Try again in a moment.");
+  }
   finally { await rm(temp, { recursive: true, force: true }); }
 }
