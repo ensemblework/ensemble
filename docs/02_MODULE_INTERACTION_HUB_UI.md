@@ -56,7 +56,7 @@ Board settings rename/reorder columns and remove empty columns. A column with pa
 
 ### 3.3 Needs Me (Approval Queue)
 
-Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts, and under *From your nodes* the approval cards the person's Ensemble Node nodes wait on (`components/needs-me/node-approvals.tsx`: approve, discard or open in Node; [35 §8.6](35_ENSEMBLE_NODE.md#86-needs-me)). The sidebar badge counts all of them. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
+Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts, and under *From your nodes* the approval cards the person's Ensemble Node nodes wait on (`components/needs-me/node-approvals.tsx`: approve, discard or open in Node; a node's request for a secret shows a password box whose value goes straight to the computer, [35 §8.7](35_ENSEMBLE_NODE.md#87-secrets); [35 §8.6](35_ENSEMBLE_NODE.md#86-needs-me)). The sidebar badge counts all of them. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
 
 It is one queue, without overview counters or filter tabs. Empty sections are omitted; a fully empty queue shows All caught up. Failed queries keep an explicit retry.
 

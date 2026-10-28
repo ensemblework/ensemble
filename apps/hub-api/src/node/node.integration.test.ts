@@ -5,7 +5,9 @@
  * a room where a node speaks only through its owner and private threads stay private, requests to
  * join a room and their guardrails, unique names, a manager delegating to the crew its owner chose,
  * search, pins, reactions, replies and deletion, file reading on a paired computer only where the
- * owner turned it on and reads alone, and the CLI's read-only overview.
+ * owner turned it on and reads alone, and the CLI's read-only overview; secrets typed into a secure box
+ * that go to the computer and never to a model or the database; temporary helpers in read-only task
+ * rooms that report through their node and go when idle; nodes that make nodes and crews.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -21,22 +23,24 @@ const { pollRuns } = await import("./runs.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sha256 } = await import("../lib/auth.js");
+const { sseHub } = await import("../lib/sse.js");
+const { sweepHelpers, HELPER_IDLE_MS } = await import("./helpers.js");
 after(() => h.close());
 
 type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string };
-type Seen = { slug: string; transcript: string; system: string; tools: string[]; files: Array<{ filename: string; data: string }> };
+type Seen = { slug: string; transcript: string; system: string; tools: string[]; files: Array<{ filename: string; data: string }>; effort?: string };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
 
 setAskRuntimeStreamForTests(async (args) => {
   const messages = args.messages as Array<{ role?: string; content?: unknown }>;
   const system = messages.filter((row) => row.role === "system").map((row) => String(row.content)).join("\n");
-  const slug = /You are .+? \(@([a-z0-9-]+)\), an Ensemble Node/.exec(system)?.[1] ?? "?";
+  const slug = /You are .+? \(@([a-z0-9-]+)\), (?:an Ensemble Node|a temporary helper)/.exec(system)?.[1] ?? "?";
   const last = messages.filter((row) => row.role === "user").at(-1)?.content;
   const transcript = Array.isArray(last) ? last.map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "")).join("\n") : String(last ?? "");
   const second = messages.at(-1)?.role === "tool";
   const files = Array.isArray(last) ? last.flatMap((part) => (part && typeof part === "object" && (part as { type?: unknown }).type === "file" ? [(part as { file: { filename: string; file_data: string } }).file].map((file) => ({ filename: file.filename, data: file.file_data })) : [])) : [];
-  const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name), files };
+  const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name), files, ...(args.reasoningEffort ? { effort: args.reasoningEffort } : {}) };
   if (!second) seen.push(current);
   const step = script(current);
   const calls = second ? [] : (step.calls ?? []);
@@ -689,4 +693,224 @@ test("a node reads the files on its owner's message; another account's file is r
   const gone = (await read(mira, room.id)).find((message) => message.id === sent.id)!;
   assert.equal(gone.data.deleted, true);
   assert.equal(gone.data.files, undefined, "a deleted message keeps no file names");
+});
+
+test("a node asks for a secret in a secure box: the value goes to the computer only, never to a model, a message or the database", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "Mira's laptop");
+  const { node, room } = await createNode(mira, "assistant");
+  const secret = `sk_live_${randomBytes(12).toString("hex")}`;
+  const ask = (name: string) => ({ calls: [{ name: "node_secret_request", arguments: { name, why: "To call your staging API in the tests." } }], then: `I need ${name}: type it in the box.` });
+
+  script = () => ask("STRIPE_KEY");
+  await say(mira, room.id, "test the payments API with my stripe key");
+  let card = (await read(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "secret");
+  assert.equal(card, undefined, "a computer too old to keep secrets gets no card");
+  assert.match(JSON.stringify(await h.prisma.assistantMessage.findMany({ where: { role: "assistant" }, orderBy: { createdAt: "desc" }, take: 1 })), /too old to keep secrets|I need STRIPE_KEY/);
+
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { folders: ["ensemble"], engines: ["claude-code", "codex"], secrets: 1 } } });
+  script = () => ask("GITHUB_TOKEN");
+  await say(mira, room.id, "and my github token");
+  assert.equal((await read(mira, room.id)).filter((row) => row.data?.type === "secret").length, 0, "a name the agents sign in with is refused");
+
+  script = () => ask("STRIPE_KEY");
+  await say(mira, room.id, "test the payments API with my stripe key");
+  card = (await read(mira, room.id)).find((row) => row.kind === "approval" && row.data.type === "secret")!;
+  assert.equal(card.data.name, "STRIPE_KEY");
+  assert.equal(card.data.computer, "Mira's laptop");
+  assert.equal(card.private, true, "only the owner sees the box");
+  const needs = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string; data: { type: string } }>;
+  assert.ok(needs.some((row) => row.id === card!.id && row.data.type === "secret"), "the box is in Needs me");
+  assert.equal((await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } })).statusCode, 400, "approving without a value is refused");
+
+  // The computer answers the secret.save frame it hears on its stream.
+  const heard: Array<Record<string, unknown>> = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${laptop.id}` || frame.event !== "secret.save") return;
+    const data = frame.data as { id: string; name: string; value: string };
+    heard.push(data);
+    setTimeout(() => void key.inject({ method: "POST", url: `/api/devices/self/code-requests/${data.id}`, payload: { status: 200, body: { saved: true, name: data.name } } }), 5);
+  });
+  try {
+    await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: new Date(Date.now() - 3_600_000) } });
+    const offline = await mira.inject({ method: "POST", url: `/api/node/secrets/${card.id}`, payload: { value: secret } });
+    assert.equal(offline.statusCode, 409, "an offline computer cannot take it");
+    assert.match(json(offline).error, /offline/);
+    await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: new Date() } });
+
+    script = (turn) => (turn.transcript.includes("saved STRIPE_KEY") ? { text: "Saved; continuing with $STRIPE_KEY." } : { text: "ok" });
+    const saved = await mira.inject({ method: "POST", url: `/api/node/secrets/${card.id}`, payload: { value: secret } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    await settleTurns();
+    assert.equal(json(saved).message.data.status, "saved");
+    assert.deepEqual(heard.map((row) => [row.name, row.value]), [["STRIPE_KEY", secret]], "the value went to the computer");
+    assert.equal((await mira.inject({ method: "POST", url: `/api/node/secrets/${card.id}`, payload: { value: secret } })).statusCode, 409, "a box is answered once");
+  } finally {
+    stop();
+  }
+  assert.ok(seen.some((turn) => turn.slug === "assistant" && /saved STRIPE_KEY on Mira's laptop/.test(turn.transcript) && !turn.transcript.includes(secret)), "the node hears it was saved, not the value");
+  const stored = JSON.stringify([
+    await h.prisma.nodeMessage.findMany({ where: { roomId: room.id } }),
+    await h.prisma.assistantMessage.findMany({ where: { userId: mira.id } }),
+    await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id } }),
+  ]);
+  assert.ok(!stored.includes(secret), "the value is nowhere in the database");
+
+  script = () => ask("OPENROUTER_KEY");
+  await say(mira, room.id, "also use my openrouter key");
+  const second = (await read(mira, room.id)).find((row) => row.data?.type === "secret" && row.data.name === "OPENROUTER_KEY")!;
+  script = (turn) => (turn.transcript.includes("declined to give OPENROUTER_KEY") ? { text: "Fine, I'll skip it." } : { text: "ok" });
+  const declined = await mira.inject({ method: "POST", url: `/api/node/approvals/${second.id}`, payload: { decision: "discard" } });
+  assert.equal(declined.statusCode, 200, declined.body);
+  await settleTurns();
+  assert.ok(seen.some((turn) => /declined to give OPENROUTER_KEY/.test(turn.transcript)), "the node hears no");
+  const tom = await person("Tom");
+  assert.equal((await tom.inject({ method: "POST", url: `/api/node/secrets/${second.id}`, payload: { value: "x" } })).statusCode, 404, "only the owner answers");
+});
+
+test("a node brings in a temporary helper: a read-only task room, reports through its node, goes when idle", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  script = (turn) => {
+    if (turn.slug === "assistant-auditor") return { text: "@assistant Checked: the launch page says 14 November." };
+    if (turn.slug === "assistant" && turn.transcript.includes("Checked:")) return { text: "The auditor confirms 14 November." };
+    if (turn.slug === "assistant" && turn.transcript.includes("independent audit")) {
+      return { calls: [{ name: "node_helper", arguments: { task: "Independently check that the launch is on 14 November.", name: "Auditor", role: "auditor" } }], then: "I asked an auditor to check it." };
+    }
+    return { text: "ok" };
+  };
+  await say(mira, room.id, "get an independent audit of the launch date");
+
+  const helper = await h.prisma.nodeAgent.findFirstOrThrow({ where: { parentNodeId: node.id } });
+  assert.equal(helper.slug, "assistant-auditor");
+  const helperTurn = seen.find((turn) => turn.slug === "assistant-auditor")!;
+  assert.match(helperTurn.system, /a temporary helper in Mira's Ensemble Node, made by @assistant/);
+  assert.match(helperTurn.transcript, /Independently check that the launch is on 14 November/);
+  assert.ok(!helperTurn.tools.some((name) => name.startsWith("node_")), "a helper has no node tools");
+  assert.ok(!helperTurn.tools.includes("hub_create_tasks"), "and changes nothing");
+  assert.equal(helperTurn.effort, "low", "helpers think briefly");
+
+  const rooms = json(await mira.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ id: string; kind: string; title: string }>;
+  const taskRoom = rooms.find((row) => row.kind === "task")!;
+  assert.equal(taskRoom.title, "Assistant · Auditor");
+  const inTask = await read(mira, taskRoom.id);
+  assert.ok(inTask.some((row) => row.authorNodeId === node.id && row.body.startsWith("@assistant-auditor Independently")), "the brief is in the task room");
+  assert.ok(inTask.some((row) => row.authorNodeId === helper.id && row.body.includes("Checked:")), "and the helper's report");
+  assert.ok(!inTask.some((row) => row.body.includes("The auditor confirms")), "the node's answer is not posted there");
+  const dm = await read(mira, room.id);
+  assert.ok(dm.some((row) => row.authorNodeId === node.id && row.body === "The auditor confirms 14 November."), "it tells its owner in the DM");
+  assert.ok(!dm.some((row) => row.authorNodeId === helper.id), "the helper never talks to the owner");
+
+  const refused = await mira.inject({ method: "POST", url: `/api/node/rooms/${taskRoom.id}/messages`, payload: { body: "hello" } });
+  assert.equal(refused.statusCode, 403, "the owner reads a task room but does not write there");
+  const nodes = json(await mira.inject({ method: "GET", url: "/api/node/nodes" })).nodes as Array<{ id: string }>;
+  assert.ok(!nodes.some((row) => row.id === helper.id), "helpers are not in the node list");
+  const crew = await mira.inject({ method: "POST", url: "/api/node/crews", payload: { title: "With a helper", nodeIds: [node.id, helper.id] } });
+  assert.equal(crew.statusCode, 404, "nor can they join a crew");
+
+  // A quiet task room goes, with its helper; a busy one stays.
+  assert.equal(await sweepHelpers(h.app), 0);
+  await h.prisma.nodeRoom.update({ where: { id: taskRoom.id }, data: { lastMessageAt: new Date(Date.now() - HELPER_IDLE_MS - 60_000) } });
+  assert.equal(await sweepHelpers(h.app), 1);
+  assert.equal(await h.prisma.nodeAgent.findUnique({ where: { id: helper.id } }), null);
+  assert.equal(await h.prisma.nodeRoom.findUnique({ where: { id: taskRoom.id } }), null);
+  assert.ok(await h.prisma.nodeAgent.findUnique({ where: { id: node.id } }), "its node stays");
+
+  // Deleting a helper's room removes the helper at once.
+  await say(mira, room.id, "get an independent audit of the launch date");
+  const next = await h.prisma.nodeAgent.findFirstOrThrow({ where: { parentNodeId: node.id } });
+  const nextRoom = await h.prisma.nodeRoom.findFirstOrThrow({ where: { kind: "task", members: { some: { nodeId: next.id } } } });
+  assert.equal((await mira.inject({ method: "DELETE", url: `/api/node/rooms/${nextRoom.id}` })).statusCode, 204);
+  assert.equal(await h.prisma.nodeAgent.findUnique({ where: { id: next.id } }), null);
+});
+
+test("a node makes a lasting node and a crew when its owner asks; its thinking level is its own", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  script = (turn) =>
+    turn.transcript.includes("make a node")
+      ? { calls: [{ name: "node_create", arguments: { name: "Release watcher", role: "researcher", charter: "Track our releases and tell me what shipped.", templateId: "researcher" } }], then: "Made @release-watcher." }
+      : turn.transcript.includes("make a group")
+        ? { calls: [{ name: "node_create_group", arguments: { title: "Releases", members: ["assistant", "release-watcher"], lead: "release-watcher" } }], then: "Made the crew." }
+        : { text: "ok" };
+  await say(mira, room.id, "make a node that tracks our releases");
+  const made = await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: mira.id, name: "Release watcher" } });
+  assert.equal(made.parentNodeId, null, "a lasting node, not a helper");
+  assert.equal(made.slug, "release-watcher", "its handle follows its name, not its template");
+  assert.equal(made.charter, "Track our releases and tell me what shipped.");
+  const listed = json(await mira.inject({ method: "GET", url: "/api/node/nodes" })).nodes as Array<{ id: string }>;
+  assert.ok(listed.some((row) => row.id === made.id), "it is in the sidebar");
+  assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ kind: string; title: string }>).some((row) => row.kind === "dm" && row.title === "Release watcher"), "with its own chat");
+
+  await say(mira, room.id, "make a group with you and the release watcher");
+  const crew = await h.prisma.nodeRoom.findFirstOrThrow({ where: { userId: mira.id, kind: "crew", title: "Releases" } });
+  assert.deepEqual((crew.settings as { leadNodeIds: string[] }).leadNodeIds, [made.id]);
+  assert.equal(await h.prisma.nodeRoomMember.count({ where: { roomId: crew.id, nodeId: { not: null } } }), 2);
+
+  const patched = await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { effort: "high" } });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.equal(json(patched).node.effort, "high");
+  assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { effort: "max" } })).statusCode, 400);
+  assert.deepEqual(seen.map((turn) => turn.effort), ["low", "low"], "a node thinks briefly by default");
+  seen.length = 0;
+  await say(mira, room.id, "hello");
+  assert.deepEqual(seen.map((turn) => turn.effort), ["high"], "until its owner turns it up");
+});
+
+test("a helper brought in from a private thread reports privately; only working helpers count toward the cap", async () => {
+  const mira = await person("Mira");
+  const ben = await person("Ben");
+  const { node, room: dm } = await createNode(mira, "assistant");
+  const { node: bensNode } = await createNode(ben, "assistant");
+  const made = await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch", nodeIds: [node.id], invite: [ben.email] } });
+  const group = json(made).room as { id: string };
+  const invite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } })).statusCode, 201);
+  await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { autonomy: { sharedRooms: "auto" } } });
+  script = (turn) => {
+    if (turn.slug.startsWith("assistant-auditor")) return { text: "@assistant Checked: the budget is 40k." };
+    if (turn.transcript.includes("Checked:")) return { text: "The auditor confirms the budget is 40k." };
+    if (turn.transcript.includes("independent audit")) return { calls: [{ name: "node_helper", arguments: { task: "Check the budget.", name: "Auditor" } }], then: "Asked an auditor." };
+    return { text: "(no reply)" };
+  };
+  await say(mira, group.id, "@assistant get an independent audit of the budget", { private: true });
+  const report = (await read(mira, group.id)).find((row) => row.body === "The auditor confirms the budget is 40k.")!;
+  assert.ok(report, "the node reports in the room it was asked in");
+  assert.equal(report.private, true, "privately, as it was asked");
+  assert.ok(!(await read(ben, group.id)).some((row) => row.body.includes("40k")), "Ben never sees it");
+
+  // Finished helpers stay readable but do not block new ones; four working at once do.
+  const quiet = new Date(Date.now() - 60 * 60_000);
+  await h.prisma.nodeRoom.updateMany({ where: { kind: "task", userId: mira.id }, data: { lastMessageAt: quiet } });
+  for (let index = 0; index < 4; index++) await say(mira, dm.id, `get an independent audit number ${index}`);
+  assert.equal(await h.prisma.nodeAgent.count({ where: { parentNodeId: node.id } }), 5, "the finished one did not count");
+  seen.length = 0;
+  await say(mira, dm.id, "get an independent audit once more");
+  assert.equal(await h.prisma.nodeAgent.count({ where: { parentNodeId: node.id } }), 5, "a fifth working helper is refused");
+});
+
+test("declining and saving a secret card cannot both win, and a save a restart left behind can be answered again", async () => {
+  const mira = await person("Mira");
+  const { laptop } = await laptopFor(mira, "Mira's laptop");
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { folders: ["ensemble"], engines: ["claude-code", "codex"], secrets: 1 } } });
+  const { room } = await createNode(mira, "assistant");
+  script = (turn) => (turn.transcript.includes("my stripe key") ? { calls: [{ name: "node_secret_request", arguments: { name: "STRIPE_KEY", why: "For the tests." } }], then: "Type it in the box." } : { text: "ok" });
+  await say(mira, room.id, "use my stripe key");
+  const card = (await read(mira, room.id)).find((row) => row.data?.type === "secret")!;
+
+  // A save under way: a decline is refused.
+  await h.prisma.nodeMessage.update({ where: { id: card.id }, data: { data: { ...card.data, status: "saving", savingId: "first", savingAt: new Date().toISOString() } } });
+  assert.equal((await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 409);
+  assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "it is not waiting on its owner");
+
+  // The server restarted mid-save: after a while the card is in Needs me again and can be declined once.
+  await h.prisma.nodeMessage.update({ where: { id: card.id }, data: { data: { ...card.data, status: "saving", savingId: "first", savingAt: new Date(Date.now() - 60_000).toISOString() } } });
+  assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id));
+  const [one, two] = await Promise.all([
+    mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } }),
+    mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } }),
+  ]);
+  assert.deepEqual([one.statusCode, two.statusCode].sort(), [200, 409], "answered once");
+  await settleTurns();
+  assert.equal(seen.filter((turn) => /declined to give STRIPE_KEY/.test(turn.transcript)).length, 1, "the node hears it once");
 });

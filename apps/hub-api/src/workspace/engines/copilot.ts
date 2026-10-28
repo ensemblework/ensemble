@@ -188,7 +188,7 @@ export async function runCopilot(
     JSON.stringify({ mcpServers: { ensemble: { type: "local", command: process.execPath, args: [hookScriptPath("ensemble-ask-mcp.mjs")], env: ensembleMcp, tools: ["*"], timeout: 86_400_000 } } }),
     { mode: 0o600 },
   );
-  const env = copilotEnv(ensembleMcp);
+  const env = { ...copilotEnv(ensembleMcp), ...ctx.secretEnv };
   const model = str(options.model) && options.model !== "default" ? options.model!.trim() : null;
   const effort = str(options.effort) && options.effort !== "default" ? options.effort!.trim() : null;
   const effortFlag = effort && COPILOT_EFFORTS.has(effort) && (!options.efforts?.length || options.efforts.includes(effort));

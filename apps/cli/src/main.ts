@@ -30,7 +30,8 @@ import {
   withLocalApi,
   localJson,
 } from "./sidecar.js";
-import { addFolder, folderLine, folderRequest, listFolders, listKeys, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
+import { addFolder, folderLine, folderRequest, listFolders, listKeys, listSecrets, removeFolder, removeKey, removeSecret, remoteStatus, setKey, setSecret, withAdminApi } from "./local-commands.js";
+import { readSecret } from "./secret.js";
 import { chooseEditors, configuredEditors, detectEditors, parseEditorNames, removeEditor, setupEditor } from "./editors.js";
 import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
@@ -74,6 +75,7 @@ Usage:
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
   ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
+  ensemble secrets [list] | set <NAME> | remove <NAME>
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble sessions [list] [--json]
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
@@ -95,6 +97,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   folders:
     "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
+  secrets: "Usage: ensemble secrets [list] | set <NAME> | remove <NAME>\nSecrets for the agents that run tasks on this computer (API keys, tokens), kept here, encrypted. Each run gets them as environment variables ($NAME); no model sees a value. `set` reads the value without showing it, or from stdin.",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust, then what your Ensemble Node nodes wait on (answered on Node or in Ensemble).",
   sessions: "Usage: ensemble sessions [list] [--json]\nThe coding-agent sessions on this computer, newest first: one conversation with Claude Code, Codex, Copilot or another agent, carried across the tasks continued in it (Continue an earlier task resumes it).",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
@@ -482,6 +485,30 @@ async function commandKeys(args: string[]): Promise<void> {
   console.log(`${subcommand === "set" ? "Saved" : "Removed"} ${result.positionals[0]}.`);
 }
 
+async function commandSecrets(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.secrets);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (!["list", "set", "remove"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.secrets);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const rows = await withAdminApi({ sidecarDir, run: listSecrets });
+    console.log(rows.length ? rows.map((row) => `${row.name}\t${row.updatedAt.slice(0, 10)}`).join("\n") : "No secrets on this computer. Save one with `ensemble secrets set <NAME>`, or when a node asks for one.");
+    return;
+  }
+  const name = args[1]?.trim().toUpperCase();
+  if (!name) throw new Error(`Usage: ensemble secrets ${subcommand} <NAME>`);
+  if (subcommand === "set") {
+    const value = await readSecret(`Value for ${name} (not shown): `);
+    if (!value) throw new Error("Nothing was entered.");
+    await withAdminApi({ sidecarDir, run: (discovery) => setSecret(discovery, name, value) });
+    console.log(`Saved ${name}. Agent runs on this computer get it as $${name}.`);
+    return;
+  }
+  await withAdminApi({ sidecarDir, run: (discovery) => removeSecret(discovery, name) });
+  console.log(`Removed ${name}.`);
+}
+
 async function commandSessions(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.sessions);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
@@ -833,6 +860,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandFolders(rest);
     case "keys":
       return commandKeys(rest);
+    case "secrets":
+      return commandSecrets(rest);
     case "needs":
       return commandNeeds(rest);
     case "sessions":

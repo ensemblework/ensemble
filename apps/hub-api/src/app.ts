@@ -45,6 +45,7 @@ import { codeRoutes } from "./routes/code.js";
 import { agentRoutes } from "./routes/agents.js";
 import { engineRoutes } from "./routes/engine.js";
 import { handoffRoutes } from "./routes/handoffs.js";
+import { runSecretRoutes } from "./routes/run-secrets.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { viewRoutes } from "./routes/views.js";
 import { commentRoutes } from "./routes/comments.js";
@@ -256,6 +257,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     agentRoutes,
     engineRoutes,
     handoffRoutes,
+    runSecretRoutes,
     deviceRoutes,
     deviceCodeRoutes,
     subscriptionRoutes,

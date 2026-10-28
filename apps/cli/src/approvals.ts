@@ -92,7 +92,7 @@ export function answerFor(row: PendingDecision, input: string): Answer {
 /** An Ensemble Node approval card, as `GET /api/bridge/node` lists it. */
 export type NodeCard = { id: string; roomId: string; body: string; type?: string | null; node?: { slug: string; name: string } | null; room?: string | null };
 
-const NODE_WANTS: Record<string, string> = { tools: "wants to act for you", post: "wants to post for you", session: "wants to start work on your computer" };
+const NODE_WANTS: Record<string, string> = { tools: "wants to act for you", post: "wants to post for you", session: "wants to start work on your computer", secret: "needs a secret for work on your computer" };
 
 /** The signed-in person's Ensemble Node cards, which are part of Needs me everywhere. Empty when signed out or the server has no Node. */
 export async function nodeCards(paths?: CliPaths): Promise<NodeCard[]> {

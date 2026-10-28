@@ -8,6 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { truncateText } from "../lib/text.js";
 import { abortAllTurns, enqueueTurn, recoverTurns } from "./queue.js";
 import { updateMessageData } from "./store.js";
+import { sweepHelpers } from "./helpers.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 const EVERY_MS = 15_000;
@@ -92,7 +93,13 @@ export function stopNodeRuns(): void {
 export function startNode(app: FastifyInstance): () => void {
   void recoverTurns(app).catch((error: unknown) => app.log.error({ err: error }, "Could not resume node turns"));
   startNodeRuns(app);
+  // Helpers whose task room went quiet (node/helpers.ts).
+  const sweep = setInterval(() => {
+    void sweepHelpers(app).catch((error: unknown) => app.log.error({ err: error }, "Could not remove idle node helpers"));
+  }, 10 * 60_000);
+  sweep.unref?.();
   return () => {
+    clearInterval(sweep);
     stopNodeRuns();
     abortAllTurns();
   };

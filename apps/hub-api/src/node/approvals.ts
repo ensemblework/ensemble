@@ -12,6 +12,7 @@ import { mentionsFor, postMessage, updateMessageData } from "./store.js";
 import { refsNote, savedRefs } from "../assistant/refs.js";
 import { sessionOfJob } from "../workspace/sessions.js";
 import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
+import { declineSecret } from "./node-secrets.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -139,6 +140,10 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   }
 
   if (type === "session") return settleSession(app, card, node, input);
+  if (type === "secret") {
+    if (input.decision === "discard") return declineSecret(app, accountId, messageId);
+    throw new ApprovalError("Type the secret into its box: it goes straight to your computer.", 400);
+  }
 
   const parsed = ToolsCard.parse(card.data);
   const chosen = input.callIds?.length ? parsed.calls.filter((call) => input.callIds!.includes(call.callId)) : parsed.calls;

@@ -351,7 +351,7 @@ export type NodeApprovalCard = {
   roomId: string;
   body: string;
   createdAt: string;
-  data: { type?: "tools" | "post" | "session"; status?: string; error?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
+  data: { type?: "tools" | "post" | "session" | "secret"; status?: string; error?: string | null; name?: string; computer?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
   node: { id: string; slug: string; name: string; role: string } | null;
   room: { id: string; title: string; kind: string } | null;
 };
@@ -1387,6 +1387,8 @@ export const api = bindClient({
   /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
   nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
   settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),
+  /** A secret a node asked for: relayed straight to the person's computer, never stored by Ensemble on the web. */
+  saveNodeSecret: (id: string, value: string) => post(`/api/node/secrets/${id}`, { value }),
 
   // context
   entities: () => get<{ entities: Entity[] }>("/api/entities"),

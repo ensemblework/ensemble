@@ -31,6 +31,8 @@ import { commandGate, type AccessMode, type GateAction, type OutsideZone, type S
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
+  /** The person's run secrets saved on this computer (lib/run-secrets.ts), given to coding agents as environment variables. */
+  secretEnv?: Record<string, string>;
   userId: string;
   taskId: string;
   taskTitle: string;

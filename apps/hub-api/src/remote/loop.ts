@@ -23,6 +23,7 @@ import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
+import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
@@ -108,6 +109,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     engines: [...CODE_ENGINES],
     // Runs here can end in a pull request into any branch, and take any branch or git choice from the web (docs/24 §5.1).
     pullRequests: 2,
+    // Secrets typed on the web are kept here for this computer's agent runs (docs/35 §8.7).
+    secrets: SECRETS_API,
     // The same installation after it is paired again: the web finds this computer's earlier runs here (devices/successor.ts).
     installId: installId(),
     // Reconnect and carry-on after an outage (docs/25 §3): reattach a run that kept going, resume one that was cut off.
@@ -286,6 +289,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
         if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
         if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
+        // A secret typed on the web for this computer's runs: kept here only.
+        if (event === "secret.save") void answerSecretSave(client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
         if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
         if (event === "assistant.stop") stopAssistantTurn(data);

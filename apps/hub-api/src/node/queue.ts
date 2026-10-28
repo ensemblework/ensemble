@@ -229,7 +229,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       mentions: (Array.isArray(message.mentions) ? message.mentions : []) as Mention[],
       botDepth: message.botDepth,
     },
-    { kind: room.kind as "dm" | "crew" | "room", leadNodeIds: roomSettings(room).leadNodeIds },
+    { kind: room.kind as "dm" | "crew" | "room" | "task", leadNodeIds: roomSettings(room).leadNodeIds },
     nodes,
     botStreak(recent),
   );
@@ -250,7 +250,12 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       userId: room.userId,
       authorKind: "system",
       kind: "status",
-      body: decision.brake === "streak" ? "Nodes paused here: too many node messages in a row. Mention a node to continue." : "Nodes paused this thread: it went too deep. Mention a node to continue.",
+      body:
+        room.kind === "task"
+          ? "Paused here: this went too deep. Ask the node that made this helper to continue."
+          : decision.brake === "streak"
+            ? "Nodes paused here: too many node messages in a row. Mention a node to continue."
+            : "Nodes paused this thread: it went too deep. Mention a node to continue.",
       data: { brake: decision.brake } as Prisma.InputJsonObject,
       visibleTo: message.visibleTo,
     });

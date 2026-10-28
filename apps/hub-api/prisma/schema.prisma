@@ -2394,6 +2394,10 @@ model NodeAgent {
   /// active | paused
   status       String           @default("active")
   templateId   String?          @map("template_id")
+  /// A temporary helper (node/helpers.ts): the node it works for. It and its task room go when the room is idle.
+  parentNodeId String?          @map("parent_node_id")
+  /// Thinking level of its chat model: low | medium | high. Null: low.
+  effort       String?
   createdAt    DateTime         @default(now()) @map("created_at")
   updatedAt    DateTime         @updatedAt @map("updated_at")
   memberships  NodeRoomMember[]
@@ -2401,6 +2405,7 @@ model NodeAgent {
   turns        NodeTurn[]
 
   @@unique([userId, slug])
+  @@index([parentNodeId])
   @@map("node_agents")
 }
 
@@ -2582,4 +2587,20 @@ model NodeMemory {
 
   @@index([nodeId, createdAt])
   @@map("node_memories")
+}
+
+/// A secret a person saved on their own computer for its agent runs (lib/run-secrets.ts): given to the
+/// runs there as an environment variable, never to a model. Encrypted with that computer's key.
+/// Ensemble on the web never stores one; the value only passes through on its way to the computer.
+model RunSecret {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// An environment variable name, such as GITHUB_TOKEN.
+  name      String
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, name])
+  @@map("run_secrets")
 }

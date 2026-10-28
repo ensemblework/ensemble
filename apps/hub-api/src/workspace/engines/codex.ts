@@ -166,7 +166,7 @@ export async function runCodex(
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
   const credential = registerEngineRun(ctx);
   const ensembleMcp = mcpEnv(credential, options.chat === true);
-  const env: NodeJS.ProcessEnv = { ...process.env, ...ensembleMcp };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...ensembleMcp };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
@@ -302,6 +302,8 @@ export async function runCodex(
         // MCP servers) runs as it would in their Codex; any other folder's does not (`engineTrust`).
         projects: { [ctx.root]: { trust_level: engineTrust(ctx) ? "trusted" : "untrusted" } },
         sandbox_workspace_write: { network_access: ctx.network },
+        // Codex leaves *KEY*, *SECRET* and *TOKEN* variables out of commands unless set here; this goes over its stdin.
+        ...(Object.keys(ctx.secretEnv ?? {}).length ? { shell_environment_policy: { set: ctx.secretEnv } } : {}),
         mcp_servers: {
           ensemble: {
             command: process.execPath,
