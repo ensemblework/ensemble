@@ -87,6 +87,15 @@ export function sessionTaskPrompt(brief: string): string {
   ].join("\n");
 }
 
+/** The person changed what the agent was doing; the run was interrupted for it. Only the change goes, as the rules and brief are in the session. */
+export function steerPrompt(update: string): string {
+  return [
+    "(Ensemble: you were interrupted because the person changed what they want for the work you were doing. What you did so far is still in the folder and in this conversation; check the files before relying on memory. Go on with the same work, changed as they say:)",
+    "",
+    update,
+  ].join("\n");
+}
+
 export function delay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {

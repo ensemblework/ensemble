@@ -157,6 +157,8 @@ export interface AssistantTurnArgs {
   agentPersona?: string;
   /** Tools added to this turn and always shown (Ensemble Node's room tools). Same checks as every tool. */
   extraTools?: AnyHubTool[];
+  /** Assistant tools this surface replaces with its own (Ensemble Node's session tools replace agent assignment). */
+  withoutTools?: readonly string[];
   /** Records this surface showed the model by id (Ensemble Node's rooms), so replies can name them by title. */
   extraRefs?: AssistantRef[];
   /** Metrics and credit purpose for the model calls. Default "Hub chat". */
@@ -248,7 +250,7 @@ async function drive(
   let stage: AttachStage = 0;
   const verified = { images: modelReadsImages(args.provider, args.model), files: documentsFor(args.provider, args.model) };
   const subscription = isSubscriptionProvider(args.provider);
-  const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
+  const tools = [...(await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name)), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
+import { ArrowUpRight, Bot, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
 import { EditorDecisions } from "@/components/needs-me/editor-decisions";
+import { NodeApprovals, useNodeApprovals } from "@/components/needs-me/node-approvals";
 import { usePeek } from "@/components/shell/peek";
 import { useToast } from "@/components/toast";
 
@@ -148,19 +149,23 @@ export default function NeedsMePage() {
   const approvals = useQuery({ queryKey: ["approvals"], queryFn: api.approvals });
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
   const decisions = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000 });
+  // Ensemble Node's cards; where there is no Node (Ensemble on a computer) the list is empty.
+  const nodes = useNodeApprovals();
+  const nodeCards = nodes.data?.approvals ?? [];
   const peek = usePeek();
   useWarmEditors("peek");
   const blocked = (tasks.data?.tasks ?? []).filter((task) => task.status === "blocked" || task.status === "waiting_approval").sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const pendingApprovals = approvals.data?.approvals ?? [];
   const requests = decisions.data?.decisions ?? [];
-  const ready = approvals.isSuccess && tasks.isSuccess && decisions.isSuccess;
+  const ready = approvals.isSuccess && tasks.isSuccess && decisions.isSuccess && !nodes.isPending;
   const failed = approvals.isError || tasks.isError || decisions.isError;
-  const clear = ready && !blocked.length && !pendingApprovals.length && !requests.length;
+  const clear = ready && !blocked.length && !pendingApprovals.length && !requests.length && !nodeCards.length;
   return <div className="page-read review-page mx-auto max-w-[980px] px-6 pb-24 pt-8">
     <PageHeader title="Needs me" />
     {failed && <div className="work-load-error" role="alert">Some of your review queue could not load.<button className="btn" type="button" onClick={() => { void approvals.refetch(); void decisions.refetch(); void tasks.refetch(); }}>Try again</button></div>}
     {clear ? <div className="work-clear-state"><span><CheckCheck size={30} /></span><h2>All caught up</h2></div> : <>
       {(requests.length > 0 || decisions.isPending) && <div className="review-requests"><EditorDecisions hideEmpty /></div>}
+      {nodeCards.length > 0 && <section className="review-section"><header><span><Bot size={16} />From your nodes</span><small>{nodeCards.length}</small></header><NodeApprovals cards={nodeCards} nodeUrl={nodes.data?.nodeUrl ?? null} /></section>}
       {(pendingApprovals.length > 0 || approvals.isPending) && <section className="review-section"><header><span><ShieldCheck size={16} />Approvals</span><small>{pendingApprovals.length || ""}</small></header><Held pending={approvals.isPending} fallback={<SkeletonRows count={2} />}><div className="space-y-3">{pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div></Held></section>}
       {(blocked.length > 0 || tasks.isPending) && <section className="review-section"><header><span><CircleHelp size={16} />Waiting tasks</span><small>{blocked.length || ""}</small></header>{tasks.isPending ? <SkeletonRows count={2} /> : <div className="waiting-grid">{blocked.map((task) => <button key={task.id} type="button" onMouseEnter={() => warmTask(client, task.id)} onFocus={() => warmTask(client, task.id)} onClick={() => peek.open(task.id)} className="waiting-card" data-motion-slot="needs.waiting" data-state="waiting"><span className="waiting-status" data-blocked={task.status === "blocked"}>{task.status === "blocked" ? "Blocked" : "Awaiting approval"}</span><strong>{task.title}</strong><span className="waiting-meta">{relative(task.updatedAt)}<ArrowUpRight size={14} /></span></button>)}</div>}</section>}
     </>}

@@ -31,7 +31,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
-    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode] = await Promise.all([
+    const accountId = accountIdOf(request);
+    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(prisma.agentDecision.count({ where: { userId, status: "pending" } })),
@@ -42,11 +43,15 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
       // The same check as `requireHostAccess` in front of `/api/code/*`.
       canUseHostCredentials(userId).catch(() => false),
+      // Ensemble Node's approval cards are the account's own: they count in its own space only.
+      accountId === userId
+        ? countOrZero(prisma.nodeMessage.count({ where: { kind: "approval", userId: accountId, visibleTo: { equals: [accountId] }, data: { path: ["status"], equals: "pending" } } }))
+        : 0,
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
     const owner = ownsOpenSpace(request);
-    const account = accountIdOf(request) === userId ? user : await prisma.user.findUnique({ where: { id: accountIdOf(request) } });
+    const account = accountId === userId ? user : await prisma.user.findUnique({ where: { id: accountId } });
     const spaceOwnerId = user?.ownerId ?? user?.id ?? null;
     const spaceOwner = !owner && spaceOwnerId ? await prisma.user.findUnique({ where: { id: spaceOwnerId }, select: { id: true, name: true, email: true, spaceName: true, avatar: true } }) : null;
     const access = request.access;
@@ -88,6 +93,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       verificationRequired: isHosted() && !account?.emailVerifiedAt,
       approvals,
       decisions,
+      /** Ensemble Node approval cards waiting for this account (GET /api/node/approvals). */
+      nodeApprovals,
       attention: owner ? flags.filter(Boolean).length : 0,
       canUndo: undo.canUndo,
       canRedo: undo.canRedo,

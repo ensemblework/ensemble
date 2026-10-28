@@ -56,7 +56,7 @@ Board settings rename/reorder columns and remove empty columns. A column with pa
 
 ### 3.3 Needs Me (Approval Queue)
 
-Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
+Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts, and under *From your nodes* the approval cards the person's Ensemble Node nodes wait on (`components/needs-me/node-approvals.tsx`: approve, discard or open in Node; [35 §8.6](35_ENSEMBLE_NODE.md#86-needs-me)). The sidebar badge counts all of them. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
 
 It is one queue, without overview counters or filter tabs. Empty sections are omitted; a fully empty queue shows All caught up. Failed queries keep an explicit retry.
 
@@ -145,7 +145,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 
 | Area | Routes / implementation |
 | --- | --- |
-| Shell and Today | `/api/shell` (account, open space, counts, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
+| Shell and Today | `/api/shell` (account, open space, counts including `nodeApprovals` in the account's own space, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
 | Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`, `/pin`, `/reopen`, `/api/deliverables`, `/api/completed`; `routes/tasks.ts`, `board.ts`, `completed.ts` |
 | Custom boards | `GET/POST /api/boards`, `GET/PATCH/DELETE /api/boards/:id`, `POST /api/boards/:id/pages`, `PUT /api/pages/:kind/:id/board`; `routes/page-boards.ts`, `pages/boards.ts`. Space viewers read; editors manage boards and membership |
 | Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; `routes/tasks.ts`, `collab.ts` |
@@ -176,7 +176,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |
 | Sharing/presence | `sharing/routes.ts`; [29](29_SHARING.md#6-routes) |
 | Device login/editor MCP | `routes/cli-auth.ts`, `routes/mcp.ts`; [26](26_CLI.md) |
-| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals, runs, activity, events) and `GET /api/bridge/node`; `node/routes.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
+| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals and `GET /api/node/approvals` for Needs me, runs, activity, events) and `GET /api/bridge/node`; `node/routes.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
 
 Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 

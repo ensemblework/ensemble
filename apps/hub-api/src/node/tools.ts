@@ -12,6 +12,7 @@ import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { CodeAnswer } from "../remote/contract.js";
 import { refusedPath } from "../workspace/folder-read.js";
+import { sessionTools } from "./sessions.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 
 export const MAX_MEMORIES = 200;
@@ -134,7 +135,7 @@ function computerFilesTool(scope: NodeScope): AnyHubTool {
     description:
       "Look at files on your owner's paired computer, inside the folders it shares with Ensemble. action folders: the folders you may use. " +
       "list: a folder's contents (path: a subfolder). read: a text file (path). search: lines containing `query` in a git folder. " +
-      "Read-only; files of keys and secrets are never shown. For anything outside these folders, or to change files, assign an Ensemble task to an agent (hub_assign_to_agent).",
+      "Read-only; files of keys and secrets are never shown. For anything outside these folders, or to change files, have a coding agent do it (node_session_start or node_session_send).",
     input: z.object({
       action: z.enum(["folders", "list", "read", "search"]),
       computer: z.string().max(120).optional().describe("The computer's name, when your owner has more than one."),
@@ -164,7 +165,7 @@ function computerFilesTool(scope: NodeScope): AnyHubTool {
       if (answer.data.status >= 400) {
         throw new ToolBlockedError(
           `${device.name} refused: ${typeof body.error === "string" ? body.error : `status ${answer.data.status}`}`,
-          "Only the folders that computer shares can be read. Your owner can add one there (`ensemble folders add <path>`), or you can assign an Ensemble task to an agent for it.",
+          "Only the folders that computer shares can be read. Your owner can add one there (`ensemble folders add <path>`), or a coding agent can do the work (node_session_start).",
         );
       }
       await appendLedger({ userId: node.userId, actor: "agent", action: "node.computer_files", payload: { nodeId: node.id, deviceId: device.id, action: input.action, folder: input.folder ?? null, path: input.path ?? null } });
@@ -207,6 +208,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   return [
     ...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []),
+    ...sessionTools(scope),
     defineTool({
       name: "node_delegate",
       area: "tasks",

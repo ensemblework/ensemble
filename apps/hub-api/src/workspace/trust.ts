@@ -154,6 +154,16 @@ export function isChatTurn(context: unknown): boolean {
   return typeof context === "object" && context !== null && (context as { chat?: unknown }).chat === true;
 }
 
+/**
+ * A run that changes the one it continues, which was interrupted for it (Ensemble Node's steer,
+ * node/sessions.ts): the change, kept on the job's context. It goes to the agent on its own.
+ */
+export function steerOf(context: unknown): { update: string } | null {
+  const steer = typeof context === "object" && context !== null ? (context as { steer?: unknown }).steer : undefined;
+  const update = typeof steer === "object" && steer !== null ? (steer as { update?: unknown }).update : undefined;
+  return typeof update === "string" && update.trim() ? { update } : null;
+}
+
 /** The model's fast mode chosen for the run (Claude Code, Codex), kept on the job's context. */
 export function fastOf(context: unknown): boolean {
   return typeof context === "object" && context !== null && (context as { fast?: unknown }).fast === true;

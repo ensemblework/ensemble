@@ -10,7 +10,8 @@ import { TESTING, TESTING_NODE } from "../channel.js";
 export type NodeOverview = {
   nodes: Array<{ id: string; slug: string; name: string; role: string; status: string; busy: boolean }>;
   rooms: Array<{ id: string; kind: string; title: string; unread: number; lastMessageAt: string | null; last: { author: string; body: string } | null }>;
-  approvals: Array<{ id: string; roomId: string; body: string }>;
+  /** `node` and `room` name who asks and where; servers before them send only the body. */
+  approvals: Array<{ id: string; roomId: string; body: string; type?: string | null; node?: { slug: string; name: string } | null; room?: string | null }>;
   /** Requests to join someone's room; servers before this field send none. */
   invites?: Array<{ id: string; room: string; from: string }>;
   runs: Array<{ id: string; title: string; status: string; progress: string | null; summary: string | null; computer: string | null; createdAt: string }>;
@@ -74,7 +75,10 @@ export function nodePane(state: NodeState, width: number, now: number, signedIn:
   if (state.error) lines.push(...wrapLine([{ text: `Could not refresh: ${state.error}`, color: "yellow" }], width), []);
   if (approvals.length) {
     lines.push([{ text: `WAITING FOR YOU · ${approvals.length}`, bold: true, color: "yellow" }]);
-    for (const row of approvals.slice(0, 5)) lines.push([{ text: " ◆ ", color: "yellow" }, { text: truncate(row.body.replace(/\s+/g, " "), width - 4) }]);
+    for (const row of approvals.slice(0, 5)) {
+      const who = row.node ? `@${row.node.slug}${row.room ? ` in ${row.room}` : ""}: ` : "";
+      lines.push([{ text: " ◆ ", color: "yellow" }, { text: truncate(`${who}${row.body.replace(/\s+/g, " ")}`, width - 4) }]);
+    }
     lines.push(...wrapLine([{ text: ` Approve or discard on ${url}`, dim: true }], width), []);
   }
   if (invites.length) {

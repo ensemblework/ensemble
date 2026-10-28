@@ -48,13 +48,13 @@ import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
-import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, watchEngine } from "./engine-watch.js";
+import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, type SandboxStrength } from "./trust.js";
+import { contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, runModeOf, steerOf, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, loadGrants, opensFiles, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -821,7 +821,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           // A task that continues an earlier run by the same agent goes on in that agent's own session
           // (workspace/sessions.ts): it remembers the earlier work, and the provider can reuse its cache.
           resume = (await earlierSession(prisma, job)).session;
-          if (resume) enginePromptText = sessionTaskPrompt(fullPrompt);
+          // A change to the run it interrupted (Ensemble Node's steer) goes on with just the change.
+          const steer = steerOf(job.context);
+          if (resume) enginePromptText = steer ? steerPrompt(steer.update) : sessionTaskPrompt(fullPrompt);
         }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.

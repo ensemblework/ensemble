@@ -6,16 +6,17 @@ import { keysFor } from "../sharing/context.js";
 import { defaultSpaceName } from "../spaces/store.js";
 import { diagramSources } from "../pages/agent-context.js";
 import { filesOnPage, filesOnTask, filesSection } from "../files/attached.js";
+import { ON_BOARD } from "../lib/node-tasks.js";
 
 export async function buildHubState(prisma: PrismaClient, userId: string, modules?: string | null) {
   const [proposed, todo, inProgress, needsMe, projects, people, repos, skills, account] = await Promise.all([
-    prisma.task.count({ where: { userId, deletedAt: null, status: "proposed" } }),
+    prisma.task.count({ where: { userId, deletedAt: null, status: "proposed", ...ON_BOARD } }),
     prisma.task.findMany({
-      where: { userId, deletedAt: null, status: { in: ["todo", "in_progress"] } },
+      where: { userId, deletedAt: null, status: { in: ["todo", "in_progress"] }, ...ON_BOARD },
       select: { id: true, title: true, owner: true, status: true },
       take: 20,
     }),
-    prisma.task.count({ where: { userId, deletedAt: null, status: "in_progress" } }),
+    prisma.task.count({ where: { userId, deletedAt: null, status: "in_progress", ...ON_BOARD } }),
     prisma.approval.count({ where: { userId, decision: null } }),
     prisma.project.findMany({
       where: { userId, deletedAt: null },

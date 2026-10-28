@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { answerFor, formatPending, type PendingDecision } from "./approvals.js";
+import { answerFor, formatNodeCards, formatPending, type PendingDecision } from "./approvals.js";
 
 const question: PendingDecision = {
   id: "d1",
@@ -59,4 +59,19 @@ test("a Claude Code question lists its options with descriptions and takes sever
   assert.deepEqual(answerFor(row, "1,3"), { decision: "allow", scope: "once", reason: "Vitest, node:test" });
   assert.deepEqual(answerFor(row, "something else"), { decision: "allow", scope: "once", reason: "something else" });
   assert.deepEqual(answerFor({ ...row, detail: { ...row.detail, multiSelect: false } }, "2"), { decision: "allow", scope: "once", reason: "Jest" });
+});
+
+test("Ensemble Node cards follow this computer's list, named by node and room, answered on Node", () => {
+  const text = formatNodeCards(
+    [
+      { id: "a", roomId: "r", body: "Start Claude Code:\n  Fix the login", type: "session", node: { slug: "builder", name: "Builder" }, room: "Builder" },
+      { id: "b", roomId: "r", body: "Ship it", node: null, room: null },
+    ],
+    "https://node.example.com",
+  );
+  assert.match(text, /^From your nodes \(2\):/);
+  assert.match(text, /- @builder wants to start work on your computer in “Builder”: Start Claude Code: Fix the login/);
+  assert.match(text, /- A node wants to act for you: Ship it/);
+  assert.match(text, /https:\/\/node\.example\.com\/needs-me/);
+  assert.equal(formatNodeCards([], "https://node.example.com"), "");
 });

@@ -9,6 +9,7 @@ import { isGuestIn } from "../sharing/context.js";
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { createTask, updateTask } from "../services/tasks.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
+import { NODE_TASK } from "../lib/node-tasks.js";
 
 export function serializeTask(task: {
   due: Date | null;
@@ -40,7 +41,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
         userId,
         deletedAt: null,
         ...(board ? { OR: [{ page: null }, { page: { boardId: null } }] } : {}),
-        ...(hideStarters ? { NOT: { sourceRef: { startsWith: "template:" } } } : {}),
+        NOT: [NODE_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])],
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
     });

@@ -80,7 +80,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
     if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
     // A run carrying on one this computer lost when it restarted runs in that run's folder and agent session (agent.ts).
-    const context = spec.resume ? ({ ...webContext(spec.id), resumeOf: spec.resume } as Prisma.InputJsonValue) : webContext(spec.id);
+    const context = { ...webContext(spec.id), ...(spec.resume ? { resumeOf: spec.resume } : {}), ...(spec.steer ? { steer: spec.steer } : {}) } as Prisma.InputJsonValue;
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context, actor: "system" });
     if (!created) throw new Error("The task could not be queued.");
     held.localJobId = created.jobId;
