@@ -25,12 +25,16 @@ export const MAX_STEP_RUNS = 4;
 export type StepStatus = "waiting" | "working" | "done" | "blocked" | "skipped" | "stopped";
 export type PlanStatus = "draft" | "running" | "reporting" | "done" | "stopped";
 
+/** How the step's agent runs go, as its owner asked (applied when the step's node names none). */
+export type StepRun = { agent?: string; model?: string; effort?: string; context?: "default" | "long_context" };
+
 export type PlanStep = {
   id: string;
   nodeId: string;
   handle: string;
   name: string;
   brief: string;
+  run?: StepRun;
   /** Steps that must be done before this one starts. */
   after: string[];
   status: StepStatus;
@@ -112,7 +116,7 @@ export async function currentPlan(prisma: PrismaClient, leadNodeId: string, turn
   return message && data ? { message, data } : null;
 }
 
-export type NewStep = { node: Pick<NodeAgent, "id" | "name">; handle: string; brief: string; after: string[] };
+export type NewStep = { node: Pick<NodeAgent, "id" | "name">; handle: string; brief: string; after: string[]; run?: StepRun };
 
 /**
  * Adds a step to the lead's plan for this turn, making the plan card on the first one. `after` names
@@ -172,6 +176,7 @@ export async function addStep(
       handle: input.step.handle,
       name: input.step.node.name,
       brief: truncateText(input.step.brief.trim(), 4000),
+      ...(input.step.run && Object.values(input.step.run).some(Boolean) ? { run: input.step.run } : {}),
       after: resolveAfter(data),
       status: "waiting",
       result: null,
@@ -293,8 +298,20 @@ export async function afterReport(app: FastifyInstance, planId: string): Promise
  */
 export async function planTurnEnded(app: FastifyInstance, turn: { planId: string | null; planStep: string | null }, why: string): Promise<void> {
   if (!turn.planId) return;
-  if (turn.planStep) await finishStep(app, turn.planId, turn.planStep, { status: "blocked", result: why });
-  else await afterReport(app, turn.planId);
+  if (!turn.planStep) return afterReport(app, turn.planId);
+  // A run or card of the step is still to come back: the step goes on when it does.
+  if (await stepPending(app.prisma, turn.planId, turn.planStep)) return;
+  await finishStep(app, turn.planId, turn.planStep, { status: "blocked", result: why });
+}
+
+/** Whether a step still waits on an agent run or a card of its own. */
+export async function stepPending(prisma: PrismaClient, planId: string, stepId: string): Promise<boolean> {
+  return (await stepRuns(prisma, planId, stepId)).pending > 0 || (await stepCardsWaiting(prisma, planId, stepId)) > 0;
+}
+
+/** The run settings the lead gave a step. */
+export async function stepRun(prisma: PrismaClient, planId: string, stepId: string): Promise<StepRun> {
+  return (await loadPlan(prisma, planId))?.data.steps.find((row) => row.id === stepId)?.run ?? {};
 }
 
 /**
@@ -379,9 +396,11 @@ function resultLine(row: PlanStep): string {
 /** What a step's node is told when its step starts. */
 export function stepNote(data: PlanData, step: PlanStep): string {
   const before = step.after.map((id) => data.steps.find((row) => row.id === id)).filter((row): row is PlanStep => Boolean(row));
+  const run = step.run ? Object.entries(step.run).filter(([, value]) => value).map(([key, value]) => `${key} ${value}`).join(", ") : "";
   return [
     `Your step in @${data.leadHandle}'s plan (${stepTitle(data, step)}):`,
     step.brief,
+    run ? `Agent runs for this step use ${run} (applied for you when you start a session).` : "",
     before.length ? `\nDone before yours:\n${before.map(resultLine).join("\n")}` : "",
     "",
     STEP_RULES,

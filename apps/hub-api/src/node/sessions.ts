@@ -29,7 +29,7 @@ import { LIVE_RUN, listSessions, resolveSession, runsOfSession, summaryLine, typ
 import { steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
-import { finishStep, MAX_STEP_RUNS, stepCardsWaiting, stepLive, stepRuns, type PlanLink } from "./plans.js";
+import { finishStep, MAX_STEP_RUNS, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 
 export type SessionLineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
@@ -407,6 +407,12 @@ function placeLine(found: Plan): string {
 /** A new session with one of the owner's coding agents. */
 export async function startSession(env: SessionEnv, input: StartInput): Promise<Started> {
   await refuseWhenPaused(env);
+  // A plan step's runs go as its owner asked the lead (agent, model, thinking, context), unless named here.
+  if (env.plan?.planStep) {
+    const run = await stepRun(env.prisma, env.plan.planId, env.plan.planStep);
+    const agent = Agent.safeParse(run.agent).success ? (run.agent as z.infer<typeof Agent>) : undefined;
+    input = { ...input, agent: input.agent ?? agent, model: input.model ?? run.model, effort: input.effort ?? run.effort, context: input.context ?? run.context };
+  }
   const profile = chooseProfile(env.ctx, input.profile);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
