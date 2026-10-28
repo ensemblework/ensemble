@@ -4,6 +4,7 @@
  */
 import { ROUTES, type CodeAnswer, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
+import { hideSecretsDeep } from "../lib/redact.js";
 
 function channelBase(base: string): string {
   const channel = process.env.ENSEMBLE_CLI_CHANNEL;
@@ -84,7 +85,8 @@ async function send(base: string, token: string, method: string, path: string, j
     response = await fetch(`${base}${path}`, {
       method,
       headers: { authorization: `Bearer ${token}`, ...(json === undefined ? {} : { "content-type": "application/json" }) },
-      body: json === undefined ? undefined : JSON.stringify(json),
+      // A saved run secret's value never leaves the computer, whatever a run printed (lib/run-secrets.ts).
+      body: json === undefined ? undefined : JSON.stringify(hideSecretsDeep(json)),
       signal,
       ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" } : {}),
     });

@@ -27,7 +27,7 @@ export type RouteMessage = {
   botDepth: number;
 };
 
-export type RouteRoom = { kind: "dm" | "crew" | "room"; leadNodeIds: readonly string[] };
+export type RouteRoom = { kind: "dm" | "crew" | "room" | "task"; leadNodeIds: readonly string[] };
 export type RouteNode = { id: string; ownerId: string; active: boolean; representative: boolean; role: string };
 
 export type RouteDecision =
@@ -57,7 +57,8 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 
   if (message.authorKind === "node") {
-    if (streak >= MAX_BOT_STREAK) return none("streak");
+    // A helper's room is nodes only: the depth limit (reset by each owner message) is its brake.
+    if (room.kind !== "task" && streak >= MAX_BOT_STREAK) return none("streak");
     if (message.botDepth >= MAX_BOT_DEPTH) return none("depth");
     return mentioned.length ? { reason: "mentioned", nodeIds: mentioned.slice(0, MAX_NODE_FANOUT) } : none();
   }

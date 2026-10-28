@@ -304,7 +304,7 @@ export async function runAcp(
   const credential = registerEngineRun(ctx);
   const ensembleMcp = mcpEnv(credential, options.chat === true);
   const model = str(options.model) && options.model !== "default" ? options.model!.trim() : null;
-  const launch = await agent.launch({ root: ctx.root, sandboxed: ctx.sandboxed, trusted: engineTrust(ctx), model, extraEnv: ensembleMcp });
+  const launch = await agent.launch({ root: ctx.root, sandboxed: ctx.sandboxed, trusted: engineTrust(ctx), model, extraEnv: { ...ctx.secretEnv, ...ensembleMcp } });
   if (!launch) {
     unregisterEngineRun(ctx.job.id);
     throw new Error(`${label} is not on this computer. ${agent.install}`);

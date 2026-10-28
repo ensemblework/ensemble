@@ -13,6 +13,8 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { CodeAnswer } from "../remote/contract.js";
 import { refusedPath } from "../workspace/folder-read.js";
 import { sessionTools } from "./sessions.js";
+import { secretTools } from "./node-secrets.js";
+import { helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 
 export const MAX_MEMORIES = 200;
@@ -206,9 +208,13 @@ async function pickComputer(prisma: PrismaClient, ownerId: string, name: string 
 
 export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
+  // A temporary helper only answers the node that made it, with the read-only assistant tools.
+  if (node.parentNodeId) return [];
   return [
     ...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []),
     ...sessionTools(scope),
+    ...secretTools(scope),
+    ...helperTools({ ...scope, postBrief: (room, body) => postAsNode(scope, room, body, null) }),
     defineTool({
       name: "node_delegate",
       area: "tasks",
@@ -222,19 +228,25 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       isWrite: false,
       risk: "low",
       async run(_ctx, input) {
-        const here = await prisma.nodeRoomMember.findFirst({ where: { roomId: scope.room.id, handle: input.to, nodeId: { not: null } } });
+        let here = await prisma.nodeRoomMember.findFirst({ where: { roomId: scope.room.id, handle: input.to, nodeId: { not: null } } });
         const target = here?.nodeId
           ? await prisma.nodeAgent.findUnique({ where: { id: here.nodeId } })
           : await prisma.nodeAgent.findFirst({ where: { userId: node.userId, slug: input.to } });
+        if (target?.parentNodeId && !here) {
+          if (target.parentNodeId !== node.id) throw new ToolBlockedError(`@${target.slug} is another node's helper.`);
+          // Your own helper: the brief goes to its task room.
+          here = await prisma.nodeRoomMember.findFirst({ where: { nodeId: target.id, room: { kind: "task", archivedAt: null } } });
+          if (!here) throw new ToolBlockedError(`@${target.slug}'s room is gone.`, "Bring in a new helper with node_helper.");
+        }
         if (!target || target.id === node.id) {
-          const mine = await prisma.nodeAgent.findMany({ where: { userId: node.userId, status: "active", id: { not: node.id } }, select: { slug: true } });
+          const mine = await prisma.nodeAgent.findMany({ where: { userId: node.userId, status: "active", parentNodeId: null, id: { not: node.id } }, select: { slug: true } });
           throw new ToolBlockedError(`There is no node called @${input.to} you can delegate to.`, mine.length ? `Your owner's nodes: ${mine.map((row) => `@${row.slug}`).join(", ")}.` : "Your owner has no other nodes yet.");
         }
         if (target.userId !== node.userId) {
           throw new ToolBlockedError(`@${input.to} belongs to someone else. Mention it in your reply instead; your owner sees that first.`);
         }
         if (target.status !== "active") throw new ToolBlockedError(`@${target.slug} is paused.`);
-        const room = here ? scope.room : await crewRoomFor(prisma, node);
+        const room = here ? (here.roomId === scope.room.id ? scope.room : await prisma.nodeRoom.findUniqueOrThrow({ where: { id: here.roomId } })) : await crewRoomFor(prisma, node);
         const member = here ?? (await addNode(prisma, room.id, target));
         const people = await roomPeople(prisma, room.id);
         // Crew chatter stays between the owner and their nodes when other people are in the room.

@@ -49,6 +49,7 @@ import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPul
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
 import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
+import { MISSING_SECRET_RULE, runSecretEnv, secretRules } from "../lib/run-secrets.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
@@ -255,6 +256,10 @@ function outsideRule(ctx: Pick<JobContext, "job" | "accessMode" | "outsideAccess
 }
 
 function engineRules(ctx: JobContext): string[] {
+  return [...baseEngineRules(ctx), ...secretRules(Object.keys(ctx.secretEnv ?? {})), MISSING_SECRET_RULE];
+}
+
+function baseEngineRules(ctx: JobContext): string[] {
   const mode = runModeOf(ctx.job);
   const git =
     (ctx.job.delivery === "push"
@@ -644,6 +649,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   const ctx: JobContext = {
     prisma,
     job,
+    secretEnv: job.kind === "code" ? await runSecretEnv(prisma, userId) : {},
     userId,
     taskId: job.taskId,
     taskTitle: job.task.title,
