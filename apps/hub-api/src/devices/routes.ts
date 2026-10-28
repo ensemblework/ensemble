@@ -424,6 +424,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!won) continue;
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
+      sseHub.publish(next.userId, { event: "task", data: { id: next.taskId, action: "agent" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       const fromApps = await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "");
       // The computer downloads the originals (the attachments route); the brief names them.
