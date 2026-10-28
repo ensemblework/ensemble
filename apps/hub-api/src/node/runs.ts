@@ -61,7 +61,7 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
         reason: "run",
         triggerMessageId: null,
         note: [
-          `The ${run.sessionId ? "session" : "computer"} run for ${named} ${words}.${run.sessionId ? ` (Session ${run.sessionId}.)` : ""}`,
+          `The ${run.sessionId ? "session" : "computer"} run for ${named} ${words}.${run.sessionId ? ` (Its session's id, for your tools only: ${run.sessionId}.)` : ""}`,
           job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
           job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
           next.length ? `Still queued in this session: ${next.map((row) => `“${row.task.title}”`).join(", ")}; it goes on by itself.` : "",

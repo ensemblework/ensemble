@@ -165,7 +165,7 @@ test("a node runs its owner's own coding agent in a session, off the board, and 
   await pollRuns(h.app);
   await settleTurns();
   assert.ok((await read(mira, room.id)).some((row) => row.authorNodeId === node.id && row.body === "Fixed: the redirect works and the tests pass."), "the node reports when the run ends");
-  assert.match(seen.find((row) => row.transcript.includes("session run for"))!.transcript, /“Fix the login redirect” finished\. \(Session /);
+  assert.match(seen.find((row) => row.transcript.includes("session run for"))!.transcript, /“Fix the login redirect” finished\. \(Its session.s id, for your tools only: /);
 });
 
 test("a node queues, steers, replaces and stops work in its own session, and the computer gets only the change when steered", async () => {

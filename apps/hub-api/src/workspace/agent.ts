@@ -441,24 +441,43 @@ async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, 
   return parts.filter(Boolean).join("\n\n");
 }
 
+/**
+ * The folder the person granted to a chain of continued runs: the nearest run's `externalRoot`, from
+ * `jobId` back. A run that continues one keeps working there without a grant of its own.
+ */
+export async function grantedFolderOf(prisma: PrismaClient, jobId: string | null): Promise<string | null> {
+  let id = jobId;
+  for (let hops = 0; id && hops < 200; hops += 1) {
+    const row: { externalRoot: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { externalRoot: true, continueFromJobId: true } });
+    if (!row) return null;
+    if (row.externalRoot) return row.externalRoot;
+    id = row.continueFromJobId;
+  }
+  return null;
+}
+
 /** Chooses and prepares the folder: a fresh checkout, a folder the person granted, or an earlier job's. */
 async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ root: string; git: boolean }> {
   const job = ctx.job;
   const base = await workspaceRoot();
   if (job.externalRoot) return { root: await resolveWorkFolder(job.externalRoot), git: await isGitRepo(job.externalRoot) };
   if (job.continueFromJobId) {
-    const previous = await app.prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { repoPath: true, externalRoot: true } });
-    const folder = previous?.externalRoot ?? previous?.repoPath;
+    const previous = await app.prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { repoPath: true, externalRoot: true, continueFromJobId: true } });
+    const grant = previous?.externalRoot ?? (previous ? await grantedFolderOf(app.prisma, previous.continueFromJobId) : null);
+    const granted = grant ? await resolveWorkFolder(grant) : null;
+    // A run that continued a granted folder worked in that folder.
+    const external = Boolean(granted && (!previous?.repoPath || previous.repoPath === granted));
+    const folder = external ? granted : previous?.repoPath;
     if (!folder) throw new GuardError("The earlier task never got a folder, so there is nothing to continue from.");
-    const root = previous?.externalRoot ? await resolveWorkFolder(folder) : folder;
-    if (!previous?.externalRoot && !within(base, root)) throw new GuardError("The earlier task's folder is outside the workspace.");
+    const root = folder;
+    if (!external && !within(base, root)) throw new GuardError("The earlier task's folder is outside the workspace.");
     await stat(root).catch(() => {
       throw new GuardError("The earlier task's folder no longer exists.");
     });
     const git = await isGitRepo(root);
     // An Ensemble folder created before the empty-commit fix has a repo and no HEAD.
     // User-attached folders and clones (anything with a remote or an existing commit) stay as they are.
-    if (git && !previous?.externalRoot) {
+    if (git && !external) {
       const remote = await gitIn({ ...ctx, root }, ["remote"]);
       if (remote.exitCode !== 0 || !remote.output.trim()) await commitUnbornHead({ ...ctx, root });
     }
