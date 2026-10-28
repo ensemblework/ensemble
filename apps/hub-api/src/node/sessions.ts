@@ -492,14 +492,17 @@ export async function stopSession(env: SessionEnv, input: z.infer<typeof StopInp
   };
 }
 
-function describeCall(call: SessionCall, node: NodeAgent): string {
+/** What a held session call does, as the card says it under "@node wants to start work on your computer". */
+function describeCall(call: SessionCall): string {
+  if (call.action === "start") {
+    const input = call.input;
+    const agent = input.agent ? agentLabel(input.agent) : "your coding agent";
+    const where = `${input.computer && input.computer !== "any" ? ` on ${input.computer}` : ""}${input.folder ? ` in “${input.folder}”` : input.repoUrl ? ` in a clone of ${input.repoUrl}` : ""}`;
+    return `Start ${agent}${where}: ${input.title}\n\n${truncateText(input.prompt, 1200)}`;
+  }
   const input = call.input;
-  const agent = call.action === "start" && call.input.agent ? agentLabel(call.input.agent) : "your coding agent";
-  const head =
-    call.action === "start"
-      ? `@${node.slug} wants to start ${agent}${call.input.computer && call.input.computer !== "any" ? ` on ${call.input.computer}` : " on your computer"}${call.input.folder ? ` in “${call.input.folder}”` : call.input.repoUrl ? ` in a clone of ${call.input.repoUrl}` : ""}: ${call.input.title}`
-      : `@${node.slug} wants to ${call.input.delivery === "steer" ? "steer the run going on in" : call.input.delivery === "replace" ? "replace what is running in" : "send a message to"} one of its sessions${call.input.title ? `: ${call.input.title}` : ""}`;
-  return `${head}\n\n${truncateText(input.prompt, 1200)}`;
+  const verb = input.delivery === "steer" ? "Change the run going on in its session" : input.delivery === "replace" ? "Replace what its session is doing" : "Next in its session";
+  return `${verb}${input.title ? `: ${input.title}` : ""}\n\n${truncateText(input.prompt, 1200)}`;
 }
 
 /** One owner-only card with exactly this call; approvals.ts runs it when the owner approves. */
@@ -510,7 +513,7 @@ async function holdForOwner(env: SessionEnv, call: SessionCall): Promise<ToolRes
     authorKind: "node",
     authorNodeId: env.node.id,
     kind: "approval",
-    body: describeCall(call, env.node),
+    body: describeCall(call),
     data: { type: "session", status: "pending", action: call.action, input: call.input, private: Boolean(env.privateTo), fromNonOwner: env.lineage.fromNonOwner },
     visibleTo: [env.node.userId],
     rootMessageId: env.lineage.rootMessageId,
