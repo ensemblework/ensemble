@@ -5,6 +5,7 @@ import type { SurfaceEntity } from "./citations.js";
 import { describeGraph, fitBudget, personNodeId } from "./graph-facts.js";
 import { shortestPath } from "./graph-path.js";
 import type { WatcherScope } from "./watchers.js";
+import { ON_BOARD } from "../lib/node-tasks.js";
 
 export const SURFACE_IDS = ["page", "comment", "board", "today", "needs_me", "graph", "code", "deliverable", "trash", "completed"] as const;
 export type SurfaceId = (typeof SURFACE_IDS)[number];
@@ -72,6 +73,7 @@ export async function loadSurfaceContext(prisma: PrismaClient, userId: string, r
       where: {
         userId,
         deletedAt: null,
+        ...ON_BOARD,
         ...(request.entityIds ? { id: { in: request.entityIds } } : { status: { notIn: ["dropped"] } }),
       },
       select: { id: true, title: true, status: true, priority: true, owner: true, people: true, due: true },
@@ -94,6 +96,7 @@ export async function loadSurfaceContext(prisma: PrismaClient, userId: string, r
       where: {
         userId,
         deletedAt: null,
+        ...ON_BOARD,
         ...(requested.length
           ? { id: { in: requested } }
           : request.surface === "needs_me"
@@ -348,7 +351,7 @@ async function loadGraph(prisma: PrismaClient, userId: string) {
     prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, take: 80 }),
     prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true }, take: 80 }),
     prisma.task.findMany({
-      where: { userId, deletedAt: null, status: { not: "dropped" } },
+      where: { userId, deletedAt: null, status: { not: "dropped" }, ...ON_BOARD },
       select: { id: true, title: true, projectId: true, repoId: true, deliverableId: true, people: true },
       orderBy: { updatedAt: "desc" },
       take: 200,

@@ -37,7 +37,7 @@ import { folderLabels, rejectPathLabels } from "./labels.js";
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
-import { contextTierOf, fastOf, outsideAccessOf } from "../workspace/trust.js";
+import { contextTierOf, fastOf, outsideAccessOf, steerOf } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
 import { resumeOf } from "../workspace/repeat.js";
 import { reattachJob, resumeJob } from "./recover.js";
@@ -487,6 +487,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         maxToolCalls: next.maxToolCalls,
         attempt: next.attempt + 1,
         ...(resumeOf(next.context) ? { resume: resumeOf(next.context) } : {}),
+        ...(steerOf(next.context) ? { steer: steerOf(next.context) } : {}),
       };
     }
     return reply.code(204).send();

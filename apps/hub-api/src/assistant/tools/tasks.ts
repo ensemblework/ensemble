@@ -6,6 +6,7 @@ import { softDelete, trashTasks } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 import { MAX_MARKDOWN, appendToTaskPage, droppedNote } from "./pages.js";
 import { titleList } from "../refs.js";
+import { ON_BOARD } from "../../lib/node-tasks.js";
 
 const Due = z
   .string()
@@ -74,6 +75,7 @@ export const taskTools = [
       const where = {
         userId: ctx.userId,
         deletedAt: null,
+        ...ON_BOARD,
         ...(input.ids ? { id: { in: input.ids } } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.owner ? { owner: input.owner } : {}),
@@ -384,6 +386,7 @@ async function bulkTaskIds(ctx: ToolContext, input: BulkTaskInput): Promise<stri
     where: {
       userId: ctx.userId,
       deletedAt: null,
+      ...ON_BOARD,
       ...(input.status ? { status: input.status } : {}),
       ...(input.owner ? { owner: input.owner } : {}),
       ...(input.label ? { labels: { has: input.label } } : {}),

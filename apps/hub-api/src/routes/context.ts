@@ -23,6 +23,7 @@ import { mirrorSettings } from "../spaces/store.js";
 import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/context.js";
 import { ARTIFACT_SUPPRESSION, artifactOrigin, artifactSuppressionKey, NOT_UPLOADED } from "../context/artifacts.js";
 import { ARTIFACT_KINDS } from "../desk/artifacts.js";
+import { NODE_TASK, ON_BOARD } from "../lib/node-tasks.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -419,7 +420,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/context/board", async (request) => {
     const userId = request.userId;
     const hideStarters = await hidesSignupStarters(prisma, userId);
-    const starterTask = hideStarters ? { NOT: { sourceRef: { startsWith: "template:" } } } : {};
+    const starterTask = { NOT: [NODE_TASK, ...(hideStarters ? [{ sourceRef: { startsWith: "template:" } }] : [])] };
     const starterPerson = hideStarters ? { OR: [{ upn: null }, { NOT: { upn: { startsWith: "template:" } } }] } : {};
     const starterDeliverable = hideStarters
       ? { OR: [{ sourceRef: null }, { NOT: { sourceRef: { startsWith: "template:" } } }] }
@@ -801,7 +802,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, take: 200 }),
       prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true }, take: 200 }),
       prisma.task.findMany({
-        where: { userId, deletedAt: null, status: { not: "dropped" } },
+        where: { userId, deletedAt: null, status: { not: "dropped" }, ...ON_BOARD },
         select: { id: true, title: true, status: true },
         orderBy: { updatedAt: "desc" },
         take: 300,
@@ -854,6 +855,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
           where: {
             userId,
             deletedAt: null,
+            ...ON_BOARD,
             OR: [
               { status: { notIn: ["done", "dropped"] } },
               ...(recentDone

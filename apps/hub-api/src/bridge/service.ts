@@ -20,6 +20,7 @@ import {
   zonedDayRange,
 } from "./text.js";
 import { visibleArtifacts } from "../sharing/context.js";
+import { ON_BOARD } from "../lib/node-tasks.js";
 
 type Db = PrismaClient;
 
@@ -116,6 +117,7 @@ export async function listTasks(db: Db, userId: string, query: { status?: string
     where: {
       userId,
       deletedAt: null,
+      ...ON_BOARD,
       ...(query.status ? { status: query.status as never } : {}),
       ...(query.q
         ? {
@@ -447,7 +449,7 @@ export async function todayBriefing(db: Db, userId: string) {
   const day = zonedDayRange(zone);
   const [tasks, deliverables, meetings, approvals, decisions] = await Promise.all([
     db.task.findMany({
-      where: { userId, deletedAt: null },
+      where: { userId, deletedAt: null, ...ON_BOARD },
       orderBy: { updatedAt: "desc" },
       take: 200,
       select: { ...TASK_PUBLIC, project: { select: { name: true } }, repo: { select: { fullName: true } } },
@@ -889,6 +891,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       where: {
         userId,
         deletedAt: null,
+        ...ON_BOARD,
         OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }, { notes: { contains: q, mode: "insensitive" } }],
       },
       take: limit,

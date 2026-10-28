@@ -36,7 +36,7 @@ const INVALIDATES: Record<string, string[][]> = {
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
   deliverable: [["deliverables"], ["graph"]],
-  approval: [["approvals"], ["shell"]],
+  approval: [["approvals"], ["node-approvals"], ["shell"]],
   decision: [["decisions"], ["shell"]],
   "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
   notification: [["notifications"]],

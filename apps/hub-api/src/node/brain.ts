@@ -1,9 +1,10 @@
 /**
- * One node turn (docs/35 §7): the room's new messages become one user message in the node's own
+ * One node turn (docs/35 §5): the room's new messages become one user message in the node's own
  * assistant conversation, and Ensemble's assistant loop (assistant/agent.ts) answers with every
  * Hub tool plus the node tools. Writes follow the owner's Ensemble write policy; a turn started by
  * anyone but the owner holds every write for the owner's approval. Nothing runs on this server:
- * work on a computer is an Ensemble job (hub_assign_to_agent), always approved by the owner.
+ * work on a computer is done by the owner's own coding agents, in sessions the node controls
+ * (node/sessions.ts).
  */
 import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
 import type { FastifyInstance } from "fastify";
@@ -20,6 +21,10 @@ import { chatModelFor } from "./model.js";
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
+import { computerWorkAsks } from "./sessions.js";
+
+/** The assistant tools a node turn does without: its session tools replace them, scoped to the node's own sessions. */
+export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessions"] as const;
 
 
 export type TurnOutcome = { status: "done" | "failed" | "skipped"; model?: string; credits?: number | null; error?: string };
@@ -46,7 +51,7 @@ async function namesFor(app: FastifyInstance, room: NodeRoom, members: NodeRoomM
   };
 }
 
-async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean): Promise<{ text: string; rooms: AssistantRef[] }> {
+async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, members: NodeRoomMember[], ownerName: string, fromNonOwner: boolean, ownerOnly: boolean): Promise<{ text: string; rooms: AssistantRef[] }> {
   const prisma = app.prisma;
   const [nodes, rooms, memories, people] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: members.filter((row) => row.nodeId).map((row) => row.nodeId!) } } }),
@@ -71,8 +76,9 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     `You are ${node.name} (@${node.slug}), an Ensemble Node: a persistent AI teammate that belongs to ${ownerName}. Role: ${node.role}.`,
     node.charter ? `Your charter, from ${ownerName}:\n${node.charter}` : "",
     "",
-    `You work in ${ownerName}'s Ensemble workspace with the Ensemble tools (tasks, projects, pages, people, skills, notes). ` +
-      "You never run commands yourself: work on a computer is an Ensemble task assigned to an agent on your owner's paired computer (hub_assign_to_agent); your owner approves it, and you report the result when the run ends.",
+    `You work in ${ownerName}'s Ensemble workspace with the Ensemble tools (tasks, projects, pages, people, skills, notes, connected apps, the web). ` +
+      "You do not write code or run commands yourself. Work on a computer is done by your owner's own coding agents (Claude Code, Codex, Cursor, GitHub Copilot and the rest) on their paired computer and their own subscription, and you run those agents: " +
+      "start a session (node_session_start), send it the next message (node_session_send: queue, steer or replace), stop it (node_session_stop), and see what your sessions did (node_sessions). You hear when each run ends.",
     "",
     `Room: “${room.title}” (${room.kind === "dm" ? "a direct chat with your owner" : room.kind === "crew" ? "your owner and their nodes" : "a room with other people and their nodes"}). Members:`,
     ...roster,
@@ -88,6 +94,7 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     "- Use node_remember for lasting facts your owner tells you.",
     "- Look things up with the Ensemble tools before answering: search the workspace for notes, pages and tasks, read connected apps (Notion, Linear, Zotero and the rest your owner connected), and search the web when the answer is outside Ensemble.",
     computerFilesOn(node) ? "- In a chat with only your owner you may read files in the folders their paired computer shares (node_computer_files). Never quote a file in a room with other people." : "",
+    ...sessionRules(fromNonOwner, computerWorkAsks(node), !ownerOnly),
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
     memories.length ? `\nWhat you remember (newest first):\n${memories.map((row) => `- ${row.content}`).join("\n")}` : "",
   ];
@@ -220,7 +227,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
   let result: AssistantTurnResult;
   try {
-    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner);
+    const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
+    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly);
     result = await runAssistantTurn({
       app,
       userId: spaceId,
@@ -235,7 +243,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       modules: user.moduleSet,
       agentPersona: nodePersona.text,
       extraRefs: nodePersona.rooms,
-      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly: !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner)), redis: app.redis as never, dispatch: deps.dispatch }),
+      withoutTools: NODE_REPLACED_TOOLS,
+      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly, redis: app.redis as never, dispatch: deps.dispatch }),
       purpose: "Ensemble Node",
       signal: deps.signal,
       emit(frame) {
@@ -312,4 +321,23 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     });
   }
   return { status: "done", model: result.model, credits: result.credits };
+}
+
+/** How a node chooses and drives its agent sessions (node/sessions.ts). */
+export function sessionRules(fromNonOwner: boolean, asks: boolean, othersRead = false): string[] {
+  if (fromNonOwner) return ["- Only your owner can have work done on their computer: node_session_start sends them a request to approve, and you never share what their sessions did here."];
+  return [
+    "- Work on the computer: choose the session first (node_sessions lists yours; another node's sessions are never yours to use).",
+    "  - The same line of work in the same repository or folder (the next step, a fix to what it just did, a follow-up on top of it): node_session_send to that session. The agent remembers the work, and its provider reuses the cached conversation, which costs your owner less.",
+    "  - Unrelated work, another repository or folder, another computer or agent, or a session whose earlier work has nothing to do with this: node_session_start. Work in two repositories is two sessions.",
+    "  - While a run is going on: “then do Y” → delivery queue; “do X this way instead”, “also …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop.",
+    "  - Write the agent's message as your owner would to their agent: what to do and where, how to check it, what done looks like. Then tell your owner in a line what you started; the run card shows the rest.",
+    "  - Runs stay off the Ensemble board unless your owner wants a task there: then make it (hub_create_tasks) and pass its taskId.",
+    "  - Asked what you worked on: read node_sessions and answer per session, one line per task in it.",
+    othersRead
+      ? "  - Other people read this thread: starting work or sending a session a message makes an approval card for your owner, and you cannot list or stop sessions here. To manage them, your owner talks to you privately (Only me) or in your DM."
+      : asks
+        ? "  - Your owner asked you to check with them first: starting work or sending a session a message makes an approval card for them."
+        : "",
+  ].filter(Boolean);
 }

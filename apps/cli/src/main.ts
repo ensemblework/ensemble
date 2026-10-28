@@ -1,4 +1,4 @@
-import { answerFor, answerPending, browseFiles, connectedHooks, webAccess, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, browseFiles, connectedHooks, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import { formatSessions, listSessions } from "./sessions.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
@@ -95,7 +95,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   folders:
     "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
-  needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
+  needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust, then what your Ensemble Node nodes wait on (answered on Node or in Ensemble).",
   sessions: "Usage: ensemble sessions [list] [--json]\nThe coding-agent sessions on this computer, newest first: one conversation with Claude Code, Codex, Copilot or another agent, carried across the tasks continued in it (Continue an earlier task resumes it).",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
   hooks:
@@ -499,8 +499,12 @@ async function commandNeeds(args: string[]): Promise<void> {
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
   if (subcommand === "list") {
-    const rows = await withAdminApi({ sidecarDir, run: listPending });
+    const [rows, cards] = await Promise.all([withAdminApi({ sidecarDir, run: listPending }), nodeCards().catch(() => [])]);
     console.log(formatPending(rows));
+    if (cards.length) {
+      const { nodeWebUrl } = await import("./tui/node.js");
+      console.log(`\n${formatNodeCards(cards, nodeWebUrl((await loadConfig()).appUrl))}`);
+    }
     return;
   }
   const [number, ...words] = args.slice(1);

@@ -2524,7 +2524,13 @@ model NodeRun {
   messageId  String?   @map("message_id")
   jobId      String    @unique @map("job_id")
   taskId     String    @map("task_id")
-  /// The job status last seen.
+  /// The agent session the run belongs to: its first run's job id. The node of the session's first node run owns it.
+  sessionId  String?   @map("session_id")
+  /// What the node asked the agent to do, for session summaries.
+  prompt     String?
+  /// Started by the node itself (node/sessions.ts): its task is internal and stays off the board.
+  direct     Boolean   @default(false)
+  /// The job status last seen; `steered` when a newer message in the session took over.
   status     String    @default("queued")
   reportedAt DateTime? @map("reported_at")
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -2533,6 +2539,8 @@ model NodeRun {
 
   @@index([status])
   @@index([userId, createdAt])
+  @@index([sessionId])
+  @@index([nodeId, status])
   @@map("node_runs")
 }
 

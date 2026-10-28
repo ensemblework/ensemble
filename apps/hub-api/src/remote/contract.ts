@@ -165,6 +165,8 @@ export const JobSpec = z
     keepsFileText: z.boolean().optional(),
     /** This run carries on `continueFromJobId`, cut off when this computer restarted (protocol 5). */
     resume: z.object({ reason: text(300), attempt: z.number().int().min(1).max(10) }).nullish(),
+    /** This run changes the one it continues, which was interrupted for it (Ensemble Node's steer). Older servers omit it. */
+    steer: z.object({ update: text(8000) }).nullish(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
