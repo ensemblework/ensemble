@@ -536,7 +536,7 @@ test("a crew works through one plan: only the lead answers, steps run in order a
   assert.equal(rooms.find((row) => row.id === crew.id)!.unread, 2, "cards inside the plan are not unread messages");
 });
 
-test("stopping a crew stops its plan and the runs its steps started; a step that keeps failing reports instead of retrying", async () => {
+test("stopping a crew stops its plan and the runs its steps started; a step whose runs keep failing reports instead of retrying", async () => {
   const kofi = await person("Kofi");
   await laptopFor(kofi, "Kofi's laptop");
   const ids: string[] = [];
@@ -583,7 +583,7 @@ test("stopping a crew stops its plan and the runs its steps started; a step that
   const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
   assert.equal(second.data.steps[0].status, "blocked");
   assert.equal(second.data.steps.length, 1);
-  assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "at most four runs for one step");
+  assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "a step stops after four failed runs");
   assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
 });
 
@@ -1146,4 +1146,36 @@ test("a step whose turn fails after it started a run waits for that run instead 
   await settleTurns();
   plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
   assert.deepEqual([plan.data.status, plan.data.steps[0].status, plan.data.steps[0].result], ["done", "done", "README updated."]);
+});
+
+test("a step may keep its session going as long as its runs work", async () => {
+  const kofi = await person("Kofi");
+  await laptopFor(kofi, "Kofi's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer"]) ids.push((await createNode(kofi, template)).node.id);
+  const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Long work", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
+  let session = "";
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Done in six rounds." };
+    if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it in rounds." } }], then: "Planned." };
+    if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) {
+      const round = seen.filter((row) => row.slug === "builder" && row.transcript.includes("This run was for your plan step")).length;
+      if (round < 6) return { ...sendCall(session, `Round ${round + 1}.`, "queue", `Round ${round + 1}`), then: "(no reply)" };
+      return { text: "Built in six rounds." };
+    }
+    if (turn.slug === "builder") return { ...startCall("Round 1", "Round 1."), then: "(no reply)" };
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "build it in rounds");
+  for (let round = 0; round < 8; round += 1) {
+    const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
+    if (!open.length) break;
+    session ||= open[0]!.id;
+    for (const job of open) await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", summary: "Round done.", startedAt: new Date(), claimedAt: new Date(), finishedAt: new Date() } });
+    await pollRuns(h.app);
+    await settleTurns();
+  }
+  const plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
+  assert.deepEqual([plan.data.steps[0].status, plan.data.steps[0].result], ["done", "Built in six rounds."]);
+  assert.equal(await h.prisma.nodeRun.count({ where: { planId: plan.id } }), 6, "runs that work are never capped");
 });
