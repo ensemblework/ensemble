@@ -327,6 +327,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
 export function sessionRules(fromNonOwner: boolean, asks: boolean, othersRead = false): string[] {
   if (fromNonOwner) return ["- Only your owner can have work done on their computer: node_session_start sends them a request to approve, and you never share what their sessions did here."];
   return [
+    "- Work on code or files on your owner's computer (“fix…”, “add … to …”, “in my X folder or repo”, “run the tests”) is yours to do in this same turn: start or continue an agent session (node_session_start or node_session_send). Do not make an Ensemble task first and do not stop at a plan. Ensemble's playbooks name hub_assign_to_agent and hub_list_agent_sessions; in Ensemble Node those are node_session_start / node_session_send and node_sessions, and they need no task.",
     "- Work on the computer: choose the session first (node_sessions lists yours; another node's sessions are never yours to use).",
     "  - The same line of work in the same repository or folder (the next step, a fix to what it just did, a follow-up on top of it): node_session_send to that session. The agent remembers the work, and its provider reuses the cached conversation, which costs your owner less.",
     "  - Unrelated work, another repository or folder, another computer or agent, or a session whose earlier work has nothing to do with this: node_session_start. Work in two repositories is two sessions.",

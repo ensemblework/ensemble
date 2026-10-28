@@ -555,7 +555,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
     name: "node_session_start",
     area: "tasks",
     description:
-      "Start a new session with one of your owner's own coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity) on their paired computer and their own subscription: the agent does the work in a folder that computer shares (folder), a fresh clone (repoUrl) or a new empty folder, and you hear when it ends. " +
+      "Do work on your owner's computer now (no Ensemble task needed): start a new session with one of their own coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity) on their paired computer and their own subscription: the agent does the work in a folder that computer shares (folder), a fresh clone (repoUrl) or a new empty folder, and you hear when it ends. " +
       "Their default run profile decides the agent, computer, mode and git rules unless you name others (profile, agent, computer, model, effort, mode, branch, pullRequest). " +
       "For work that builds on what one of your sessions already did, use node_session_send instead. Off the board unless you pass taskId.",
     input: StartInput,
