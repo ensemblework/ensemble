@@ -482,7 +482,7 @@ test("a crew works through one plan: only the lead answers, steps run in order a
     if (turn.slug === "manager" && turn.transcript.includes("divide the work")) {
       return {
         calls: [
-          { name: "node_delegate", arguments: { to: "builder", brief: "Make custom boards match the default board, and let the page bar resize with a minimum width. Work in the ensemble folder." } },
+          { name: "node_delegate", arguments: { to: "builder", brief: "Make custom boards match the default board, and let the page bar resize with a minimum width. Work in the ensemble folder.", agent: "codex", model: "gpt-5.5-codex", effort: "Extra High", context: "long_context" } },
           { name: "node_delegate", arguments: { to: "builder-2", brief: "Expire Needs Me requests when their task ends." } },
           { name: "node_delegate", arguments: { to: "tester", brief: "Test all three changes.", after: ["builder", "builder-2"] } },
           { name: "node_delegate", arguments: { to: "docs", brief: "Update the docs for what changed.", after: ["tester"] } },
@@ -514,6 +514,7 @@ test("a crew works through one plan: only the lead answers, steps run in order a
 
   // The builder's run ends; then the tester, then docs, then the lead reports once.
   const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: kofi.id, deviceId: laptop.id } });
+  assert.deepEqual([job.provider, job.model, job.reasoningEffort, (job.context as { contextTier?: string }).contextTier], ["codex", "gpt-5.5-codex", "xhigh", "long_context"], "the step's run goes as the owner asked the lead");
   const runCard = (await read(kofi, crew.id)).find((row) => row.kind === "run")!;
   assert.equal(runCard.data.plan.id, plan.id, "the step's run card belongs inside the plan card");
   await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", summary: "Boards and page bar done.", finishedAt: new Date() } });
@@ -1119,4 +1120,30 @@ test("steps that finish together start the next one once; a declined step card l
   await say(ben, room.id, "@manager have your builder do my thing");
   const plans = await h.prisma.nodeMessage.count({ where: { kind: "plan", userId: kofi.id } });
   assert.equal(plans, 2, "no plan was made for Ben's request");
+});
+
+test("a step whose turn fails after it started a run waits for that run instead of ending blocked", async () => {
+  const kofi = await person("Kofi");
+  await laptopFor(kofi, "Kofi's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "docs-writer"]) ids.push((await createNode(kofi, template)).node.id);
+  const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Docs team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
+  let docsCalls = 0;
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Docs updated." };
+    if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "docs", brief: "Update the README." } }], then: "Planned." };
+    if (turn.slug === "docs" && turn.transcript.includes("This run was for your plan step")) return { text: "README updated." };
+    // The first call starts a run; the model then fails on its final answer.
+    if (turn.slug === "docs") return ++docsCalls === 1 ? startCall("Update the README", "Update the README.") : { rateLimited: true };
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "have the docs writer update the readme");
+  let plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
+  assert.equal(plan.data.steps[0].status, "working", "its run is still going");
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: kofi.id } });
+  await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", summary: "README updated.", finishedAt: new Date() } });
+  await pollRuns(h.app);
+  await settleTurns();
+  plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
+  assert.deepEqual([plan.data.status, plan.data.steps[0].status, plan.data.steps[0].result], ["done", "done", "README updated."]);
 });

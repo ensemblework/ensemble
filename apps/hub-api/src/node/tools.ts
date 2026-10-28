@@ -266,6 +266,10 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         to: Handle.describe("The node's handle, for example tester."),
         brief: z.string().min(1).max(4000).describe("What to do, with links to the task or page, and what done looks like."),
         after: z.array(Handle).max(11).optional().describe("Handles of nodes already in this plan whose steps must be done before this one starts, for example [\"builder\", \"swe-2\"]."),
+        agent: z.string().max(40).optional().describe("Only when your owner names the coding agent for this work: claude-code, codex, cursor-agent, copilot-cli (GitHub Copilot), grok-cli, opencode, gemini-cli, antigravity."),
+        model: z.string().max(120).optional().describe("Only when your owner names a model for the agent runs (as they wrote it, for example GPT 6.1 Sol)."),
+        effort: z.string().max(20).optional().describe("Only when your owner names a thinking level (low, medium, high, extra high, max)."),
+        context: z.enum(["default", "long_context"]).optional().describe("long_context when your owner asks for the long (1M) context window."),
       }).strict(),
       isWrite: false,
       risk: "low",
@@ -315,7 +319,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
             originRoomId: scope.room.id,
             originPrivate: Boolean(scope.privateTo),
             visibleTo,
-            step: { node: target, handle: member.handle, brief: input.brief, after: input.after ?? [] },
+            step: { node: target, handle: member.handle, brief: input.brief, after: input.after ?? [], run: { agent: input.agent, model: input.model, effort: input.effort, context: input.context } },
           });
           const after = input.after?.length ? ` after ${input.after.map((handle) => `@${handle}`).join(", ")}` : "";
           return toolOk(

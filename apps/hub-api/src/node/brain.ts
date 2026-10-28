@@ -25,7 +25,7 @@ import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js
 import { computerWorkAsks } from "./sessions.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { mayRetry } from "./queue.js";
-import { afterReport, currentPlan, finishStep, startPlan, stepCardsWaiting, stepLive, stepProgress, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
+import { afterReport, currentPlan, finishStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -128,7 +128,7 @@ async function persona(
       ? ""
       : "  - Work for your owner's other nodes: node_delegate, once per piece of work, builds one plan that runs in order without any chat between nodes; you hear back once, when it ends. A node or a crew your owner asks for (“make a node that…”, “make a group with…”): node_create, node_create_group. Report in another room with node_post.",
     !step && leadsHere
-      ? `- You lead this crew: your owner's messages here come to you, the others never read the chat and do nothing until your plan gives them a step. When your owner asks for work by several nodes (or to coordinate), make the whole plan in this one turn: node_delegate per piece of work, with after for order (build first, test after the builds, docs last). Put into every brief what your owner said about where to work, models, thinking level and what not to do. Your reply opens the plan: one or two lines, not the list of steps (the card shows them). When the plan ends you get every report at once; then tell your owner once.`
+      ? `- You lead this crew: your owner's messages here come to you, the others never read the chat and do nothing until your plan gives them a step. When your owner asks for work by several nodes (or to coordinate), make the whole plan in this one turn: node_delegate per piece of work, with after for order (build first, test after the builds, docs last). Put into every brief what your owner said about where to work and what not to do, and pass the agent, model, thinking level and context they named on every step (node_delegate agent, model, effort, context: the step's runs then use them). Your reply opens the plan: one or two lines, not the list of steps (the card shows them). When the plan ends you get every report at once; then tell your owner once.`
       : "",
     !step && room.kind === "crew" && !leadsHere ? `- In this crew your owner talks to ${leadHandle ? `@${leadHandle}` : "the lead"}; you answer here only when your owner mentions you alone. Work for a plan comes to you as a step.` : "",
     !step && room.kind === "room" ? "- When another node asked you for something, finish by mentioning it (for example @manager) with the result." : "",
@@ -423,7 +423,10 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   }
   if (result.failed) {
     // A step that failed ends as blocked (or stopped) on its plan, which its lead reports; no notice in the room.
-    if (step) await finishStep(app, step.planId, step.stepId, { status: result.interrupted ? "stopped" : "blocked", result: result.interrupted ? "Stopped." : `@${node.slug} could not do its step: ${result.content}` });
+    // A failed turn after it started a run (the model gave no final answer) leaves the step to that run.
+    if (step && result.interrupted) await finishStep(app, step.planId, step.stepId, { status: "stopped", result: "Stopped." });
+    else if (step && (await stepPending(prisma, step.planId, step.stepId))) await stepProgress(prisma, step.planId, step.stepId, "Waiting for its agent run.");
+    else if (step) await finishStep(app, step.planId, step.stepId, { status: "blocked", result: `@${node.slug} could not do its step: ${result.content}` });
     else {
       await ownerNotice(app, node, room.id, result.content);
       // Steps the lead added before its turn failed still run; a stopped turn's plan stops with it.
