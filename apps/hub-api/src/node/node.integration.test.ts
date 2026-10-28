@@ -25,9 +25,11 @@ const { RunProfile } = await import("@ensemble/shared-types");
 const { sha256 } = await import("../lib/auth.js");
 const { sseHub } = await import("../lib/sse.js");
 const { sweepHelpers, HELPER_IDLE_MS } = await import("./helpers.js");
+const { RuntimeError } = await import("../lib/runtime-error.js");
+const { setTurnRetryDelaysForTests } = await import("./queue.js");
 after(() => h.close());
 
-type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string };
+type Step = { calls?: Array<{ name: string; arguments: Record<string, unknown> }>; text?: string; then?: string; rateLimited?: boolean };
 type Seen = { slug: string; transcript: string; system: string; tools: string[]; files: Array<{ filename: string; data: string }>; effort?: string };
 let script: (turn: Seen) => Step = () => ({ text: "ok" });
 const seen: Seen[] = [];
@@ -43,6 +45,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { slug, transcript, system, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name), files, ...(args.reasoningEffort ? { effort: args.reasoningEffort } : {}) };
   if (!second) seen.push(current);
   const step = script(current);
+  if (step.rateLimited) throw new RuntimeError("Ensemble is rate-limiting this key. Wait about 1s and try again.", 429, false, "rate_limit");
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
@@ -91,7 +94,7 @@ async function say(user: HttpUser, roomId: string, body: string, extra: Record<s
 async function read(user: HttpUser, roomId: string) {
   const response = await user.inject({ method: "GET", url: `/api/node/rooms/${roomId}/messages` });
   assert.equal(response.statusCode, 200, response.body);
-  return json(response).messages as Array<{ id: string; kind: string; body: string; authorKind: string; authorNodeId: string | null; private: boolean; data: any }>;
+  return json(response).messages as Array<{ id: string; kind: string; body: string; authorKind: string; authorNodeId: string | null; private: boolean; planId?: string | null; data: any }>;
 }
 
 test("a DM turn acts in the owner's Ensemble with the assistant's tools and reports with tool chips", async () => {
@@ -465,29 +468,122 @@ test("in a room, a node speaks for its owner only after approval, and private th
   assert.ok(!(await read(mira, group.id)).some((row) => row.body === "Ben's side can review it."));
 });
 
-test("a manager delegates to its crew, and the crew reports back by mention", async () => {
+test("a crew works through one plan: only the lead answers, steps run in order and silently, and the owner gets the plan and one report", async () => {
   const kofi = await person("Kofi");
+  const { laptop } = await laptopFor(kofi, "Kofi's laptop");
   const ids: string[] = [];
-  for (const template of ["manager", "feature-engineer", "tester", "docs-writer"]) ids.push((await createNode(kofi, template)).node.id);
+  for (const template of ["manager", "feature-engineer", "feature-engineer", "tester", "docs-writer"]) ids.push((await createNode(kofi, template)).node.id);
   const made = await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Software team", nodeIds: ids, leadNodeId: ids[0] } });
   assert.equal(made.statusCode, 201, made.body);
-  const crew = json(made).room as { id: string; members: Array<{ kind: string; handle: string }>; leadNodeIds: string[] };
-  assert.deepEqual(crew.members.filter((row) => row.kind === "node").map((row) => row.handle), ["manager", "builder", "tester", "docs"]);
+  const crew = json(made).room as { id: string; members: Array<{ kind: string; handle: string }> };
+  assert.deepEqual(crew.members.filter((row) => row.kind === "node").map((row) => row.handle), ["manager", "builder", "builder-2", "tester", "docs"]);
+
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Ship the docs page")) {
-      return { calls: [{ name: "node_delegate", arguments: { to: "docs", brief: "Write the release docs page. Mention @manager when done." } }], then: "Handed to the docs writer." };
+    if (turn.slug === "manager" && turn.transcript.includes("divide the work")) {
+      return {
+        calls: [
+          { name: "node_delegate", arguments: { to: "builder", brief: "Make custom boards match the default board, and let the page bar resize with a minimum width. Work in the ensemble folder." } },
+          { name: "node_delegate", arguments: { to: "builder-2", brief: "Expire Needs Me requests when their task ends." } },
+          { name: "node_delegate", arguments: { to: "tester", brief: "Test all three changes.", after: ["builder", "builder-2"] } },
+          { name: "node_delegate", arguments: { to: "docs", brief: "Update the docs for what changed.", after: ["tester"] } },
+        ],
+        then: "Plan: @builder and @builder-2 build, then @tester checks, then @docs. I'll report when it's done.",
+      };
     }
-    if (turn.slug === "docs") return { text: "@manager Docs page drafted." };
-    return { text: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Done: boards, page bar and Needs Me expiry are in, tested, and documented." };
+    if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) return { text: "Boards match the default board; the page bar resizes down to 200px. Tests pass." };
+    if (turn.slug === "builder") return { ...startCall("Board parity and page bar", "Make custom boards match the default board and let the page bar resize."), then: "(no reply)" };
+    if (turn.slug === "builder-2") return { text: "Needs Me requests now expire when their task ends." };
+    if (turn.slug === "tester") return { text: "All three changes pass." };
+    if (turn.slug === "docs") return { text: "Docs updated." };
+    return { text: "unexpected" };
   };
-  await say(kofi, crew.id, "Ship the docs page");
-  assert.deepEqual(seen.map((row) => row.slug), ["manager", "docs", "manager"]);
-  const messages = await read(kofi, crew.id);
-  const brief = messages.find((row) => row.body.startsWith("@docs Write the release docs page"))!;
-  assert.ok(brief, "the brief is posted in the crew room and wakes the docs node");
-  assert.ok(messages.some((row) => row.body === "@manager Docs page drafted."));
-  assert.ok(!messages.some((row) => row.body === "(no reply)"), "a node with nothing to say stays quiet");
-  assert.equal(json(await kofi.inject({ method: "GET", url: "/api/node/activity" })).turns.length, 3);
+  const asked = await say(kofi, crew.id, "Now lets divide the work. @manager please co-ordinate. @builder you will work on boards and the page bar, @builder-2 on Needs Me expiry. Then @tester tests, and @docs updates the docs.");
+
+  // Only the lead answered the owner; the builders started in parallel, nobody else woke.
+  assert.equal(seen[0]!.slug, "manager");
+  assert.ok(seen[0]!.tools.includes("node_delegate"));
+  assert.deepEqual(seen.slice(1).map((row) => row.slug).sort(), ["builder", "builder-2"], "the testers and docs wait for their turn in the plan");
+  const builderTurn = seen.find((row) => row.slug === "builder")!;
+  assert.match(builderTurn.transcript, /Your step in @manager's plan \(step 1 of 4\)/);
+  assert.ok(!builderTurn.tools.includes("node_delegate") && !builderTurn.tools.includes("node_post"), "a step's node hands nothing on and posts nothing");
+  assert.ok(builderTurn.tools.includes("node_step_blocked"));
+  const plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
+  assert.equal(plan.body, "Plan: @builder and @builder-2 build, then @tester checks, then @docs. I'll report when it's done.", "the lead's reply opens the plan");
+  assert.deepEqual(plan.data.steps.map((row: { handle: string; status: string }) => [row.handle, row.status]), [["builder", "working"], ["builder-2", "done"], ["tester", "waiting"], ["docs", "waiting"]]);
+
+  // The builder's run ends; then the tester, then docs, then the lead reports once.
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: kofi.id, deviceId: laptop.id } });
+  const runCard = (await read(kofi, crew.id)).find((row) => row.kind === "run")!;
+  assert.equal(runCard.data.plan.id, plan.id, "the step's run card belongs inside the plan card");
+  await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", summary: "Boards and page bar done.", finishedAt: new Date() } });
+  seen.length = 0;
+  await pollRuns(h.app);
+  await settleTurns();
+  assert.deepEqual(seen.map((row) => row.slug), ["builder", "tester", "docs", "manager"], "in the plan's order, one turn each");
+  assert.match(seen.find((row) => row.slug === "tester")!.transcript, /Done before yours:[\s\S]*@builder \(done\): Boards match[\s\S]*@builder-2 \(done\): Needs Me requests/);
+  const report = seen.find((row) => row.slug === "manager")!;
+  assert.match(report.transcript, /Your plan ended[\s\S]*@docs \(done\): Docs updated\./);
+
+  const after = (await read(kofi, crew.id)).filter((row) => row.id !== asked.id && !row.planId);
+  assert.deepEqual(after.map((row) => row.kind), ["plan", "text"], "the owner sees the plan card and one report, nothing else");
+  assert.equal(after[1]!.body, "Done: boards, page bar and Needs Me expiry are in, tested, and documented.");
+  const final = after[0]!;
+  assert.equal(final.data.status, "done");
+  assert.ok(final.data.steps.every((row: { status: string }) => row.status === "done"));
+  const rooms = json(await kofi.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ id: string; unread: number }>;
+  assert.equal(rooms.find((row) => row.id === crew.id)!.unread, 2, "cards inside the plan are not unread messages");
+});
+
+test("stopping a crew stops its plan and the runs its steps started; a step that keeps failing reports instead of retrying", async () => {
+  const kofi = await person("Kofi");
+  await laptopFor(kofi, "Kofi's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer", "tester"]) ids.push((await createNode(kofi, template)).node.id);
+  const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("build it")) {
+      return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it." } }, { name: "node_delegate", arguments: { to: "tester", brief: "Test it.", after: ["builder"] } }], then: "On it." };
+    }
+    if (turn.slug === "builder") return { ...startCall("Build it", "Build it."), then: "(no reply)" };
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "@builder build it and @tester test it");
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: kofi.id } });
+  await working(job.id);
+  const stopped = await kofi.inject({ method: "POST", url: `/api/node/rooms/${crew.id}/stop`, payload: {} });
+  assert.equal(stopped.statusCode, 200, stopped.body);
+  await settleTurns();
+  assert.ok((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: job.id } })).cancelRequestedAt, "the step's run is stopped");
+  const plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
+  assert.equal(plan.data.status, "stopped");
+  assert.deepEqual(plan.data.steps.map((row: { status: string }) => row.status), ["stopped", "stopped"]);
+  await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "cancelled", finishedAt: new Date() } });
+  seen.length = 0;
+  await pollRuns(h.app);
+  await settleTurns();
+  assert.deepEqual(seen.map((row) => row.slug), [], "nobody reports a stopped plan");
+
+  // A step whose runs keep failing: after the cap the session tools refuse and the node reports.
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "The build kept failing; it needs you." };
+    if (turn.slug === "manager" && turn.transcript.includes("again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
+    if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "try it again");
+  for (let round = 0; round < 6; round += 1) {
+    const open = await h.prisma.workspaceJob.findMany({ where: { userId: kofi.id, status: "queued" } });
+    if (!open.length) break;
+    await h.prisma.workspaceJob.updateMany({ where: { id: { in: open.map((row) => row.id) } }, data: { status: "failed", error: "The model refused.", finishedAt: new Date() } });
+    await pollRuns(h.app);
+    await settleTurns();
+  }
+  const second = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
+  assert.equal(second.data.steps[0].status, "blocked");
+  assert.equal(second.data.steps.length, 1);
+  assert.equal(await h.prisma.nodeRun.count({ where: { planId: second.id } }), 4, "at most four runs for one step");
+  assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build kept failing; it needs you."));
 });
 
 test("the CLI's Node tab reads a bridge overview; Node routes refuse narrow keys; deleting a node removes its DM", async () => {
@@ -913,4 +1009,114 @@ test("declining and saving a secret card cannot both win, and a save a restart l
   assert.deepEqual([one.statusCode, two.statusCode].sort(), [200, 409], "answered once");
   await settleTurns();
   assert.equal(seen.filter((turn) => /declined to give STRIPE_KEY/.test(turn.transcript)).length, 1, "the node hears it once");
+});
+
+test("a rate-limited turn tries again quietly; nodes cannot post into the conversation they reply in", async () => {
+  const mira = await person("Mira");
+  const { room } = await createNode(mira, "assistant");
+  setTurnRetryDelaysForTests([5, 5, 5]);
+  try {
+    let tries = 0;
+    script = () => (++tries < 3 ? { rateLimited: true } : { text: "Here it is." });
+    await say(mira, room.id, "summarise my week");
+    assert.equal(tries, 3);
+    const rows = await read(mira, room.id);
+    assert.deepEqual(rows.filter((row) => row.authorKind === "node").map((row) => [row.kind, row.body]), [["text", "Here it is."]], "no error notice, one answer");
+
+    script = () => ({ calls: [{ name: "node_post", arguments: { room: room.id, body: "Posting here too." } }], then: "Done." });
+    await say(mira, room.id, "tell me twice");
+    assert.ok(!(await read(mira, room.id)).some((row) => row.body === "Posting here too."), "node_post refuses the conversation the reply goes to");
+  } finally {
+    setTurnRetryDelaysForTests(null);
+  }
+});
+
+test("a session's model is resolved by name on the computer, an unsupported thinking level is refused, and an old computer cannot continue a session", async () => {
+  const mira = await person("Mira");
+  const { laptop } = await laptopFor(mira, "Mira's laptop");
+  const agents = [{ id: "copilot-cli", via: "cli", version: "1.0", signedIn: true, checkedAt: new Date().toISOString(), models: [{ id: "auto", label: "Auto" }, { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", efforts: ["low", "medium", "high", "xhigh"] }] }];
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { appVersion: "cli-0.4.16", capabilities: { folders: ["ensemble"], engines: ["claude-code", "codex", "copilot-cli"], agents } } });
+  const { room } = await createNode(mira, "assistant");
+  const start = (model: string, effort: string) => ({ calls: [{ name: "node_session_start", arguments: { title: "Fix it", prompt: "Fix it.", folder: "ensemble", agent: "copilot-cli", model, effort } }], then: "Started." });
+
+  script = () => start("GPT 6.1 sol", "Extra High");
+  await say(mira, room.id, "fix it with GPT 6.1 sol at extra high");
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id }, orderBy: { createdAt: "desc" } });
+  assert.deepEqual([job.provider, job.model, job.reasoningEffort], ["copilot-cli", "gpt-6.1-sol", "xhigh"], "the model's label and the level's words become what Copilot takes");
+
+  script = () => start("GPT 9 turbo", "high");
+  await say(mira, room.id, "fix it with GPT 9 turbo");
+  script = () => start("gpt-6.1-sol", "max");
+  await say(mira, room.id, "fix it at max");
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), 1, "no run is made for a model or level the agent would refuse");
+
+  // 0.4.16 opens a new agent session for every message: continuing is refused, not spread over new sessions.
+  await working(job.id);
+  script = () => sendCall(job.id, "Then add tests.", "queue", "Add tests");
+  await say(mira, room.id, "then add tests");
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), 1);
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { appVersion: "cli-0.4.20" } });
+  await say(mira, room.id, "then add tests");
+  assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), 2, "an up-to-date computer continues the session");
+});
+
+
+test("steps that finish together start the next one once; a declined step card lets its step finish; nobody else can make a plan for the owner's crew", async () => {
+  const kofi = await person("Kofi");
+  await laptopFor(kofi, "Kofi's laptop");
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer", "feature-engineer", "tester"]) ids.push((await createNode(kofi, template)).node.id);
+  const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "All done." };
+    if (turn.slug === "manager") {
+      return {
+        calls: [
+          { name: "node_delegate", arguments: { to: "builder", brief: "Part one." } },
+          { name: "node_delegate", arguments: { to: "builder-2", brief: "Part two." } },
+          { name: "node_delegate", arguments: { to: "tester", brief: "Test both.", after: ["builder", "builder-2"] } },
+        ],
+        then: "Planned.",
+      };
+    }
+    if (turn.slug === "tester") return { text: "Both pass." };
+    return { text: `${turn.slug} done.` };
+  };
+  await say(kofi, crew.id, "do both parts, then test");
+  assert.deepEqual(seen.map((row) => row.slug).sort(), ["builder", "builder-2", "manager", "manager", "tester"], "the tester and the report run once each");
+
+  // With Ask me first, the step's session waits for a card; declining it lets the step finish.
+  await h.prisma.nodeAgent.update({ where: { id: ids[1] }, data: { autonomy: { computerWork: "ask" } } });
+  seen.length = 0;
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "The build was not run: you declined it." };
+    if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it on the laptop." } }], then: "Planned." };
+    if (turn.slug === "builder" && turn.transcript.includes("declined")) return { text: "Nothing was run: my owner declined the build." };
+    if (turn.slug === "builder") return { ...startCall("Build it", "Build it."), then: "(no reply)" };
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "build it on the laptop");
+  const plan = (await read(kofi, crew.id)).filter((row) => row.kind === "plan").at(-1)!;
+  assert.equal(plan.data.steps[0].status, "working", "the step waits for its card");
+  const card = (await read(kofi, crew.id)).find((row) => row.kind === "approval" && row.data.type === "session" && row.data.status === "pending")!;
+  assert.equal(card.data.plan.id, plan.id);
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 200);
+  await settleTurns();
+  const after = (await read(kofi, crew.id)).find((row) => row.id === plan.id)!;
+  assert.equal(after.data.status, "done");
+  assert.match(after.data.steps[0].result, /declined/);
+  assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build was not run: you declined it."));
+
+  // Another person in a room cannot have the owner's nodes put to work.
+  const ben = await person("Ben");
+  const made = await kofi.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Shared", nodeIds: [ids[0]], invite: [ben.email] } });
+  const room = json(made).room as { id: string };
+  const invite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  const { node: bensNode } = await createNode(ben, "assistant");
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } })).statusCode, 201);
+  await h.prisma.nodeAgent.update({ where: { id: ids[0] }, data: { autonomy: { sharedRooms: "auto" } } });
+  script = (turn) => (turn.slug === "manager" ? { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Do Ben's thing." } }], then: "I can't hand that out." } : { text: "(no reply)" });
+  await say(ben, room.id, "@manager have your builder do my thing");
+  const plans = await h.prisma.nodeMessage.count({ where: { kind: "plan", userId: kofi.id } });
+  assert.equal(plans, 2, "no plan was made for Ben's request");
 });

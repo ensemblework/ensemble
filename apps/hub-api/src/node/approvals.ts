@@ -13,6 +13,7 @@ import { refsNote, savedRefs } from "../assistant/refs.js";
 import { sessionOfJob } from "../workspace/sessions.js";
 import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
+import { finishStep, planLinkOf } from "./plans.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -153,7 +154,9 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   const spaceId = node.userId;
   if (input.decision === "discard") {
     await markCalls(app, parsed.conversationId, spaceId, new Set(parsed.calls.map((call) => call.callId)), NOT_APPROVED);
-    return updateMessageData(prisma, current, { status: "discarded" });
+    const discarded = await updateMessageData(prisma, current, { status: "discarded" });
+    await declinedInStep(app, node, card, "the changes it asked to make");
+    return discarded;
   }
   const started = new Date();
   const response = await app.inject({
@@ -188,6 +191,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     nodeId: node.id,
     roomId: card.roomId,
     reason: "approval",
+    ...(planLinkOf(card.data) ?? {}),
     // The summary names records by title; their ids follow as links for the node's next calls.
     note: `Your owner approved and it was applied: ${(result.summary || "done").replace(/\.+$/, "")}.${refsNote(savedRefs(result.refs)) ? ` ${refsNote(savedRefs(result.refs))}` : ""}${failures ? ` These failed: ${failures}.` : ""}${assigned.length ? " The computer run started; you will hear when it ends." : ""} Continue the plan if there is more to do; otherwise reply ${"(no reply)"}.`,
     private: parsed.private === true,
@@ -204,7 +208,11 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
   const parsed = SessionCard.parse(card.data);
   const data = await claim(app, card);
   const current = { ...card, data: data as Prisma.JsonValue };
-  if (input.decision === "discard") return updateMessageData(prisma, current, { status: "discarded" });
+  if (input.decision === "discard") {
+    const discarded = await updateMessageData(prisma, current, { status: "discarded" });
+    await declinedInStep(app, node, card, "the work it asked to start on the computer");
+    return discarded;
+  }
   const room = await prisma.nodeRoom.findUnique({ where: { id: card.roomId } });
   if (!room) throw new ApprovalError("That conversation is gone.", 404);
   const call = { action: parsed.action, input: parsed.input } as SessionCall;
@@ -219,6 +227,7 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
         room,
         lineage: { rootMessageId: card.rootMessageId, botDepth: card.botDepth, fromNonOwner: false },
         privateTo: parsed.private ? [node.userId] : null,
+        plan: planLinkOf(card.data),
       },
       call,
     );
@@ -233,6 +242,22 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
     reason: "approval",
     note: `Your owner approved and it started: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
     private: parsed.private === true,
+    ...(planLinkOf(card.data) ?? {}),
   });
   return updated;
 }
+
+/** A plan step waits for its cards: when the owner says no to one, its node hears it and finishes the step. */
+async function declinedInStep(app: FastifyInstance, node: NodeAgent, card: NodeMessage, what: string): Promise<void> {
+  const link = planLinkOf(card.data);
+  if (!link?.planStep) return;
+  const queued = await enqueueTurn(app, {
+    nodeId: node.id,
+    roomId: card.roomId,
+    reason: "approval",
+    note: `Your owner declined ${what}. Finish your step without it (reply with what was done), or call node_step_blocked with why it cannot be done.`,
+    ...link,
+  });
+  if (!queued) await finishStep(app, link.planId, link.planStep, { status: "blocked", result: `Your owner declined ${what}.` });
+}
+

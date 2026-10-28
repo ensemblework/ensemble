@@ -16,6 +16,7 @@ import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assist
 import { publishTo } from "./events.js";
 import { handleFrom, uniqueHandle } from "./mentions.js";
 import { stopTurns } from "./queue.js";
+import { stopPlans } from "./plans.js";
 import { addNode, addPerson, createNode, freeRoomTitle, nodeNameTaken, numbered, roomTitleTaken } from "./store.js";
 import { NODE_TEMPLATES } from "./templates.js";
 import type { SessionToolScope } from "./sessions.js";
@@ -37,6 +38,7 @@ const Handle = z.string().min(1).max(60).transform((value) => value.trim().repla
 /** Removes a node with its direct chat or task room, its runs and its conversations. */
 export async function deleteNode(app: FastifyInstance, node: Pick<NodeAgent, "id" | "userId">): Promise<string[]> {
   await stopTurns(app, [node.id], null);
+  await stopPlans(app, { nodeId: node.id, userId: node.userId });
   return removeNodeRows(app.prisma, node);
 }
 

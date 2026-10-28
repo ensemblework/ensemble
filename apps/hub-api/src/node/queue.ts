@@ -15,6 +15,7 @@ import { defaultChatModel } from "./model.js";
 import { MAX_BOT_STREAK, botStreak, parseRelevance, relevancePrompt, whoSpeaks, type RelevanceCandidate, type RouteNode } from "./router.js";
 import { publishTo } from "./events.js";
 import { postMessage, roomSettings } from "./store.js";
+import { planTurnEnded } from "./plans.js";
 
 const PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_PARALLEL ?? 4) || 4);
 /** Queued turns older than this when the server starts are dropped, not run late. */
@@ -23,7 +24,7 @@ const STALE_MS = 60 * 60 * 1000;
 let active = 0;
 const waiting: Array<() => void> = [];
 const chains = new Map<string, Promise<void>>();
-const live = new Map<string, { controller: AbortController; nodeId: string; roomId: string | null }>();
+const live = new Map<string, { controller: AbortController; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null }>();
 
 async function acquire(): Promise<void> {
   if (active < PARALLEL) {
@@ -39,18 +40,37 @@ function release(): void {
   waiting.shift()?.();
 }
 
-export type TurnRequest = { nodeId: string; roomId: string; reason: string; triggerMessageId?: string | null; note?: string | null; private?: boolean };
+export type TurnRequest = {
+  nodeId: string;
+  roomId: string;
+  reason: string;
+  triggerMessageId?: string | null;
+  note?: string | null;
+  private?: boolean;
+  /** A plan's turn (node/plans.ts): a step's worker turn, or the lead's report. */
+  planId?: string | null;
+  planStep?: string | null;
+  attempt?: number;
+};
+
+/** Rate-limited turns try again quietly this many times, this far apart. */
+const RETRIES = 3;
+const RETRY_MS = [8_000, 30_000, 90_000];
 
 function tainted(message: Pick<NodeMessage, "userId" | "data"> | null, owner: string): boolean {
   return Boolean(message && (message.userId !== owner || (message.data as { fromNonOwner?: unknown } | null)?.fromNonOwner === true));
 }
 
-export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): Promise<void> {
+/** Queues a node's turn (or adds to the one already waiting there); false when the node is paused or gone. */
+export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): Promise<boolean> {
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: request.nodeId }, select: { userId: true, status: true } });
-  if (!node || node.status !== "active") return;
+  if (!node || node.status !== "active") return false;
   const isPrivate = request.private ?? false;
-  const queued = await prisma.nodeTurn.findFirst({ where: { nodeId: request.nodeId, roomId: request.roomId, status: "queued", private: isPrivate } });
+  // A plan's turns stay apart: a step's turn never takes in another step's or a chat's.
+  const queued = await prisma.nodeTurn.findFirst({
+    where: { nodeId: request.nodeId, roomId: request.roomId, status: "queued", private: isPrivate, planId: request.planId ?? null, planStep: request.planStep ?? null },
+  });
   if (queued) {
     // The queued turn reads every new message anyway. It answers the newest one, unless the one it
     // holds came from someone other than the owner: that keeps the turn's writes held for approval.
@@ -63,7 +83,7 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       where: { id: queued.id },
       data: { note, ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }) },
     });
-    return;
+    return true;
   }
   const turn = await prisma.nodeTurn.create({
     data: {
@@ -74,9 +94,13 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       triggerMessageId: request.triggerMessageId ?? null,
       note: request.note ?? null,
       private: isPrivate,
+      planId: request.planId ?? null,
+      planStep: request.planStep ?? null,
+      attempt: request.attempt ?? 0,
     },
   });
   schedule(app, turn);
+  return true;
 }
 
 function schedule(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId">): void {
@@ -96,9 +120,15 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     if (claimed.count !== 1) return;
     const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
     const controller = new AbortController();
-    live.set(turnId, { controller, nodeId: turn.nodeId, roomId: turn.roomId });
+    live.set(turnId, { controller, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep });
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
+      if (outcome.status === "retry") {
+        // The model's rate limit: the same turn again a little later, without a message in the room.
+        await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "failed", error: truncateText(outcome.error ?? "Rate limited.", 500), finishedAt: new Date() } });
+        await retryLater(app, turn);
+        return;
+      }
       await prisma.nodeTurn.update({
         where: { id: turnId },
         data: {
@@ -109,17 +139,72 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
           finishedAt: new Date(),
         },
       });
+      if (outcome.status !== "done") await planTurnEnded(app, turn, outcome.error ? `Its node could not take its turn: ${truncateText(outcome.error, 300)}` : "Its node could not take its turn.");
     } finally {
       live.delete(turnId);
     }
   } catch (error) {
     app.log.error({ err: error, turnId }, "Node turn failed");
-    await prisma.nodeTurn
+    const failed = await prisma.nodeTurn
       .update({ where: { id: turnId }, data: { status: "failed", error: truncateText(safePublicError(error), 500), finishedAt: new Date() } })
-      .catch(() => undefined);
+      .catch(() => null);
+    if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
     release();
   }
+}
+
+/** Retries waiting for their time, with what ends their background work. */
+const delayed = new Map<ReturnType<typeof setTimeout>, () => void>();
+let retryDelays: readonly number[] = RETRY_MS;
+
+export function setTurnRetryDelaysForTests(delays: readonly number[] | null): void {
+  retryDelays = delays ?? RETRY_MS;
+}
+
+/** Runs a queued turn once its time comes (a retry's `runAfter`); counted as background work. */
+function scheduleLater(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "runAfter">): void {
+  const wait = Math.max(0, (turn.runAfter?.getTime() ?? 0) - Date.now());
+  if (!wait) return schedule(app, turn);
+  let done: () => void = () => undefined;
+  inBackground(app, () => new Promise<void>((resolve) => (done = resolve)));
+  const timer = setTimeout(() => {
+    delayed.delete(timer);
+    schedule(app, turn);
+    done();
+  }, wait);
+  timer.unref?.();
+  delayed.set(timer, done);
+}
+
+/** The same turn again later, as a queued row: a restart runs it, a Stop drops it. */
+async function retryLater(app: FastifyInstance, turn: NodeTurn): Promise<void> {
+  const node = await app.prisma.nodeAgent.findUnique({ where: { id: turn.nodeId }, select: { status: true } });
+  if (node?.status !== "active") {
+    await planTurnEnded(app, turn, "Its node was paused before it could try again.");
+    return;
+  }
+  const next = await app.prisma.nodeTurn.create({
+    data: {
+      userId: turn.userId,
+      nodeId: turn.nodeId,
+      roomId: turn.roomId,
+      reason: turn.reason,
+      triggerMessageId: turn.triggerMessageId,
+      note: turn.note,
+      private: turn.private,
+      planId: turn.planId,
+      planStep: turn.planStep,
+      attempt: turn.attempt + 1,
+      runAfter: new Date(Date.now() + retryDelays[Math.min(turn.attempt, retryDelays.length - 1)]!),
+    },
+  });
+  scheduleLater(app, next);
+}
+
+/** Whether a turn the model's rate limit stopped may try again. */
+export function mayRetry(turn: Pick<NodeTurn, "attempt">): boolean {
+  return turn.attempt < RETRIES;
 }
 
 /** Stops the running and queued turns of these nodes in a room (null: in every room). */
@@ -131,26 +216,46 @@ export async function stopTurns(app: FastifyInstance, nodeIds: readonly string[]
       stopped += 1;
     }
   }
-  const dropped = await app.prisma.nodeTurn.updateMany({
-    where: { ...(roomId === null ? {} : { roomId }), nodeId: { in: [...nodeIds] }, status: "queued" },
+  const where = { ...(roomId === null ? {} : { roomId }), nodeId: { in: [...nodeIds] }, status: "queued" };
+  const planTurns = await app.prisma.nodeTurn.findMany({ where: { ...where, planId: { not: null } }, select: { planId: true, planStep: true } });
+  const dropped = await app.prisma.nodeTurn.updateMany({ where, data: { status: "failed", error: "Stopped.", finishedAt: new Date() } });
+  for (const turn of planTurns) await planTurnEnded(app, turn, "Stopped before it started.");
+  return stopped + dropped.count;
+}
+
+/** A plan's turns (one step's or several, or all of them) stop: running ones are aborted, queued ones dropped. */
+export async function stopPlanTurns(app: FastifyInstance, planId: string, steps: readonly string[] | null): Promise<void> {
+  for (const entry of live.values()) {
+    if (entry.planId === planId && (!steps || (entry.planStep && steps.includes(entry.planStep)))) entry.controller.abort();
+  }
+  await app.prisma.nodeTurn.updateMany({
+    where: { planId, status: "queued", ...(steps ? { planStep: { in: [...steps] } } : {}) },
     data: { status: "failed", error: "Stopped.", finishedAt: new Date() },
   });
-  return stopped + dropped.count;
 }
 
 /** Shutdown: running turns stop where they are; queued rows run after the restart. */
 export function abortAllTurns(): void {
   for (const entry of live.values()) entry.controller.abort();
+  for (const [timer, done] of delayed) {
+    clearTimeout(timer);
+    done();
+  }
+  delayed.clear();
 }
 
 /** After a restart: a turn cut off mid-way is not run twice; recent queued ones run now. */
 export async function recoverTurns(app: FastifyInstance): Promise<void> {
   const prisma = app.prisma;
   const now = Date.now();
+  const stale = { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } };
+  // A plan's turn cut off here ends its part of the plan as blocked, so the plan goes on.
+  const cut = await prisma.nodeTurn.findMany({ where: { planId: { not: null }, OR: [{ status: "running" }, stale] }, select: { planId: true, planStep: true } });
   await prisma.nodeTurn.updateMany({ where: { status: "running" }, data: { status: "failed", error: "Interrupted by a server restart.", finishedAt: new Date(now) } });
-  await prisma.nodeTurn.updateMany({ where: { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } }, data: { status: "failed", error: "Too old to run after a restart.", finishedAt: new Date(now) } });
-  const queued = await prisma.nodeTurn.findMany({ where: { status: "queued" }, orderBy: { createdAt: "asc" }, select: { id: true, nodeId: true } });
-  for (const turn of queued) schedule(app, turn);
+  await prisma.nodeTurn.updateMany({ where: stale, data: { status: "failed", error: "Too old to run after a restart.", finishedAt: new Date(now) } });
+  for (const turn of cut) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
+  const queued = await prisma.nodeTurn.findMany({ where: { status: "queued" }, orderBy: { createdAt: "asc" }, select: { id: true, nodeId: true, runAfter: true } });
+  for (const turn of queued) scheduleLater(app, turn);
 }
 
 const background = new Set<Promise<unknown>>();
@@ -245,6 +350,13 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
     ids = await relevant(app, message, candidates);
   }
   if (decision.reason === "none" && decision.brake) {
+    // Said once: not again until a person writes here.
+    const lastPerson = await prisma.nodeMessage.findFirst({ where: { roomId: room.id, authorKind: "human" }, orderBy: { seq: "desc" }, select: { seq: true } });
+    const said = await prisma.nodeMessage.findFirst({
+      where: { roomId: room.id, authorKind: "system", kind: "status", seq: { gt: lastPerson?.seq ?? 0 }, OR: [{ data: { path: ["brake"], equals: "streak" } }, { data: { path: ["brake"], equals: "depth" } }] },
+      select: { id: true },
+    });
+    if (said) return;
     await postMessage(prisma, {
       roomId: room.id,
       userId: room.userId,
@@ -260,6 +372,10 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       visibleTo: message.visibleTo,
     });
     return;
+  }
+  // The owner's mention resumes a paused node in a crew even when the lead answers: the lead's plan may need it.
+  if (room.kind === "crew" && message.authorKind === "human") {
+    for (const row of members) if (row.node && row.node.status === "paused" && mentioned.has(row.node.id) && row.node.userId === message.userId) await resumeNode(app, row.node);
   }
   for (const nodeId of ids) {
     const node = members.find((row) => row.nodeId === nodeId)?.node;

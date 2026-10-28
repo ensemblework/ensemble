@@ -101,6 +101,8 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.9 Subscriptions and included models
 
+Agent sessions: a computer with `capabilities.sessions` 1 runs a job that continues another in the agent's own session (Claude `--resume`, Codex thread resume, ACP `session/load`) and takes the claim's `steer`. Ensemble Node continues sessions only on such a computer, or one reporting 0.4.18 or later ([35 §8.2](35_ENSEMBLE_NODE.md#82-which-session)).
+
 Secrets for runs: a computer with `capabilities.secrets` 1 or more (`SECRETS_API`) takes a `secret.save` frame `{id, name, value}` on its event stream, keeps the value encrypted in its own `run_secrets`, and answers on `/api/devices/self/code-requests/:id` with only whether it saved it. Every code run there gets the saved secrets as environment variables and their names in its brief; whatever the computer sends back has the values hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)); `ensemble secrets` manages them on the computer.
 
 The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there (`capabilities.assistantTurns` 1 or more, `ASSISTANT_TURNS_MIN`). Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).

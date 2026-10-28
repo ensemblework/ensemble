@@ -1196,6 +1196,7 @@
   {"method":"HEAD","path":"/api/node/nodes/:id/memory","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"POST","path":"/api/node/nodes/:id/memory","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"DELETE","path":"/api/node/nodes/:id/memory/:memoryId","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
+  {"method":"POST","path":"/api/node/plans/:id/stop","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"GET","path":"/api/node/rooms","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/rooms","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"POST","path":"/api/node/rooms","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},

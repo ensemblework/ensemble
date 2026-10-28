@@ -19,6 +19,7 @@ import { secretNameProblem } from "../lib/run-secrets.js";
 import { pickRunProfile } from "@ensemble/shared-types";
 import { enqueueTurn } from "./queue.js";
 import { postMessage, updateMessageDataIf } from "./store.js";
+import { planLinkOf } from "./plans.js";
 import type { SessionToolScope } from "./sessions.js";
 
 const SAVE_MS = 20_000;
@@ -91,7 +92,15 @@ export function secretTools(scope: SessionToolScope): AnyHubTool[] {
           authorNodeId: scope.node.id,
           kind: "approval",
           body: input.why.trim(),
-          data: { type: "secret", status: "pending", name, deviceId: computer.id, computer: computer.name, private: Boolean(scope.privateTo) },
+          data: {
+            type: "secret",
+            status: "pending",
+            name,
+            deviceId: computer.id,
+            computer: computer.name,
+            private: Boolean(scope.privateTo),
+            ...(scope.plan?.planStep ? { plan: { id: scope.plan.planId, step: scope.plan.planStep } } : {}),
+          },
           visibleTo: [scope.node.userId],
           rootMessageId: scope.lineage.rootMessageId,
           botDepth: scope.lineage.botDepth,
@@ -168,6 +177,7 @@ export async function saveSecret(app: FastifyInstance, accountId: string, messag
     reason: "approval",
     note: `Your owner saved ${data.name} on ${device.name}. Agent runs there now have it as $${data.name} (you never see the value). Continue the work that needed it: send the session the next step and tell the agent to use $${data.name}.`,
     private: data.private === true,
+    ...(planLinkOf(card.data) ?? {}),
   });
   return updated;
 }
@@ -179,6 +189,6 @@ export async function declineSecret(app: FastifyInstance, accountId: string, mes
   if (!when) throw new SecretError("This was already answered.", 409);
   const updated = await updateMessageDataIf(app.prisma, card, when, { status: "discarded" });
   if (!updated) throw new SecretError("This was already answered.", 409);
-  await enqueueTurn(app, { nodeId: node.id, roomId: card.roomId, reason: "approval", note: `Your owner declined to give ${data.name}. Go on without it, or say what cannot be done without it.`, private: data.private === true });
+  await enqueueTurn(app, { nodeId: node.id, roomId: card.roomId, reason: "approval", note: `Your owner declined to give ${data.name}. Go on without it, or say what cannot be done without it.`, private: data.private === true, ...(planLinkOf(card.data) ?? {}) });
   return updated;
 }

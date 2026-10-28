@@ -115,6 +115,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     installId: installId(),
     // Reconnect and carry-on after an outage (docs/25 §3): reattach a run that kept going, resume one that was cut off.
     recovery: 1,
+    // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
+    sessions: 1,
   };
 }
 
