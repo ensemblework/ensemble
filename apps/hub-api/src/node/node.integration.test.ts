@@ -829,13 +829,14 @@ test("a node makes a lasting node and a crew when its owner asks; its thinking l
   const { node, room } = await createNode(mira, "assistant");
   script = (turn) =>
     turn.transcript.includes("make a node")
-      ? { calls: [{ name: "node_create", arguments: { name: "Release watcher", role: "researcher", charter: "Track our releases and tell me what shipped." } }], then: "Made @release-watcher." }
+      ? { calls: [{ name: "node_create", arguments: { name: "Release watcher", role: "researcher", charter: "Track our releases and tell me what shipped.", templateId: "researcher" } }], then: "Made @release-watcher." }
       : turn.transcript.includes("make a group")
         ? { calls: [{ name: "node_create_group", arguments: { title: "Releases", members: ["assistant", "release-watcher"], lead: "release-watcher" } }], then: "Made the crew." }
         : { text: "ok" };
   await say(mira, room.id, "make a node that tracks our releases");
   const made = await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: mira.id, name: "Release watcher" } });
   assert.equal(made.parentNodeId, null, "a lasting node, not a helper");
+  assert.equal(made.slug, "release-watcher", "its handle follows its name, not its template");
   assert.equal(made.charter, "Track our releases and tell me what shipped.");
   const listed = json(await mira.inject({ method: "GET", url: "/api/node/nodes" })).nodes as Array<{ id: string }>;
   assert.ok(listed.some((row) => row.id === made.id), "it is in the sidebar");

@@ -201,7 +201,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
         if (!scope.ownerOnly) throw new ToolBlockedError("Only in a chat with just your owner can you make them a node.");
         if (await nodeNameTaken(prisma, owner, input.name)) throw new ToolBlockedError(`Your owner already has a node called “${input.name.trim()}”.`, "Pick another name.");
         if ((await prisma.nodeAgent.count({ where: { userId: owner, parentNodeId: null } })) >= MAX_NODES) throw new ToolBlockedError(`Your owner has ${MAX_NODES} nodes, the most one account can have.`);
-        const { node: made, room } = await createNode(prisma, owner, { templateId: input.templateId, name: input.name.trim(), role: input.role.trim(), charter: input.charter, provider: node.provider, model: node.model });
+        const { node: made, room } = await createNode(prisma, owner, { templateId: input.templateId, name: input.name.trim(), slug: handleFrom(input.name.trim()), role: input.role.trim(), charter: input.charter, provider: node.provider, model: node.model });
         publishTo([owner], "node.room", { roomId: room.id });
         return toolOk(`Made @${made.slug} (${made.name}); its chat is in your owner's sidebar. Hand it work with node_delegate.`, { handle: made.slug, name: made.name });
       },
