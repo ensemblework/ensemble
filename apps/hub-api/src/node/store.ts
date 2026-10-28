@@ -10,7 +10,7 @@ import { nodeTemplate, type NodeAvatar } from "./templates.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type MessageKind = "text" | "approval" | "run" | "status" | "error";
+export type MessageKind = "text" | "approval" | "run" | "status" | "error" | "plan";
 
 export const visibleWhere = (accountId: string): Prisma.NodeMessageWhereInput => ({
   OR: [{ visibleTo: { isEmpty: true } }, { visibleTo: { has: accountId } }],
@@ -57,6 +57,8 @@ export type PostInput = {
   rootMessageId?: string | null;
   botDepth?: number;
   clientId?: string | null;
+  /** Shown inside this plan's card, not in the timeline (node/plans.ts). */
+  planId?: string | null;
 };
 
 export type WireMessage = ReturnType<typeof wireMessage>;
@@ -76,6 +78,7 @@ export function wireMessage(row: NodeMessage) {
     mentions: row.mentions,
     rootMessageId: row.rootMessageId,
     clientId: row.clientId,
+    planId: row.planId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -105,6 +108,7 @@ export async function postMessage(prisma: PrismaClient, input: PostInput): Promi
           rootMessageId: input.rootMessageId ?? null,
           botDepth: input.botDepth ?? 0,
           clientId: input.clientId ?? null,
+          planId: input.planId ?? null,
         },
       });
     });

@@ -23,6 +23,7 @@ import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import { pausedNotice, stopNodeRuns } from "./sessions.js";
 import { saveSecret, SecretError, secretStuck } from "./node-secrets.js";
 import { createCrew, deleteNode, MAX_NODES } from "./helpers.js";
+import { stopPlans } from "./plans.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
@@ -150,8 +151,9 @@ async function roomList(prisma: PrismaClient, accountId: string) {
   const list = await Promise.all(
     rooms.map(async (row) => {
       const [last, unread, view] = await Promise.all([
-        prisma.nodeMessage.findFirst({ where: { roomId: row.roomId, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt) }, orderBy: { seq: "desc" } }),
-        prisma.nodeMessage.count({ where: { roomId: row.roomId, seq: { gt: row.readSeq }, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt), NOT: { authorKind: "human", userId: accountId } } }),
+        // Cards inside a plan card are not separate messages: no preview, no unread.
+        prisma.nodeMessage.findFirst({ where: { roomId: row.roomId, planId: null, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt) }, orderBy: { seq: "desc" } }),
+        prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeq }, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt), NOT: { authorKind: "human", userId: accountId } } }),
         roomView(prisma, accountId, row.room),
       ]);
       return { ...view, unread, readSeq: row.readSeq, last: last ? { ...wireMessage(last), body: truncateText(last.body, 200) } : null };
@@ -424,6 +426,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     }
     await stopTurns(app, [node.id, ...helpers], null);
     const stopped = await stopNodeRuns(app, node);
+    // The plans it leads stop; its steps in others' plans end as stopped and those plans go on.
+    await stopPlans(app, { nodeId: node.id, userId: node.userId });
     const dm = memberships.length
       ? await prisma.nodeRoom.findFirst({ where: { id: { in: memberships.map((row) => row.roomId) }, kind: "dm", userId: node.userId, archivedAt: null } })
       : null;
@@ -859,6 +863,15 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  /** Stops one of my plans: its steps that have not ended and the agent runs they started (node/plans.ts). */
+  app.post("/api/node/plans/:id/stop", async (request) => {
+    const accountId = nodeAccount(request);
+    const plan = await prisma.nodeMessage.findUnique({ where: { id: (request.params as { id: string }).id } });
+    if (!plan || plan.kind !== "plan" || plan.userId !== accountId || !(await personIn(prisma, plan.roomId, accountId))) throw fail(404, "That plan is not available.");
+    // Its turns (steps and the lead's report) stop with it; the nodes' other conversations go on.
+    return { stopped: await stopPlans(app, { planId: plan.id, userId: accountId }) };
+  });
+
   app.post("/api/node/rooms/:id/stop", async (request) => {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
@@ -866,7 +879,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     for (const member of mine) {
       for (const conversationId of [member.conversationId, member.privateConversationId]) if (conversationId) abortAssistantTurn(conversationId);
     }
-    return { stopped: await stopTurns(app, mine.map((row) => row.nodeId!), room.id) };
+    // Plans here stop too, with the agent runs their steps started.
+    const plans = await stopPlans(app, { roomId: room.id, userId: accountId });
+    return { stopped: (await stopTurns(app, mine.map((row) => row.nodeId!), room.id)) + plans };
   });
 
   /** Deletes one of my own messages: its text goes, a "deleted" line stays so replies still make sense. */

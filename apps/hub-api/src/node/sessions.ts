@@ -29,6 +29,8 @@ import { LIVE_RUN, listSessions, resolveSession, runsOfSession, summaryLine, typ
 import { steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
+import { finishStep, MAX_STEP_RUNS, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
+import { enqueueTurn } from "./queue.js";
 
 export type SessionLineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
 
@@ -41,6 +43,8 @@ export type SessionEnv = {
   room: NodeRoom;
   lineage: SessionLineage;
   privateTo: string[] | null;
+  /** A plan step's call: its runs and cards belong to the step (node/plans.ts). */
+  plan?: PlanLink | null;
 };
 
 const Agent = z.enum(["ensemble", ...CODE_ENGINES]);
@@ -221,6 +225,70 @@ async function refuseWhenPaused(env: SessionEnv): Promise<void> {
   if (env.app.redis && (await isPaused(env.app.redis as never, env.node.userId))) {
     throw new ToolBlockedError("Your owner stopped all agent work in Ensemble (Stop everything), so nothing new can start.", "They resume it in Ensemble first.");
   }
+  // A step that keeps failing reports instead of opening run after run on the owner's computer.
+  if (env.plan?.planStep && (await stepRuns(env.prisma, env.plan.planId, env.plan.planStep)).total >= MAX_STEP_RUNS) {
+    throw new ToolBlockedError(`This step has already run ${MAX_STEP_RUNS} times on the computer.`, "Report what happened: reply with the result, or call node_step_blocked with why.");
+  }
+}
+
+/** A version like 0.4.18 from a computer's app version ("cli-0.4.18", "cli-test-0.4.19-testing.1", "0.4.18"). */
+function versionOf(appVersion: string | null | undefined): number[] | null {
+  const found = /(\d+)\.(\d+)\.(\d+)/.exec(appVersion ?? "");
+  return found ? found.slice(1, 4).map(Number) : null;
+}
+
+/** Continuing a session needs Ensemble 0.4.18 there: older runtimes open a new agent session for every message. */
+export const SESSION_CONTINUE_VERSION = [0, 4, 18];
+
+export function continuesSessions(device: { appVersion: string | null; capabilities: unknown }): boolean {
+  const caps = (device.capabilities ?? {}) as { sessions?: unknown };
+  if (typeof caps.sessions === "number" && caps.sessions >= 1) return true;
+  const version = versionOf(device.appVersion);
+  // A computer that never said its version is not refused on a guess.
+  if (!version) return true;
+  for (let index = 0; index < 3; index += 1) {
+    if (version[index]! !== SESSION_CONTINUE_VERSION[index]!) return version[index]! > SESSION_CONTINUE_VERSION[index]!;
+  }
+  return true;
+}
+
+const squash = (value: string) => value.toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-").trim();
+const EFFORT_WORDS: Record<string, string> = { "extra-high": "xhigh", "x-high": "xhigh", "very-high": "xhigh", maximum: "max", minimal: "minimal", none: "none" };
+
+/**
+ * The model and thinking level the computer's agent knows them by: a model named by its label ("GPT
+ * 6.1 Sol") becomes its id, and a level the model does not take is refused here with the ones it
+ * takes, before a run is made that the agent would refuse.
+ */
+export async function agentModel(prisma: PrismaClient, deviceId: string | null | undefined, engine: string, model: string | undefined, effort: string | undefined): Promise<{ model?: string; effort?: string }> {
+  const out: { model?: string; effort?: string } = {};
+  const wantedEffort = effort?.trim() ? (EFFORT_WORDS[squash(effort)] ?? squash(effort)) : undefined;
+  const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId }, select: { capabilities: true, name: true } }) : null;
+  const agent = device ? computerAgents(device).agents.find((row) => row.id === engine) : undefined;
+  const models = agent?.models ?? [];
+  let chosen: (typeof models)[number] | undefined;
+  if (model?.trim()) {
+    const wanted = squash(model);
+    chosen =
+      models.find((row) => squash(row.id) === wanted || (row.aliases ?? []).some((alias) => squash(alias) === wanted)) ??
+      models.find((row) => squash(row.label) === wanted) ??
+      models.find((row) => squash(row.label).startsWith(wanted));
+    if (!chosen && models.length && !agent?.typedModels) {
+      throw new ToolBlockedError(
+        `${agentLabel(engine)} on ${device!.name} has no model “${model}”.`,
+        `Its models: ${models.filter((row) => row.id !== "auto").slice(0, 30).map((row) => `${row.id}${row.label !== row.id ? ` (${row.label})` : ""}`).join(", ")}.`,
+      );
+    }
+    out.model = chosen?.id ?? model.trim();
+  }
+  if (wantedEffort) {
+    const levels = chosen?.efforts ?? agent?.efforts ?? [];
+    if (levels.length && !levels.includes(wantedEffort)) {
+      throw new ToolBlockedError(`${chosen?.label ?? model ?? agentLabel(engine)} does not take thinking “${effort}”.`, `It takes: ${levels.join(", ")}.`);
+    }
+    out.effort = wantedEffort;
+  }
+  return out;
 }
 
 async function queueJob(env: SessionEnv, body: JobRequest, context: Record<string, unknown>, cleanup?: () => Promise<unknown>): Promise<string> {
@@ -248,6 +316,7 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
   const people = await roomPeople(prisma, room.id);
   // The computer and its work are the owner's: other people in a room do not see the card.
   const visibleTo = env.privateTo || people.some((id) => id !== node.userId) ? [node.userId] : [];
+  const step = env.plan?.planStep ? env.plan : null;
   const { message } = await postMessage(prisma, {
     roomId: room.id,
     userId: node.userId,
@@ -255,7 +324,9 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
     authorNodeId: node.id,
     kind: "run",
     body: info.title,
+    planId: step?.planId ?? null,
     data: {
+      ...(step ? { plan: { id: step.planId, step: step.planStep } } : {}),
       jobId: info.jobId,
       ...(info.direct ? { direct: true } : { taskId: info.taskId }),
       sessionId: info.sessionId,
@@ -284,6 +355,8 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
       sessionId: info.sessionId,
       prompt: truncateText(info.prompt, 4000),
       direct: info.direct,
+      planId: step?.planId ?? null,
+      planStep: step?.planStep ?? null,
     },
   });
   return message;
@@ -293,12 +366,33 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
  * Runs this node started that a newer call took over (steered, replaced, stopped, paused): their
  * cards say so, and node/runs.ts does not wake the node when they end.
  */
-async function quiet(prisma: PrismaClient, jobIds: string[], why: "steered" | "replaced" | "stopped" | "paused"): Promise<void> {
+async function quiet(app: FastifyInstance, jobIds: string[], why: "steered" | "replaced" | "stopped" | "paused", current: PlanLink | null = null): Promise<void> {
   if (!jobIds.length) return;
+  const prisma = app.prisma;
   const runs = await prisma.nodeRun.findMany({ where: { jobId: { in: jobIds }, reportedAt: null } });
   for (const run of runs) {
     const card = run.messageId ? await prisma.nodeMessage.findUnique({ where: { id: run.messageId } }) : null;
     if (card) await updateMessageData(prisma, card, { quiet: why });
+  }
+  // A plan step's run taken over from outside that step wakes nobody: its node hears it here instead,
+  // so the step does not wait for it.
+  const steps = new Map<string, { planId: string; planStep: string; nodeId: string; roomId: string }>();
+  for (const run of runs) {
+    if (!run.planId || !run.planStep || (current?.planId === run.planId && current.planStep === run.planStep)) continue;
+    steps.set(`${run.planId}:${run.planStep}`, { planId: run.planId, planStep: run.planStep, nodeId: run.nodeId, roomId: run.roomId });
+  }
+  for (const step of steps.values()) {
+    if (!(await stepLive(prisma, step.planId, step.planStep))) continue;
+    if ((await stepRuns(prisma, step.planId, step.planStep)).pending || (await stepCardsWaiting(prisma, step.planId, step.planStep))) continue;
+    const queued = await enqueueTurn(app, {
+      nodeId: step.nodeId,
+      roomId: step.roomId,
+      reason: "run",
+      note: `The agent run for your plan step was ${why} from outside the step. Reply with what the step got done, or call node_step_blocked with why it cannot be finished.`,
+      planId: step.planId,
+      planStep: step.planStep,
+    });
+    if (!queued) await finishStep(app, step.planId, step.planStep, { status: "stopped", result: `Its agent run was ${why}.` });
   }
 }
 
@@ -313,10 +407,18 @@ function placeLine(found: Plan): string {
 /** A new session with one of the owner's coding agents. */
 export async function startSession(env: SessionEnv, input: StartInput): Promise<Started> {
   await refuseWhenPaused(env);
+  // A plan step's runs go as its owner asked the lead (agent, model, thinking, context), unless named here.
+  if (env.plan?.planStep) {
+    const run = await stepRun(env.prisma, env.plan.planId, env.plan.planStep);
+    const agent = Agent.safeParse(run.agent).success ? (run.agent as z.infer<typeof Agent>) : undefined;
+    input = { ...input, agent: input.agent ?? agent, model: input.model ?? run.model, effort: input.effort ?? run.effort, context: input.context ?? run.context };
+  }
   const profile = chooseProfile(env.ctx, input.profile);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
   if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? []);
+  const named = await agentModel(env.prisma, where.deviceId, agent, input.model, input.effort);
+  input = { ...input, ...named };
   const task = await taskFor(env, input);
   const cleanup = task.made ? () => env.prisma.task.delete({ where: { id: task.id } }) : undefined;
   let found: Plan;
@@ -384,6 +486,16 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
   const { prisma, node } = env;
   await refuseWhenPaused(env);
   const session = await usableSession(prisma, node, input.session);
+  if (session.deviceId) {
+    const device = await prisma.device.findUnique({ where: { id: session.deviceId }, select: { appVersion: true, capabilities: true, name: true } });
+    if (device && !continuesSessions(device)) {
+      throw new ToolBlockedError(
+        `Ensemble on ${device.name} (${device.appVersion ?? "an old version"}) cannot carry on an agent session: every message would open a new session with the agent.`,
+        "Tell your owner to update Ensemble there (`ensemble update`). Do not start new sessions to get around it.",
+      );
+    }
+  }
+  input = { ...input, ...(await agentModel(prisma, session.deviceId, session.agent, input.model, input.effort)) };
   const runs = await runsOfSession(prisma, scopeOf(node), session.id);
   const chain = liveChain(runs);
   const active = chain[0];
@@ -453,11 +565,11 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
     await prisma.workspaceJob.updateMany({ where: { continueFromJobId: active!.id, status: "queued", id: { not: jobId } }, data: { continueFromJobId: jobId } });
     const now = await prisma.workspaceJob.findUnique({ where: { id: active!.id }, select: { status: true, cancelRequestedAt: true } });
     if (now && now.status !== "stopping" && !now.cancelRequestedAt) await stopJob(env.app, node.userId, active!.id);
-    await quiet(prisma, [active!.id], "steered");
+    await quiet(env.app, [active!.id], "steered", env.plan ?? null);
   } else if (delivery === "replace" && chain.length) {
     // Newest first, so nothing queued starts on the way.
     for (const row of [...chain].reverse()) await stopJob(env.app, node.userId, row.id);
-    await quiet(prisma, chain.map((row) => row.id), "replaced");
+    await quiet(env.app, chain.map((row) => row.id), "replaced", env.plan ?? null);
   }
 
   const title = steering ? `Update: ${active!.title}` : fallbackTitle;
@@ -484,7 +596,7 @@ export async function stopSession(env: SessionEnv, input: z.infer<typeof StopInp
   const targets = input.queued === "keep" ? chain.filter((row) => row.status !== "queued") : chain;
   if (!targets.length) return { summary: "Nothing is running in that session.", data: { session: session.id, stopped: 0 } };
   for (const row of [...targets].reverse()) await stopJob(env.app, node.userId, row.id);
-  await quiet(prisma, targets.map((row) => row.id), "stopped");
+  await quiet(env.app, targets.map((row) => row.id), "stopped", env.plan ?? null);
   const kept = chain.length - targets.length;
   return {
     summary: `Stopped ${targets.map((row) => `“${row.title}”`).join(", ")}. What it changed so far stays.${kept ? ` ${kept} queued message${kept === 1 ? "" : "s"} will run next.` : ""}`,
@@ -514,7 +626,15 @@ async function holdForOwner(env: SessionEnv, call: SessionCall): Promise<ToolRes
     authorNodeId: env.node.id,
     kind: "approval",
     body: describeCall(call),
-    data: { type: "session", status: "pending", action: call.action, input: call.input, private: Boolean(env.privateTo), fromNonOwner: env.lineage.fromNonOwner },
+    data: {
+      type: "session",
+      status: "pending",
+      action: call.action,
+      input: call.input,
+      private: Boolean(env.privateTo),
+      fromNonOwner: env.lineage.fromNonOwner,
+      ...(env.plan?.planStep ? { plan: { id: env.plan.planId, step: env.plan.planStep } } : {}),
+    },
     visibleTo: [env.node.userId],
     rootMessageId: env.lineage.rootMessageId,
     botDepth: env.lineage.botDepth,
@@ -539,6 +659,7 @@ export type SessionToolScope = {
   privateTo: string[] | null;
   /** Only the owner reads this turn's thread and only the owner started it (a DM, a crew, their private thread). */
   ownerOnly: boolean;
+  plan?: PlanLink | null;
 };
 
 /**
@@ -551,7 +672,7 @@ export type SessionToolScope = {
 export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
   const fromOwner = scope.ownerOnly && !scope.lineage.fromNonOwner;
   const asks = !fromOwner || computerWorkAsks(scope.node);
-  const env = (ctx: ToolContext): SessionEnv => ({ ctx, prisma: scope.prisma, app: ctx.app, node: scope.node, room: scope.room, lineage: scope.lineage, privateTo: scope.privateTo });
+  const env = (ctx: ToolContext): SessionEnv => ({ ctx, prisma: scope.prisma, app: ctx.app, node: scope.node, room: scope.room, lineage: scope.lineage, privateTo: scope.privateTo, plan: scope.plan ?? null });
   const result = (done: Started) => toolOk(done.summary, done.data);
 
   const start = defineTool({
@@ -646,7 +767,7 @@ export async function stopNodeRuns(app: FastifyInstance, node: Pick<NodeAgent, "
   const order = new Map(runs.map((row, index) => [row.jobId, index]));
   const live = jobs.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
   for (const job of live) await stopJob(app, node.userId, job.id);
-  await quiet(prisma, live.map((job) => job.id), "paused");
+  await quiet(app, live.map((job) => job.id), "paused");
   return live
     .reverse()
     .map((job) => ({ title: job.task.title, agent: agentLabel(job.provider), computer: job.device?.name ?? null, started: job.status !== "queued" || Boolean(job.startedAt || job.claimedAt) }));

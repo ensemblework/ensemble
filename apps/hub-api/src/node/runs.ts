@@ -9,6 +9,7 @@ import { truncateText } from "../lib/text.js";
 import { abortAllTurns, enqueueTurn, recoverTurns } from "./queue.js";
 import { updateMessageData } from "./store.js";
 import { sweepHelpers } from "./helpers.js";
+import { finishStep } from "./plans.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 const EVERY_MS = 15_000;
@@ -56,7 +57,8 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
         ? await prisma.workspaceJob.findMany({ where: { id: { in: queued.map((row) => row.jobId) }, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { task: { select: { title: true } } } })
         : [];
       const named = run.direct ? `“${title.replace(/[“”]/g, "")}”` : `[${title.replace(/[[\]]/g, "")}](ensemble://task/${run.taskId})`;
-      await enqueueTurn(app, {
+      const step = run.planId && run.planStep ? { planId: run.planId, planStep: run.planStep } : null;
+      const queuedTurn = await enqueueTurn(app, {
         nodeId: run.nodeId,
         roomId: run.roomId,
         reason: "run",
@@ -66,10 +68,17 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
           job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
           job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
           next.length ? `Still queued in this session: ${next.map((row) => `“${row.task.title}”`).join(", ")}; it goes on by itself.` : "",
-          "Report the result to whoever asked (mention them if it was another node), and say what is next.",
+          step
+            ? "This run was for your plan step. If the step is done, reply with its result. If it needs one more change, send your session the next message (node_session_send) and reply (no reply). If it cannot be done, call node_step_blocked."
+            : "Report the result to whoever asked (mention them if it was another node), and say what is next.",
         ].filter(Boolean).join("\n"),
         private: (shown as Prisma.JsonObject).private === true,
+        ...(step ?? {}),
       });
+      // Its node was paused or removed meanwhile: the step ends with what the run did.
+      if (step && !queuedTurn) {
+        await finishStep(app, step.planId, step.planStep, { status: status === "succeeded" ? "done" : "stopped", result: job?.summary ?? job?.error ?? `The run ${words}.` });
+      }
     }
   } finally {
     polling = false;
