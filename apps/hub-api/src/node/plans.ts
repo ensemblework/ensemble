@@ -18,9 +18,10 @@ import { stopJob } from "../workspace/worker.js";
 import { enqueueTurn, stopPlanTurns } from "./queue.js";
 import { announce, postMessage, roomPeople, updateMessageData } from "./store.js";
 
-export const MAX_STEPS = 12;
-/** Agent runs one step may start or continue; past this its node reports instead of trying again. */
-export const MAX_STEP_RUNS = 4;
+/** A brake on runaway planning, not on work: a plan's steps. */
+export const MAX_STEPS = 30;
+/** Failed agent runs one step may have; then its node reports instead of trying again. Runs that work are not counted. */
+export const MAX_STEP_FAILURES = 4;
 
 export type StepStatus = "waiting" | "working" | "done" | "blocked" | "skipped" | "stopped";
 export type PlanStatus = "draft" | "running" | "reporting" | "done" | "stopped";
@@ -318,12 +319,13 @@ export async function stepRun(prisma: PrismaClient, planId: string, stepId: stri
  * Agent runs a step has started so far, and those its node will still hear about: not reported yet
  * and not taken over by a newer call (a steer, a replacement, a stop), whose end wakes nobody.
  */
-export async function stepRuns(prisma: PrismaClient, planId: string, stepId: string): Promise<{ total: number; pending: number }> {
-  const runs = await prisma.nodeRun.findMany({ where: { planId, planStep: stepId }, select: { messageId: true, reportedAt: true } });
+export async function stepRuns(prisma: PrismaClient, planId: string, stepId: string): Promise<{ total: number; pending: number; failed: number }> {
+  const runs = await prisma.nodeRun.findMany({ where: { planId, planStep: stepId }, select: { messageId: true, reportedAt: true, jobId: true } });
   const open = runs.filter((row) => !row.reportedAt);
   const cards = open.length ? await prisma.nodeMessage.findMany({ where: { id: { in: open.map((row) => row.messageId).filter((id): id is string => Boolean(id)) } }, select: { data: true } }) : [];
   const quiet = cards.filter((card) => typeof (card.data as { quiet?: unknown } | null)?.quiet === "string").length;
-  return { total: runs.length, pending: Math.max(0, open.length - quiet) };
+  const failed = runs.length ? await prisma.workspaceJob.count({ where: { id: { in: runs.map((row) => row.jobId) }, status: "failed" } }) : 0;
+  return { total: runs.length, pending: Math.max(0, open.length - quiet), failed };
 }
 
 /** Cards of a step still waiting on the owner (a session to approve, a secret to type): the step goes on after them. */

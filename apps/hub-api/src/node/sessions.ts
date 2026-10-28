@@ -29,7 +29,7 @@ import { LIVE_RUN, listSessions, resolveSession, runsOfSession, summaryLine, typ
 import { steerOf } from "../workspace/trust.js";
 import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
-import { finishStep, MAX_STEP_RUNS, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
+import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 
 export type SessionLineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
@@ -226,8 +226,8 @@ async function refuseWhenPaused(env: SessionEnv): Promise<void> {
     throw new ToolBlockedError("Your owner stopped all agent work in Ensemble (Stop everything), so nothing new can start.", "They resume it in Ensemble first.");
   }
   // A step that keeps failing reports instead of opening run after run on the owner's computer.
-  if (env.plan?.planStep && (await stepRuns(env.prisma, env.plan.planId, env.plan.planStep)).total >= MAX_STEP_RUNS) {
-    throw new ToolBlockedError(`This step has already run ${MAX_STEP_RUNS} times on the computer.`, "Report what happened: reply with the result, or call node_step_blocked with why.");
+  if (env.plan?.planStep && (await stepRuns(env.prisma, env.plan.planId, env.plan.planStep)).failed >= MAX_STEP_FAILURES) {
+    throw new ToolBlockedError(`${MAX_STEP_FAILURES} agent runs of this step have failed.`, "Report what happened: reply with the result, or call node_step_blocked with why.");
   }
 }
 
