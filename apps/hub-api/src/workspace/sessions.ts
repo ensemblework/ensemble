@@ -190,7 +190,8 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
     fast: contextOf(last.context).fast === true,
     deviceId: last.deviceId,
     computer: last.device?.name ?? null,
-    folder: folderOf(last),
+    // A continued run carries no folder label of its own: the session's folder is its nearest run's.
+    folder: folderOf([...ordered].reverse().find((row) => row.folderLabel || row.externalRoot) ?? last),
     title: first.task.title,
     latestTask: { id: last.taskId, title: last.task.title },
     summary,

@@ -335,6 +335,7 @@ export function sessionRules(fromNonOwner: boolean, asks: boolean, othersRead = 
     "  - Write the agent's message as your owner would to their agent: what to do and where, how to check it, what done looks like. Then tell your owner in a line what you started; the run card shows the rest.",
     "  - Runs stay off the Ensemble board unless your owner wants a task there: then make it (hub_create_tasks) and pass its taskId.",
     "  - Asked what you worked on: read node_sessions and answer per session, one line per task in it.",
+    "  - Session and run ids are for your tools only: never write them in a reply. Name a session by its folder and what it worked on.",
     othersRead
       ? "  - Other people read this thread: starting work or sending a session a message makes an approval card for your owner, and you cannot list or stop sessions here. To manage them, your owner talks to you privately (Only me) or in your DM."
       : asks
