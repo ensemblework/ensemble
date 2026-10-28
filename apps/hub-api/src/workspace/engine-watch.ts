@@ -78,6 +78,15 @@ export function continuePrompt(reason: string): string {
   ].join(" ");
 }
 
+/** A new task in an agent session that already holds earlier, related work: the whole brief, after a note that it is a new task. */
+export function sessionTaskPrompt(brief: string): string {
+  return [
+    "(Ensemble: a new task, continuing in this session. What you did earlier in this conversation is related context, not the task. The folder may have changed since, so check the files and git before relying on what you remember. This task's rules and brief follow, and they replace any earlier ones.)",
+    "",
+    brief,
+  ].join("\n");
+}
+
 export function delay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {

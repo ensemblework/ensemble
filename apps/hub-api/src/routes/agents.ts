@@ -25,6 +25,7 @@ import { liveLog } from "../workspace/live-log.js";
 import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
 import { contextTierOf, fastOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
+import { listSessions, resolveSession, sessionOfJob } from "../workspace/sessions.js";
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
@@ -261,6 +262,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       job: {
         ...card(job, undefined, { paths: host }),
         reviewId: job.review?.id ?? null,
+        // The coding agent's session this run is part of (workspace/sessions.ts); null for Ensemble's own agent.
+        session: await sessionOfJob(prisma, job),
         instructions: job.instructions,
         networkAccess: job.networkAccess,
         unattended: job.unattended,
@@ -328,6 +331,22 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     // The task's own runs first: carrying on a run of this task is the usual reason to continue.
     const own = taskId ? rows.filter((row) => row.taskId === taskId) : [];
     return { checkouts: [...own, ...rows.filter((row) => !own.includes(row))] };
+  });
+
+  // The person's coding-agent sessions (workspace/sessions.ts), most recently active first: for the
+  // assistant and Ensemble Node. Someone a space is shared with sees the sessions of the runs they started.
+  app.get("/api/agent/sessions", async (request) => {
+    const query = z
+      .object({ taskId: z.string().uuid().optional(), deviceId: z.string().uuid().optional(), q: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(100).optional() })
+      .parse(request.query);
+    const sessions = await listSessions(prisma, { space: request.userId, runner: actorFor(request.userId) }, { taskId: query.taskId, deviceIds: query.deviceId ? [query.deviceId] : null, query: query.q, limit: query.limit });
+    return { sessions };
+  });
+
+  app.get("/api/agent/sessions/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const session = await resolveSession(prisma, { space: request.userId, runner: actorFor(request.userId) }, id);
+    return session ? { session } : reply.code(404).send({ error: "Session not found." });
   });
 
   // Assign → "Continue an earlier task" on a paired computer (devices/earlier.ts). Not under

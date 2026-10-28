@@ -2,8 +2,8 @@
 name: agents
 title: Agents, runs, code and what is running now
 when: assigning a task to an agent (on their computer or here), run profiles, what agents and jobs are running, stopping one, recent agent runs and their results, the Code tab and changes waiting for review, the Workspace, and how to get coding done
-tools: hub_assign_to_agent, hub_list_agent_options, hub_list_activity, hub_stop_activity, hub_list_runs, hub_get_run, hub_list_code_folders, hub_list_agent_changes, hub_list_approvals, hub_list_tasks, hub_get_task, hub_update_task, hub_list_repos, hub_repo_overview, hub_repo_read_file
-match: \b(running|agents?|runs?|jobs?|processes|stop|cancel|kill|halt|pause|in progress|working on|code|coding|codebase|repo|repository|clone|pull requests?|prs?|reviews?|diffs?|changes waiting|workspace|claude code|codex|cursor|terminal|my (machine|computer|laptop|mac|pc|desktop)|on (this|my) (machine|computer|laptop)|profiles?|delegate)\b
+tools: hub_assign_to_agent, hub_list_agent_options, hub_list_agent_sessions, hub_list_activity, hub_stop_activity, hub_list_runs, hub_get_run, hub_list_code_folders, hub_list_agent_changes, hub_list_approvals, hub_list_tasks, hub_get_task, hub_update_task, hub_list_repos, hub_repo_overview, hub_repo_read_file
+match: \b(running|agents?|sessions?|runs?|jobs?|processes|stop|cancel|kill|halt|pause|in progress|working on|code|coding|codebase|repo|repository|clone|pull requests?|prs?|reviews?|diffs?|changes waiting|workspace|claude code|codex|cursor|terminal|my (machine|computer|laptop|mac|pc|desktop)|on (this|my) (machine|computer|laptop)|profiles?|delegate)\b
 paths: /runs, /workspace, /code, /needs-me
 ---
 Assign a task to an agent
@@ -12,6 +12,10 @@ Assign a task to an agent
 - The work is in a repository (a GitHub link or owner/repo on the task or in their message) → repoUrl. A folder they shared from that computer → folder (its name, never a path). Neither → a fresh empty folder.
 - Put what to do and how to check it in instructions, from the task's page and their message.
 - Not sure which profile or computer they mean, or they ask what exists → hub_list_agent_options (profiles with the default marked, computers with online and folders), then ask with "Choices:".
+
+Agent sessions
+- A session is one conversation with their own coding agent, carried across the tasks continued in it. "What are my agents doing", "which sessions do I have", "the session where Claude fixed the login" → hub_list_agent_sessions (newest first, each with a one or two line summary and whether it is working, waiting or idle). Say them as agent · computer · folder: summary.
+- "Do it in that session", "continue that Copilot session", "give this to the Claude session working on the API" → hub_assign_to_agent with session (its id) and the task; leave agent, computer and folder out. The agent picks up its own conversation in that folder. When several sessions could be meant, ask with "Choices:".
 - After Apply, link the task; the run's progress shows there and in Runs. Never say the work is done: the agent has only been asked to start.
 
 What is running

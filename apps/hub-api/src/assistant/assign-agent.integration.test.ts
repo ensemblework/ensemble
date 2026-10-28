@@ -98,3 +98,73 @@ test("without a marked default the first saved profile is the default, everywher
     assert.equal(chooseProfile({ settings: Settings.parse({}) } as ToolContext).id, "quick");
   });
 });
+
+test("agent sessions: one agent's chain of continued runs is one session; the assistant lists them and assigns a task into one", async () => {
+  const { user, laptop, task, ctx } = await setup();
+  const { listSessions, resolveSession, summaryLine } = await import("../workspace/sessions.js");
+  const second = await h.prisma.task.create({ data: { userId: user.id, title: "Rate-limit the login", boardOrder: 1, createdBy: "me" } });
+  const at = (minutes: number) => new Date(Date.UTC(2026, 9, 27, 9, minutes));
+  const run = (data: Record<string, unknown>) =>
+    h.prisma.workspaceJob.create({ data: { userId: user.id, kind: "code", executionMode: "sandbox", deviceId: laptop.id, status: "succeeded", startedAt: at(0), claimedAt: at(0), finishedAt: at(5), ...data } as never });
+  const first = await run({ taskId: task.id, provider: "claude-code", model: "claude-sonnet-5-5", summary: "Fixed the login form. Added two tests. Left the CSS alone.", createdAt: at(0) });
+  const next = await run({ taskId: second.id, provider: "claude-code", model: "claude-sonnet-5-5", reasoningEffort: "high", context: { contextTier: "long_context" }, continueFromJobId: first.id, summary: "Added rate limiting to the login route.", createdAt: at(10), finishedAt: at(15) });
+  const codex = await run({ taskId: second.id, provider: "codex", model: "default", continueFromJobId: next.id, status: "running", finishedAt: null, progress: "Running the tests", createdAt: at(20) });
+  await run({ taskId: task.id, provider: "openai", model: "gpt-6-luna", summary: "Ensemble's own agent is not a session.", createdAt: at(30) });
+  await h.prisma.workspaceEvent.createMany({ data: [first, next].map((job) => ({ jobId: job.id, kind: "engine", data: { engine: "claude-code", session: "claude-session-1" } })) });
+
+  const scope = { space: user.id, runner: null };
+  const sessions = await listSessions(h.prisma, scope);
+  assert.deepEqual(sessions.map((row) => [row.id, row.agent, row.status, row.runs]), [[codex.id, "codex", "working", 1], [first.id, "claude-code", "idle", 2]], "a new agent starts a new session in the same folder");
+  const claude = sessions[1]!;
+  assert.deepEqual([claude.lastJobId, claude.title, claude.latestTask.title, claude.tasks, claude.resumable, claude.computer], [next.id, "Clone a repo", "Rate-limit the login", 2, true, "Chinmay's MacBook Pro"]);
+  assert.equal(claude.summary, "Added rate limiting to the login route.");
+  assert.equal(sessions[0]!.summary, "Running the tests");
+  assert.equal(summaryLine("Fixed the login form. Added two tests. Left the CSS alone."), "Fixed the login form. Added two tests.");
+  assert.deepEqual((await listSessions(h.prisma, scope, { query: "rate limiting" })).map((row) => row.id), [first.id]);
+  assert.equal((await resolveSession(h.prisma, scope, next.id))?.id, first.id, "any run in it finds its session");
+  assert.equal(await resolveSession(h.prisma, { space: user.id, runner: "someone-else" }, first.id), null);
+
+  const listed = (await getTool("hub_list_agent_sessions")!.run(ctx, { limit: 5 })).data as { sessions: Array<{ id: string; agent: string; summary: string; status: string }> };
+  assert.deepEqual(listed.sessions.map((row) => [row.agent, row.status]), [["Codex", "working"], ["Claude Code", "idle"]]);
+
+  // Into the Claude session: its agent, computer and model, continuing its latest run, whatever the profile says.
+  const third = await h.prisma.task.create({ data: { userId: user.id, title: "Add a lockout email", boardOrder: 2, createdBy: "me" } });
+  const tool = getTool("hub_assign_to_agent")!;
+  const input = await tool.prepare!(ctx, tool.input.parse({ taskId: third.id, profile: "away", session: first.id }));
+  assert.match(await tool.preview!(ctx, input), /to Claude Code on Chinmay's MacBook Pro, in its session “Clone a repo” \(its own checkout\)/);
+  const batch = await applyHeldCalls(app, ctx, [{ tool, input }]);
+  assert.ok(batch.outcomes[0]!.ok, JSON.stringify(batch.outcomes[0]));
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { taskId: third.id } });
+  assert.deepEqual([job.provider, job.model, job.continueFromJobId, job.deviceId, job.kind], ["claude-code", "claude-sonnet-5-5", next.id, laptop.id, "code"]);
+  assert.equal((await resolveSession(h.prisma, scope, job.id))?.lastJobId, job.id, "the new task is the session's latest run");
+  await assert.rejects(() => tool.prepare!(ctx, tool.input.parse({ taskId: third.id, session: "00000000-0000-4000-8000-000000000000" })), /not one of theirs/);
+
+  // The same agent's profile keeps its model to itself; a model the person names wins.
+  const opus = { ...ctx, settings: { ...ctx.settings, runProfiles: ctx.settings.runProfiles.map((row) => (row.id === "careful" ? { ...row, model: "claude-opus-5-5", effort: "high" as const } : row)) } };
+  const assignInto = async (context: ToolContext, title: string, extra: Record<string, unknown> = {}) => {
+    const into = await h.prisma.task.create({ data: { userId: user.id, title, boardOrder: 3, createdBy: "me" } });
+    const held = await tool.prepare!(context, tool.input.parse({ taskId: into.id, session: first.id, ...extra }));
+    const outcome = (await applyHeldCalls(app, context, [{ tool, input: held }])).outcomes[0]!;
+    assert.ok(outcome.ok, JSON.stringify(outcome));
+    return { held, job: await h.prisma.workspaceJob.findFirstOrThrow({ where: { taskId: into.id } }) };
+  };
+  const kept = (await assignInto(opus, "Keep the model")).job;
+  assert.deepEqual([kept.model, kept.reasoningEffort, (kept.context as { contextTier?: string }).contextTier], ["claude-sonnet-5-5", "high", "long_context"], "the session's model and tuning stay, not the profile's");
+  assert.equal((await assignInto(opus, "Name a model", { model: "claude-haiku-4-5" })).job.model, "claude-haiku-4-5");
+
+  // A computer paired again: the session moves to its current pairing.
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { revokedAt: new Date() } });
+  const repaired = await computer(user.id, "Chinmay's MacBook Pro", new Date(), ["Papers"]);
+  const moved = (await listSessions(h.prisma, scope, { deviceIds: [repaired.id] })).map((row) => [row.id, row.deviceId]);
+  assert.deepEqual(moved, [[first.id, repaired.id], [codex.id, repaired.id]]);
+  const again = await assignInto(ctx, "After pairing again");
+  assert.match(await tool.preview!(ctx, again.held), /to Claude Code on Chinmay's MacBook Pro, in its session/);
+  assert.equal(again.job.deviceId, repaired.id);
+
+  // A chain whose first run never started (cancelled while queued, then run again) is still found by its id.
+  const never = await run({ taskId: third.id, provider: "gemini-cli", model: "default", status: "cancelled", startedAt: null, claimedAt: null, finishedAt: at(40), createdAt: at(40) });
+  const retried = await run({ taskId: third.id, provider: "gemini-cli", model: "default", continueFromJobId: never.id, deviceId: repaired.id, createdAt: at(41), finishedAt: at(45) });
+  const gemini = (await listSessions(h.prisma, scope)).find((row) => row.agent === "gemini-cli");
+  assert.equal(gemini?.id, never.id);
+  assert.equal((await resolveSession(h.prisma, scope, never.id))?.lastJobId, retried.id);
+});

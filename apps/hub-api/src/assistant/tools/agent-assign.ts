@@ -11,6 +11,7 @@ import { deviceEngines, deviceOpensPullRequests, folderLabels, repositoryLabels 
 import { isPaused } from "../../lib/activity.js";
 import { actorFor } from "../../sharing/context.js";
 import { Assign, autoKind, createJob } from "../../workspace/assign.js";
+import { listSessions, resolveSession, type AgentSession } from "../../workspace/sessions.js";
 import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
 import { engineName, profileLine } from "./code.js";
 
@@ -104,6 +105,11 @@ const AssignInput = z
     effort: z.string().max(20).optional().describe("Only when the person names a thinking level (low, medium, high, xhigh, max). Leave out to follow the profile."),
     context: z.enum(["default", "long_context"]).optional().describe("long_context when the person asks for the long (1M) context window, for Claude Code or GitHub Copilot models that have one."),
     branch: z.string().max(200).optional().describe("Only when the person names the branch to work on: a new branch with exactly that name (made from the pull request's base when there is one)."),
+    session: z
+      .string()
+      .uuid()
+      .optional()
+      .describe("An agent session's id from hub_list_agent_sessions, when the person wants the work done in that session (“continue in the session where Claude fixed the login”, “give it to that Copilot session”). The task then goes to that session's agent, computer and folder, and the agent continues its own conversation; leave agent, computer and folder out."),
     pullRequest: z
       .object({
         base: z.string().max(200).default("").describe("The branch the pull request goes into, as the person says (any branch, e.g. testing or main). Empty: the repository's default branch."),
@@ -115,14 +121,22 @@ const AssignInput = z
   .strict();
 type AssignInput = z.infer<typeof AssignInput>;
 
-type Plan = { title: string; profile: RunProfile; engine: z.infer<typeof Engine>; where: Where; body: z.infer<typeof Assign> };
+type Plan = { title: string; profile: RunProfile; engine: z.infer<typeof Engine>; where: Where; body: z.infer<typeof Assign>; session: AgentSession | null };
 
 async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
   const task = await ctx.prisma.task.findFirst({ where: { id: input.taskId, userId: ctx.userId, deletedAt: null }, select: { id: true, title: true } });
   if (!task) throw new ToolBlockedError("That task is not on the board. Use the @task mention's id or hub_list_tasks.");
   const profile = chooseProfile(ctx, input.profile);
-  const engine = input.agent ?? profile.engine;
-  const where = await chooseComputer(ctx, profile, engine, input.computer);
+  const session = input.session ? await resolveSession(ctx.prisma, { space: ctx.userId, runner: actorFor(ctx.userId) }, input.session) : null;
+  if (input.session && !session) throw new ToolBlockedError("That agent session is not one of theirs, or no longer exists.", "List them again with hub_list_agent_sessions.");
+  const engine = session?.agent ?? input.agent ?? profile.engine;
+  const where: Where = session
+    ? session.deviceId
+      ? await chooseComputer(ctx, profile, engine, session.deviceId).catch(() => {
+          throw new ToolBlockedError(`The computer that session ran on (${session.computer ?? "a paired computer"}) is no longer paired, so the session cannot go on.`, "Assign the task without a session to start a new one.");
+        })
+      : {}
+    : await chooseComputer(ctx, profile, engine, input.computer);
   const kind = autoKind({ engine, deviceId: where.deviceId, folder: input.folder, repoUrl: input.repoUrl, pullRequest: input.pullRequest }, serverRunnerEnabled() && !actorFor(ctx.userId));
   if (input.folder && where.computer && !where.computer.folders.includes(input.folder.trim())) {
     throw new ToolBlockedError(
@@ -130,16 +144,19 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
       "Pass repoUrl to work in a fresh clone, or leave folder out for a fresh empty folder.",
     );
   }
+  // A session keeps its own model and tuning: only what the person names here changes them.
+  const fromProfile = !session && engine === profile.engine;
   const model = profile.model.trim();
   const [provider, modelId] = model.includes("::") ? model.split("::", 2) : [undefined, model];
   const body = Assign.parse({
     taskId: task.id,
     kind,
     engine,
-    ...(model && engine === profile.engine ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
-    ...(profile.effort !== "default" && engine === profile.engine ? { reasoningEffort: profile.effort } : {}),
-    ...(engine !== "ensemble" && engine === profile.engine && profile.context ? { contextTier: profile.context } : {}),
-    ...(engine !== "ensemble" && engine === profile.engine && profile.fast ? { fast: true } : {}),
+    ...(session ? { session: session.id } : {}),
+    ...(model && fromProfile ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
+    ...(profile.effort !== "default" && fromProfile ? { reasoningEffort: profile.effort } : {}),
+    ...(engine !== "ensemble" && fromProfile && profile.context ? { contextTier: profile.context } : {}),
+    ...(engine !== "ensemble" && fromProfile && profile.fast ? { fast: true } : {}),
     instructions: [profile.instructions, input.instructions].filter((part) => part?.trim()).join("\n\n"),
     markDone: profile.markDone,
     network: profile.network,
@@ -167,12 +184,18 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     ...(kind === "code" && (input.pullRequest ?? profile.pullRequest) ? { pullRequest: input.pullRequest ?? profile.pullRequest! } : {}),
     ...(kind === "code" && input.branch?.trim() ? { branchMode: "new" as const, branch: input.branch.trim() } : {}),
   });
-  return { title: task.title, profile, engine, where, body };
+  return { title: task.title, profile, engine, where, body, session };
 }
 
 function describePlan(found: Plan): string {
   const place = found.where.computer ? `on ${found.where.computer.name}${found.where.computer.online ? "" : " (offline now: it starts when that computer is back)"}` : "on Ensemble's server";
-  const work = found.body.repoUrl ? `, in a fresh clone of ${found.body.repoUrl}` : found.body.folderLabel ? `, in its “${found.body.folderLabel}” folder` : "";
+  const work = found.session
+    ? `, in its session “${found.session.title}” (${found.session.folder})`
+    : found.body.repoUrl
+      ? `, in a fresh clone of ${found.body.repoUrl}`
+      : found.body.folderLabel
+        ? `, in its “${found.body.folderLabel}” folder`
+        : "";
   const mode = found.body.mode && found.body.mode !== found.profile.mode ? ` (mode: ${found.body.mode === "unattended" ? "Run unattended" : found.body.mode === "review" ? "Review only" : "Ask"})` : "";
   const pull = found.body.pullRequest
     ? ` · then a pull request${found.body.branch ? ` from ${found.body.branch}` : ""} into ${found.body.pullRequest.base || "the default branch"}, ${found.body.pullRequest.merge === "auto" ? "merged when its checks pass" : found.body.pullRequest.merge === "ask" ? "merged if you approve on Needs me" : "left open"}`
@@ -181,6 +204,43 @@ function describePlan(found: Plan): string {
 }
 
 export const agentAssignTools = [
+  defineTool({
+    name: "hub_list_agent_sessions",
+    area: "tasks",
+    description:
+      "The person's coding-agent sessions, most recently active first: each is one conversation with their own Claude Code, Codex, Cursor, GitHub Copilot or other agent on a computer, carried across the tasks continued in it. Each has an id, the agent and model, computer, folder, the first and latest task, a one or two line summary of what it did or is doing, and whether it is working, waiting for them, queued or idle. Use it when they ask what their agents are doing or have done, or name a session to continue (“the session where Claude fixed the login”); then hub_assign_to_agent with session.",
+    input: z
+      .object({
+        taskId: z.string().uuid().optional().describe("Only sessions that worked on this task."),
+        query: z.string().max(200).optional().describe("Words to match in the tasks, summary, folder, agent or computer."),
+        limit: z.number().int().min(1).max(50).default(12),
+      })
+      .strict(),
+    isWrite: false,
+    risk: "low",
+    async run(ctx, input) {
+      const sessions = await listSessions(ctx.prisma, { space: ctx.userId, runner: actorFor(ctx.userId) }, { taskId: input.taskId, query: input.query, limit: input.limit });
+      return toolOk(
+        sessions.length ? `${sessions.length} agent session(s).` : "No agent sessions yet: a session starts when their own coding agent runs a task.",
+        {
+          sessions: sessions.map((session) => ({
+            id: session.id,
+            agent: session.agentName,
+            model: session.model === "default" ? null : session.model,
+            computer: session.computer ?? (session.deviceId ? "a paired computer" : "this computer"),
+            folder: session.folder,
+            firstTask: session.title,
+            latestTask: session.latestTask,
+            summary: session.summary,
+            status: session.status,
+            lastActive: session.lastActiveAt,
+            tasks: session.tasks,
+            runs: session.runs,
+          })),
+        },
+      );
+    },
+  }),
   defineTool({
     name: "hub_list_agent_options",
     area: "tasks",
@@ -211,7 +271,7 @@ export const agentAssignTools = [
     name: "hub_assign_to_agent",
     area: "tasks",
     description:
-      "Assign a task to an agent so it does the work: Ensemble's agent, or the person's own Claude Code, Codex, Cursor agent or GitHub Copilot on their paired computer (“do this on my machine”, “have an agent do it”, “assign it to Copilot”). Uses their default run profile unless they name one (profile), and that profile's computer unless they name one (computer; \"any\" for “my computer/laptop/machine”). Pass repoUrl when the work is in a repository named on the task, or folder when it is one the computer shares as a repository. When the person wants a pull request (“make branch A, open a PR against testing, merge it”), pass branch and pullRequest {base, merge}: Ensemble pushes the branch, opens the pull request into any branch they name and merges it (merge: auto when they say to merge it; ask to confirm on Needs me first; never to leave it open). With the profile's git choice No limits the agent itself may also commit, push any branch and open or merge pull requests; its questions reach the person. Always waits for Apply.",
+      "Assign a task to an agent so it does the work: Ensemble's agent, or the person's own Claude Code, Codex, Cursor agent or GitHub Copilot on their paired computer (“do this on my machine”, “have an agent do it”, “assign it to Copilot”). Uses their default run profile unless they name one (profile), and that profile's computer unless they name one (computer; \"any\" for “my computer/laptop/machine”). Pass repoUrl when the work is in a repository named on the task, or folder when it is one the computer shares as a repository. When the person wants a pull request (“make branch A, open a PR against testing, merge it”), pass branch and pullRequest {base, merge}: Ensemble pushes the branch, opens the pull request into any branch they name and merges it (merge: auto when they say to merge it; ask to confirm on Needs me first; never to leave it open). With the profile's git choice No limits the agent itself may also commit, push any branch and open or merge pull requests; its questions reach the person. Pass session (an id from hub_list_agent_sessions) to do the task in that agent session: same agent, computer and folder, and the agent continues its own conversation. Always waits for Apply.",
     input: AssignInput,
     isWrite: true,
     risk: "medium",

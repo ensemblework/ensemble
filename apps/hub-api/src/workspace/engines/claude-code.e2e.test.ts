@@ -49,6 +49,7 @@ const reply = require("node:child_process").execFileSync(mcp.command, mcp.args, 
 const answer = reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2);
 seen.push("question:" + allowed.permissionDecision + ":" + answer.result.content[0].text);
 seen.push("sandbox:" + settings.sandbox.enabled, "effort:" + (args.includes("--effort") ? args[args.indexOf("--effort") + 1] : "none"), "sources:" + args[args.indexOf("--setting-sources") + 1]);
+seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "none"), "insession:" + args[args.indexOf("-p") + 1].startsWith("(Ensemble: a new task, continuing in this session."));
 say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
 `;
 
@@ -84,6 +85,25 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.match(summary, /sources:user(\s|$)/, "a folder the person did not trust: its own .claude/ settings stay out");
     assert.ok(job.folder && existsSync(join(job.folder, "hello.txt")));
     assert.equal(readFileSync(join(job.folder!, "hello.txt"), "utf8"), "hi");
+    assert.match(summary, /resume:none insession:false/, "a new task starts a new session");
+
+    // Continuing it: the same folder, and Claude Code resumes its own session with the new task.
+    const next = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Follow-up" } });
+    const continued = await side.api<{ jobId?: string; error?: string }>("/api/agent/assign", {
+      json: { taskId: next.body.task.id, kind: "code", engine: "claude-code", mode: "unattended", sandbox: false, delivery: "local", continueFromJobId: assigned.body.jobId },
+    });
+    assert.ok(continued.body.jobId, JSON.stringify(continued.body));
+    let second: { status: string; summary?: string | null; error?: string | null; folder?: string | null; session?: { id: string; resumable: boolean } | null } = { status: "queued" };
+    for (let i = 0; i < 240 && !["succeeded", "failed", "blocked", "cancelled"].includes(second.status); i += 1) {
+      await sleep(500);
+      second = (await side.api<{ job: typeof second }>(`/api/agent/jobs/${continued.body.jobId}`)).body.job;
+    }
+    assert.equal(second.status, "succeeded", `${second.error ?? ""}\n${side.logs().slice(-3000)}`);
+    assert.equal(second.folder, job.folder);
+    assert.match(second.summary ?? "", /resume:s1 insession:true/, "the agent's own session goes on, told it is a new task");
+    assert.deepEqual(second.session, { id: assigned.body.jobId, resumable: true });
+    const sessions = await side.api<{ sessions: Array<{ id: string; runs: number; latestTask: { title: string }; agent: string }> }>("/api/agent/sessions");
+    assert.deepEqual(sessions.body.sessions.map((row) => [row.id, row.agent, row.runs, row.latestTask.title]), [[assigned.body.jobId, "claude-code", 2, "Follow-up"]]);
   } finally {
     await side.stop();
     await runtime.close();

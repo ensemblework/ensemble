@@ -347,7 +347,7 @@ test("without included models there is no Included tab and nothing about credits
   try {
     await until(() => Boolean(document.querySelector('[aria-label="Low model: agent and model"]')), "the tier pickers");
     await openLowPicker();
-    assert.deepEqual(tabNames(), ["Your AI plans", "API keys"]);
+    assert.deepEqual(tabNames(), [], "only AI plans are usable here: no tabs for sources with nothing to pick");
     assert.equal(document.querySelector('[data-testid="included-credits"]'), null);
     assert.ok(!view.calls.includes("/api/metrics/credits"), "credits are not asked for");
   } finally {
