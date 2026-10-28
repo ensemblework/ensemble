@@ -343,7 +343,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const resourceKeys: string[] = [];
   if (body.kind === "code") {
     if (body.continueFromJobId) {
-      const previous = await prisma.workspaceJob.findFirst({ where: { id: body.continueFromJobId, userId }, select: { id: true, kind: true, continueFromJobId: true, externalRoot: true } });
+      const previous = await prisma.workspaceJob.findFirst({ where: { id: body.continueFromJobId, userId }, select: { id: true, kind: true, continueFromJobId: true, externalRoot: true, repoPath: true } });
       if (!previous || previous.kind !== "code") throw new GuardError("Pick an earlier code task to continue from.");
       continueFrom = previous.id;
       let rootId = previous.id;
@@ -353,6 +353,8 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
         parent = (await prisma.workspaceJob.findUnique({ where: { id: parent }, select: { continueFromJobId: true } }))?.continueFromJobId ?? null;
       }
       resourceKeys.push(previous.externalRoot ? `dir:${previous.externalRoot}` : `chain:${rootId}`);
+      // Its folder too, so it waits while another run is changing that folder (folder-claims.ts).
+      if (!previous.externalRoot && previous.repoPath) resourceKeys.push(`dir:${previous.repoPath}`);
     } else if (body.folder?.trim()) {
       externalRoot = await resolveWorkFolder(body.folder);
       resourceKeys.push(`dir:${externalRoot}`);

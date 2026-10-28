@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { loadSettings } from "../lib/settings.js";
+import { within } from "./guard.js";
 
 export const NEEDS_ME_GRACE_MS = 60 * 60_000;
 export const OCCUPIED = [
@@ -58,9 +59,15 @@ export function queueConflict(candidate: QueueJob, active: QueueJob[]): QueueCon
       return { jobId: job.id, reason: "repository" };
     if (candidate.task.projectId && candidate.task.projectId === job.task.projectId) return { jobId: job.id, reason: "project" };
     // Paths and labels are local to a computer; repo identities above are account-wide.
-    if (candidate.deviceId === job.deviceId && candidate.resourceKeys.some((key) => job.resourceKeys.includes(key))) return { jobId: job.id, reason: "folder" };
+    if (candidate.deviceId === job.deviceId && candidate.resourceKeys.some((key) => job.resourceKeys.some((held) => sameResource(key, held)))) return { jobId: job.id, reason: "folder" };
   }
   return null;
+}
+
+/** The same key, or two folders one inside the other (a running job holds every `dir:` folder it changes, folder-claims.ts). */
+function sameResource(a: string, b: string): boolean {
+  if (a === b) return true;
+  return a.startsWith("dir:") && b.startsWith("dir:") && (within(a.slice(4), b.slice(4)) || within(b.slice(4), a.slice(4)));
 }
 
 const WAIT_WORDS: Record<QueueConflict["reason"], string> = {

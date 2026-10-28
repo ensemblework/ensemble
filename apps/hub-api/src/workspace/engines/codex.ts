@@ -23,6 +23,7 @@ import { bundledCodex } from "../handoff.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
+import { heldElsewhere, noteChanges, writtenOutside } from "../folder-claims.js";
 import { claudeFilesystem, engineSandboxPaths, openRoots, type EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
@@ -190,6 +191,8 @@ export async function runCodex(
   // Notifications are handled concurrently; the turn ends only after every earlier one is done, so
   // the reply and the last tool calls are in before the result is read.
   const handling = new Set<Promise<void>>();
+  /** Folders other runs held when the thread started, closed to Codex's sandbox: it reaches them only through an approval. */
+  const held: string[] = [];
   server.onNotification = (method, params) => {
     const earlier = [...handling];
     const work = (async () => {
@@ -198,6 +201,7 @@ export async function runCodex(
           type?: string;
           id?: string;
           command?: string;
+          cwd?: string;
           text?: string;
           changes?: Array<{ path: string }>;
           phase?: string | null;
@@ -221,6 +225,12 @@ export async function runCodex(
           traced.push(trace.toolStart(item.id ?? "", item.type ?? "tool", input, summary));
           appendLive(ctx.job.id, `· ${summary}\n`);
           await ctx.event("tool", { name: item.type, ok: true, summary, engine: "codex" });
+        }
+        // Codex changes the folders its sandbox opens without asking: each one it changed is held for this run from now on.
+        // Read when the call is done (an approval it asked for may have declined it, or waited for the folder).
+        if (method === "item/completed" && isTool && item.status !== "declined") {
+          const changed = item.type === "fileChange" ? (item.changes ?? []).map((change) => change.path).concat(item.changes ? [] : files.get(item.id ?? "") ?? []) : item.type === "commandExecution" && item.command ? writtenOutside(ctx.root, item.command, item.cwd || ctx.root) : [];
+          if (changed.length) await noteChanges(ctx, changed, held).catch(() => undefined);
         }
         if (method === "item/completed" && isTool) {
           const failed = item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0);
@@ -287,7 +297,9 @@ export async function runCodex(
       throw new Error("Codex is not signed in on this computer. Open the ChatGPT app (or run `codex login`) and sign in, then Run again.");
     }
     const home = homedir();
-    const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files")];
+    // Folders other runs are changing stay out of reach too, so changing one comes through an approval and waits its turn (folder-claims.ts).
+    held.push(...(await heldElsewhere(ctx)));
+    const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files"), ...held];
     const paths = await engineSandboxPaths(ctx);
     // Codex's sandbox has no deny list: no writable root may hold a closed path (a home folder holding Ensemble's code, the workspace holding its git helper).
     const writable = await openRoots(claudeFilesystem({ access: paths.access, home, writable: paths.writable, closed, homeEntries: paths.access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite, closed);
