@@ -28,6 +28,7 @@ import { fetchUrl, searchPapers, webSearch } from "./research.js";
 import { runCommand } from "./runner.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { commandGate, type AccessMode, type GateAction, type OutsideZone, type SandboxStrength } from "./trust.js";
+import { busyWith, copyFor, holdFolder, releaseFolder } from "./folder-claims.js";
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
@@ -89,6 +90,12 @@ export interface JobContext {
   remainingMs?: () => number;
   /** Files the run writes beyond its folder's own snapshot (outside-changes.ts). */
   changes?: RunChanges;
+  /** Folders beyond its own this run holds while it changes them (folder-claims.ts). */
+  claims?: string[];
+  /** Folders another run was changing, each with the git worktree this run works in instead (folder-claims.ts). */
+  copies?: Array<{ from: string; folder: string; branch: string; holder: string }>;
+  /** Waits on another run (not the person): the time is not the run's, and the engine is not stuck. */
+  waitForRun?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 /** Per-run answers. Kept apart from `ensemble`/`path` folder trust so a command answer can never trust a path. */
@@ -413,7 +420,8 @@ export type Held = { ok: false; result: unknown; summary: string };
  * A path outside the run's folder, by name. The hard floor first (keys, Ensemble's own data and
  * code, system folders), then the mode: reading goes ahead, a folder the run was let into is its
  * own, and changing a new one asks once for that whole folder (`grantFolder`). Nothing the mode
- * covers is refused. `command`: the command that names it, shown in the question.
+ * covers is refused. A change also takes the folder for the run, or waits, copies or goes alongside
+ * when another run is changing it (`holdFolder`). `command`: the command that names it, shown in the question.
  */
 export async function outsidePath(
   ctx: JobContext,
@@ -424,12 +432,16 @@ export async function outsidePath(
   if (harmlessPath(real)) return { held: null, asked: false };
   const floor = outsideRefusal(real, write);
   if (floor) return { held: refusal(`${real}: ${floor}`, "Refused: off limits"), asked: false };
-  if (granted(ctx, real, write)) return { held: null, asked: false };
+  const hold = (asked = false) => (write ? holdFolder(ctx, real, options).then((verdict) => ({ held: verdict.held, asked: asked || verdict.asked })) : Promise.resolve({ held: null, asked }));
+  // A folder this run works on in its own copy (another run was changing it): the call is pointed there, nobody asked.
+  const copied = write ? copyFor(ctx, real) : null;
+  if (copied) return { held: copied, asked: false };
+  if (granted(ctx, real, write)) return hold();
   const zone = zoneOf(ctx, real);
   const decision = gate(ctx, "outside", false, write, zone);
   if (decision === "allow") {
     if (write) await ctx.event(ctx.job.unattended ? "unattended" : "outside", { action: "outside", path: real, zone });
-    return { held: null, asked: false };
+    return hold();
   }
   if (decision === "block") {
     ctx.blockedOutside.push(real);
@@ -448,19 +460,29 @@ export async function outsidePath(
   const saved = await runRule(ctx, tool, folder);
   if (saved === "allow") {
     await grantFolderToRun(ctx, folder, write);
-    return { held: null, asked: false };
+    return hold();
   }
   if (saved === "deny") return { held: refusal(`The person said no to this run working in ${folder}. Carry on without it and say so in your summary.`, "Not allowed (this run)"), asked: false };
+  // Another run is changing that folder: one question covers both, and its answer lets this run in.
+  if (write && (await busyWith(ctx, real))) {
+    const verdict = await holdFolder(ctx, real, options);
+    if (verdict.held) return { held: verdict.held, asked: verdict.asked };
+    if (verdict.answered) {
+      await grantFolderToRun(ctx, folder, true);
+      return { held: null, asked: verdict.asked };
+    }
+  }
   await ctx.progress(`Waiting for approval: work in ${folder}`);
   const title = options.command
     ? `Run ${options.command.slice(0, 120)}? It ${write ? "changes" : "reads"} ${folder}, outside this run's folder.`
     : `Let the agent ${write ? "work in" : "read"} ${folder} for this run? It is outside the run's folder.`;
   const answer = await askPerson(ctx, { event: "permission", toolName: tool, title, command: folder }, options.withdrawn);
   if (answer.decision !== "allow") {
+    if (write) await releaseFolder(ctx, real);
     return { held: refusal(`The person did not allow ${write ? "working in" : "reading"} ${folder}.${answer.answer ? ` They said: ${answer.answer}` : ""} Carry on without it.`, "Not allowed"), asked: true };
   }
   await grantFolderToRun(ctx, folder, write);
-  return { held: null, asked: true };
+  return hold(true);
 }
 
 function refusal(error: string, summary: string): Held {

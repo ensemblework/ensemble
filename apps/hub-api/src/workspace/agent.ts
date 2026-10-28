@@ -695,6 +695,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         waited += Date.now() - from;
       }
     },
+    waitForRun: async (work) => {
+      const from = Date.now();
+      waitingNow += 1;
+      try {
+        return await work();
+      } finally {
+        waitingNow -= 1;
+        waited += Date.now() - from;
+      }
+    },
     remainingMs,
   };
 

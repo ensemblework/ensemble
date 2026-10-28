@@ -40,7 +40,7 @@ Complexity picks the Low/Medium/High/Max model profile; a complexity the person 
 
 ## 4. Queue slots and limits
 
-`workspace/queue-policy.ts` serializes claims on the space's user row and takes eligible jobs in assignment order. Jobs sharing a project, repository, folder/device resource or unfinished continuation wait for each other, whatever their engine or model; unrelated work can pass (`queueConflict`). Each queued card in Up next and the activity panel says why it waits (`waitingFor` from `queueWaitReason`): the pause, "Same folder as “…”, which is running" (or repository, project, continues), or every slot in use.
+`workspace/queue-policy.ts` serializes claims on the space's user row and takes eligible jobs in assignment order. Jobs sharing a project, repository, folder/device resource (a folder, or one inside or around it, including folders a running job started changing and the folder a continued run works in: [24](24_DESKTOP_SANDBOXING.md)) or unfinished continuation wait for each other, whatever their engine or model; unrelated work can pass (`queueConflict`). Each queued card in Up next and the activity panel says why it waits (`waitingFor` from `queueWaitReason`): the pause, "Same folder as “…”, which is running" (or repository, project, continues), or every slot in use.
 
 - `orchestration.maxConcurrentJobs`: 1–8, default **3**. Claimed, Running, Stopping and Waiting jobs use a slot.
 - When a Needs me question or publishing approval has waited **60 minutes**, one extra job may start (**N+1** total). It is not refilled until fewer than N jobs remain.
