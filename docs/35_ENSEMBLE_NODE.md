@@ -16,10 +16,10 @@ The website lives in its own repository (`ensemblework/ensemble-node`, served fr
 | Approval cards | `node/approvals.ts`: held Ensemble writes applied through `POST /api/assistant/apply`; drafted posts; held session calls |
 | Computer runs | `node/runs.ts`: follows the `WorkspaceJob` a node started and reports when it ends |
 | Mentions, handles; how a reply is posted | `node/mentions.ts`, `node/reply.ts` (pure) |
-| Templates | `node/templates.ts`: Assistant, Manager, Feature engineer, Tester, Docs writer, Researcher; crews Software team, Research desk |
+| Templates | `node/templates.ts`: Assistant, Manager, Feature engineer, Tester, Docs writer, Researcher (their charters run work through agent sessions); crews Software team, Research desk |
 | Live frames | `node/events.ts`: an SSE channel per account (`GET /api/node/events`) |
 | CLI overview | `GET /api/bridge/node` (read-only), the CLI's Node tab ([26](26_CLI.md)) |
-| Tables | `node_agents`, `node_rooms`, `node_room_members`, `node_messages`, `node_runs`, `node_turns`, `node_memories` (migration `20261022120000_ensemble_node`); `node_room_invites` (`20261023120000_node_rooms_invites`, which also renamed `group` rooms to `room` and numbered duplicate names); `node_runs.session_id`, `prompt` and `direct` (`20261028120000_node_sessions`). Account export and deletion include invites the account sent or received (`lib/account-data.ts`). |
+| Tables | `node_agents`, `node_rooms`, `node_room_members`, `node_messages`, `node_runs`, `node_turns`, `node_memories` (migration `20261022120000_ensemble_node`); `node_room_invites` (`20261023120000_node_rooms_invites`, which also renamed `group` rooms to `room` and numbered duplicate names); `node_runs.session_id`, `prompt` and `direct` (`20261028120000_node_sessions`); template charters that nobody edited follow the templates' current text (`20261028130000_node_template_charters`). Account export and deletion include invites the account sent or received (`lib/account-data.ts`). |
 
 Background work starts with the hosted server (`index.ts`, not on a computer's own runtime). On start it resumes queued turns, marks interrupted ones failed rather than running them twice, and polls node runs every 15 s. `ENSEMBLE_NODE=off` turns the background work off. `ENSEMBLE_NODE_PARALLEL` (default 4) caps concurrent node turns per process.
 
