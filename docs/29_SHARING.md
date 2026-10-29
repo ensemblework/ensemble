@@ -20,7 +20,7 @@ Limits: contacts and people per space are each account's own choice (`settings.s
 | `contacts` | 5 (`MAX_CONTACTS`) | 500 |
 | `members` (people per space you own) | 2 (`MAX_MEMBERS`) | 50 |
 
-A lower limit takes nobody away; it only stops new additions until fewer are in use. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+A lower limit takes nobody away; it only stops new additions until fewer are in use. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
 
 **Never shared**, even with a member: Today, metrics, settings, model keys, connected apps (connectors, MCP connections, imports), reminders, the terminal, editor tokens, paired computers, the kill switch, Trash, data deletion, page history and templates. Runs, Needs me, metrics and settings cannot be shared on their own.
 
