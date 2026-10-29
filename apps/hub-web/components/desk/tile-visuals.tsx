@@ -5,6 +5,8 @@ import { ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, FileText } from
 import type { DeskLive } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
 import type { Spec } from "./live-board";
+import { AgentsAtWork, FocusNow, YourWeek } from "./now-tiles";
+import { plainRow, RowList, rowsForSpan, taskRow, type ListRow } from "./rows";
 import { CHART_COLORS as COLORS, datedItems, dayLabel, isLate, mockScores, ratio, taskSegments, timeSegments, weekAhead, type Segment } from "./tile-data";
 
 const short = (day: string) => new Date(`${day.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
@@ -120,60 +122,71 @@ function Timeline({ spec, live }: { spec: Spec; live: DeskLive }) {
   return <div className="visual-timeline" data-visual="date-agenda">{[...dated.map((r) => ({ ...r, meta: dayLabel(r.day, live.today) })), ...fallback.map((r) => ({ ...r, day: "" }))].slice(0, 5).map((r, i) => <div key={r.id}><span className="visual-date" style={{ color: r.day && r.day < live.today ? "var(--chart-rose)" : tone(i) }}>{r.meta || "Next"}</span><span className="visual-timeline-dot" style={{ background: tone(i) }} /><strong title={r.title}>{r.title}</strong></div>)}</div>;
 }
 
-export function TileVisuals({ spec, live, preview = false, interactive = true }: { spec: Spec; live: DeskLive; preview?: boolean; interactive?: boolean }) {
+type VisualProps = { spec: Spec; live: DeskLive; preview?: boolean; interactive?: boolean; footer?: ReactNode; href?: string };
+
+export function TileVisuals(props: VisualProps) {
+  return <>{tileVisual(props).node}</>;
+}
+
+/** The tile's picture. `list` says it drew its own footer (the quiet add and "View all"), so the caller must not. */
+export function tileVisual({ spec, live, preview = false, interactive = true, footer, href }: VisualProps): { node: ReactNode; list: boolean } {
   const key = spec.key;
-  if (key === "progress") return <Donut interactive={interactive} segments={taskSegments(live)} label="tasks" />;
-  if (key === "workload") return <><Metric value={taskSegments(live).slice(1).reduce((s, r) => s + r.value, 0)} label="open tasks" /><Columns segments={taskSegments(live)} label="Task status" /></>;
-  if (["time-split", "hours", "billable", "unbilled"].includes(key)) return timeSegments(live).length ? <Donut interactive={interactive} segments={timeSegments(live)} label="hours logged" unit="h" /> : <Empty>Log time to see how your hours are distributed.</Empty>;
-  if (key === "calendar") return <Calendar live={live} interactive={interactive} />;
+  const drawn = (node: ReactNode) => ({ node, list: false });
+  if (key === "focus-now") return { node: <FocusNow live={live} preview={preview} />, list: true };
+  if (key === "agents") return { node: <AgentsAtWork live={live} preview={preview} />, list: true };
+  if (key === "your-week") return { node: <YourWeek live={live} preview={preview} />, list: true };
+  if (key === "progress") return drawn(<Donut interactive={interactive} segments={taskSegments(live)} label="tasks" />);
+  if (key === "workload") return drawn(<><Metric value={taskSegments(live).slice(1).reduce((s, r) => s + r.value, 0)} label="open tasks" /><Columns segments={taskSegments(live)} label="Task status" /></>);
+  if (["time-split", "hours", "billable", "unbilled"].includes(key)) return drawn(timeSegments(live).length ? <Donut interactive={interactive} segments={timeSegments(live)} label="hours logged" unit="h" /> : <Empty>Log time to see how your hours are distributed.</Empty>);
+  if (key === "calendar") return drawn(<Calendar live={live} interactive={interactive} />);
   if (key === "due-week") {
     const week = weekAhead(live);
     const days = week.days.map((d, i) => ({ label: new Date(`${d.day}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }), value: d.value, color: tone(i) }));
     const late = week.overdue ? [{ label: "Late", value: week.overdue, color: "var(--chart-rose)" }] : [];
     const total = week.overdue + days.reduce((s, d) => s + d.value, 0);
-    return <><Metric value={total} label={week.overdue ? "due or overdue" : "due in 7 days"} note={week.overdue ? `${week.overdue} overdue` : undefined} /><Columns segments={[...late, ...days]} label={week.overdue ? "Overdue, then due in the next seven days" : "Due in the next seven days"} /></>;
+    return drawn(<><Metric value={total} label={week.overdue ? "due or overdue" : "due in 7 days"} note={week.overdue ? `${week.overdue} overdue` : undefined} /><Columns segments={[...late, ...days]} label={week.overdue ? "Overdue, then due in the next seven days" : "Due in the next seven days"} /></>);
   }
-  if (key === "mocks") return <Scores live={live} interactive={interactive} />;
-  if (key === "marking") return <Grading live={live} />;
+  if (key === "mocks") return drawn(<Scores live={live} interactive={interactive} />);
+  if (key === "marking") return drawn(<Grading live={live} />);
   if (["attendance", "streak"].includes(key)) {
     const { present, absent } = live.attendance;
-    return <Donut interactive={interactive} segments={[{ label: "Present", value: present, color: tone(0) }, { label: "Absent", value: absent, color: tone(3) }]} label="attendance" value={`${Math.round(ratio(present, present + absent))}%`} />;
+    return drawn(<Donut interactive={interactive} segments={[{ label: "Present", value: present, color: tone(0) }, { label: "Absent", value: absent, color: tone(3) }]} label="attendance" value={`${Math.round(ratio(present, present + absent))}%`} />);
   }
   if (key === "accuracy") {
     const scores = mockScores(live);
     const avg = scores.length ? scores.reduce((s, r) => s + r.value, 0) / scores.length : 0;
-    return scores.length ? <><Metric value={`${Math.round(avg)}%`} label="average score" note={`${scores.length} recorded attempts`} /><div className="visual-progress-track"><i style={{ width: `${avg}%`, background: tone(0) }} /></div><div className="visual-score-pills">{scores.slice(0, 3).map((s, i) => <span key={s.id}><i style={{ background: tone(i) }} /><strong>{s.subject || s.label}</strong><b>{round(s.value)}%</b></span>)}</div></> : <Empty>No scored attempts yet.</Empty>;
+    return drawn(scores.length ? <><Metric value={`${Math.round(avg)}%`} label="average score" note={`${scores.length} recorded attempts`} /><div className="visual-progress-track"><i style={{ width: `${avg}%`, background: tone(0) }} /></div><div className="visual-score-pills">{scores.slice(0, 3).map((s, i) => <span key={s.id}><i style={{ background: tone(i) }} /><strong>{s.subject || s.label}</strong><b>{round(s.value)}%</b></span>)}</div></> : <Empty>No scored attempts yet.</Empty>);
   }
-  if (["people", "group", "advisor", "out", "ones"].includes(key)) return <People spec={spec} live={live} />;
-  if (["read", "reading", "affairs", "drafts"].includes(key)) return <Documents spec={spec} live={live} preview={preview} />;
-  if (key === "cites") return <div className="visual-citations" data-visual="source-trail">{live.citations.slice(0, 4).map((r, i) => <div key={r.id}><span style={{ color: tone(i) }}>{String(i + 1).padStart(2, "0")}</span><section><strong>{r.fromTitle}</strong><small><ArrowRight size={12} />{r.toTitle}</small></section></div>)}</div>;
+  if (["people", "group", "advisor", "out", "ones"].includes(key)) return drawn(<People spec={spec} live={live} />);
+  if (["read", "reading", "affairs", "drafts"].includes(key)) return drawn(<Documents spec={spec} live={live} preview={preview} />);
+  if (key === "cites") return drawn(<div className="visual-citations" data-visual="source-trail">{live.citations.slice(0, 4).map((r, i) => <div key={r.id}><span style={{ color: tone(i) }}>{String(i + 1).padStart(2, "0")}</span><section><strong>{r.fromTitle}</strong><small><ArrowRight size={12} />{r.toTitle}</small></section></div>)}</div>);
   if (["checks", "tests", "result"].includes(key)) {
     const counts = ["pass", "fail", "unknown"].map((status, i) => ({ label: status === "pass" ? "Passed" : status === "fail" ? "Failed" : "Unknown", value: live.tests.filter((r) => r.status === status).length, color: tone([0, 3, 2][i]!) }));
-    return <><div className="visual-test-counts">{counts.map((s) => <div key={s.label}><strong className="num" style={{ color: s.color }}>{s.value}</strong><small>{s.label}</small></div>)}</div><div className="visual-checks">{live.tests.slice(0, 3).map((r) => <div key={r.id}><i style={{ background: r.status === "pass" ? tone(0) : r.status === "fail" ? tone(3) : tone(2) }} /><strong>{r.name}</strong><small>{r.status}</small></div>)}</div></>;
+    return drawn(<><div className="visual-test-counts">{counts.map((s) => <div key={s.label}><strong className="num" style={{ color: s.color }}>{s.value}</strong><small>{s.label}</small></div>)}</div><div className="visual-checks">{live.tests.slice(0, 3).map((r) => <div key={r.id}><i style={{ background: r.status === "pass" ? tone(0) : r.status === "fail" ? tone(3) : tone(2) }} /><strong>{r.name}</strong><small>{r.status}</small></div>)}</div></>);
   }
   if (["syllabus", "revision", "concepts", "target"].includes(key)) {
     const type = key === "syllabus" ? "phase" : key === "concepts" ? "concept" : "revision";
     const rows = live.tasks.filter((t) => t.taskType === type);
     const done = rows.filter((t) => t.status === "done" || t.pipelineStage?.toLowerCase() === "done").length;
-    return <div data-visual="phase-plan" className="visual-phases"><div className="visual-phase-summary"><strong>{done}<small> / {rows.length}</small></strong><span>completed {type === "phase" ? "units" : "topics"}</span></div>{rows.slice(0, 4).map((r, i) => <div key={r.id} className="visual-phase"><span style={{ color: tone(i), borderColor: tone(i) }}>{r.status === "done" || r.pipelineStage?.toLowerCase() === "done" ? <Check size={12} /> : i + 1}</span><section><strong title={r.title}>{r.title}</strong><small>{r.subject || (r.due ? `Due ${dayLabel(r.due, live.today)}` : r.pipelineStage || "To do")}</small></section></div>)}</div>;
+    return drawn(<div data-visual="phase-plan" className="visual-phases"><div className="visual-phase-summary"><strong>{done}<small> / {rows.length}</small></strong><span>completed {type === "phase" ? "units" : "topics"}</span></div>{rows.slice(0, 4).map((r, i) => <div key={r.id} className="visual-phase"><span style={{ color: tone(i), borderColor: tone(i) }}>{r.status === "done" || r.pipelineStage?.toLowerCase() === "done" ? <Check size={12} /> : i + 1}</span><section><strong title={r.title}>{r.title}</strong><small>{r.subject || (r.due ? `Due ${dayLabel(r.due, live.today)}` : r.pipelineStage || "To do")}</small></section></div>)}</div>);
   }
-  if (["deadlines", "dels", "reminders", "brief", "filings", "paper", "hearings", "cause", "venue", "lead", "next", "hold"].includes(key)) return <Timeline spec={spec} live={live} />;
+  if (["deadlines", "dels", "reminders", "brief", "filings", "paper", "hearings", "cause", "venue", "lead", "next", "hold"].includes(key)) return drawn(<Timeline spec={spec} live={live} />);
   if (key === "stages") {
     const rows = spec.rows(live);
-    return <Donut interactive={interactive} segments={rows.map((r, i) => ({ label: r.title, value: Number(r.meta) || 0, color: tone(i) }))} label="matters" />;
+    return drawn(<Donut interactive={interactive} segments={rows.map((r, i) => ({ label: r.title, value: Number(r.meta) || 0, color: tone(i) }))} label="matters" />);
   }
   if (key === "objectives" || key === "words") {
     const rows = key === "objectives" ? live.objectives.map((r) => ({ id: r.id, title: r.title, value: r.progress })) : live.tasks.filter((r) => r.taskType === "paper" && r.wordCount != null).map((r) => ({ id: r.id, title: r.title, value: r.wordCount! }));
     const max = key === "objectives" ? 100 : Math.max(1, ...rows.map((r) => r.value));
-    return <div className="visual-bars" data-visual="measured-bars">{rows.slice(0, 4).map((r, i) => <div key={r.id}><header><strong>{r.title}</strong><b>{round(r.value)}{key === "objectives" ? "%" : " words"}</b></header><div className="visual-progress-track"><i style={{ width: `${ratio(r.value, max)}%`, background: tone(i) }} /></div></div>)}</div>;
+    return drawn(<div className="visual-bars" data-visual="measured-bars">{rows.slice(0, 4).map((r, i) => <div key={r.id}><header><strong>{r.title}</strong><b>{round(r.value)}{key === "objectives" ? "%" : " words"}</b></header><div className="visual-progress-track"><i style={{ width: `${ratio(r.value, max)}%`, background: tone(i) }} /></div></div>)}</div>);
   }
   const rows = spec.rows(live).filter((r, i, a) => a.findIndex((x) => x.id === r.id) === i);
   const meetings = key === "meet" || key === "follow";
-  return <div className={`visual-work ${meetings ? "visual-meetings" : ""}`} data-visual={meetings ? "meeting-cards" : "work-cards"}>{rows.slice(0, spec.r <= 2 ? 1 : spec.r === 3 ? 3 : 5).map((r, i) => {
-    const task = live.tasks.find((t) => t.id === r.id);
-    const status = task?.status;
-    const late = task ? isLate(task, live.today) : false;
-    const content = <><span className="visual-work-marker" style={{ color: status === "blocked" ? tone(3) : tone(i), background: `color-mix(in srgb, ${tone(i)} 12%, transparent)` }}>{status === "done" ? <Check size={13} /> : meetings ? personInitials(r.title) : String(i + 1).padStart(2, "0")}</span><section><strong title={r.title}>{r.title}</strong><small>{r.meta || (status ? status.replaceAll("_", " ") : meetings ? "Meeting notes & follow-up" : "On your desk")}{late ? <span className="visual-tag" data-urgent="true">Overdue</span> : null}</small></section><ArrowRight size={13} /></>;
-    return task && !preview ? <a key={r.id} href={`/tasks/${encodeURIComponent(r.id)}`}>{content}</a> : <div key={r.id}>{content}</div>;
-  })}</div>;
+  const tasks = new Map(live.tasks.map((t) => [t.id, t]));
+  const listRows: ListRow[] = rows.map((r, i) => {
+    const task = tasks.get(r.id);
+    if (task && !meetings) return { ...taskRow(task, live.today, preview, r.meta), title: r.title };
+    return plainRow(r, meetings ? "person" : "dot", tone(i));
+  });
+  return { node: <RowList rows={listRows} estimate={rowsForSpan(spec.r)} href={href} footer={footer} preview={preview} label={spec.title} />, list: true };
 }

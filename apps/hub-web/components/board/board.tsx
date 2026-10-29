@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Ellipsis, FilePlus2, LayoutGrid, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BoardDragOverlay, useBoardDragSensors, useBoardMotion, useBoardMoveMotion } from "@/components/motion/board-drag/board-drag-dnd-kit";
@@ -534,17 +534,26 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
         </select>
         {tasks.data ? <span className="text-[12.5px] text-muted">{plural(count, "task")}</span> : null}
         {picked.length > 0 && <span className="text-[12.5px] text-muted">{plural(picked.length, "selected task", "selected tasks")}</span>}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Popover trigger={(_open, toggle) => <button type="button" className="btn" disabled={addPage.isPending} onClick={toggle}>Add page</button>}>
-            {(close) => (pages.data?.pages.length ? pages.data.pages.map((page) => (
-              <MenuItem key={page.id} onClick={() => { close(); addPage.mutate(page.id); }}>{page.title || "Untitled"}</MenuItem>
-            )) : <p className="p-2 text-[13px] text-muted">No pages to add. Create one in the sidebar.</p>)}
+        <div className="ml-auto flex flex-nowrap items-center gap-2" data-board-tools>
+          <Popover
+            align="right"
+            width={220}
+            maxHeight={380}
+            trigger={(open, toggle) => (
+              <button type="button" className="btn px-2" aria-label="More board actions" title="More board actions" aria-expanded={open} disabled={addPage.isPending} onClick={toggle}>
+                <Ellipsis size={16} />
+              </button>
+            )}
+          >
+            {(close) => (
+              <BoardMore
+                pages={pages.data?.pages ?? []}
+                tiles={!shell.data?.space?.shared}
+                onPage={(id) => { close(); addPage.mutate(id); }}
+                onTiles={() => { close(); setLayoutEdit(true); }}
+              />
+            )}
           </Popover>
-          {shell.data?.space?.shared ? null : (
-            <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
-              Board tiles
-            </button>
-          )}
           <BoardImport />
           <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
             <Plus size={14} />
@@ -636,6 +645,25 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
         </DndContext>
       </Held>}</div>}
       <CustomBoards />
+    </div>
+  );
+}
+
+/** The board's secondary actions behind one "More" button: add an existing page, choose the overview tiles. */
+function BoardMore({ pages, tiles, onPage, onTiles }: { pages: Array<{ id: string; title: string }>; tiles: boolean; onPage: (id: string) => void; onTiles: () => void }) {
+  const [picking, setPicking] = useState(false);
+  if (picking) {
+    return (
+      <div role="group" aria-label="Add a page to the board">
+        <MenuItem onClick={() => setPicking(false)}><span className="inline-flex items-center gap-1.5 text-muted"><ChevronLeft size={13} />Back</span></MenuItem>
+        {pages.length ? pages.map((page) => <MenuItem key={page.id} onClick={() => onPage(page.id)}>{page.title || "Untitled"}</MenuItem>) : <p className="p-2 text-[13px] text-muted">No pages to add. Create one in the sidebar.</p>}
+      </div>
+    );
+  }
+  return (
+    <div role="group" aria-label="More board actions">
+      <MenuItem onClick={() => setPicking(true)}><span className="inline-flex items-center gap-2"><FilePlus2 size={14} className="text-muted" aria-hidden />Add a page…</span></MenuItem>
+      {tiles ? <MenuItem onClick={onTiles}><span className="inline-flex items-center gap-2"><LayoutGrid size={14} className="text-muted" aria-hidden />Board tiles…</span></MenuItem> : null}
     </div>
   );
 }

@@ -298,7 +298,7 @@ async function main() {
       await boardPhone.goto(`${WEB}/board`, { waitUntil: "networkidle" });
       const phoneStrip = boardPhone.locator("[data-board-strip]");
       await phoneStrip.waitFor();
-      const edit = boardPhone.getByRole("button", { name: "Board tiles" });
+      const edit = boardPhone.getByRole("button", { name: "More board actions" });
       const task = boardPhone.getByRole("button", { name: "New task", exact: true }).first();
       const editBox = await edit.boundingBox();
       const taskBox = await task.boundingBox();

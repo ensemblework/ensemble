@@ -10,6 +10,7 @@ import { undoLast } from "../lib/undo.js";
 import { saveSettings } from "../lib/settings.js";
 import { prisma } from "../lib/prisma.js";
 import { coworkRoutes } from "../routes/cowork.js";
+import { weeklyRecap } from "./service.js";
 import "../types.js";
 
 async function databaseReady(): Promise<boolean> {
@@ -413,6 +414,70 @@ test("cowork edge cases: dates, ownership, nudges, meetings, recap bounds", asyn
   } finally {
     await app.close();
     await otherApp.close();
+    await cleanup(owner.id);
+    await cleanup(other.id);
+  }
+});
+
+test("weekly recap numbers: local days, the week before, and only this space", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const owner = await user("numbers");
+  const other = await user("elsewhere");
+  const app = await appFor(owner.id);
+  try {
+    await saveSettings(prisma, owner.id, { timezone: "Asia/Kolkata" });
+    const project = await prisma.project.create({ data: { userId: owner.id, name: "Atlas" } });
+    const task = (userId: string, title: string, completedAt: string, extra: Record<string, unknown> = {}) =>
+      prisma.task.create({ data: { userId, title, status: "done", owner: "me", createdBy: "me", completedAt: new Date(completedAt), createdAt: new Date(completedAt), ...extra } });
+    // Week of 12–18 Jan 2026. 19:00 UTC on Sunday 11 Jan is 00:30 on Monday in Kolkata.
+    await task(owner.id, "Monday in Kolkata", "2026-01-11T19:00:00Z", { priority: "p0", projectId: project.id });
+    const byAgent = await task(owner.id, "Agent finished", "2026-01-14T10:00:00Z", { projectId: project.id });
+    await prisma.taskTransition.create({ data: { userId: owner.id, taskId: byAgent.id, fromStatus: "in_progress", toStatus: "done", actor: "agent", at: new Date("2026-01-14T10:00:00Z") } });
+    await task(owner.id, "Week before", "2026-01-07T10:00:00Z");
+    await prisma.task.create({ data: { userId: owner.id, title: "Still open", status: "todo", owner: "me", createdBy: "me", projectId: project.id } });
+    const theirs = await task(other.id, "Someone else's", "2026-01-14T10:00:00Z");
+    await prisma.run.create({ data: { userId: owner.id, taskId: byAgent.id, worker: "workspace", outcome: "success", startedAt: new Date("2026-01-13T09:00:00Z") } });
+    await prisma.run.create({ data: { userId: other.id, taskId: theirs.id, worker: "workspace", outcome: "failed", startedAt: new Date("2026-01-13T09:00:00Z") } });
+    const view = (userId: string, at: string, minutes: number) =>
+      prisma.interactionEvent.create({ data: { userId, sessionKey: "recap-test", at: new Date(at), kind: "view", surface: "board", route: "/board", durationMs: minutes * 60_000 } });
+    await view(owner.id, "2026-01-13T04:20:00Z", 20);
+    await view(other.id, "2026-01-13T04:20:00Z", 45);
+    await prisma.meetingSession.create({
+      data: { userId: owner.id, title: "Planning", notes: "We decided to ship on Friday.", recap: "- We decided to ship on Friday.", startedAt: new Date("2026-01-15T06:00:00Z") },
+    });
+
+    const body = (await app.inject({ method: "GET", url: "/api/recap/week?date=2026-01-14" })).json();
+    assert.equal(body.start, "2026-01-12");
+    assert.equal(body.current, false);
+    assert.equal(body.compare, "full");
+    assert.deepEqual(
+      body.days.map((day: { completedByYou: number; completedByAgents: number }) => [day.completedByYou, day.completedByAgents]),
+      [[1, 0], [0, 0], [0, 1], [0, 0], [0, 0], [0, 0], [0, 0]],
+    );
+    assert.equal(body.stats.completed, 2);
+    assert.equal(body.stats.completedByAgents, 1);
+    assert.equal(body.previous.completed, 1);
+    assert.equal(body.stats.agentRuns, 1, "another space's runs do not count");
+    assert.deepEqual(body.agents.byAgent, [{ name: "Ensemble agent", runs: 1, succeeded: 1 }]);
+    assert.equal(body.stats.activeMinutes, 20, "only this person's screen time");
+    assert.equal(body.rhythm[1][9] + body.rhythm[1][10], 20, "09:50 to 10:10 in Kolkata on Tuesday");
+    assert.deepEqual(body.projects, [{ id: project.id, name: "Atlas", href: `/projects/${project.id}`, completed: 2, created: 2, open: 1 }]);
+    assert.ok(body.highlights.some((row: { kind: string }) => row.kind === "priority"));
+    assert.ok(body.highlights.some((row: { kind: string }) => row.kind === "first_run"));
+    assert.match(body.narrative, /2 tasks, 1 more than the week before/);
+    assert.equal(body.stats.decisions, 1, "a decision in both the notes and their recap counts once");
+    assert.equal(body.stats.meetings, 1);
+    assert.match(body.markdown, /## At a glance/);
+    assert.doesNotMatch(JSON.stringify(body), /Someone else's/);
+
+    // Screen time is the signed-in account's, whichever space is open.
+    const asGuest = await weeklyRecap(prisma, owner.id, "2026-01-14", other.id);
+    assert.equal(asGuest.stats.activeMinutes, 45);
+    assert.equal(asGuest.stats.completed, 2);
+  } finally {
+    await app.close();
+    await prisma.interactionEvent.deleteMany({ where: { userId: { in: [owner.id, other.id] } } });
+    await prisma.project.deleteMany({ where: { userId: owner.id } });
     await cleanup(owner.id);
     await cleanup(other.id);
   }

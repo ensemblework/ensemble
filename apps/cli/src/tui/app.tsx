@@ -16,7 +16,7 @@ import { terminalBrand } from "@ensemble/brand/cli";
 import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { asksForIds, formatEntityText, INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type AssistantRef, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import { PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
@@ -104,7 +104,8 @@ export type Ops = {
   nodeUrl?: string;
 };
 
-type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error" | "included"; text: string; notice?: IncludedNotice };
+/** `refs`: records the turn named, so ids show as titles; `ids`: the person asked for ids (docs/11 §4.1). */
+type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error" | "included"; text: string; notice?: IncludedNotice; refs?: readonly AssistantRef[]; ids?: boolean };
 
 type Overlay =
   | { kind: "picker"; title: string; hint?: string; items: Array<{ id: string; label: string; detail?: string; active?: boolean }>; index: number; onPick: (id: string) => void }
@@ -115,7 +116,7 @@ type Overlay =
 type Notice = { text: string; tone: "info" | "ok" | "error" };
 
 let entrySeq = 0;
-const entry = (kind: Entry["kind"], text: string): Entry => ({ id: `e${(entrySeq += 1)}`, kind, text });
+const entry = (kind: Entry["kind"], text: string, named?: { refs: readonly AssistantRef[]; ids: boolean }): Entry => ({ id: `e${(entrySeq += 1)}`, kind, text, ...(named ? { refs: named.refs, ids: named.ids } : {}) });
 /** An error entry, or a notice when it is an included refusal ("connect this computer", "credits used"). */
 const failure = (text: string, code?: string | null): Entry => {
   const notice = includedNotice(code, text);
@@ -295,6 +296,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   const [chatScroll, setChatScroll] = useState(0);
   const chatAbort = useRef<AbortController | null>(null);
   const conversationRef = useRef<string | null>(null);
+  /** Every record this chat's turns named, newest last. */
+  const chatRefs = useRef<AssistantRef[]>([]);
   conversationRef.current = conversationId;
   // Chat with your agent: the chat's task, the last message's run (the next one continues it), and the run in progress.
   const chatTask = useRef<{ taskId: string; lastJobId: string | null } | null>(null);
@@ -370,7 +373,15 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     async (message: string) => {
       if (streaming) return;
       if (agentChat) return sendAgentChat(message);
-      setEntries((current) => [...current, entry("user", message), entry("assistant", "")]);
+      // Shared by this turn's entries and filled as refs arrive, so streamed ids show as titles.
+      const named = { refs: chatRefs.current, ids: asksForIds(message) };
+      const note = (kind: Entry["kind"], text: string) => entry(kind, text, named);
+      const remember = (refs: readonly AssistantRef[] | undefined) => {
+        if (!refs?.length) return;
+        chatRefs.current.push(...refs.filter((ref) => ref && typeof ref.id === "string" && typeof ref.label === "string"));
+        if (chatRefs.current.length > 600) chatRefs.current.splice(0, chatRefs.current.length - 600);
+      };
+      setEntries((current) => [...current, entry("user", message), note("assistant", "")]);
       setChatScroll(0);
       setStreaming(true);
       const abort = new AbortController();
@@ -380,19 +391,22 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         setEntries((current) => {
           const last = current[current.length - 1];
           if (last?.kind === "assistant") return [...current.slice(0, -1), { ...last, text: last.text + text }];
-          return [...current, entry("assistant", text)];
+          return [...current, note("assistant", text)];
         });
       // The turn's error frame is shown once; a "done" that only repeats it adds nothing.
       let failed: string | null = null;
       const onFrame = (frame: ChatFrame) => {
         if (frame.type === "status" && frame.conversationId) setConversationId(frame.conversationId);
+        else if (frame.type === "refs") remember(frame.refs);
         else if (frame.type === "delta") appendAssistant(frame.text);
         else if (frame.type === "tool") {
           const call = frame.call;
-          setEntries((current) => [...current, entry(call.state === "failed" ? "failed" : "tool", call.state === "failed" ? call.error ?? `${call.name} failed` : call.summary || call.name), entry("assistant", "")]);
+          remember(call.refs);
+          setEntries((current) => [...current, note(call.state === "failed" ? "failed" : "tool", call.state === "failed" ? call.error ?? `${call.name} failed` : call.summary || call.name), note("assistant", "")]);
         } else if (frame.type === "pending") {
+          remember(frame.call.refs);
           setPending((current) => [...current, frame.call]);
-          setEntries((current) => [...current, entry("pending", frame.preview || frame.call.summary || frame.call.name), entry("assistant", "")]);
+          setEntries((current) => [...current, note("pending", frame.preview || frame.call.summary || frame.call.name), note("assistant", "")]);
         } else if (frame.type === "error") {
           failed = frame.message ?? frame.error ?? "Something went wrong.";
           const text = failed;
@@ -409,7 +423,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
             const trimmed = current.filter((item, index) => !(item.kind === "assistant" && !item.text.trim() && index < current.length - 1));
             const last = trimmed[trimmed.length - 1];
             if (last?.kind === "assistant") return [...trimmed.slice(0, -1), { ...last, text: frame.content || last.text }];
-            return frame.content ? [...trimmed, entry("assistant", frame.content)] : trimmed;
+            return frame.content ? [...trimmed, note("assistant", frame.content)] : trimmed;
           });
         }
       };
@@ -857,6 +871,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         if (streaming) return say("Stop the reply first (Esc), then start a new chat.");
         setConversationId(null);
         chatTask.current = null;
+        chatRefs.current = [];
         setEntries([]);
         setPending([]);
         return setPrefs({ tab: "chat" });
@@ -1399,6 +1414,11 @@ function decisionLines(decision: Decision, width: number): Line[] {
   return lines;
 }
 
+/** Records by title, not id: a terminal cannot open `ensemble://` links, so they read as their labels. */
+export function titled(item: Pick<Entry, "refs" | "ids">, text: string, markdownText = false): string {
+  return formatEntityText(text, item.refs ?? [], { plain: !markdownText, showIds: item.ids, link: () => null });
+}
+
 function chatPane(
   entries: readonly Entry[],
   width: number,
@@ -1449,11 +1469,11 @@ function chatPane(
   for (const item of entries) {
     if (item.kind === "user") lines.push([], ...wrapLine([{ text: "› ", color: ACCENT, bold: true }, { text: item.text, bold: true }], width, "  "));
     else if (item.kind === "assistant") {
-      if (item.text.trim()) lines.push([], ...markdown(item.text.trim(), width));
+      if (item.text.trim()) lines.push([], ...markdown(titled(item, item.text.trim(), true), width));
     } else if (item.kind === "agent") lines.push(...agentLines(item.text, width));
-    else if (item.kind === "tool") lines.push(...wrapLine([{ text: "  ✓ ", color: "green" }, { text: item.text, dim: true }], width, "    "));
-    else if (item.kind === "failed") lines.push(...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));
-    else if (item.kind === "pending") lines.push([], [{ text: "  ◇ Waiting for Apply", color: "yellow", bold: true }], ...markdown(item.text, width - 4).map((line) => [{ text: "    " }, ...line]));
+    else if (item.kind === "tool") lines.push(...wrapLine([{ text: "  ✓ ", color: "green" }, { text: titled(item, item.text), dim: true }], width, "    "));
+    else if (item.kind === "failed") lines.push(...wrapLine([{ text: "  ✗ ", color: "red" }, { text: titled(item, item.text), color: "red" }], width, "    "));
+    else if (item.kind === "pending") lines.push([], [{ text: "  ◇ Waiting for Apply", color: "yellow", bold: true }], ...markdown(titled(item, item.text, true), width - 4).map((line) => [{ text: "    " }, ...line]));
     else if (item.kind === "note") lines.push(...wrapLine([{ text: `  ${item.text}`, dim: true, italic: true }], width));
     else if (item.kind === "included" && item.notice) lines.push([], ...noticeLines(item.notice, width));
     else lines.push([], ...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));

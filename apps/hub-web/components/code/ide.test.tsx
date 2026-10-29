@@ -220,3 +220,32 @@ test("on a phone the editor opens unobstructed, and choosing a file closes the p
     phone = false;
   }
 });
+
+test("the terminal panel resizes from its top edge: arrow keys, at least 140 px, at most three quarters of the window, double-click resets, and the height is remembered", async () => {
+  window.localStorage.clear();
+  window.localStorage.setItem("ensemble.code.terminal", "true");
+  const fake = server();
+  const view = await mount();
+  try {
+    const panel = () => view.host.querySelector<HTMLElement>('[data-testid="ide-bottom-panel"]')!;
+    const sash = panel().querySelector<HTMLElement>('[role="separator"][aria-label="Resize the terminal"]')!;
+    assert.ok(sash, "the terminal's top edge");
+    assert.equal(panel().style.height, "280px");
+    await press("ArrowUp", {}, sash);
+    assert.equal(panel().style.height, "296px");
+    assert.equal(window.localStorage.getItem("ensemble.code.terminalHeight"), "296");
+    for (let i = 0; i < 12; i += 1) await press("ArrowDown", { shiftKey: true }, sash);
+    assert.equal(panel().style.height, "140px", "never shorter than 140 px");
+    for (let i = 0; i < 30; i += 1) await press("ArrowUp", { shiftKey: true }, sash);
+    assert.equal(panel().style.height, `${Math.floor(window.innerHeight * 0.75)}px`, "never more than three quarters of the window");
+    await act(async () => {
+      sash.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    assert.equal(panel().style.height, "280px");
+    assert.equal(view.host.textContent?.includes("Bigger"), false);
+  } finally {
+    await view.done();
+    fake.restore();
+    window.localStorage.clear();
+  }
+});

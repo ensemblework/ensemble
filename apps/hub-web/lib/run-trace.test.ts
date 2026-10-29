@@ -54,6 +54,7 @@ test("the model that answered is compared with the one asked for, allowing dated
 
 test("durations and costs read plainly", () => {
   assert.equal(duration(340), "340ms");
+  assert.equal(duration(-1), "<1ms");
   assert.equal(duration(2400), "2.4s");
   assert.equal(duration(75_000), "1m 15s");
   assert.equal(duration(null), "");

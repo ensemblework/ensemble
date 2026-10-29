@@ -264,7 +264,7 @@ Profile, timezone, profession and selected personal instructions inform requests
 
 ## 7. Meeting context
 
-`routes/cowork.ts` serves manual notes: `GET/POST /api/meetings/sessions`, `GET/PATCH/DELETE /api/meetings/sessions/:id`, `/end`, `/attach`, `/decline`, `/recap`, plus `GET /api/meetings/cues` (saved calendar events from 48 hours back to 24 hours ahead, with their sessions) and `POST /api/meetings/summarize`. `routes/meeting-notes.ts` serves `GET /api/meetings/imported` and `GET /api/meetings/notes/:id`.
+`routes/cowork.ts` serves manual notes: `GET/POST /api/meetings/sessions`, `GET/PATCH/DELETE /api/meetings/sessions/:id` (a `projectId`, owned by the same account, links notes to a project; null unlinks them), `/end`, `/attach`, `/decline`, `/recap`, plus `GET /api/meetings/cues` (saved calendar events from 48 hours back to 24 hours ahead, with their sessions) and `POST /api/meetings/summarize`. `routes/meeting-notes.ts` serves `GET /api/meetings/imported` and `GET /api/meetings/notes/:id`.
 
 Manual notes use the page editor, with saved `content` plus Markdown `notes`, and attendee/event links. Attaching notes to an event saves the link inside Ensemble only; calendar apps are not written. Imported notes are read-only. Summaries, decisions and tasks must come from the selected note. There is no microphone recording or audio/video understanding. The assistant can read notes, import a bounded batch, create/edit manual notes and propose tasks when asked ([34](34_ASSISTANT_ACTIONS.md)).
 

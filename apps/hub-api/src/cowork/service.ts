@@ -20,7 +20,7 @@ import { composeAskAnswer, pathFromHubUrl, searchTerms, type AskSource } from ".
 import { renderMorningBrief } from "./morning-skill.js";
 import { formatMorningBrief } from "./brief.js";
 import { parseCapture, type ParsedCapture } from "./capture.js";
-import { calendarLabel, weekBounds } from "./dates.js";
+import { addCalendarDays, calendarLabel, weekBounds } from "./dates.js";
 import {
   CALENDAR_WRITE_MESSAGE,
   buildMeetingRecap,
@@ -32,8 +32,19 @@ import {
   type MeetingPhase,
 } from "./meetings.js";
 import { nudgeQuestion, nudgeReasons, pathToDone, OPEN_STATUSES, type NudgeReason } from "./nudges.js";
-import { clipSummary, renderWeeklyRecap, slippedLinks } from "./recap.js";
-import { isGuestIn } from "../sharing/context.js";
+import {
+  agentSummary,
+  clipSummary,
+  recapHighlights,
+  recapNarrative,
+  renderWeeklyRecap,
+  slippedLinks,
+  weekShape,
+  type CompletedFact,
+  type RecapProject,
+  type RecapStats,
+} from "./recap.js";
+import { currentScope, isGuestIn } from "../sharing/context.js";
 
 type Db = PrismaClient;
 /** Meeting-session writes also run inside the assistant's Apply transaction. */
@@ -111,9 +122,10 @@ export async function deliverMorningBrief(db: Db, userId: string, render = rende
 export async function listNotifications(db: Db, userId: string) {
   const [rows, user] = await Promise.all([
     db.notification.findMany({
-      where: { userId, channel: "hub" },
+      // Read notifications leave the list: the bell keeps no history.
+      where: { userId, channel: "hub", readAt: null },
       orderBy: { createdAt: "desc" },
-      take: 40,
+      take: 60,
     }),
     db.user.findUnique({ where: { id: userId }, select: { moduleSet: true } }),
   ]);
@@ -137,8 +149,9 @@ export async function markNotificationRead(db: Db, userId: string, id: string) {
   return { updated: result.count };
 }
 
-export async function markAllNotificationsRead(db: Db, userId: string) {
-  const result = await db.notification.updateMany({ where: { userId, readAt: null, channel: "hub" }, data: { readAt: new Date() } });
+/** Every unread notification, or only `ids` (one tab of the bell). */
+export async function markAllNotificationsRead(db: Db, userId: string, ids?: string[]) {
+  const result = await db.notification.updateMany({ where: { userId, readAt: null, channel: "hub", ...(ids ? { id: { in: ids } } : {}) }, data: { readAt: new Date() } });
   return { updated: result.count };
 }
 
@@ -336,6 +349,7 @@ function sessionJson(row: {
   status: string;
   attachState: string;
   personIds: string[];
+  projectId?: string | null;
   startedAt: Date;
   endedAt: Date | null;
 }, withContent = true) {
@@ -349,6 +363,7 @@ function sessionJson(row: {
     status: row.status,
     attachState: row.attachState,
     personIds: row.personIds,
+    projectId: row.projectId ?? null,
     startedAt: row.startedAt.toISOString(),
     endedAt: row.endedAt?.toISOString() ?? null,
     href: `/meetings?session=${row.id}`,
@@ -519,9 +534,10 @@ export async function getMeetingSession(db: Db, userId: string, id: string) {
   return { session: sessionJson(session), attendees, ...prep, voice: VOICE_TODO, calendarWrite: false, calendarWriteReason: CALENDAR_WRITE_MESSAGE };
 }
 
-export async function startMeetingSession(db: Db, userId: string, input: { artifactId?: string | null; title?: string }) {
+export async function startMeetingSession(db: Db, userId: string, input: { artifactId?: string | null; title?: string; projectId?: string | null }) {
   let title = input.title?.trim() || "Meeting notes";
   let personIds: string[] = [];
+  if (input.projectId) await ownedProject(db, userId, input.projectId);
   if (input.artifactId) {
     const event = await db.artifact.findFirst({ where: { id: input.artifactId, userId, deletedAt: null, kind: "event" } });
     if (!event) throw fail(404, "That calendar event was not found.");
@@ -534,9 +550,21 @@ export async function startMeetingSession(db: Db, userId: string, input: { artif
       .filter((id): id is string => Boolean(id));
   }
   const session = await db.meetingSession.create({
-    data: { userId, title, artifactId: input.artifactId ?? null, personIds, status: "live", attachState: "none" },
+    data: { userId, title, artifactId: input.artifactId ?? null, personIds, status: "live", attachState: "none", projectId: input.projectId ?? null },
   });
   return { session: sessionJson(session) };
+}
+
+async function ownedProject(db: Tx, userId: string, id: string) {
+  if (!(await db.project.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true } }))) throw fail(404, "That project was not found.");
+}
+
+/** Links meeting notes to a project, or unlinks them with null. */
+export async function setMeetingProject(db: Tx, userId: string, id: string, projectId: string | null) {
+  const session = await ownedSession(db, userId, id);
+  if (projectId) await ownedProject(db, userId, projectId);
+  const updated = await db.meetingSession.update({ where: { id: session.id }, data: { projectId } });
+  return { session: sessionJson(updated) };
 }
 
 export async function saveMeetingNotes(db: Tx, userId: string, id: string, change: { notes?: string; content?: unknown; title?: string }) {
@@ -791,24 +819,72 @@ export async function askEnsemble(db: Db, userId: string, question: string) {
   return { question: asked, answer, sources: composed.sources };
 }
 
-export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
+const DAY_MS = 86_400_000;
+/** Screen-time rows read for one week; a person active all day stays well under this. */
+const MAX_VIEWS = 20_000;
+
+/**
+ * The weekly recap: the lists (done, decided, slipped, meetings) plus the week in numbers, its
+ * days, when and where screen time went, projects, agent runs, highlights and what is coming up.
+ * Everything is scoped to the space (`userId`); screen time is the signed-in account's own
+ * (`accountId`), because interaction events belong to a person, not a space.
+ */
+export async function weeklyRecap(db: Db, userId: string, anchor?: string, accountId = currentScope()?.accountId ?? userId) {
   const settings = await loadSettings(db, userId);
-  const clock = zonedParts(settings.timezone);
+  const timeZone = settings.timezone;
+  const now = new Date();
+  const clock = zonedParts(timeZone, now);
   if (anchor && !isIsoDate(anchor)) throw fail(400, "Pick a real date.");
   const date = anchor ?? clock.date;
   const weekday = anchor
     ? new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(new Date(`${date}T12:00:00Z`))
     : clock.weekday;
   const bounds = weekBounds(date, weekday);
-  const startUtc = dayStart(bounds.start, settings.timezone);
-  const endUtc = dayStart(bounds.end, settings.timezone);
+  const startUtc = dayStart(bounds.start, timeZone);
+  const endUtc = dayStart(bounds.end, timeZone);
+  const prevStartUtc = dayStart(addCalendarDays(bounds.start, -7), timeZone);
+  const current = startUtc <= now && now < endUtc;
+  // Mid-week, last week is compared up to the same moment, not its whole seven days.
+  const prevEndUtc = current ? new Date(now.getTime() - 7 * DAY_MS) : startUtc;
   const cutoff = bounds.end < clock.date ? bounds.end : clock.date;
-  const [tasks, overdue, deliverables, sessions, approvals, decisions] = await Promise.all([
+  const dueFrom = clock.date > bounds.start ? clock.date : bounds.start;
+  const dueUntil = addCalendarDays(bounds.end, 7);
+  const both = { gte: prevStartUtc, lt: endUtc };
+  const thisWeek = { gte: startUtc, lt: endUtc };
+  const guest = isGuestIn(userId);
+  const [
+    completedRows,
+    agentDone,
+    createdRows,
+    overdue,
+    deliverables,
+    projectsDone,
+    sessions,
+    approvals,
+    decisions,
+    runs,
+    firstRun,
+    views,
+    previousViews,
+    revisions,
+    pages,
+    dueTasks,
+    dueDeliverables,
+    waitingApprovals,
+    waitingDecisions,
+  ] = await Promise.all([
     db.task.findMany({
-      where: { userId, deletedAt: null },
-      select: { id: true, title: true, status: true, due: true, completedAt: true },
-      take: 400,
+      where: { userId, deletedAt: null, status: "done", completedAt: both },
+      orderBy: { completedAt: "asc" },
+      select: { id: true, title: true, priority: true, projectId: true, completedAt: true },
+      take: 2000,
     }),
+    db.taskTransition.findMany({
+      where: { userId, toStatus: "done", actor: "agent", at: both },
+      select: { taskId: true },
+      take: 2000,
+    }),
+    db.task.findMany({ where: { userId, deletedAt: null, createdAt: both }, select: { createdAt: true, projectId: true }, take: 4000 }),
     db.task.findMany({
       where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { lt: new Date(`${cutoff}T00:00:00.000Z`) } },
       orderBy: { due: "asc" },
@@ -816,47 +892,223 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
       take: 100,
     }),
     db.deliverable.findMany({
-      where: { userId, deletedAt: null, status: "completed", completedAt: { gte: startUtc, lt: endUtc } },
+      where: { userId, deletedAt: null, status: "completed", completedAt: thisWeek },
       select: { id: true, title: true, projectId: true, completedAt: true },
     }),
+    db.project.findMany({ where: { userId, deletedAt: null, completedAt: thisWeek }, select: { id: true, name: true }, take: 10 }),
     db.meetingSession.findMany({
-      where: { userId, deletedAt: null, startedAt: { gte: startUtc, lt: endUtc } },
+      where: { userId, deletedAt: null, startedAt: both },
       orderBy: { startedAt: "asc" },
+      take: 200,
     }),
     db.approval.findMany({
-      where: { userId, decidedAt: { gte: startUtc, lt: endUtc }, decision: { not: null } },
-      select: { id: true, title: true, decision: true },
-      take: 40,
+      where: { userId, decidedAt: both, decision: { not: null } },
+      select: { id: true, title: true, decision: true, decidedAt: true },
+      take: 200,
     }),
     db.agentDecision.findMany({
       // The owner's own editors (Cursor, Claude Code…) are theirs alone; runs' questions are the space's.
-      where: { userId, decidedAt: { gte: startUtc, lt: endUtc }, decision: { not: null }, ...(isGuestIn(userId) ? { source: "ensemble" } : {}) },
-      select: { id: true, title: true, decision: true },
-      take: 40,
+      where: { userId, decidedAt: both, decision: { not: null }, ...(guest ? { source: "ensemble" } : {}) },
+      select: { id: true, title: true, decision: true, decidedAt: true },
+      take: 200,
     }),
+    db.run.findMany({
+      where: { userId, deletedAt: null, startedAt: both },
+      select: { startedAt: true, outcome: true, worker: true, workspaceJob: { select: { provider: true } } },
+      take: 2000,
+    }),
+    db.run.findFirst({ where: { userId }, orderBy: { startedAt: "asc" }, select: { startedAt: true } }),
+    db.interactionEvent.findMany({
+      where: { userId: accountId, kind: "view", at: thisWeek },
+      select: { at: true, durationMs: true, surface: true },
+      take: MAX_VIEWS,
+    }),
+    db.interactionEvent.aggregate({ where: { userId: accountId, kind: "view", at: { gte: prevStartUtc, lt: prevEndUtc } }, _sum: { durationMs: true } }),
+    db.pageRevision.findMany({ where: { userId, createdAt: both }, select: { pageId: true, createdAt: true }, take: 2000 }),
+    db.taskPage.findMany({ where: { userId, deletedAt: null, updatedAt: both }, select: { id: true, updatedAt: true }, take: 2000 }),
+    dueFrom < dueUntil
+      ? db.task.findMany({
+          where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { gte: new Date(`${dueFrom}T00:00:00.000Z`), lt: new Date(`${dueUntil}T00:00:00.000Z`) } },
+          orderBy: { due: "asc" },
+          select: { id: true, title: true, due: true, priority: true },
+          take: 12,
+        })
+      : Promise.resolve([]),
+    dueFrom < dueUntil
+      ? db.deliverable.findMany({
+          where: { userId, deletedAt: null, status: "upcoming", due: { gte: new Date(`${dueFrom}T00:00:00.000Z`), lt: new Date(`${dueUntil}T00:00:00.000Z`) } },
+          orderBy: { due: "asc" },
+          select: { title: true, due: true, projectId: true },
+          take: 6,
+        })
+      : Promise.resolve([]),
+    db.approval.count({ where: { userId, decision: null } }),
+    db.agentDecision.count({ where: { userId, status: "pending", ...(guest ? { source: "ensemble" } : {}) } }),
   ]);
+
+  const inWeek = (at: Date | null | undefined) => Boolean(at && at >= startUtc && at < endUtc);
+  const inPrevious = (at: Date | null | undefined) => Boolean(at && at >= prevStartUtc && at < prevEndUtc);
+  const byAgent = new Set(agentDone.map((row) => row.taskId));
+  const completedFacts: CompletedFact[] = completedRows.map((task) => ({
+    id: task.id,
+    title: task.title,
+    priority: task.priority,
+    projectId: task.projectId,
+    at: task.completedAt!,
+    byAgent: byAgent.has(task.id),
+  }));
+  const completedWeek = completedFacts.filter((task) => inWeek(task.at));
+  const completedBefore = completedFacts.filter((task) => inPrevious(task.at));
+  const sessionsWeek = sessions.filter((session) => inWeek(session.startedAt));
+  // The recap is written from the notes, so the same decision can appear in both.
+  const meetingDecisions = (rows: typeof sessions) =>
+    rows.flatMap((session) => {
+      const seen = new Set<string>();
+      return decisionLines(`${session.notes}\n${session.recap}`)
+        .filter((text) => {
+          const key = text.toLowerCase().replace(/\s+/g, " ");
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((text) => ({ title: text, href: `/meetings?session=${session.id}` }));
+    });
+  const runsWeek = runs.filter((run) => inWeek(run.startedAt));
+  const runsBefore = runs.filter((run) => inPrevious(run.startedAt));
+  const pagesIn = (inRange: (at: Date) => boolean) =>
+    new Set([...revisions.filter((row) => inRange(row.createdAt)).map((row) => row.pageId), ...pages.filter((row) => inRange(row.updatedAt)).map((row) => row.id)]).size;
+
   const done = [
-    ...tasks
-      .filter((task) => task.status === "done" && task.completedAt && task.completedAt >= startUtc && task.completedAt < endUtc)
-      .map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: "Done" })),
+    ...completedWeek.map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: "Done" })),
     ...deliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, detail: "Deliverable" })),
   ];
   const slipped = slippedLinks(overdue, cutoff, clock.date);
   const decided = [
-    ...sessions.flatMap((session) =>
-      decisionLines(`${session.notes}\n${session.recap}`).map((text) => ({ title: text, href: `/meetings?session=${session.id}` })),
-    ),
-    ...approvals.map((row) => ({ title: `${row.title} (${row.decision})`, href: "/needs-me" })),
-    ...decisions.map((row) => ({ title: `${row.title} (${row.decision})`, href: "/needs-me" })),
+    ...meetingDecisions(sessionsWeek),
+    ...approvals.filter((row) => inWeek(row.decidedAt)).map((row) => ({ title: `${row.title} (${row.decision})`, href: "/needs-me" })),
+    ...decisions.filter((row) => inWeek(row.decidedAt)).map((row) => ({ title: `${row.title} (${row.decision})`, href: "/needs-me" })),
   ];
-  const meetings = sessions.map((session) => ({
+  const decidedBefore =
+    meetingDecisions(sessions.filter((session) => inPrevious(session.startedAt))).length +
+    approvals.filter((row) => inPrevious(row.decidedAt)).length +
+    decisions.filter((row) => inPrevious(row.decidedAt)).length;
+  const meetings = sessionsWeek.map((session) => ({
     title: session.title,
     when: calendarLabel(session.startedAt.toISOString().slice(0, 10)),
     summary: clipSummary(session.recap || session.notes),
     href: `/meetings?session=${session.id}`,
   }));
+
+  const shape = weekShape({
+    start: bounds.start,
+    today: clock.date,
+    timeZone,
+    completed: completedWeek,
+    created: createdRows.filter((row) => inWeek(row.createdAt)).map((row) => row.createdAt),
+    views: views.map((row) => ({ at: row.at, durationMs: row.durationMs ?? 0, surface: row.surface })),
+  });
+  const agents = agentSummary(runsWeek.map((run) => ({ at: run.startedAt, outcome: run.outcome, worker: run.worker, provider: run.workspaceJob?.provider ?? null })));
+  const stats: RecapStats = {
+    completed: completedWeek.length,
+    completedByAgents: completedWeek.filter((task) => task.byAgent).length,
+    created: shape.days.reduce((sum, day) => sum + day.created, 0),
+    agentRuns: agents.runs,
+    agentSucceeded: agents.succeeded,
+    activeMinutes: shape.days.reduce((sum, day) => sum + day.activeMinutes, 0),
+    meetings: sessionsWeek.length,
+    decisions: decided.length,
+    pagesEdited: pagesIn(inWeek),
+  };
+  const previous: RecapStats = {
+    completed: completedBefore.length,
+    completedByAgents: completedBefore.filter((task) => task.byAgent).length,
+    created: createdRows.filter((row) => inPrevious(row.createdAt)).length,
+    agentRuns: runsBefore.length,
+    agentSucceeded: runsBefore.filter((run) => run.outcome === "success").length,
+    activeMinutes: Math.round((previousViews._sum.durationMs ?? 0) / 60_000),
+    meetings: sessions.filter((session) => inPrevious(session.startedAt)).length,
+    decisions: decidedBefore,
+    pagesEdited: pagesIn(inPrevious),
+  };
+
+  const projectCounts = new Map<string, { completed: number; created: number }>();
+  const bump = (id: string | null, key: "completed" | "created") => {
+    if (!id) return;
+    const row = projectCounts.get(id) ?? { completed: 0, created: 0 };
+    row[key] += 1;
+    projectCounts.set(id, row);
+  };
+  for (const task of completedWeek) bump(task.projectId, "completed");
+  for (const row of createdRows) if (inWeek(row.createdAt)) bump(row.projectId, "created");
+  const projectIds = [...projectCounts.entries()]
+    .sort((a, b) => b[1].completed - a[1].completed || b[1].created - a[1].created || a[0].localeCompare(b[0]))
+    .slice(0, 6)
+    .map(([id]) => id);
+  const [projectRows, openRows] = projectIds.length
+    ? await Promise.all([
+        db.project.findMany({ where: { userId, deletedAt: null, id: { in: projectIds } }, select: { id: true, name: true } }),
+        db.task.groupBy({ by: ["projectId"], where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, projectId: { in: projectIds } }, _count: { _all: true } }),
+      ])
+    : [[], []];
+  const names = new Map(projectRows.map((row) => [row.id, row.name]));
+  const open = new Map(openRows.map((row) => [row.projectId, row._count._all]));
+  const projects: RecapProject[] = projectIds.flatMap((id) => {
+    const name = names.get(id);
+    if (!name) return [];
+    const counts = projectCounts.get(id)!;
+    return [{ id, name, href: `/projects/${id}`, completed: counts.completed, created: counts.created, open: open.get(id) ?? 0 }];
+  });
+
+  const waiting = waitingApprovals + waitingDecisions;
+  const dueSoon = [
+    ...dueTasks.map((row) => ({ title: row.title, href: `/tasks/${row.id}`, due: row.due!.toISOString().slice(0, 10), ...(row.priority === "critical" || row.priority === "p0" ? { detail: "High priority" } : {}) })),
+    ...dueDeliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, due: row.due!.toISOString().slice(0, 10), detail: "Deliverable" })),
+  ]
+    .sort((a, b) => a.due.localeCompare(b.due))
+    .slice(0, 12);
+  const highlights = recapHighlights({
+    days: shape.days,
+    stats,
+    completed: completedWeek,
+    deliverables: deliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}` })),
+    projectsDone: projectsDone.map((row) => ({ name: row.name, href: `/projects/${row.id}` })),
+    projects,
+    firstRun: inWeek(firstRun?.startedAt),
+    current,
+    waiting,
+    decided: decided.length,
+  });
+  const narrative = recapNarrative({ stats, previous, days: shape.days, current });
+  const summary = { narrative, stats, previous, current, highlights, dueSoon };
   const input = { label: bounds.label, done, decided, slipped, meetings };
-  return { ...input, start: bounds.start, end: bounds.end, markdown: renderWeeklyRecap(input) };
+  return {
+    ...input,
+    start: bounds.start,
+    end: bounds.end,
+    markdown: renderWeeklyRecap({ ...input, summary }),
+    today: clock.date,
+    timeZone,
+    current,
+    /** "to_date": this week so far against last week up to the same moment. "full": whole weeks. */
+    compare: current ? ("to_date" as const) : ("full" as const),
+    narrative,
+    stats,
+    previous,
+    days: shape.days,
+    /** Seven rows (Monday first) of 24 hourly active minutes. */
+    rhythm: shape.rhythm,
+    surfaces: shape.surfaces,
+    projects,
+    highlights,
+    ahead: {
+      dueNextWeek: dueSoon,
+      dueRange: { from: dueFrom, until: addCalendarDays(dueUntil, -1) },
+      overdue: slipped.slice(0, 8),
+      overdueTotal: slipped.length,
+      waiting: { count: waiting, href: "/needs-me" },
+    },
+    agents,
+  };
 }
 
 export type { NudgeReason };

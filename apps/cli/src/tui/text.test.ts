@@ -30,3 +30,8 @@ test("markdown: headings, bullets, inline code and fenced code", () => {
 test("logs lose colour codes a tool printed", () => {
   assert.equal(lineText(plain("\u001B[32mok\u001B[0m done", 40)[0]!), "ok done");
 });
+
+test("markdown: record links show their title only; web links keep their address", () => {
+  const text = markdown("Added [Ship the brief](ensemble://task/9b238e86-45bf-4e1a-bd26-5303de63da26), see [Board](/board) and [docs](https://example.com/a).", 200).map(lineText).join("\n");
+  assert.equal(text, "Added Ship the brief, see Board and docs (https://example.com/a).");
+});

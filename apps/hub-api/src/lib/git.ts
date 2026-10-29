@@ -110,6 +110,74 @@ export async function discoverRepos(roots: string[], depth = 2): Promise<string[
   return repos;
 }
 
+/**
+ * A remote reduced to the name people know it by: `owner/repo` for a hosted remote, the folder name for
+ * a local one. Never the URL itself, which can carry a sign-in.
+ */
+export function remoteName(url: string): string | null {
+  const clean = url.trim().replace(/[\\/]+$/, "").replace(/\.git$/i, "");
+  if (!clean) return null;
+  const scp = /^[^@/\s]+@[^:/\s]+:(.+)$/.exec(clean);
+  const hosted = scp !== null || /^[a-z][a-z0-9+.-]*:\/\//i.test(clean);
+  let path = scp?.[1] ?? clean;
+  if (!scp && hosted) {
+    try {
+      path = new URL(clean).pathname;
+    } catch {
+      return null;
+    }
+  }
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  if (!parts.length) return null;
+  const file = /^file:/i.test(clean);
+  return (hosted && !file ? parts.slice(-2).join("/") : parts.at(-1)!).slice(0, 200);
+}
+
+const LABEL_FILE_MAX = 64 * 1024;
+
+async function readSmall(path: string): Promise<string | null> {
+  const info = await stat(path).catch(() => null);
+  if (!info?.isFile() || info.size > LABEL_FILE_MAX) return null;
+  return readFile(path, "utf8").catch(() => null);
+}
+
+/**
+ * What the Code tab shows next to a checkout: its branch, its origin's name and when it was last used.
+ * Read from git's own files, so no git process starts and none of the repository's configuration runs.
+ */
+export async function repoLabelInfo(repo: string): Promise<{ branch: string | null; remote: string | null; at: string | null }> {
+  let gitDir = join(repo, ".git");
+  const dotGit = await stat(gitDir).catch(() => null);
+  if (!dotGit) return { branch: null, remote: null, at: null };
+  if (dotGit.isFile()) {
+    const pointer = /^gitdir:\s*(.+)$/m.exec((await readSmall(gitDir)) ?? "")?.[1]?.trim();
+    if (!pointer) return { branch: null, remote: null, at: null };
+    gitDir = resolve(repo, pointer);
+  }
+  const common = (await readSmall(join(gitDir, "commondir")))?.trim();
+  const commonDir = common ? resolve(gitDir, common) : gitDir;
+  const head = (await readSmall(join(gitDir, "HEAD"))) ?? "";
+  const branch = /^ref:\s*refs\/heads\/(.+)$/m.exec(head)?.[1]?.trim().slice(0, 200) ?? null;
+  const config = (await readSmall(join(commonDir, "config"))) ?? "";
+  let inOrigin = false;
+  let url: string | null = null;
+  for (const line of config.split(/\r?\n/)) {
+    const section = /^\s*\[\s*([^\]"\s]+)(?:\s+"([^"]*)")?\s*\]/.exec(line);
+    if (section) {
+      inOrigin = section[1]!.toLowerCase() === "remote" && section[2] === "origin";
+      continue;
+    }
+    const value = inOrigin ? /^\s*url\s*=\s*(.+?)\s*$/i.exec(line)?.[1] : undefined;
+    if (value) {
+      url = value.replace(/^"(.*)"$/, "$1");
+      break;
+    }
+  }
+  const times = await Promise.all(["HEAD", "index", join("logs", "HEAD")].map((name) => stat(join(gitDir, name)).then((info) => info.mtimeMs).catch(() => 0)));
+  const latest = Math.max(...times);
+  return { branch, remote: url ? remoteName(url) : null, at: latest ? new Date(latest).toISOString() : null };
+}
+
 // ── changes & hunks ───────────────────────────────────────────────────────
 
 export interface ChangedFile {

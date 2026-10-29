@@ -74,3 +74,100 @@ export function byUrgency<T extends { due: string | null }>(rows: T[]): T[] {
   const dated = rows.filter((r) => r.due).sort((a, b) => a.due!.localeCompare(b.due!));
   return [...dated, ...rows.filter((r) => !r.due)];
 }
+
+/** The Today header's counts: open work, what is due today, and what is overdue. */
+export function dayGlance(live: Pick<DeskLive, "tasks" | "today">): { open: number; dueToday: number; overdue: number } {
+  const open = live.tasks.filter((t) => OPEN.has(t.status));
+  return {
+    open: open.length,
+    dueToday: open.filter((t) => t.due?.slice(0, 10) === live.today).length,
+    overdue: open.filter((t) => isLate(t, live.today)).length,
+  };
+}
+
+type FocusCandidate = { status: string; due: string | null; priority?: string | null; taskType?: string | null };
+const PRIORITY_RANK: Record<string, number> = { critical: 0, p0: 1, p1: 2, p2: 3 };
+/** Entries that are logged, not worked on. They never belong in a focus list. */
+const NOT_WORK = new Set(["time", "mock", "decision"]);
+
+/**
+ * What to work on next: to-do and in-progress work only. Overdue first, then due today,
+ * then by priority, then the nearest date, then work already started. Ties keep their order.
+ */
+export function focusQueue<T extends FocusCandidate>(tasks: T[], today: string, limit = 3): T[] {
+  const bucket = (t: T) => (!t.due ? 2 : t.due.slice(0, 10) < today ? 0 : t.due.slice(0, 10) === today ? 1 : 2);
+  const rank = (t: T) => PRIORITY_RANK[t.priority ?? ""] ?? 2;
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .filter(({ task }) => (task.status === "todo" || task.status === "in_progress") && !NOT_WORK.has(task.taskType ?? ""))
+    .sort((a, b) =>
+      bucket(a.task) - bucket(b.task) ||
+      rank(a.task) - rank(b.task) ||
+      (a.task.due ? 0 : 1) - (b.task.due ? 0 : 1) ||
+      (a.task.due ?? "").localeCompare(b.task.due ?? "") ||
+      (a.task.status === "in_progress" ? 0 : 1) - (b.task.status === "in_progress" ? 0 : 1) ||
+      a.index - b.index)
+    .slice(0, limit)
+    .map(({ task }) => task);
+}
+
+/** The local calendar day of an ISO timestamp, as YYYY-MM-DD. */
+export function localDay(iso: string): string {
+  const date = new Date(iso);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function shiftDay(day: string, delta: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + delta * 86_400_000).toISOString().slice(0, 10);
+}
+
+type Finished = { status: string; completedAt?: string | null };
+
+/** Tasks finished on each of the `days` days that end on `today`, oldest first. */
+export function doneByDay(tasks: Finished[], today: string, days = 7, dayOf: (iso: string) => string = localDay): Array<{ day: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const task of tasks) {
+    if (task.status !== "done" || !task.completedAt) continue;
+    const day = dayOf(task.completedAt);
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  return Array.from({ length: days }, (_, index) => {
+    const day = shiftDay(today, index - days + 1);
+    return { day, count: counts.get(day) ?? 0 };
+  });
+}
+
+/** Days in a row with at least one finished task. A day with nothing yet does not break it until it is over. */
+export function doneStreak(tasks: Finished[], today: string, dayOf: (iso: string) => string = localDay): number {
+  const days = new Set(tasks.filter((t) => t.status === "done" && t.completedAt).map((t) => dayOf(t.completedAt!)));
+  let day = days.has(today) ? today : shiftDay(today, -1);
+  let streak = 0;
+  while (days.has(day)) {
+    streak += 1;
+    day = shiftDay(day, -1);
+  }
+  return streak;
+}
+
+/** "12 Oct" in the reader's locale, for a timestamp. */
+function shortDay(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** Under a person's name: their role, open work and when you last spoke. */
+export function personLine(person: { role?: string | null; team?: string | null; openTasks?: number; lastInteraction?: string | null }): string {
+  const parts = [
+    person.role ? `${person.role}${person.team ? ` · ${person.team}` : ""}` : null,
+    person.openTasks ? `${person.openTasks} open` : null,
+    person.lastInteraction ? `seen ${shortDay(person.lastInteraction)}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "No open tasks";
+}
+
+export type FeedProject = { id: string; name: string; done: number; total: number };
+
+/** Projects still in motion. A project whose every task is done drops off the overview. */
+export function activeProjects<T extends FeedProject>(rows: T[]): T[] {
+  return rows.filter((row) => !(row.total > 0 && row.done >= row.total));
+}

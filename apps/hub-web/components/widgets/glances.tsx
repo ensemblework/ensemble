@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { CalendarDays, FileText, GitBranch, History, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
 import { filesHref } from "@/lib/files/links";
@@ -29,6 +30,17 @@ function useWhenVisible() {
     return () => observer.disconnect();
   }, [visible]);
   return { ref, visible };
+}
+
+/** The widgets' empty state, as on the desk tiles: centred, an icon in a soft circle, one line, at most one link. */
+function GlanceEmpty({ icon: Icon, line, href, action }: { icon: LucideIcon; line: string; href?: string; action?: string }) {
+  return (
+    <div className="flex h-full min-h-[4.5rem] flex-1 flex-col items-center justify-center gap-1.5 px-2 text-center" data-widget-empty>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-hover text-muted" aria-hidden="true"><Icon size={14} /></span>
+      <p className="text-[13px] leading-snug text-muted">{line}</p>
+      {href && action ? <Link href={href} className="rounded px-1 text-[12.5px] font-medium text-ink-2 hover:text-ink hover:underline">{action}</Link> : null}
+    </div>
+  );
 }
 
 function limitFor(size: Size, small: number, medium: number): number {
@@ -72,7 +84,7 @@ export function PeopleGlance({ size }: { size: Size }) {
   const people = useQuery({ queryKey: ["people"], queryFn: api.people, enabled: visible, staleTime: 30_000 });
   const rows = (people.data?.people ?? []).slice(0, limitFor(size, 3, 6));
   return (
-    <div ref={ref}>
+    <div ref={ref} className="flex h-full min-h-0 flex-col">
       {rows.length ? (
         <ul className="space-y-1">
           {rows.map((person) => (
@@ -89,12 +101,14 @@ export function PeopleGlance({ size }: { size: Size }) {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="text-[12.5px] text-muted">{people.data ? "No one here yet. Placeholders have no email, rename or delete them." : " "}</p>
-      )}
-      <Link href="/context?tab=people" className="mt-2 inline-block text-[12px] text-accent hover:underline">
-        All people
-      </Link>
+      ) : people.data ? (
+        <GlanceEmpty icon={Users} line="No one here yet." href="/context?tab=people" action="Add a person" />
+      ) : null}
+      {rows.length ? (
+        <Link href="/context?tab=people" className="mt-2 inline-block text-[12px] text-accent hover:underline">
+          All people
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -104,7 +118,7 @@ export function ReposGlance({ size }: { size: Size }) {
   const repos = useQuery({ queryKey: ["repos"], queryFn: api.repos, enabled: visible, staleTime: 30_000 });
   const rows = (repos.data?.repos ?? []).slice(0, limitFor(size, 1, 5));
   return (
-    <div ref={ref}>
+    <div ref={ref} className="flex h-full min-h-0 flex-col">
       {rows.length ? (
         <ul className="space-y-1">
           {rows.map((repo) => (
@@ -116,7 +130,7 @@ export function ReposGlance({ size }: { size: Size }) {
           ))}
         </ul>
       ) : (
-        <p className="text-[12.5px] text-muted">{repos.data ? "No repo yet. Connect one when you have it, this tile does not invent one." : " "}</p>
+        repos.data ? <GlanceEmpty icon={GitBranch} line="No repos yet." href="/context?tab=repos" action="Open repos" /> : null
       )}
     </div>
   );
@@ -127,7 +141,7 @@ export function MeetingsGlance({ size }: { size: Size }) {
   const cues = useQuery({ queryKey: ["meeting-cues"], queryFn: api.meetingCues, enabled: visible, staleTime: 30_000 });
   const rows = (cues.data?.cues ?? []).slice(0, limitFor(size, 1, 3));
   return (
-    <div ref={ref}>
+    <div ref={ref} className="flex h-full min-h-0 flex-col">
       {rows.length ? (
         <ul className="space-y-1">
           {rows.map((cue) => (
@@ -136,12 +150,14 @@ export function MeetingsGlance({ size }: { size: Size }) {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="text-[12.5px] text-muted">{cues.data ? "Nothing on the calendar." : " "}</p>
-      )}
-      <Link href="/meetings" className="mt-2 inline-block text-[12px] text-accent hover:underline">
-        Open meetings
-      </Link>
+      ) : cues.data ? (
+        <GlanceEmpty icon={CalendarDays} line="Nothing on the calendar." href="/meetings" action="Open meetings" />
+      ) : null}
+      {rows.length ? (
+        <Link href="/meetings" className="mt-2 inline-block text-[12px] text-accent hover:underline">
+          Open meetings
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -151,7 +167,7 @@ export function ArtifactsGlance({ size }: { size: Size }) {
   const artifacts = useQuery({ queryKey: ["artifacts", "widget"], queryFn: () => api.artifacts({}), enabled: visible, staleTime: 30_000 });
   const rows = (artifacts.data?.artifacts ?? []).slice(0, limitFor(size, 1, 8));
   return (
-    <div ref={ref}>
+    <div ref={ref} className="flex h-full min-h-0 flex-col">
       {rows.length ? (
         <ul className="space-y-1">
           {rows.map((row) => (
@@ -164,7 +180,7 @@ export function ArtifactsGlance({ size }: { size: Size }) {
           ))}
         </ul>
       ) : (
-        <p className="text-[12.5px] text-muted">{artifacts.data ? "No artifacts yet." : " "}</p>
+        artifacts.data ? <GlanceEmpty icon={FileText} line="No artifacts yet." href="/files" action="Open files" /> : null
       )}
     </div>
   );
@@ -185,7 +201,7 @@ export function RecentLinks({ size }: { size: Size }) {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, size === "s" ? 3 : 8);
   return (
-    <div ref={ref}>
+    <div ref={ref} className="flex h-full min-h-0 flex-col">
       <ul className="space-y-1">
         {rows.map((task) => (
           <li key={task.id} className="truncate text-[13.5px]">
@@ -196,7 +212,7 @@ export function RecentLinks({ size }: { size: Size }) {
           </li>
         ))}
       </ul>
-      {!rows.length && tasks.data ? <p className="text-[12.5px] text-muted">Nothing recent.</p> : null}
+      {!rows.length && tasks.data ? <GlanceEmpty icon={History} line="Nothing recent." /> : null}
     </div>
   );
 }

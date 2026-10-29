@@ -4,7 +4,7 @@
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fingerprint, Laptop, Lock, Mail, Maximize2, Minimize2, TerminalSquare, X } from "lucide-react";
+import { Fingerprint, Laptop, Lock, Mail, TerminalSquare, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, api, terminalLocked } from "@/lib/api";
 import type { CodeTarget } from "@/lib/code-target";
@@ -193,7 +193,6 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<{ line: string; message: string } | null>(null);
-  const [big, setBig] = useState(false);
   const history = useRef<string[]>([]);
   const cursor = useRef(-1);
   const out = useRef<HTMLDivElement>(null);
@@ -370,11 +369,11 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
   const access = backend.web ? ({ ok: true } as const) : currentTerminalAccess();
 
   return (
-    <div className={cx("ide-terminal flex shrink-0 flex-col border-t", big ? "h-[60vh]" : "h-[280px]")}>
-      <div className="term-line flex h-8 shrink-0 items-center gap-2 border-b px-3 text-[12px]">
-        <TerminalSquare size={13} />
-        <span className="font-medium">Terminal</span>
-        <span className="term-faint">
+    <div className="ide-terminal flex h-full min-h-0 flex-col border-t">
+      <div className="term-line flex h-8 shrink-0 items-center gap-2 overflow-hidden whitespace-nowrap border-b px-3 text-[12px]">
+        <TerminalSquare size={13} className="shrink-0" />
+        <span className="shrink-0 font-medium">Terminal</span>
+        <span className="term-faint min-w-0 truncate max-sm:hidden">
           · you only · sandboxed
           {computerName ? (
             <>
@@ -382,20 +381,17 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
             </>
           ) : null}
         </span>
-        {data?.unlocked ? <span className="term-dim truncate font-mono">{cwd}</span> : null}
+        {data?.unlocked ? <span className="term-dim min-w-0 truncate font-mono">{cwd}</span> : null}
         <div className="flex-1" />
         {data?.unlocked ? (
           <>
             <Countdown until={data.expiresAt} />
-            <button type="button" className="term-hover rounded px-1.5 py-0.5" onClick={() => void lock()} title="Lock now">
+            <button type="button" className="term-hover rounded px-1.5 py-0.5" onClick={() => void lock()} title="Lock now" aria-label="Lock now">
               <Lock size={12} />
             </button>
           </>
         ) : null}
-        <button type="button" className="term-hover rounded px-1.5 py-0.5" onClick={() => setBig(!big)} title={big ? "Smaller" : "Bigger"}>
-          {big ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-        </button>
-        <button type="button" className="term-hover rounded px-1.5 py-0.5" onClick={onClose} title="Close (Ctrl+`)">
+        <button type="button" className="term-hover rounded px-1.5 py-0.5" onClick={onClose} title="Close (Ctrl+`)" aria-label="Close the terminal">
           <X size={12} />
         </button>
       </div>
@@ -418,7 +414,7 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
           {access.message}
         </div>
       ) : !data.unlocked ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto p-4 text-center [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto">
           <Fingerprint size={28} className="term-dim" />
           {data.passkeys.length ? (
             <>
@@ -434,14 +430,14 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
               <div className="term-dim max-w-md text-[13px]">
                 Set up a passkey once (Touch ID, Windows Hello, your phone). After that only you can open this terminal: no agent, script, API key or the assistant can. Confirm your Ensemble password to start.
               </div>
-              <div className="flex gap-2">
+              <div className="flex max-w-full flex-wrap justify-center gap-2">
                 <input
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   onKeyDown={(event) => event.key === "Enter" && password && enrol.mutate()}
                   placeholder="Ensemble password"
-                  className="field term-line w-56 bg-transparent"
+                  className="field term-line w-56 min-w-0 max-w-full bg-transparent"
                 />
                 <button type="button" className="btn-primary" disabled={!password || enrol.isPending} onClick={() => enrol.mutate()}>
                   {enrol.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Set up passkey
@@ -454,13 +450,13 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
                 Set up a passkey once (Touch ID, Windows Hello, your phone). After that only you can open this terminal: no agent, script, API key or the assistant can. Your account has no password, so confirm with a code we email you.
               </div>
               {codeSent ? (
-                <div className="flex gap-2">
+                <div className="flex max-w-full flex-wrap justify-center gap-2">
                   <input
                     value={code}
                     onChange={(event) => setCode(event.target.value.toUpperCase())}
                     onKeyDown={(event) => event.key === "Enter" && code && enrol.mutate()}
                     placeholder={`Code sent to ${codeSent}`}
-                    className="field term-line w-56 bg-transparent font-mono"
+                    className="field term-line w-56 min-w-0 max-w-full bg-transparent font-mono"
                     autoComplete="one-time-code"
                   />
                   <button type="button" className="btn-primary" disabled={!code || enrol.isPending} onClick={() => enrol.mutate()}>

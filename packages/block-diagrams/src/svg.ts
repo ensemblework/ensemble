@@ -1,5 +1,6 @@
 import { textStyle, type DiagramModel, type LayoutBox, type ShapeId, type TextStyle } from "./model.js";
 import { DIAGRAM_DOT, DIAGRAM_LINE, DIAGRAM_PAPER, PALETTE, paintFor, type DiagramTheme } from "./palette.js";
+import { refitGroups } from "./layout.js";
 import { edgeEnds, edgeRoute } from "./route.js";
 import { LABEL_SIZE, labelMetrics, nodeSize, outlineSize, shapeGeometry, textFrame, textSize, wrapLabel } from "./shapes.js";
 
@@ -21,18 +22,10 @@ function boxesFor(model: DiagramModel): Record<string, LayoutBox> {
   };
   for (const [id, node] of Object.entries(model.nodes)) take(id, nodeSize(node.shape, node.label, node.font));
   for (const [id, text] of Object.entries(model.texts)) take(id, textSize(text.text, text.font));
-  for (const [id, group] of Object.entries(model.groups)) {
-    if (model.layout[id]) layout[id] = model.layout[id]!;
-    else {
-      const members = Object.entries(layout).filter(([member]) => model.nodes[member]?.group === id || model.texts[member]?.group === id);
-      if (!members.length) continue;
-      const minX = Math.min(...members.map(([, box]) => box.x)) - 28;
-      const minY = Math.min(...members.map(([, box]) => box.y)) - 40;
-      const maxX = Math.max(...members.map(([, box]) => box.x + box.w)) + 28;
-      const maxY = Math.max(...members.map(([, box]) => box.y + box.h)) + 22;
-      layout[id] = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-    }
-    void group;
+  // Frames go around their members, the same way the canvas draws them.
+  const frames = refitGroups({ ...model, layout: { ...model.layout, ...layout } }).layout;
+  for (const id of Object.keys(model.groups)) {
+    if (frames[id]) layout[id] = frames[id]!;
   }
   return layout;
 }

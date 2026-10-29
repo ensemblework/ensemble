@@ -125,7 +125,7 @@ export function PagesSection({
           const href = boardPageHref(page);
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <div key={page.id} style={{ marginLeft: Math.min(page.depth, 8) * 12 }} className={cx("group flex items-center gap-1 rounded-lg pr-1", active && "bg-hover")}>
+            <div key={page.id} style={{ marginLeft: Math.min(page.depth, 6) * 12 }} className={cx("group relative flex items-center gap-1 rounded-lg", active && "bg-hover")}>
               {parents.has(page.id) ? <button type="button" className="icon-btn size-6 shrink-0" aria-label={`${expanded.has(page.id) ? "Collapse" : "Expand"} ${page.title}`} aria-expanded={expanded.has(page.id)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(page.id)) next.delete(page.id); else next.add(page.id); return next; })}><ChevronRight size={13} className={expanded.has(page.id) ? "rotate-90" : undefined} /></button> : <span className="w-6 shrink-0" />}
               {selecting && page.kind !== "task" ? <input type="checkbox" aria-label={`Select ${page.title}`} checked={selected.includes(page.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, page.id] : current.filter((id) => id !== page.id))} /> : null}
               {editingId === page.id ? (
@@ -167,7 +167,7 @@ export function PagesSection({
                 })
               )}
               {editingId === page.id || readOnly ? null : (
-                <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                <span className="page-row-actions">
                   {renderActions ? renderActions(page, () => { setDraft(page.title); setEditingId(page.id); }, () => onDelete(page.id)) : <><button type="button" className="icon-btn" aria-label={`Rename ${page.title}`} onClick={() => { setDraft(page.title); setEditingId(page.id); }}><Pencil size={13} /></button><button type="button" className="icon-btn" aria-label={`Delete ${page.title}`} onClick={() => onDelete(page.id)}><Trash2 size={13} /></button></>}
                 </span>
               )}

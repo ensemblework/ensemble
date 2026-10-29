@@ -18,6 +18,7 @@ import { arrange, CARD_CAP, emptyOrder, ORDER_KEY, OrderError, readOrder, saniti
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { peopleCards } from "../context/people-view.js";
 import { assertOwned } from "../services/records.js";
+import { meetingNotesFields } from "../cowork/service.js";
 import { fileDetail } from "../files/store.js";
 import { mirrorSettings } from "../spaces/store.js";
 import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/context.js";
@@ -231,6 +232,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         deliverables: { where: { deletedAt: null }, orderBy: { due: "asc" } },
         tasks: { where: { deletedAt: null }, orderBy: { boardOrder: "asc" }, take: 50 },
         meetingNotes: { where: { deletedAt: null }, orderBy: { askedAt: "desc" }, take: 20 },
+        meetingSessions: { where: { deletedAt: null }, orderBy: { startedAt: "desc" }, take: 30, select: { id: true, title: true, startedAt: true, status: true } },
       },
     });
     if (!project) return reply.code(404).send({ error: "Project not found." });
@@ -238,9 +240,10 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/projects", async (request, reply) => {
-    const body = z.object({ name: z.string().min(1), summary: z.string().optional() }).parse(request.body);
+    // Like a new page: no name yet is fine, and names may repeat.
+    const body = z.object({ name: z.string().max(200).optional(), summary: z.string().optional() }).parse(request.body ?? {});
     const project = await prisma.project.create({
-      data: { userId: request.userId, name: body.name, summary: body.summary ?? "", createdBy: "me" },
+      data: { userId: request.userId, name: body.name?.trim() || "Untitled project", summary: body.summary ?? "", createdBy: "me" },
     });
     sseHub.publish(request.userId, { event: "context", data: { kind: "project", id: project.id } });
     return reply.code(201).send({ project });
@@ -253,6 +256,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         name: z.string().min(1).optional(),
         summary: z.string().optional(),
         notes: z.string().optional(),
+        /** The project page body (the block editor). Its Markdown becomes `notes`, for search and the assistant. */
+        content: z.unknown().optional(),
         status: z.enum(["active", "done"]).optional(),
         personIds: z.array(z.string().uuid()).optional(),
         repoIds: z.array(z.string().uuid()).optional(),
@@ -260,7 +265,9 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const found = await prisma.project.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!found) return reply.code(404).send({ error: "Project not found." });
-    const { personIds, repoIds, ...data } = body;
+    const { personIds, repoIds, content, ...fields } = body;
+    const page = content !== undefined ? meetingNotesFields({ content }) : null;
+    const data = { ...fields, ...(page ? { notes: page.notes, content: page.content } : {}) };
     await prisma.$transaction(async (tx) => {
       for (const personId of personIds ?? []) await assertOwned(tx, request.userId, "person", personId);
       for (const repoId of repoIds ?? []) await assertOwned(tx, request.userId, "repo", repoId);

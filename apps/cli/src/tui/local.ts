@@ -2,7 +2,7 @@
  * The interactive app's view of this computer's Ensemble (the same runtime the desktop app
  * uses): agent runs, Needs me, settings and run profiles, models, and Ensemble Code chat.
  */
-import type { RunProfile, SubscriptionAgent } from "@ensemble/shared-types";
+import type { AssistantRef, RunProfile, SubscriptionAgent } from "@ensemble/shared-types";
 import type { Discovery } from "../sidecar.js";
 
 export type JobCard = {
@@ -75,10 +75,11 @@ export type Settings = {
   assistant: { writePolicy: string; defaultTier?: string };
 };
 
-export type ToolCall = { id: string; name: string; summary?: string; state: string; input: Record<string, unknown>; error?: string; isWrite?: boolean };
+export type ToolCall = { id: string; name: string; summary?: string; state: string; input: Record<string, unknown>; error?: string; isWrite?: boolean; refs?: AssistantRef[] };
 
 export type ChatFrame =
   | { type: "status"; text?: string; conversationId?: string }
+  | { type: "refs"; refs: AssistantRef[] }
   | { type: "delta"; text: string }
   | { type: "tool"; call: ToolCall }
   | { type: "pending"; call: ToolCall; preview: string }

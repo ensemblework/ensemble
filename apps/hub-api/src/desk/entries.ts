@@ -270,6 +270,7 @@ export const TASK_SELECT = {
   id: true,
   title: true,
   status: true,
+  priority: true,
   taskType: true,
   due: true,
   startsAt: true,

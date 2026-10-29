@@ -12,7 +12,8 @@ import { ROLES } from "../onboarding/roles";
 import { AddTileDialog } from "./add-tile";
 import { PreviewTiles, specPool } from "./live-board";
 import { deskRole, tileFitsRole } from "./tile-catalog";
-import { byUrgency, datedItems, dayLabel, isLate, mockScores, ratio, taskSegments, timeSegments, weekAhead } from "./tile-data";
+import { activeProjects, byUrgency, datedItems, dayGlance, dayLabel, doneByDay, doneStreak, focusQueue, isLate, mockScores, personLine, ratio, taskSegments, timeSegments, weekAhead } from "./tile-data";
+import { RowList, rowsForSpan, taskRow } from "./rows";
 import { TileVisuals } from "./tile-visuals";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -194,3 +195,90 @@ test("the live Today proposal inbox handles M/A/L/D and uses the saved default p
     const count = calls.length; await press("m"); assert.equal(calls.length, count); modal.remove();
   } finally { await act(async () => root.unmount()); client.clear(); host.remove(); globalThis.fetch = realFetch; }
 });
+
+test("the day at a glance counts open work, what is due today and what is late", () => {
+  const live = sampleLive("engineer", null, date);
+  const base = live.tasks[0]!;
+  live.today = "2026-10-11";
+  live.tasks = [
+    { ...base, id: "a", status: "todo", due: "2026-10-11" },
+    { ...base, id: "b", status: "in_progress", due: "2026-10-01" },
+    { ...base, id: "c", status: "blocked", due: null },
+    { ...base, id: "d", status: "done", due: "2026-10-01" },
+    { ...base, id: "e", status: "logged", taskType: "time", due: "2026-10-11" },
+  ];
+  assert.deepEqual(dayGlance(live), { open: 3, dueToday: 1, overdue: 1 });
+});
+
+test("Focus now picks to-do work: late, then today, then priority, then the nearest date", () => {
+  const today = "2026-10-11";
+  const row = (id: string, extra: Partial<{ status: string; due: string | null; priority: string | null; taskType: string | null }> = {}) => ({ id, status: "todo", due: null, priority: "p1", taskType: "task", ...extra });
+  const rows = [
+    row("low-soon", { priority: "p2", due: "2026-10-12" }),
+    row("blocked-late", { status: "blocked", due: "2026-10-01" }),
+    row("urgent-undated", { priority: "critical" }),
+    row("today", { due: "2026-10-11" }),
+    row("late", { due: "2026-10-02", status: "in_progress" }),
+    row("logged", { taskType: "time", due: "2026-10-01" }),
+    row("medium-soon", { due: "2026-10-14" }),
+    row("medium-undated"),
+  ];
+  assert.deepEqual(focusQueue(rows, today).map((r) => r.id), ["late", "today", "urgent-undated"]);
+  assert.deepEqual(focusQueue(rows, today, 6).map((r) => r.id), ["late", "today", "urgent-undated", "medium-soon", "medium-undated", "low-soon"]);
+  assert.deepEqual(focusQueue([row("x", { status: "done" }), row("y", { status: "proposed" })], today), []);
+});
+
+test("Your week counts finished tasks per day and keeps a streak alive until the day is over", () => {
+  const utc = (iso: string) => iso.slice(0, 10);
+  const done = (day: string) => ({ status: "done", completedAt: `${day}T10:00:00Z` });
+  const tasks = [done("2026-10-11"), done("2026-10-11"), done("2026-10-10"), done("2026-10-09"), done("2026-10-06"), done("2026-10-01"), { status: "todo", completedAt: "2026-10-11T09:00:00Z" }];
+  const days = doneByDay(tasks, "2026-10-11", 7, utc);
+  assert.deepEqual(days.map((d) => d.day), ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11"]);
+  assert.deepEqual(days.map((d) => d.count), [0, 1, 0, 0, 1, 1, 2], "only done work, and nothing outside the seven days");
+  assert.equal(doneStreak(tasks, "2026-10-11", utc), 3);
+  assert.equal(doneStreak(tasks, "2026-10-12", utc), 3, "a day with nothing finished yet does not break the streak");
+  assert.equal(doneStreak(tasks, "2026-10-13", utc), 0);
+});
+
+test("list tiles draw whole rows, then View all, with status, overdue and priority at a glance", () => {
+  const live = sampleLive("engineer", null, date);
+  live.today = "2026-10-11";
+  const base = live.tasks[0]!;
+  const tasks = Array.from({ length: 9 }, (_, i) => ({ ...base, id: `t${i}`, title: `Task ${i}`, status: i === 0 ? "in_progress" : "todo", due: i === 1 ? "2026-10-01" : null, priority: i === 2 ? ("p0" as const) : ("p1" as const) }));
+  assert.equal(rowsForSpan(3), 4);
+  assert.equal(rowsForSpan(2), 2);
+  const html = renderToStaticMarkup(<RowList rows={tasks.map((t) => taskRow(t, live.today))} estimate={rowsForSpan(3)} href="/board" label="Issues" />);
+  assert.equal((html.match(/class="lrow"/g) ?? []).length, 4);
+  assert.match(html, /View all 9/);
+  assert.match(html, /In progress/);
+  assert.match(html, /data-tone="danger"[^>]*title="Overdue since 1 Oct"/);
+  assert.match(html, /data-prio="high">High/);
+  assert.doesNotMatch(html, /Medium/, "medium priority stays quiet");
+  const preview = renderToStaticMarkup(<RowList rows={tasks.map((t) => taskRow(t, live.today, true))} estimate={4} href="/board" preview label="Issues" />);
+  assert.ok(!/<a\s|<button/.test(preview), "previews have no nested controls");
+  const few = renderToStaticMarkup(<RowList rows={tasks.slice(0, 2).map((t) => taskRow(t, live.today))} estimate={4} href="/board" label="Issues" />);
+  assert.doesNotMatch(few, /View all/, "no View all when every row is shown");
+});
+
+test("the new tiles are offered where they fit and preview without fetching", () => {
+  for (const role of ROLES) {
+    assert.ok(tileFitsRole("focus-now", role.id) && tileFitsRole("your-week", role.id), role.id);
+    assert.equal(tileFitsRole("agents", role.id), role.id === "engineer" || role.id === "vibe", role.id);
+  }
+  const live = sampleLive("engineer", null, date);
+  for (const key of ["focus-now", "agents", "your-week"]) {
+    const html = renderToStaticMarkup(<TileVisuals spec={specPool().get(key)!} live={live} preview />);
+    assert.ok(!/<a\s|<button/.test(html), `${key}: preview has no controls`);
+    assert.ok(!html.includes("NaN"), key);
+  }
+  assert.match(renderToStaticMarkup(<TileVisuals spec={specPool().get("your-week")!} live={live} preview />), /4-day streak/);
+});
+
+test("Context people and projects say something useful at a glance", () => {
+  assert.equal(personLine({ role: "Designer", team: "Atlas", openTasks: 3, lastInteraction: null }), "Designer · Atlas · 3 open");
+  assert.equal(personLine({ role: null, openTasks: 0, lastInteraction: null }), "No open tasks");
+  assert.match(personLine({ role: null, openTasks: 0, lastInteraction: "2026-10-01T10:00:00Z" }), /^seen /);
+  const rows = [{ id: "a", name: "Live", done: 2, total: 5 }, { id: "b", name: "Shipped", done: 4, total: 4 }, { id: "c", name: "New", done: 0, total: 0 }];
+  assert.deepEqual(activeProjects(rows).map((r) => r.id), ["a", "c"]);
+});
+

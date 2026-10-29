@@ -76,7 +76,7 @@ export { DIAGRAM_TEMPLATES } from "./templates.js";
 export type { DiagramTemplate } from "./templates.js";
 export { applyDiagramEdits, diagramChanges } from "./refine.js";
 export type { DiagramOp } from "./refine.js";
-export { layoutDiagram, refitGroups } from "./layout.js";
+export { GROUP_PAD, edgeLabelSize, freeSpot, groupContents, groupMinWidth, isLocked, layoutDiagram, layoutOverlaps, refitGroups, withoutOverlappingLayout } from "./layout.js";
 export type { LayoutFit } from "./layout.js";
 export { DIAGRAM_DOT, DIAGRAM_LINE, DIAGRAM_PAPER, PALETTE, SHAPE_COLOR, SWATCHES, paintFor } from "./palette.js";
 export { BEND_SNAP, bendFromPoint, edgeEnds, edgeRoute, portPoint } from "./route.js";

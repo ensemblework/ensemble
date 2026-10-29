@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useContext, useId, type CSSProperties, type ReactNode } from "react";
-import { ArrowUpRight, EyeOff, Plus, type LucideIcon } from "lucide-react";
+import { Children, createContext, useContext, useId, type CSSProperties, type ReactNode } from "react";
+import { ArrowRight, ArrowUpRight, EyeOff, Plus, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { personInitials } from "@/lib/initials";
 
@@ -45,7 +45,7 @@ export function Tile(props: {
   const widget = mark ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const meta = ghost ? undefined : props.meta;
   const right = ghost ? undefined : props.right;
-  const children = ghost ? <Ghost {...ghost}>{props.children}</Ghost> : props.children;
+  const children = ghost ? <Ghost icon={Icon} {...ghost}>{props.children}</Ghost> : props.children;
   return (
     <section
       {...props.attrs}
@@ -53,6 +53,7 @@ export function Tile(props: {
       data-desk-key={props.deskKey}
       data-desk-tile={ghost ? "ghost" : "live"}
       data-span={c}
+      data-rows={r}
       className={`tile${hero ? " hero" : ""}${hover ? " hover" : ""}${skel ? " skel" : ""}${className ? " " + className : ""}`}
       style={{ gridColumn: `span ${c}`, gridRow: `span ${r}`, ...(pad ? { padding: pad } : {}), ...style }}
     >
@@ -273,10 +274,39 @@ export function Sk({ w = "100%", h = 10, r = 5, style }: { w?: number | string; 
   return <div className="sk" style={{ width: w, height: h, borderRadius: r, flexShrink: 0, ...style }} />;
 }
 
-/* Empty ghost: the populated preview, dimmed, with one action */
-/** An empty tile. Without an action (someone else's space), it only says what would be here. */
-export function Ghost({ children, label, sub, action, kind, onAction }: { children: ReactNode; label: string; sub?: string; action?: string; kind?: string; onAction?: () => void }) {
+/**
+ * The one empty state every tile uses: centred, a small icon in a soft circle, one short line,
+ * and at most one quiet action. In a preview (a gallery card is already the link) the action is inert.
+ */
+export function TileEmpty({ icon: Icon, label, sub, action, kind, onAction, href }: { icon?: LucideIcon; label: ReactNode; sub?: ReactNode; action?: string; kind?: string; onAction?: () => void; href?: string }) {
   const preview = useContext(DeskPreviewContext);
+  const body = !action ? null : href ? <>{action}<ArrowRight size={12} aria-hidden="true" /></> : <><Plus size={12} strokeWidth={2.4} aria-hidden="true" />{action}</>;
+  return (
+    <div className="tempty" data-tile-empty>
+      {Icon ? <span className="tempty-icon" aria-hidden="true"><Icon size={15} strokeWidth={2} /></span> : null}
+      <p className="tempty-line">{label}</p>
+      {sub ? <p className="tempty-sub">{sub}</p> : null}
+      {!action ? null : preview ? (
+        <span className="tempty-act" aria-hidden="true">{body}</span>
+      ) : href ? (
+        <Link className="tempty-act" href={href}>{body}</Link>
+      ) : (
+        <button type="button" className="tempty-act" data-desk-add={kind ?? action} onClick={onAction}>{body}</button>
+      )}
+    </div>
+  );
+}
+
+/** An empty tile. With a populated preview it is drawn dimmed behind the action; without one it is the calm empty state. */
+export function Ghost({ children, icon, label, sub, action, kind, onAction }: { children: ReactNode; icon?: LucideIcon; label: string; sub?: string; action?: string; kind?: string; onAction?: () => void }) {
+  const preview = useContext(DeskPreviewContext);
+  if (Children.toArray(children).length === 0) {
+    return (
+      <div className="ghost" data-ghost="calm">
+        <TileEmpty icon={icon} label={label} sub={sub} action={action} kind={kind} onAction={onAction} />
+      </div>
+    );
+  }
   return (
     <div className="ghost">
       <div className="gx">{children}</div>

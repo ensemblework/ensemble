@@ -113,7 +113,7 @@ async function findLive(ctx: ToolContext, id: string): Promise<Live> {
   const wanted = id.trim();
   if (wanted === ownTurn(ctx)) throw new ToolBlockedError("That is this chat's own reply; it cannot stop itself. The person can press Stop in the chat.");
   const row = (await liveWork(ctx)).find((item) => item.id === wanted);
-  if (!row) throw new ToolBlockedError(`Nothing with id ${wanted} is running in this space. Call hub_list_activity for the current ids.`);
+  if (!row) throw new ToolBlockedError("That is no longer running in this space; it may have just finished. Call hub_list_activity for what is running now.");
   if (!row.canStop) throw new ToolBlockedError(row.note ?? "That cannot be stopped from here.");
   return row;
 }

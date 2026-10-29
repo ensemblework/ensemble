@@ -93,7 +93,7 @@ A group is a dashed frame with a label, not a new system. Example: a group `edge
 
 - `direction down` for flows, orgs, and decision trees. Fit vertically in the editor does the same.
 - `direction right` for architecture, pipelines, ER-ish maps, and repo maps. Fit horizontally does the same.
-- Leave `layout` out of a new diagram. The editor places the blocks when it opens.
+- Leave `layout` out of a new diagram. The editor places the blocks when it opens. A `layout` that puts blocks or group frames on top of each other is dropped by `hub_create_diagram` and `hub_update_diagram` (locked positions stay), and the result says `layoutDropped`.
 - `curve` defaults to `straight`. Set `curve elbow` for architecture and ER-ish maps (right-angle connectors). Set `curve curved` only when a flow should feel soft. One diagram-level line is enough.
 - Add `curve` on a single edge only when that edge should differ: `edge api > cache curve curved : "optional"`.
 

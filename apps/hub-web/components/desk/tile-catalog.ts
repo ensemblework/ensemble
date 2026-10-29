@@ -5,13 +5,13 @@ import type { Role } from "../onboarding/roles";
 export const TILE_CATEGORIES = ["All tiles", "Progress & insights", "Planning & calendar", "People & meetings", "Work & resources"] as const;
 export type TileCategory = (typeof TILE_CATEGORIES)[number];
 
-const SHARED = new Set("day focus proposed needs dels reminders brief deadlines people follow meet questions decisions wip blocked blockers done objectives progress workload calendar agenda time-split due-week".split(" "));
+const SHARED = new Set("day focus proposed needs dels reminders brief deadlines people follow meet questions decisions wip blocked blockers done objectives progress workload calendar agenda time-split due-week focus-now your-week".split(" "));
 const ROLE_TILES: Record<Role, string> = {
   student: "week courses streak now plan group reading countdown target affairs syllabus mocks revision hours accuracy pipeline words cites read advisor venue concepts",
   teacher: "week periods marking syllabus attendance duty paper countdown mocks accuracy read reading cites ones concepts hours courses now",
   lawyer: "limitation hearings billable stages filings drafts cause unbilled cites read reading ones hours",
-  engineer: "reviews repos checks deploys issues ones load tests result build next log concepts hours",
-  vibe: "build parts tests log count lead result next issues concepts hold hours",
+  engineer: "reviews repos checks deploys issues ones load tests result build next log concepts hours agents",
+  vibe: "build parts tests log count lead result next issues concepts hold hours agents",
   manager: "load ones out build next hours reviews issues",
 };
 
@@ -32,13 +32,16 @@ export function tileFitsRole(key: string, role: Role): boolean {
 }
 
 export function tileCategory(key: string): TileCategory {
-  if ("progress workload time-split due-week marking attendance streak accuracy mocks hours billable unbilled objectives stages words checks tests result parts count".split(" ").includes(key)) return "Progress & insights";
+  if ("progress workload time-split due-week your-week marking attendance streak accuracy mocks hours billable unbilled objectives stages words checks tests result parts count".split(" ").includes(key)) return "Progress & insights";
   if ("calendar agenda week periods now countdown deadlines dels reminders brief paper cause hearings limitation venue next lead build plan revision syllabus target".split(" ").includes(key)) return "Planning & calendar";
   if ("people group advisor follow ones out load meet".split(" ").includes(key)) return "People & meetings";
   return "Work & resources";
 }
 
 const DESCRIPTIONS: Record<string, string> = {
+  "focus-now": "Your next three open tasks: overdue and due today first, then by priority. Mark one done or open it in one click.",
+  agents: "Agent runs working now and next in the queue, with their progress and anything waiting on you.",
+  "your-week": "Tasks you finished on each of the last seven days, your total, and your streak.",
   progress: "See recent completed, active, planned, and waiting work in one donut chart.",
   workload: "Compare recent work in each status with a clear column chart.",
   agenda: "Upcoming meetings and events from your connected Google or Outlook calendar.",

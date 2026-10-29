@@ -8,7 +8,7 @@
  *                reject discards it, like stage/revert hunk in an editor.
  */
 import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { env } from "../config.js";
@@ -27,6 +27,7 @@ import {
   readRepoBytes,
   readRepoFile,
   removeRepoFile,
+  repoLabelInfo,
   revertHunk,
   stageHunk,
   status,
@@ -113,8 +114,41 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/code/repos", async (request) => {
     const all = await roots(request.userId);
     const repos = await discoverRepos(all);
-    return { repos, roots: all.filter(Boolean) };
+    return { repos, roots: all.filter(Boolean), details: await repoDetails(request.userId, repos) };
   });
+
+  /**
+   * How the Code tab names each checkout (`repos` stays a list of paths for older clients). A run's
+   * checkout (`<workspace>/runs/<job>`) is named by its origin and the task that made it, never its folder.
+   */
+  async function repoDetails(userId: string, repos: string[]) {
+    const workspace = expandHome(env.ENSEMBLE_WORKSPACE_ROOT);
+    const runs = join(workspace, "runs");
+    const runOf = (repo: string) => (within(runs, repo, false) ? relative(runs, repo).split(sep)[0] ?? null : null);
+    const jobIds = [...new Set(repos.map(runOf).filter((id): id is string => Boolean(id && z.string().uuid().safeParse(id).success)))];
+    const jobs = repos.length
+      ? await prisma.workspaceJob.findMany({
+          where: { userId, OR: [{ repoPath: { in: repos } }, ...(jobIds.length ? [{ id: { in: jobIds } }] : [])] },
+          select: { id: true, repoPath: true, createdAt: true, finishedAt: true, task: { select: { title: true } } },
+          orderBy: { createdAt: "desc" },
+          take: 1000,
+        })
+      : [];
+    return Promise.all(
+      repos.map(async (repo) => {
+        const info = await repoLabelInfo(repo);
+        const runId = runOf(repo);
+        const job = jobs.find((row) => row.repoPath === repo) ?? (runId ? jobs.find((row) => row.id === runId) : undefined);
+        const kind = runId ? ("run" as const) : within(workspace, repo) ? ("workspace" as const) : ("folder" as const);
+        // A repository cloned inside a run's folder keeps its own folder name; the run's folder is an id.
+        const nested = runId !== null && relative(runs, repo).split(sep).length > 1;
+        const name = kind === "run" && !nested ? info.remote ?? "Run checkout" : basename(repo);
+        const used = job ? (job.finishedAt ?? job.createdAt).toISOString() : null;
+        const at = [info.at, used].filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
+        return { path: repo, name, kind, remote: info.remote, branch: info.branch, taskTitle: job?.task.title ?? null, at };
+      }),
+    );
+  }
 
   /**
    * Check a folder someone wants Code to use and return its real path. Settings
