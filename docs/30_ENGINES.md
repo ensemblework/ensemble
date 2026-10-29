@@ -23,7 +23,7 @@ Paths below are under `apps/hub-api/src/` unless qualified.
 
 - Continuing a task in a session (Assign's "Continue an earlier task", the assistant's `session`, `Assign.session`) resumes the agent's own conversation (`earlierSession` walks back to the nearest recorded session) and sends the new task with a line saying it continues there (`sessionTaskPrompt`); the agent keeps what it learned and its prompt cache. A session that cannot be reopened (`SessionGoneError`) runs as a new one with the full prompt.
 - A run that continues a run in a folder the person granted (a shared folder) works in that folder however long the chain, since only the first run carries the grant (`grantedFolderOf` in `workspace/agent.ts`).
-- `Assign.session` (any run id in it) runs on the session's computer, under its current pairing, in its folder, with its agent, model, thinking level, context window and fast mode unless others are named (a run profile's do not apply); another agent or computer is refused.
+- `Assign.session` (any run id in it) runs on the session's computer, under its current pairing, in its folder, with its agent, model, thinking level, context window and fast mode unless others are named (a run profile's do not apply); another agent or computer is refused. Each setting is kept, reset to the agent's own default (`"default"`, or `fast: false`), or set as named, separately (`sessionChoices` in `workspace/assign.ts`): naming a model keeps the thinking level and context window. The task's model tier adds nothing to a run in a session.
 - `GET /api/agent/sessions?taskId=&deviceId=&q=&limit=` lists the person's sessions, newest first, each with agent, model, computer, folder, first and latest task, a one-line summary of the latest report, status (`working`, `waiting`, `queued`, `idle`) and whether it can be resumed; `GET /api/agent/sessions/:id` reads one, and a job's detail carries its `session`. The web shows no session list.
 - Ensemble Node's nodes start and drive sessions, each node only its own ([35 §8](35_ENSEMBLE_NODE.md#8-work-on-a-computer)). A **steer** is a run that continues the one it interrupts, with `context.steer {update}` (the claim spec's `steer` on a paired computer); resuming the session, the agent gets only the change (`steerPrompt`), and with the session gone it gets the whole brief with the update in its instructions.
 
@@ -119,6 +119,20 @@ A run is the Copilot run of §3 with the agent's own names: `initialize`, `authe
 **Sandbox.** Grok Build, OpenCode and Antigravity have no OS sandbox Ensemble can turn on, and Gemini CLI has one only on macOS (`--sandbox`, Seatbelt). A run with Sandbox on stops with "<agent> has no OS sandbox Ensemble can turn on here. Turn the sandbox off for this run: Ensemble still judges every command, edit, outside read and fetch <agent> asks to make."
 
 **Antigravity's install** (`subscriptions/antigravity.ts`). Google publishes the agent as a zip per platform on `dl.google.com` (`agy-acp-server-1.3.0-<os>-<arch>.zip`, a few hundred MB). Sign in (or *Install and sign in* on its tile) downloads it once, checks it against the pinned SHA-256 and unpacks it (`ditto`, `unzip`, Python's `zipfile` or `tar`) into `<state>/agents/antigravity/versions/1.3.0/`. It then starts the server with `GEMINI_HOME=<state>/agents/antigravity/home` and `AGY_ACP_FORCE_FILE_STORAGE=1`, calls `authenticate`, and opens the Google sign-in link the server prints (`Open the following link to authenticate the ACP server: …`) in the browser; Google answers on the server's own 127.0.0.1 address, and the sign-in stays in Antigravity's file in that home. A run that meets the link instead says it is not signed in. Release table and environment follow T3 Code (MIT).
+
+### 3.4 What the agent says it runs with
+
+A run's settings are recorded three ways ([35 §8.10](35_ENSEMBLE_NODE.md#810-run-settings)): as asked, as sent, and as the agent itself reported them. Each adapter reports only what its agent says, never what was asked (`workspace/engines/observed.ts`): `observed` on its `engine` event, and the window it used on `engine_context` (`size` in tokens, `context` when the model's windows are known; within 5% of the long window is the long one).
+
+| Agent | Model | Thinking level | Context window | Fast mode |
+| --- | --- | --- | --- | --- |
+| Claude Code | `model` in its `init` message | not reported | the main model's `contextWindow` in the result's `modelUsage` (a fixed 1M window counts as long) | not reported |
+| Codex | `model` in the `thread/start` or `thread/resume` reply | the thread's `reasoningEffort`, only when the turn sets none (Codex does not echo a turn's own) | `modelContextWindow` in `thread/tokenUsage/updated` (one window: `default`) | not reported |
+| GitHub Copilot | the session's `model` option after it starts | the session's `reasoning_effort` option | the window in `usage_update`, against the model's long window as the computer listed it | — |
+| Grok Build, OpenCode, Gemini CLI, Antigravity | the session's model option (an older agent: the model it accepted) | the session's thought-level option | the window in `usage_update`, in tokens | — |
+| Cursor's agent | the session's `currentModelId`, when it reports one | — | — | — |
+
+The computer sends the result with its progress when it changes and with complete (`observed`, and `totals.observed`; [25 §4.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#41-account-and-device-routes)), and the server keeps it on the job (`workspace_jobs.observed_settings`). A run on this server is read from its own events. Anything not reported shows as "not reported": a runtime before this release reports only the model, from its `engine` event.
 
 ## 4. In the agent's own app, or a terminal
 

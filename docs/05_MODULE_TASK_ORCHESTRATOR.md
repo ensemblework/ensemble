@@ -46,11 +46,17 @@ Complexity picks the Low/Medium/High/Max model profile; a complexity the person 
 - When a Needs me question or publishing approval has waited **60 minutes**, one extra job may start (**N+1** total). It is not refilled until fewer than N jobs remain.
 - Answering continues the same job without taking another slot.
 
+Runs of one agent session ([30](30_ENGINES.md), Agent sessions) run one at a time, in the order of the session's queue (`queue_position`: a queued message last, a steer first, as the owner reorders it), not of `continueFromJobId`. A claim of a session's run and every change to its queue hold the session's lock (an advisory transaction lock), and the claim sets the run's `continueFromJobId` to the session's run that actually ran last (`sessionTurn` in `workspace/sessions.ts`), so resume ancestry is always one true line ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
+
 Minutes, model turns and tool calls are separate per-run budgets; waiting on a person does not use minutes. Provider request concurrency has its own limiter.
 
 ## 5. Decisions and publishing
 
 Needs me combines saved approvals, structured questions, tool-permission decisions and interrupted attempts, with exact choice IDs and the pending operation. A checkpoint saves messages, tool arguments, counters, receipts and the working-tree identity. Answering requeues the same job and resumes without replaying completed writes; a changed tree or stale decision voids the permission. In a shared space only the person whose computer runs the job answers its execution decisions.
+
+**Requests close with their work.** When a run ends (succeeded, failed, cancelled, interrupted or blocked), its pending questions and permissions close as `expired` with the reason "Its work ended.", in the same transaction, whichever path ended it: the computer's complete, the lease sweep, a stop, a restart, a revoked computer. A database trigger does it (`workspace_jobs_close_decisions`, migration `20261102120000_node_session_control`; `WORK_ENDED` in `lib/decisions.ts`), so no path can leave one open. An editor's own prompts are not a run's and stay. A late answer is refused with "This request ended with its work." and changes nothing (`applyAnswer` in `routes/decisions.ts`); a request found pending after its run ended is closed then.
+
+**The first answer wins.** Every answer, from the web, a phone, the CLI or a node (`node_answer_question`, [35 §8.11](35_ENSEMBLE_NODE.md#811-the-watchdog-and-the-agents-questions)), takes the request with a compare-and-set on `pending` (`decideOnce`); the rule it saves is written only by the answer that won. A second answer is told "Already answered." and changes nothing.
 
 Publishing resumes from the reviewed payload and approval instead of replanning. An approval does not cover later, different writes.
 
