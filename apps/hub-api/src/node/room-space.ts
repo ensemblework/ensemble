@@ -35,6 +35,50 @@ export function boundSpaceId(room: Pick<NodeRoom, "settings">): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
+/**
+ * The room's linked space while the room's creator still owns it. A space that changed hands (a transfer)
+ * or is gone unlinks the room here, at first use: nothing more is offered, proposed or followed in it.
+ */
+export async function linkedSpace(app: FastifyInstance, room: NodeRoom): Promise<string | null> {
+  const spaceId = boundSpaceId(room);
+  if (!spaceId) return null;
+  if ((await spaceOwner(app.prisma, spaceId)) === room.userId) return spaceId;
+  await unlinkLost(app, room, spaceId);
+  return null;
+}
+
+async function unlinkLost(app: FastifyInstance, room: NodeRoom, spaceId: string): Promise<void> {
+  const prisma = app.prisma;
+  const gone = await prisma.$queryRaw<Array<{ id: string }>>`
+    UPDATE node_rooms SET settings = settings - 'spaceId' WHERE id = ${room.id} AND settings->>'spaceId' = ${spaceId} RETURNING id`;
+  if (!gone.length) return;
+  await expireOffers(app, room.id, spaceId);
+  await postMessage(prisma, {
+    roomId: room.id,
+    userId: room.userId,
+    authorKind: "system",
+    kind: "status",
+    body: "The room's space is no longer linked: it now belongs to someone else, or it is gone. Its board and members stay as they are.",
+    data: { roomSpace: { spaceId, action: "unbound", why: "owner_changed" } },
+  });
+  publishTo(await roomPeople(prisma, room.id), "node.room", { roomId: room.id });
+}
+
+/**
+ * Someone lost a space (its owner removed them, or them as a contact, or they left): their open offers to
+ * join it through a room are withdrawn, so Join cannot bring them back. Registered with sharing/revoke.ts.
+ */
+export async function expireOffersFor(db: Pick<PrismaClient, "nodeMessage">, spaceIds: readonly string[], accountId: string): Promise<void> {
+  if (!spaceIds.length) return;
+  const cards = await db.nodeMessage.findMany({
+    where: { kind: "status", visibleTo: { equals: [accountId] }, AND: [{ data: { path: ["type"], equals: "space_offer" } }, { OR: [{ data: { path: ["status"], equals: "pending" } }, { data: { path: ["status"], equals: "declined" } }] }] },
+  });
+  for (const card of cards) {
+    if (!spaceIds.includes(String((card.data as { spaceId?: unknown }).spaceId))) continue;
+    await updateMessageData(db as PrismaClient, card, { status: "expired" });
+  }
+}
+
 export type SpaceRole = "owner" | "editor" | "viewer";
 
 /** What `accountId` may do in the space now (read every time), or null. */
@@ -141,7 +185,7 @@ async function offerCard(db: Db, roomId: string, personId: string, spaceId: stri
 export async function offerSpace(app: FastifyInstance, roomId: string, personId: string): Promise<void> {
   const prisma = app.prisma;
   const room = await prisma.nodeRoom.findUnique({ where: { id: roomId } });
-  const spaceId = room ? boundSpaceId(room) : null;
+  const spaceId = room ? await linkedSpace(app, room) : null;
   if (!room || !spaceId || !(await personIn(prisma, roomId, personId))) return;
   if (await roleIn(personId, spaceId)) return;
   const existing = await offerCard(prisma, roomId, personId, spaceId);
@@ -173,7 +217,7 @@ async function expireOffers(app: FastifyInstance, roomId: string, spaceId: strin
  */
 export async function answerSpaceOffer(app: FastifyInstance, room: NodeRoom, personId: string, join: boolean): Promise<{ status: string }> {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId) throw new RoomSpaceError("This room has no shared space.", 404);
   const card = await offerCard(prisma, room.id, personId, spaceId);
   if (!card) throw new RoomSpaceError("There is no offer to answer.", 404);
@@ -208,7 +252,7 @@ export async function answerSpaceOffer(app: FastifyInstance, room: NodeRoom, per
 /** The room's space as one person sees it: which space, their role there, and their offer. */
 export async function spaceView(app: FastifyInstance, room: NodeRoom, viewerId: string) {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId) return { space: null, offer: null };
   const owner = await spaceOwner(prisma, spaceId);
   const role = await roleIn(viewerId, spaceId);
@@ -227,7 +271,7 @@ export async function spaceView(app: FastifyInstance, room: NodeRoom, viewerId: 
  */
 export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: string) {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId) return { space: null, tasks: [] };
   const role = await roleIn(viewerId, spaceId);
   const owner = await spaceOwner(prisma, spaceId);
@@ -272,7 +316,7 @@ export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: 
 /** Pages of the linked space the room follows (watched, a contract, the decisions log), as one person sees them. */
 export async function roomPages(app: FastifyInstance, room: NodeRoom, viewerId: string) {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId || !(await roleIn(viewerId, spaceId))) return [];
   const rows = await prisma.nodeRoomPage.findMany({ where: { roomId: room.id, spaceId }, orderBy: { createdAt: "asc" } });
   const pages = new Map((await prisma.taskPage.findMany({ where: { id: { in: rows.map((row) => row.pageId) }, userId: spaceId, deletedAt: null }, select: { id: true, title: true, taskId: true, updatedAt: true } })).map((row) => [row.id, row]));
@@ -286,7 +330,7 @@ export async function roomPages(app: FastifyInstance, room: NodeRoom, viewerId: 
 
 /** The page, if it is in the room's linked space and the person can open that space. */
 export async function followedPage(app: FastifyInstance, room: NodeRoom, accountId: string, pageId: string): Promise<{ spaceId: string; pageId: string }> {
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId) throw new RoomSpaceError("This room has no shared space.", 404);
   if (!(await roleIn(accountId, spaceId))) throw new RoomSpaceError("Join the room's space first.", 403);
   const page = await app.prisma.taskPage.findFirst({ where: { userId: spaceId, deletedAt: null, OR: [{ id: pageId }, { taskId: pageId }] }, select: { id: true } });
@@ -319,7 +363,7 @@ export async function watchPage(app: FastifyInstance, room: NodeRoom, accountId:
  */
 export async function proposeTask(app: FastifyInstance, request: NodePeerRequest, room: NodeRoom): Promise<string | null> {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId || request.kind !== "work") return null;
   if (!canEdit(await roleIn(request.fromAccountId, spaceId)) || !canEdit(await roleIn(request.toAccountId, spaceId))) return null;
   const users = await prisma.user.findMany({ where: { id: { in: [request.fromAccountId, request.toAccountId] } }, select: { id: true, name: true, email: true } });
@@ -355,7 +399,7 @@ export async function proposeTask(app: FastifyInstance, request: NodePeerRequest
  * board of the room's space, while the requester can edit there. Null otherwise (the result stays in the room).
  */
 export async function requesterTask(app: FastifyInstance, request: NodePeerRequest, room: NodeRoom): Promise<string | null> {
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId || !canEdit(await roleIn(request.fromAccountId, spaceId))) return null;
   const ids = (Array.isArray(request.refs) ? (request.refs as Array<{ kind?: unknown; id?: unknown }>) : []).filter((ref) => ref.kind === "task" && typeof ref.id === "string").map((ref) => ref.id as string);
   if (!ids.length) return null;

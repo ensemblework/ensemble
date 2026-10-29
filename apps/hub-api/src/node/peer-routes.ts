@@ -12,7 +12,8 @@ import { truncateText } from "../lib/text.js";
 import { wireMessage } from "./store.js";
 import { nodeAccount } from "./routes.js";
 import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
-import { answerSpaceOffer, bindSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
+import { answerSpaceOffer, bindSpace, expireOffersFor, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
+import { onMemberRevoked } from "../sharing/revoke.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
 import { RoomResultError, startRoomTask } from "./room-results.js";
 import { publishTo } from "./events.js";
@@ -37,6 +38,8 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
   watchPeerMissions(app);
   // What concerns each person reaches them once, through their lead (node/room-events.ts).
   watchRoomEvents(app);
+  // Losing a space withdraws a person's open offers to join it through a room (node/room-space.ts).
+  onMemberRevoked(expireOffersFor);
 
   const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
     try {

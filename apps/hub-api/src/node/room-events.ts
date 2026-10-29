@@ -20,7 +20,7 @@ import { truncateText } from "../lib/text.js";
 import { publishTo } from "./events.js";
 import { resolveMentions } from "./mentions.js";
 import { inBackground } from "./queue.js";
-import { boundSpaceId, onSpaceBound, roleIn } from "./room-space.js";
+import { boundSpaceId, linkedSpace, onSpaceBound, roleIn } from "./room-space.js";
 import { directoryOf, postMessage } from "./store.js";
 import { awayNow, personRow, prefsOf, updatePrefs } from "./trust.js";
 
@@ -160,7 +160,8 @@ export async function scanRoom(app: FastifyInstance, roomId: string): Promise<nu
   const feed = await prisma.nodeRoomFeed.findUnique({ where: { roomId } });
   if (!feed) return 0;
   const room = await prisma.nodeRoom.findUnique({ where: { id: roomId } });
-  const spaceId = room && !room.archivedAt && room.kind === "room" ? boundSpaceId(room) : null;
+  // Only while the room's creator still owns it (a transfer unlinks the room, node/room-space.ts).
+  const spaceId = room && !room.archivedAt && room.kind === "room" ? await linkedSpace(app, room) : null;
   if (!room || spaceId !== feed.spaceId) {
     // Unlinked (or linked elsewhere, which follows anew): this feed and what it saw go.
     await prisma.$transaction([prisma.nodeRoomTask.deleteMany({ where: { roomId } }), prisma.nodeRoomFeed.deleteMany({ where: { roomId, spaceId: feed.spaceId } })]);
@@ -324,9 +325,9 @@ function schedule(app: FastifyInstance): void {
 }
 
 /** May this person still hear of this event: still in the room, and (for the space) the room still follows it and they can open it. */
-async function stillFor(db: Db, event: NodeRoomEvent, room: NodeRoom): Promise<boolean> {
+async function stillFor(db: Db, event: NodeRoomEvent, room: NodeRoom, linked: string | null): Promise<boolean> {
   if (event.spaceId) {
-    if (boundSpaceId(room) !== event.spaceId) return false;
+    if (linked !== event.spaceId) return false;
     if (!(await roleIn(event.userId, event.spaceId))) return false;
   }
   if (event.subjectKind === "message") {
@@ -443,8 +444,9 @@ async function deliverPage(app: FastifyInstance, due: NodeRoomEvent[], now: Date
     }
     const kept: NodeRoomEvent[] = [];
     const gone: string[] = [];
+    const linked = await linkedSpace(app, room);
     for (const event of events) {
-      if (await stillFor(prisma, event, room)) kept.push(event);
+      if (await stillFor(prisma, event, room, linked)) kept.push(event);
       else gone.push(event.id);
     }
     // What they may no longer see never reaches them.
@@ -516,7 +518,7 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const member = await personRow(prisma, room.id, personId);
   if (!member || room.kind !== "room") return null;
   const from = member.digestAt && member.digestAt > since ? member.digestAt : since;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   const role = spaceId ? await roleIn(personId, spaceId) : null;
   const owner = spaceId && role ? await spaceOwnerOf(prisma, spaceId) : null;
   const users = new Map<string, string>();
@@ -532,7 +534,7 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const proposed = await Promise.all(waiting.map(async (row) => ({ taskId: row.id, title: row.title, requestedBy: row.requestedByAccountId ? await nameFor(row.requestedByAccountId) : null })));
   const rows = await prisma.nodeRoomEvent.findMany({ where: { roomId: room.id, userId: personId, createdAt: { gte: from } }, orderBy: { createdAt: "asc" }, take: 200 });
   const allowed: NodeRoomEvent[] = [];
-  for (const row of rows) if (await stillFor(prisma, row, room)) allowed.push(row);
+  for (const row of rows) if (await stillFor(prisma, row, room, spaceId)) allowed.push(row);
   const { lines: eventLines, items: events } = await describe(prisma, allowed, null);
   const touched = new Set([...allowed.map((row) => row.subjectId), ...waiting.map((row) => row.id)]);
   const board = spaceId && role ? (await prisma.task.findMany({ where: { userId: spaceId, deletedAt: null, updatedAt: { gte: from } }, orderBy: { updatedAt: "desc" }, take: 20, select: { id: true, title: true, status: true } })).filter((row) => !touched.has(row.id)).slice(0, 8) : [];

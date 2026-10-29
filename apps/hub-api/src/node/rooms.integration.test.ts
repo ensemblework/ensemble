@@ -1145,6 +1145,44 @@ test("review #A: an away person's held events never stop delivery to anyone else
   assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 0);
 });
 
+test("review #B: a linked space that changes hands unlinks its room: no more offers, and Join adds nobody", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const cara = await person("Cara");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } })).statusCode, 201);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const invite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  const offer = (await read(cara, room.id)).find((row) => row.data?.type === "space_offer")!;
+  assert.equal(offer.data.status, "pending");
+
+  // Akash hands the space to Ben: Akash no longer owns what his room links.
+  const handed = await akash.inject({ method: "POST", url: `/api/sharing/spaces/${spaceId}/transfer`, payload: { toId: ben.id, confirmation: "Launch space" } });
+  assert.equal(handed.statusCode, 200, handed.body);
+  const refused = await joinSpace(cara, room.id);
+  assert.equal(refused.statusCode, 404, refused.body);
+  assert.equal(await h.prisma.spaceMember.count({ where: { spaceId, accountId: cara.id } }), 0);
+  assert.equal(await h.prisma.contact.count({ where: { ownerId: ben.id, contactId: cara.id } }), 0, "Ben's contacts stay his choice");
+  assert.equal(((await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).settings as any).spaceId, undefined, "the room is unlinked");
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: offer.id } })).data as any).status, "expired");
+  assert.ok((await read(akash, room.id)).some((row) => row.data?.roomSpace?.why === "owner_changed"));
+  assert.equal(json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/space` })).space, null);
+});
+
+test("review #B: when the owner removes someone, their open offer is withdrawn and Join cannot bring them back", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  // Ben said Not now; Akash added him from the Hub, then removed him.
+  assert.equal((await joinSpace(ben, room.id, false)).statusCode, 200);
+  assert.equal((await akash.inject({ method: "POST", url: `/api/sharing/spaces/${spaceId}/members`, payload: { personId: ben.id, role: "editor" } })).statusCode, 201);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/sharing/spaces/${spaceId}/members/${ben.id}` })).statusCode, 204);
+  const again = await joinSpace(ben, room.id);
+  assert.equal(again.statusCode, 409, again.body);
+  assert.equal(await h.prisma.spaceMember.count({ where: { spaceId, accountId: ben.id } }), 0);
+  assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/space` })).offer.status, "expired");
+});
+
 // ── C6 results into the room and onto the board: the worked example (extension §19) ──────────
 
 test("C6, extension §19: two people, two features: told once, started in My crew, results on the board and in the room, a review on the requester's task, a digest", async () => {

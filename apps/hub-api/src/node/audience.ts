@@ -36,6 +36,7 @@ import { cardText, statusCard } from "./status-cards.js";
 import { personIn, postMessage, roomPeople, roomSettings, updateMessageData } from "./store.js";
 import { awayNow, budgetSpent, prefsOf, publicTrust, shareableText, trustFor, type TrustSettings } from "./trust.js";
 import { resultPosted } from "./room-results.js";
+import { linkedSpace } from "./room-space.js";
 
 /** Hub tools a room-bound turn never gets, even in the room's shared space: the owner's own settings, models, runs and agents. */
 const OWNER_ONLY = new Set([
@@ -240,7 +241,7 @@ export async function roomBoundTurn(
   });
 
   // The room's shared space (bound in C4), only while the owner can open it and their settings share from it. No fallback to the owner's own spaces.
-  const bound = (room.settings as { spaceId?: unknown } | null)?.spaceId;
+  const bound = await linkedSpace(app, room);
   let spaceName: string | null = null;
   let gateway: ReturnType<typeof nodeSpaceGateway> | null = null;
   let modules = "";

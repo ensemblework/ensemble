@@ -25,7 +25,7 @@ import { missionEnded } from "./missions-core.js";
 import { missionMedia, type Media } from "./media.js";
 import { loadPlan } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
-import { boundSpaceId, roleIn } from "./room-space.js";
+import { boundSpaceId, linkedSpace, roleIn } from "./room-space.js";
 import { personIn, postMessage } from "./store.js";
 import { personRow, prefsOf } from "./trust.js";
 
@@ -67,7 +67,7 @@ async function moveTask(app: FastifyInstance, task: Task, status: "in_progress" 
  */
 export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, mode: "private" | "shared"): Promise<void> {
   const prisma = app.prisma;
-  const spaceId = boundSpaceId(room);
+  const spaceId = await linkedSpace(app, room);
   if (!spaceId) throw new RoomResultError("This room has no shared space.", 404);
   const role = await roleIn(accountId, spaceId);
   if (role !== "owner" && role !== "editor") throw new RoomResultError("Join the room's space as an editor first.", 403);
@@ -105,7 +105,8 @@ export async function roomTaskOrigin(
   if (!turn.private || !turn.roomId) return {};
   const room = await db.nodeRoom.findUnique({ where: { id: turn.roomId } });
   const spaceId = room && room.kind === "room" ? boundSpaceId(room) : null;
-  if (!spaceId) return {};
+  // Only while the room's creator still owns its space (node/room-space.ts linkedSpace).
+  if (!spaceId || (await spaceOwnerOf(db, spaceId)) !== room!.userId) return {};
   const started = /^room-task:([0-9a-f-]{36}):(private|shared):/.exec(operationId ?? "");
   let taskId = started?.[1] ?? null;
   if (!taskId && turn.triggerMessageId) {
