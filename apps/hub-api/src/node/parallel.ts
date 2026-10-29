@@ -202,7 +202,8 @@ export function integrationPart(mission: MissionShape, step: Pick<StepShape, "id
   return lines.join("\n");
 }
 
-export type Stale = { step: string; handle: string; candidate: string; at: string };
+/** `tested`: the candidate the pass was for; `candidate`: the later one it does not cover. */
+export type Stale = { step: string; handle: string; candidate: string; at: string; tested: string };
 
 /**
  * Passing checks a later change no longer covers (plan §13: a candidate changed after a passing test):
@@ -230,7 +231,7 @@ export function staleChecks(mission: MissionShape): Map<string, Stale> {
       for (const attempt of other.attempts ?? []) {
         const key = candidateKey(attempt.candidate);
         if (!key || !attempt.endedAt || attempt.endedAt <= passed.endedAt || sameCandidate(key, tested)) continue;
-        if (!first || attempt.endedAt < first.at) first = { step: other.id, handle: other.handle, candidate: key, at: attempt.endedAt };
+        if (!first || attempt.endedAt < first.at) first = { step: other.id, handle: other.handle, candidate: key, at: attempt.endedAt, tested };
       }
     }
     if (first) stale.set(check.id, first);

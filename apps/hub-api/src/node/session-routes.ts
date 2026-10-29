@@ -12,7 +12,7 @@ import { requireBrowserSession } from "../bridge/auth.js";
 import { accountIdOf } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
-import { liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
+import { listSessions, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
 import { stepLive } from "./plans.js";
 import { sessionOwners, sessionSnapshot } from "./session-queue.js";
 import { editSessionQueue, moveSession, ownerContext, sendToSession, stopSession, type SessionEnv } from "./sessions.js";
@@ -40,6 +40,7 @@ const Control = z
   .strict();
 const Reorder = z.object({ order: z.array(z.string().uuid()).max(100) }).strict();
 const HandOver = z.object({ nodeId: z.string().uuid() }).strict();
+const ListQuery = z.object({ q: z.string().trim().max(200).optional(), limit: z.coerce.number().int().min(1).max(50).default(20) }).strict();
 
 /**
  * The session's node acting for its owner's card: the node that manages it, in the conversation of its
@@ -107,6 +108,34 @@ async function recentRuns(prisma: PrismaClient, runs: SessionRun[], rootId: stri
 
 export function registerSessionRoutes(app: FastifyInstance): void {
   const prisma = app.prisma;
+
+  /**
+   * My agent sessions, most recently active first, each with the node that manages it (null: none, such
+   * as one started in the Hub or the CLI), so I can give one to a node.
+   */
+  app.get("/api/node/sessions", async (request) => {
+    const accountId = owner(request);
+    const query = ListQuery.parse(request.query ?? {});
+    const sessions = await listSessions(prisma, { space: accountId, runner: null }, { query: query.q, limit: query.limit });
+    const owners = await sessionOwners(prisma, accountId, sessions.map((row) => row.id));
+    return {
+      sessions: sessions.map((row) => ({
+        id: row.id,
+        nodeId: owners.get(row.id) ?? null,
+        status: row.status,
+        agent: row.agent,
+        agentName: row.agentName,
+        model: row.model && row.model !== "default" ? row.model : null,
+        computer: row.computer,
+        folder: row.folder,
+        title: row.title,
+        latestTask: row.latestTask.title,
+        summary: truncateText(row.summary, 300),
+        runs: row.runs,
+        lastActiveAt: row.lastActiveAt,
+      })),
+    };
+  });
 
   /** One of my sessions: its state, the run going on, the queue in order and its recent runs. */
   app.get("/api/node/sessions/:id", async (request) => {

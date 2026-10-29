@@ -289,7 +289,8 @@ test("a check is stale when a later step leaves another commit in its place, and
 
   const card = await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: mission.id } });
   const check = (card.data as { steps: Array<{ id: string; staleAfter?: { step: string; handle: string; candidate: string } }> }).steps.find((row) => row.id === s["check-dark-mode"]!.id);
-  assert.deepEqual({ ...check?.staleAfter, at: undefined }, { step: s["document-dark-mode"]!.id, handle: "builder", candidate: "ddd4444", at: undefined });
+  assert.deepEqual({ ...check?.staleAfter, at: undefined, tested: undefined }, { step: s["document-dark-mode"]!.id, handle: "builder", candidate: "ddd4444", at: undefined, tested: undefined });
+  assert.ok((check?.staleAfter as { tested?: string } | undefined)?.tested, "it names what the pass tested");
   const report = seen.find((turn) => turn.slug === "manager" && turn.transcript.includes("nothing left to run"));
   assert.match(report?.transcript ?? "", /@tester's check passed for aaa1111, but @builder's step then left ddd4444 in the same place: that pass does not cover it\./);
 });

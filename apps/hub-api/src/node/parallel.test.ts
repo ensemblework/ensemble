@@ -45,7 +45,7 @@ test("a pass goes stale only for another candidate left later in the same place"
         }),
       }),
     );
-  assert.deepEqual(run("serial", [{ id: "s6-doc", commit: "ddd4444", minute: 3 }]).get("s3-ca"), { step: "s6-doc", handle: "writer", candidate: "ddd4444", at: at(3) });
+  assert.deepEqual(run("serial", [{ id: "s6-doc", commit: "ddd4444", minute: 3 }]).get("s3-ca"), { step: "s6-doc", handle: "writer", candidate: "ddd4444", at: at(3), tested: "aaa1111" });
   assert.equal(run("serial", [{ id: "s6-doc", commit: "ddd4444", minute: 1 }]).size, 0, "a change before the pass was there when it was checked");
   assert.equal(run("serial", [{ id: "s6-doc", commit: "aaa1111ffffffff", minute: 3 }]).size, 0, "the same commit, written out in full");
   assert.equal(run("worktrees", [{ id: "s4-in", commit: "ccc3333", minute: 3 }]).size, 0, "an integration in the checkout leaves a worktree's check standing");
