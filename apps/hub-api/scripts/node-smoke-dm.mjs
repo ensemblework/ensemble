@@ -5,7 +5,9 @@
  *
  *   HUB_API=http://127.0.0.1:4098 node apps/hub-api/scripts/node-smoke-dm.mjs
  *
- * Use it against a local server (a sign-up must not need Turnstile). It spends included credits.
+ * Against a local server it signs up a new account (a sign-up must not need Turnstile). Against a
+ * hosted one, sign in to a verified test account instead: NODE_SMOKE_EMAIL and NODE_SMOKE_PASSWORD.
+ * It spends included credits.
  */
 const API = process.env.HUB_API ?? "http://127.0.0.1:4098";
 const stamp = Date.now().toString(36);
@@ -14,7 +16,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function call(path, { method = "GET", cookie, body } = {}) {
   const headers = {};
   if (body !== undefined) headers["content-type"] = "application/json";
-  if (cookie) headers.cookie = `ensemble_session=${cookie}`;
+  if (cookie) headers.cookie = cookie;
   const response = await fetch(`${API}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
   const parsed = text ? JSON.parse(text) : null;
@@ -22,13 +24,17 @@ async function call(path, { method = "GET", cookie, body } = {}) {
   return parsed;
 }
 
-const signup = await fetch(`${API}/api/auth/signup`, {
+const given = process.env.NODE_SMOKE_EMAIL && process.env.NODE_SMOKE_PASSWORD;
+const signin = await fetch(`${API}/api/auth/${given ? "login" : "signup"}`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ email: `node-smoke-dm-${stamp}@ensemble.test`, password: `node-smoke-pass-${stamp}`, name: "Smoke" }),
+  body: JSON.stringify(given ? { email: process.env.NODE_SMOKE_EMAIL, password: process.env.NODE_SMOKE_PASSWORD } : { email: `node-smoke-dm-${stamp}@ensemble.test`, password: `node-smoke-pass-${stamp}`, name: "Smoke" }),
 });
-if (!signup.ok) throw new Error(`sign-up ${signup.status}: ${await signup.text()}`);
-const cookie = (signup.headers.getSetCookie?.() ?? []).join(",").match(/ensemble_session=([^;]+)/)?.[1];
+if (!signin.ok) throw new Error(`${given ? "sign-in" : "sign-up"} ${signin.status}: ${await signin.text()}`);
+// The session cookie as `name=value` (a hosted server may name it `ensemble_<namespace>_session`).
+const pair = (signin.headers.getSetCookie?.() ?? []).join(",").match(/(ensemble_(?:[a-z0-9_]+_)?session)=([^;]+)/);
+if (!pair) throw new Error("signing in did not set a session");
+const cookie = `${pair[1]}=${pair[2]}`;
 const { node, room } = await call("/api/node/nodes", { method: "POST", cookie, body: { templateId: "assistant" } });
 
 async function timeline() {
