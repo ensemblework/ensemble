@@ -371,6 +371,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const [prBranch, setPrBranch] = useState("");
   const [askFirst, setAskFirst] = useState(false);
   const [credentials, setCredentials] = useState(false);
+  // The saved secrets the chosen profile names: a run on a computer gets only those (docs/35 §8.7).
+  const [profileSecrets, setProfileSecrets] = useState<string[]>([]);
   const [sandbox, setSandbox] = useState(true);
   const [network, setNetwork] = useState(true);
   // null follows Settings; a choice here is for this run only.
@@ -510,6 +512,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     maxTurns: maxTurns === "" ? null : maxTurns,
     instructions,
     pullRequest: prOn ? { base: pullRequest.base.trim(), merge: pullRequest.merge } : null,
+    ...(profileSecrets.length ? { secrets: profileSecrets } : {}),
   };
 
   const applyProfile = (profile: RunProfile) => {
@@ -532,6 +535,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
     setInstructions(profile.instructions);
     setPullRequest(profile.pullRequest ? { base: profile.pullRequest.base, merge: profile.pullRequest.merge } : null);
     setPrBranch("");
+    setProfileSecrets(profile.secrets ?? []);
   };
 
   // Each time the dialog opens: the task, then the default profile once settings are in.
@@ -687,7 +691,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
           ...(outside ? { outsideAccess: outside } : {}),
         });
         if (selectedDevice) {
-          Object.assign(input, { useCredentials: false, ...(place === "folder" ? { folderLabel } : {}) });
+          Object.assign(input, { useCredentials: false, ...(place === "folder" ? { folderLabel } : {}), ...(profileSecrets.length ? { secrets: profileSecrets } : {}) });
         } else {
           Object.assign(input, { useCredentials: credentials, ...(place === "folder" ? { folder } : {}) });
         }

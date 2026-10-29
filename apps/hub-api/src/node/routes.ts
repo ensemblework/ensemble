@@ -22,7 +22,7 @@ import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } f
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import { pausedNotice, stopNodeRuns } from "./sessions.js";
 import { registerSessionRoutes } from "./session-routes.js";
-import { saveSecret, SecretError, secretStuck } from "./node-secrets.js";
+import { saveSecret, SecretAnswer, SecretError, secretStuck, secretTarget } from "./node-secrets.js";
 import { createCrew, deleteNode, MAX_NODES, promoteHelper } from "./helpers.js";
 import { stopPlans } from "./plans.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
@@ -1105,14 +1105,29 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/node/runs", async (request) => ({ runs: await runList(prisma, nodeAccount(request)) }));
 
-  /** The value for a node's secret request: relayed to the card's computer, never stored or logged here (node/node-secrets.ts). */
+  /** Where a node's secret request goes and how: the computer, and its pinned key for a box sealed in the browser (node/node-secrets.ts). */
+  app.get("/api/node/secrets/:messageId", async (request, reply) => {
+    try {
+      return await secretTarget(app, nodeAccount(request), (request.params as { messageId: string }).messageId);
+    } catch (error) {
+      if (error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message, ...(error.code ? { code: error.code } : {}) });
+      throw error;
+    }
+  });
+
+  /**
+   * The answer to a node's secret request: a box sealed in the browser for the card's computer, relayed as
+   * it came; or, only for a computer too old for a key, the value over TLS. Never stored or logged here.
+   */
   app.post("/api/node/secrets/:messageId", async (request, reply) => {
     const accountId = nodeAccount(request);
-    const { value } = z.object({ value: z.string().min(1).max(16 * 1024) }).strict().parse(request.body);
+    const parsed = SecretAnswer.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Send the secret encrypted for the computer ({sealed}), or for an older computer as {value}." });
+    const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     try {
-      return { message: wireMessage(await saveSecret(app, accountId, (request.params as { messageId: string }).messageId, value)) };
+      return { message: wireMessage(await saveSecret(app, accountId, (request.params as { messageId: string }).messageId, parsed.data, origin)) };
     } catch (error) {
-      if (error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message, ...(error.code ? { code: error.code } : {}) });
       throw error;
     }
   });

@@ -49,7 +49,8 @@ import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPul
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
 import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
-import { MISSING_SECRET_RULE, runSecretEnv, secretRules, secretScopeOf } from "../lib/run-secrets.js";
+import { MISSING_SECRET_RULE, secretRules } from "../lib/run-secrets.js";
+import { runCredentials } from "../credentials/run-env.js";
 import { evidenceDir } from "../evidence/files.js";
 import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { LOCAL_ACCOUNT_NAME } from "../lib/desktop-user.js";
@@ -281,7 +282,7 @@ function outsideRule(ctx: Pick<JobContext, "job" | "accessMode" | "outsideAccess
 }
 
 function engineRules(ctx: JobContext): string[] {
-  return [...baseEngineRules(ctx), ...secretRules(Object.keys(ctx.secretEnv ?? {})), MISSING_SECRET_RULE];
+  return [...baseEngineRules(ctx), ...secretRules(Object.keys(ctx.secretEnv ?? {}), ctx.secretRefs ?? []), MISSING_SECRET_RULE];
 }
 
 function baseEngineRules(ctx: JobContext): string[] {
@@ -677,11 +678,14 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           : caps.mechanism === "windows"
             ? "the Windows sandbox account"
             : undefined;
+  // Saved secrets: every environment secret for a Hub or CLI run in compatibility mode, only the ones it names
+  // for a run with a scope (Ensemble Node) or in named mode; reference secrets by name only (credentials/run-env.ts).
+  const credentials = job.kind === "code" ? await runCredentials(prisma, userId, job) : { env: {}, references: [] };
   const ctx: JobContext = {
     prisma,
     job,
-    // Every saved secret for a Hub or CLI run; only the ones it names for a run with a scope (Ensemble Node).
-    secretEnv: job.kind === "code" ? await runSecretEnv(prisma, userId, secretScopeOf(job.context)) : {},
+    secretEnv: credentials.env,
+    secretRefs: credentials.references,
     userId,
     taskId: job.taskId,
     taskTitle: job.task.title,

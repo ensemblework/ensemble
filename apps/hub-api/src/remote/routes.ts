@@ -12,6 +12,7 @@ import { checkApiBase, hostedClient, registerDevice, RemoteError } from "./clien
 import { parseRegistered } from "./contract.js";
 import { deviceCapabilities, devicePlatform, REMOTE_NOTICE, remotePresence, stopRemoteWork, wakeRemote } from "./loop.js";
 import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type SharedFolder } from "./store.js";
+import { loadSealKey, makeSealKey, saveSealKey } from "../credentials/seal-key.js";
 
 const CODE = /^[A-Za-z0-9]{8}$/;
 
@@ -41,6 +42,9 @@ async function status(app: FastifyInstance) {
     unreachable: settings.unreachable,
     folders: settings.folders,
     platform: devicePlatform(),
+    // The key the web encrypts secrets for, to compare with the web (B12), and how runs here get secrets.
+    sealKey: token && settings.pairedAt ? (loadSealKey()?.info ?? null) : null,
+    secretsMode: settings.secretsMode,
   };
 }
 
@@ -115,6 +119,8 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
     const settings = loadSettings();
     let registered: unknown;
     let base: string;
+    // Each pairing has its own key pair (B12): the web pins this one for the new pairing; the old one goes once it is accepted.
+    const sealKey = makeSealKey();
     try {
       base = checkApiBase(body.apiBase);
       registered = await registerDevice(base, {
@@ -122,7 +128,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         name: body.name?.trim() || settings.deviceName,
         platform: devicePlatform(),
         appVersion: process.env.ENSEMBLE_APP_VERSION ?? "0.1.0",
-        capabilities: await deviceCapabilities(app),
+        capabilities: { ...(await deviceCapabilities(app)), sealKey: sealKey.info },
       });
     } catch (error) {
       if (error instanceof RemoteError) return reply.code(error.status || 502).send({ error: error.message });
@@ -130,6 +136,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
     }
     const parsed = parseRegistered(registered);
     await saveDeviceToken(parsed.token, base);
+    saveSealKey(sealKey, parsed.deviceId);
     saveSettings({
       ...loadSettings(),
       apiBase: base,

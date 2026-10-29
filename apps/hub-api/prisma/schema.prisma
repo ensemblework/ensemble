@@ -604,6 +604,8 @@ model Device {
   tokenId      String         @unique @map("token_id")
   /// Sandbox strength, max concurrent jobs, folder labels. Never paths to secrets.
   capabilities Json           @default("{}")
+  /// The public key this computer reported first ({kid, alg, spki, fingerprint, pinnedAt}); the web encrypts secrets for it (credentials/device-key.ts).
+  sealKey      Json?          @map("seal_key")
   lastSeenAt   DateTime?      @map("last_seen_at")
   createdAt    DateTime       @default(now()) @map("created_at")
   revokedAt    DateTime?      @map("revoked_at")
@@ -2883,6 +2885,8 @@ model RunSecret {
   /// An environment variable name, such as GITHUB_TOKEN.
   name      String
   value     String
+  /// Origins it may be sent to by reference (secret_http, git); null: nowhere (credentials/secret-store.ts).
+  allow     Json?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

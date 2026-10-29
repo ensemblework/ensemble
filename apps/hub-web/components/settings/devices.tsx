@@ -63,6 +63,22 @@ export function DevicesSection() {
                       Repositories: {repositoryLabels(device.capabilities).join(", ")}
                     </span>
                   ) : null}
+                  {device.sealKeyMismatch ? (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] text-danger" data-seal-key="mismatch">
+                      Secret key changed: pair it again
+                      <InfoTip text={`${device.name} now reports a different key from the one it was paired with, so secrets typed on the web are not sent to it. Pair it again (\`ensemble login\`).`} />
+                    </span>
+                  ) : device.sealKey ? (
+                    <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-muted" data-seal-key={device.sealKey.kid}>
+                      Secret key {device.sealKey.fingerprint}
+                      <InfoTip text={`Secrets you type on the web for ${device.name} are encrypted in your browser with this key, so only it can read them. Check \`ensemble secrets fingerprint\` there shows the same.`} />
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] text-muted" data-seal-key="none">
+                      Secrets: over HTTPS only
+                      <InfoTip text={`Ensemble on ${device.name} is too old for end-to-end encryption: a secret typed on the web goes over HTTPS through Ensemble's server, which passes it on without keeping it. Update Ensemble there.`} />
+                    </span>
+                  )}
                 </div>
               </div>
               <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => revoke.mutate(device.id)} disabled={revoke.isPending}>

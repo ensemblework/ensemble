@@ -30,7 +30,8 @@ import {
   withLocalApi,
   localJson,
 } from "./sidecar.js";
-import { addFolder, folderLine, folderRequest, listFolders, listKeys, listSecrets, removeFolder, removeKey, removeSecret, remoteStatus, setKey, setSecret, withAdminApi } from "./local-commands.js";
+import { addFolder, folderLine, folderRequest, listFolders, listKeys, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
+import { allowSecret, formatKey, formatSecrets, listSecrets, modeLine, removeSecret, secretKey, secretsMode, setSecret } from "./secrets.js";
 import { readSecret } from "./secret.js";
 import { chooseEditors, configuredEditors, detectEditors, parseEditorNames, removeEditor, setupEditor } from "./editors.js";
 import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
@@ -76,7 +77,7 @@ Usage:
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
   ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
-  ensemble secrets [list] | set <NAME> | remove <NAME>
+  ensemble secrets [list] | set <NAME> [--allow ORIGIN] | remove <NAME> | allow <NAME> <ORIGIN...>|--none | mode [named|all] | fingerprint
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble sessions [list] [--json]
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
@@ -100,7 +101,8 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   folders:
     "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
-  secrets: "Usage: ensemble secrets [list] | set <NAME> | remove <NAME>\nSecrets for the agents that run tasks on this computer (API keys, tokens), kept here, encrypted. Each run gets them as environment variables ($NAME); no model sees a value. `set` reads the value without showing it, or from stdin.",
+  secrets:
+    "Usage: ensemble secrets [list] | set <NAME> [--allow ORIGIN] | remove <NAME> | allow <NAME> <ORIGIN...>|--none | mode [named|all] | fingerprint\nSecrets for the agents that run tasks on this computer (API keys, tokens), kept here, encrypted; no model sees a value. `set` reads the value without showing it, or from stdin.\n  allow        where a secret may be sent by reference (https://api.stripe.com). A secret with a destination is never put in a run's environment: runs call that service with the secret_http tool, and git over https to it signs in with it. --none makes it an environment secret again.\n  mode         all (compatibility mode, the default): a run that names no secrets gets every environment secret, and a program it runs can read them. named: a run gets only the secrets its run profile, task or node step names.\n  fingerprint  the key Ensemble on the web encrypts secrets for; compare it with the secret card and this computer's details on the web.",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust, then what your Ensemble Node nodes wait on (answered on Node or in Ensemble).",
   sessions: "Usage: ensemble sessions [list] [--json]\nThe coding-agent sessions on this computer, newest first: one conversation with Claude Code, Codex, Copilot or another agent, carried across the tasks continued in it (Continue an earlier task resumes it).",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
@@ -495,21 +497,45 @@ async function commandKeys(args: string[]): Promise<void> {
 async function commandSecrets(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.secrets);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
-  if (!["list", "set", "remove"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.secrets);
+  if (!["list", "set", "remove", "allow", "mode", "fingerprint"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.secrets);
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
   if (subcommand === "list") {
-    const rows = await withAdminApi({ sidecarDir, run: listSecrets });
-    console.log(rows.length ? rows.map((row) => `${row.name}\t${row.updatedAt.slice(0, 10)}`).join("\n") : "No secrets on this computer. Save one with `ensemble secrets set <NAME>`, or when a node asks for one.");
+    const { secrets, mode } = await withAdminApi({ sidecarDir, run: listSecrets });
+    console.log(formatSecrets(secrets, mode, COMMAND));
+    return;
+  }
+  if (subcommand === "fingerprint") {
+    console.log(formatKey(await withAdminApi({ sidecarDir, run: secretKey }), COMMAND));
+    return;
+  }
+  if (subcommand === "mode") {
+    const wanted = args[1];
+    if (wanted !== undefined && wanted !== "named" && wanted !== "all") throw new Error(`Usage: ${COMMAND} secrets mode [named|all]`);
+    const mode = await withAdminApi({ sidecarDir, run: (discovery) => secretsMode(discovery, wanted) });
+    console.log(modeLine(mode, COMMAND));
     return;
   }
   const name = args[1]?.trim().toUpperCase();
-  if (!name) throw new Error(`Usage: ensemble secrets ${subcommand} <NAME>`);
+  if (!name || name.startsWith("-")) throw new Error(`Usage: ${COMMAND} secrets ${subcommand} <NAME>${subcommand === "allow" ? " <ORIGIN...>|--none" : ""}`);
+  if (subcommand === "allow") {
+    const origins = args.slice(2).filter((arg) => arg !== "--none");
+    if (!origins.length && !args.includes("--none")) throw new Error(`Usage: ${COMMAND} secrets allow ${name} <ORIGIN...> (for example https://api.stripe.com), or --none to clear`);
+    const allow = await withAdminApi({ sidecarDir, run: (discovery) => allowSecret(discovery, name, origins) });
+    console.log(allow.length ? `${name} is used by reference only, sent only to ${allow.join(", ")}; it is no longer put in any run's environment.` : `${name} has no allowed destinations: runs that may have it get it as $${name} again.`);
+    return;
+  }
   if (subcommand === "set") {
+    const allow: string[] = [];
+    for (let index = 2; index < args.length; index += 1) {
+      if (args[index] === "--allow" && args[index + 1]) allow.push(args[++index]!);
+      else if (args[index]?.startsWith("--allow=")) allow.push(args[index]!.slice("--allow=".length));
+      else throw new Error(`Usage: ${COMMAND} secrets set <NAME> [--allow ORIGIN]`);
+    }
     const value = await readSecret(`Value for ${name} (not shown): `);
     if (!value) throw new Error("Nothing was entered.");
-    await withAdminApi({ sidecarDir, run: (discovery) => setSecret(discovery, name, value) });
-    console.log(`Saved ${name}. Agent runs on this computer get it as $${name}.`);
+    const saved = await withAdminApi({ sidecarDir, run: (discovery) => setSecret(discovery, name, value, allow.length ? allow : undefined) });
+    console.log(saved.allow.length ? `Saved ${name}, used by reference only: runs here send it to ${saved.allow.join(", ")} with secret_http, never seeing it.` : `Saved ${name}. Agent runs on this computer that may have it get it as $${name}.`);
     return;
   }
   await withAdminApi({ sidecarDir, run: (discovery) => removeSecret(discovery, name) });
@@ -753,6 +779,9 @@ async function statusSummary(): Promise<Record<string, unknown>> {
     runnerStartedAt: pid?.startedAt || null,
     remoteEnabled: remote?.enabled ?? null,
     folders: remote?.folders ?? null,
+    // The key Ensemble on the web encrypts secrets for, to compare with the web (docs/35 §8.7).
+    sealKey: remote?.sealKey?.fingerprint ?? null,
+    secretsMode: remote?.secretsMode ?? null,
     modelKeys: runner ? (keys ?? []).filter((key) => key.source && key.source !== "none").map((key) => key.provider) : null,
     node: process.version,
     git: Boolean(isExecutableOnPath("git")),
@@ -791,6 +820,8 @@ function statusLines(status: Summary): string[] {
           : "none (add one with `ensemble folders add <path>`)",
     ),
     row("Model keys", keys === null ? "start the runner to list" : keys.length ? keys.join(", ") : "none (add one on the web in Settings → Models, or `ensemble keys set <provider>`)"),
+    row("Secret key", typeof status.sealKey === "string" ? `${status.sealKey} (the web shows this on secret cards)` : status.runnerRunning && status.pairedAt ? "none yet (made on the next report to the web)" : "—"),
+    row("Secrets", status.secretsMode === "named" ? "named: runs get only the secrets they name" : status.secretsMode === "all" ? "all (compatibility mode): runs that name none get every environment secret" : "start the runner to see"),
     row("Editors", editors.length ? editors.join(", ") : "none configured (run `ensemble mcp setup`)"),
   ];
 }

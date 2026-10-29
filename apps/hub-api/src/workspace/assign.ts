@@ -82,9 +82,22 @@ export const Assign = z.object({
    * the agent's own conversation, continued from the session's latest run.
    */
   session: z.string().uuid().optional(),
+  /**
+   * The saved secrets this run may have (their names), from its run profile: the run gets only those
+   * on the computer. Left out: the computer's mode decides (`ensemble secrets mode`, docs/35 §8.7).
+   */
+  secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(100).optional(),
 });
 
 const ENGINE_NAME: Record<"ensemble" | CodeEngine, string> = { ensemble: "Ensemble's agent", ...ENGINE_LABELS, "cursor-agent": "Cursor's agent" };
+
+/** A context naming the saved secrets the run may have; a scope already there (an Ensemble Node run's) wins. */
+function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readonly string[] | undefined): Prisma.InputJsonValue | undefined {
+  if (!secrets?.length) return context;
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  if (Array.isArray(base.secrets)) return context;
+  return { ...base, secrets: [...new Set(secrets)] } as Prisma.InputJsonValue;
+}
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
 function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
@@ -316,7 +329,7 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withSecrets(options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -470,7 +483,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withSecrets(options.context, body.secrets), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   if (externalRoot && body.trust === "always") {

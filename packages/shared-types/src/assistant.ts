@@ -320,6 +320,11 @@ export const RunProfile = z.object({
   instructions: z.string().max(2000).default(""),
   /** End each run in a pull request Ensemble opens into this base (empty: the default branch), and whether to merge it. */
   pullRequest: PullRequestPlan.nullable().default(null),
+  /**
+   * The saved secrets a run with this profile may have on the computer, by name. Empty: the computer's
+   * mode decides (every environment secret in compatibility mode, none in named mode; docs/35 §8.7).
+   */
+  secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(20).optional(),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;

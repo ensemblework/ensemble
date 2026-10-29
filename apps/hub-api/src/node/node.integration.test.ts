@@ -788,6 +788,8 @@ test("a node reads the files on its owner's message; another account's file is r
   assert.equal(gone.data.files, undefined, "a deleted message keeps no file names");
 });
 
+// A computer too old for a sealing key: the value goes over HTTPS through the server (compatibility path).
+// Encrypted entry for a computer with a key: sealed-secrets.integration.test.ts.
 test("a node asks for a secret in a secure box: the value goes to the computer only, never to a model, a message or the database", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira, "Mira's laptop");
@@ -832,10 +834,12 @@ test("a node asks for a secret in a secure box: the value goes to the computer o
     await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: new Date() } });
 
     script = (turn) => (turn.transcript.includes("saved STRIPE_KEY") ? { text: "Saved; continuing with $STRIPE_KEY." } : { text: "ok" });
+    assert.equal(json(await mira.inject({ method: "GET", url: `/api/node/secrets/${card.id}` })).route.mode, "tls", "no key: the card says it goes over HTTPS");
     const saved = await mira.inject({ method: "POST", url: `/api/node/secrets/${card.id}`, payload: { value: secret } });
     assert.equal(saved.statusCode, 200, saved.body);
     await settleTurns();
     assert.equal(json(saved).message.data.status, "saved");
+    assert.equal(json(saved).message.data.sealed, false, "the card records it was not encrypted end to end");
     assert.deepEqual(heard.map((row) => [row.name, row.value]), [["STRIPE_KEY", secret]], "the value went to the computer");
     assert.equal((await mira.inject({ method: "POST", url: `/api/node/secrets/${card.id}`, payload: { value: secret } })).statusCode, 409, "a box is answered once");
   } finally {

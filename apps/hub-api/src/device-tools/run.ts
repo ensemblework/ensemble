@@ -11,7 +11,7 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
-import { runSecretEnv } from "../lib/run-secrets.js";
+import { referenceSecrets, runSecretEnv } from "../lib/run-secrets.js";
 import { loadSettings as loadHubSettings } from "../lib/settings.js";
 import { sliceBytes } from "../lib/text.js";
 import { checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable } from "../workspace/guard.js";
@@ -133,7 +133,12 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
   const prepared = await prepare(app, request, folder, sandboxed);
   const saved = request.secrets.length ? await runSecretEnv(app.prisma, userId(), request.secrets) : {};
   const missing = request.secrets.filter((name) => !(name in saved));
-  if (missing.length) throw new GuardError(`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not saved on this computer. Ask your owner for ${missing.length === 1 ? "it" : "them"} with node_secret_request.`);
+  if (missing.length) {
+    // A secret with allowed destinations is used by reference only (credentials/secret-http.ts), never in a command's environment.
+    const byReference = (await referenceSecrets(app.prisma, userId(), missing)).map((row) => row.name);
+    if (byReference.length) throw new GuardError(`${byReference.join(", ")} ${byReference.length === 1 ? "is" : "are"} kept for use by reference only, never in a command's environment. Call the service with secret_http instead.`);
+    throw new GuardError(`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not saved on this computer. Ask your owner for ${missing.length === 1 ? "it" : "them"} with node_secret_request.`);
+  }
   const controller = new AbortController();
   running.set(request.runId, controller);
   const stream = outputStream(client, request.runId, () => controller.abort());

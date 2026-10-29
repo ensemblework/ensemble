@@ -5,6 +5,7 @@ import { useState } from "react";
 import { ArrowUpRight, Check, KeyRound, X } from "lucide-react";
 import { useToast } from "@/components/toast";
 import { api, type NodeApprovalCard } from "@/lib/api";
+import { keptText, parseAllow, routeText, secretAnswer, targetFingerprint } from "@/lib/node-secret";
 import { relative } from "@/lib/format";
 
 const WANTS: Record<string, string> = {
@@ -17,25 +18,34 @@ const WANTS: Record<string, string> = {
   peer_request: "has a request for you from a room",
 };
 
-/** The value goes once, straight on to the computer on the card; it is not kept in this page after sending. */
+/**
+ * The value is encrypted here for the computer on the card (lib/node-secret.ts) and sent once; it is
+ * not kept in this page after sending. A computer too old for a key gets it over HTTPS, and the card
+ * says so.
+ */
 function SecretForm({ card, onDone }: { card: NodeApprovalCard; onDone: () => void }) {
   const toast = useToast();
   const [value, setValue] = useState("");
+  const [allowText, setAllowText] = useState((card.data.allow ?? []).join(", "));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const name = card.data.name ?? "SECRET";
-  const computer = card.data.computer ?? "your computer";
+  const target = useQuery({ queryKey: ["node-secret", card.id], queryFn: () => api.nodeSecretTarget(card.id), retry: false, staleTime: 30_000 });
+  const fingerprint = useQuery({ queryKey: ["node-secret-key", card.id, target.data?.route.mode === "sealed" ? target.data.route.sealKey.kid : null], queryFn: () => targetFingerprint(target.data!), enabled: Boolean(target.data) });
+  const computer = target.data?.computer.name ?? card.data.computer ?? "your computer";
+  const allow = parseAllow(allowText);
+  const blocked = target.data?.route.mode === "pair_again";
   return (
     <form
       className="mt-3 space-y-2"
       autoComplete="off"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!value) return;
+        if (!value || !target.data) return;
         setBusy(true);
         setError(null);
-        api
-          .saveNodeSecret(card.id, value)
+        secretAnswer(target.data, card, value, allow, window.location.origin)
+          .then((answer) => api.saveNodeSecret(card.id, answer))
           .then(() => {
             setValue("");
             toast(`Saved ${name} on ${computer}.`);
@@ -47,13 +57,17 @@ function SecretForm({ card, onDone }: { card: NodeApprovalCard; onDone: () => vo
     >
       <label className="field flex items-center gap-2">
         <KeyRound size={14} className="shrink-0 text-muted" />
-        <input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="new-password" spellCheck={false} aria-label={`Value for ${name}`} placeholder={`Paste ${name}`} className="min-w-0 flex-1 bg-transparent font-mono outline-none" disabled={busy} />
+        <input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoComplete="new-password" spellCheck={false} aria-label={`Value for ${name}`} placeholder={`Paste ${name}`} className="min-w-0 flex-1 bg-transparent font-mono outline-none" disabled={busy || blocked} />
       </label>
-      <div className="text-[12px] text-muted">
-        Goes straight to {computer}, kept there encrypted and given to agent runs there as ${name}. The node and its models never see it.
+      <label className="block text-[12px] text-muted">
+        Only send it to (optional)
+        <input value={allowText} onChange={(event) => setAllowText(event.target.value)} spellCheck={false} aria-label={`Where ${name} may be sent`} placeholder="https://api.example.com" className="field mt-1 w-full font-mono text-[12px]" disabled={busy || blocked} />
+      </label>
+      <div className="text-[12px] text-muted" data-secret-route={target.data?.route.mode ?? "loading"}>
+        {target.data ? routeText(target.data, fingerprint.data ?? null) : target.error ? (target.error as Error).message : "Checking how this goes to the computer…"} {keptText(name, computer, allow)} The node and its models never see it.
       </div>
       {error ? <div className="text-[12px] text-danger">{error}</div> : null}
-      <button type="submit" className="btn-primary" disabled={!value || busy}>
+      <button type="submit" className="btn-primary" disabled={!value || busy || !target.data || blocked}>
         <Check size={13} /> Save to {computer}
       </button>
     </form>

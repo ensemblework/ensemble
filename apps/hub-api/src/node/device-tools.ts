@@ -64,7 +64,7 @@ type ToolCall = DistributiveOmit<z.input<typeof NodeToolRequest>, "id" | "nodeId
 
 /** What the ledger keeps of a call: the folder or address and the program, never what it printed. */
 function ledgerOf(call: ToolCall): Record<string, string | null> {
-  if (call.tool === "http") return { origin: safeOrigin(call.url) };
+  if (call.tool === "http" || call.tool === "secret_http") return { origin: safeOrigin(call.url) };
   if (call.tool === "run") return { folder: call.folder, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "" };
   if (call.tool === "git") return { folder: call.folder, op: call.op };
   return { folder: call.folder, action: call.action };

@@ -1,0 +1,38 @@
+{
+  "about": "Fixed vectors for Ensemble's sealed box v1 (docs/35 §8.7): ECDH P-256, HKDF-SHA-256 (salt: the ephemeral public key, raw; info: \"ensemble-seal-v1|\" + kid), AES-256-GCM with the associated data's exact bytes. Computed once with node:crypto. The browser modules (packages/shared-types/src/seal.ts and Ensemble Node's apps/node-web/lib/seal.ts) must make `sealed` byte for byte from the inputs; the computer (apps/hub-api/src/credentials/seal.ts) must open it to `payload`. The same file is in both repositories. Test keys only.",
+  "device": {
+    "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgKFc9wLXF_KvkF-CkWXaLg_5vCmlOjCmiu0GK_ztbFtqhRANCAATRVk4wUOoqlQiriF8GemEgdx8VjWPQppQ7Z1lpike0KP0gEmMSCzoVpBcD0HSdQM-Q9cw-K1mkjU-eh3J6NNJO",
+    "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE0VZOMFDqKpUIq4hfBnphIHcfFY1j0KaUO2dZaYpHtCj9IBJjEgs6FaQXA9B0nUDPkPXMPitZpI1PnodyejTSTg",
+    "kid": "7f985267e5fd5a05",
+    "fingerprint": "7F98 5267 E5FD 5A05"
+  },
+  "ephemeral": {
+    "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6JTbrDH69lk4QLBDGWuYNrZ3vz6RyjGwcJICIsjR3BehRANCAAQuOxQsm8XyHl3Y0KVIIExkzryBqg9K4rarzyaycoQ9UTptPB9Q8PvQq-2ZbToCCaHt-hx-AZE9InNr11JLDVhh",
+    "raw": "BC47FCybxfIeXdjQpUggTGTOvIGqD0ritqvPJrJyhD1ROm08H1Dw-9Cr7ZltOgIJoe36HH4BkT0ic2vXUksNWGE"
+  },
+  "iv": "AAECAwQFBgcICQoL",
+  "nonce": "8OHSw7Sllod4aVpLPC0eDw",
+  "now": 1794916800000,
+  "ttlMs": 600000,
+  "context": {
+    "purpose": "secret",
+    "deviceId": "6d1f3c2a-8b4e-4f5a-9c7d-2e1b0a9f8e7d",
+    "decisionId": "3b9e7c1d-5a2f-4e8b-b6c4-1d0e9f8a7b6c",
+    "name": "STRIPE_KEY",
+    "origin": "https://node.ensemblework.com"
+  },
+  "payload": {
+    "value": "sk_test_SEALVECTOR_canary_4242",
+    "allow": [
+      "https://api.stripe.com"
+    ]
+  },
+  "sealed": {
+    "v": 1,
+    "kid": "7f985267e5fd5a05",
+    "epk": "BC47FCybxfIeXdjQpUggTGTOvIGqD0ritqvPJrJyhD1ROm08H1Dw-9Cr7ZltOgIJoe36HH4BkT0ic2vXUksNWGE",
+    "iv": "AAECAwQFBgcICQoL",
+    "ct": "RLHzazBzG5cseKoNzFp-hETM8knZPn9VG5hCJOMRereMA2Le5-LQP7OvGLGeqXUfqfBeJiOi3UB2MhXFzA-cn04touuVly3XEgjOyhVEqfKjjoS6cAVTmYGO6RLj",
+    "aad": "eyJ2IjoxLCJwdXJwb3NlIjoic2VjcmV0Iiwia2lkIjoiN2Y5ODUyNjdlNWZkNWEwNSIsImRldmljZUlkIjoiNmQxZjNjMmEtOGI0ZS00ZjVhLTljN2QtMmUxYjBhOWY4ZTdkIiwiZGVjaXNpb25JZCI6IjNiOWU3YzFkLTVhMmYtNGU4Yi1iNmM0LTFkMGU5ZjhhN2I2YyIsIm5hbWUiOiJTVFJJUEVfS0VZIiwib3JpZ2luIjoiaHR0cHM6Ly9ub2RlLmVuc2VtYmxld29yay5jb20iLCJleHBpcmVzQXQiOiIyMDI2LTExLTE3VDEyOjEwOjAwLjAwMFoiLCJub25jZSI6IjhPSFN3N1NsbG9kNGFWcExQQzBlRHcifQ"
+  }
+}

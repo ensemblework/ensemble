@@ -26,6 +26,7 @@ import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteEr
 import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
+import { credentialCapabilities } from "../credentials/capabilities.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
@@ -132,6 +133,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     secretScope: 1,
     // An Ensemble Node build can work in its own git worktree of a shared folder (the claim's `mission.worktree`, B13).
     worktrees: 1,
+    // The key the web encrypts secrets for, how runs get secrets, and secrets used by reference (B12).
+    ...credentialCapabilities(settings),
   };
 }
 

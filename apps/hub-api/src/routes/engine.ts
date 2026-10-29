@@ -9,6 +9,9 @@ import type { FastifyInstance } from "fastify";
 import { bridgeFor, callThroughBridge } from "../subscriptions/bridge.js";
 import { CHAT_TOOLS, runChatTool } from "../workspace/engines/chat-tools.js";
 import { RUN_TOOLS, RunToolError, runRunTool } from "../evidence/run-tools.js";
+import { CREDENTIAL_TOOLS, runCredentialTool } from "../credentials/run-tools.js";
+import { SecretUseError } from "../credentials/secret-http.js";
+import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { isChatTurn } from "../workspace/trust.js";
 
@@ -66,8 +69,18 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     const header = request.headers["x-ensemble-run"];
     const run = engineRunFor(Array.isArray(header) ? header[0] : header);
     if (!run) return reply.code(401).send({ error: "This run has ended." });
-    const body = z.object({ name: z.enum([...CHAT_TOOLS, ...RUN_TOOLS]), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    const body = z.object({ name: z.enum([...CHAT_TOOLS, ...RUN_TOOLS, ...CREDENTIAL_TOOLS]), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     const chat = isChatTurn(run.ctx.job.context);
+    // A saved secret used by reference (credentials/secret-http.ts), in task runs and Chat alike.
+    if ((CREDENTIAL_TOOLS as readonly string[]).includes(body.name)) {
+      try {
+        return { text: await runCredentialTool(run.ctx, body.name, body.input) };
+      } catch (error) {
+        if (error instanceof SecretUseError) return reply.code(error.statusCode).send({ error: error.message });
+        request.log.error({ err: error }, "credential tool failed");
+        return reply.code(500).send({ error: "The tool failed." });
+      }
+    }
     if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
       if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
       try {
@@ -86,5 +99,17 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       request.log.error({ err: error }, "chat tool failed");
       return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
     }
+  });
+
+  // git's credential helper in a run that may use a secret by reference (credentials/git-credential.ts):
+  // the run's own token, on loopback, on the computer only. The answer is git's format, or empty.
+  app.post("/api/engine/git-credential", async (request, reply) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).type("text/plain").send("");
+    const header = request.headers["x-ensemble-git"];
+    const token = Array.isArray(header) ? header[0] : header;
+    const body = typeof request.body === "string" ? request.body.slice(0, 4096) : "";
+    const answer = await gitCredentialAnswer(app.prisma, token, body, async (jobId) => (await app.prisma.workspaceJob.findUnique({ where: { id: jobId }, select: { status: true } }))?.status ?? null);
+    return reply.header("cache-control", "no-store").type("text/plain").send(answer);
   });
 }
