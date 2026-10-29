@@ -23,6 +23,7 @@ import { inBackground } from "./queue.js";
 import { boundSpaceId, linkedSpace, onSpaceBound, roleIn } from "./room-space.js";
 import { directoryOf, postMessage } from "./store.js";
 import { awayNow, personRow, prefsOf, updatePrefs } from "./trust.js";
+import { presenceChanged } from "./status-cards.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -699,6 +700,7 @@ export async function roomOpened(app: FastifyInstance, room: NodeRoom, personId:
   if (prefs.away && !awayNow(prefs)) {
     digest = { since: new Date(prefs.away.since), reason: "back" };
     await updatePrefs(prisma, member.id, (current) => ({ ...current, away: null }));
+    await presenceChanged(prisma, personId, room.id);
   } else if (!prefs.away && member.seenAt && now.getTime() - member.seenAt.getTime() >= DIGEST_GAP_MS) {
     digest = { since: member.seenAt, reason: "gap" };
   }

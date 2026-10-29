@@ -1579,3 +1579,44 @@ test("web #2: a turn's live status and frames say which thread it is in, and its
     stop();
   }
 });
+
+test("web #3: away, back, and a person's first stream opening or last closing tell their rooms' people (node.presence)", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const { sseHub } = await import("../lib/sse.js");
+  const { nodeChannel } = await import("./events.js");
+  const { followPresence } = await import("./status-cards.js");
+  const { EventEmitter } = await import("node:events");
+  const told: Array<{ channel: string; data: any }> = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (frame.event === "node.presence") told.push({ channel: userId, data: frame.data });
+  });
+  const toAkash = () => told.filter((row) => row.channel === nodeChannel(akash.id) && row.data.roomId === room.id).length;
+  try {
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true } })).statusCode, 200);
+    assert.equal(toAkash(), 1);
+    assert.deepEqual(told.at(-1)!.data, { roomId: room.id }, "no content");
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: false } })).statusCode, 200);
+    await settleTurns();
+    assert.equal(toAkash(), 2);
+    // Ben's Node stream opens, a second one opens, both close: online once, offline once.
+    const stream = () => ({ raw: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined, destroyed: false, writableEnded: false }) }) as never;
+    const first = stream();
+    const second = stream();
+    sseHub.subscribe(nodeChannel(ben.id), first, { accountId: ben.id, owner: true });
+    followPresence(h.app, first, ben.id);
+    sseHub.subscribe(nodeChannel(ben.id), second, { accountId: ben.id, owner: true });
+    followPresence(h.app, second, ben.id);
+    await settleTurns();
+    assert.equal(toAkash(), 3, "online");
+    (first as { raw: InstanceType<typeof EventEmitter> }).raw.emit("close");
+    await new Promise((resolve) => setImmediate(resolve));
+    await settleTurns();
+    assert.equal(toAkash(), 3, "still online");
+    (second as { raw: InstanceType<typeof EventEmitter> }).raw.emit("close");
+    await new Promise((resolve) => setImmediate(resolve));
+    await settleTurns();
+    assert.equal(toAkash(), 4, "offline");
+  } finally {
+    stop();
+  }
+});

@@ -21,7 +21,7 @@ import { clearSteward, setSteward, stewardOf } from "./steward.js";
 import { publishTo } from "./events.js";
 import { inBackground } from "./queue.js";
 import { roomPeople } from "./store.js";
-import { statusCard, statusCards } from "./status-cards.js";
+import { presenceChanged, statusCard, statusCards } from "./status-cards.js";
 import { personRow, prefsOf, SHAREABLE_KINDS, shareableItem, TrustPatch, trustView, updatePrefs } from "./trust.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -125,6 +125,7 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     // Back: their lead catches them up on what happened meanwhile.
     if (wasAway && !body.away) inBackground(app, () => cameBack(app, room, accountId, wasAway.since));
     publishTo(await roomPeople(prisma, room.id), "node.cards", { roomId: room.id });
+    await presenceChanged(prisma, accountId, room.id);
     return { card: await statusCard(prisma, room, accountId, { viewerId: accountId }) };
   });
 

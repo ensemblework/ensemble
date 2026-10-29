@@ -57,6 +57,7 @@ import { boundSpaceId, offerSpace } from "./room-space.js";
 import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 import { confirmDecision } from "./room-pages.js";
+import { followPresence } from "./status-cards.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -352,7 +353,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   });
 
   mirrorNeedsMe();
-  app.get("/api/node/events", async (request, reply) => nodeEventStream(request, reply, nodeAccount(request)));
+  app.get("/api/node/events", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    await nodeEventStream(request, reply, accountId);
+    // Their first stream opening, or last closing, is a presence change for their rooms (node/status-cards.ts).
+    followPresence(app, reply, accountId);
+  });
   registerSessionRoutes(app);
 
   // ── nodes ────────────────────────────────────────────────────────────────────────────────
