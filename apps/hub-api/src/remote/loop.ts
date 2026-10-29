@@ -19,6 +19,8 @@ import { capabilities } from "../workspace/sandbox/spawn.js";
 import { liveLogSince } from "../workspace/live-log.js";
 import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
+import { workspaceRoot } from "../workspace/guard.js";
+import { removeWorktrees } from "../workspace/worktrees.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
@@ -34,7 +36,7 @@ import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -128,6 +130,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     evidenceUpload: settings.evidenceUpload,
     // A run from Ensemble Node gets only the saved secrets it names (the claim's `secrets`).
     secretScope: 1,
+    // An Ensemble Node build can work in its own git worktree of a shared folder (the claim's `mission.worktree`, B13).
+    worktrees: 1,
   };
 }
 
@@ -739,7 +743,16 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       });
     }
   }
+  // An integration step that succeeded: the worktrees it brought in go, when nothing would be lost (B13).
+  if (local.status === "succeeded") await removeIntegrated(local).catch((error: unknown) => app.log.warn({ err: error }, "could not remove integrated worktrees"));
   job.phase = "done";
+}
+
+async function removeIntegrated(local: WorkspaceJob): Promise<void> {
+  const mission = missionOf(local.context);
+  const root = (local.context as { mission?: { root?: unknown } } | null)?.mission?.root;
+  if (!mission?.integrates?.length || typeof root !== "string") return;
+  await removeWorktrees({ userId: userId(), folder: root, workspace: await workspaceRoot(), names: mission.integrates });
 }
 
 /** What the run reports when it ends: counts, the model that answered, its cost estimate, the files changed (names and line counts). */

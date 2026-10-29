@@ -5,8 +5,11 @@
  * judgement is needed: the run reported blocked, or still reported nothing after being asked once; the
  * step is not work in files; or the hand-over itself failed.
  *
- * Same line of work continues the same session (a repair, a builder's next feature); a check runs in
- * a session of its own. The owner's "ask before computer work" setting still applies: the packet then
+ * Same line of work continues the same session (a repair, a builder's next feature in serial work); a
+ * check runs in a session of its own, and so does each build that works apart in its own worktree (B13).
+ * Before it starts, a step takes its place on the computer (node/placement.ts): the folder's checkout,
+ * or its worktree; when another step has it, the step waits in line and is handed over when it frees.
+ * The owner's "ask before computer work" setting still applies: the packet then
  * waits on the same approval card a node's own call would make.
  */
 import type { FastifyInstance } from "fastify";
@@ -17,6 +20,8 @@ import { nodeWebOrigin } from "../lib/node-origin.js";
 import { truncateText } from "../lib/text.js";
 import type { AttemptReason } from "./missions-core.js";
 import { compilePacket, dispatchable } from "./packet.js";
+import { parallelMode } from "./parallel.js";
+import { placeStep, type Located } from "./placement.js";
 import { stepProgress, type PlanData, type PlanStep } from "./plans.js";
 import { computerWorkAsks, holdForOwner, ownerContext, SendInput, sendToSession, StartInput, startSession, type SessionCall, type SessionEnv, type Started } from "./sessions.js";
 import { updateMessageData } from "./store.js";
@@ -33,7 +38,7 @@ export function reportAsk(title: string | null): string {
 }
 
 /** The mission's folder as one of the owner's computers shares it (folders are shared by name, never by path). */
-async function sharedFolder(prisma: PrismaClient, ownerId: string, folder: string, computer: string | undefined): Promise<{ folder: string; computer?: string } | null> {
+async function findShared(prisma: PrismaClient, ownerId: string, folder: string, computer: string | undefined): Promise<{ place: { folder: string; computer?: string }; located: Located } | null> {
   const devices = await prisma.device.findMany({ where: { userId: ownerId, revokedAt: null }, select: { id: true, name: true, capabilities: true }, orderBy: { lastSeenAt: "desc" } });
   const wanted = folder.trim().replace(/[\\/]+$/, "");
   const last = wanted.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
@@ -41,9 +46,17 @@ async function sharedFolder(prisma: PrismaClient, ownerId: string, folder: strin
   const candidates = devices.filter((device) => !named || device.id === computer || device.name.toLowerCase() === named);
   for (const device of candidates) {
     const label = folderLabels(device.capabilities).find((name) => name.toLowerCase() === wanted.toLowerCase() || name.toLowerCase() === last);
-    if (label) return { folder: label, ...(computer || devices.length > 1 ? { computer: device.name } : {}) };
+    if (label) return { place: { folder: label, ...(computer || devices.length > 1 ? { computer: device.name } : {}) }, located: { deviceId: device.id, deviceName: device.name, label, capabilities: device.capabilities } };
   }
   return null;
+}
+
+
+/** Where a session runs: its computer and the folder it was started in (a continued session stays there). */
+async function sessionPlace(prisma: PrismaClient, sessionId: string): Promise<Located | null> {
+  const first = await prisma.workspaceJob.findUnique({ where: { id: sessionId }, select: { folderLabel: true, device: { select: { id: true, name: true, capabilities: true } } } });
+  if (!first?.device || !first.folderLabel) return null;
+  return { deviceId: first.device.id, deviceName: first.device.name, label: first.folderLabel, capabilities: first.device.capabilities };
 }
 
 /** A repository the agent can clone: a URL or owner/repo. A bare name is not enough to find it. */
@@ -53,15 +66,15 @@ function cloneable(repo: string): boolean {
 
 type Place = { folder?: string; computer?: string; repoUrl?: string };
 
-/** Where a new session for the mission works: the folder a computer shares, else its one clonable repository. */
-async function placeFor(prisma: PrismaClient, ownerId: string, constraints: PlanData["constraints"]): Promise<{ place: Place } | { why: string }> {
+/** Where a new session for the mission works: the folder a computer shares (and where that is), else its one clonable repository. */
+async function placeFor(prisma: PrismaClient, ownerId: string, constraints: PlanData["constraints"]): Promise<{ place: Place; located: Located | null } | { why: string }> {
   if (constraints.folder) {
-    const shared = await sharedFolder(prisma, ownerId, constraints.folder, constraints.computer);
-    return shared ? { place: shared } : { why: `No paired computer shares a folder matching “${constraints.folder}”${constraints.computer ? ` on ${constraints.computer}` : ""}.` };
+    const shared = await findShared(prisma, ownerId, constraints.folder, constraints.computer);
+    return shared ? { place: shared.place, located: shared.located } : { why: `No paired computer shares a folder matching “${constraints.folder}”${constraints.computer ? ` on ${constraints.computer}` : ""}.` };
   }
   const repos = (constraints.repos ?? []).filter(cloneable);
   if (repos.length !== 1) return { why: "The plan names its repositories without one clonable address (a URL or owner/repo) and no folder, so where to work is yours to choose." };
-  return { place: { repoUrl: repos[0]!, ...(constraints.computer ? { computer: constraints.computer } : {}) } };
+  return { place: { repoUrl: repos[0]!, ...(constraints.computer ? { computer: constraints.computer } : {}) }, located: null };
 }
 
 /** Runs of a session that have not ended: another step's work may be queued or running there. */
@@ -75,6 +88,8 @@ async function sessionFor(prisma: PrismaClient, data: PlanData, step: PlanStep, 
     prisma.nodeRun.findFirst({ where: { planId: data.missionId, planStep: { in: stepIds }, nodeId: step.nodeId, sessionId: { not: null } }, orderBy: { createdAt: "desc" }, select: { sessionId: true } });
   if (reason === "repair" || reason === "retest") return (await latest([step.id]))?.sessionId ?? null;
   if (step.kind === "verify") return null;
+  // Builds that work apart (B13) each have their own worktree, so their own session; so does their integration.
+  if (parallelMode(data.constraints) !== "serial") return null;
   const mine = data.steps.filter((row) => row.id !== step.id && row.nodeId === step.nodeId && (row.kind === "build" || row.kind === "write")).map((row) => row.id);
   const session = mine.length ? ((await latest(mine))?.sessionId ?? null) : null;
   // Another step's work still goes on there: a session of its own, so each result is its own step's.
@@ -137,17 +152,27 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
   if (!env) return null;
   const owner = await prisma.user.findUnique({ where: { id: node.userId }, select: { name: true } });
   const origin = nodeWebOrigin();
-  // The session adds the applied run settings itself (node/settings.ts), so the packet does not repeat them.
-  const packet = compilePacket(data, step, reason, { ownerName: owner?.name || "your owner", node: { name: node.name, handle: node.slug, role: node.role }, planUrl: origin ? `${origin}/r/${data.originRoomId}` : null });
 
   const constraints = data.constraints;
   const continuing = await sessionFor(prisma, data, step, reason);
   let place: Place = {};
+  let located: Located | null = null;
   if (!continuing) {
     const found = await placeFor(prisma, node.userId, constraints);
     if ("why" in found) return { done: false, why: found.why };
     place = found.place;
+    located = found.located;
+  } else if (constraints.folder) {
+    located = await sessionPlace(prisma, continuing);
   }
+  // Where it works on the computer (B13): the folder's checkout or its own worktree, held so no other step changes it meanwhile.
+  const placed = await placeStep(app, { userId: node.userId, data, step, reason, located });
+  if (placed.wait !== null) {
+    await stepProgress(prisma, data.missionId, step.id, placed.wait);
+    return { done: true, summary: placed.wait };
+  }
+  // The session adds the applied run settings itself (node/settings.ts), so the packet does not repeat them.
+  const packet = compilePacket(data, step, reason, { ownerName: owner?.name || "your owner", node: { name: node.name, handle: node.slug, role: node.role }, planUrl: origin ? `${origin}/r/${data.originRoomId}` : null, place: placed.place });
   const startInput = () => StartInput.parse({ title: packet.title, prompt: packet.prompt, ...place });
   const call: SessionCall = continuing ? { action: "send", input: SendInput.parse({ session: continuing, prompt: packet.prompt, title: packet.title, delivery: "queue" }) } : { action: "start", input: startInput() };
   try {

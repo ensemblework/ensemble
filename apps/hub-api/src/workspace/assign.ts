@@ -244,6 +244,16 @@ export interface CreateJobOptions {
 type AssignTask = NonNullable<Awaited<ReturnType<PrismaClient["task"]["findFirst"]>>>;
 
 /**
+ * A run in its own git worktree of a shared folder (an Ensemble Node build, `context.mission.worktree`)
+ * waits only for runs in that worktree, not for the folder's other runs: it never changes the folder itself.
+ */
+export function worktreeKeys(keys: string[], context: unknown): string[] {
+  const tree = (context as { mission?: { worktree?: { name?: unknown } | null } | null } | null | undefined)?.mission?.worktree;
+  if (!tree || typeof tree.name !== "string" || !tree.name) return keys;
+  return [...keys.filter((key) => !key.startsWith("label:")), `worktree:${tree.name}`];
+}
+
+/**
  * A job for a paired computer. The server stores the request and does not run it.
  * Trust, unattended, and the sandbox stay on that computer.
  */
@@ -302,7 +312,7 @@ async function createDeviceJob(
       model,
       reasoningEffort: body.reasoningEffort ?? (body.model ? null : tierEffort),
       instructions: body.instructions,
-      resourceKeys: assigned.resourceKeys,
+      resourceKeys: worktreeKeys(assigned.resourceKeys, options.context),
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,

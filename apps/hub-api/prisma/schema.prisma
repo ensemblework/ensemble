@@ -2784,6 +2784,8 @@ model NodeStep {
   after          String[]    @default([])
   /// For a verify step: the build step it checks.
   verifies       String?
+  /// For an integration step (a build): the build steps whose worktrees or snapshots it brings into the folder (B13).
+  integrates     String[]    @default([])
   requirementIds String[]    @default([]) @map("requirement_ids")
   /// Agent run settings the lead gave: { agent, model, effort, context }.
   run            Json?
@@ -2837,6 +2839,36 @@ model NodeOutbox {
   @@index([deliveredAt, availableAt])
   @@index([missionId])
   @@map("node_outbox")
+}
+
+/// What a plan step (or another holder, such as the browser broker) uses on a computer, so two never use it
+/// at once (node/claims.ts, B13): a folder's checkout, a git worktree, a branch, a development-server port, a
+/// browser profile or tab. One holder at a time; the others wait in line, in the order they asked, and the
+/// next one gets it when the holder lets go. A claim never refuses work.
+model ResourceClaim {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// checkout | worktree | branch | port | browser_profile | browser_tab
+  kind      String
+  /// The resource, scoped to its computer: `<deviceId>:<folder>`, `<deviceId>:<folder>:<worktree>`, `<deviceId>:<port>`.
+  key       String
+  /// Who holds it or waits for it: `step:<missionId>:<stepId>`, or the caller's own id (a job, a browser session).
+  holder    String
+  /// held | waiting
+  state     String   @default("held")
+  missionId String?  @map("mission_id")
+  stepId    String?  @map("step_id")
+  /// What the holder needs back: a waiting step's { attempt, reason }; a worktree's { name, branch, detached, reuse }.
+  data      Json     @default("{}")
+  /// The order holders asked in: the first one waiting gets the resource next.
+  sequence  BigInt   @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([kind, key, holder])
+  @@index([kind, key, state])
+  @@index([holder])
+  @@index([missionId])
+  @@map("resource_claims")
 }
 
 /// A secret a person saved on their own computer for its agent runs (lib/run-secrets.ts): given to the

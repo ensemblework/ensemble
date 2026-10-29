@@ -99,7 +99,7 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.8 Protocol and compatibility
 
-`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4, secret scopes, the worker's report, evidence and node tools protocol 6). An optional field an older server does not know is left out by it, so it needs no new protocol: `observed` on progress and complete is one (2 November 2026). Until a computer runs a release that sends it, its runs show their observed settings as "not reported", except the agent's model from its `engine` event. The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
+`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4, secret scopes, the worker's report, evidence and node tools protocol 6). An optional field an older server does not know is left out by it, so it needs no new protocol: `observed` on progress and complete is one (2 November 2026), and a claim's `mission` another (§4.12). Until a computer runs a release that sends it, its runs show their observed settings as "not reported", except the agent's model from its `engine` event. The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
 
 ### 4.9 Subscriptions and included models
 
@@ -161,6 +161,23 @@ The answers count only while the computer accepts approvals from the web (`accep
 
 **Off on this computer.** `ensemble evidence off` (`evidenceUpload` in `remote.json`, reported as `capabilities.evidenceUpload`) keeps the files here. Only their description goes up, with `local: true` and no bytes. The card shows them as "on this computer, not uploaded", and reading one answers 409. A server without the route (404) gets nothing more for that run.
 
+### 4.12 Worktrees for parallel work
+
+An Ensemble Node mission may build in parallel in one repository ([35 §8.15](35_ENSEMBLE_NODE.md#815-parallel-work-in-one-repository)). Its runs' claims carry `mission` (optional; older servers leave it out):
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `step` | The mission and its step. Kept on the local job (`context.mission`) with the shared folder's path, which never leaves the computer. |
+| `worktree` | `{name, branch?, detached?, reuse?}`: work in the git worktree `<workspace>/worktrees/<name>` of the shared folder, on `branch` (made from the folder's last commit, or taken as it is when it exists), or detached for a snapshot. `reuse`: a check of a build, in that build's worktree. |
+| `port` | The development-server port the step holds; its packet names it. |
+| `integrates` | An integration step's worktrees, removed after its run succeeds. |
+
+- **Making one** (`prepareWorktree` in `workspace/worktrees.ts`, from `remote/accept.ts`). With Ensemble's own git (hooks off), like a run's separate copy ([24 §3](24_DESKTOP_SANDBOXING.md)). Only of a shared folder that is a git repository's own top folder, with a commit and a config that starts nothing. A folder shared as a repository gets a worktree instead of a fresh clone. The local job then works in place in the worktree, on its branch as it is (the web's branch, pull request and Git choice for this run do not move it), and may write the repository's own git folder, which every worktree shares, so its commits land. A check reuses the build's worktree as it is; a snapshot that is gone cannot be checked again. A continued run (a repair, a retest) stays in its run's folder.
+- **When it cannot be made** (not a repository, no commit, a folder in the way), the run works in the folder itself. The ledger's `remote.claim` entry says why, and this computer's queue makes runs in one folder take turns.
+- **Removing.** After an integration run succeeds, each worktree it brought in goes, only when clean and when nothing would be lost: a branch keeps its commits; a detached one must already be in the folder's history. Never forced. The rest stay for the person (`git worktree list` shows them).
+- **Capability.** A computer that does this reports `capabilities.worktrees` 1. The web gives a parallel build on an older computer the folder itself, one step at a time, and its packet says to update Ensemble there. The new field and capability need no new protocol: an older computer ignores `mission`.
+- **Folder claims.** Runs of one mission that meet in a folder outside their own take turns there without asking (`context.mission.id`; [24 §3](24_DESKTOP_SANDBOXING.md)).
+
 ## 5. Local execution and permissions
 
 `planLocalJob` validates the hosted spec against shared folders, local settings, available engines and models, and code, sandbox and Git rules. Local conflict locks and budgets apply. A "trusted" flag from the server is not local trust.
@@ -198,5 +215,7 @@ Packaged launchers set `ENSEMBLE_INSTALL_PATH`; on each heartbeat the runtime ch
 API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation. Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
 
 Evidence and node tools: `src/evidence/files.test.ts` (a link to a key, a hard link, `.env`, a file swapped after the check, a file outside the evidence folder, a saved secret value, sizes and kinds), `src/evidence/evidence.integration.test.ts` (the upload route's lease, sizes, sniffed types, active formats, redaction, the run card, owner-only reads, a computer that keeps its files, the blob store and its sweep), `src/evidence/report.integration.test.ts` (the MCP tools into `job.report` and the evidence folder; the `.ensemble/result.json` fallback), `src/device-tools/device-tools.test.ts` (the policy, the hard floor, loopback-only HTTP with redirects, read-only git, file changes, long output and background commands, and the OS sandbox denying keys, Ensemble's data and the browser profile) and `src/node/device-tools.integration.test.ts` (the relay round trip with a fake computer, one Needs me card per folder, an older computer, owner-only tools, a long command waking its node once, and a node run getting only the secrets it names). macOS and Windows sandboxes are not exercised there.
+
+Worktrees for parallel work: `src/workspace/worktrees.test.ts` (a build's worktree on its branch, its check in the same one, a snapshot, what is refused, and removing only what loses nothing, in a real repository) and `src/node/parallel.integration.test.ts` (the claim's `mission`, and two builds claimed at once).
 
 There is no automatic move to another computer, full database sync, mid-command replay or inbound remote shell or tunnel. A compromised browser session can use whatever the computer's switches allow; local switches and OS rules are the boundary. Redaction is bounded and does not prove content has no sensitive data.

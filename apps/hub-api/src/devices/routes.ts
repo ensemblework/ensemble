@@ -46,7 +46,7 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -506,6 +506,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(steerOf(next.context) ? { steer: steerOf(next.context) } : {}),
         // The saved secrets the run may have (an Ensemble Node run's scope); absent: all of them.
         ...(secretScopeOf(next.context) !== "all" ? { secrets: secretScopeOf(next.context) } : {}),
+        // An Ensemble Node plan step's place: its worktree of the folder, its port (B13). Older computers ignore it.
+        ...(missionOf(next.context) ? { mission: missionOf(next.context) } : {}),
       };
     }
     return reply.code(204).send();

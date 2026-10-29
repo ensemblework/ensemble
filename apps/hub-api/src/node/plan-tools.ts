@@ -32,8 +32,9 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
       description:
         "Propose a whole plan for work by several nodes in one call; code checks it before anything starts. " +
         "goal: one line. requirements: one per deliverable your owner asked for, with acceptance criteria (each with a unique id) when it must be checked. " +
-        "constraints: written once for every step (computer, folder, repos, branch, publish none|commit|push|pr, environment, agent, model, effort, context, substitution, order serial when each feature must pass its check before the next starts, notes). " +
+        "constraints: written once for every step (computer, folder, repos, branch, publish none|commit|push|pr, environment, agent, model, effort, context, substitution, order serial when each feature must pass its check before the next starts, parallel serial|worktrees|snapshots for how builds share the folder (serial, the default: one checkout in turn; worktrees: a git worktree and local branch each; snapshots: a detached copy each), integrate merge|rebase|patch, notes). " +
         "steps: each with an id, to (a node's handle; your own handle for work you do yourself), kind (build, verify, write, research, other), the requirementIds it covers, a short brief with only its own objective, after (step ids), and for a verify step verifies (the build step's id). " +
+        "With parallel worktrees or snapshots and two or more builds, add one integration step: kind build, integrates (the build ids), after the builds and their checks, with a verify step after it; Ensemble writes its instructions. " +
         "Anything you will not do now goes in deferred with a reason. Your reply opens the plan: one or two lines.",
       input: PlanInput,
       isWrite: false,
@@ -73,8 +74,8 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
       name: "node_plan_revise",
       area: "tasks",
       description:
-        "Change a plan you lead while it runs, when your owner changes something: new constraints (they apply to every step's next instructions; an empty string clears one), " +
-        "steps to add (after may name new step ids, existing step ids from the card, or @handle for that node's latest step), waiting steps to cancel, requirements to add or defer with a reason.",
+        "Change a plan you lead while it runs, when your owner changes something: new constraints (they apply to every step's next instructions; an empty string clears one; parallel changes only steps that have not started), " +
+        "steps to add (after may name new step ids, existing step ids from the card, or @handle for that node's latest step; an integration step names its builds in integrates), waiting steps to cancel, requirements to add or defer with a reason.",
       input: z
         .object({
           plan: z.string().uuid().describe("The plan's id (the work board lists it)."),
@@ -101,15 +102,22 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
         // Validate the plan as it would be: existing steps plus the new ones.
         const latest = (ref: string) => [...plan.data.steps].reverse().find((row) => `@${row.handle}` === ref || row.handle === ref.replace(/^@/, ""))?.id;
         const existing = new Set(plan.data.steps.map((row) => row.id));
-        const added = (input.add ?? []).map((step) => ({ ...step, after: step.after.map((ref) => (existing.has(ref) ? ref : (latest(ref) ?? ref))), verifies: step.verifies && !existing.has(step.verifies) ? (latest(step.verifies) ?? step.verifies) : step.verifies }));
+        const resolve = (ref: string) => (existing.has(ref) ? ref : (latest(ref) ?? ref));
+        const added = (input.add ?? []).map((step) => ({
+          ...step,
+          after: step.after.map(resolve),
+          verifies: step.verifies && !existing.has(step.verifies) ? (latest(step.verifies) ?? step.verifies) : step.verifies,
+          ...(step.integrates ? { integrates: step.integrates.map((ref) => (input.add ?? []).some((row) => row.id === ref) ? ref : resolve(ref)) } : {}),
+        }));
         const requirements = [...plan.data.requirements.map((row) => ({ id: row.id, acceptance: row.acceptance })), ...(input.requirements ?? [])];
+        const constraints = input.constraints ? mergeConstraints(plan.data.constraints, input.constraints) : plan.data.constraints;
         const problems = validatePlan(
           {
             requirements,
             deferred: [...plan.data.deferred, ...(input.defer ?? [])],
-            constraints: { order: input.constraints?.order ?? plan.data.constraints.order },
+            constraints,
             steps: [
-              ...plan.data.steps.filter((row) => !(input.cancel ?? []).includes(row.id)).map((row) => ({ id: row.id, kind: row.kind, after: row.after, verifies: row.verifies, requirementIds: row.requirementIds })),
+              ...plan.data.steps.filter((row) => !(input.cancel ?? []).includes(row.id)).map((row) => ({ id: row.id, kind: row.kind, after: row.after, verifies: row.verifies, requirementIds: row.requirementIds, integrates: row.integrates ?? [] })),
               ...added,
             ],
           },
@@ -120,7 +128,7 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
           const result = await revisePlan(ctx.app, plan.mission.id, {
             add: added,
             cancel: input.cancel,
-            constraints: input.constraints ? mergeConstraints(plan.data.constraints, input.constraints) : undefined,
+            constraints: input.constraints ? constraints : undefined,
             requirements: (input.requirements ?? []).map((row) => ({ id: row.id, text: row.text, status: "open" as const, acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false })) })),
             defer: input.defer,
             nodes,

@@ -41,6 +41,7 @@ import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAct
 import { appliedLine, requestedSettings, startingSettings, tuningProblem, type SettingValues, type Tuning } from "./settings.js";
 import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
+import { missionContext } from "./placement.js";
 
 export { sessionOwners };
 
@@ -354,7 +355,9 @@ async function refuseUnhonoured(prisma: PrismaClient, deviceId: string | null | 
 
 async function queueJob(env: SessionEnv, body: JobRequest, context: Record<string, unknown>, cleanup?: () => Promise<unknown>, keepSettings = false): Promise<string> {
   try {
-    const created = await createJob(env.prisma, env.node.userId, body, { actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...context } as never });
+    // A plan step's run works where its step holds its place (node/placement.ts): its worktree, its port.
+    const mission = await missionContext(env.prisma, env.plan);
+    const created = await createJob(env.prisma, env.node.userId, body, { actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...mission, ...context } as never });
     if (!created) throw new ToolBlockedError("That task is not available any more.");
     return created.jobId;
   } catch (error) {

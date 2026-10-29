@@ -7,6 +7,7 @@
 import { truncateText } from "../lib/text.js";
 import { renderConstraints } from "./plan-contract.js";
 import type { AttemptReason } from "./missions-core.js";
+import { integrationPart, placeLines, type Place } from "./parallel.js";
 import type { PlanData, PlanStep } from "./plans.js";
 import type { Check } from "./report.js";
 
@@ -20,6 +21,8 @@ export type PacketWho = {
   settings?: { agent?: string | null; model?: string | null; effort?: string | null; context?: string | null } | null;
   /** Where the owner follows the plan (its room on the Node site): linked, never pasted. */
   planUrl?: string | null;
+  /** Where the step works when its mission builds in parallel (B13): its worktree, its port. */
+  place?: Place | null;
 };
 
 export type SectionName = "Goal" | "Your part" | "Constraints" | "Inputs" | "Settings" | "Who you are" | "Report";
@@ -125,6 +128,7 @@ function partSection(data: PlanData, step: PlanStep, reason: AttemptReason): str
       .join("\n");
   }
   const lines = [truncateText(step.brief.trim(), 1500)];
+  if (step.integrates?.length) lines.push(`\n${integrationPart(data, step)}`);
   if (covers.length) lines.push(`\nIt covers:\n${covers.join("\n")}`);
   if (step.kind === "verify") {
     const target = data.steps.find((row) => row.id === step.verifies);
@@ -192,7 +196,7 @@ function render(sections: Array<{ name: SectionName; text: string }>): string {
  * linked), then the step's own part; constraints, settings and the report rules are never cut.
  */
 export function compilePacket(data: PlanData, step: PlanStep, reason: AttemptReason, who: PacketWho): Packet {
-  const constraints = renderConstraints(data.constraints, { agentSettings: false });
+  const constraints = [renderConstraints(data.constraints, { agentSettings: false }), ...placeLines(data, step, who.place)].filter(Boolean).join("\n");
   const sections: Array<{ name: SectionName; text: string }> = [
     { name: "Goal", text: goalSection(data, step) },
     { name: "Your part", text: partSection(data, step, reason) },
