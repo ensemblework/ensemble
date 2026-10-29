@@ -17,6 +17,7 @@ import { secretTools } from "./node-secrets.js";
 import { helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { addStep, finishStep, PlanError, planVisibility, type PlanLink } from "./plans.js";
+import { overviewTool } from "./overview.js";
 
 export const MAX_MEMORIES = 200;
 
@@ -230,7 +231,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       return toolOk("Remembered.");
     },
   });
-  const own = [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope)];
+  const own = [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope), overviewTool(scope)];
   // A step of a plan: the node does its own step and reports it; it hands nothing on and posts nothing.
   const step = scope.plan?.planStep ? { planId: scope.plan.planId, stepId: scope.plan.planStep } : null;
   if (step) {
