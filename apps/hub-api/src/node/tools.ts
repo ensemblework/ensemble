@@ -24,6 +24,7 @@ import { planTools } from "./plan-tools.js";
 import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 import { overviewTool } from "./overview.js";
 import { routineTools } from "./routine-tools.js";
+import { attachToTurn, MAX_MEDIA, ownerMedia } from "./media.js";
 
 export const MAX_MEMORIES = 200;
 
@@ -290,8 +291,26 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       remember,
     ];
   }
+  const show = defineTool({
+    name: "node_show",
+    area: "tasks",
+    description:
+      "Show your owner screenshots, videos or files their agent runs attached (evidence ids, from a run's report or card): they appear with your reply in this conversation. " +
+      "Show only what was checked: a screenshot you or a check looked at, a video of the thing working. A plan's report shows its checked media by itself.",
+    input: z.object({ evidence: z.array(z.string().max(64)).min(1).max(MAX_MEDIA), caption: z.string().max(300).optional() }).strict(),
+    isWrite: false,
+    risk: "low",
+    async run(_ctx, input) {
+      if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner's own requests can show their files.");
+      const { media, problems } = await ownerMedia(prisma, node.userId, input.evidence);
+      if (!media.length) throw new ToolBlockedError(`Nothing to show: ${problems.join("; ")}.`);
+      const count = attachToTurn(scope.turnId, input.caption && media.length === 1 ? [{ ...media[0]!, caption: input.caption }] : media);
+      return toolOk(`${count} file(s) will show with your reply.${problems.length ? ` Not shown: ${problems.join("; ")}.` : ""} Write the reply as usual.`);
+    },
+  });
   return [
     ...own,
+    show,
     ...helperTools({ ...scope, postBrief: (room, body) => postAsNode(scope, room, body, null) }),
     ...planTools(scope),
     ...routineTools(scope),

@@ -29,6 +29,7 @@ import { addReceipt, markActed, mayRetry } from "./queue.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
+import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -533,12 +534,21 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
   const opensPlan = Boolean(made && made.data.status === "draft" && made.message.roomId === replyRoom.id && made.message.visibleTo.join() === (replyPrivateTo ?? []).join());
   if (made && made.data.status === "draft") await startPlan(app, made.message.id, opensPlan && text !== NO_REPLY ? text : null);
+  // Files shown with the reply: what the node chose (node_show), and a plan's checked media in its report.
+  const media: Media[] = takeTurnMedia(turn.id);
+  if (turn.planId && !turn.planStep && text && text !== NO_REPLY) {
+    for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
+  }
+  const mediaData = media.length ? { media: media.slice(0, 8) } : {};
   if (text && text !== NO_REPLY && !opensPlan) {
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
     // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
     const named = result.refs?.length ? { refs: result.refs } : {};
-    await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}) } });
+    await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...mediaData } });
+  } else if (media.length) {
+    // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
+    await postAsNode(scope, replyRoom, "", replyPrivateTo, { data: mediaData });
   }
   if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
   // The lead's report turn: the plan is done, unless it added steps (they start now).

@@ -132,6 +132,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
       `The ${run.sessionId ? "session" : "computer"} run for ${named} ${words}.${run.sessionId ? ` (Its session's id, for your tools only: ${run.sessionId}.)` : ""}`,
       report ? `The agent reported: ${report.outcome}. ${truncateText(report.summary, 1500)}${report.checks?.length ? `\nChecks: ${report.checks.map((check) => `${check.verdict} ${check.name}`).join("; ")}` : ""}` : "",
       job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
+      await evidenceLine(prisma, run),
       job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
       run.settings ? `Run settings: ${settingsLine(storedSettings((await prisma.nodeRun.findUnique({ where: { id: run.id }, select: { settings: true } }))?.settings ?? run.settings))}.` : "",
       next.length ? `Still queued in this session: ${next.map((row) => `“${row.task.title}”`).join(", ")}; it goes on by itself.` : "",
@@ -147,6 +148,13 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   if (step && !queuedTurn) {
     await finishStep(app, step.planId, step.planStep, report ? { status: "done", result: report.summary, report } : { status: status === "succeeded" ? "done" : "stopped", result: job?.summary ?? job?.error ?? `The run ${words}.` });
   }
+}
+
+/** The files the run's worker attached, by id, so the node can show them (node_show). */
+async function evidenceLine(prisma: FastifyInstance["prisma"], run: Pick<NodeRun, "jobId" | "userId">): Promise<string> {
+  const files = (await evidenceOf(prisma, run.jobId, run.userId)).filter((row) => !row.local);
+  if (!files.length) return "";
+  return `Files it attached (node_show shows them to your owner): ${files.slice(0, 12).map((row) => `${row.kind} “${row.name}”${row.caption ? ` (${truncateText(row.caption, 80)})` : ""} [${row.id}]`).join("; ")}`;
 }
 
 export function startNodeRuns(app: FastifyInstance, everyMs = EVERY_MS): void {

@@ -6,6 +6,7 @@
  * images and video inline, everything else as a download, active formats (HTML, SVG, XML, JavaScript)
  * never run (a download, or `?view=1` inside a sandbox that allows nothing).
  */
+import { mediaReadable } from "../node/media.js";
 import type { Device } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -156,7 +157,8 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     const accountId = reader(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { view } = z.object({ view: z.enum(["0", "1"]).optional() }).parse(request.query);
-    const head = await prisma.jobEvidence.findFirst({ where: { id, userId: accountId }, select: { name: true, mime: true, sha256: true, local: true, size: true } });
+    // Its owner, or someone who may read a message that shows it (node/media.ts).
+    const head = (await mediaReadable(prisma, accountId, id)) ? await prisma.jobEvidence.findUnique({ where: { id }, select: { name: true, mime: true, sha256: true, local: true, size: true } }) : null;
     if (!head) return reply.code(404).send({ error: "That evidence is not available." });
     if (head.local) return reply.code(409).send({ error: "This file is on the computer that ran the job, not uploaded: evidence upload is off there (`ensemble evidence on` turns it on)." });
     const media = head.mime.startsWith("image/") && !isActiveMime(head.mime) ? true : head.mime.startsWith("video/");
@@ -173,7 +175,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       .header("Content-Disposition", disposition(media || (view === "1" && !head.mime.startsWith("application/octet")) ? "inline" : "attachment", head.name));
     const match = request.headers["if-none-match"];
     if (typeof match === "string" && match.split(",").some((tag) => tag.trim().replace(/^W\//, "") === etag)) return reply.code(304).send();
-    const row = await prisma.jobEvidence.findFirst({ where: { id, userId: accountId }, select: { bytes: true, storageKey: true, local: true } });
+    const row = await prisma.jobEvidence.findUnique({ where: { id }, select: { bytes: true, storageKey: true, local: true } });
     if (!row) return reply.code(404).send({ error: "That evidence is not available." });
     const bytes = await evidenceContent(row);
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(request.headers.range ?? "").trim());

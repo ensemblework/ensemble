@@ -119,7 +119,9 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     const data = await claim(app, card);
     if (input.decision === "discard") return updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "discarded" });
     const body = (input.body ?? card.body).trim();
-    if (!body) {
+    const shown = data as { media?: unknown; refs?: unknown };
+    const carried = { ...(Array.isArray(shown.media) && shown.media.length ? { media: shown.media } : {}), ...(Array.isArray(shown.refs) && shown.refs.length ? { refs: shown.refs } : {}) };
+    if (!body && !carried.media) {
       await updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "pending" });
       throw new ApprovalError("The message is empty.", 400);
     }
@@ -131,7 +133,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
       authorKind: "node",
       authorNodeId: node.id,
       body,
-      data: { approvedBy: accountId },
+      data: { approvedBy: accountId, ...carried },
       mentions: mentionsFor(body, members, []),
       rootMessageId: card.rootMessageId,
       botDepth: card.botDepth,

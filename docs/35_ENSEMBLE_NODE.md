@@ -158,6 +158,7 @@ The assistant works in one space per conversation. A node acts for its owner in 
 | `computer_http {url, method?, body?, contentType?, computer?}` | Calls a development server on the computer itself (loopback only, every redirect checked; §8.13). |
 | `computer_files_write {folder, path, content}`, `computer_files_move {folder, path, to}`, `computer_files_delete {folder, path}` | Writes (at most 1 MB), moves (never over a file) or deletes a file in a folder (§8.13). |
 | `node_helper {task, name?, role?, can?, folders?}` | Brings in a temporary helper for one side task (§6.1); `can` is `read` (default), `sessions` or `computer`. |
+| `node_show {evidence, caption?}` | Shows the owner screenshots, videos or files their runs attached (evidence ids), with the node's reply (§8.14). Only in turns the owner started. |
 | `node_routines {action: list\|create\|pause\|resume\|delete\|run_now, …}` | The owner's routines for this node (§6.5), when they ask. Only where the owner reads alone. |
 | `node_create {name, role, charter, templateId?}` | Makes the owner a lasting node, with its own DM, when they ask (§6.1). Only where the owner reads alone. |
 | `node_create_group {title, members, lead?}` | Makes a crew of the owner's nodes (`createCrew`, the same as `POST /api/node/crews`), when they ask. Only where the owner reads alone. |
@@ -401,6 +402,14 @@ Where the computer's sandbox is weak, the floor is best effort: *Always* is not 
 
 **Ledger.** Every call writes `node.device_tool.<tool>` on the web and `node.tool.*` on the computer, with the folder and the program, operation or address, never the output.
 
+### 8.14 Media in the conversation
+
+A node's message can carry screenshots, videos and files its owner's runs attached (`data.media: [{evidenceId, kind, name, mime, caption, size}]`, at most 8; `node/media.ts`):
+
+- **Chosen by the node.** `node_show` attaches the owner's own uploaded evidence to the turn's reply (a run's end note lists its files by id). Evidence of someone else, or kept on the computer (upload off), is refused with why. Files with nothing to say are posted on their own.
+- **A plan's report.** The lead's report message brings the media of the steps that were done or passed: the files the worker named in its report or checks first, then the screenshots and videos its runs attached; video first, at most 6. A failed or held step's media is not shown by itself: what reaches the chat was checked.
+- **Who can open a file.** Its owner, and anyone who may read a message that shows it (a person of the room who can see the message and, in a room with other people, had joined when it was posted). An approved draft keeps its files and record names, so sharing a result in a room is the owner's act (§5).
+
 ## 9. Routes
 
 | Route | Purpose |
@@ -451,6 +460,8 @@ Where the computer's sandbox is weak, the floor is best effort: *Always* is not 
 `src/node/missions-core.test.ts` tests the pure plan rules without a database, including the reported incident (a failed check never releases the next feature; the build is repaired and retested), repairs that change nothing, the same failure twice and three times, holding behind unverified work, contract-1 plans, attempt fencing and checks that were skipped. `src/node/report.test.ts` covers verdicts and failure signatures; `src/node/plan-contract.test.ts` the plan validation and constraint rendering. `src/node/missions.integration.test.ts` runs the incident end to end through the API, then: prose asked for once then unverified; a verification refused when a check was skipped or a mandatory criterion is missing; `node_plan` refusing an incomplete plan and then gating each feature on its check with the constraints in every note; `node_plan_revise`; a node answering while its own work runs; a newer message merging with a turn that has not acted; stop without a model; an outbox effect delivered twice starting one turn; a restart re-running and resuming turns; cards of ended work expiring; a late run from an earlier attempt changing nothing; a worker's structured report ending its step directly; a helper's sessions grant and keeping a helper.
 
 `src/node/packet.test.ts` covers the packet (each constraint once, settings as facts, repair and retest packets, the length limit) and which steps go straight to an agent; `src/node/dispatch.integration.test.ts` a crew plan where the lead is the only node that thinks (plan, report) while the build and its check run from packets, a repair in the builder's own session and a retest in the checker's, a run asked once for its result before its node judges, and the owner's card before computer work.
+
+`src/node/dispatch.integration.test.ts` also covers media: a plan's report shows the checked video and screenshot (named first, no logs), `node_show` refuses another account's file, and a file opens for its owner and for nobody who cannot read a message showing it.
 
 `src/node/cron.test.ts` covers schedules in a time zone, clock changes and both day fields; `src/node/routines.integration.test.ts` a scheduled time started once however often the tick runs, each notification rule, a missed time, pausing and running now, a burst of changes as one run that its own changes do not restart, a webhook's token, redeliveries and a renewed token, and a saved plan run as a plan.
 

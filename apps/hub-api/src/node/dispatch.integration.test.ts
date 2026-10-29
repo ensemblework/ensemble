@@ -231,3 +231,40 @@ test("ask me before computer work: the packet waits on the owner's card; no job 
   const build = await runOf(mission.id, "build");
   assert.equal(build.job.folderLabel, "live-test");
 });
+
+test("a plan's report shows the checked screenshots and video; node_show shows only the owner's files; files open for whoever reads the message", async () => {
+  const mira = await person("Mira");
+  await laptopFor(mira);
+  const { room } = await crew(mira);
+  script = planScript("Fixed and checked. Here it is working.");
+  await post(mira, room.id, "Please fix the tables bug, then have it checked.");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+  const file = (jobId: string, kind: string, name: string, mime: string) =>
+    h.prisma.jobEvidence.create({ data: { userId: mira.id, jobId, kind, name, mime, size: 4, sha256: randomBytes(8).toString("hex"), storageKey: `k-${name}`, bytes: Buffer.from("data") } });
+  const build = await runOf(mission.id, "build");
+  const log = await file(build.job.id, "log", "build.log", "text/plain");
+  await finish(build.job.id, { outcome: "done", summary: "Escaped pipes.", subject: { commit: "abc1234" } });
+  const check = await runOf(mission.id, "verify");
+  const shot = await file(check.job.id, "screenshot", "table.png", "image/png");
+  const video = await file(check.job.id, "video", "table.webm", "video/webm");
+  await finish(check.job.id, { outcome: "pass", summary: "One cell.", checks: [{ id: "A1", name: "pipe title in one cell", verdict: "pass", evidence: [shot.id] }], evidence: [{ kind: "video", ref: video.id, caption: "Typing a title with |" }], subject: { commit: "abc1234" } });
+
+  const messages = json(await mira.inject({ method: "GET", url: `/api/node/rooms/${room.id}/messages` })).messages as Array<{ kind: string; authorKind: string; body: string; data: any }>;
+  const reported = messages.find((row) => row.kind === "text" && row.authorKind === "node" && row.body.includes("Here it is working"))!;
+  assert.deepEqual(reported.data.media.map((row: { name: string }) => row.name), ["table.webm", "table.png"], "named media first, video first; no logs");
+  assert.equal(reported.data.media[0].caption, "Typing a title with |");
+  assert.ok(!reported.data.media.some((row: { evidenceId: string }) => row.evidenceId === log.id));
+
+  assert.equal((await mira.inject({ method: "GET", url: `/api/node/evidence/${video.id}` })).statusCode, 200);
+  const stranger = await person("Ben");
+  assert.equal((await stranger.inject({ method: "GET", url: `/api/node/evidence/${video.id}` })).statusCode, 404);
+
+  // node_show: the owner's own file, attached to the reply; someone else's file is refused.
+  const theirs = await h.prisma.workspaceJob.create({ data: { userId: stranger.id, taskId: (await h.prisma.task.create({ data: { userId: stranger.id, title: "x", owner: "agent", status: "todo", createdBy: "agent" } })).id, kind: "code", provider: "codex", model: "default", status: "succeeded", executionMode: "sandbox" } });
+  const foreign = await h.prisma.jobEvidence.create({ data: { userId: stranger.id, jobId: theirs.id, kind: "screenshot", name: "theirs.png", mime: "image/png", size: 4, sha256: "y", storageKey: "y", bytes: Buffer.from("data") } });
+  const dm = (await h.prisma.nodeRoom.findFirstOrThrow({ where: { userId: mira.id, kind: "dm", members: { some: { node: { slug: "manager" } } } } })).id;
+  script = (turn) => (turn.transcript.includes("show me the table") ? { calls: [{ name: "node_show", arguments: { evidence: [shot.id, foreign.id] } }], then: "This is the table now." } : { text: "(no reply)" });
+  await post(mira, dm, "show me the table");
+  const shown = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${dm}/messages` })).messages as Array<{ body: string; data: any }>).find((row) => row.body === "This is the table now.")!;
+  assert.deepEqual(shown.data.media.map((row: { name: string }) => row.name), ["table.png"]);
+});
