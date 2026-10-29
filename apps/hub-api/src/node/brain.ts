@@ -18,7 +18,7 @@ import { loadSettings } from "../lib/settings.js";
 import { effortToSend } from "../lib/model-meta.js";
 import { persistAssistantText, safePublicError, truncateText } from "../lib/text.js";
 import { publishTo } from "./events.js";
-import { chatModelFor, defaultChatModel, leadChatModel, type ChatModel } from "./model.js";
+import { chatModelFor, fastChatModel, leadChatModel, type ChatModel } from "./model.js";
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
@@ -433,9 +433,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         }
       },
     });
-  // A conversation turn the model's rate limit cuts off before it ran a tool tries the fast default model once,
+  // A conversation turn the model's rate limit cuts off before it ran a tool tries the fast model once,
   // so the owner still gets an answer; work turns wait and try again later.
-  const fallback = work ? null : defaultChatModel(settings);
+  const fallback = work ? null : fastChatModel(settings);
   const picks: ChatModel[] = [choice, ...(fallback && (fallback.model !== choice.model || fallback.provider !== choice.provider) ? [fallback] : [])];
   let failure: unknown = null;
   for (const [index, pick] of picks.entries()) {
