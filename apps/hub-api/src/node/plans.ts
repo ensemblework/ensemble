@@ -42,6 +42,7 @@ import { renderConstraints, type Constraints, type PlanInput, type StepInput } f
 import { missionOriginFor } from "./peer-requests.js";
 import { claimEvents, releaseIn, stepHolder } from "./claims.js";
 import { staleChecks, type Stale } from "./parallel.js";
+import { withVisionChecks } from "./vision.js";
 
 export { ENDED, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
@@ -528,6 +529,11 @@ export async function advancePlan(app: FastifyInstance, planId: string): Promise
 
 /** A step's node finished it, could not, or was stopped; what runs next starts (or the build is repaired). */
 export async function finishStep(app: FastifyInstance, planId: string, stepId: string, outcome: Finish): Promise<boolean> {
+  // Confirm before sending (B20): pictures the step's requirements asked for are judged before its report counts.
+  if (outcome.report && outcome.status === "done") {
+    const owner = (await app.prisma.nodeMission.findUnique({ where: { id: planId }, select: { userId: true } }))?.userId;
+    if (owner) outcome = { ...outcome, report: await withVisionChecks(app, { ownerId: owner, missionId: planId, stepId, report: outcome.report }) };
+  }
   let ended = false;
   await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission) => {
     ended = finish(draft, stepId, { ...outcome, mandatory: mandatoryFor(mission, draft, stepId) }, new Date().toISOString());

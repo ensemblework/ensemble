@@ -293,3 +293,61 @@ test("a repaired step's report shows only the passing attempt's captures", async
   const reported = messages.find((row) => row.kind === "text" && row.authorKind === "node" && row.body === "Fixed after a repair.")!;
   assert.deepEqual(reported.data.media.map((row: { name: string }) => row.name), ["fixed.png"], "the failed check's capture is not shown as the result");
 });
+
+test("confirm before sending: a picture that does not show what was asked fails the check and the build is repaired; one that does is shown", async () => {
+  // Included models are offered, so a model that reads pictures judges them (node/vision.ts).
+  const before = { ...process.env };
+  Object.assign(process.env, { AZURE_FOUNDRY_RESOURCE: "ensemble-ai", AZURE_FOUNDRY_API_KEY: "test-key", ENSEMBLE_INCLUDED_MODELS: "gpt-6-luna,gpt-6.1-sol" });
+  try {
+    const mira = await person("Mira");
+    await laptopFor(mira);
+    const { room } = await crew(mira);
+    const pictures = { ...PLAN, requirements: [{ ...PLAN.requirements[0]!, evidence: ["screenshot"] }] };
+    let verdict: "pass" | "fail" = "fail";
+    const judged: string[] = [];
+    script = (turn) => {
+      if (turn.slug === "manager" && turn.transcript.includes("fix the tables")) return { calls: [{ name: "node_plan", arguments: pictures }], then: "Planned." };
+      if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Fixed and checked; here it is." };
+      if (turn.transcript.includes("What was asked:")) {
+        judged.push(turn.transcript);
+        const id = /Picture id ([0-9a-f-]{36})/.exec(turn.transcript)![1];
+        return { text: JSON.stringify({ pictures: [{ id, verdict, reason: verdict === "pass" ? "The title sits in one cell." : "The page is blank." }] }) };
+      }
+      return { text: "(no reply)" };
+    };
+    await post(mira, room.id, "Please fix the tables bug, then have it checked.");
+    const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+    const file = (jobId: string, name: string) =>
+      h.prisma.jobEvidence.create({ data: { userId: mira.id, jobId, kind: "screenshot", name, mime: "image/png", size: 4, sha256: randomBytes(8).toString("hex"), storageKey: `k-${name}`, bytes: Buffer.from("data") } });
+    const build = await runOf(mission.id, "build");
+    await finish(build.job.id, { outcome: "done", summary: "Escaped pipes.", subject: { commit: "abc1234" } });
+
+    // The checker says pass and names a screenshot, but the screenshot shows nothing: the check fails.
+    const check = await runOf(mission.id, "verify");
+    const blank = await file(check.job.id, "blank.png");
+    await finish(check.job.id, { outcome: "pass", summary: "One cell.", checks: [{ id: "A1", name: "pipe title in one cell", verdict: "pass", evidence: [blank.id] }], subject: { commit: "abc1234" } });
+    assert.equal(judged.length, 1);
+    assert.match(judged[0]!, /What was asked:\n- Titles containing \| stay in one cell\n {2}Acceptance: A title with \| renders in one cell/);
+    const checked = await h.prisma.nodeStep.findUniqueOrThrow({ where: { missionId_id: { missionId: mission.id, id: check.step.id } } });
+    const vision = ((checked.attempts as Array<{ checks?: Array<{ name: string; verdict: string; detail?: string }> }>)[0]!.checks ?? []).find((row) => row.name.startsWith("Vision:"));
+    assert.deepEqual([vision?.verdict, vision?.detail], ["fail", "The page is blank."]);
+    const repair = await runOf(mission.id, "build", 1);
+    assert.match(repair.job.instructions ?? "", /FAIL Vision: blank\.png shows what was asked: The page is blank\./, "the repair is told what the picture showed");
+
+    // Repaired and checked again: the new screenshot shows it, so it is the one shown.
+    verdict = "pass";
+    await finish(repair.job.id, { outcome: "done", summary: "Fixed.", subject: { commit: "def5678" } });
+    const retest = await runOf(mission.id, "verify", 1);
+    const fixed = await file(retest.job.id, "fixed.png");
+    await finish(retest.job.id, { outcome: "pass", summary: "One cell.", checks: [{ id: "A1", name: "pipe title in one cell", verdict: "pass", evidence: [fixed.id] }], subject: { commit: "def5678" } });
+    assert.equal((await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } })).status, "succeeded");
+    const messages = json(await mira.inject({ method: "GET", url: `/api/node/rooms/${room.id}/messages` })).messages as Array<{ kind: string; authorKind: string; body: string; data: any }>;
+    const reported = messages.find((row) => row.kind === "text" && row.authorKind === "node" && row.body.startsWith("Fixed and checked"))!;
+    assert.deepEqual(reported.data.media.map((row: { name: string }) => row.name), ["fixed.png"]);
+  } finally {
+    for (const key of ["AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY", "ENSEMBLE_INCLUDED_MODELS"]) {
+      if (before[key] === undefined) delete process.env[key];
+      else process.env[key] = before[key];
+    }
+  }
+});
