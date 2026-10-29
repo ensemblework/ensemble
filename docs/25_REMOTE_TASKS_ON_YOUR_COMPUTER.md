@@ -50,10 +50,10 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | DELETE | `/api/devices/self` | Device-initiated removal |
 | POST | `/api/devices/self/heartbeat`, `/api/devices/self/claim` | Refresh state and leases; claim eligible work |
 | GET | `/api/devices/self/jobs/:id/attachments/:fileId` | Download an attached original (§4.5) |
-| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/complete` | Report, ask a saved question, send changed-file text (§4.6), settle |
+| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/evidence`, `/complete` | Report, ask a saved question, send changed-file text (§4.6) and the files the worker attached (§4.11), settle with the worker's report |
 | POST | `/api/devices/self/jobs/:id/reattach`, `/resume` | After an outage: take back a run that kept going, or carry on one lost to a restart (§3) |
 | GET / POST | `/api/devices/self/decisions/:id`, `/api/devices/self/decisions/:id/close` | Read an answer / close a decision answered locally, or withdraw it (`expired`) when the agent stopped waiting |
-| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output` | The computer's answers to relayed requests |
+| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output`, `/tool-runs/:runId/output` | The computer's answers to relayed requests, and the longer output of a node's command (§4.10) |
 | GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
 | GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
 | GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9) |
@@ -63,7 +63,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 
 ### 4.2 Stored model and job data
 
-The host stores device identity and capabilities, the task and job spec, lease state, decisions, progress, logs, evidence and result. Ensemble on the web stores no file contents from a computer: the files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
+The host stores device identity and capabilities, the task and job spec, lease state, decisions, progress, logs, evidence and result, including the worker's own report (`workspace_jobs.report`, §4.11). Ensemble on the web stores no file contents from a computer, with one exception: the files a run's worker attaches for its owner (§4.11), unless that computer turned it off. The files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
 
 Local secrets stay local. The exception runs the other way: with *Settings → Models* `keysOnComputers` on (the default), `GET /api/devices/self/model-keys` gives the computer the account's model keys for its own model calls, except keys with a custom base URL; the ledger records once a day which providers' keys a computer read.
 
@@ -99,13 +99,15 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.8 Protocol and compatibility
 
-`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4). The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
+`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4, secret scopes, the worker's report, evidence and node tools protocol 6). The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
 
 ### 4.9 Subscriptions and included models
 
 Agent sessions: a computer with `capabilities.sessions` 1 runs a job that continues another in the agent's own session (Claude `--resume`, Codex thread resume, ACP `session/load`) and takes the claim's `steer`. Ensemble Node continues sessions only on such a computer, or one reporting 0.4.18 or later ([35 §8.2](35_ENSEMBLE_NODE.md#82-which-session)).
 
-Secrets for runs: a computer with `capabilities.secrets` 1 or more (`SECRETS_API`) takes a `secret.save` frame `{id, name, value}` on its event stream, keeps the value encrypted in its own `run_secrets`, and answers on `/api/devices/self/code-requests/:id` with only whether it saved it. Every code run there gets the saved secrets as environment variables and their names in its brief; whatever the computer sends back has the values hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)); `ensemble secrets` manages them on the computer.
+Secrets for runs: a computer with `capabilities.secrets` 1 or more (`SECRETS_API`) takes a `secret.save` frame `{id, name, value}` on its event stream, keeps the value encrypted in its own `run_secrets`, and answers on `/api/devices/self/code-requests/:id` with only whether it saved it. A code run there gets the saved secrets as environment variables and their names in its brief; whatever the computer sends back has the values hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)); `ensemble secrets` manages them on the computer.
+
+**Which secrets a run gets.** A claim may carry `secrets` (protocol 6): the names the run may have, possibly none. The computer keeps the list on the local job (`context.secrets`) and gives the run only those (`secretScopeOf` and `runSecretEnv` in `lib/run-secrets.ts`). Without the list, a run gets every saved secret, as before: runs from the Hub and the CLI. Ensemble Node's runs always carry it ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). A computer that reports `capabilities.secretScope` 1 applies it; an older one ignores it and has neither evidence upload nor node tools.
 
 The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there (`capabilities.assistantTurns` 1 or more, `ASSISTANT_TURNS_MIN`). Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
 
@@ -114,6 +116,50 @@ A computer that reports `assistantTurns: 2` (`ASSISTANT_TURN_FILES`) takes the f
 A computer that reports `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) keeps one agent session per chat: the spec carries `session: { key, history }` (the conversation id and the chat so far), and the computer resumes that chat's session or starts one with the history ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)). An older computer gets the history in front of the message instead.
 
 A paired desktop app or CLI calls included models through `/api/devices/self/included` and `/api/devices/self/included/turn`. The device token identifies the account; Azure credentials stay on the host, and usage counts against that account's credits and the global ceiling ([33](33_INCLUDED_AI.md)).
+
+### 4.10 A node's own tools on the computer
+
+A node can run a command, read git, call a development server on the computer and change a file without starting an agent session ([35 §8.9](35_ENSEMBLE_NODE.md#89-the-nodes-own-tools-on-the-computer)). Each call goes to the computer as a `node.tool.request` frame on its event stream, like `code.request` (`askDeviceFor` in `devices/file-relay.ts`). The computer judges it and answers once on `/api/devices/self/code-requests/:id` (`device-tools/answer.ts`). Only a computer that reports `capabilities.nodeTools` 1 (`NODE_TOOLS_API`) gets these frames; for an older one the node is told "Update Ensemble on <computer>".
+
+| Tool (`NodeToolRequest`) | What the computer does |
+| --- | --- |
+| `run {folder, command, cwd?, timeoutSec ≤ 900, background?, secrets?}` | Checks the command like an agent's (`workspace/guard.ts`: allowed programs, arguments, folders; git against the run profile's git ceiling; no `git push` or `fetch`) and runs it under the OS sandbox with the folder writable and the profile's network choice. Named saved secrets go into that command's environment only |
+| `git {folder, op, args?}` | `status`, `diff`, `log`, `show` or `branch` (list only), read-only and sandboxed; options that write, run programs or leave the folder are refused (`device-tools/git.ts`) |
+| `http {url, method?, body?}` | `http` or `https` only, no user name or password, and every address the name resolves to must be loopback; the connection uses the checked address, and each of at most 5 redirects is checked again. Ensemble's own local port is refused (`device-tools/http.ts`) |
+| `files {action: write\|move\|delete, folder, path, to?, content?}` | Inside the folder only: no link, no hard link, no key, credential or `.env` file, no `.git`; a write is at most 1 MB, a move never overwrites, delete removes files only (`device-tools/files.ts`) |
+
+**Folders.** A folder is one this computer shares (by its label) or a full path Ensemble may hand to an agent (`resolveWorkFolder`). A link, the home folder itself, a system folder, Ensemble's data folder and folders that hold keys, sign-ins, Ensemble's git helper or its code are refused (`device-tools/folders.ts`). The sandbox also denies the secret folders and files in the home folder (`SECRET_PATHS` in `workspace/guard.ts`, which includes `SECRET_HOME_PATHS`), Ensemble's data folder (with the run secrets, the key that encrypts them and the browser profile folder) and its git helper, inside any folder (`nodeToolDenies`).
+
+**Who decides** (`device-tools/policy.ts`, on the computer). In order:
+
+1. The hard floor above: 403, and no answer opens it.
+2. The owner's answers for this computer: rules in `decision_rules` with `source` `node-tools`, one per folder or web address (`toolName` `folder` or `origin`), for the mission (`sessionId`) or always.
+3. Unattended (the node's run profile runs unattended, and the node does not ask first): allowed inside the sandbox.
+4. Attended: 428 with `body.ask` (`NodeToolAsk`). The server opens one Needs me card with *Once*, *This mission* and *Always for this folder* (or *for this address*). The answer goes back with the node's next call (`grants`), and the computer keeps *This mission* and *Always* as its own rules.
+
+The answers count only while the computer accepts approvals from the web (`acceptWebApprovals`); with it off, a call without a rule here is refused (409). Where the sandbox is weak (no OS sandbox, or `capabilities.sandbox` `advisory` or `ask`), the floor is best effort: *Always* does not cover commands, which ask once per mission instead.
+
+**Answers.** 200 with the result; 202 for a command still going; 403 for the hard floor; 404 for a missing path; 409 when switched off or not possible here. What a command prints is redacted for saved secret values and key shapes. An answer carries at most 64 KB (`NODE_TOOL_INLINE_BYTES`, the start and the end). Longer output goes in order, in chunks at line ends, to `/api/devices/self/tool-runs/:runId/output`, at most 1 MB per command. The server keeps it in Redis for 6 hours under the run's id, never in the database (`devices/tool-runs.ts`). A command still going after 60 seconds (`NODE_TOOL_FOREGROUND_MS`), or started with `background`, runs on. Its last chunk says how it ended, and the server wakes the node once (`enqueueTurn`, reason `tool`). Stopping remote work stops these commands too.
+
+**Ledger.** Each call writes one entry on the computer (`node.tool.run`, `node.tool.git`, `node.tool.http`, `node.tool.files.*`, and `node.tool.ask`) and one on the server (`node.device_tool.<tool>`). They keep the program or operation and the folder or origin, never the output.
+
+### 4.11 The worker's report and evidence
+
+**Report.** A run's worker reports its own result with `report_result`, or `.ensemble/result.json` when its agent has no MCP ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). The computer validates it as a `StepReport` (`node/report.ts`) and keeps it on its local job. `complete` sends it as `report` (protocol 6). The server checks the shape again, redacts it and keeps it on the job (`workspace_jobs.report`); an invalid report is dropped with a warning.
+
+**Evidence.** Each file the worker attaches is uploaded before `complete`, while the run holds its lease (`evidence/upload.ts`, also during the run):
+
+- `POST /api/devices/self/jobs/:id/evidence`, authenticated like progress: the device token and the job's lease in `x-ensemble-job-lease`. The body is the file's bytes (`application/octet-stream`). `x-ensemble-evidence` carries `EvidenceMeta` as base64url JSON: `{id, kind, name, size, sha256, mime?, caption?, requirementId?, local}`.
+- The computer reads the file again from the run's evidence folder, under the same checks as when it was attached, and sends it only if it is unchanged. Text is redacted before it goes.
+- The server checks it again: the size for its kind, the digest, credential names, and the type sniffed from the bytes (it never trusts the name or the computer). Text is redacted again. Then it stores the bytes where Files keeps uploads ([32 §7](32_FILES.md#evidence-from-agent-runs)), lists the file on the run's card in Ensemble Node and writes `evidence.upload` to the ledger. The same `id` again answers with the stored file.
+- Answers: 201 (stored), 200 (already stored), 400 (bad description, size or digest), 413 (too large for its kind), 415 (type does not match the kind), 422 (credential file), 409 (lease, another run's id, or 100 files already), 404 (no such job).
+
+| Kind | Largest file |
+| --- | --- |
+| `screenshot`, `image`, `report`, `log`, `file` | 20 MB |
+| `video`, `trace` | 100 MB |
+
+**Off on this computer.** `ensemble evidence off` (`evidenceUpload` in `remote.json`, reported as `capabilities.evidenceUpload`) keeps the files here. Only their description goes up, with `local: true` and no bytes. The card shows them as "on this computer, not uploaded", and reading one answers 409. A server without the route (404) gets nothing more for that run.
 
 ## 5. Local execution and permissions
 
@@ -137,7 +183,7 @@ A run can belong to a shared space while running on a member's own computer. Mem
 
 ## 7. What synchronizes
 
-Assignments, bounded context and attachments, progress, decisions, results, usage and review metadata cross the protocol, plus model keys as described in §4.2. The local database, arbitrary folder contents, the local ledger and other credentials do not.
+Assignments, bounded context and attachments, progress, decisions, results, usage and review metadata cross the protocol, plus model keys as described in §4.2. So do the worker's report and the files it attaches, unless the computer keeps them (§4.11), and the bounded answers of a node's tool calls (§4.10). The local database, arbitrary folder contents, the local ledger and other credentials do not.
 
 ## 8. Device lifetime and removal
 
@@ -150,5 +196,7 @@ Packaged launchers set `ENSEMBLE_INSTALL_PATH`; on each heartbeat the runtime ch
 ## 9. Tests and limits
 
 API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation. Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
+
+Evidence and node tools: `src/evidence/files.test.ts` (a link to a key, a hard link, `.env`, a file swapped after the check, a file outside the evidence folder, a saved secret value, sizes and kinds), `src/evidence/evidence.integration.test.ts` (the upload route's lease, sizes, sniffed types, active formats, redaction, the run card, owner-only reads, a computer that keeps its files, the blob store and its sweep), `src/evidence/report.integration.test.ts` (the MCP tools into `job.report` and the evidence folder; the `.ensemble/result.json` fallback), `src/device-tools/device-tools.test.ts` (the policy, the hard floor, loopback-only HTTP with redirects, read-only git, file changes, long output and background commands, and the OS sandbox denying keys, Ensemble's data and the browser profile) and `src/node/device-tools.integration.test.ts` (the relay round trip with a fake computer, one Needs me card per folder, an older computer, owner-only tools, a long command waking its node once, and a node run getting only the secrets it names). macOS and Windows sandboxes are not exercised there.
 
 There is no automatic move to another computer, full database sync, mid-command replay or inbound remote shell or tunnel. A compromised browser session can use whatever the computer's switches allow; local switches and OS rules are the boundary. Redaction is bounded and does not prove content has no sensitive data.
