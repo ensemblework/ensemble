@@ -1641,3 +1641,40 @@ test("web #4: a room with other people has a read mark per tab: Room and My crew
   assert.deepEqual([row.unreadRoom, row.unreadCrew, row.unread], [0, 0, 0]);
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { tab: "both", upTo: last } })).statusCode, 400);
 });
+
+test("web #5: the shareable picker lists what a person can read in their own space and the room's linked space, never anyone else's", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  type Candidates = { spaces: Array<{ id: string; name: string; role: string; linked: boolean }>; items: Array<{ kind: string; id: string; title: string; spaceId: string; spaceName: string; updatedAt: string; shared: boolean }> };
+  const candidates = async (user: HttpUser, q = "") => {
+    const response = await user.inject({ method: "GET", url: `/api/node/rooms/${room.id}/shareable/candidates${q ? `?q=${encodeURIComponent(q)}` : ""}` });
+    assert.equal(response.statusCode, 200, response.body);
+    return json(response) as Candidates;
+  };
+  const mine = await h.prisma.taskPage.create({ data: { userId: ben.id, title: "Pricing draft" } });
+  const file = await h.prisma.document.create({ data: { userId: ben.id, filename: "pricing.csv", mediaType: "text/csv", byteSize: 4, sha256: "pricing", original: Buffer.from("a,b\n"), format: "csv" } });
+  const contract = await h.prisma.taskPage.create({ data: { userId: spaceId, title: "Pricing contract" } });
+  const task = await h.prisma.task.create({ data: { userId: spaceId, title: "Pricing export", owner: "me", status: "todo", createdBy: "me" } });
+  await h.prisma.taskPage.create({ data: { userId: spaceId, taskId: task.id, title: "Pricing export page" } });
+  const secret = await h.prisma.taskPage.create({ data: { userId: akash.id, title: "Pricing secret" } });
+
+  // Not yet a member of the room's space: only Ben's own.
+  let seen = await candidates(ben, "pricing");
+  assert.deepEqual(seen.spaces.map((space) => [space.id, space.linked]), [[ben.id, false]]);
+  assert.deepEqual(new Set(seen.items.map((row) => row.id)), new Set([mine.id, file.id]));
+
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  seen = await candidates(ben, "pricing");
+  assert.deepEqual(seen.spaces.map((space) => [space.id, space.role, space.linked]), [[ben.id, "owner", false], [spaceId, "editor", true]]);
+  assert.equal(seen.spaces[1]!.name, "Launch space");
+  assert.deepEqual(new Set(seen.items.map((row) => `${row.kind}:${row.id}:${row.spaceId}`)), new Set([`page:${mine.id}:${ben.id}`, `file:${file.id}:${ben.id}`, `page:${contract.id}:${spaceId}`, `task:${task.id}:${spaceId}`]), "a task's page comes as its task; Akash's own space never");
+  assert.ok(seen.items.every((row) => row.id !== secret.id && !row.shared));
+  assert.equal(seen.items.find((row) => row.id === task.id)!.spaceName, "Launch space");
+
+  // Marking one from the linked space shows it as shared; a search narrows the list.
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/shareable`, payload: { kind: "task", id: task.id, spaceId, shared: true } })).statusCode, 200);
+  seen = await candidates(ben, "export");
+  assert.deepEqual(seen.items.map((row) => [row.id, row.shared]), [[task.id, true]]);
+  assert.ok((await candidates(akash, "pricing")).items.some((row) => row.id === secret.id), "Akash's own items are his to offer");
+  assert.equal((await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/shareable/candidates?q=${"x".repeat(101)}` })).statusCode, 400);
+});

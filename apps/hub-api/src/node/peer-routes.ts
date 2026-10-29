@@ -12,7 +12,7 @@ import { truncateText } from "../lib/text.js";
 import { wireMessage } from "./store.js";
 import { nodeAccount } from "./routes.js";
 import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
-import { answerSpaceOffer, bindSpace, expireOffersFor, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
+import { answerSpaceOffer, bindSpace, expireOffersFor, linkedSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
 import { onMemberRevoked } from "../sharing/revoke.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
 import { RoomResultError, startRoomTask } from "./room-results.js";
@@ -22,7 +22,7 @@ import { publishTo } from "./events.js";
 import { inBackground } from "./queue.js";
 import { roomPeople } from "./store.js";
 import { presenceChanged, statusCard, statusCards } from "./status-cards.js";
-import { personRow, prefsOf, SHAREABLE_KINDS, shareableItem, TrustPatch, trustView, updatePrefs } from "./trust.js";
+import { personRow, prefsOf, SHAREABLE_KINDS, shareableCandidates, shareableItem, TrustPatch, trustView, updatePrefs } from "./trust.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -225,6 +225,20 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
     return { items: prefsOf(await me(room.id, accountId)).shareable ?? [] };
+  });
+
+  /**
+   * What I could mark shareable here: my pages, tasks and files in my own space and, when I can open it, the room's
+   * linked space (each with its space), at most 10 of each kind per space, newest first; `q` searches titles.
+   */
+  app.get("/api/node/rooms/:id/shareable/candidates", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { q } = z.object({ q: z.string().max(100).optional() }).parse(request.query ?? {});
+    const linked = await linkedSpace(app, room);
+    const marked = prefsOf(await me(room.id, accountId)).shareable ?? [];
+    const found = await shareableCandidates(prisma, accountId, [accountId, ...(linked ? [linked] : [])], { q, marked });
+    return { spaces: found.spaces.map((space) => ({ ...space, linked: space.id === linked })), items: found.items };
   });
 
   /** Marks one of my pages, tasks or files shareable in this room (my lead may then quote it here), or takes it back. */
