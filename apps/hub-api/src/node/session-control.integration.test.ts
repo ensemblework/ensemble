@@ -333,6 +333,63 @@ test("the session card's routes act exactly as the node's tools: read, queue, st
   assert.deepEqual(actions, ["queue:chat", "queue:card", "reorder:card", "reorder:chat", "cancel:card", "steer:card", "stop:card", "replace:card", "stop:card"]);
 });
 
+test("a session goes to another node when its node hands it over or from its card; a node takes over a session no node manages; the node that had it no longer sees it", async () => {
+  const ama = await person("Ama");
+  const { laptop } = await laptopFor(ama, "Ama's laptop");
+  const builder = await createNode(ama, "feature-engineer");
+  const writer = await createNode(ama, "tester");
+  script = (turn) => (turn.slug === builder.node.slug ? startCall("Add the export button", "Add an export button to the reports page.") : { text: "(no reply)" });
+  await say(ama, builder.room.id, "add an export button");
+  const root = await newestJob(ama);
+
+  // The node hands it over when asked, with a note for the node it goes to.
+  script = (turn) => (turn.slug === builder.node.slug ? call("node_session_hand_over", { session: root.id, to: `@${writer.node.slug}`, note: "The docs are next." }) : { text: "(no reply)" });
+  await say(ama, builder.room.id, "give that session to the tester");
+  assert.match(results.at(-1)!, new RegExp(`@${writer.node.slug} manages the Claude Code session`));
+  assert.equal((await sessionOf(ama, root.id)).nodeId, writer.node.id, "the card names the node it went to");
+  const { sessionEventLine } = await import("./session-queue.js");
+  const handed = (await sessionEvents(h.prisma, writer.node.id, { sessionId: root.id }))[0]!;
+  assert.deepEqual([handed.action, handed.actor, handed.via], ["adopt", "node", "chat"]);
+  assert.match(sessionEventLine(handed), new RegExp(`^@${builder.node.slug} handed you this session: “The docs are next.”`), "the new node's work board says who handed it over and why");
+
+  // The node that had it can no longer use it; the one it went to can.
+  script = (turn) => (turn.slug === builder.node.slug ? call("node_session_send", { session: root.id, prompt: "Also add a test.", delivery: "queue", title: "Test" }) : { text: "(no reply)" });
+  await say(ama, builder.room.id, "also add a test");
+  assert.match(results.at(-1)!, /belongs to another of your owner's nodes/);
+  const { sessionsForNode } = await import("./sessions.js");
+  assert.ok(!(await sessionsForNode(h.prisma, builder.node)).some((row) => row.id === root.id));
+  assert.equal((await sessionsForNode(h.prisma, writer.node)).find((row) => row.id === root.id)?.yours, true);
+
+  // Its card acts as that node, from that node's chat, where the new run's card goes.
+  const queued = await control(ama, root.id, { action: "queue", prompt: "Then write the docs.", title: "Docs" });
+  assert.equal(queued.statusCode, 200, queued.body);
+  const docsRun = await h.prisma.nodeRun.findUniqueOrThrow({ where: { jobId: json(queued).jobId } });
+  assert.deepEqual([docsRun.nodeId, docsRun.roomId], [writer.node.id, writer.room.id]);
+
+  // The owner hands it back from the card; never to another account's node, nor another account's session.
+  const back = await ama.inject({ method: "POST", url: `/api/node/sessions/${root.id}/hand-over`, payload: { nodeId: builder.node.id } });
+  assert.equal(back.statusCode, 200, back.body);
+  assert.equal((await sessionOf(ama, root.id)).nodeId, builder.node.id);
+  const backLine = sessionEventLine((await sessionEvents(h.prisma, builder.node.id, { sessionId: root.id }))[0]!);
+  assert.ok(backLine.startsWith(`Your owner handed you this session (@${writer.node.slug} had it) from the session card`), backLine);
+  const kwame = await person("Kwame");
+  const theirs = await createNode(kwame, "assistant");
+  assert.equal((await ama.inject({ method: "POST", url: `/api/node/sessions/${root.id}/hand-over`, payload: { nodeId: theirs.node.id } })).statusCode, 404);
+  assert.equal((await kwame.inject({ method: "POST", url: `/api/node/sessions/${root.id}/hand-over`, payload: { nodeId: theirs.node.id } })).statusCode, 404);
+
+  // A session started elsewhere: a node takes it over without sending it anything; then only it sees it.
+  const task = await h.prisma.task.create({ data: { userId: ama.id, title: "Bump the version", createdBy: "me" } });
+  const elsewhere = await h.prisma.workspaceJob.create({
+    data: { userId: ama.id, taskId: task.id, kind: "code", provider: "codex", model: "default", executionMode: "sandbox", deviceId: laptop.id, folderLabel: "ensemble", status: "succeeded", startedAt: new Date(), finishedAt: new Date(), summary: "Bumped the version." },
+  });
+  assert.equal((await sessionsForNode(h.prisma, builder.node)).find((row) => row.id === elsewhere.id)?.yours, false);
+  script = (turn) => (turn.slug === writer.node.slug ? call("node_session_adopt", { session: elsewhere.id }) : { text: "(no reply)" });
+  await say(ama, writer.room.id, "look after the version bump session");
+  assert.equal((await sessionsForNode(h.prisma, writer.node)).find((row) => row.id === elsewhere.id)?.yours, true);
+  assert.ok(!(await sessionsForNode(h.prisma, builder.node)).some((row) => row.id === elsewhere.id), "other nodes no longer see it");
+  assert.equal(sessionEventLine((await sessionEvents(h.prisma, writer.node.id, { sessionId: elsewhere.id }))[0]!).split(" (")[0], "You took the session over");
+});
+
 test("reordering changes the order runs start in; each claimed run continues the run that actually ran before it, and a session that never ran starts afresh in its folder", async () => {
   const kofi = await person("Kofi");
   const { key } = await laptopFor(kofi, "Kofi's laptop");

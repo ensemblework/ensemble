@@ -1,7 +1,7 @@
 /**
  * The session card's controls (docs/35 §8.9): its owner, signed in in the browser, reads a session one of
- * their nodes manages, sends it a message (queue, steer, replace), stops it, and reorders or empties its
- * queue. Each action goes through exactly the functions the node's own tools use (node/sessions.ts), as
+ * their nodes manages, sends it a message (queue, steer, replace), stops it, reorders or empties its
+ * queue, and hands it to another of their nodes. Each action goes through exactly the functions the node's own tools use (node/sessions.ts), as
  * the node's run would, and is recorded for the node's work board, so the node always knows.
  */
 import { z } from "zod";
@@ -15,7 +15,7 @@ import { isVisitor } from "../sharing/context.js";
 import { liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
 import { stepLive } from "./plans.js";
 import { sessionOwners, sessionSnapshot } from "./session-queue.js";
-import { editSessionQueue, ownerContext, sendToSession, stopSession, type SessionEnv } from "./sessions.js";
+import { editSessionQueue, moveSession, ownerContext, sendToSession, stopSession, type SessionEnv } from "./sessions.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -39,6 +39,7 @@ const Control = z
   })
   .strict();
 const Reorder = z.object({ order: z.array(z.string().uuid()).max(100) }).strict();
+const HandOver = z.object({ nodeId: z.string().uuid() }).strict();
 
 /**
  * The session's node acting for its owner's card: the node that manages it, in the conversation of its
@@ -52,10 +53,13 @@ async function cardEnv(app: FastifyInstance, accountId: string, id: string): Pro
   const node = nodeId ? await prisma.nodeAgent.findFirst({ where: { id: nodeId, userId: accountId } }) : null;
   if (!node) throw fail(409, "None of your nodes manages this session yet. Ask a node to continue it first.");
   const latest = await prisma.nodeRun.findFirst({ where: { userId: accountId, nodeId: node.id, OR: [{ sessionId: session.id }, { sessionId: null, jobId: session.id }] }, orderBy: { createdAt: "desc" } });
-  const room = latest ? await prisma.nodeRoom.findUnique({ where: { id: latest.roomId } }) : null;
-  if (!latest || !room || room.archivedAt) throw fail(409, "The conversation this session's runs were in is gone.");
-  const card = latest.messageId ? await prisma.nodeMessage.findUnique({ where: { id: latest.messageId } }) : null;
-  const step = latest.planId && latest.planStep && (await stepLive(prisma, latest.planId, latest.planStep)) ? { planId: latest.planId, planStep: latest.planStep } : null;
+  // A node the session was handed to may not have run in it yet: it acts from its own chat.
+  const room = latest
+    ? await prisma.nodeRoom.findUnique({ where: { id: latest.roomId } })
+    : await prisma.nodeRoom.findFirst({ where: { kind: "dm", userId: accountId, archivedAt: null, members: { some: { nodeId: node.id } } } });
+  if (!room || room.archivedAt) throw fail(409, "The conversation this session's runs were in is gone.");
+  const card = latest?.messageId ? await prisma.nodeMessage.findUnique({ where: { id: latest.messageId } }) : null;
+  const step = latest?.planId && latest.planStep && (await stepLive(prisma, latest.planId, latest.planStep)) ? { planId: latest.planId, planStep: latest.planStep } : null;
   return {
     ctx: await ownerContext(app, accountId),
     prisma,
@@ -136,6 +140,26 @@ export function registerSessionRoutes(app: FastifyInstance): void {
     const env = await cardEnv(app, accountId, id);
     await acting(() => editSessionQueue(env, { session: env.sessionId, order: body.order }));
     return { ok: true };
+  });
+
+  /**
+   * Hands the session to another of my nodes (or gives a session no node manages to one): from now on
+   * that node sees it, sends it messages and answers for it. Runs already started report to their node.
+   */
+  app.post("/api/node/sessions/:id/hand-over", async (request) => {
+    const accountId = owner(request);
+    const { id } = Params.parse(request.params);
+    const body = HandOver.parse(request.body);
+    const session = await resolveSession(prisma, { space: accountId, runner: null }, id);
+    if (!session) throw fail(404, "That session is not available.");
+    const to = await prisma.nodeAgent.findFirst({ where: { id: body.nodeId, userId: accountId, parentNodeId: null } });
+    if (!to) throw fail(404, "That node is not one of yours.");
+    const fromId = (await sessionOwners(prisma, accountId, [session.id])).get(session.id) ?? null;
+    if (fromId !== to.id) {
+      const from = fromId ? await prisma.nodeAgent.findUnique({ where: { id: fromId }, select: { id: true, slug: true } }) : null;
+      await moveSession(prisma, { accountId, sessionId: session.id, to, from, actor: "owner", via: "card" });
+    }
+    return { ok: true, nodeId: to.id };
   });
 
   /** Takes one queued message out of the session; it never starts. */

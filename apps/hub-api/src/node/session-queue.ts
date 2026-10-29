@@ -50,6 +50,13 @@ export async function sessionOwners(prisma: PrismaClient, accountId: string, ses
     const id = row.sessionId ?? row.jobId;
     if (!owners.has(id)) owners.set(id, row.nodeId);
   }
+  // A session handed over or taken over belongs to the node it went to last (node/sessions.ts moveSession).
+  const moved = await prisma.nodeSessionEvent.findMany({
+    where: { userId: accountId, action: "adopt", sessionId: { in: sessionIds } },
+    orderBy: { createdAt: "asc" },
+    select: { sessionId: true, nodeId: true },
+  });
+  for (const row of moved) owners.set(row.sessionId, row.nodeId);
   return owners;
 }
 
@@ -188,9 +195,11 @@ export async function sessionEvents(prisma: PrismaClient, nodeId: string, option
 
 /** One line per event, for a node's work board. */
 export function sessionEventLine(event: Pick<NodeSessionEvent, "action" | "actor" | "via" | "detail" | "createdAt">): string {
-  const who = event.actor === "owner" ? "Your owner" : event.actor === "watchdog" ? "The watchdog" : "You";
+  const detail = (event.detail ?? {}) as { title?: string; note?: string; source?: string; fromHandle?: string | null };
+  // A handover is recorded on the node it went to: the node that gave it acted, not this one.
+  const handed = event.action === "adopt" && (event.actor === "owner" || Boolean(detail.fromHandle));
+  const who = event.actor === "owner" ? "Your owner" : event.actor === "watchdog" ? "The watchdog" : handed ? `@${detail.fromHandle}` : "You";
   const from = event.via === "card" ? " from the session card" : "";
-  const detail = (event.detail ?? {}) as { title?: string; note?: string; source?: string };
   const what: Record<string, string> = {
     queue: `queued “${detail.title ?? "a message"}”`,
     steer: `steered the run going on${detail.title ? ` (“${detail.title}”)` : ""}`,
@@ -200,7 +209,9 @@ export function sessionEventLine(event: Pick<NodeSessionEvent, "action" | "actor
     cancel: `took “${detail.title ?? "a message"}” out of the queue`,
     answer: `answered the agent's question from ${detail.source ?? "the mission"}`,
     attention: `raised: ${detail.note ?? "attention"}`,
-    adopt: "took the session over",
+    adopt: handed
+      ? `handed you this session${event.actor === "owner" && detail.fromHandle ? ` (@${detail.fromHandle} had it)` : ""}${detail.note ? `: “${detail.note}”` : ""}`
+      : "took the session over",
   };
   return `${who} ${what[event.action] ?? event.action}${from} (${event.createdAt.toISOString()}).`;
 }

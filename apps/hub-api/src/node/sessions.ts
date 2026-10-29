@@ -6,9 +6,9 @@
  * or in place of it), stops it, and summarises what each session did. Every run is an Ensemble job,
  * so the computer's rules, Needs me and the run's record apply as for any task.
  *
- * Isolation: a session belongs to the node whose run it started with (its first node run). Other
- * nodes never see or touch it. A session started outside Node (the Hub, the CLI) belongs to no node
- * until one continues it.
+ * Isolation: a session belongs to the node whose run it started with (its first node run), or to the
+ * node it was last handed to or taken over by (`moveSession`). Other nodes never see or touch it. A
+ * session started outside Node (the Hub, the CLI) belongs to no node until one continues or adopts it.
  *
  * A run a node starts on its own keeps its record on an internal task that stays off the board
  * (lib/node-tasks.ts); a run on a board task the owner named stays on that task.
@@ -37,7 +37,7 @@ import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
 import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
-import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction } from "./session-queue.js";
+import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction, type SessionActor, type SessionVia } from "./session-queue.js";
 import { appliedLine, requestedSettings, startingSettings, tuningProblem, type SettingValues, type Tuning } from "./settings.js";
 import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
@@ -126,7 +126,18 @@ export const QueueInput = z
   .strict();
 export type QueueInput = z.infer<typeof QueueInput>;
 
-export type SessionCall = { action: "start"; input: StartInput } | { action: "send"; input: SendInput };
+export const AdoptInput = z.object({ session: z.string().uuid().describe("The session's id, from node_sessions (one with yours: false).") }).strict();
+
+export const HandOverInput = z
+  .object({
+    session: z.string().uuid().describe("The session's id, from node_sessions."),
+    to: z.string().trim().min(1).max(80).describe("The handle of another of your owner's nodes, e.g. @designer."),
+    note: z.string().trim().min(1).max(600).optional().describe("What that node should know to carry the session on, in a line or two."),
+  })
+  .strict();
+export type HandOverInput = z.infer<typeof HandOverInput>;
+
+export type SessionCall = { action: "start"; input: StartInput } | { action: "send"; input: SendInput } | { action: "hand_over"; input: HandOverInput };
 
 /** Whether the owner asked this node to check with them before it starts work on their computer. */
 export function computerWorkAsks(node: Pick<NodeAgent, "autonomy">): boolean {
@@ -754,8 +765,62 @@ export async function editSessionQueue(env: SessionEnv, input: QueueInput): Prom
   };
 }
 
+/**
+ * Moves a session to another of its owner's nodes (docs/35 §8.9): from now on that node sees it, sends it
+ * messages and answers for it, and the node that had it no longer does. Runs already started still report
+ * to the node that started them. Recorded as the new node's `adopt` event, which `sessionOwners` reads.
+ */
+export async function moveSession(
+  prisma: PrismaClient,
+  input: { accountId: string; sessionId: string; to: Pick<NodeAgent, "id">; from: Pick<NodeAgent, "id" | "slug"> | null; actor: SessionActor; via: SessionVia; note?: string },
+): Promise<void> {
+  await recordSessionEvent(prisma, {
+    userId: input.accountId,
+    nodeId: input.to.id,
+    sessionId: input.sessionId,
+    action: "adopt",
+    actor: input.actor,
+    via: input.via,
+    detail: { from: input.from?.id ?? null, fromHandle: input.from?.slug ?? null, ...(input.note ? { note: input.note } : {}) },
+  });
+  await refreshSessionCards(prisma, input.accountId, input.sessionId);
+}
+
+/** Takes over a session no node manages (started in the Hub or the CLI) without sending it anything. */
+export async function adoptSession(env: SessionEnv, input: z.infer<typeof AdoptInput>): Promise<Started> {
+  const session = await usableSession(env.prisma, env.node, input.session);
+  const owner = (await sessionOwners(env.prisma, env.node.userId, [session.id])).get(session.id);
+  if (owner === env.node.id) return { summary: "You already manage that session.", data: { session: session.id } };
+  await moveSession(env.prisma, { accountId: env.node.userId, sessionId: session.id, to: env.node, from: null, ...by(env) });
+  return { summary: `You manage the ${session.agentName} session in ${session.folder} now; your owner's other nodes no longer see it.`, data: { session: session.id } };
+}
+
+async function lastingNodeByHandle(prisma: PrismaClient, accountId: string, handle: string): Promise<NodeAgent> {
+  const slug = handle.trim().replace(/^@/, "").toLowerCase();
+  const found = await prisma.nodeAgent.findFirst({ where: { userId: accountId, slug, parentNodeId: null } });
+  if (!found) throw new ToolBlockedError(`Your owner has no node @${slug}.`, "Name one of their nodes by its handle; helpers do not take sessions.");
+  return found;
+}
+
+/** Hands one of this node's sessions to another of its owner's nodes. */
+export async function handOverSession(env: SessionEnv, input: HandOverInput): Promise<Started> {
+  const { prisma, node } = env;
+  const session = await usableSession(prisma, node, input.session);
+  const target = await lastingNodeByHandle(prisma, node.userId, input.to);
+  if (target.id === node.id) return { summary: "You already manage that session.", data: { session: session.id } };
+  await moveSession(prisma, { accountId: node.userId, sessionId: session.id, to: target, from: node, ...by(env), note: input.note });
+  return {
+    summary: `@${target.slug} manages the ${session.agentName} session in ${session.folder} now and sees what it did; you no longer see it. Runs you started in it still report to you.`,
+    data: { session: session.id, to: target.id },
+  };
+}
+
 /** What a held session call does, as the card says it under "@node wants to start work on your computer". */
 function describeCall(call: SessionCall): string {
+  if (call.action === "hand_over") {
+    const input = call.input;
+    return `Hand a session to @${input.to.replace(/^@/, "")}${input.note ? `\n\n${truncateText(input.note, 600)}` : ""}`;
+  }
   if (call.action === "start") {
     const input = call.input;
     const agent = input.agent ? agentLabel(input.agent) : "your coding agent";
@@ -768,14 +833,14 @@ function describeCall(call: SessionCall): string {
 }
 
 /** One owner-only card with exactly this call; approvals.ts runs it when the owner approves. */
-export async function holdForOwner(env: SessionEnv, call: SessionCall, extra: Record<string, unknown> = {}): Promise<ToolResult> {
+export async function holdForOwner(env: SessionEnv, call: SessionCall, extra: Record<string, unknown> = {}, body?: string): Promise<ToolResult> {
   const { message } = await postMessage(env.prisma, {
     roomId: env.room.id,
     userId: env.node.userId,
     authorKind: "node",
     authorNodeId: env.node.id,
     kind: "approval",
-    body: describeCall(call),
+    body: body ?? describeCall(call),
     data: {
       type: "session",
       status: "pending",
@@ -794,6 +859,7 @@ export async function holdForOwner(env: SessionEnv, call: SessionCall, extra: Re
 }
 
 export async function runSessionCall(env: SessionEnv, call: SessionCall): Promise<Started> {
+  if (call.action === "hand_over") return handOverSession(env, HandOverInput.parse(call.input));
   return call.action === "start" ? startSession(env, StartInput.parse(call.input)) : sendToSession(env, SendInput.parse(call.input));
 }
 
@@ -864,7 +930,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
       area: "tasks",
       description:
         "Your agent sessions on your owner's computers, most recently active first: for each, the agent, model, thinking level, context window and fast mode, computer, folder, whether it is working, waiting for your owner, queued or idle, the run going on and the messages queued after it (jobIds, in order), and one line per task done in it (what was asked, what came of it). " +
-        "Read it before choosing a session, and when your owner asks what you have been working on. Sessions no node owns yet (started in Ensemble or the CLI) show with yours: false; you may continue them. Other nodes' sessions never show.",
+        "Read it before choosing a session, and when your owner asks what you have been working on. Sessions no node owns yet (started in Ensemble or the CLI) show with yours: false; you may continue them, or take one over with node_session_adopt. Other nodes' sessions never show.",
       input: z
         .object({
           session: z.string().uuid().optional().describe("One session's id, for all of its tasks."),
@@ -914,6 +980,35 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
       risk: "low",
       async run(ctx, input) {
         return result(await editSessionQueue(env(ctx), input));
+      },
+    }),
+    defineTool({
+      name: "node_session_adopt",
+      area: "tasks",
+      description:
+        "Take over a session no node manages yet (yours: false in node_sessions: started in Ensemble or the CLI) without sending it anything, when your owner wants you to look after it: from then on only you see and run it, and its card names you.",
+      input: AdoptInput,
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        return result(await adoptSession(env(ctx), input));
+      },
+    }),
+    defineTool({
+      name: "node_session_hand_over",
+      area: "tasks",
+      description:
+        "Hand one of your sessions to another of your owner's nodes (to: its handle) when your owner asks, or when the session's work is that node's: it then sees the session, sends it messages and answers for it, and you no longer see it. Runs already going on still report to you. note: what it should know to carry on.",
+      input: HandOverInput,
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        if (asks) {
+          const session = await usableSession(scope.prisma, scope.node, input.session);
+          const to = input.to.replace(/^@/, "");
+          return holdForOwner(env(ctx), { action: "hand_over", input }, {}, `Hand the ${session.agentName} session in ${session.folder} to @${to}${input.note ? `\n\n${truncateText(input.note, 600)}` : ""}`);
+        }
+        return result(await handOverSession(env(ctx), input));
       },
     }),
     ...questionTools(scope),

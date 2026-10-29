@@ -326,7 +326,7 @@ The session's cards still going and its newest card get `data.session` after eve
 
 ### 8.9 Session control from the card
 
-The owner controls a session from its card with the same functions the node's tools call (`node/session-routes.ts` calls `sendToSession`, `stopSession` and `editSessionQueue` in `node/sessions.ts`). The routes take the owner's browser session only: no key, no link visitor, no other person. They act as the session's node (the node of its first node run), in the thread of its newest run, and for its plan step while that step goes on. A session no node manages is read but not controlled (409).
+The owner controls a session from its card with the same functions the node's tools call (`node/session-routes.ts` calls `sendToSession`, `stopSession` and `editSessionQueue` in `node/sessions.ts`). The routes take the owner's browser session only: no key, no link visitor, no other person. They act as the session's node (see Handing over below), in the thread of its newest run of that node (its own chat when it has none yet), and for its plan step while that step goes on. A session no node manages is read but not controlled (409).
 
 | Route | Effect |
 | --- | --- |
@@ -334,6 +334,7 @@ The owner controls a session from its card with the same functions the node's to
 | `POST /api/node/sessions/:id/control {action, prompt?, title?, queued?}` | `queue`, `steer` or `replace` with `prompt` (as `node_session_send`), or `stop` with `queued: keep \| drop` (as `node_session_stop`); `{ ok, jobId? }` |
 | `POST /api/node/sessions/:id/queue {order}` | Every queued message's `jobId` in the new order |
 | `DELETE /api/node/sessions/:id/queue/:jobId` | Takes one queued message out: it is cancelled and never starts (204) |
+| `POST /api/node/sessions/:id/hand-over {nodeId}` | Hands the session to another of the owner's nodes, not a helper (or gives a session no node manages to one); `{ ok, nodeId }` |
 
 A refusal (the computer's agent cannot honour a setting, Stop everything is on, a message already started) is a 409 with what to do instead.
 
@@ -341,7 +342,9 @@ A refusal (the computer's agent cannot honour a setting, Stop everything is on, 
 
 **Resume ancestry.** Each change to a session's queue and each claim of one of its runs (the server's queue and a computer's claim, both through `claimQueuedJob` and `sessionTurn`) holds the session's lock, a Postgres advisory transaction lock on its first run's id. A queued run starts only when no other run of its session is on a computer and it is first in the queue. As it is claimed, its `continueFromJobId` becomes the run of the session that actually ran last, so the chain of runs that ran is one line in the order they ran, whatever was reordered, taken out or steered. When nothing in the session ever reached a computer, it starts afresh in the session's folder and stays in the session. A reorder or a cancel touches only runs still queued, with a compare-and-set on their status; an order made from a queue that changed meanwhile is refused (409) and changes nothing.
 
-**The work board.** Every action is recorded in `node_session_events` (`queue`, `steer`, `replace`, `stop`, `reorder`, `cancel`, `answer`, `attention`), with who did it (`owner`, `node` or `watchdog`) and from where (`card`, `chat` or `watchdog`). `sessionEvents(prisma, nodeId, { since, sessionId })` and `sessionEventLine` (`node/session-queue.ts`) give the node's work board what happened since its last turn, so it is never surprised by what its owner did on the card.
+**Handing over.** A session belongs to the node whose run started it, or to the node it was last handed to or taken over by. `moveSession` records an `adopt` event on the node it goes to, and `sessionOwners` reads the latest one. The owner hands a session over from its card. A node hands one of its sessions to another of its owner's nodes with `node_session_hand_over {session, to, note?}`; where the owner asked the node to check first, this waits for the owner's card. A node takes over a session no node manages (started in the Hub or the CLI) with `node_session_adopt`. The node the session went to sees it, sends it messages and answers for it, and its work board says who handed it over and why. The node that had it no longer sees it. Runs it already started still report to it.
+
+**The work board.** Every action is recorded in `node_session_events` (`queue`, `steer`, `replace`, `stop`, `reorder`, `cancel`, `answer`, `attention`, `adopt`), with who did it (`owner`, `node` or `watchdog`) and from where (`card`, `chat` or `watchdog`). `sessionEvents(prisma, nodeId, { since, sessionId })` and `sessionEventLine` (`node/session-queue.ts`) give the node's work board what happened since its last turn, so it is never surprised by what its owner did on the card.
 
 ### 8.10 Run settings
 
