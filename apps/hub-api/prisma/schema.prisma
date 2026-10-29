@@ -569,6 +569,9 @@ model WorkspaceJob {
   /// Order among the queued messages of an agent session, separate from continueFromJobId (which stays
   /// the true resume ancestry and is set when the job is claimed). Null: creation order.
   queuePosition        Int?                @map("queue_position")
+  /// What the engine reported it ran with: { model, effort, context, contextTokens, fast }
+  /// (workspace/engines/observed.ts), from the computer's progress and complete. Null: nothing reported yet.
+  observedSettings     Json?               @map("observed_settings")
   error                String?
   createdAt            DateTime            @default(now()) @map("created_at")
   startedAt            DateTime?           @map("started_at")
@@ -2415,6 +2418,7 @@ model NodeAgent {
   memberships  NodeRoomMember[]
   memories     NodeMemory[]
   turns        NodeTurn[]
+  sessionEvents NodeSessionEvent[]
 
   @@unique([userId, slug])
   @@index([parentNodeId])
@@ -2560,6 +2564,9 @@ model NodeRun {
   /// Run settings: { requested, resolved, observed } with agent, model, effort, context, fast
   /// (node/settings.ts). observed values are "not_reported" when the engine does not say.
   settings   Json?
+  /// What the watchdog already raised for this run (node/watchdog.ts): { <condition>: ISO time }, so each
+  /// condition reaches the node once.
+  watchdog   Json      @default("{}")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   room       NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -2570,6 +2577,33 @@ model NodeRun {
   @@index([nodeId, status])
   @@index([planId])
   @@map("node_runs")
+}
+
+/// What happened to one of a node's agent sessions (node/session-queue.ts): a message queued, a steer, a
+/// replacement, a stop, the queue reordered or a message taken out of it, a question answered, a watchdog
+/// attention. From the node's tools (chat), its owner's session card (card) or the watchdog. The node's work
+/// board reads it, so the node is never surprised by what its owner did on the card.
+model NodeSessionEvent {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  nodeId    String    @map("node_id")
+  /// The session's id: its first run's job id.
+  sessionId String    @map("session_id")
+  /// The run it concerns, when one: the new run, the stopped one, the one taken out of the queue.
+  jobId     String?   @map("job_id")
+  /// queue | steer | replace | stop | reorder | cancel | answer | attention | adopt
+  action    String
+  /// owner | node | watchdog
+  actor     String
+  /// chat | card | watchdog
+  via       String
+  detail    Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  node      NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+  @@index([sessionId, createdAt])
+  @@map("node_session_events")
 }
 
 /// One node turn: why it ran, how it ended. Queued rows left by a restart run again.
