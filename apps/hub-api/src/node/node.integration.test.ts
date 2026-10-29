@@ -18,7 +18,7 @@ import type { RuntimeTurn } from "../lib/model-turn.js";
 
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
-const { settleTurns, setNodeRelevanceForTests } = await import("./queue.js");
+const { settleTurns } = await import("./queue.js");
 const { pollRuns } = await import("./runs.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
@@ -67,7 +67,6 @@ setAskRuntimeStreamForTests(async (args) => {
 afterEach(async () => {
   await settleTurns();
   seen.length = 0;
-  setNodeRelevanceForTests(null);
 });
 
 async function person(name: string): Promise<HttpUser> {
@@ -368,7 +367,7 @@ test("with Ask me first, work on the computer waits for the owner's card, which 
   assert.ok((await read(mira, room.id)).some((row) => row.kind === "run" && row.data.jobId === job.id), "the run card follows the approved run");
   assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 0);
 
-  // Where other people read along, even the owner's request waits for a card, and sessions are not listed.
+  // Where other people read along, even the owner's own request is room-bound: it never reaches the computer (rooms v2).
   await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { autonomy: { computerWork: "auto" } } });
   const { node: bensNode } = await createNode(ben, "assistant");
   const made = json(await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Release room", nodeIds: [node.id], invite: [ben.email] } })).room as { id: string };
@@ -379,9 +378,9 @@ test("with Ask me first, work on the computer waits for the owner's card, which 
   script = (turn) => (turn.slug === node.slug ? startCall("Tag the release", "Tag the release.") : { text: "(no reply)" });
   await say(mira, made.id, `@${node.slug} tag the release`);
   const turn = seen.find((row) => row.slug === node.slug)!;
-  assert.ok(turn.tools.includes("node_session_start") && turn.tools.includes("node_session_send") && !turn.tools.includes("node_sessions") && !turn.tools.includes("node_session_stop"));
+  assert.ok(["node_session_start", "node_session_send", "node_sessions", "node_session_stop"].every((name) => !turn.tools.includes(name)), "a room-bound turn has no session tools");
   assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), jobs, "nothing starts in a thread others read");
-  assert.ok((await read(mira, made.id)).some((row) => row.kind === "approval" && row.data.type === "session"), "it waits for Mira's card");
+  assert.ok(!(await read(mira, made.id)).some((row) => row.kind === "approval" && row.data.type === "session"), "and nothing waits to start: work is asked for in My crew");
 });
 
 test("a node's handle and name change everywhere it is, and stay unique", async () => {
@@ -411,7 +410,6 @@ test("in a room, a node speaks for its owner only after approval, and private th
   assert.equal(invite.room.id, group.id);
   const joined = await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } });
   assert.equal(joined.statusCode, 201, joined.body);
-  setNodeRelevanceForTests(async () => ({ nodes: ["manager"] }));
 
   const benRooms = json(await ben.inject({ method: "GET", url: "/api/node/bootstrap" })).rooms as Array<{ id: string; members: any[] }>;
   assert.ok(benRooms.some((row) => row.id === group.id) && !benRooms.some((row) => row.id === dm.id), "Ben sees the room, not Mira's DM");
@@ -425,9 +423,9 @@ test("in a room, a node speaks for its owner only after approval, and private th
     if (turn.system.includes("started by someone other than your owner")) return { text: "I'll take the login page." };
     return { text: "(no reply)" };
   };
-  await say(ben, group.id, "Can someone own the login page?");
+  await say(ben, group.id, "@manager can someone own the login page?");
   assert.match(seen[0]!.system, /started by someone other than your owner/);
-  assert.ok(seen[0]!.tools.includes("node_session_start") && !seen[0]!.tools.includes("node_sessions") && !seen[0]!.tools.includes("node_session_send"), "someone else's turn may only ask the owner to start work");
+  assert.ok(!seen[0]!.tools.includes("node_session_start") && seen[0]!.tools.includes("node_peer_request"), "someone else's question is answered room-bound: work is only recorded for the owner");
   const draft = (await read(mira, group.id)).find((row) => row.kind === "approval")!;
   assert.equal(draft.data.type, "post");
   assert.equal(draft.body, "I'll take the login page.");
@@ -457,18 +455,13 @@ test("in a room, a node speaks for its owner only after approval, and private th
   assert.ok(!shared.some((row) => row.content.includes("under a day")), "nor does its history");
 
   assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${group.id}/nodes`, payload: { nodeId: manager.id } })).statusCode, 404, "nobody adds someone else's node");
-  const routed: string[] = [];
-  setNodeRelevanceForTests(async ({ prompt }) => {
-    routed.push(prompt);
-    return { nodes: ["assistant"] };
-  });
+  // Rooms v2: a message that names no node wakes nobody, however many leads could answer it.
   seen.length = 0;
-  script = (turn) => (turn.slug === "assistant" ? { text: "Ben's side can review it." } : { text: "(no reply)" });
+  const turnsBefore = await h.prisma.nodeTurn.count({ where: { roomId: group.id } });
   await say(mira, group.id, "Who reviews the login page?");
-  assert.equal(routed.length, 1, "two representatives: a relevance call picks");
-  assert.deepEqual(seen.map((row) => row.slug), ["assistant"]);
-  assert.ok((await read(ben, group.id)).some((row) => row.kind === "approval" && row.body === "Ben's side can review it."), "Ben's node drafts for Ben");
-  assert.ok(!(await read(mira, group.id)).some((row) => row.body === "Ben's side can review it."));
+  assert.equal(seen.length, 0, "no model turn");
+  assert.equal(await h.prisma.nodeTurn.count({ where: { roomId: group.id } }), turnsBefore, "and no turn at all");
+  assert.ok(!(await read(ben, group.id)).some((row) => row.kind === "approval"), "Ben's node drafts nothing");
 });
 
 test("a crew works through one plan: only the lead answers, steps run in order and silently, and the owner gets the plan and one report", async () => {

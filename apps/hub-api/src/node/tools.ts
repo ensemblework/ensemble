@@ -25,6 +25,7 @@ import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 import { overviewTool } from "./overview.js";
 import { routineTools } from "./routine-tools.js";
 import { attachToTurn, MAX_MEDIA, ownerMedia } from "./media.js";
+import { peerRequestTool } from "./peer-requests.js";
 
 export const MAX_MEMORIES = 200;
 
@@ -320,6 +321,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
     ...helperTools(scope),
     ...planTools(scope),
     ...routineTools(scope),
+    // My crew in a room with other people: ask someone there, through their lead (node/peer-requests.ts).
+    ...(scope.room.kind === "room" && scope.privateTo && !scope.lineage.fromNonOwner ? [peerRequestTool({ node, room: scope.room, askerId: node.userId })] : []),
     defineTool({
       name: "node_delegate",
       area: "tasks",

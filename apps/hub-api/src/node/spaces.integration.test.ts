@@ -425,7 +425,7 @@ test("Apply checks the space again: a held write is refused once its owner can o
   assert.match(entry.label, /Import the March data/, "Apply's undo entry is in Fieldnote, for Akash");
 });
 
-test("where other people read, a node reaches only its home space, and its overview stays private", async () => {
+test("where other people read, a node reaches none of its owner's spaces, only the room's shared space when there is one, and its overview stays private", async () => {
   const akash = await person("Akash");
   const ben = await person("Ben Ito");
   const fieldnote = await spaceOf(ben, "Fieldnote");
@@ -443,15 +443,30 @@ test("where other people read, a node reaches only its home space, and its overv
       ? { text: "(no reply)" }
       : step === 0
         ? { calls: [{ name: "hub_list_tasks", arguments: { space: "Fieldnote" } }, { name: "hub_list_tasks", arguments: {} }, { name: "node_overview", arguments: {} }] }
-        : { text: "I can look in Akash's own space here." };
+        : { text: "I can only see what this room may see." };
+  // Rooms v2: the answer goes to the room, so the turn is room-bound: no space of Akash's, not even his own (docs/35 §12).
   await say(ben, group.id, `@${node.slug} what is Akash working on in Fieldnote?`);
   const turn = seen.find((row) => row.slug === node.slug)!;
-  assert.match(turn.system, /Spaces: only “Akash's space” is reachable in this conversation/);
-  assert.doesNotMatch(turn.system, /Fieldnote/);
+  assert.ok(!turn.tools.includes("hub_list_tasks") && !turn.tools.includes("node_overview") && turn.tools.includes("hub_web_search"));
+  assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable in this conversation/);
+  assert.doesNotMatch(turn.system, /Fieldnote|Only this space is reachable/);
   const [elsewhere, home, overview] = await receipts(node.id, group.id);
-  assert.match(elsewhere!.error!, /Only “Akash's space” is reachable here/);
-  assert.equal(home!.state, "ok", "the home space still works");
-  assert.match(overview!.error!, /listed only in a chat with just your owner/);
+  assert.match(elsewhere!.error!, /There is no tool called hub_list_tasks/);
+  assert.match(home!.error!, /There is no tool called hub_list_tasks/, "no fallback to the owner's own space");
+  assert.match(overview!.error!, /There is no tool called node_overview/);
+
+  // A shared space bound to the room (C4 binds it; set directly here): that space and nothing else.
+  await h.prisma.nodeRoom.update({ where: { id: group.id }, data: { settings: { version: 2, spaceId: fieldnote } } });
+  seen.length = 0;
+  await say(ben, group.id, `@${node.slug} and now?`);
+  const bound = seen.find((row) => row.slug === node.slug)!;
+  assert.match(bound.system, /Spaces: only “Fieldnote” is reachable in this conversation/);
+  assert.ok(bound.tools.includes("hub_list_tasks") && !bound.tools.includes("node_overview"));
+  const [there, again, private_] = await receipts(node.id, group.id);
+  assert.equal(there!.state, "ok", "the room's space");
+  assert.equal(again!.state, "ok", "a call naming no space acts there too");
+  assert.equal(again!.space?.id ?? again!.input?.space, fieldnote);
+  assert.match(private_!.error!, /There is no tool called node_overview/);
 });
 
 test("node_overview lists its owner's tasks, what is due and runs going on across three spaces, by space name", async () => {

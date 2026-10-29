@@ -39,6 +39,7 @@ import {
 } from "./missions-core.js";
 import { parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
 import { renderConstraints, type Constraints, type PlanInput, type StepInput } from "./plan-contract.js";
+import { missionOriginFor } from "./peer-requests.js";
 
 export { ENDED, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
@@ -413,6 +414,7 @@ export async function addStep(
         status: "draft",
         goal: input.goal ?? null,
         ...(input.routine ? { routine: input.routine as unknown as Prisma.InputJsonValue } : {}),
+        ...(await missionOriginFor(db, input.turnId)),
       },
     });
     plan = await loadPlan(db, message.id);
@@ -851,6 +853,8 @@ export async function createPlan(
     acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false })),
     ...(row.evidence?.length ? { evidence: row.evidence } : {}),
   }));
+  // An accepted peer request (node/peer-requests.ts): who asked, where the result goes, its principals.
+  const origin = await missionOriginFor(db, input.turnId, input.plan.constraints);
   await db.$transaction(async (tx) => {
     await tx.nodeMission.create({
       data: {
@@ -868,6 +872,7 @@ export async function createPlan(
         requirements: requirements as unknown as Prisma.InputJsonValue,
         deferred: input.plan.deferred as unknown as Prisma.InputJsonValue,
         ...(input.routine ? { routine: input.routine as unknown as Prisma.InputJsonValue } : {}),
+        ...origin,
       },
     });
     for (const [index, step] of input.plan.steps.entries()) {

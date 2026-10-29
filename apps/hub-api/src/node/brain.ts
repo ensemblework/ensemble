@@ -30,6 +30,7 @@ import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWa
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
+import { draftDisclosure, roomBoundTurn } from "./audience.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -237,10 +238,11 @@ async function ownerNotice(app: FastifyInstance, node: NodeAgent, roomId: string
   await postMessage(app.prisma, { roomId, userId: node.userId, authorKind: "node", authorNodeId: node.id, kind: "error", body: text, data, visibleTo: [node.userId] });
 }
 
-/** " ↪ #12" when the message replies to another. */
+/** " ↪ #12 “its words”" when the message replies to another (Ask my nodes quotes a Room message this way). */
 function replyMark(row: NodeMessage): string {
-  const seq = (row.data as { replyTo?: { seq?: unknown } } | null)?.replyTo?.seq;
-  return typeof seq === "number" ? ` ↪ #${seq}` : "";
+  const replyTo = (row.data as { replyTo?: { seq?: unknown; excerpt?: unknown } } | null)?.replyTo;
+  if (typeof replyTo?.seq !== "number") return "";
+  return ` ↪ #${replyTo.seq}${typeof replyTo.excerpt === "string" && replyTo.excerpt ? ` “${replyTo.excerpt}”` : ""}`;
 }
 
 /** Files a message carries (routes.ts stores them as data.files). */
@@ -308,6 +310,12 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     botDepth: (trigger?.botDepth ?? 0) + 1,
     fromNonOwner,
   };
+  // A turn whose answer the room reads gets only room-safe context and tools (node/audience.ts).
+  const bound = work ? null : await roomBoundTurn(app, { turn, node, room, members, trigger, rows: transcriptRows, ownerName, lineage });
+  if (bound?.held) {
+    await saveCursor(readUpTo);
+    return { status: "skipped" };
+  }
 
   const who = await namesFor(app, room, members, owner);
   // Files on the owner's messages are read with this turn (assistant/attachments.ts); a node works in its
@@ -319,7 +327,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     const names = files.map((file) => `“${file.name}”`).join(", ");
     return row.userId === owner && row.authorKind === "human" ? ` [attached ${names}]` : ` [attached ${names}, which you cannot open: they are in that person's Files]`;
   };
-  const board = work || fromNonOwner ? "" : await workBoard(prisma, node, room.id);
+  const board = work || fromNonOwner || bound ? "" : await workBoard(prisma, node, room.id);
   const transcript = work
     ? (turn.note ?? "Continue your step, then report it with node_step_report.")
     : [
@@ -376,9 +384,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
   const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
-  const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
+  const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
-    runAssistantTurn({
+    (bound ? bound.run : runAssistantTurn)({
       app,
       userId: spaceId,
       conversationId: conversationId!,
@@ -552,18 +560,23 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const opensPlan = Boolean(made && made.data.status === "draft" && made.message.roomId === replyRoom.id && made.message.visibleTo.join() === (replyPrivateTo ?? []).join());
   if (made && made.data.status === "draft") await startPlan(app, made.message.id, opensPlan && text !== NO_REPLY ? text : null);
   // Files shown with the reply: what the node chose (node_show), and a plan's checked media in its report.
+  // Only where only the owner reads, like tool chips: sharing them with others is the owner's own act.
+  const ownerReads = single || Boolean(replyPrivateTo);
   const media: Media[] = takeTurnMedia(turn.id);
-  if (turn.planId && !turn.planStep && text && text !== NO_REPLY) {
+  if (ownerReads && turn.planId && !turn.planStep && text && text !== NO_REPLY) {
     for (const item of await missionMedia(prisma, turn.planId, owner)) if (!media.some((row) => row.evidenceId === item.evidenceId)) media.push(item);
   }
-  const mediaData = media.length ? { media: media.slice(0, 8) } : {};
-  if (text && text !== NO_REPLY && !opensPlan) {
+  const mediaData = media.length && ownerReads ? { media: media.slice(0, 8) } : {};
+  // An answer the owner agreed to share reaches the room only as their draft (node/audience.ts).
+  const drafted = text && text !== NO_REPLY && !opensPlan ? await draftDisclosure(app, { turn, node, room, text, lineage }) : false;
+  if (text && text !== NO_REPLY && !opensPlan && !drafted) {
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
     // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
     const named = result.refs?.length ? { refs: result.refs } : {};
-    await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...mediaData } });
-  } else if (media.length) {
+    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData } });
+    await bound?.afterReply(posted);
+  } else if (mediaData.media && !drafted) {
     // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
     await postAsNode(scope, replyRoom, "", replyPrivateTo, { data: mediaData });
   }
