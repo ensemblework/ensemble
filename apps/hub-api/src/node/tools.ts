@@ -17,8 +17,9 @@ import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
 import { helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
-import { addStep, finishStep, kindFromRole, loadPlan, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
+import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
+import { planTools } from "./plan-tools.js";
 import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 
 export const MAX_MEMORIES = 200;
@@ -108,7 +109,7 @@ export async function postAsNode(
 }
 
 /** The crew room this node leads for its owner, made on first use. */
-async function crewRoomFor(prisma: PrismaClient, node: NodeAgent): Promise<NodeRoom> {
+export async function crewRoomFor(prisma: PrismaClient, node: NodeAgent): Promise<NodeRoom> {
   const rooms = await prisma.nodeRoom.findMany({
     where: { userId: node.userId, kind: "crew", archivedAt: null, members: { some: { nodeId: node.id } } },
     orderBy: { createdAt: "asc" },
@@ -243,7 +244,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       }
       const row = await prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: step.planId, id: step.stepId } }, select: { kind: true, status: true } });
       if (!row || !["waiting", "working"].includes(row.status)) throw new ToolBlockedError("This step has already ended.");
-      const verdict = verdictOf(row.kind, input);
+      const verdict = verdictOf(row.kind, input, await mandatoryIds(prisma, step.planId, step.stepId));
       // A report that contradicts its own checks goes back to the worker to fix, rather than being guessed at.
       if (verdict.problem && input.outcome !== "blocked") throw new ToolBlockedError(verdict.problem, "Report again: name each check with its verdict, and choose the outcome they support.");
       await finishStep(ctx.app, step.planId, step.stepId, { status: input.outcome === "blocked" ? "blocked" : "done", result: input.summary, report: input });
@@ -286,6 +287,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   return [
     ...own,
     ...helperTools({ ...scope, postBrief: (room, body) => postAsNode(scope, room, body, null) }),
+    ...planTools(scope),
     defineTool({
       name: "node_delegate",
       area: "tasks",

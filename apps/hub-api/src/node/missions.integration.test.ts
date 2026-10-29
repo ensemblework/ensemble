@@ -414,3 +414,155 @@ test("a worker's structured report ends its step directly, without a node turn",
   const runCard = (await read(kofi, crew.id)).find((row) => row.kind === "run")!;
   assert.equal(runCard.data.report.subject.commit, "def5678");
 });
+
+const planCall = (plan: Record<string, unknown>): Call => ({ name: "node_plan", arguments: plan });
+
+test("node_plan: an incomplete plan comes back to the lead; a valid one keeps every requirement, writes the constraints once and gates each feature on its check", async () => {
+  const kofi = await person("Kofi");
+  const { crew } = await crewOf(kofi, ["manager", "feature-engineer", "tester", "docs-writer"]);
+  const constraints = { folder: "ensemble", branch: "live-testing", publish: "push", agent: "copilot-cli", model: "gpt-6.1-sol", context: "long_context", substitution: "forbid", order: "serial", notes: ["Web app only: no CLI or native changes."] };
+  const requirements = [
+    { id: "md", text: "Markdown tables in chat", acceptance: [{ id: "md.pipes", text: "A title with | keeps every cell" }] },
+    { id: "expiry", text: "Expire Needs Me requests when their task ends", acceptance: [{ id: "exp.end", text: "Ending a task closes its requests" }] },
+    { id: "resize", text: "Resizable page bar" },
+  ];
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("first try")) {
+      // Two of three requirements covered, nothing deferred: the plan comes back with what is missing.
+      return { calls: [planCall({ goal: "Three web features", requirements, constraints, steps: [{ id: "b1", to: "builder", kind: "build", requirementIds: ["md"], brief: "Markdown tables." }, { id: "b2", to: "builder", kind: "build", requirementIds: ["expiry"], brief: "Expire requests." }] })], then: "Planning." };
+    }
+    if (turn.slug === "manager" && turn.transcript.includes("second try")) {
+      return {
+        calls: [
+          planCall({
+            goal: "Three web features",
+            requirements,
+            constraints,
+            deferred: [{ requirementId: "resize", reason: "The owner said: no resizing yet." }],
+            steps: [
+              { id: "b1", to: "builder", kind: "build", requirementIds: ["md"], brief: "Markdown tables in chat messages." },
+              { id: "t1", to: "tester", kind: "verify", requirementIds: ["md"], brief: "Check Markdown tables.", after: ["b1"], verifies: "b1" },
+              { id: "b2", to: "builder", kind: "build", requirementIds: ["expiry"], brief: "Expire Needs Me requests when their task ends.", after: ["t1"] },
+              { id: "t2", to: "tester", kind: "verify", requirementIds: ["expiry"], brief: "Check request expiry.", after: ["b2"], verifies: "b2" },
+              { id: "d1", to: "docs", kind: "write", brief: "Document both features.", after: ["t2"] },
+            ],
+          }),
+        ],
+        then: "Planned: tables, then expiry, each checked; resizing deferred.",
+      };
+    }
+    if (turn.slug === "manager") return { text: "Tables and expiry are in and checked; docs updated; resizing deferred as you asked." };
+    if (turn.slug === "builder" && turn.transcript.includes("Markdown tables")) return report("done", "Tables render.", { subject: { commit: "aaa1111", branch: "live-testing" } });
+    if (turn.slug === "builder") return report("done", "Requests expire.", { subject: { commit: "bbb2222", branch: "live-testing" } });
+    if (turn.slug === "tester" && turn.transcript.includes("Check Markdown tables")) return report("pass", "Tables pass.", { subject: { commit: "aaa1111" }, checks: [{ id: "md.pipes", name: "pipe in a title", verdict: "pass" }] });
+    if (turn.slug === "tester") return report("pass", "Expiry passes.", { subject: { commit: "bbb2222" }, checks: [{ id: "exp.end", name: "ending a task closes requests", verdict: "pass" }] });
+    if (turn.slug === "docs") return report("done", "Docs updated.");
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "@manager first try: three features");
+  assert.equal((await read(kofi, crew.id)).filter((row) => row.kind === "plan").length, 0, "an invalid plan is not made");
+  const failedCall = await h.prisma.assistantMessage.findFirst({ where: { role: "assistant", toolCalls: { not: undefined } }, orderBy: { createdAt: "desc" } });
+  assert.match(JSON.stringify(failedCall?.toolCalls ?? []), /No step covers requirement “resize”/);
+
+  seen.length = 0;
+  await say(kofi, crew.id, "@manager second try");
+  const builderNote = seen.find((row) => row.slug === "builder")!.transcript;
+  assert.match(builderNote, /Constraints from your owner[\s\S]*Branch: live-testing[\s\S]*commit and push[\s\S]*copilot-cli, gpt-6\.1-sol, long context[\s\S]*Never substitute[\s\S]*Web app only/);
+  assert.match(builderNote, /It covers: Markdown tables in chat \(acceptance: md\.pipes/);
+  assert.deepEqual(seen.map((row) => row.slug), ["manager", "builder", "tester", "builder", "tester", "docs", "manager"], "each feature waits for the previous one's check");
+  const plan = await planCard(kofi, crew.id);
+  assert.equal(plan.data.status, "succeeded");
+  assert.deepEqual(plan.data.requirements.map((row: { id: string; status: string }) => [row.id, row.status]), [["md", "accepted"], ["expiry", "accepted"], ["resize", "deferred"]]);
+  assert.deepEqual(plan.data.steps[0].run, { agent: "copilot-cli", model: "gpt-6.1-sol", context: "long_context" }, "agent settings come from the constraints");
+});
+
+test("a verification must report each mandatory acceptance criterion; one left out is asked for, not passed", async () => {
+  const kofi = await person("Kofi");
+  const { crew } = await crewOf(kofi, ["manager", "feature-engineer", "tester"]);
+  let tries = 0;
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("@manager tables please")) {
+      return {
+        calls: [
+          planCall({
+            goal: "Tables",
+            requirements: [{ id: "md", text: "Markdown tables", acceptance: [{ id: "md.pipes", text: "pipes" }, { id: "md.links", text: "links" }] }],
+            steps: [
+              { id: "b1", to: "builder", kind: "build", requirementIds: ["md"], brief: "Tables." },
+              { id: "t1", to: "tester", kind: "verify", requirementIds: ["md"], brief: "Check tables.", after: ["b1"], verifies: "b1" },
+            ],
+          }),
+        ],
+        then: "Planned.",
+      };
+    }
+    if (turn.slug === "manager") return { text: "Reported." };
+    if (turn.slug === "builder") return report("done", "Built.", { subject: { commit: "abc1234" } });
+    if (turn.slug === "tester") {
+      tries = seen.filter((row) => row.slug === "tester").length;
+      // First try leaves out the links criterion (refused by the tool); the nudge then gets both.
+      return tries === 1
+        ? report("pass", "Pipes fine.", { checks: [{ id: "md.pipes", name: "pipes", verdict: "pass" }] })
+        : report("pass", "Both fine.", { checks: [{ id: "md.pipes", name: "pipes", verdict: "pass" }, { id: "md.links", name: "links", verdict: "pass" }] });
+    }
+    return { text: "unexpected" };
+  };
+  await say(kofi, crew.id, "@manager tables please");
+  const plan = await planCard(kofi, crew.id);
+  assert.equal(tries, 2, "the incomplete report was refused and asked for again");
+  assert.deepEqual([plan.data.steps[1].outcome, plan.data.requirements[0].status, plan.data.status], ["pass", "accepted", "succeeded"]);
+});
+
+test("node_plan_revise: new constraints reach the next instructions; waiting steps can be cancelled and steps added", async () => {
+  const kofi = await person("Kofi");
+  await laptopFor(kofi);
+  const { crew } = await crewOf(kofi, ["manager", "feature-engineer", "docs-writer"]);
+  let planId = "";
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("build then docs")) {
+      return {
+        calls: [
+          planCall({
+            goal: "Build and document",
+            constraints: { branch: "feature-x" },
+            steps: [
+              { id: "b1", to: "builder", kind: "build", brief: "Build it." },
+              { id: "d1", to: "docs", kind: "write", brief: "Write docs.", after: ["b1"] },
+              { id: "d2", to: "docs", kind: "write", brief: "Write a blog post.", after: ["b1"] },
+            ],
+          }),
+        ],
+        then: "Planned.",
+      };
+    }
+    if (turn.slug === "manager" && turn.transcript.includes("use branch main-fix")) {
+      const plan = seen.length ? planId : "";
+      return { calls: [{ name: "node_plan_revise", arguments: { plan, constraints: { branch: "main-fix" }, cancel: [cancelId], add: [{ id: "c1", to: "docs", kind: "write", brief: "Changelog entry.", after: ["@builder"] }] } }], then: "Switched to main-fix." };
+    }
+    if (turn.slug === "manager") return { text: "Done." };
+    if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) return report("done", "Built.", { subject: { commit: "abc1234" } });
+    if (turn.slug === "builder") return { calls: [{ name: "node_session_start", arguments: { title: "Build it", prompt: "Build it.", folder: "ensemble" } }], then: "(no reply)" };
+    if (turn.slug === "docs") return report("done", "Written.");
+    return { text: "unexpected" };
+  };
+  let cancelId = "";
+  await say(kofi, crew.id, "@manager build then docs");
+  const before = await planCard(kofi, crew.id);
+  planId = before.id;
+  cancelId = before.data.steps[2].id;
+  assert.equal(before.data.steps[0].status, "working", "the build's run is still going");
+  await say(kofi, crew.id, "@manager use branch main-fix instead, drop the blog post, and add a changelog");
+  const revised = await planCard(kofi, crew.id);
+  assert.equal(revised.data.revision, 1);
+  assert.equal(revised.data.constraints.branch, "main-fix");
+  assert.deepEqual(revised.data.steps.map((row: { status: string }) => row.status), ["working", "waiting", "skipped", "waiting"]);
+  const job = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: kofi.id } });
+  await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "succeeded", summary: "Built.", finishedAt: new Date() } });
+  seen.length = 0;
+  await pollRuns(h.app);
+  await settleTurns();
+  const docsNotes = seen.filter((row) => row.slug === "docs").map((row) => row.transcript);
+  assert.equal(docsNotes.length, 2, "the docs step and the added changelog step ran; the cancelled one did not");
+  assert.ok(docsNotes.every((note) => /Branch: main-fix/.test(note)), "later steps read the revised constraints");
+  assert.equal((await planCard(kofi, crew.id)).data.status, "partially_completed", "a cancelled step means the plan did not do everything it first set out to");
+});

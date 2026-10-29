@@ -38,6 +38,7 @@ import {
   type StepStatus,
 } from "./missions-core.js";
 import { parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
+import { renderConstraints, type Constraints, type PlanInput, type StepInput } from "./plan-contract.js";
 
 export { ENDED, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
@@ -79,7 +80,8 @@ export type PlanStep = {
   sessionId: string | null;
 };
 
-export type Requirement = { id: string; text: string; status: string; acceptance: Array<{ id: string; text: string; mandatory: boolean }> };
+export type RequirementStatus = "open" | "in_progress" | "accepted" | "failed" | "deferred" | "cancelled";
+export type Requirement = { id: string; text: string; status: RequirementStatus; acceptance: Array<{ id: string; text: string; mandatory: boolean }>; evidence?: string[] };
 
 export type PlanData = {
   type: "plan";
@@ -94,7 +96,9 @@ export type PlanData = {
   originRoomId: string;
   originPrivate: boolean;
   status: PlanStatus;
+  revision: number;
   goal: string | null;
+  constraints: Constraints;
   requirements: Requirement[];
   deferred: Array<{ requirementId: string; reason: string }>;
   steps: PlanStep[];
@@ -156,6 +160,35 @@ function missionState(row: NodeMission): MissionState {
   return { id: row.id, contract: row.contract, status: row.status as MissionStatus, reportedAt: iso(row.reportedAt) };
 }
 
+function storedRequirements(mission: Pick<NodeMission, "requirements">): Requirement[] {
+  return Array.isArray(mission.requirements) ? (mission.requirements as unknown as Requirement[]) : [];
+}
+
+function storedDeferred(mission: Pick<NodeMission, "deferred">): PlanData["deferred"] {
+  return Array.isArray(mission.deferred) ? (mission.deferred as unknown as PlanData["deferred"]) : [];
+}
+
+/**
+ * The requirement ledger (B6): each requested deliverable's state, derived from the steps that cover it.
+ * Accepted needs every covering step done or passed, and a passing check when it has acceptance criteria.
+ */
+export function ledger(requirements: Requirement[], deferred: PlanData["deferred"], steps: StepState[], ended: boolean): Requirement[] {
+  const deferredIds = new Set(deferred.map((row) => row.requirementId));
+  return requirements.map((requirement) => {
+    if (requirement.status === "cancelled") return requirement;
+    if (deferredIds.has(requirement.id)) return { ...requirement, status: "deferred" };
+    const covering = steps.filter((step) => step.requirementIds.includes(requirement.id));
+    const satisfied = covering.length > 0 && covering.every((step) => step.outcome === "done" || step.outcome === "pass");
+    const checked = !requirement.acceptance?.length || covering.some((step) => step.kind === "verify" && step.outcome === "pass");
+    let status: RequirementStatus;
+    if (satisfied && checked) status = "accepted";
+    else if (ended) status = "failed";
+    else if (covering.some((step) => step.status !== "waiting")) status = "in_progress";
+    else status = "open";
+    return { ...requirement, status };
+  });
+}
+
 function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): PlanData {
   const steps = rows.map(stepState);
   const view = { steps };
@@ -171,9 +204,11 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
     originRoomId: mission.originRoomId,
     originPrivate: mission.originPrivate,
     status: mission.status as PlanStatus,
+    revision: mission.revision,
     goal: mission.goal,
-    requirements: Array.isArray(mission.requirements) ? (mission.requirements as unknown as Requirement[]) : [],
-    deferred: Array.isArray(mission.deferred) ? (mission.deferred as unknown as PlanData["deferred"]) : [],
+    constraints: (mission.constraints && typeof mission.constraints === "object" ? mission.constraints : {}) as Constraints,
+    requirements: ledger(storedRequirements(mission), storedDeferred(mission), steps, missionEnded(mission.status)),
+    deferred: storedDeferred(mission),
     steps: steps.map((step, index) => {
       const row = rows[index]!;
       const holder = heldBy(view, step);
@@ -493,14 +528,17 @@ export async function nudgeStep(app: FastifyInstance, planId: string, stepId: st
 
 /** After the lead's report turn: done, unless that turn added steps (then they start). */
 export async function afterReport(app: FastifyInstance, planId: string): Promise<void> {
-  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft, mission) => {
     if (draft.mission.status !== "reporting") return false;
     if (draft.steps.some((row) => row.status === "waiting" && ready(draft, row))) {
       draft.mission.status = "running";
       draft.missionDirty = true;
       return undefined;
     }
-    conclude(draft, new Date().toISOString());
+    const status = conclude(draft, new Date().toISOString());
+    // A mission with requested deliverables not accepted (and not deferred) is not a success.
+    const open = ledger(storedRequirements(mission), storedDeferred(mission), draft.steps, true).filter((row) => row.status === "failed");
+    if (status === "succeeded" && open.length) draft.mission.status = "partially_completed";
     return undefined;
   });
   await app.prisma.nodeMission.updateMany({ where: { id: planId, reportedAt: null }, data: { reportedAt: new Date() } });
@@ -692,12 +730,23 @@ export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason
     );
   } else {
     lines.push(`Your step in @${data.leadHandle}'s plan (${stepTitle(data, step)}, ${step.kind}):`, step.brief);
+    const covers = data.requirements.filter((row) => step.requirementIds.includes(row.id));
+    if (covers.length) {
+      lines.push(
+        `It covers: ${covers
+          .map((row) => `${row.text}${row.acceptance.length ? ` (acceptance: ${row.acceptance.map((item) => `${item.id}: ${item.text}`).join("; ")})` : ""}`)
+          .join(" · ")}`,
+      );
+      if (step.kind === "verify") lines.push("Report one check per acceptance criterion, with its id, so the plan knows each one passed.");
+    }
     if (step.kind === "verify") {
       const target = data.steps.find((row) => row.id === step.verifies);
       const candidate = target?.attempts.filter((row) => row.outcome === "done").at(-1)?.candidate;
       if (target) lines.push(`You check @${target.handle}'s work independently${candidate?.commit ? ` at commit ${candidate.commit}` : ""}. Do not fix it yourself: report what fails.`);
     }
   }
+  const rules = renderConstraints(data.constraints);
+  if (rules) lines.push(`\nConstraints from your owner (they apply to this step and override anything else):\n${rules}`);
   if (run) lines.push(`Agent runs for this step use ${run}. These settings are already applied when you start or continue a session; do not check them.`);
   if (before.length && reason === "first") lines.push(`\nDone before yours:\n${before.map((row) => resultLine(data, row)).join("\n")}`);
   lines.push("", STEP_RULES);
@@ -722,10 +771,198 @@ export function reportNote(data: PlanData, judgement: string[] = []): string {
     data.kind === "self" ? "Your own work ended. Its report:" : "Your plan has nothing left to run. The steps:",
     ...data.steps.map((row) => resultLine(data, row)),
     ...(failed.length ? ["", "Failed checks:", ...failed.map((row) => `- @${row.handle}:\n${checksLine(row.attempts.at(-1)) || `  ${truncateText(row.result ?? "", 400)}`}`)] : []),
+    ...(data.requirements.length ? ["", "Requirements:", ...data.requirements.map((row) => `- ${row.status}: ${row.text}`)] : []),
     ...(judgement.length ? ["", "Needs your judgement:", ...judgement.map((line) => `- ${line}`)] : []),
     "",
     ok
       ? "Tell your owner, in one message, what was done and checked, and anything that needs them. Do not repeat each report; summarise."
       : `Tell your owner, in one message, what was done, what ${held.length ? "is held and why" : "did not finish and why"}, and what you need from them. To repair, redo or add work, call node_delegate (it continues this plan); to ask your owner, say what you need in your one message.`,
   ].join("\n");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The mission contract (B6): a whole plan at once, and revisions
+
+export type PlanNode = { node: Pick<NodeAgent, "id" | "name">; handle: string };
+
+/** The run settings a step gets: its own, else the agent settings in the mission's constraints. */
+function runFor(step: Pick<StepInput, "run">, constraints: Constraints): StepRun | undefined {
+  const own = step.run && Object.values(step.run).some(Boolean) ? step.run : undefined;
+  if (own) return own;
+  const fromConstraints: StepRun = { agent: constraints.agent, model: constraints.model, effort: constraints.effort, context: constraints.context };
+  return Object.values(fromConstraints).some(Boolean) ? fromConstraints : undefined;
+}
+
+/**
+ * Creates a validated plan (node_plan): its card, its mission with goal, requirements, constraints and
+ * deferrals, and every step, in one transaction. It opens (starts) when the lead's turn ends, like a
+ * plan built with node_delegate. `nodes` maps each step's `to` handle to its node.
+ */
+export async function createPlan(
+  db: PrismaClient,
+  input: { lead: NodeAgent; turnId: string; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; plan: PlanInput; nodes: Map<string, PlanNode> },
+): Promise<{ planId: string; steps: Map<string, string> }> {
+  if (await currentPlan(db, input.lead.id, input.turnId, null)) throw new PlanError("This turn already made a plan; add to it with node_delegate or revise it with node_plan_revise.");
+  const { message } = await postMessage(db, {
+    roomId: input.room.id,
+    userId: input.lead.userId,
+    authorKind: "node",
+    authorNodeId: input.lead.id,
+    kind: "plan",
+    body: "",
+    data: { type: "plan", version: 0, contract: 3, missionId: "", kind: "plan", leadNodeId: input.lead.id, leadHandle: input.lead.slug, leadTurnId: input.turnId, originRoomId: input.originRoomId, originPrivate: input.originPrivate, status: "draft", goal: input.plan.goal, requirements: [], deferred: [], steps: [] },
+    visibleTo: input.visibleTo,
+  });
+  const ids = new Map<string, string>();
+  input.plan.steps.forEach((step, index) => ids.set(step.id, `s${index + 1}-${randomUUID().slice(0, 6)}`));
+  const requirements: Requirement[] = input.plan.requirements.map((row) => ({
+    id: row.id,
+    text: row.text,
+    status: "open",
+    acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false })),
+    ...(row.evidence?.length ? { evidence: row.evidence } : {}),
+  }));
+  await db.$transaction(async (tx) => {
+    await tx.nodeMission.create({
+      data: {
+        id: message.id,
+        userId: input.lead.userId,
+        leadNodeId: input.lead.id,
+        originRoomId: input.originRoomId,
+        originPrivate: input.originPrivate,
+        leadTurnId: input.turnId,
+        kind: "plan",
+        contract: 3,
+        status: "draft",
+        goal: input.plan.goal,
+        constraints: input.plan.constraints as Prisma.InputJsonValue,
+        requirements: requirements as unknown as Prisma.InputJsonValue,
+        deferred: input.plan.deferred as unknown as Prisma.InputJsonValue,
+      },
+    });
+    for (const [index, step] of input.plan.steps.entries()) {
+      const target = input.nodes.get(step.to)!;
+      const run = runFor(step, input.plan.constraints);
+      await tx.nodeStep.create({
+        data: {
+          missionId: message.id,
+          id: ids.get(step.id)!,
+          position: index + 1,
+          nodeId: target.node.id,
+          handle: target.handle,
+          name: target.node.name,
+          kind: step.kind,
+          executor: target.node.id === input.lead.id ? "self" : "node",
+          brief: truncateText(step.brief.trim(), 4000),
+          after: step.after.map((id) => ids.get(id)!).filter(Boolean),
+          verifies: step.verifies ? (ids.get(step.verifies) ?? null) : null,
+          requirementIds: step.requirementIds,
+          ...(run ? { run: run as Prisma.InputJsonValue } : {}),
+        },
+      });
+    }
+  });
+  await mutateMission({ prisma: db }, message.id, () => undefined, { settle: false });
+  return { planId: message.id, steps: ids };
+}
+
+export type Revision = {
+  add?: StepInput[];
+  cancel?: string[];
+  constraints?: Constraints;
+  requirements?: Requirement[];
+  defer?: Array<{ requirementId: string; reason: string }>;
+  /** Resolved nodes for added steps' `to` handles. */
+  nodes?: Map<string, PlanNode>;
+};
+
+/**
+ * Revises a running plan (node_plan_revise): new constraints apply to every step's next note; added
+ * steps join (their `after` names new step ids or existing ones); waiting steps can be cancelled;
+ * requirements can be added or deferred. The revision number goes up; the rules then settle.
+ */
+export async function revisePlan(app: FastifyInstance, planId: string, change: Revision): Promise<{ revision: number; added: string[]; cancelled: string[] }> {
+  const added: string[] = [];
+  const cancelled: string[] = [];
+  let revision = 0;
+  await app.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM node_missions WHERE id = ${planId} FOR UPDATE`;
+    const mission = await tx.nodeMission.findUniqueOrThrow({ where: { id: planId } });
+    if (missionEnded(mission.status)) throw new PlanError("That plan has ended; start a new one.");
+    const rows = await tx.nodeStep.findMany({ where: { missionId: planId }, orderBy: { position: "asc" } });
+    const constraints = change.constraints ?? ((mission.constraints ?? {}) as Constraints);
+    const ids = new Map<string, string>();
+    let position = rows.length;
+    for (const step of change.add ?? []) ids.set(step.id, `s${++position}-${randomUUID().slice(0, 6)}`);
+    const resolve = (ref: string) => ids.get(ref) ?? rows.find((row) => row.id === ref)?.id ?? [...rows].reverse().find((row) => `@${row.handle}` === ref || row.handle === ref.replace(/^@/, ""))?.id;
+    position = rows.length;
+    for (const step of change.add ?? []) {
+      const target = change.nodes?.get(step.to);
+      if (!target) throw new PlanError(`There is no node @${step.to} for step “${step.id}”.`);
+      const after = step.after.map((ref) => {
+        const id = resolve(ref);
+        if (!id) throw new PlanError(`Step “${step.id}” comes after “${ref}”, which is not a step of this plan.`);
+        return id;
+      });
+      const run = runFor(step, constraints);
+      await tx.nodeStep.create({
+        data: {
+          missionId: planId,
+          id: ids.get(step.id)!,
+          position: ++position,
+          nodeId: target.node.id,
+          handle: target.handle,
+          name: target.node.name,
+          kind: step.kind,
+          executor: target.node.id === mission.leadNodeId ? "self" : "node",
+          brief: truncateText(step.brief.trim(), 4000),
+          after,
+          verifies: step.verifies ? (resolve(step.verifies) ?? null) : null,
+          requirementIds: step.requirementIds,
+          ...(run ? { run: run as Prisma.InputJsonValue } : {}),
+        },
+      });
+      added.push(ids.get(step.id)!);
+    }
+    const requirements = [...storedRequirements(mission), ...(change.requirements ?? [])];
+    const deferred = [...storedDeferred(mission), ...(change.defer ?? [])];
+    const updated = await tx.nodeMission.update({
+      where: { id: planId },
+      data: {
+        revision: { increment: 1 },
+        constraints: constraints as Prisma.InputJsonValue,
+        requirements: requirements as unknown as Prisma.InputJsonValue,
+        deferred: deferred as unknown as Prisma.InputJsonValue,
+      },
+    });
+    revision = updated.revision;
+  });
+  await mutateMission({ prisma: app.prisma, app }, planId, (draft) => {
+    const now = new Date().toISOString();
+    for (const id of change.cancel ?? []) {
+      const step = stepById(draft, id);
+      if (!step || step.status !== "waiting") continue;
+      step.status = "skipped";
+      step.result = `Cancelled in revision ${revision}.`;
+      step.endedAt = now;
+      draft.dirty.add(step.id);
+      cancelled.push(step.id);
+    }
+    // A plan that was reporting goes on when the revision added work that can start.
+    if (draft.mission.status === "reporting" && draft.steps.some((row) => row.status === "waiting" && ready(draft, row))) {
+      draft.mission.status = "running";
+      draft.missionDirty = true;
+    }
+    return undefined;
+  });
+  return { revision, added, cancelled };
+}
+
+/** The acceptance ids a verify step must report passing checks for (its requirements' mandatory criteria). */
+export async function mandatoryIds(db: Db, planId: string, stepId: string): Promise<string[]> {
+  const [mission, step] = await Promise.all([db.nodeMission.findUnique({ where: { id: planId } }), db.nodeStep.findUnique({ where: { missionId_id: { missionId: planId, id: stepId } } })]);
+  if (!mission || !step || step.kind !== "verify") return [];
+  return storedRequirements(mission)
+    .filter((row) => step.requirementIds.includes(row.id))
+    .flatMap((row) => (row.acceptance ?? []).filter((item) => item.mandatory !== false).map((item) => item.id));
 }
