@@ -68,6 +68,8 @@ Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent r
 
 Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
 
+Tool input and output use a readable JSON view (`lib/run-trace.ts`, `components/runs/run-preview.tsx`): string fields retain real newlines, content envelopes expose their text, and other fields remain visible. Raw toggles show the exact stored text; Copy copies that raw text. Incomplete content envelopes show recoverable text with an explicit warning; unrecognized malformed JSON stays unchanged. A tool result repeated in the step's output is shown only once, while distinct assistant commentary stays under Said.
+
 ### 3.5 Context
 
 Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
