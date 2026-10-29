@@ -54,6 +54,7 @@ import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 import { boundSpaceId, offerSpace } from "./room-space.js";
+import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -730,6 +731,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const taken = await tx.nodeRoomInvite.updateMany({ where: { id: invite.id, status: "pending" }, data: { status: "accepted", respondedAt: new Date() } });
       if (!taken.count) throw fail(409, "That request was already answered or withdrawn.");
       await addPerson(tx, room.id, accountId);
+      // Nodes here forget the shared thread from before this person (node/audience.ts).
+      await freshSharedThreads(tx, room.id);
       const added: string[] = [];
       for (const id of ids) added.push((await addNode(tx, room.id, nodes.find((node) => node.id === id)!, id === lead.id)).handle);
       return added;

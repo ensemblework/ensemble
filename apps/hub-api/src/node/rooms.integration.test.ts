@@ -749,6 +749,49 @@ test("security: the target owner's card shows the whole request their lead's pla
   assert.ok(card.body.includes(text) && card.body.includes("THE END"));
 });
 
+test("security: a room-bound turn reads nothing from before the room's newest person joined", async () => {
+  const akash = await person("Akash");
+  const carol = await person("Carol");
+  const ben = await person("Ben");
+  const { node: lead } = await createNode(akash, "manager");
+  const { node: carolsLead } = await createNode(carol, "assistant");
+  const { node: bensLead } = await createNode(ben, "assistant");
+  const room = await roomWith(akash, [lead.id], [{ user: carol, nodeIds: [carolsLead.id] }]);
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (turn.transcript.includes("what did they say about pricing")) return { calls: [{ name: "node_room_history", arguments: { query: "pricing" } }, { name: "node_room_history", arguments: {} }], then: "Nothing I can share from before you joined." };
+    if (turn.transcript.includes("pricing")) return { text: "Noted: pricing stays at 40 a seat (CANARY-PRICE-40)." };
+    return { text: "(no reply)" };
+  };
+  await say(akash, room.id, "Pricing: 40 a seat, CANARY-PRICE-40. Keep it in this room.");
+  await say(carol, room.id, "@manager confirm the pricing?");
+  const before = (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: lead.id } })).conversationId;
+  assert.ok(before, "the lead's shared thread had a conversation");
+  // Carol mentions the lead again; Ben joins before that turn would run.
+  await post(carol, room.id, "@manager and the pricing for teams?");
+  const invite = await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: ben.email } });
+  assert.equal(invite.statusCode, 201, invite.body);
+  const bensInvite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${bensInvite.id}/accept`, payload: { nodeIds: [bensLead.id] } })).statusCode, 201);
+  await settleTurns();
+  assert.equal((await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: lead.id } })).conversationId, null, "its shared thread starts afresh");
+  inputs.length = 0;
+  await say(ben, room.id, "@manager what did they say about pricing before I joined?");
+  assert.ok(inputs.length > 0);
+  for (const text of inputs) assert.ok(!text.includes("CANARY-PRICE-40") && !text.includes("pricing for teams"), "nothing from before Ben joined reaches the model");
+  assert.ok(inputs.some((text) => text.includes("1 message(s).")), "its history starts at Ben's join: only his own question mentions pricing");
+});
+
+test("security: a routine never reports into a room for other people, even while its owner is alone there", async () => {
+  const akash = await person("Akash");
+  const { node: lead } = await createNode(akash, "manager");
+  const made = await akash.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch", nodeIds: [lead.id], leadNodeId: lead.id, invite: [] } });
+  assert.equal(made.statusCode, 201, made.body);
+  const refused = await akash.inject({ method: "POST", url: "/api/node/routines", payload: { title: "Daily digest", nodeId: lead.id, instruction: "Summarise my day.", cron: "0 9 * * *", roomId: json(made).room.id } });
+  assert.equal(refused.statusCode, 400, refused.body);
+  assert.match(json(refused).error, /reports where only you read/);
+});
+
 // ── C4 the room's shared space and proposed tasks ─────────────────────────────────────────────
 
 /** Akash makes and links a space for the room (named `name`); its id. */

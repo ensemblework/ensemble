@@ -18,7 +18,7 @@
  * `settleRoomCard` and tells `roomDraftPosted` when a draft linked to one was posted.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, Prisma } from "@prisma/client";
+import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { parseModules, serializeModules, type AssistantRef } from "@ensemble/shared-types";
 import { runAssistantTurn, type AssistantTurnArgs, type AssistantTurnResult } from "../assistant/agent.js";
@@ -102,15 +102,33 @@ export type RoomBound = {
   /** Added to the reply (or its draft): the peer request it answers. */
   replyData: Record<string, unknown>;
   afterReply(posted: { message: NodeMessage; drafted: boolean } | null): Promise<void>;
+  /** The new messages this turn may read: none from before the room's newest person joined. */
+  rows: NodeMessage[];
 };
 
 const nameOf = (row: { name: string | null; email: string } | null | undefined): string => row?.name?.trim() || row?.email.split("@")[0] || "Someone";
+
+/**
+ * What everyone in the room may read starts when its newest person joined: nobody reads what was said
+ * before they were there (as `joinedFilter` in routes.ts), so a room-bound turn reads nothing older either.
+ */
+export async function sharedSince(db: Pick<PrismaClient, "nodeRoomMember">, roomId: string): Promise<Date> {
+  const newest = await db.nodeRoomMember.findFirst({ where: { roomId, nodeId: null }, orderBy: { joinedAt: "desc" }, select: { joinedAt: true } });
+  return newest?.joinedAt ?? new Date();
+}
+
+/** Someone joined: every node's shared thread here starts afresh, so no room-bound turn remembers what was said before them. */
+export async function freshSharedThreads(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
+  await tx.nodeRoomMember.updateMany({ where: { roomId, nodeId: { not: null } }, data: { conversationId: null } });
+}
+
 const held = (): RoomBound => ({
   held: true,
   persona: async () => ({ text: "", rooms: [] }),
   run: () => Promise.reject(new Error("This turn is held.")),
   replyData: {},
   afterReply: async () => undefined,
+  rows: [],
 });
 
 type BoundCtx = {
@@ -156,6 +174,11 @@ export async function roomBoundTurn(
     return held();
   }
   const owner = node.userId;
+  // Nothing from before the newest person joined: not the messages, not the one that woke it.
+  const since = await sharedSince(prisma, room.id);
+  const rows = input.rows.filter((row) => row.createdAt >= since);
+  if (trigger && trigger.authorKind !== "system" && trigger.createdAt < since) return held();
+  if (!rows.length && !turn.note) return held();
   const ownerRow = members.find((row) => !row.nodeId && row.userId === owner);
   const prefs = prefsOf(ownerRow);
   const cardRequest = trigger?.kind === "request" ? (trigger.data as { requestId?: unknown } | null)?.requestId : null;
@@ -164,7 +187,7 @@ export async function roomBoundTurn(
   // A request settled meanwhile (cancelled when its asker left, or already answered) needs no answer.
   if (request && turn.reason === "request" && !["open", "awaiting_owner"].includes(request.status)) return held();
   // Messages that came together are answered together: when the owner asked this node too, it is the owner's turn.
-  const ownerAsked = input.rows.some((row) => row.authorKind === "human" && row.userId === owner && Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id));
+  const ownerAsked = rows.some((row) => row.authorKind === "human" && row.userId === owner && Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id));
   const askerId = ownerAsked ? owner : (request?.fromAccountId ?? (trigger && trigger.authorKind !== "system" ? trigger.userId : owner));
   const people = await roomPeople(prisma, room.id);
   const users = await prisma.user.findMany({ where: { id: { in: [askerId, owner] } }, select: { id: true, name: true, email: true } });
@@ -233,6 +256,7 @@ export async function roomBoundTurn(
     async afterReply(posted) {
       if (request && posted) await requestReplied(app, request.id, posted.message, posted.drafted);
     },
+    rows,
   };
 }
 
@@ -307,7 +331,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
-      const since = (await personIn(prisma, room.id, owner))?.joinedAt ?? new Date();
+      const since = await sharedSince(prisma, room.id);
       const words = (input.query ?? "").split(/\s+/).filter(Boolean).slice(0, 6);
       const rows = await prisma.nodeMessage.findMany({
         where: {
