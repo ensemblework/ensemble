@@ -58,6 +58,65 @@ export function asText(value: unknown): string {
   }
 }
 
+function readableValue(value: unknown): string {
+  return typeof value === "string" ? value : value === null ? "null" : asText(value);
+}
+
+function readableObject(value: Record<string, unknown>, output: boolean): string {
+  const { content, detailedContent, ...rest } = value;
+  if (output && (typeof content === "string" || Array.isArray(content))) {
+    const body = typeof content === "string" ? content : content.map((block: unknown) => {
+      if (block && typeof block === "object" &&
+        "type" in block && block.type === "text" &&
+        "text" in block && typeof block.text === "string" &&
+        Object.keys(block).every(key => key === "type" || key === "text")) {
+        return block.text;
+      }
+      return readableValue(block);
+    }).join("\n\n");
+    const details = detailedContent === undefined || detailedContent === body ? "" : `detailedContent:\n${readableValue(detailedContent)}`;
+    return [body, details, readableObject(rest, false)].filter(Boolean).join("\n\n");
+  }
+  return Object.entries(value).map(([key, field]) => `${key}:\n${readableValue(field)}`).join("\n\n");
+}
+
+/** Presentation only: keep the original string for raw view and copying. */
+export function readableTraceValue(text: string, output = false): { text: string; incomplete: boolean } {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    // Paired computers bound stored output, sometimes in the middle of a JSON string.
+    const start = output ? /^\s*\{\s*"content"\s*:\s*(?=")/.exec(text) : null;
+    if (start) {
+      const source = text.slice(start[0].length);
+      const token = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*/.exec(source)?.[0];
+      if (token) {
+        const tail = source.slice(token.length);
+        if (tail.startsWith('"') || /^(?:\\|\\u[0-9a-fA-F]{0,3})?$/.test(tail)) {
+          const recovered: string = JSON.parse(`${token}"`);
+          return { text: recovered, incomplete: true };
+        }
+      }
+    }
+    return { text, incomplete: false };
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const formatted = readableObject(value as Record<string, unknown>, output);
+    return { text: formatted || asText(value), incomplete: false };
+  }
+  return { text: readableValue(value), incomplete: false };
+}
+
+function sameTraceText(left: string, right: string): boolean {
+  if (left.trim() === right.trim()) return true;
+  try {
+    return JSON.stringify(JSON.parse(left)) === JSON.stringify(JSON.parse(right));
+  } catch {
+    return false;
+  }
+}
+
 function callsOf(step: RunStep): TraceCall[] {
   const rows = Array.isArray(step.toolCalls) ? (step.toolCalls as RunToolCall[]) : [];
   const running = step.status === "running";
@@ -99,6 +158,7 @@ export function traceEntries(steps: RunStep[], runStartedAt: string, runEndedAt:
       const ms = callMs ?? (startedAt != null && endedAt != null ? Math.max(0, endedAt - startedAt) : null);
       const offset = startedAt != null ? Math.min(1, Math.max(0, (startedAt - start) / span)) : null;
       const width = offset != null && ms != null ? Math.min(1 - offset, Math.max(0, ms / span)) : null;
+      const text = (step.output ?? "").trim();
       return {
         id: step.id,
         index: step.index,
@@ -106,7 +166,7 @@ export function traceEntries(steps: RunStep[], runStartedAt: string, runEndedAt:
         title: step.title,
         status: step.status,
         reasoning: step.reasoning?.trim() ?? "",
-        text: (step.output ?? "").trim(),
+        text: calls.some(call => call.output && sameTraceText(text, call.output)) ? "" : text,
         error: (step.error ?? "").trim(),
         model: step.model,
         tokensIn: step.tokensIn ?? null,

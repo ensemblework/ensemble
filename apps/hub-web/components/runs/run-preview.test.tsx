@@ -121,3 +121,54 @@ test("a run opens on Results with three tabs: facts, timeline with tool timings,
   host.remove();
   client.clear();
 });
+
+test("tool JSON renders readable newlines, raw/copy preserve the record, and Said shows only distinct commentary", async () => {
+  const content = 'first line\n+const answer = "hello";\nlast line';
+  const output = JSON.stringify({ content, detailedContent: content });
+  const partial = '{"content":"first\\nsecond\\ntruncated';
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  client.setQueryData(["run", run.id], { run: {
+    ...run,
+    steps: [
+      { ...run.steps[1]!, output, toolCalls: [{ name: "bash", args: '{"command":"echo hello","initial_wait":120}', output, ok: true }] },
+      { ...run.steps[1]!, id: "partial", index: 2, output: partial, toolCalls: [{ name: "bash", output: partial, ok: false }] },
+      { ...run.steps[1]!, id: "comment", index: 3, output: "I will fix this.", toolCalls: [{ name: "read", output: "No file", ok: false }] },
+    ],
+  }, job });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  let copied = "";
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied = text; } } });
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><RunPreview runId={run.id} onClose={() => {}} /></QueryClientProvider>));
+    const sheet = document.querySelector('[role="dialog"]') as HTMLElement;
+    await act(async () => (sheet.querySelectorAll('[role="tab"]')[2] as HTMLButtonElement).click());
+    await act(async () => ([...sheet.querySelectorAll("button")].find(button => button.textContent === "Expand all")!).click());
+    const blocks = [...sheet.querySelectorAll("pre")];
+    assert.equal(blocks[0]!.textContent, "command:\necho hello\n\ninitial_wait:\n120");
+    assert.equal(blocks[1]!.textContent, content);
+    assert.equal(blocks[2]!.textContent, "first\nsecond\ntruncated");
+    assert.match(sheet.textContent ?? "", /Stored JSON is incomplete/);
+    assert.equal((sheet.textContent?.match(/Said/g) ?? []).length, 1);
+    assert.match(sheet.textContent ?? "", /I will fix this\./);
+    const raw = sheet.querySelector('[aria-label="Show raw output"]') as HTMLButtonElement;
+    await act(async () => raw.click());
+    assert.equal(raw.getAttribute("aria-pressed"), "true");
+    assert.equal(blocks[1]!.textContent, output);
+    await act(async () => (sheet.querySelector('[aria-label="Copy raw output"]') as HTMLButtonElement).click());
+    assert.equal(copied, output);
+    await act(async () => raw.click());
+    assert.equal(blocks[1]!.textContent, content);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("denied"); } } });
+    await act(async () => (sheet.querySelector('[aria-label="Copy raw output"]') as HTMLButtonElement).click());
+    assert.match(sheet.querySelector('[role="alert"]')?.textContent ?? "", /Could not copy/);
+  } finally {
+    if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+    await act(async () => root.unmount());
+    host.remove();
+    client.clear();
+  }
+});

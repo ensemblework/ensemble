@@ -44,7 +44,7 @@ import { friendlyDateTime, plural } from "@/lib/format";
 import { useFullscreen } from "@/lib/fullscreen";
 import { useResizablePeek } from "../shell/peek";
 import { useModalFocus } from "@/lib/modal-focus";
-import { duration, modelsSeen, sameModel, toolStats, traceEntries, usd, type TraceCall, type TraceEntry, type TraceKind } from "@/lib/run-trace";
+import { duration, modelsSeen, readableTraceValue, sameModel, toolStats, traceEntries, usd, type TraceCall, type TraceEntry, type TraceKind } from "@/lib/run-trace";
 
 export const RUN_OUTCOME: Record<string, { label: string; tone: "green" | "red" | "yellow" | "gray" | "orange" | "blue" }> = {
   success: { label: "Done", tone: "green" },
@@ -443,7 +443,7 @@ function CallDetail({ call, many }: { call: TraceCall; many: boolean }) {
         </div>
       ) : null}
       {call.args ? <CodeView label="Input" text={call.args} /> : null}
-      {call.output ? <CodeView label={call.ok === false ? "Error" : "Output"} text={call.output} danger={call.ok === false} /> : call.running ? <div className="text-[12px] text-muted">Waiting for the result…</div> : null}
+      {call.output ? <CodeView label={call.ok === false ? "Error" : "Output"} text={call.output} output danger={call.ok === false} /> : call.running ? <div className="text-[12px] text-muted">Waiting for the result…</div> : null}
     </div>
   );
 }
@@ -460,26 +460,41 @@ function Section({ label, icon, children }: { label: string; icon: ReactNode; ch
   );
 }
 
-function CodeView({ label, text, danger }: { label: string; text: string; danger?: boolean }) {
+function CodeView({ label, text, output = false, danger }: { label: string; text: string; output?: boolean; danger?: boolean }) {
   const [copied, setCopied] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const readable = useMemo(() => readableTraceValue(text, output), [text, output]);
+  const formatted = readable.text !== text;
   return (
     <div className={cx("overflow-hidden rounded-md border", danger ? "border-danger/35" : "border-line")}>
-      <div className="flex items-center justify-between bg-raised px-2 py-0.5 text-[11px] text-faint">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-raised px-2 py-0.5 text-[11px] text-faint">
         <span className={cx("uppercase tracking-wide", danger && "text-danger")}>{label}</span>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded px-1 hover:text-ink"
-          onClick={() =>
-            void navigator.clipboard?.writeText(text).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1500);
-            })
-          }
-        >
-          <Copy size={11} /> {copied ? "Copied" : "Copy"}
-        </button>
+        <div className="flex items-center gap-2">
+          {formatted ? <button type="button" className="rounded px-1 hover:text-ink" aria-label={`Show raw ${label.toLowerCase()}`} aria-pressed={raw} onClick={() => setRaw(!raw)}>{raw ? "Readable" : "Raw"}</button> : null}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded px-1 hover:text-ink"
+            aria-label={`Copy raw ${label.toLowerCase()}`}
+            onClick={async () => {
+              setCopyError("");
+              try {
+                if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+                await navigator.clipboard.writeText(text);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              } catch {
+                setCopyError("Could not copy. Select and copy the raw text instead.");
+              }
+            }}
+          >
+            <Copy size={11} /> {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       </div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-bg p-2 font-mono text-[11.5px] leading-[1.5]"><LinkifiedText text={text} /></pre>
+      {readable.incomplete && !raw ? <p className="bg-bg px-2 pt-2 text-[12px] text-muted">Stored JSON is incomplete. Showing recovered content; use Raw for the full stored text.</p> : null}
+      {copyError ? <p role="alert" className="bg-bg px-2 pt-2 text-[12px] text-danger">{copyError}</p> : null}
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-bg p-2 font-mono text-[11.5px] leading-[1.5]"><LinkifiedText text={raw ? text : readable.text} /></pre>
     </div>
   );
 }

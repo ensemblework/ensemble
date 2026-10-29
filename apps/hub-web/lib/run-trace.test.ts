@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RunStep } from "./api";
-import { duration, modelsSeen, sameModel, toolStats, traceEntries, usd } from "./run-trace";
+import { duration, modelsSeen, readableTraceValue, sameModel, toolStats, traceEntries, usd } from "./run-trace";
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 9, 14, 10, 0, seconds)).toISOString();
 
@@ -59,4 +59,60 @@ test("durations and costs read plainly", () => {
   assert.equal(duration(null), "");
   assert.equal(usd(0.004), "<$0.01");
   assert.equal(usd(1.234), "$1.23");
+});
+
+test("JSON trace values show decoded strings and keep structured fields and primitives", () => {
+  const command = 'printf "hello\\nworld"\nnext command';
+  assert.equal(readableTraceValue(JSON.stringify({ command, initial_wait: 120 })).text, `command:\n${command}\n\ninitial_wait:\n120`);
+  assert.equal(readableTraceValue('{"nested":{"enabled":true},"empty":null}').text, 'nested:\n{\n  "enabled": true\n}\n\nempty:\nnull');
+  for (const text of ["null", "false", "0", "{}", "[]", "[1,2]"]) {
+    assert.equal(readableTraceValue(text).text, JSON.stringify(JSON.parse(text), null, 2));
+  }
+  assert.equal(readableTraceValue('"one\\ntwo"').text, "one\ntwo");
+});
+
+test("tool envelopes show readable content without losing metadata, details or non-text blocks", () => {
+  const content = 'diff --git a/file b/file\n+const x = "hello";\n';
+  assert.equal(readableTraceValue(JSON.stringify({ content, detailedContent: content }), true).text, content);
+  assert.equal(readableTraceValue('{"content":[null,0,false]}', true).text, "null\n\n0\n\nfalse");
+  const formatted = readableTraceValue(JSON.stringify({
+    content: [{ type: "text", text: "first\nsecond" }, { type: "image", data: "image-data" }],
+    detailedContent: "more detail",
+    isError: true,
+    exitCode: 1,
+  }), true).text;
+  assert.match(formatted, /first\nsecond/);
+  assert.match(formatted, /"type": "image"/);
+  assert.match(formatted, /image-data/);
+  assert.match(formatted, /detailedContent:\nmore detail/);
+  assert.match(formatted, /isError:\ntrue/);
+  assert.match(formatted, /exitCode:\n1/);
+});
+
+test("bounded tool envelopes recover only valid content string prefixes and identify incomplete JSON", () => {
+  const content = 'first\n"quoted"\tC:\\files\\file';
+  const text = JSON.stringify({ content, detailedContent: "long details" });
+  assert.deepEqual(readableTraceValue(text.slice(0, -5), true), { text: content, incomplete: true });
+  const prefix = JSON.stringify({ content }).slice(0, -2);
+  assert.deepEqual(readableTraceValue(prefix, true), { text: content, incomplete: true });
+  for (const ending of ["\\", "\\u", "\\u0", "\\u00", "\\u004"]) {
+    assert.deepEqual(readableTraceValue(prefix + ending, true), { text: content, incomplete: true });
+  }
+  for (const raw of ["plain\noutput", '{"other":"unfinished', '{"content":"bad\\x', '{"content":"bad\nnewline', '{"command":']) {
+    assert.deepEqual(readableTraceValue(raw, true), { text: raw, incomplete: false });
+  }
+  assert.deepEqual(readableTraceValue(prefix), { text: prefix, incomplete: false }, "input is not guessed from partial JSON");
+});
+
+test("tool output is not repeated as Said, but distinct assistant commentary stays", () => {
+  const output = JSON.stringify({ content: "one\ntwo" });
+  const entries = traceEntries([
+    step(0, { output, toolCalls: [{ name: "bash", output }] }),
+    step(1, { output: JSON.stringify(JSON.parse(output), null, 2), toolCalls: [{ name: "bash", output }] }),
+    step(2, { output: "I will fix the error.", toolCalls: [{ name: "bash", output }] }),
+    step(3, { title: "Message", output }),
+    step(4, { output: "different", toolCalls: [{ name: "bash", output }] }),
+  ], at(0), at(1));
+  assert.deepEqual(entries.map(entry => entry.text), ["", "", "I will fix the error.", output, "different"]);
+  assert.equal(entries[0]!.calls[0]!.output, output, "the recorded tool output stays untouched");
 });

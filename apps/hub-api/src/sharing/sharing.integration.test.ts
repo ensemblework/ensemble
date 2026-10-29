@@ -366,7 +366,21 @@ test("runs: a member runs on their own computer; only they stop it or answer it"
 
   const notMine = await miraMac.inject({ method: "POST", url: "/api/devices/self/claim" });
   assert.equal(notMine.statusCode, 204, "Mira's computer does not pick up Ben's run");
-  const claimed = await ok<{ id: string; leaseToken: string }>(benPc.inject({ method: "POST", url: "/api/devices/self/claim" }));
+  const { sseHub, delivers } = await import("../lib/sse.js");
+  const taskFrames: string[] = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (frame.event === "task" && (frame.data as { id?: string }).id === task.task.id) {
+      assert.equal(delivers({ accountId: ben.id, owner: false, share: { kind: "task", resourceId: task.task.id } }, frame, undefined), true);
+      taskFrames.push(userId);
+    }
+  });
+  let claimed: { id: string; leaseToken: string };
+  try {
+    claimed = await ok<{ id: string; leaseToken: string }>(benPc.inject({ method: "POST", url: "/api/devices/self/claim" }));
+    assert.deepEqual(taskFrames, [mira.id], "the shared board refreshes on its space channel, not the runner's account");
+  } finally {
+    stop();
+  }
   assert.equal(claimed.id, job.id);
 
   const asked = await ok<{ decisionId: string }>(
