@@ -108,7 +108,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   // Handed straight from its packet and ended without its result: the same session is asked once before its node judges (B8).
   if (step && !report && status === "succeeded" && typeof shown.told === "string" && !shown.reportAsked) {
     const row = await stepRow(prisma, step.planId, step.planStep);
-    if (row?.status === "working" && !(await stepPending(prisma, step.planId, step.planStep)) && (await askForReport(app, run))) return;
+    if (row?.status === "working" && !(await stepPending(prisma, step.planId, step.planStep)) && (await askForReport(app, run, card?.body ?? null))) return;
   }
   // A step its node has not seen yet (it went straight to the agent): the node is told what the step is.
   const plan = step && typeof shown.told === "string" ? await loadPlan(prisma, step.planId) : null;

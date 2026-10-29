@@ -128,7 +128,9 @@ export function zonedInstant(local: LocalTime, zone: string): Date {
   // time; otherwise the time does not exist (the clock skipped it) and the first instant is just after.
   const other = guess - second;
   const back = localTime(new Date(other), zone);
-  return new Date(back.hour === local.hour && back.minute === local.minute && back.day === local.day ? other : instant);
+  if (back.hour === local.hour && back.minute === local.minute && back.day === local.day) return new Date(other);
+  // Neither gives this wall time: the clock skipped it, so the run moves to just after the gap, east or west of UTC.
+  return new Date(Math.max(instant, other));
 }
 
 function dayMatches(cron: Cron, day: number, month: number, weekday: number): boolean {

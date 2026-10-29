@@ -215,6 +215,18 @@ test("a burst of changes is one run with every change; changes while it runs do 
   for (let index = 0; index < 5; index += 1) assert.match(work.transcript, new RegExp(`task task-${index} create`));
   assert.doesNotMatch(work.transcript, /task-9/);
   assert.equal(await h.prisma.nodeRoutineRun.count({ where: { routineId: made.routine.id } }), 1);
+
+  // Its run has ended; a change that lands in the window it started from opens a follow-up occurrence, never dropped.
+  await tickRoutines(h.app, new Date(runs[0]!.dueAt.getTime() - 60_000));
+  // The started occurrence holds this very window, as when a change arrives just after it started.
+  const window = `event:${new Date(Math.floor(Date.now() / 10_000) * 10_000).toISOString()}`;
+  await h.prisma.nodeRoutineRun.update({ where: { id: runs[0]!.id }, data: { occurrenceKey: window } });
+  sseHub.publish(mira.id, { event: "task", data: { id: "task-late", action: "create" } });
+  await settleTurns();
+  const later = await h.prisma.nodeRoutineRun.findMany({ where: { routineId: made.routine.id }, orderBy: { createdAt: "asc" } });
+  assert.equal(later.length, 2);
+  assert.equal(later[1]!.occurrenceKey, `${later[0]!.occurrenceKey}+`);
+  assert.deepEqual((later[1]!.payload as { items: Array<{ id: string }> }).items.map((row) => row.id), ["task-late"]);
 });
 
 test("a webhook needs its token, a redelivery starts nothing, and the call's body reaches the node as information", async () => {
@@ -237,8 +249,13 @@ test("a webhook needs its token, a redelivery starts nothing, and the call's bod
   await tick(new Date(run.dueAt.getTime() + 1000));
   const work = seen.find((turn) => turn.transcript.includes("Tell me what failed in the deploy."))!;
   assert.match(work.transcript, /a webhook call \(d-1\): \{"status":"failed","step":"migrate"\}/);
-  // The same delivery later starts nothing either.
+  // The same delivery later starts nothing either, even when another delivery opened the window it lands in.
   assert.equal(json(await call({ authorization: `Bearer ${made.token}`, "x-github-delivery": "d-1" })).accepted, false);
+  await h.prisma.nodeRoutineRun.update({ where: { id: run.id }, data: { occurrenceKey: "hook:an-earlier-window" } });
+  assert.equal(json(await call({ authorization: `Bearer ${made.token}`, "x-github-delivery": "d-9" })).accepted, true);
+  assert.equal(json(await call({ authorization: `Bearer ${made.token}`, "x-github-delivery": "d-1" })).accepted, false);
+  const open = await h.prisma.nodeRoutineRun.findFirstOrThrow({ where: { routineId: made.routine.id, status: "pending" } });
+  assert.deepEqual((open.payload as { deliveries: string[] }).deliveries, ["d-9"]);
 
   // A new token replaces the old one.
   const rotated = json(await mira.inject({ method: "POST", url: `/api/node/routines/${made.routine.id}/token` })).token as string;

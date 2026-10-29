@@ -35,6 +35,13 @@ test("clock changes: a skipped time moves forward, and runs keep their wall-cloc
   // New York springs forward on 2027-03-14 at 02:00: 02:30 does not exist that day.
   const skipped = zonedInstant({ year: 2027, month: 3, day: 14, hour: 2, minute: 30 }, "America/New_York");
   assert.equal(localTime(skipped, "America/New_York").hour, 3);
+  // East of UTC too: Berlin skips 02:00–03:00 on 2026-03-29, so 02:30 runs at 03:30 CEST, and 01:00 and 02:00 both run.
+  const berlin = zonedInstant({ year: 2026, month: 3, day: 29, hour: 2, minute: 30 }, "Europe/Berlin");
+  assert.equal(berlin.toISOString(), "2026-03-29T01:30:00.000Z");
+  const twice = parseCron("0 1,2 * * *");
+  const first = nextRun(twice, "Europe/Berlin", new Date("2026-03-28T23:30:00Z"))!;
+  const second = nextRun(twice, "Europe/Berlin", first)!;
+  assert.deepEqual([first.toISOString(), second.toISOString()], ["2026-03-29T00:00:00.000Z", "2026-03-29T01:00:00.000Z"]);
   // 09:00 every day is 14:00 UTC before the change and 13:00 UTC after it.
   const daily = parseCron("0 9 * * *");
   assert.equal(nextRun(daily, "America/New_York", new Date("2027-03-13T15:00:00Z"))?.toISOString(), "2027-03-14T13:00:00.000Z");

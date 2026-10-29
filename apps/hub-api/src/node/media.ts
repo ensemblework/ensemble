@@ -58,7 +58,7 @@ export async function ownerMedia(prisma: PrismaClient, ownerId: string, ids: rea
  * its report, then the screenshots and videos its runs attached; videos and screenshots first.
  */
 export async function missionMedia(prisma: PrismaClient, missionId: string, ownerId: string, limit = 6): Promise<Media[]> {
-  const steps = await prisma.nodeStep.findMany({ where: { missionId, outcome: { in: ["done", "pass"] } }, select: { id: true, report: true } });
+  const steps = await prisma.nodeStep.findMany({ where: { missionId, outcome: { in: ["done", "pass"] } }, select: { id: true, report: true, startedAt: true } });
   if (!steps.length) return [];
   const named = new Map<string, string | null>();
   for (const step of steps) {
@@ -66,7 +66,11 @@ export async function missionMedia(prisma: PrismaClient, missionId: string, owne
     for (const ref of report.evidence ?? []) if (typeof ref.ref === "string" && UUID.test(ref.ref)) named.set(ref.ref, typeof ref.caption === "string" ? ref.caption : null);
     for (const check of report.checks ?? []) for (const id of Array.isArray(check.evidence) ? check.evidence : []) if (typeof id === "string" && UUID.test(id) && !named.has(id)) named.set(id, null);
   }
-  const runs = await prisma.nodeRun.findMany({ where: { planId: missionId, planStep: { in: steps.map((row) => row.id) } }, select: { jobId: true } });
+  // Only the attempt that passed: an earlier attempt's captures show what failed.
+  const runs = await prisma.nodeRun.findMany({
+    where: { planId: missionId, OR: steps.map((row) => ({ planStep: row.id, ...(row.startedAt ? { createdAt: { gte: row.startedAt } } : {}) })) },
+    select: { jobId: true },
+  });
   const rows = await prisma.jobEvidence.findMany({
     where: { userId: ownerId, local: false, OR: [{ id: { in: [...named.keys()] } }, { jobId: { in: runs.map((row) => row.jobId) }, kind: { in: [...SHOWN_KINDS] } }] },
     orderBy: { createdAt: "asc" },
@@ -80,12 +84,23 @@ export async function missionMedia(prisma: PrismaClient, missionId: string, owne
     .map((row) => toMedia(row, named.get(row.id)));
 }
 
-/** Whether `accountId` may open an evidence file: its owner, or someone who may read a message showing it. */
-export async function mediaReadable(prisma: PrismaClient, accountId: string, evidenceId: string): Promise<boolean> {
+/**
+ * Whether `accountId` may open an evidence file: its owner, or someone who may read a message that
+ * shows it. The website names that message (`messageId`), so one row is checked; without it, only the
+ * newest messages of the rooms this person is in.
+ */
+export async function mediaReadable(prisma: PrismaClient, accountId: string, evidenceId: string, messageId?: string | null): Promise<boolean> {
   const row = await prisma.jobEvidence.findUnique({ where: { id: evidenceId }, select: { userId: true } });
   if (!row) return false;
   if (row.userId === accountId) return true;
-  const messages: NodeMessage[] = await prisma.nodeMessage.findMany({ where: { kind: "text", userId: row.userId, data: { path: ["media"], array_contains: [{ evidenceId }] } }, take: 20 });
+  const shows = { kind: "text", userId: row.userId, data: { path: ["media"], array_contains: [{ evidenceId }] } };
+  let messages: NodeMessage[];
+  if (messageId && UUID.test(messageId)) {
+    messages = await prisma.nodeMessage.findMany({ where: { id: messageId, ...shows }, take: 1 });
+  } else {
+    const rooms = await prisma.nodeRoomMember.findMany({ where: { userId: accountId, nodeId: null }, select: { roomId: true }, take: 500 });
+    messages = rooms.length ? await prisma.nodeMessage.findMany({ where: { roomId: { in: rooms.map((room) => room.roomId) }, ...shows }, orderBy: { createdAt: "desc" }, take: 50 }) : [];
+  }
   for (const message of messages) {
     if (!canSee(message, accountId)) continue;
     // A person of the room, and in a room with other people, one who had joined when it was posted.

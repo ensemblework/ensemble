@@ -27,6 +27,11 @@ export type Dispatch = { done: true; summary: string } | { done: false; why: str
 export const REPORT_ASK =
   "You finished without reporting your result. Call the Ensemble tool report_result now (or write .ensemble/result.json): outcome, a short summary, subject (repo, branch, commit), and each check with its verdict. Do not redo the work.";
 
+/** The ask, naming the work it is about. */
+export function reportAsk(title: string | null): string {
+  return title ? `${REPORT_ASK.replace("You finished without", `You finished “${title}” without`)}` : REPORT_ASK;
+}
+
 /** The mission's folder as one of the owner's computers shares it (folders are shared by name, never by path). */
 async function sharedFolder(prisma: PrismaClient, ownerId: string, folder: string, computer: string | undefined): Promise<{ folder: string; computer?: string } | null> {
   const devices = await prisma.device.findMany({ where: { userId: ownerId, revokedAt: null }, select: { id: true, name: true, capabilities: true }, orderBy: { lastSeenAt: "desc" } });
@@ -46,6 +51,24 @@ function cloneable(repo: string): boolean {
   return /^https?:\/\//.test(repo) || /^[\w.-]+\/[\w.-]+$/.test(repo);
 }
 
+type Place = { folder?: string; computer?: string; repoUrl?: string };
+
+/** Where a new session for the mission works: the folder a computer shares, else its one clonable repository. */
+async function placeFor(prisma: PrismaClient, ownerId: string, constraints: PlanData["constraints"]): Promise<{ place: Place } | { why: string }> {
+  if (constraints.folder) {
+    const shared = await sharedFolder(prisma, ownerId, constraints.folder, constraints.computer);
+    return shared ? { place: shared } : { why: `No paired computer shares a folder matching “${constraints.folder}”${constraints.computer ? ` on ${constraints.computer}` : ""}.` };
+  }
+  const repos = (constraints.repos ?? []).filter(cloneable);
+  if (repos.length !== 1) return { why: "The plan names its repositories without one clonable address (a URL or owner/repo) and no folder, so where to work is yours to choose." };
+  return { place: { repoUrl: repos[0]!, ...(constraints.computer ? { computer: constraints.computer } : {}) } };
+}
+
+/** Runs of a session that have not ended: another step's work may be queued or running there. */
+async function liveInSession(prisma: PrismaClient, sessionId: string): Promise<number> {
+  return prisma.nodeRun.count({ where: { sessionId, reportedAt: null } });
+}
+
 /** The session this step's work continues, if any: its own (repair, retest), or its node's latest build or writing in this plan. */
 async function sessionFor(prisma: PrismaClient, data: PlanData, step: PlanStep, reason: AttemptReason): Promise<string | null> {
   const latest = (stepIds: string[]) =>
@@ -53,7 +76,9 @@ async function sessionFor(prisma: PrismaClient, data: PlanData, step: PlanStep, 
   if (reason === "repair" || reason === "retest") return (await latest([step.id]))?.sessionId ?? null;
   if (step.kind === "verify") return null;
   const mine = data.steps.filter((row) => row.id !== step.id && row.nodeId === step.nodeId && (row.kind === "build" || row.kind === "write")).map((row) => row.id);
-  return mine.length ? ((await latest(mine))?.sessionId ?? null) : null;
+  const session = mine.length ? ((await latest(mine))?.sessionId ?? null) : null;
+  // Another step's work still goes on there: a session of its own, so each result is its own step's.
+  return session && !(await liveInSession(prisma, session)) ? session : null;
 }
 
 /** This attempt was already handed over (a redelivered outbox row): a run or a held card made since it started. */
@@ -90,7 +115,7 @@ async function envFor(app: FastifyInstance, node: NodeAgent, roomId: string, pla
   };
 }
 
-async function noteTold(prisma: PrismaClient, jobId: unknown, told: string): Promise<void> {
+export async function noteTold(prisma: PrismaClient, jobId: unknown, told: string): Promise<void> {
   if (typeof jobId !== "string") return;
   const run = await prisma.nodeRun.findFirst({ where: { jobId }, select: { messageId: true } });
   const card = run?.messageId ? await prisma.nodeMessage.findUnique({ where: { id: run.messageId } }) : null;
@@ -117,23 +142,18 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
 
   const constraints = data.constraints;
   const continuing = await sessionFor(prisma, data, step, reason);
-  let place: { folder?: string; computer?: string; repoUrl?: string } = {};
+  let place: Place = {};
   if (!continuing) {
-    if (constraints.folder) {
-      const shared = await sharedFolder(prisma, node.userId, constraints.folder, constraints.computer);
-      if (!shared) return { done: false, why: `No paired computer shares a folder matching “${constraints.folder}”${constraints.computer ? ` on ${constraints.computer}` : ""}.` };
-      place = shared;
-    } else {
-      const repos = (constraints.repos ?? []).filter(cloneable);
-      if (repos.length !== 1) return { done: false, why: "The plan names its repositories without one clonable address (a URL or owner/repo) and no folder, so where to work is yours to choose." };
-      place = { repoUrl: repos[0]!, ...(constraints.computer ? { computer: constraints.computer } : {}) };
-    }
+    const found = await placeFor(prisma, node.userId, constraints);
+    if ("why" in found) return { done: false, why: found.why };
+    place = found.place;
   }
   const startInput = () => StartInput.parse({ title: packet.title, prompt: packet.prompt, ...place });
   const call: SessionCall = continuing ? { action: "send", input: SendInput.parse({ session: continuing, prompt: packet.prompt, title: packet.title, delivery: "queue" }) } : { action: "start", input: startInput() };
   try {
     if (computerWorkAsks(node)) {
-      await holdForOwner(env, call);
+      // The card keeps the packet, so the run it starts once approved shows what the agent was told.
+      await holdForOwner(env, call, { told: packet.prompt });
       await stepProgress(prisma, data.missionId, step.id, "Waiting for your approval to start the agent.");
       return { done: true, summary: "Waiting for approval." };
     }
@@ -141,10 +161,12 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
     try {
       started = call.action === "start" ? await startSession(env, call.input) : await sendToSession(env, call.input);
     } catch (error) {
-      // The session it would continue cannot go on (gone, or its computer too old): a new one in the same place.
+      // The session it would continue cannot go on (gone, or its computer too old): a new one in the
+      // mission's place, found as for a first attempt; with no such place its node decides.
       if (call.action !== "send") throw error;
-      if (!constraints.folder && !(constraints.repos ?? []).some(cloneable)) throw error;
-      place = constraints.folder ? ((await sharedFolder(prisma, node.userId, constraints.folder, constraints.computer)) ?? {}) : { repoUrl: (constraints.repos ?? []).find(cloneable)! };
+      const found = await placeFor(prisma, node.userId, constraints);
+      if ("why" in found) return { done: false, why: `${why(error)} ${found.why}` };
+      place = found.place;
       started = await startSession(env, startInput());
     }
     await noteTold(prisma, started.data.jobId, packet.prompt);
@@ -159,20 +181,23 @@ export async function dispatchStep(app: FastifyInstance, data: PlanData, step: P
  * A dispatched run ended without its result: the same session is asked once to report (a new run,
  * queued in it). False when that is not possible or was already done; its node then judges.
  */
-export async function askForReport(app: FastifyInstance, run: Pick<NodeRun, "nodeId" | "roomId" | "sessionId" | "planId" | "planStep">): Promise<boolean> {
+export async function askForReport(app: FastifyInstance, run: Pick<NodeRun, "nodeId" | "roomId" | "sessionId" | "planId" | "planStep">, title: string | null = null): Promise<boolean> {
   if (!run.sessionId || !run.planId || !run.planStep) return false;
   const prisma = app.prisma;
+  // Other work queued or running in the session would come first, and its result could answer this ask.
+  if (await liveInSession(prisma, run.sessionId)) return false;
   const node = await prisma.nodeAgent.findUnique({ where: { id: run.nodeId } });
   if (!node || node.status !== "active") return false;
   const env = await envFor(app, node, run.roomId, run.planId, run.planStep);
   if (!env) return false;
+  const ask = reportAsk(title);
   try {
-    const started = await sendToSession(env, SendInput.parse({ session: run.sessionId, prompt: REPORT_ASK, title: "Report the result", delivery: "queue" }));
+    const started = await sendToSession(env, SendInput.parse({ session: run.sessionId, prompt: ask, title: "Report the result", delivery: "queue" }));
     const jobId = started.data.jobId;
     if (typeof jobId === "string") {
       const asked = await prisma.nodeRun.findFirst({ where: { jobId }, select: { messageId: true } });
       const card = asked?.messageId ? await prisma.nodeMessage.findUnique({ where: { id: asked.messageId } }) : null;
-      if (card) await updateMessageData(prisma, card, { told: REPORT_ASK, reportAsked: true });
+      if (card) await updateMessageData(prisma, card, { told: ask, reportAsked: true });
     }
     return true;
   } catch {

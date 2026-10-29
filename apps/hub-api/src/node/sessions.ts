@@ -765,7 +765,7 @@ function describeCall(call: SessionCall): string {
 }
 
 /** One owner-only card with exactly this call; approvals.ts runs it when the owner approves. */
-export async function holdForOwner(env: SessionEnv, call: SessionCall): Promise<ToolResult> {
+export async function holdForOwner(env: SessionEnv, call: SessionCall, extra: Record<string, unknown> = {}): Promise<ToolResult> {
   const { message } = await postMessage(env.prisma, {
     roomId: env.room.id,
     userId: env.node.userId,
@@ -781,6 +781,7 @@ export async function holdForOwner(env: SessionEnv, call: SessionCall): Promise<
       private: Boolean(env.privateTo),
       fromNonOwner: env.lineage.fromNonOwner,
       ...(env.plan?.planStep ? { plan: { id: env.plan.planId, step: env.plan.planStep } } : {}),
+      ...extra,
     },
     visibleTo: [env.node.userId],
     rootMessageId: env.lineage.rootMessageId,

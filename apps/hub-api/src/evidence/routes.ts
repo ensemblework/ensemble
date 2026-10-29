@@ -156,9 +156,9 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
   app.get("/api/node/evidence/:id", async (request, reply) => {
     const accountId = reader(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const { view } = z.object({ view: z.enum(["0", "1"]).optional() }).parse(request.query);
-    // Its owner, or someone who may read a message that shows it (node/media.ts).
-    const head = (await mediaReadable(prisma, accountId, id)) ? await prisma.jobEvidence.findUnique({ where: { id }, select: { name: true, mime: true, sha256: true, local: true, size: true } }) : null;
+    const { view, message } = z.object({ view: z.enum(["0", "1"]).optional(), message: z.string().uuid().optional() }).parse(request.query);
+    // Its owner, or someone who may read the message that shows it (node/media.ts).
+    const head = (await mediaReadable(prisma, accountId, id, message)) ? await prisma.jobEvidence.findUnique({ where: { id }, select: { name: true, mime: true, sha256: true, local: true, size: true } }) : null;
     if (!head) return reply.code(404).send({ error: "That evidence is not available." });
     if (head.local) return reply.code(409).send({ error: "This file is on the computer that ran the job, not uploaded: evidence upload is off there (`ensemble evidence on` turns it on)." });
     const media = head.mime.startsWith("image/") && !isActiveMime(head.mime) ? true : head.mime.startsWith("video/");

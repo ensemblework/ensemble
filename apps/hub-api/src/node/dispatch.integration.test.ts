@@ -18,7 +18,6 @@ const { settleTurns } = await import("./queue.js");
 const { pollRuns } = await import("./runs.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
-const { REPORT_ASK } = await import("./dispatch.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
@@ -202,7 +201,7 @@ test("a run that ends without its result is asked once in its session; then its 
   await finish(build.job.id, null, "Fixed it.");
   const asked = await runOf(mission.id, "build", 1);
   assert.equal(asked.run.sessionId, build.run.sessionId);
-  assert.equal(asked.job.instructions?.includes(REPORT_ASK), true);
+  assert.match(asked.job.instructions ?? "", /You finished “Build: Escape \| in record titles in Markdown tables” without reporting your result/);
   assert.equal(seen.filter((turn) => turn.slug === "builder").length, 0, "nobody thought yet");
 
   await finish(asked.job.id, null, "Already done.");
@@ -230,6 +229,8 @@ test("ask me before computer work: the packet waits on the owner's card; no job 
   await settleTurns();
   const build = await runOf(mission.id, "build");
   assert.equal(build.job.folderLabel, "live-test");
+  const card = await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: build.run.messageId! } });
+  assert.match(String((card.data as { told?: string }).told), /## Your part/, "the approved run shows what the agent was told");
 });
 
 test("a plan's report shows the checked screenshots and video; node_show shows only the owner's files; files open for whoever reads the message", async () => {
@@ -267,4 +268,28 @@ test("a plan's report shows the checked screenshots and video; node_show shows o
   await post(mira, dm, "show me the table");
   const shown = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${dm}/messages` })).messages as Array<{ body: string; data: any }>).find((row) => row.body === "This is the table now.")!;
   assert.deepEqual(shown.data.media.map((row: { name: string }) => row.name), ["table.png"]);
+});
+
+test("a repaired step's report shows only the passing attempt's captures", async () => {
+  const mira = await person("Mira");
+  await laptopFor(mira);
+  const { room } = await crew(mira);
+  script = planScript("Fixed after a repair.");
+  await post(mira, room.id, "Please fix the tables bug, then have it checked.");
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { originRoomId: room.id } });
+  const file = (jobId: string, name: string) =>
+    h.prisma.jobEvidence.create({ data: { userId: mira.id, jobId, kind: "screenshot", name, mime: "image/png", size: 4, sha256: randomBytes(8).toString("hex"), storageKey: `k-${name}`, bytes: Buffer.from("data") } });
+  const build = await runOf(mission.id, "build");
+  await finish(build.job.id, { outcome: "done", summary: "Escaped.", subject: { commit: "abc1234" } });
+  const check = await runOf(mission.id, "verify");
+  await file(check.job.id, "broken.png");
+  await finish(check.job.id, { outcome: "fail", summary: "Breaks.", checks: [{ id: "A1", name: "one cell", verdict: "fail", detail: "split" }], subject: { commit: "abc1234" } });
+  const repair = await runOf(mission.id, "build", 1);
+  await finish(repair.job.id, { outcome: "done", summary: "Fixed.", subject: { commit: "def5678" } });
+  const retest = await runOf(mission.id, "verify", 1);
+  await file(retest.job.id, "fixed.png");
+  await finish(retest.job.id, { outcome: "pass", summary: "One cell.", checks: [{ id: "A1", name: "one cell", verdict: "pass" }], subject: { commit: "def5678" } });
+  const messages = json(await mira.inject({ method: "GET", url: `/api/node/rooms/${room.id}/messages` })).messages as Array<{ kind: string; authorKind: string; body: string; data: any }>;
+  const reported = messages.find((row) => row.kind === "text" && row.authorKind === "node" && row.body === "Fixed after a repair.")!;
+  assert.deepEqual(reported.data.media.map((row: { name: string }) => row.name), ["fixed.png"], "the failed check's capture is not shown as the result");
 });

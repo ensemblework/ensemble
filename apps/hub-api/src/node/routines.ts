@@ -415,11 +415,11 @@ export async function tickRoutines(app: FastifyInstance, now = new Date()): Prom
     for (const run of runs) {
       // A run left "starting" by a crash is picked up again after a minute; starting it twice continues the same mission.
       if (run.status === "starting" && (run.startedAt ?? run.createdAt).getTime() > now.getTime() - 60_000) continue;
-      const claimed = await prisma.nodeRoutineRun.updateMany({ where: { id: run.id, status: run.status }, data: { status: "starting", startedAt: new Date() } });
+      // startedAt changes with every claim, so two servers that read the same stale row cannot both win.
+      const claimed = await prisma.nodeRoutineRun.updateMany({ where: { id: run.id, status: run.status, startedAt: run.startedAt }, data: { status: "starting", startedAt: new Date() } });
       if (claimed.count !== 1) continue;
-      const items = takeGathered(run.id);
-      if (items) await prisma.nodeRoutineRun.update({ where: { id: run.id }, data: { payload: items as Prisma.InputJsonValue } });
-      const fresh = items ? { ...run, payload: items as Prisma.JsonValue } : run;
+      // Read again after the claim: what was gathered until then is all it gets (later changes open a follow-up).
+      const fresh = (await prisma.nodeRoutineRun.findUnique({ where: { id: run.id } })) ?? run;
       try {
         await startOccurrence(app, fresh);
         started += 1;
@@ -440,14 +440,6 @@ export async function tickRoutines(app: FastifyInstance, now = new Date()): Prom
 
 type Watch = { id: string; userId: string; on: string; actions: string[] | null; windowMs: number };
 let watches = new Map<string, Watch[]>();
-type Gathered = { items: Array<Record<string, unknown>>; deliveries: string[] };
-const gathered = new Map<string, Gathered>();
-
-function takeGathered(runId: string): Gathered | null {
-  const found = gathered.get(runId);
-  if (found) gathered.delete(runId);
-  return found ?? null;
-}
 
 async function refreshWatches(prisma: PrismaClient): Promise<void> {
   const rows = await prisma.nodeRoutine.findMany({ where: { status: "active", trigger: "event" }, select: { id: true, userId: true, event: true } });
@@ -474,37 +466,52 @@ function refreshSoon(app: FastifyInstance): void {
 }
 
 /** Adds an item to the routine's occurrence for this window (made on the first item), deduplicating deliveries. */
+/** Adds an item to one occurrence: made with it, or joined while it has not started. */
+async function gatherInto(prisma: PrismaClient, routine: Pick<NodeRoutine, "id" | "userId">, key: string, trigger: string, dueAt: Date, item: Record<string, unknown>, delivery: string | null): Promise<"added" | "duplicate" | "closed"> {
+  const made = await occurrence(prisma, routine, key, trigger, dueAt, {}, { items: [item], deliveries: delivery ? [delivery] : [] });
+  if (made) return "added";
+  const run = await prisma.nodeRoutineRun.findUnique({ where: { routineId_occurrenceKey: { routineId: routine.id, occurrenceKey: key } }, select: { id: true, status: true } });
+  if (!run || run.status !== "pending") return "closed";
+  const items = JSON.stringify([item]);
+  const deliveries = JSON.stringify(delivery ? [delivery] : []);
+  // One statement, so changes arriving together all land; the same change twice is kept once, at most EVENT_ITEMS.
+  const changed = await prisma.$executeRaw`
+    UPDATE node_routine_runs
+    SET payload = jsonb_build_object(
+      'items',
+      CASE
+        WHEN coalesce(payload->'items', '[]'::jsonb) @> ${items}::jsonb OR jsonb_array_length(coalesce(payload->'items', '[]'::jsonb)) >= ${EVENT_ITEMS}
+          THEN coalesce(payload->'items', '[]'::jsonb)
+        ELSE coalesce(payload->'items', '[]'::jsonb) || ${items}::jsonb
+      END,
+      'deliveries', coalesce(payload->'deliveries', '[]'::jsonb) || ${deliveries}::jsonb
+    )
+    WHERE id = ${run.id} AND status = 'pending'
+      AND NOT (${delivery !== null} AND coalesce(payload->'deliveries', '[]'::jsonb) @> ${deliveries}::jsonb)`;
+  if (changed === 1) return "added";
+  const now = await prisma.nodeRoutineRun.findUnique({ where: { id: run.id }, select: { status: true } });
+  return now?.status === "pending" ? "duplicate" : "closed";
+}
+
+/**
+ * Adds a change or webhook call to the routine's occurrence for this window, made on the first one. A
+ * window whose occurrence already started gets a follow-up occurrence, so nothing is dropped.
+ */
 async function gather(app: FastifyInstance, routine: Pick<NodeRoutine, "id" | "userId">, prefix: "event" | "hook", windowMs: number, item: Record<string, unknown>, delivery: string | null): Promise<boolean> {
   const start = Math.floor(Date.now() / windowMs) * windowMs;
-  const key = `${prefix}:${new Date(start).toISOString()}`;
   const prisma = app.prisma;
-  let run = await prisma.nodeRoutineRun.findUnique({ where: { routineId_occurrenceKey: { routineId: routine.id, occurrenceKey: key } } });
-  if (!run) {
-    if (delivery) {
-      // The same delivery in an earlier window (a webhook sender retrying): already taken.
-      const seen = await prisma.nodeRoutineRun.findFirst({ where: { routineId: routine.id, createdAt: { gte: new Date(Date.now() - 86_400_000) }, payload: { path: ["deliveries"], array_contains: [delivery] } }, select: { id: true } });
-      if (seen) return false;
-    }
-    const first = { items: [item], deliveries: delivery ? [delivery] : [] };
-    const made = await occurrence(prisma, routine, key, prefix === "hook" ? "webhook" : "event", new Date(start + windowMs), {}, first);
-    if (made) {
-      gathered.set(made.id, first);
-      return true;
-    }
-    // Another change made it at the same moment: join it.
-    run = await prisma.nodeRoutineRun.findUnique({ where: { routineId_occurrenceKey: { routineId: routine.id, occurrenceKey: key } } });
-    if (!run) return false;
+  if (delivery) {
+    // The same delivery seen in the last day (a webhook sender retrying, in this window or an earlier one): already taken.
+    const seen = await prisma.nodeRoutineRun.findFirst({ where: { routineId: routine.id, createdAt: { gte: new Date(Date.now() - 86_400_000) }, payload: { path: ["deliveries"], array_contains: [delivery] } }, select: { id: true } });
+    if (seen) return false;
   }
-  if (run.status !== "pending") return false;
-  const bag = gathered.get(run.id) ?? ((run.payload ?? { items: [], deliveries: [] }) as Gathered);
-  if (delivery && bag.deliveries.includes(delivery)) return false;
-  const same = bag.items.some((row) => row.event === item.event && row.id === item.id && row.action === item.action && item.id !== undefined);
-  if (!same && bag.items.length < EVENT_ITEMS) bag.items.push(item);
-  if (delivery) bag.deliveries.push(delivery);
-  gathered.set(run.id, bag);
-  // Recorded with the occurrence too, so a delivery is known after a restart.
-  if (delivery) await prisma.nodeRoutineRun.update({ where: { id: run.id }, data: { payload: bag as unknown as Prisma.InputJsonValue } }).catch(() => undefined);
-  return true;
+  let key = `${prefix}:${new Date(start).toISOString()}`;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const result = await gatherInto(prisma, routine, key, prefix === "hook" ? "webhook" : "event", new Date(start + windowMs), item, delivery);
+    if (result !== "closed") return result === "added";
+    key = `${key}+`;
+  }
+  return false;
 }
 
 /** Every frame Ensemble writes to a space: the routines watching it gather the change. */

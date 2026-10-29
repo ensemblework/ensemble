@@ -15,6 +15,7 @@ import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall }
 import { declineSecret } from "./node-secrets.js";
 import { finishStep, planLinkOf } from "./plans.js";
 import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
+import { noteTold } from "./dispatch.js";
 import { ToolBlockedError } from "../assistant/types.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
@@ -241,6 +242,9 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
     return updateMessageData(prisma, current, { status: "pending", error: error instanceof Error ? error.message : String(error) });
   }
   const updated = await updateMessageData(prisma, current, { status: "applied", error: null, result: { summary: done.summary, href: null, failed: [] } });
+  // A packet code handed over (node/dispatch.ts): its run shows what the agent was told, and is asked for its result as any other.
+  const told = (card.data as { told?: unknown }).told;
+  if (typeof told === "string") await noteTold(prisma, done.data.jobId, told);
   await enqueueTurn(app, {
     nodeId: node.id,
     roomId: card.roomId,
