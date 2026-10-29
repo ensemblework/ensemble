@@ -43,6 +43,8 @@ export async function startHub(): Promise<HubServer> {
   const stopQueue = process.env.ENSEMBLE_AGENT_QUEUE === "off" ? async () => {} : startAgentQueue(app);
   // Saved run secrets are hidden from everything this computer sends or logs, from the start.
   if (desktop) await rememberRunSecrets(app.prisma, env.ENSEMBLE_DEV_USER_ID).catch((error: unknown) => app.log.error({ err: error }, "could not load saved run secrets for redaction"));
+  // The browser broker and the capture service live on the computer only (docs/25 §10), never on the hosted server.
+  const stopCapture = desktop ? (await import("./capture/runtime.js")).startCaptureRuntime(app) : async () => {};
   const stopRemote = desktop && process.env.ENSEMBLE_REMOTE_LOOP !== "off" ? startRemote(app) : async () => {};
   const deviceRevokeBus = await startDeviceRevokeBus();
   if (!deviceRevokeBus) {
@@ -61,6 +63,7 @@ export async function startHub(): Promise<HubServer> {
     stopEnrichment();
     await stopRemote();
     await stopQueue();
+    await stopCapture();
     await releaseSandbox().catch(() => undefined);
     await stopDeviceRevokeBus();
     await app.close();

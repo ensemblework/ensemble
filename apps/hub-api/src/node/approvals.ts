@@ -18,6 +18,7 @@ import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
 import { noteTold } from "./dispatch.js";
 import { ToolBlockedError } from "../assistant/types.js";
 import { roomDraftPosted, settleRoomCard } from "./audience.js";
+import { MEDIA_PREVIEW_CARD, settleHeld } from "../evidence/held.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -153,6 +154,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
 
   if (type === "session") return settleSession(app, card, node, input);
   if (type === "node_proposal") return settleProposal(app, card, node, input);
+  if (type === MEDIA_PREVIEW_CARD) return settlePreview(app, card, node, input);
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);
     throw new ApprovalError("Type the secret into its box: it goes straight to your computer.", 400);
@@ -296,6 +298,47 @@ async function settleProposal(app: FastifyInstance, card: NodeMessage, node: Nod
     note: `Your owner approved your proposal: ${made.summary}. Continue if there is more to do (node_delegate hands it work); otherwise reply ${"(no reply)"}.`,
     private: parsed.private === true,
   });
+  return updated;
+}
+
+const PreviewCard = z
+  .object({
+    type: z.literal(MEDIA_PREVIEW_CARD),
+    status: z.string(),
+    evidence: z.array(z.object({ id: z.string(), name: z.string() }).passthrough()),
+    nodeCapture: z.boolean().optional(),
+    private: z.boolean().optional(),
+    planId: z.string().nullish(),
+    planStep: z.string().nullish(),
+  })
+  .passthrough();
+
+/**
+ * Captures the computer held for the owner's preview (evidence/held.ts): approving releases every
+ * file on the card (the computer uploads it; then node_show and a plan's report can show it),
+ * discarding deletes them. The node that captured them hears that it may show them now.
+ */
+async function settlePreview(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = PreviewCard.parse(card.data);
+  await claim(app, card);
+  const settled = await settleHeld(app, node.userId, parsed.evidence.map((item) => item.id), input.decision);
+  const current = await prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
+  const result = { released: settled.released, discarded: settled.discarded };
+  // Some could not be sent (the computer offline, upload off there): the owner can try again or discard.
+  if (settled.failed.length) return updateMessageData(prisma, current, { status: "pending", error: settled.failed.map((item) => `“${item.name}”: ${item.error}`).join(" "), result });
+  const updated = await updateMessageData(prisma, current, { status: input.decision === "discard" ? "discarded" : "released", error: null, result });
+  if (input.decision === "approve" && settled.released.length && parsed.nodeCapture) {
+    const names = parsed.evidence.filter((item) => settled.released.includes(item.id)).map((item) => `“${item.name}” [${item.id}]`).join(", ");
+    await enqueueTurn(app, {
+      nodeId: node.id,
+      roomId: card.roomId,
+      reason: "approval",
+      note: `Your owner previewed and released ${names}: you may show them now (node_show), if they still help. Otherwise reply ${"(no reply)"}.`,
+      // A conversation turn where the card is: the step that captured them may have ended meanwhile.
+      private: parsed.private === true,
+    });
+  }
   return updated;
 }
 

@@ -33,11 +33,13 @@ import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from ".
 import { answerNodeToolRequest } from "../device-tools/answer.js";
 import { stopNodeCommands } from "../device-tools/run.js";
 import { sendEvidence } from "../evidence/upload.js";
+import { answerEvidenceRequest } from "../evidence/requests.js";
+import { setLiveSink } from "./live.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -135,6 +137,9 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     worktrees: 1,
     // The key the web encrypts secrets for, how runs get secrets, and secrets used by reference (B12).
     ...credentialCapabilities(settings),
+    // A node's browser and capture tools run here (protocol 7), and what this computer can capture.
+    browser: BROWSER_API,
+    capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
 }
 
@@ -246,6 +251,14 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     app.log.warn({ err: error }, "remote task sync failed");
   };
   onFatal = fail;
+  // A run's live view goes to the web under its hosted job and lease, one small frame at a time (protocol 7).
+  setLiveSink((localJobId, frame) => {
+    const job = Object.values(held()).find((row) => row.localJobId === localJobId && row.phase === "active");
+    if (!job || (job.protocol ?? 1) < 7 || !client.liveFrame || (frame.jpeg && frame.jpeg.length > 220_000)) return false;
+    const picture = frame.jpeg ? { jpeg: frame.jpeg.toString("base64"), ...(frame.width ? { width: frame.width } : {}), ...(frame.height ? { height: frame.height } : {}) } : {};
+    void client.liveFrame(job.hostedId, { leaseToken: job.leaseToken, tab: frame.tab, url: frame.url, title: frame.title, at: frame.at, ...picture, ...(frame.paused ? { paused: frame.paused } : {}) }).catch(() => undefined);
+    return true;
+  });
   await reconcile(app, client);
   let claiming = false;
   // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
@@ -314,6 +327,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         if (event === "node.tool.request") void answerNodeToolRequest(app, client, data).catch(() => undefined);
         // A secret typed on the web for this computer's runs: kept here only.
         if (event === "secret.save") void answerSecretSave(client, data).catch(() => undefined);
+        // The owner previews, releases or discards a file kept here (protocol 7).
+        if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
         if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
         if (event === "assistant.stop") stopAssistantTurn(data);
@@ -345,7 +360,10 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     clearInterval(sync);
     clearInterval(poll);
     parent.removeEventListener("abort", stopParent);
-    if (currentSession === abort) currentSession = null;
+    if (currentSession === abort) {
+      currentSession = null;
+      setLiveSink(null);
+    }
   }
 }
 

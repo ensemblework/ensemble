@@ -24,7 +24,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { claudeLaunch, claudeModel } from "@ensemble/shared-types";
-import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { ensembleDataDenies } from "../data-denies.js";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE, holdsProtected, SECRET_PATHS, within, workspaceFolders, workspaceRoot } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { claudeBinary } from "../../subscriptions/detect.js";
@@ -204,7 +204,7 @@ export async function runClaudeCode(
   const credential = registerEngineRun(ctx);
   const hookCommand = `"${process.execPath}" "${hookScriptPath()}" --source claude --engine`;
   const home = homedir();
-  const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
+  const closed = [...SECRET_PATHS.map((name) => join(home, name)), ...ensembleDataDenies({ home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
   const { access, writable } = await engineSandboxPaths(ctx);
   const filesystem = claudeFilesystem({
     access,

@@ -38,7 +38,7 @@ import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
-import { formatCapture, runCaptureScript } from "./capture.js";
+import { captureSites, formatCapture, formatSites, parseSitesArgs, runCaptureScript } from "./capture.js";
 import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
@@ -87,7 +87,7 @@ Usage:
   ensemble web [status] | files|edit|terminal on|off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
-  ensemble capture [status] [--json] | setup [--dry-run] [--json]
+  ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
@@ -112,13 +112,13 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   browse:
     "Usage: ensemble browse [status] | on | off\nOn (default): Ensemble on the web shows the files of tasks run here: the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets.",
   evidence:
-    "Usage: ensemble evidence [status] | on | off\nOn (default): files a run's agent attaches for you (screenshots, reports, logs) go to Ensemble on the web with the run's result, for you only. Off: they stay on this computer, and the web shows their names as on this computer, not uploaded. Keys, .env files and anything holding a saved secret are never attached.",
+    "Usage: ensemble evidence [status] | on | off\nOn (default): files a run's agent attaches for you (screenshots, reports, logs), and the screenshots and videos a run or a node captures here, go to Ensemble on the web, for you only. Off: they stay on this computer, and the web shows their names as on this computer, not uploaded. Keys, .env files and anything holding a saved secret are never attached.",
   web:
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   capture:
-    "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json]\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.",
+    "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.\n`sites` lists the sites you never want captured (no screenshot, video, page reading or live view) and those whose captures you preview before anything is sent; `add` and `remove` change them. A site is a host (example.com, which covers its subdomains) or an address (https://mail.example.com). They are kept on this computer only.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
 }).map(([key, value]) => [key, value.replace(/\bensemble\b/g, COMMAND)]));
@@ -717,7 +717,16 @@ async function commandSandbox(args: string[]): Promise<void> {
 async function commandCapture(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.capture);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "status";
-  if (!["status", "setup"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.capture);
+  if (!["status", "setup", "sites"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.capture);
+  if (subcommand === "sites") {
+    const parsedSites = parseSitesArgs(args.slice(1));
+    if ("error" in parsedSites) throw new Error(parsedSites.error);
+    const sitesDir = resolveSidecarDir(import.meta.url);
+    if (!(await sidecarAvailable(sitesDir))) throw new Error(NO_RUNNER);
+    const sites = await withAdminApi({ sidecarDir: sitesDir, run: (discovery) => captureSites(discovery, parsedSites.change) });
+    for (const line of formatSites(sites)) console.log(line);
+    return;
+  }
   const result = parsed(args[0] === subcommand ? args.slice(1) : args, { json: { type: "boolean" }, "dry-run": { type: "boolean" } }, false);
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(`Capture runs in Ensemble's local runtime, which this install does not have. Install the full CLI: ${DOWNLOAD_URL}`);

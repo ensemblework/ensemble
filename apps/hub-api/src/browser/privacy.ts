@@ -65,6 +65,37 @@ export function matchesSite(url: string, entry: string): boolean {
   return pageHost === host || pageHost.endsWith(`.${host}`);
 }
 
+/** At most this many sites in each of the owner's lists. */
+export const MAX_SITES = 200;
+
+/**
+ * A site as the owner's lists keep it (`matchesSite`): an origin (`https://mail.example.com`), or a
+ * host that covers its subdomains (`example.com`; `*.example.com` and a path or port are taken off).
+ * Null when it names no site.
+ */
+export function normalizeSite(input: string): string | null {
+  const value = input.trim().toLowerCase();
+  if (!value || value.length > 300) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(value)) {
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:") && url.hostname ? url.origin : null;
+    } catch {
+      return null;
+    }
+  }
+  const host = value.replace(/^\*\./, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "").replace(/\.$/, "");
+  return /^(?=.{1,253}$)[a-z0-9_]([a-z0-9_-]{0,62}[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]{0,62}[a-z0-9_])?)*$/.test(host) ? host : null;
+}
+
+/** The owner's two lists as kept: each site normalized once, or the first entry that names no site. */
+export function siteLists(input: { never: readonly string[]; preview: readonly string[] }): { never: string[]; preview: string[] } | { error: string } {
+  const bad = [...input.never, ...input.preview].find((site) => !normalizeSite(site));
+  if (bad !== undefined) return { error: `“${bad.slice(0, 80)}” is not a site: give a host such as example.com, or an address such as https://mail.example.com.` };
+  const list = (sites: readonly string[]) => [...new Set(sites.map((site) => normalizeSite(site)!))].slice(0, MAX_SITES);
+  return { never: list(input.never), preview: list(input.preview) };
+}
+
 /** "never" wins over "preview"; null when the owner set nothing for this page. */
 export function siteRule(url: string, rules: PrivacyRules): "never" | "preview" | null {
   if ((rules.neverCapture ?? []).some((entry) => matchesSite(url, entry))) return "never";

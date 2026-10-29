@@ -152,9 +152,14 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
 
 /** The files the run's worker attached, by id, so the node can show them (node_show). */
 async function evidenceLine(prisma: FastifyInstance["prisma"], run: Pick<NodeRun, "jobId" | "userId">): Promise<string> {
-  const files = (await evidenceOf(prisma, run.jobId, run.userId)).filter((row) => !row.local);
-  if (!files.length) return "";
-  return `Files it attached (node_show shows them to your owner): ${files.slice(0, 12).map((row) => `${row.kind} “${row.name}”${row.caption ? ` (${truncateText(row.caption, 80)})` : ""} [${row.id}]`).join("; ")}`;
+  const all = await evidenceOf(prisma, run.jobId, run.userId);
+  const files = all.filter((row) => !row.local);
+  const held = all.filter((row) => row.held);
+  const lines = [
+    files.length ? `Files it attached (node_show shows them to your owner): ${files.slice(0, 12).map((row) => `${row.kind} “${row.name}”${row.caption ? ` (${truncateText(row.caption, 80)})` : ""} [${row.id}]`).join("; ")}` : "",
+    held.length ? `Held on the computer for your owner to preview first (they release or discard them; you cannot show them until then): ${held.slice(0, 12).map((row) => `${row.kind} “${row.name}” [${row.id}]`).join("; ")}` : "",
+  ];
+  return lines.filter(Boolean).join("\n");
 }
 
 export function startNodeRuns(app: FastifyInstance, everyMs = EVERY_MS): void {

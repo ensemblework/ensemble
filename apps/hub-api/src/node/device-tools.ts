@@ -17,7 +17,11 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
-import { CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
+import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
+import { BROWSER_TOOLS } from "../browser/tool-specs.js";
+import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
+import { grantUpload } from "../evidence/grants.js";
+import { postPreviewCard } from "../evidence/held.js";
 import { askOwner, markGrantsUsed, pendingGrants, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
 import { helperFolders, helperGrant } from "./helpers.js";
@@ -30,17 +34,25 @@ const OUTPUT_READ_BYTES = 60_000;
 
 type Redisish = Parameters<typeof openToolRun>[0];
 
-/** The owner's computer for a node tool: by name, else the one online; it must be new enough. */
-async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined): Promise<Device> {
+/** The owner's computer for a node tool: by name, else the one online; it must be new enough (and, for the browser and capture tools, have them). */
+async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined, need?: { browser: string }): Promise<Device> {
   const devices = await prisma.device.findMany({ where: { userId: ownerId, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
   if (!devices.length) throw new ToolBlockedError("Your owner has no paired computer.", "They can pair one with `ensemble login` (the Ensemble CLI) or the Ensemble desktop app.");
   const wanted = name?.trim().toLowerCase();
   const device = wanted && wanted !== "any" ? devices.find((row) => row.name.toLowerCase() === wanted || row.id === name) : devices.find((row) => deviceOnline(row.lastSeenAt));
   if (!device) throw new ToolBlockedError(wanted && wanted !== "any" ? `There is no computer called “${name}”.` : "None of your owner's computers is online.", `Their computers: ${devices.map((row) => row.name).join(", ")}.`);
   if (!deviceOnline(device.lastSeenAt)) throw new ToolBlockedError(`${device.name} is offline.`, "Ensemble must be running there (`ensemble runner start`).");
-  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown };
+  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; browser?: unknown; capture?: { browser?: unknown } | null };
   if (typeof caps.nodeTools !== "number" || caps.nodeTools < 1) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to let a node use it directly.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then, have a coding agent do it (node_session_start).");
+  }
+  if (need) {
+    if (typeof caps.browser !== "number" || caps.browser < BROWSER_API) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to browse or capture for a node.`, "Your owner updates it there (`ensemble update`, or the desktop app's update).");
+    }
+    if (caps.capture?.browser === false && need.browser !== "capture_status") {
+      throw new ToolBlockedError(`${device.name} has no browser for Ensemble yet.`, "Your owner runs `ensemble capture setup` there once; it installs one. capture_status says what else that computer can capture.");
+    }
   }
   return device;
 }
@@ -64,6 +76,7 @@ type ToolCall = DistributiveOmit<z.input<typeof NodeToolRequest>, "id" | "nodeId
 
 /** What the ledger keeps of a call: the folder or address and the program, never what it printed. */
 function ledgerOf(call: ToolCall): Record<string, string | null> {
+  if (call.tool === "browser" || call.tool === "capture") return { name: call.name, origin: typeof call.input?.url === "string" ? safeOrigin(call.input.url) : null };
   if (call.tool === "http" || call.tool === "secret_http") return { origin: safeOrigin(call.url) };
   if (call.tool === "run") return { folder: call.folder, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "" };
   if (call.tool === "git") return { folder: call.folder, op: call.op };
@@ -76,16 +89,16 @@ async function callComputer(
   scope: NodeScope,
   computer: string | undefined,
   request: ToolCall,
-  options: { timeoutMs: number; describe: string; before?: (device: Device) => Promise<void> },
+  options: { timeoutMs: number; describe: string; before?: (device: Device) => Promise<void | Record<string, unknown>>; need?: { browser: string } },
 ): Promise<Called | ToolResult> {
   const { prisma, node } = scope;
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
-  const device = await toolComputer(prisma, node.userId, computer);
+  const device = await toolComputer(prisma, node.userId, computer, options.need);
   const mode = await attendedFor(prisma, node);
   const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
-  await options.before?.(device);
+  const extra = (await options.before?.(device)) ?? {};
   const operationId = `${scope.turnId}:${randomUUID()}`;
-  const data = { ...request, nodeId: node.id, mission: missionOf(scope), attended: mode.attended, grants, operationId } as Record<string, unknown>;
+  const data = { ...request, ...extra, nodeId: node.id, mission: missionOf(scope), attended: mode.attended, grants, operationId } as Record<string, unknown>;
   const raw = await askDeviceFor(ctx.app.redis, { deviceId: device.id, event: "node.tool.request", data }, options.timeoutMs);
   if (!raw) throw new ToolBlockedError(`${device.name} did not answer. It may be asleep or busy; try again.`);
   const answer = CodeAnswer.safeParse(raw);
@@ -314,18 +327,110 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         return toolOk(`Deleted ${input.path}.`, { computer: done.device.name, ...done.body });
       },
     }),
+    ...captureTools(scope),
   ];
   return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
 }
 
-/** A helper's tool that works only in the folders its parent named (by label, path or last part). */
+/**
+ * The node's tool operation for the browser and capture tools: one per node and mission (or
+ * conversation), so its tabs and apps last across its turns there.
+ */
+export function captureOperation(scope: Pick<NodeScope, "node" | "plan" | "room" | "privateTo">): string {
+  return `node:${scope.node.id}:${missionOf(scope as NodeScope).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 200)}`;
+}
+
+/** How long a call may take on the computer: a video for its length, every call for its upload. */
+function captureTimeout(name: string, input: Record<string, unknown>): number {
+  const seconds = typeof input.durationSec === "number" ? Math.min(input.durationSec, 600) : 0;
+  return name === "capture_video" ? 120_000 + seconds * 2_000 : name === "capture_app_start" ? 90_000 : 75_000;
+}
+
+/** A small result the node reads besides the summary (checks, a status, apps); a page's snapshot is in its summary. */
+function smallResult(result: unknown): Record<string, unknown> {
+  if (result === undefined) return {};
+  const text = JSON.stringify(result);
+  return text.length <= 8_000 ? { result } : {};
+}
+
+/**
+ * The browser and capture tools (B10, B19) on the owner's computer, for this node: the same tools a
+ * coding agent's run has, through `node.tool.request` (device-tools/capture.ts on the computer). What
+ * they capture is the node's own evidence; a capture the computer holds waits for the owner's
+ * preview card.
+ */
+function captureTools(scope: NodeScope): AnyHubTool[] {
+  const { prisma, node } = scope;
+  const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny }>;
+  return specs.map((spec) =>
+    defineTool({
+      name: spec.name,
+      area: "tasks",
+      description: `On your owner's computer: ${spec.description} What it captures is evidence you can show (node_show) once it was checked (capture_check); a capture the computer holds waits for your owner's preview.`,
+      input: (spec.input as z.AnyZodObject).extend({ computer: Computer }),
+      isWrite: false,
+      risk: spec.name === "capture_app_start" || spec.name === "browser_type" || spec.name === "browser_upload" ? "medium" : "low",
+      async run(ctx, raw) {
+        const { computer, ...input } = raw as Record<string, unknown> & { computer?: string };
+        const tool = spec.name.startsWith("browser_") ? ("browser" as const) : ("capture" as const);
+        const operation = captureOperation(scope);
+        const mode = await attendedFor(prisma, node);
+        const done = await callComputer(
+          ctx,
+          scope,
+          computer,
+          { tool, name: spec.name, input, operation, uploadId: "pending", network: mode.network },
+          {
+            timeoutMs: captureTimeout(spec.name, input),
+            describe: typeof input.url === "string" ? `Open ${input.url}` : spec.name === "capture_app_start" ? `Start ${String(input.command ?? "the app")} in ${String(input.cwd ?? "")}` : spec.name,
+            need: { browser: spec.name },
+            // Its files have somewhere to go before the computer makes them.
+            before: async (device) => ({ uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) }),
+          },
+        );
+        if (isResult(done)) return done;
+        const answer = NodeCaptureAnswer.safeParse(done.body);
+        if (!answer.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
+        const { ok, summary, result, error, evidence, refused } = answer.data;
+        const main = evidence.filter((item) => !item.variantOf);
+        const held = main.filter((item) => item.held);
+        if (held.length) {
+          const rows = await prisma.jobEvidence.findMany({ where: { id: { in: held.map((item) => item.id) }, userId: node.userId } });
+          await postPreviewCard(ctx.app, {
+            ownerId: node.userId,
+            nodeId: node.id,
+            roomId: scope.room.id,
+            rows,
+            operation,
+            planId: scope.plan?.planId ?? null,
+            planStep: scope.plan?.planStep ?? null,
+            rootMessageId: scope.lineage.rootMessageId,
+            private: Boolean(scope.privateTo),
+          });
+        }
+        const lines = [
+          ok ? (summary ?? "Done.") : `It did not work: ${error?.message ?? "the tool failed"}`,
+          main.filter((item) => !item.held).length ? `Kept as your evidence (show with node_show after checking it): ${main.filter((item) => !item.held).map((item) => `${item.kind} “${item.name}” [${item.id}]${item.local ? " (kept on the computer: evidence upload is off there)" : ""}`).join("; ")}.` : "",
+          held.length ? `Held for your owner to preview first, on a card in this chat (nothing is shown or sent until they release it): ${held.map((item) => `“${item.name}”: ${item.holdReason ?? "not checked"}`).join("; ")}.` : "",
+          refused.length ? `Not kept: ${refused.map((item) => `“${item.name}”: ${item.reason}`).join("; ")}.` : "",
+        ].filter(Boolean);
+        if (!ok) throw new ToolBlockedError(lines.join("\n"));
+        return toolOk(lines.join("\n"), { computer: done.device.name, evidence: main.map((item) => ({ id: item.id, name: item.name, kind: item.kind, held: item.held })), ...smallResult(result) });
+      },
+    }),
+  );
+}
+
+/** A helper's tool that works only in the folders its parent named (by label, path or last part); an app it starts for capture too. */
 function onlyIn(tool: AnyHubTool, folders: readonly string[]): AnyHubTool {
   const last = (value: string) => value.trim().replace(/[\\/]+$/, "").split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
   const allowed = (folder: string) => folders.some((name) => name.trim() === folder.trim() || last(name) === last(folder));
   return {
     ...tool,
     async run(ctx, input) {
-      const folder = (input as { folder?: unknown } | null)?.folder;
+      // An app started for capture runs in its folder, as a command does.
+      const given = input as { folder?: unknown; cwd?: unknown } | null;
+      const folder = tool.name === "capture_app_start" ? given?.cwd : given?.folder;
       if (typeof folder === "string" && !allowed(folder)) {
         throw new ToolBlockedError(`You may only use ${folders.map((name) => `“${name}”`).join(", ")}.`, "Those are the folders your node gave you; report what needs another folder.");
       }

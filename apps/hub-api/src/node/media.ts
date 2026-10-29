@@ -8,7 +8,8 @@
 import type { NodeMessage, PrismaClient } from "@prisma/client";
 import { canSee } from "./store.js";
 
-export type Media = { evidenceId: string; kind: string; name: string; mime: string; caption: string | null; size: number };
+/** One file on a message (`data.media`). A video names its poster image (`posterId`, its own evidence id) and what capture measured. */
+export type Media = { evidenceId: string; kind: string; name: string; mime: string; caption: string | null; size: number; posterId?: string; width?: number; height?: number; durationMs?: number };
 
 /** At most this many files on one message. */
 export const MAX_MEDIA = 8;
@@ -31,57 +32,106 @@ export function takeTurnMedia(turnId: string): Media[] {
   return list;
 }
 
-type EvidenceRow = { id: string; kind: string; name: string; mime: string; caption: string | null; size: number; local: boolean };
-const toMedia = (row: EvidenceRow, caption?: string | null): Media => ({ evidenceId: row.id, kind: row.kind, name: row.name, mime: row.mime, caption: caption ?? row.caption, size: row.size });
+type EvidenceRow = { id: string; kind: string; name: string; mime: string; caption: string | null; size: number; local: boolean; held: boolean; details: unknown };
+const SELECT = { id: true, kind: true, name: true, mime: true, caption: true, size: true, local: true, held: true, details: true } as const;
 
-/** The owner's own uploaded evidence for these ids, with why any other cannot be shown. */
+function toMedia(row: EvidenceRow, caption?: string | null, posterId?: string): Media {
+  const details = (row.details && typeof row.details === "object" ? row.details : {}) as Record<string, unknown>;
+  const measured = Object.fromEntries((["width", "height", "durationMs"] as const).filter((key) => typeof details[key] === "number").map((key) => [key, details[key] as number]));
+  return { evidenceId: row.id, kind: row.kind, name: row.name, mime: row.mime, caption: caption ?? row.caption, size: row.size, ...(posterId ? { posterId } : {}), ...measured };
+}
+
+/** Each video's poster image, when it was released with it: the poster is shown, never kept apart from its video. */
+async function postersOf(prisma: PrismaClient, ids: readonly string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await prisma.jobEvidence.findMany({ where: { variantOf: { in: [...ids] }, variant: "poster", held: false, local: false }, select: { id: true, variantOf: true } });
+  return new Map(rows.map((row) => [row.variantOf!, row.id]));
+}
+
+/**
+ * The owner's own uploaded evidence for these ids (their runs' files and their nodes' own captures),
+ * with why any other cannot be shown: another account's, kept on the computer, or held for the owner's
+ * preview (never shown until they release it).
+ */
 export async function ownerMedia(prisma: PrismaClient, ownerId: string, ids: readonly string[]): Promise<{ media: Media[]; problems: string[] }> {
   const wanted = [...new Set(ids.map((id) => id.trim()))];
-  const rows = await prisma.jobEvidence.findMany({
-    where: { id: { in: wanted.filter((id) => UUID.test(id)) }, userId: ownerId },
-    select: { id: true, kind: true, name: true, mime: true, caption: true, size: true, local: true },
-  });
+  const rows = await prisma.jobEvidence.findMany({ where: { id: { in: wanted.filter((id) => UUID.test(id)) }, userId: ownerId }, select: SELECT });
   const byId = new Map(rows.map((row) => [row.id, row]));
+  const posters = await postersOf(prisma, rows.filter((row) => row.kind === "video").map((row) => row.id));
   const media: Media[] = [];
   const problems: string[] = [];
   for (const id of wanted) {
     const row = byId.get(id);
-    if (!row) problems.push(`${id}: not a file your owner's runs attached`);
+    if (!row) problems.push(`${id}: not a file your owner's runs or you captured`);
+    else if (row.held) problems.push(`${row.name}: held for your owner to preview first (they release it on its card)`);
     else if (row.local) problems.push(`${row.name}: kept on the computer (evidence upload is off there)`);
-    else media.push(toMedia(row));
+    else media.push(toMedia(row, undefined, posters.get(row.id)));
   }
   return { media: media.slice(0, MAX_MEDIA), problems };
 }
 
+type ReportShape = { evidence?: Array<{ ref?: unknown; caption?: unknown }>; checks?: Array<{ evidence?: unknown; verdict?: unknown }> };
+
+/**
+ * Confirm before sending (design B20): the media a step may show, by evidence id, when one of its
+ * requirements asks for a screenshot or video. Only files a passing check names (a capture_check: the
+ * app alive with its window, the image not blank, the expected text on it), never one a failing or
+ * skipped check names. Null: the step's requirements ask for no pictures, so its checked files show.
+ */
+export function checkedMedia(report: ReportShape, wantsPictures: boolean): Set<string> | null {
+  if (!wantsPictures) return null;
+  const passed = new Set<string>();
+  const doubted = new Set<string>();
+  for (const check of report.checks ?? []) {
+    for (const id of Array.isArray(check.evidence) ? check.evidence : []) {
+      if (typeof id !== "string" || !UUID.test(id)) continue;
+      (check.verdict === "pass" ? passed : doubted).add(id);
+    }
+  }
+  for (const id of doubted) passed.delete(id);
+  return passed;
+}
+
 /**
  * What a mission's report shows: from each step that was done or passed, the files its worker named in
- * its report, then the screenshots and videos its runs attached; videos and screenshots first.
+ * its report, then the screenshots and videos its runs (or its node) captured; videos and screenshots
+ * first. Never a held file, and never the poster or preview of a video on its own. Where a step's
+ * requirement asks for a screenshot or video, only the files its passing checks name (`checkedMedia`).
  */
 export async function missionMedia(prisma: PrismaClient, missionId: string, ownerId: string, limit = 6): Promise<Media[]> {
-  const steps = await prisma.nodeStep.findMany({ where: { missionId, outcome: { in: ["done", "pass"] } }, select: { id: true, report: true, startedAt: true } });
+  const steps = await prisma.nodeStep.findMany({ where: { missionId, outcome: { in: ["done", "pass"] } }, select: { id: true, report: true, startedAt: true, requirementIds: true } });
   if (!steps.length) return [];
+  const mission = await prisma.nodeMission.findUnique({ where: { id: missionId }, select: { requirements: true } });
+  const requirements = (Array.isArray(mission?.requirements) ? mission.requirements : []) as Array<{ id?: unknown; evidence?: unknown }>;
+  const wantsPictures = (ids: readonly string[]) =>
+    requirements.some((row) => typeof row.id === "string" && ids.includes(row.id) && Array.isArray(row.evidence) && row.evidence.some((kind) => kind === "screenshot" || kind === "video"));
   const named = new Map<string, string | null>();
+  // Per step: the files it may show when its requirements ask for pictures (null: no such rule for it).
+  const allowed: Array<Set<string> | null> = [];
   for (const step of steps) {
-    const report = (step.report ?? {}) as { evidence?: Array<{ ref?: unknown; caption?: unknown }>; checks?: Array<{ evidence?: unknown }> };
-    for (const ref of report.evidence ?? []) if (typeof ref.ref === "string" && UUID.test(ref.ref)) named.set(ref.ref, typeof ref.caption === "string" ? ref.caption : null);
-    for (const check of report.checks ?? []) for (const id of Array.isArray(check.evidence) ? check.evidence : []) if (typeof id === "string" && UUID.test(id) && !named.has(id)) named.set(id, null);
+    const report = (step.report ?? {}) as ReportShape;
+    const checked = checkedMedia(report, wantsPictures(step.requirementIds));
+    allowed.push(checked);
+    for (const ref of report.evidence ?? []) if (typeof ref.ref === "string" && UUID.test(ref.ref) && (!checked || checked.has(ref.ref))) named.set(ref.ref, typeof ref.caption === "string" ? ref.caption : null);
+    for (const check of report.checks ?? []) for (const id of Array.isArray(check.evidence) ? check.evidence : []) if (typeof id === "string" && UUID.test(id) && !named.has(id) && (!checked || checked.has(id))) named.set(id, null);
   }
-  // Only the attempt that passed: an earlier attempt's captures show what failed.
-  const runs = await prisma.nodeRun.findMany({
-    where: { planId: missionId, OR: steps.map((row) => ({ planStep: row.id, ...(row.startedAt ? { createdAt: { gte: row.startedAt } } : {}) })) },
-    select: { jobId: true },
-  });
+  // Only the attempt that passed: an earlier attempt's captures show what failed. Steps whose requirements ask for pictures show only what was named.
+  const open = steps.filter((_, index) => !allowed[index]);
+  const runs = open.length
+    ? await prisma.nodeRun.findMany({ where: { planId: missionId, OR: open.map((row) => ({ planStep: row.id, ...(row.startedAt ? { createdAt: { gte: row.startedAt } } : {}) })) }, select: { jobId: true } })
+    : [];
   const rows = await prisma.jobEvidence.findMany({
-    where: { userId: ownerId, local: false, OR: [{ id: { in: [...named.keys()] } }, { jobId: { in: runs.map((row) => row.jobId) }, kind: { in: [...SHOWN_KINDS] } }] },
+    where: { userId: ownerId, local: false, held: false, variantOf: null, OR: [{ id: { in: [...named.keys()] } }, { jobId: { in: runs.map((row) => row.jobId) }, kind: { in: [...SHOWN_KINDS] } }] },
     orderBy: { createdAt: "asc" },
-    select: { id: true, kind: true, name: true, mime: true, caption: true, size: true, local: true },
+    select: SELECT,
   });
   const rank = (row: EvidenceRow) => (named.has(row.id) ? 0 : 2) + (row.kind === "video" ? 0 : row.kind === "screenshot" ? 0.5 : 1);
-  return rows
+  const shown = rows
     .filter((row) => named.has(row.id) || SHOWN_KINDS.has(row.kind))
     .sort((a, b) => rank(a) - rank(b))
-    .slice(0, limit)
-    .map((row) => toMedia(row, named.get(row.id)));
+    .slice(0, limit);
+  const posters = await postersOf(prisma, shown.filter((row) => row.kind === "video").map((row) => row.id));
+  return shown.map((row) => toMedia(row, named.get(row.id), posters.get(row.id)));
 }
 
 /**
@@ -90,9 +140,13 @@ export async function missionMedia(prisma: PrismaClient, missionId: string, owne
  * newest messages of the rooms this person is in.
  */
 export async function mediaReadable(prisma: PrismaClient, accountId: string, evidenceId: string, messageId?: string | null): Promise<boolean> {
-  const row = await prisma.jobEvidence.findUnique({ where: { id: evidenceId }, select: { userId: true } });
+  const row = await prisma.jobEvidence.findUnique({ where: { id: evidenceId }, select: { userId: true, held: true, variantOf: true } });
   if (!row) return false;
   if (row.userId === accountId) return true;
+  // Held for its owner's preview: nobody else, whatever a message says.
+  if (row.held) return false;
+  // A video's poster opens for whoever may open its video.
+  if (row.variantOf) return mediaReadable(prisma, accountId, row.variantOf, messageId);
   const shows = { kind: "text", userId: row.userId, data: { path: ["media"], array_contains: [{ evidenceId }] } };
   let messages: NodeMessage[];
   if (messageId && UUID.test(messageId)) {

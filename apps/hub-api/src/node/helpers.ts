@@ -62,7 +62,7 @@ export function helperFolders(node: Pick<NodeAgent, "autonomy">): string[] {
 
 const Handle = z.string().min(1).max(60).transform((value) => value.trim().replace(/^@/, "").toLowerCase());
 
-/** Removes a node with its direct chat or task room, its runs and its conversations. */
+/** Removes a node with its direct chat or task room, its runs, its own captures and its conversations. */
 export async function deleteNode(app: FastifyInstance, node: Pick<NodeAgent, "id" | "userId">): Promise<string[]> {
   await stopTurns(app, [node.id], null);
   await stopPlans(app, { nodeId: node.id, userId: node.userId });
@@ -78,6 +78,8 @@ async function removeNodeRows(prisma: PrismaClient, node: Pick<NodeAgent, "id" |
     prisma.nodeRoom.deleteMany({ where: { id: { in: own } } }),
     prisma.nodeAgent.delete({ where: { id: node.id } }),
     prisma.nodeRun.deleteMany({ where: { nodeId: node.id } }),
+    // Its own captures (no run): their stored bytes go with the evidence sweep.
+    prisma.jobEvidence.deleteMany({ where: { nodeId: node.id, jobId: null } }),
     prisma.assistantConversation.deleteMany({ where: { id: { in: conversations }, userId: node.userId, startedOn: "node" } }),
   ]);
   publishTo([node.userId], "node.room", { deleted: own });

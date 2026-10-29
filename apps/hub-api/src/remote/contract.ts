@@ -43,6 +43,10 @@ export const ROUTES = {
   evidence: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/evidence`,
   /** Output of a node tool command, in order, past what its answer carried (protocol 6, `node.tool.request`). */
   toolOutput: (runId: string) => `/api/devices/self/tool-runs/${encodeURIComponent(runId)}/output`,
+  /** A file the web asked for by an upload id (protocol 7): a node's capture, or a held file released or previewed. */
+  evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
+  /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
+  liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -88,8 +92,14 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * complete may carry the worker's `report` (node/report.ts StepReport); the files a worker attached go to
  * `ROUTES.evidence` before complete; the server may send `node.tool.request` (a node's own tool call on
  * this computer, `capabilities.nodeTools`), whose long output goes to `ROUTES.toolOutput`.
+ * 7 (16 Nov 2026): an evidence file's description may say it is held for the owner's preview (`held`,
+ * `holdReason`; its bytes stay here), that it is a video's poster or preview (`variantOf`, `variant`)
+ * and what capture measured (`details`); `node.tool.request` may carry a browser or capture tool
+ * (`capabilities.browser`), whose files go to `ROUTES.evidenceUpload`; the server may send
+ * `evidence.request` (preview, release or discard a file kept here); a run's live view goes to
+ * `ROUTES.liveFrame`.
  */
-export const PROTOCOL = 6;
+export const PROTOCOL = 7;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
 export const MAX_AUTO_RESUMES = 2;
 /** A run interrupted longer ago than this is not carried on by itself. */
@@ -478,6 +488,19 @@ export type TerminalChunk = z.infer<typeof TerminalChunk>;
 export const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log", "file"] as const;
 export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 
+/** What capture measured about a file: its size in pixels, a video's length, rate, frames and codec. */
+export const EvidenceDetails = z
+  .object({
+    width: z.number().int().min(0).max(100_000).optional(),
+    height: z.number().int().min(0).max(100_000).optional(),
+    durationMs: z.number().int().min(0).max(86_400_000).optional(),
+    fps: z.number().int().min(0).max(1000).optional(),
+    frames: z.number().int().min(0).max(10_000_000).optional(),
+    codec: text(40).optional(),
+  })
+  .strict();
+export type EvidenceDetails = z.infer<typeof EvidenceDetails>;
+
 /** Headers of an evidence upload: the job's lease, and `EvidenceMeta` as base64url JSON. The body is the file's bytes. */
 export const EVIDENCE_HEADERS = { lease: "x-ensemble-job-lease", meta: "x-ensemble-evidence" } as const;
 
@@ -498,6 +521,14 @@ export const EvidenceMeta = z
     caption: text(300).nullish(),
     requirementId: text(80).nullish(),
     local: z.boolean().default(false),
+    /** Protocol 7: kept here for the owner to preview first; like `local`, no bytes come with it. */
+    held: z.boolean().optional(),
+    holdReason: text(300).nullish(),
+    /** Protocol 7: a video's poster or small preview image, and the video's id. */
+    variantOf: z.string().uuid().nullish(),
+    variant: z.enum(["poster", "preview"]).nullish(),
+    /** Protocol 7: what capture measured. */
+    details: EvidenceDetails.nullish(),
   })
   .strict();
 export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
@@ -535,6 +566,19 @@ const NodeToolBase = z.object({
 });
 
 const Folder = text(4096).min(1);
+
+/** A node's browser or capture tool call (protocol 7). */
+const CaptureCall = {
+  /** The tool's name (`browser_open`, `capture_screenshot`, …) and its input, validated on the computer by the tool layer. */
+  name: text(60).regex(/^(browser|capture)_[a-z_]+$/),
+  input: z.record(z.string().max(100), z.unknown()).default({}),
+  /** The node's tool operation on this computer (`node:<nodeId>:<mission>`): its tabs, apps and files. */
+  operation: text(300).regex(/^node:[A-Za-z0-9-]{1,64}:[A-Za-z0-9:_-]{1,200}$/),
+  /** Where the files it writes go (`ROUTES.evidenceUpload`). */
+  uploadId: text(100).min(1),
+  /** Whether it may use the internet (the node's run profile): without, only this computer's own addresses. */
+  network: z.boolean().default(true),
+};
 
 /**
  * `node.tool.request` on the event stream: one tool call of a node, run and judged here (docs/25 §4.10).
@@ -592,12 +636,61 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
     headers: z.record(text(100), text(8000)).optional(),
     body: z.string().max(NODE_TOOL_INLINE_BYTES).optional(),
   }),
+  NodeToolBase.extend({ tool: z.literal("browser"), ...CaptureCall }),
+  NodeToolBase.extend({ tool: z.literal("capture"), ...CaptureCall }),
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 
+/** `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`, protocol 7). */
+export const BROWSER_API = 1;
+
+/** What a node's browser or capture tool call answers: the tool's summary and result, and the files it kept as evidence. */
+export const NodeCaptureAnswer = z.object({
+  ok: z.boolean(),
+  summary: z.string().max(200_000).optional(),
+  result: z.unknown().optional(),
+  error: z.object({ code: text(40), message: text(2000) }).optional(),
+  evidence: z
+    .array(z.object({ id: z.string().uuid(), name: text(200), kind: text(20), held: z.boolean(), holdReason: text(300).nullish(), local: z.boolean(), variantOf: z.string().uuid().nullish() }))
+    .max(40)
+    .default([]),
+  /** Files the computer did not keep (a saved secret's value in it, too large), with why. */
+  refused: z.array(z.object({ name: text(200), reason: text(300) })).max(40).default([]),
+});
+export type NodeCaptureAnswer = z.infer<typeof NodeCaptureAnswer>;
+
+/**
+ * `evidence.request` on the event stream (protocol 7): the owner previews, releases or discards a file
+ * this computer keeps (held, or upload off). Preview and release send the file to `ROUTES.evidenceUpload`
+ * under `uploadId`; discard deletes it here. The answer is a `CodeAnswer`.
+ */
+export const EvidenceRequest = z.object({
+  id: text(100).min(1),
+  evidenceId: z.string().uuid(),
+  action: z.enum(["preview", "release", "discard"]),
+  uploadId: text(100).optional(),
+});
+export type EvidenceRequest = z.infer<typeof EvidenceRequest>;
+
+/** One live view frame of a run's browser tab (`ROUTES.liveFrame`): a small JPEG, or why it paused. */
+export const LiveFramePost = z.object({
+  leaseToken: text(200).min(1),
+  tab: text(20),
+  url: text(4000).default(""),
+  title: text(500).default(""),
+  at: text(40),
+  /** base64 JPEG, at most about 200 KB; absent while paused. */
+  jpeg: z.string().max(300_000).optional(),
+  width: z.number().int().min(0).max(10_000).optional(),
+  height: z.number().int().min(0).max(10_000).optional(),
+  paused: z.enum(["sensitive", "private_site", "secret_on_screen"]).optional(),
+});
+export type LiveFramePost = z.infer<typeof LiveFramePost>;
+
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({
-  capability: z.enum(["run", "git", "http", "files"]),
+  /** `browse`: a page opened in the browser, or captured (protocol 7). */
+  capability: z.enum(["run", "git", "http", "files", "browse"]),
   /** What the answer covers: the folder's real path, or the address's origin. */
   target: text(4096).min(1),
   /** How the card names it: the folder's label or path, or the origin. */

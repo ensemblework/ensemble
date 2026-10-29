@@ -35,6 +35,11 @@ export async function captureService(): Promise<CaptureService> {
   return current;
 }
 
+/** The service if this runtime started it, else null: for ending work without starting it. */
+export function runningCapture(): CaptureService | null {
+  return shared;
+}
+
 export async function shutdownCapture(): Promise<void> {
   const current = shared;
   shared = null;

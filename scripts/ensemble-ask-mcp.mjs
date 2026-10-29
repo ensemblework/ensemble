@@ -17,7 +17,10 @@
  * ensemble_search, answered by /api/engine/tool for that chat's run only.
  * In a task run it offers report_result (the run's structured result) and
  * attach_evidence (a file the owner should see), answered by the same route
- * (hub-api src/evidence/run-tools.ts, docs/30 §9).
+ * (hub-api src/evidence/run-tools.ts, docs/30 §9), and the browser and
+ * capture tools this computer has (browser_*, capture_*), listed by
+ * /api/engine/tools and answered by /api/engine/tool too: what they capture
+ * is the run's evidence (hub-api src/evidence/capture-tools.ts, docs/25 §10).
  *
  * In both it offers secret_http: a web request made by this computer's Ensemble with one of the
  * person's saved secrets put in where {{NAME}} appears, only to the destinations they allowed for it,
@@ -188,6 +191,20 @@ export function toolsFor(env = process.env) {
   return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, SECRET_HTTP_TOOL];
 }
 
+/** The browser and capture tools this computer offers a task run, as Ensemble listed them (none in Chat). */
+let captureTools = null;
+
+export async function runCaptureTools(env = process.env, ask = () => post("/api/engine/tools", undefined, (error) => ({ error }), "GET")) {
+  if (env.ENSEMBLE_CHAT === "1") return [];
+  if (captureTools) return captureTools;
+  const answer = await ask();
+  const listed = Array.isArray(answer?.tools) ? answer.tools.filter((tool) => typeof tool?.name === "string" && tool.inputSchema && typeof tool.inputSchema === "object") : null;
+  // Ensemble could not be asked: list none now, and ask again next time.
+  if (!listed) return [];
+  captureTools = listed;
+  return captureTools;
+}
+
 function send(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
@@ -316,10 +333,10 @@ async function handle(message) {
   if (message.method === "initialize") {
     send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" } } });
   } else if (message.method === "tools/list") {
-    send({ id: message.id, result: { tools: toolsFor() } });
+    send({ id: message.id, result: { tools: [...toolsFor(), ...(await runCaptureTools())] } });
   } else if (message.method === "tools/call") {
     const name = message.params?.name;
-    if (name !== TOOL.name && toolsFor().some((tool) => tool.name === name)) {
+    if (name !== TOOL.name && (toolsFor().some((tool) => tool.name === name) || (await runCaptureTools()).some((tool) => tool.name === name))) {
       const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error }));
       const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
       send({ id: message.id, result: { content: [{ type: "text", text }], ...(typeof answer?.text === "string" ? {} : { isError: true }) } });

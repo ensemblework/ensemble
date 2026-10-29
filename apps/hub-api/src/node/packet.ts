@@ -180,7 +180,8 @@ const REPORT = [
   "- summary: what changed and how you checked it.",
   "- subject: what you built or tested: repo, branch and commit; without a commit, `git write-tree` as contentHash.",
   "- checks: each check with its verdict (pass, fail, blocked, skipped), named with the acceptance criterion's id when there is one; a fail says what you saw; add rerun (command and expected result) when it can be run again.",
-  "- evidence: attach screenshots, videos, logs or reports first with attach_evidence, then name their ids.",
+  "- evidence: screenshots and videos you take with the Ensemble browser_* and capture_* tools are evidence already (each comes back with its id); attach other files (logs, reports) with attach_evidence first. Name their ids.",
+  "- Before you name a screenshot or video, check it with capture_check (the app still runs and its window has the expected title; the image is not blank; the page shows the expected text) and put those checks in checks, with the file's id in their evidence. Only checked captures reach your owner; a blank or wrong one is a failed check.",
   "Without the Ensemble tools, write the same JSON to .ensemble/result.json in your folder before you end.",
 ].join("\n");
 

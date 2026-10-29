@@ -95,6 +95,7 @@ export function bypassesGlobalAuth(path: string): boolean {
     /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) ||
     path === "/api/engine/ask" ||
     path === "/api/engine/tool" ||
+    path === "/api/engine/tools" ||
     path === "/api/engine/assistant/tools" ||
     path === "/api/engine/assistant/tool" ||
     // git's credential helper in a run: the run's own token (credentials/git-credential.ts).

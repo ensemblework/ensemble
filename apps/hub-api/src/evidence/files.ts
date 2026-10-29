@@ -6,7 +6,7 @@
  * credential and `.env` files, shell histories, Ensemble's own data, the browser profile and any file
  * holding a saved secret value are refused. What is copied is exactly what was checked.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -15,6 +15,7 @@ import type { JobEvidence, PrismaClient } from "@prisma/client";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { expandHome, GuardError, outsideRefusal, within } from "../workspace/guard.js";
 import { stateDir } from "../remote/store.js";
+import { isEnsembleData } from "../workspace/data-denies.js";
 import type { EvidenceKind } from "../remote/contract.js";
 import { credentialPathReason, evidenceLimit, evidenceName, kindMismatch, MAX_EVIDENCE_PER_JOB, sha256Hex, sniffMime } from "./limits.js";
 
@@ -33,6 +34,26 @@ export function evidenceRoot(): string {
 export function evidenceDir(jobId: string): string {
   if (!UUID.test(jobId)) throw new EvidenceError("That run has no evidence folder.");
   return join(evidenceRoot(), jobId);
+}
+
+const OPERATION = /^node:[A-Za-z0-9-]{1,64}:[A-Za-z0-9:_-]{1,200}$/;
+
+/** A node's tool operation, as the server names it: `node:<nodeId>:<mission>`. */
+export function isNodeOperation(operation: string): boolean {
+  return OPERATION.test(operation);
+}
+
+/** Where a node's own captures for one tool operation go (no job): inside the evidence root, named by a digest. */
+export function operationEvidenceDir(operation: string): string {
+  if (!isNodeOperation(operation)) throw new EvidenceError("That is not a node's tool operation.");
+  return join(evidenceRoot(), "node", createHash("sha256").update(operation).digest("hex").slice(0, 32));
+}
+
+/** The folder a recorded file lies in: its run's, or its node operation's. */
+export function evidenceFolderOf(row: Pick<JobEvidence, "jobId" | "operation">): string {
+  if (row.jobId) return evidenceDir(row.jobId);
+  if (row.operation) return operationEvidenceDir(row.operation);
+  throw new EvidenceError("That evidence has no folder.");
 }
 
 /**
@@ -92,7 +113,7 @@ export function evidenceFloor(real: string, home = homedir()): string | null {
   if (named) return named;
   if (within(evidenceRoot(), real)) return null;
   if (within(browserProfileDir(), real)) return "The browser's profile (cookies and saved sign-ins) is never attached.";
-  if (protectedDeviceFolders(home).some((folder) => within(folder, real))) return "Ensemble's own data is never attached.";
+  if (isEnsembleData(real, { home })) return "Ensemble's own data is never attached.";
   return outsideRefusal(real, false, home);
 }
 
@@ -225,9 +246,9 @@ export async function attachEvidence(
  * A recorded file's bytes, read again from the evidence folder by the same rules and refused when
  * they are no longer what was recorded (something changed the copy).
  */
-export async function storedEvidence(row: Pick<JobEvidence, "jobId" | "storageKey" | "kind" | "sha256">, secrets: readonly string[]): Promise<CheckedFile> {
+export async function storedEvidence(row: Pick<JobEvidence, "jobId" | "operation" | "storageKey" | "kind" | "sha256">, secrets: readonly string[]): Promise<CheckedFile> {
   if (!row.storageKey || /[\\/]/.test(row.storageKey) || row.storageKey === "." || row.storageKey === "..") throw new EvidenceError("That evidence is not in the run's folder.");
-  const checked = await readEvidenceFile(join(evidenceDir(row.jobId), row.storageKey), { kind: row.kind as EvidenceKind, secrets });
+  const checked = await readEvidenceFile(join(evidenceFolderOf(row), row.storageKey), { kind: row.kind as EvidenceKind, secrets });
   if (checked.sha256 !== row.sha256) throw new EvidenceError(`${row.storageKey} changed after it was attached, so it is not sent.`);
   return checked;
 }

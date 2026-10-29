@@ -87,6 +87,11 @@ export type OperationOptions = {
   leaseMs?: number;
   /** The longest video `record` makes (default two minutes). */
   maxVideoMs?: number;
+  /**
+   * Work with the internet off: its tabs open and load only this computer's own addresses
+   * (localhost, 127.0.0.0/8, ::1); every other request is aborted.
+   */
+  loopbackOnly?: boolean;
 };
 
 export type BrokerOptions = {
@@ -140,6 +145,9 @@ type Operation = {
 };
 
 const LOG_LIMIT = 300;
+/** Recordings finished by a tab closing, kept for their work: per operation, and operations in all. */
+const FINISHED_PER_OPERATION = 20;
+const FINISHED_OPERATIONS = 200;
 const PRIVATE_IDLE_MS = 30_000;
 const PREVIEW_REASON = "The owner asked to see captures of this site before they are sent.";
 const EXPOSED_REASON = "A one-time code or card field was on screen.";
@@ -187,6 +195,16 @@ export function checkUrl(url: string): string {
   return parsed.toString();
 }
 
+/** An http(s) or ws(s) address of this computer itself: localhost, 127.0.0.0/8 or ::1. */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
 /** A snapshot reference, or else a CSS selector. */
 export function elementSelector(target: string): string {
   if (!target || target.length > 500) throw new BrowserError("bad_input", "Give an element reference from a snapshot, or a CSS selector.");
@@ -211,6 +229,7 @@ export class BrowserBroker {
   private readonly tabs = new Map<string, Tab>();
   private readonly pageTabs = new WeakMap<Page, Tab>();
   private readonly operations = new Map<string, Operation>();
+  private readonly finished = new Map<string, MediaFile[]>();
   private privateBrowser: Promise<Browser> | null = null;
   private janitor: NodeJS.Timeout | null = null;
   private counter = 0;
@@ -520,7 +539,18 @@ export class BrowserBroker {
   }
 
   private async closeTab(tab: Tab): Promise<void> {
-    if (tab.recording?.kind === "video") await tab.recording.video.stop().catch(() => undefined);
+    if (tab.recording?.kind === "video") {
+      // Finished with its tab (a close, a release, an expired lease): kept for its work to take, held as it was watched.
+      const recording = tab.recording;
+      const file = await recording.video.stop().catch(() => null);
+      if (file) {
+        if (recording.watch.held) Object.assign(file, { held: true, reason: recording.watch.held });
+        const files = [...(this.finished.get(tab.operation) ?? []), file].slice(-FINISHED_PER_OPERATION);
+        this.finished.delete(tab.operation);
+        this.finished.set(tab.operation, files);
+        while (this.finished.size > FINISHED_OPERATIONS) this.finished.delete(this.finished.keys().next().value!);
+      }
+    }
     if (tab.entry.tracing?.tab === tab.id) await this.discardTrace(tab.entry, "its tab closed");
     tab.recording = null;
     this.forgetTab(tab);
@@ -529,7 +559,10 @@ export class BrowserBroker {
 
   async open(operation: string, url: string, input: OpenOptions = {}): Promise<TabInfo & { status: number | null; error?: string; note?: string }> {
     const target = checkUrl(url);
-    this.op(operation);
+    const loopbackOnly = this.op(operation).options.loopbackOnly === true;
+    if (loopbackOnly && target !== "about:blank" && !isLoopbackUrl(target)) {
+      throw new BrowserError("refused", "This work has the internet off: the browser opens only this computer's own addresses (localhost).");
+    }
     let tab: Tab;
     let note: string | undefined;
     if (input.tab) {
@@ -543,6 +576,7 @@ export class BrowserBroker {
       const blank = found.entry.context.pages().find((page) => !this.pageTabs.has(page) && page.url() === "about:blank");
       tab = this.register(blank ?? (await found.entry.context.newPage()), operation, found.entry);
       if (input.viewport && profile !== null) await tab.page.setViewportSize(input.viewport);
+      if (loopbackOnly) await tab.page.route("**/*", (route) => (isLoopbackUrl(route.request().url()) ? route.continue() : route.abort("blockedbyclient")));
     }
     let status: number | null = null;
     let error: string | undefined;
@@ -991,6 +1025,16 @@ export class BrowserBroker {
   renew(operation: string): void {
     const op = this.op(operation);
     for (const tab of this.tabsOf(operation)) tab.expiresAt = this.now() + (op.options.leaseMs ?? this.options.leaseMs);
+  }
+
+  /**
+   * Recordings that finished because their tab closed (a close, the work's end, an expired lease),
+   * with whether they are held: taken once, so the work that made them keeps them as evidence.
+   */
+  takeFinished(operation: string): MediaFile[] {
+    const files = this.finished.get(operation) ?? [];
+    this.finished.delete(operation);
+    return files;
   }
 
   /** Ends an operation: its recordings are finished, its tabs and private browser closed. */

@@ -17,6 +17,7 @@ import { env } from "../config.js";
 import { compileSeatbeltProfile, SECRET_HOME_PATHS } from "./sandbox/seatbelt.js";
 import { programArgv } from "./shell-parse.js";
 import { capabilities } from "./sandbox/spawn.js";
+import { ensembleDataDenies, isEnsembleData } from "./data-denies.js";
 
 export class GuardError extends Error {
   readonly statusCode = 403;
@@ -199,8 +200,8 @@ function underHome(home: string, real: string, names: string[]): string | undefi
  */
 export function outsideRefusal(real: string, write: boolean, home = HOME): string | null {
   if (harmlessPath(real)) return null;
-  const appData = desktopDataDir({ platform: process.platform, home });
-  if (within(appData, real)) return "Ensemble's own data is off limits.";
+  // The desktop app's data folder and this runtime's own (the testing CLI's, ENSEMBLE_DATA_HOME's): keys, database, browser profiles.
+  if (isEnsembleData(real, { home })) return "Ensemble's own data is off limits.";
   // Ensemble's git helper runs with the person's GitHub token: nothing a run starts may touch it.
   if ([knownWorkspace(), configuredWorkspace()].some((workspace) => within(join(workspace, ".askpass"), real))) return "Ensemble's git sign-in helper is off limits.";
   // Copies of the files attached to tasks, made for the run to read.
@@ -236,7 +237,7 @@ export function outsideRefusal(real: string, write: boolean, home = HOME): strin
  */
 export function holdsProtected(real: string, home = HOME): boolean {
   const protectedPaths = [
-    desktopDataDir({ platform: process.platform, home }),
+    ...ensembleDataDenies({ home }),
     join(knownWorkspace(), ".askpass"),
     join(configuredWorkspace(), ".askpass"),
     ENSEMBLE_SOURCE,
@@ -684,7 +685,7 @@ export async function seatbeltProfile(
     home: HOME,
     readWrite,
     readOnly: options.readOnly ?? [],
-    deny: [desktopDataDir({ platform: "darwin", home: HOME })],
+    deny: [desktopDataDir({ platform: "darwin", home: HOME }), ...ensembleDataDenies()],
     network: options.network ? "outbound" : "none",
     who: options.who,
     ensembleSource: ENSEMBLE_SOURCE,

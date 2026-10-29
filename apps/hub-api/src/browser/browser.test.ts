@@ -9,7 +9,7 @@ import test from "node:test";
 import { BrowserBroker, hasDisplay } from "./broker.js";
 import { browserSearchRoots, findChromium, listBrowserBuilds, playwrightCacheDir, playwrightRevisions, type FileProbe, type Host } from "./chromium.js";
 import { browserDeniedPaths, browserProfileDir, browserRoot, ensembleDataHome, isProfileName, playwrightBrowsersDir } from "./paths.js";
-import { findSecrets, hideSecrets, matchesSite, redactSnapshot, siteRule, valueFieldRefs } from "./privacy.js";
+import { findSecrets, hideSecrets, matchesSite, normalizeSite, redactSnapshot, siteLists, siteRule, valueFieldRefs } from "./privacy.js";
 import { BROWSER_TOOLS, browserToolDefinitions, runBrowserTool } from "./tools.js";
 import { CAPTURE_TOOLS, captureToolDefinitions } from "../capture/tools.js";
 
@@ -25,6 +25,18 @@ test("site rules: an origin matches exactly; a host covers its subdomains on any
   assert.equal(siteRule("https://pay.mybank.com/", { neverCapture: ["mybank.com"], previewFirst: ["pay.mybank.com"] }), "never");
   assert.equal(siteRule("https://docs.example.com/", { previewFirst: ["example.com"] }), "preview");
   assert.equal(siteRule("https://example.org/", { neverCapture: ["example.com"] }), null);
+});
+
+test("the owner's site lists keep a host or an origin, once each", () => {
+  assert.equal(normalizeSite("  Bank.Example "), "bank.example");
+  assert.equal(normalizeSite("*.bank.example/login?x=1"), "bank.example");
+  assert.equal(normalizeSite("localhost:3000"), "localhost");
+  assert.equal(normalizeSite("https://Mail.Example.com/inbox"), "https://mail.example.com");
+  assert.equal(normalizeSite("http://127.0.0.1:5173/app"), "http://127.0.0.1:5173");
+  for (const bad of ["", "ftp://example.com", "javascript:alert(1)", "two words.com", "-bad-.com", "https://"]) assert.equal(normalizeSite(bad), null, bad);
+  assert.deepEqual(siteLists({ never: ["mybank.com", "*.MyBank.com"], preview: ["https://mail.example.com/x"] }), { never: ["mybank.com"], preview: ["https://mail.example.com"] });
+  const refused = siteLists({ never: ["fine.com", "not a site"], preview: [] });
+  assert.ok("error" in refused && /not a site/.test(refused.error));
 });
 
 test("secrets: saved values (six characters or more) and key shapes are found and hidden", () => {

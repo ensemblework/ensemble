@@ -93,7 +93,18 @@ export class OutputTail {
  * as `prepareSpawn` in workspace/sandbox/spawn.ts does. Arguments added after the returned ones
  * must reach the program (an Electron launch appends its own).
  */
-export type CommandWrapper = (input: { program: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ program: string; args: string[]; env?: NodeJS.ProcessEnv }>;
+export type CommandWrapper = (input: {
+  program: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  /** What is started: an Electron app (driven by Playwright over a local port) or any other program. */
+  kind?: "gui" | "electron";
+  /** Whether the app may use the internet (the work's own setting). */
+  network?: boolean;
+  /** The variables the caller set for the app itself, apart from the runtime's own environment. */
+  appEnv?: Record<string, string>;
+}) => Promise<{ program: string; args: string[]; env?: NodeJS.ProcessEnv }>;
 
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 

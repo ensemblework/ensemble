@@ -19,6 +19,8 @@ import { runNodeGit } from "./git.js";
 import { decide, type PolicyInput } from "./policy.js";
 import { runNodeCommand } from "./run.js";
 import { nodeSecretHttp } from "../credentials/node-tool.js";
+import { captureScope, runNodeCapture } from "./capture.js";
+import { BrowserError } from "../browser/broker.js";
 
 type App = Pick<FastifyInstance, "prisma">;
 
@@ -31,8 +33,9 @@ export function weakSandbox(): boolean {
   return !caps.osSandbox || caps.strength === "advisory" || caps.strength === "ask";
 }
 
-/** Where the call acts, for the policy: a folder's real path, or a web address's origin. */
-async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> }> {
+/** Where the call acts, for the policy: a folder's real path, or a web address's origin; null for a call on the operation's own tabs, apps and files. */
+async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> } | null> {
+  if (request.tool === "browser" || request.tool === "capture") return captureScope(request);
   if (request.tool === "http") {
     const { url } = await checkTarget(request.url);
     return { folder: null, input: { capability: "http", target: url.origin, label: url.origin, scope: "origin" } };
@@ -55,19 +58,25 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
       return reply(done.status, done.body);
     }
     const where = await scopeOf(request);
-    const settings = loadSettings();
-    const verdict = await decide(app.prisma, userId(), { ...where.input, mission: request.mission, attended: request.attended, grants: request.grants }, { weak: weakSandbox(), acceptWeb: settings.acceptWebApprovals });
-    if (verdict.kind === "refuse") return reply(verdict.status, { error: verdict.reason });
-    grantsUsed = verdict.grantsUsed;
-    if (verdict.kind === "ask") {
-      await appendLedger({ userId: userId(), actor: "agent", action: "node.tool.ask", payload: { nodeId: request.nodeId, capability: verdict.ask.capability, target: verdict.ask.label } }).catch(() => undefined);
-      return reply(428, { ask: verdict.ask });
+    if (where) {
+      const settings = loadSettings();
+      const verdict = await decide(app.prisma, userId(), { ...where.input, mission: request.mission, attended: request.attended, grants: request.grants }, { weak: weakSandbox(), acceptWeb: settings.acceptWebApprovals });
+      if (verdict.kind === "refuse") return reply(verdict.status, { error: verdict.reason });
+      grantsUsed = verdict.grantsUsed;
+      if (verdict.kind === "ask") {
+        await appendLedger({ userId: userId(), actor: "agent", action: "node.tool.ask", payload: { nodeId: request.nodeId, capability: verdict.ask.capability, target: verdict.ask.label } }).catch(() => undefined);
+        return reply(428, { ask: verdict.ask });
+      }
     }
+    if (request.tool === "browser" || request.tool === "capture") return reply(200, (await runNodeCapture(app, client, request, where?.folder ?? null)) as Record<string, unknown>);
+    if (!where) return reply(400, { error: "That request could not be read." });
     if (request.tool === "run") return await runNodeCommand(app, client, request, where.folder!, (out) => reply(out.status, (out.body ?? {}) as Record<string, unknown>));
     const done = request.tool === "git" ? await runNodeGit(request, where.folder!) : request.tool === "files" ? await runNodeFiles(request, where.folder!) : await runNodeHttp(request);
     return reply(done.status, done.body);
   } catch (error) {
     if (error instanceof GuardError) return reply(403, { error: error.message });
+    // An address the browser never opens (not http or https, not a full URL).
+    if (error instanceof BrowserError) return reply(400, { error: error.message });
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") return reply(404, { error: "That folder or file is not there." });
     return reply(500, { error: error instanceof Error ? error.message.slice(0, 300) : "This computer could not do that." });

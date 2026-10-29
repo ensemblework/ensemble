@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { captureScriptArgs, captureScriptEnv, formatCapture, runCaptureScript, type CaptureReport } from "./capture.js";
+import { captureScriptArgs, captureScriptEnv, changeSites, formatCapture, formatSites, parseSitesArgs, runCaptureScript, type CaptureReport } from "./capture.js";
 import { resolveCliPaths } from "./paths.js";
 
 const linux: CaptureReport = {
@@ -61,4 +61,17 @@ test("runCaptureScript reads the runtime's JSON report and passes its progress o
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("capture sites: list, add and remove a never or preview site", () => {
+  assert.deepEqual(parseSitesArgs([]), { change: null });
+  assert.deepEqual(parseSitesArgs(["list"]), { change: null });
+  assert.deepEqual(parseSitesArgs(["add", "never", "mail.example.com"]), { change: { action: "add", list: "never", site: "mail.example.com" } });
+  assert.deepEqual(parseSitesArgs(["remove", "preview", "https://bank.example"]), { change: { action: "remove", list: "preview", site: "https://bank.example" } });
+  for (const bad of [["add", "always", "x.com"], ["add", "never"], ["drop", "never", "x.com"], ["add", "never", "a.com", "b.com"]]) assert.ok("error" in parseSitesArgs(bad), bad.join(" "));
+  const sites = { never: ["bank.example"], preview: [] };
+  assert.deepEqual(changeSites(sites, { action: "add", list: "preview", site: "mail.example.com" }), { never: ["bank.example"], preview: ["mail.example.com"] });
+  assert.deepEqual(changeSites(sites, { action: "add", list: "never", site: "Bank.Example" }), { never: ["Bank.Example"], preview: [] }, "the same site once");
+  assert.deepEqual(changeSites(sites, { action: "remove", list: "never", site: "*.bank.example" }), { never: [], preview: [] });
+  assert.deepEqual(formatSites({ never: ["bank.example"], preview: [] }), ["Never captured (no screenshot, video, page reading or live view):", "  bank.example", "Preview first (captures wait for you before they are sent anywhere):", "  (none)"]);
 });

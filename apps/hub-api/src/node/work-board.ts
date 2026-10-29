@@ -14,7 +14,7 @@ const LIVE_MISSION = ["draft", "running", "reporting"];
  * Tools that never change anything (lookups). Every other tool counts as acting: from its first
  * call the turn is not aborted to merge a newer message, and a restart reconciles it.
  */
-const READS = /^(hub_(list|get|read|search|find|view|diagram_context|explain|validate|repo_read|repo_overview|weekly_recap|how_to)|hub_web_search|node_sessions|node_overview|node_computer_files|node_work_status|computer_git)/;
+const READS = /^(hub_(list|get|read|search|find|view|diagram_context|explain|validate|repo_read|repo_overview|weekly_recap|how_to)|hub_web_search|node_sessions|node_overview|node_computer_files|node_work_status|computer_git|browser_(tabs|snapshot|console|network_errors|wait)$|capture_(status|apps|check)$)/;
 
 export function actsOnTheWorld(name: string, isWrite: boolean | undefined): boolean {
   if (isWrite) return true;
