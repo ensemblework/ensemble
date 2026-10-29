@@ -115,6 +115,12 @@ async function names(prisma: PrismaClient, ids: string[]): Promise<Map<string, {
 }
 
 /** A room as one person sees it: other people's emails stay out, other people's nodes show only their public face. */
+function helperOf(room: NodeRoom): { parentNodeId: string | null; helperNodeId: string | null; originRoomId: string | null; originPrivate: boolean } {
+  const raw = (room.settings && typeof room.settings === "object" ? room.settings : {}) as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return { parentNodeId: text(raw.parentNodeId), helperNodeId: text(raw.helperNodeId), originRoomId: text(raw.originRoomId), originPrivate: Array.isArray(raw.originPrivateTo) && raw.originPrivateTo.length > 0 };
+}
+
 async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom) {
   const members = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id }, include: { node: true }, orderBy: { joinedAt: "asc" } });
   const invites = room.kind === "room" && room.userId === accountId
@@ -131,6 +137,8 @@ async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom)
     lastMessageAt: room.lastMessageAt?.toISOString() ?? null,
     leadNodeIds: settings.leadNodeIds,
     pinned: settings.pinned,
+    // A helper's task room: whose helper it is and where its parent was asked, so the site shows it there.
+    ...(room.kind === "task" ? { helper: helperOf(room) } : {}),
     // Only the person who made a room sees its requests: whether each was accepted, declined or is open.
     invites: invites.map((row) => ({
       id: row.id,
