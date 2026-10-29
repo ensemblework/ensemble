@@ -53,6 +53,7 @@ import { registerRoutineRoutes } from "./routine-routes.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
+import { boundSpaceId, offerSpace } from "./room-space.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -149,6 +150,8 @@ async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom)
     pinned: settings.pinned,
     // A helper's task room: whose helper it is and where its parent was asked, so the site shows it there.
     ...(room.kind === "task" ? { helper: helperOf(room) } : {}),
+    // A room with people: the space that holds its work, if linked (GET /api/node/rooms/:id/space for details).
+    ...(room.kind === "room" ? { spaceId: boundSpaceId(room) } : {}),
     // Only the person who made a room sees its requests: whether each was accepted, declined or is open.
     invites: invites.map((row) => ({
       id: row.id,
@@ -732,6 +735,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     });
     const who = await names(prisma, [accountId]);
     await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: `${who.get(accountId)?.name ?? "Someone"} joined with ${handles.map((handle) => `@${handle}`).join(", ")}.` });
+    // Joining a room is not joining its space: that is offered separately (node/room-space.ts).
+    await offerSpace(app, room.id, accountId);
     publishTo(await roomPeople(prisma, room.id), "node.room", { roomId: room.id });
     return reply.code(201).send({ room: await roomView(prisma, accountId, room) });
   });

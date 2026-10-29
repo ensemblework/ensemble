@@ -132,6 +132,41 @@ function TransferDialog({ space, onClose }: { space: OwnedSpace; onClose: () => 
   );
 }
 
+/** Your own limits: how many contacts, and how many people per space you own. Lowering one takes nobody away. */
+function LimitsCard({ limits, caps }: { limits: SharingOverview["limits"]; caps: NonNullable<SharingOverview["caps"]> }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [contacts, setContacts] = useState(String(limits.contacts));
+  const [members, setMembers] = useState(String(limits.members));
+  const save = useMutation({
+    mutationFn: () => api.saveSharingLimits({ contacts: Number(contacts), members: Number(members) }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["sharing"] });
+      toast("Limits saved.", { tone: "ok" });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const valid = (value: string, cap: number) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= cap;
+  const changed = Number(contacts) !== limits.contacts || Number(members) !== limits.members;
+  return (
+    <SectionCard title="Limits" info="Your choice. Lowering a limit takes nobody away; it only stops new additions until fewer are in use.">
+      <div className="flex flex-wrap items-end gap-3 text-[13px]">
+        <label className="block">
+          <span className="text-[12px] text-muted">Contacts (up to {caps.contacts})</span>
+          <input type="number" min={1} max={caps.contacts} className="field mt-1 w-28" value={contacts} onChange={(event) => setContacts(event.target.value)} />
+        </label>
+        <label className="block">
+          <span className="text-[12px] text-muted">People per space (up to {caps.members})</span>
+          <input type="number" min={1} max={caps.members} className="field mt-1 w-28" value={members} onChange={(event) => setMembers(event.target.value)} />
+        </label>
+        <button type="button" className="btn" disabled={!changed || !valid(contacts, caps.contacts) || !valid(members, caps.members) || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </SectionCard>
+  );
+}
+
 /** Settings → Sharing: your contacts, what you share, and what is shared with you. */
 export function SharingTab() {
   const { native } = useClientPlatform();
@@ -214,6 +249,8 @@ export function SharingTab() {
         </div>
         {contactsFull ? <p className="mt-2 text-2xs text-faint">All slots are used. Remove someone to share with a new person.</p> : null}
       </SectionCard>
+
+      {data.caps ? <LimitsCard key={`${data.limits.contacts}:${data.limits.members}`} limits={data.limits} caps={data.caps} /> : null}
 
       <SectionCard title="Spaces you share" info={`Share work with up to ${data.limits.members} people. Settings, credentials and computers stay private.`}>
         <div className="divide-y divide-line">

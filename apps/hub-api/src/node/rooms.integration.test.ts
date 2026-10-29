@@ -692,3 +692,135 @@ test("direct chats and crews keep owner-wide turns", async () => {
   assert.equal((await turnsOf([lead.id], crew.id)).at(-1)!.audience, "owner");
   assert.ok(seen[0]!.tools.includes("node_plan") && seen[0]!.tools.includes("node_remember"));
 });
+
+// ── C4 the room's shared space and proposed tasks ─────────────────────────────────────────────
+
+/** Akash makes and links a space for the room (named `name`); its id. */
+async function linkSpace(akash: HttpUser, roomId: string, name = `Space ${randomBytes(3).toString("hex")}`) {
+  const bound = await akash.inject({ method: "PUT", url: `/api/node/rooms/${roomId}/space`, payload: { create: true, name } });
+  assert.equal(bound.statusCode, 200, bound.body);
+  return json(bound).space.id as string;
+}
+const joinSpace = (user: HttpUser, roomId: string, join = true) => user.inject({ method: "POST", url: `/api/node/rooms/${roomId}/space/join`, payload: { join } });
+
+test("C4: the room's creator links a space; everyone else is offered it as editors, separately from joining; the limits are the owner's", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const said = await say(akash, room.id, "Kick-off notes are in the doc.");
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/space`, payload: { create: true } })).statusCode, 403, "only the room's creator links its space");
+  const cara = await person("Cara");
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  // Pins and edits keep the room's version and its space.
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/pins`, payload: { messageId: said.id, pinned: true } })).statusCode, 200);
+  assert.equal((await akash.inject({ method: "PATCH", url: `/api/node/rooms/${room.id}`, payload: { responsibility: "Backend" } })).statusCode, 200);
+  const settings = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).settings as any;
+  assert.deepEqual([settings.version, settings.spaceId, settings.pinned], [2, spaceId, [said.id]]);
+  assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).room.spaceId, spaceId);
+
+  const line = (await read(ben, room.id)).find((row) => row.data?.roomSpace?.action === "bound")!;
+  assert.match(line.body, /^Akash linked the space “Launch space” to this room/);
+  assert.equal(await h.prisma.spaceMember.count({ where: { spaceId } }), 0, "being in the room is not being in its space");
+  const offer = (await read(ben, room.id)).find((row) => row.data?.type === "space_offer")!;
+  assert.ok(offer.private);
+  assert.deepEqual([offer.data.status, offer.data.spaceName, offer.data.role], ["pending", "Launch space", "editor"]);
+  assert.ok(!(await read(akash, room.id)).some((row) => row.data?.type === "space_offer"), "the offer is Ben's alone");
+  const view = json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/space` }));
+  assert.deepEqual([view.space.name, view.space.role, view.space.ownerName, view.offer.status], ["Launch space", null, "Akash", "pending"]);
+  assert.deepEqual(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` })).tasks, [], "no board before joining");
+
+  // Akash allows one person per space, his choice; Ben takes the offer.
+  assert.equal((await akash.inject({ method: "PUT", url: "/api/sharing/limits", payload: { members: 51 } })).statusCode, 400, "the system's own ceiling");
+  assert.equal((await akash.inject({ method: "PUT", url: "/api/sharing/limits", payload: { members: 1 } })).statusCode, 200);
+  const joined = await joinSpace(ben, room.id);
+  assert.equal(joined.statusCode, 200, joined.body);
+  assert.equal(json(joined).space.role, "editor");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 409, "settled once");
+
+  // Cara joins the room later: offered the space at join; Akash's limit stops her until he raises it.
+  const invite = await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } });
+  assert.equal(invite.statusCode, 201, invite.body);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const caraInvite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${caraInvite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  assert.equal((await read(cara, room.id)).filter((row) => row.data?.type === "space_offer").length, 1);
+  const full = await joinSpace(cara, room.id);
+  assert.equal(full.statusCode, 409);
+  assert.match(json(full).error, /Akash has reached their sharing limit \(people in a space\)\. They can raise it in Settings, Sharing\./);
+  assert.equal(json(await joinSpace(cara, room.id, false)).offer.status, "declined");
+  assert.equal(json(await akash.inject({ method: "GET", url: "/api/sharing/overview" })).limits.members, 1);
+  assert.equal((await akash.inject({ method: "PUT", url: "/api/sharing/limits", payload: { members: 5 } })).statusCode, 200);
+  assert.equal(json(await joinSpace(cara, room.id)).space.role, "editor", "Not now can become Join later");
+  assert.deepEqual((await h.prisma.spaceMember.findMany({ where: { spaceId }, orderBy: { createdAt: "asc" } })).map((row) => [row.accountId, row.role]), [[ben.id, "editor"], [cara.id, "editor"]]);
+
+  // Unlinking leaves the space and its members as they are.
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/space` })).statusCode, 200);
+  const after_ = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).settings as any;
+  assert.deepEqual([after_.version, after_.spaceId], [2, undefined]);
+  assert.equal(await h.prisma.spaceMember.count({ where: { spaceId } }), 2);
+});
+
+test("C4: work asked between two editors of the room's space becomes a proposed task; accepting asks private work or a shared run; declining drops it", async () => {
+  const { akash, ben, bensLead, room, handle } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  // Not yet a member: Ben's request stays a private card.
+  const early = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Draft the launch post" } })).request;
+  assert.equal(early.taskId, null);
+  assert.equal((await cards(akash, room.id, "peer_request")).find((row) => row.data.requestId === early.id)!.data.taskId, undefined);
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (turn.transcript.includes("Your owner accepted Ben's request")) return { calls: [{ name: "node_work_start", arguments: { title: "Rate limiter", brief: "Add a rate limiter to the API.", kind: "other" } }], then: "(no reply)" };
+    if (turn.transcript.includes("Your step in @manager's plan (your own work")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Rate limiter added." } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Add a rate limiter\nPer key, 100 a minute.", refs: [{ kind: "link", title: "Spec", url: "https://example.com/limits" }] } })).request;
+  assert.ok(made.taskId, made);
+  await settleTurns();
+  assert.equal(seen.length, 0, "nothing runs before acceptance");
+  const task = await h.prisma.task.findUniqueOrThrow({ where: { id: made.taskId } });
+  assert.deepEqual(
+    [task.userId, task.status, task.title, task.owner, task.assigneeAccountId, task.requestedByAccountId, task.peerRequestId, task.sourceRef],
+    [spaceId, "proposed", "Add a rate limiter", "me", null, ben.id, made.id, `room-request:${made.id}`],
+    "proposed to Akash (the space's owner holds it as “me”), with who asked",
+  );
+  assert.match(task.rationale ?? "", /^Ben asked for this in “Room /);
+  const ownerCard = (await cards(akash, room.id, "peer_request")).find((row) => row.data.requestId === made.id)!;
+  assert.deepEqual([ownerCard.data.taskId, ownerCard.data.modes, ownerCard.data.defaultMode], [task.id, ["private", "shared"], "private"]);
+  const board = json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` }));
+  assert.equal(board.space.role, "editor");
+  const row = board.tasks.find((entry: { id: string }) => entry.id === task.id);
+  assert.deepEqual([row.status, row.assignee.name, row.requestedBy.name, row.peerRequestId], ["proposed", "Akash", "Ben", made.id]);
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${made.id}/accept`, payload: { mode: "sideways" } })).statusCode, 400);
+
+  const accepted = await akash.inject({ method: "POST", url: `/api/node/requests/${made.id}/accept`, payload: { mode: "shared", text: "Add a rate limiter (per key)" } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(json(accepted).request.mode, "shared");
+  const moved = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+  assert.deepEqual([moved.status, moved.title], ["in_progress", "Add a rate limiter (per key)"]);
+  await settleTurns();
+  const planning = seen.find((entry) => entry.transcript.includes("Your owner accepted Ben's request"))!;
+  assert.match(planning.transcript, /Your owner chose a shared run: work in the room's space “Launch space”/);
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id }, orderBy: { createdAt: "desc" } });
+  assert.equal(mission.spaceId, spaceId, "a shared run works in the room's space");
+  assert.deepEqual(mission.deliverTo, { roomId: room.id, audience: "room", taskId: task.id });
+
+  // Declined: the proposed task is dropped. Private work (the default) keeps the mission out of the shared space.
+  const second = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Rewrite the docs site" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${second.id}/decline`, payload: { note: "Not this sprint." } })).statusCode, 200);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: second.taskId } })).status, "dropped");
+  const third = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Add a status page" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${third.id}/accept`, payload: {} })).statusCode, 200);
+  await settleTurns();
+  const privately = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id, requestedBy: { path: ["requestId"], equals: third.id } } });
+  assert.equal(privately.spaceId, null, "private work, shared result: the mission stays in Akash's own space");
+  assert.deepEqual(privately.deliverTo, { roomId: room.id, audience: "room", taskId: third.taskId });
+  assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: third.id } })).mode, "private");
+
+  // "@node for person": what Ben's lead makes in the space for him says so.
+  script = (turn) => (turn.slug === handle(bensLead.id) ? { calls: [{ name: "hub_create_tasks", arguments: { tasks: [{ title: "Write release notes", owner: "me" }], space: "Launch space" } }], then: "Added." } : { text: "(no reply)" });
+  await say(ben, room.id, `@${handle(bensLead.id)} add a task in Launch space for me to write the release notes`, { private: true });
+  const made_ = await h.prisma.task.findFirstOrThrow({ where: { userId: spaceId, title: "Write release notes" } });
+  assert.deepEqual([made_.createdByNodeId, made_.createdByAccountId, made_.assigneeAccountId], [bensLead.id, ben.id, ben.id]);
+  const notes = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` })).tasks.find((entry: { id: string }) => entry.id === made_.id);
+  assert.deepEqual([notes.madeBy.node.id, notes.madeBy.for.name], [bensLead.id, "Ben"]);
+});

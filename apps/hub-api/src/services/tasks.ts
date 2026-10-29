@@ -10,7 +10,7 @@ import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
 import { CreateTask, TaskLabels } from "@ensemble/shared-types";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, madeBy } from "../sharing/context.js";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -181,6 +181,10 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       repoId: draft.repoId ?? null,
       deliverableId: draft.deliverableId ?? null,
       createdBy: actor,
+      ...(() => {
+        const made = madeBy(userId);
+        return { createdByAccountId: made.accountId, createdByNodeId: made.nodeId };
+      })(),
       boardOrder: draft.boardOrder ?? (await nextBoardOrder(tx, userId)),
       taskType: draft.taskType ?? null,
       measure: draft.measure ?? null,

@@ -19,7 +19,7 @@ import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { truncateText } from "../lib/text.js";
 import { assertOwned } from "../services/records.js";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, nodeActingIn } from "../sharing/context.js";
 
 const Body = z.object({
   type: z.literal("doc").optional(),
@@ -181,6 +181,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         kind: "comment",
         authorKind: "human",
         authorAccountId: actorFor(request.userId),
+        authorNodeId: nodeActingIn(request.userId),
         markId: body.markId,
         quote: body.quote,
         anchor: { markId: body.markId, quote: body.quote, ...(body.anchor ?? {}) },
@@ -283,6 +284,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         authorKind: "ensemble",
         // Who asked, so the answer is attributed in a shared space.
         authorAccountId: actorFor(request.userId),
+        authorNodeId: nodeActingIn(request.userId),
         parentId: body.parentId,
         markId: body.markId,
         quote: body.quote ?? "",

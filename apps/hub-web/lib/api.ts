@@ -279,6 +279,13 @@ export type TaskRecord = {
   taskType: string | null;
   measure?: number | null;
   createdBy: "agent" | "me" | "system";
+  /** "@node for person": who a node made this for, and which node (null when a person made it themselves). */
+  createdByAccountId?: string | null;
+  createdByNodeId?: string | null;
+  /** A work request from someone in an Ensemble Node room, proposed to the assignee (docs/35 §12.11). */
+  peerRequestId?: string | null;
+  requestedByAccountId?: string | null;
+  requestedByNodeId?: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1871,6 +1878,10 @@ export const api = bindClient({
   // sharing
   searchPeople: (q: string) => get<{ people: SharingPerson[] }>(`/api/sharing/people${qs({ q })}`),
   sharingOverview: () => get<SharingOverview>("/api/sharing/overview"),
+  saveSharingLimits: (limits: { contacts?: number; members?: number }) => put<{ limits: { contacts: number; members: number }; caps: { contacts: number; members: number } }>("/api/sharing/limits", limits),
+  /** A room request's proposed task (Ensemble Node): the person asked accepts (private work, or a shared run) or declines. */
+  acceptRoomRequest: (requestId: string, mode: "private" | "shared") => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/accept`, { mode }),
+  declineRoomRequest: (requestId: string, note?: string) => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/decline`, note ? { note } : {}),
   contacts: () => get<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts"),
   addContact: (personId: string) => post<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts", { personId }),
   removeContact: (personId: string) =>
@@ -1966,6 +1977,8 @@ export type SharedItem = { id: string; kind: ShareKind; title: string; excerpt?:
 export type SharedWithMe = { spaces: SharedSpace[]; items: SharedItem[] };
 export type SharingOverview = {
   limits: { contacts: number; members: number };
+  /** The most an account may choose. */
+  caps?: { contacts: number; members: number };
   contacts: SharingContact[];
   spaces: Array<{ id: string; name: string; icon: string | null; primary: boolean; members: SpaceMember[]; transferredAt: string | null }>;
   items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;

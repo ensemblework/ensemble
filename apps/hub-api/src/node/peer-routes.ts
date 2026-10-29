@@ -1,6 +1,6 @@
 /**
  * Routes for rooms with other people (docs/35 §12): each person's own settings for a room (trust,
- * away, shareable items), status cards, peer requests, and Share to room. Registered from
+ * away, shareable items), status cards, the room's shared space, peer requests, and Share to room. Registered from
  * node/routes.ts with `registerPeerRoutes(app)`. Every route acts for the signed-in account and only
  * for a room it is a person in; a person changes only their own settings.
  */
@@ -12,6 +12,7 @@ import { truncateText } from "../lib/text.js";
 import { wireMessage } from "./store.js";
 import { nodeAccount } from "./routes.js";
 import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
+import { answerSpaceOffer, bindSpace, roomBoard, RoomSpaceError, spaceView, unbindSpace } from "./room-space.js";
 import { statusCard, statusCards } from "./status-cards.js";
 import { personRow, prefsOf, SHAREABLE_KINDS, shareableItem, TrustPatch, trustView, updatePrefs } from "./trust.js";
 
@@ -125,6 +126,60 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     return { items: prefs.shareable ?? [] };
   });
 
+  // ── the room's shared space (docs/35 §12.11) ──────────────────────────────────────────────
+
+  const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof RoomSpaceError) throw fail(error.statusCode, error.message);
+      throw error;
+    }
+  };
+
+  /** Which space holds the room's work, my role there, and my membership offer. */
+  app.get("/api/node/rooms/:id/space", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return spaceView(app, room, accountId);
+  });
+
+  /** The space's board, for the room's Board tab: only for its owner and members. */
+  app.get("/api/node/rooms/:id/board", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return roomBoard(app, room, accountId);
+  });
+
+  /** The room's creator links a space they own (`spaceId`), or makes one for the room (`create`). */
+  app.put("/api/node/rooms/:id/space", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const body = z
+      .union([z.object({ spaceId: z.string().uuid() }).strict(), z.object({ create: z.literal(true), name: z.string().trim().min(1).max(60).optional() }).strict()])
+      .parse(request.body ?? {});
+    await requireVerifiedUser(accountId);
+    await spaceCall(() => bindSpace(app, room, accountId, body));
+    return spaceView(app, await prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } }), accountId);
+  });
+
+  app.delete("/api/node/rooms/:id/space", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    await spaceCall(() => unbindSpace(app, room, accountId));
+    return { ok: true };
+  });
+
+  /** I take, or leave, the offer to join the room's space as an editor (separate from joining the room). */
+  app.post("/api/node/rooms/:id/space/join", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const body = z.object({ join: z.boolean().default(true) }).strict().parse(request.body ?? {});
+    await requireVerifiedUser(accountId);
+    await spaceCall(() => answerSpaceOffer(app, room, accountId, body.join));
+    return spaceView(app, room, accountId);
+  });
+
   // ── peer requests ─────────────────────────────────────────────────────────────────────────
 
   app.get("/api/node/rooms/:id/requests", async (request) => {
@@ -145,7 +200,8 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ request: await wireRequest(prisma, made, accountId) });
   });
 
-  const Accept = z.object({ text: z.string().trim().min(1).max(4000).optional(), always: z.boolean().optional() }).strict();
+  // `mode` answers the one question of a proposed task in the room's space: private work with a shared result (default) or a shared run.
+  const Accept = z.object({ text: z.string().trim().min(1).max(4000).optional(), always: z.boolean().optional(), mode: z.enum(["private", "shared"]).optional() }).strict();
   app.post("/api/node/requests/:id/accept", async (request) => {
     const accountId = nodeAccount(request);
     const body = Accept.parse(request.body ?? {});

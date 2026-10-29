@@ -236,6 +236,14 @@ model Task {
   externalId        String?          @map("external_id")
   /// The meeting an action item came from (meeting-notes connectors).
   meetingNoteId     String?          @map("meeting_note_id")
+  /// A proposed task someone asked for in an Ensemble Node room (node/room-space.ts): who asked, the node that
+  /// relayed it, and the peer request the assignee accepts or declines.
+  requestedByAccountId String?       @map("requested_by_account_id")
+  requestedByNodeId    String?       @map("requested_by_node_id")
+  peerRequestId        String?       @map("peer_request_id")
+  /// "@node for person": the person a node made this task for, and the node (set when a node acts in a space).
+  createdByAccountId   String?       @map("created_by_account_id")
+  createdByNodeId      String?       @map("created_by_node_id")
 
   planSteps     PlanStep[]
   runs          Run[]
@@ -263,6 +271,7 @@ model Task {
   @@index([userId, completedAt])
   @@index([userId, taskType], map: "tasks_user_id_task_type_idx")
   @@index([userId, orderDate], map: "tasks_user_id_order_date_idx")
+  @@index([peerRequestId])
   @@map("tasks")
 }
 
@@ -273,6 +282,8 @@ model TaskPage {
   board           PageBoard?        @relation(fields: [boardId], references: [id], onDelete: SetNull)
   historySavedAt  DateTime?         @map("history_saved_at")
   editorAccountId String?           @map("editor_account_id")
+  /// The node that last edited the page for `editorAccountId` (Ensemble Node acting in a space).
+  editorNodeId    String?           @map("editor_node_id")
   versions        PageRevision[]
   parentId        String?           @map("parent_id")
   parent          TaskPage?         @relation("PageChildren", fields: [parentId], references: [id], onDelete: SetNull)
@@ -373,6 +384,8 @@ model PageDiscussion {
   authorKind         String           @default("human") @map("author_kind")
   /// The person who wrote a human comment, in a shared space. Null: the space owner.
   authorAccountId    String?          @map("author_account_id")
+  /// The node that wrote it for that person (Ensemble Node acting in a space).
+  authorNodeId       String?          @map("author_node_id")
   markId             String?          @map("mark_id")
   quote              String           @default("")
   deletedAt          DateTime?        @map("deleted_at")
@@ -2692,6 +2705,10 @@ model NodePeerRequest {
   /// The public card in the room, and the target owner's private card.
   cardId        String?   @map("card_id")
   ownerCardId   String?   @map("owner_card_id")
+  /// The proposed task in the room's shared space a work request became (node/room-space.ts).
+  taskId        String?   @map("task_id")
+  /// How accepted work runs: private (the assignee's own space, the result delivered to the task) or shared.
+  mode          String?
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   decidedAt     DateTime? @map("decided_at")

@@ -111,8 +111,11 @@ export async function statusCard(db: Db, room: NodeRoom, accountId: string, view
   });
   const spaceId = await boundSpace(db, room, "viewerId" in view ? [view.viewerId] : people);
   if (spaceId) {
+    // The space's owner holds their own tasks as "me" with no assignee account.
+    const space = await db.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });
+    const mine = (space?.ownerId ?? space?.id) === accountId ? { owner: "me" as const, assigneeAccountId: null } : { assigneeAccountId: accountId };
     const tasks = await db.task.findMany({
-      where: { userId: spaceId, assigneeAccountId: accountId, deletedAt: null, status: { in: [...OPEN_TASK] } },
+      where: { userId: spaceId, ...mine, deletedAt: null, status: { in: [...OPEN_TASK] } },
       orderBy: { updatedAt: "desc" },
       take: 10,
       select: { title: true, status: true, due: true },

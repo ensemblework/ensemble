@@ -439,6 +439,18 @@ export const CodeSettingsShape = z.object({
 });
 export type CodeSettingsShape = z.infer<typeof CodeSettingsShape>;
 
+/** Highest values an account may choose for its sharing limits: a system bound, not a product limit. */
+export const SHARING_CAPS = { contacts: 500, members: 50 } as const;
+
+/**
+ * How many people an account shares with: contacts, and people per shared space. The owner's choice;
+ * the defaults keep today's small circles (5 contacts, 2 people per space).
+ */
+export const SharingSettings = z.object({
+  contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).default(5),
+  members: z.number().int().min(1).max(SHARING_CAPS.members).default(2),
+});
+
 export const Settings = z.object({
   assistant: AssistantSettings.default({}),
   autonomy: AutonomyLevel.default("assist"),
@@ -480,6 +492,7 @@ export const Settings = z.object({
   timezone: z.string().default("Asia/Kolkata"),
   timezoneMode: z.enum(["auto", "manual"]).default("auto"),
   email: z.string().default("you@ensemble.local"),
+  sharing: SharingSettings.default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
