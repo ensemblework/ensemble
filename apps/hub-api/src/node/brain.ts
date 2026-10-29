@@ -8,7 +8,7 @@
  */
 import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
 import type { FastifyInstance } from "fastify";
-import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn } from "@prisma/client";
+import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, PrismaClient } from "@prisma/client";
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, type AssistantRef, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
 import { env } from "../config.js";
@@ -18,7 +18,7 @@ import { loadSettings } from "../lib/settings.js";
 import { effortToSend } from "../lib/model-meta.js";
 import { persistAssistantText, safePublicError, truncateText } from "../lib/text.js";
 import { publishTo } from "./events.js";
-import { chatModelFor, defaultChatModel, type ChatModel } from "./model.js";
+import { chatModelFor, defaultChatModel, leadChatModel, type ChatModel } from "./model.js";
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
@@ -208,9 +208,18 @@ async function helperPersona(app: FastifyInstance, node: NodeAgent, room: NodeRo
 }
 
 /** The node's thinking level, when its chat model takes one (none for AI plans on a computer). */
-async function turnEffort(owner: string, node: NodeAgent, provider: string, model: string): Promise<string | undefined> {
+async function turnEffort(owner: string, node: NodeAgent, provider: string, model: string, wanted?: string): Promise<string | undefined> {
   if (isSubscriptionProvider(provider)) return undefined;
-  return effortToSend(owner, provider, model, node.effort ?? "low").catch(() => undefined);
+  return effortToSend(owner, provider, model, wanted ?? node.effort ?? "low").catch(() => undefined);
+}
+
+/** Whether the node leads one of its owner's crews (it plans their work). */
+async function leadsACrew(prisma: PrismaClient, node: Pick<NodeAgent, "id" | "userId">): Promise<boolean> {
+  const crews = await prisma.nodeRoom.findMany({ where: { userId: node.userId, kind: "crew", archivedAt: null, members: { some: { nodeId: node.id } } }, select: { settings: true } });
+  return crews.some((room) => {
+    const leads = (room.settings as { leadNodeIds?: unknown } | null)?.leadNodeIds;
+    return Array.isArray(leads) && leads.includes(node.id);
+  });
 }
 
 
@@ -320,7 +329,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     : fromNonOwner && settings.assistant.writePolicy === "immediate"
       ? { ...settings, assistant: { ...settings.assistant, writePolicy: "preview" as const } }
       : settings;
-  const choice = chatModelFor(node, settings);
+  // A crew's lead planning or reporting thinks with the lead model, unless its owner chose one (model.ts).
+  const lead = !step && !node.parentNodeId && (Boolean(turn.planId && !turn.planStep) || (await leadsACrew(prisma, node))) ? leadChatModel(node) : null;
+  const choice = lead?.pick ?? chatModelFor(node, settings);
   if ("error" in choice) {
     await ownerNotice(app, node, room.id, choice.error);
     await saveCursor(readUpTo);
@@ -371,7 +382,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       settings: turnSettings,
       model: pick.model,
       provider: pick.provider,
-      reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model),
+      reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model, lead && pick === lead.pick ? lead.effort : undefined),
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
       agentPersona: nodePersona.text,

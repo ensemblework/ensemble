@@ -46,6 +46,19 @@ export function defaultChatModel(settings: Pick<Settings, "models">): ChatModel 
   return tier?.model ? { provider: tier.provider, model: tier.model } : null;
 }
 
+/**
+ * A crew's lead plans the crew's work and reports on it, so unless its owner chose its model it thinks
+ * with a stronger one (ensemble-node design decision 2): `ENSEMBLE_NODE_LEAD_MODEL` (default gpt-6.1-sol,
+ * when this server includes it; "off" for none) at `ENSEMBLE_NODE_LEAD_EFFORT` (default medium) unless
+ * the owner set the node's thinking level. Null: the node's own model applies.
+ */
+export function leadChatModel(node: { model: string | null; effort: string | null }, env: NodeJS.ProcessEnv = process.env): { pick: ChatModel; effort: string } | null {
+  if (node.model) return null;
+  const model = (env.ENSEMBLE_NODE_LEAD_MODEL ?? "gpt-6.1-sol").trim();
+  if (!model || model === "off" || !includedModelOn(model, env)) return null;
+  return { pick: { provider: INCLUDED_PROVIDER, model }, effort: node.effort ?? (env.ENSEMBLE_NODE_LEAD_EFFORT?.trim() || "medium") };
+}
+
 export function chatModelFor(node: { provider: string | null; model: string | null }, settings: Pick<Settings, "models">): ChatModel | { error: string } {
   if (node.model) {
     if (!node.provider || node.provider === INCLUDED_PROVIDER) {
