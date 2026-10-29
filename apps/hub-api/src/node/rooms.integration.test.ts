@@ -1620,3 +1620,24 @@ test("web #3: away, back, and a person's first stream opening or last closing te
     stop();
   }
 });
+
+test("web #4: a room with other people has a read mark per tab: Room and My crew", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  const { postMessage } = await import("./store.js");
+  const listed = async () => (json(await akash.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ id: string; unread: number; unreadRoom: number; unreadCrew: number; readSeq: number; readSeqCrew: number }>).find((row) => row.id === room.id)!;
+  const start = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).lastSeq;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { seq: start } })).statusCode, 204, "the old body still marks both");
+  await post(ben, room.id, "The export is merged.");
+  await postMessage(h.prisma, { roomId: room.id, userId: akash.id, authorKind: "node", authorNodeId: lead.id, body: "Ben's export is in; shall I check it?", visibleTo: [akash.id] });
+  await settleTurns();
+  let row = await listed();
+  assert.deepEqual([row.unreadRoom, row.unreadCrew, row.unread], [1, 1, 2]);
+  const last = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).lastSeq;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { tab: "room", upTo: last } })).statusCode, 204);
+  row = await listed();
+  assert.deepEqual([row.unreadRoom, row.unreadCrew, row.readSeq, row.readSeqCrew], [0, 1, last, start], "reading the Room leaves My crew unread");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { tab: "crew", upTo: last } })).statusCode, 204);
+  row = await listed();
+  assert.deepEqual([row.unreadRoom, row.unreadCrew, row.unread], [0, 0, 0]);
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { tab: "both", upTo: last } })).statusCode, 400);
+});

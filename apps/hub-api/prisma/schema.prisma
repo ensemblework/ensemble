@@ -2512,8 +2512,10 @@ model NodeRoomMember {
   privateConversationId String?    @map("private_conversation_id")
   /// The newest message seq the private thread has read (it reads shared messages too).
   privateSeenSeq        Int        @default(0) @map("private_seen_seq")
-  /// The newest message seq this person has read.
+  /// The newest message seq this person has read: in a room with other people, its Room tab (the shared thread).
   readSeq               Int        @default(0) @map("read_seq")
+  /// In a room with other people, the newest seq read in their My crew tab (their private thread).
+  readSeqCrew           Int        @default(0) @map("read_seq_crew")
   /// A person's own settings for a room with other people (node/trust.ts): `{ trust: { everyone, people: { accountId: … } },
   /// budget, away: { until, note, since }, shareable: [{ kind, id, spaceId, title }] }`. Empty for nodes.
   prefs                 Json       @default("{}")

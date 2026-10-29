@@ -179,13 +179,23 @@ async function roomList(prisma: PrismaClient, accountId: string) {
   const rooms = memberships.filter((row) => !row.room.archivedAt);
   const list = await Promise.all(
     rooms.map(async (row) => {
-      const [last, unread, view] = await Promise.all([
+      // A room with other people has two tabs, each with its own read mark: the Room (shared) and My crew (private).
+      const tabs = row.room.kind === "room";
+      const notMine = { NOT: { authorKind: "human", userId: accountId } };
+      const [last, unread, crew, view] = await Promise.all([
         // Cards inside a plan card are not separate messages: no preview, no unread.
         prisma.nodeMessage.findFirst({ where: { roomId: row.roomId, planId: null, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt) }, orderBy: { seq: "desc" } }),
-        prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeq }, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt), NOT: { authorKind: "human", userId: accountId } } }),
+        prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeq }, ...(tabs ? { visibleTo: { isEmpty: true } } : visibleWhere(accountId)), ...joinedFilter(row.room.kind, row.joinedAt), ...notMine } }),
+        tabs ? prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeqCrew }, visibleTo: { has: accountId }, ...joinedFilter(row.room.kind, row.joinedAt), ...notMine } }) : Promise.resolve(0),
         roomView(prisma, accountId, row.room),
       ]);
-      return { ...view, unread, readSeq: row.readSeq, last: last ? { ...wireMessage(last), body: truncateText(last.body, 200) } : null };
+      return {
+        ...view,
+        unread: unread + crew,
+        readSeq: row.readSeq,
+        ...(tabs ? { unreadRoom: unread, unreadCrew: crew, readSeqCrew: row.readSeqCrew } : {}),
+        last: last ? { ...wireMessage(last), body: truncateText(last.body, 200) } : null,
+      };
     }),
   );
   return list.sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? ""));
@@ -947,8 +957,16 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/node/rooms/:id/read", async (request, reply) => {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
-    const body = z.object({ seq: z.number().int().min(0) }).strict().parse(request.body);
-    await prisma.nodeRoomMember.updateMany({ where: { roomId: room.id, userId: accountId, nodeId: null, readSeq: { lt: body.seq } }, data: { readSeq: Math.min(body.seq, room.lastSeq) } });
+    // `{seq}` marks both tabs (and the one thread of a chat or crew); `{tab, upTo}` marks one tab of a room with other people.
+    const body = z
+      .union([z.object({ seq: z.number().int().min(0) }).strict(), z.object({ tab: z.enum(["room", "crew"]).optional(), upTo: z.number().int().min(0) }).strict()])
+      .parse(request.body);
+    const upTo = "seq" in body ? body.seq : body.upTo;
+    const tab = "seq" in body ? undefined : body.tab;
+    const value = Math.min(upTo, room.lastSeq);
+    const me = { roomId: room.id, userId: accountId, nodeId: null };
+    if (tab !== "crew") await prisma.nodeRoomMember.updateMany({ where: { ...me, readSeq: { lt: value } }, data: { readSeq: value } });
+    if (tab !== "room") await prisma.nodeRoomMember.updateMany({ where: { ...me, readSeqCrew: { lt: value } }, data: { readSeqCrew: value } });
     // Back after being away, or a long gap: a catch-up digest (node/room-events.ts).
     inBackground(app, () => roomOpened(app, room, accountId));
     return reply.code(204).send();

@@ -175,7 +175,7 @@ export async function addPerson(prisma: Db, roomId: string, accountId: string, r
   if (existing) return existing;
   const handle = await personHandle(prisma, accountId, await takenHandles(prisma, roomId));
   const room = await prisma.nodeRoom.findUnique({ where: { id: roomId }, select: { lastSeq: true } });
-  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role, readSeq: room?.lastSeq ?? 0 } });
+  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role, readSeq: room?.lastSeq ?? 0, readSeqCrew: room?.lastSeq ?? 0 } });
 }
 
 /**
