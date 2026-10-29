@@ -38,6 +38,7 @@ runs:
       run: |
         pnpm --filter @ensemble/hub-web exec node --import tsx --test components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx lib/session-cookie.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/routes/page-boards.integration.test.ts src/routes/cookie-namespace.integration.test.ts src/lib/production.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
     - name: Deployment guards, release scripts and route inventory
       shell: bash
       run: |
