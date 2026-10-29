@@ -6,12 +6,58 @@
  * back to the tool's own prompt.
  */
 import { EventEmitter } from "node:events";
-import type { AgentDecision } from "@prisma/client";
+import type { AgentDecision, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { actorFor } from "../sharing/context.js";
 
 export const decisionBus = new EventEmitter();
 decisionBus.setMaxListeners(0);
+
+/**
+ * The reason a request closes with when the run that asked it ends. The database sets it in the same
+ * transaction as the run's end (trigger `workspace_jobs_close_decisions`, migration 20261102120000).
+ */
+export const WORK_ENDED = "Its work ended.";
+/** What a late answer to a request whose work ended is told. Nothing changes. */
+export const ENDED_WITH_WORK = "This request ended with its work.";
+
+/** A run that ended: its requests can no longer be answered. */
+export const JOB_ENDED = ["succeeded", "failed", "cancelled", "interrupted", "blocked"] as const;
+
+type Db = PrismaClient | Prisma.TransactionClient;
+
+/** Why a request that is no longer pending cannot be answered, in words for the person. */
+export function closedRefusal(row: Pick<AgentDecision, "status" | "reason">): string {
+  if (row.status === "expired") return row.reason === WORK_ENDED ? ENDED_WITH_WORK : "The tool stopped waiting. It showed its own prompt instead.";
+  if (row.status === "settled") return row.reason ?? "Already answered in the tool.";
+  return "Already answered.";
+}
+
+/**
+ * Closes the pending requests of runs that ended, as the database trigger does: for a request found
+ * pending after its run ended (one asked before the trigger existed). Returns how many closed.
+ */
+export async function closeEndedWork(db: Db, jobIds: string[]): Promise<number> {
+  if (!jobIds.length) return 0;
+  const ended = await db.workspaceJob.findMany({ where: { id: { in: jobIds }, status: { in: [...JOB_ENDED] } }, select: { id: true } });
+  if (!ended.length) return 0;
+  const closed = await db.agentDecision.updateMany({
+    where: { sessionId: { in: ended.map((job) => job.id) }, source: "ensemble", status: "pending" },
+    data: { status: "expired", reason: WORK_ENDED, decidedAt: new Date() },
+  });
+  return closed.count;
+}
+
+/**
+ * Settles a pending request once. Every surface (the web, a phone, the CLI, a node) answers through a
+ * compare-and-set on `pending`, so the first valid answer wins and a later one changes nothing. Null
+ * when it was no longer pending.
+ */
+export async function decideOnce(db: Db, id: string, data: Prisma.AgentDecisionUpdateManyMutationInput): Promise<AgentDecision | null> {
+  const won = await db.agentDecision.updateMany({ where: { id, status: "pending" }, data });
+  if (won.count !== 1) return null;
+  return db.agentDecision.findUnique({ where: { id } });
+}
 
 export type Source = "cursor" | "claude" | "copilot" | "codex" | "other";
 

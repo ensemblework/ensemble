@@ -263,6 +263,21 @@ export const MAX_UPLOADED_STEPS = 800;
 /** About how much step text one progress post carries; the rest goes on the next post. */
 export const STEP_POST_BYTES = 1_000_000;
 
+/**
+ * What the engine reported the run went with (workspace/engines/observed.ts): the model it started on,
+ * the thinking level and context window it said it used (the window in tokens too), and fast mode. A
+ * field the engine did not report is left out; the server shows it as "not reported". Sent on progress
+ * when it changes and on complete (`RunTotals.observed`); servers before 2 November 2026 ignore it.
+ */
+export const ObservedSettings = z.object({
+  model: text(200).nullish(),
+  effort: text(40).nullish(),
+  context: z.enum(["default", "long_context"]).nullish(),
+  contextTokens: z.number().int().positive().max(100_000_000).nullish(),
+  fast: z.boolean().nullish(),
+});
+export type ObservedSettings = z.infer<typeof ObservedSettings>;
+
 /** What a computer reports when a run ends: the model that answered, counts, its cost estimate, files changed (names and line counts only). */
 export const RunTotals = z.object({
   model: text(200).nullish(),
@@ -277,6 +292,8 @@ export const RunTotals = z.object({
     .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional() }))
     .max(200)
     .default([]),
+  /** What the engine reported it ran with. */
+  observed: ObservedSettings.optional(),
 });
 export type RunTotals = z.infer<typeof RunTotals>;
 

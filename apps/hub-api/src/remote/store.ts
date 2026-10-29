@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { env } from "../config.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { prisma } from "../lib/prisma.js";
+import type { ObservedSettings } from "./contract.js";
 
 export const DEVICE_TOKEN_PROVIDER = "ensemble_device";
 
@@ -84,6 +85,8 @@ export interface HeldJob {
   protocol?: number;
   /** False when the server keeps no changed-file text (its claim said so); absent: it does. */
   keepsFileText?: boolean;
+  /** The observed settings last sent (contract.ts `ObservedSettings`): they go again only when they change. */
+  sentObserved?: ObservedSettings;
   decisions: Record<string, MirroredDecision>;
   /** Set when the Mac refused the spec before a local job existed. */
   refusal?: { code: string; message: string };

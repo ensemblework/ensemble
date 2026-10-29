@@ -55,6 +55,7 @@ const SELECT = {
   id: true,
   taskId: true,
   status: true,
+  queuePosition: true,
   provider: true,
   model: true,
   reasoningEffort: true,
@@ -79,6 +80,7 @@ type Row = {
   id: string;
   taskId: string;
   status: string;
+  queuePosition: number | null;
   provider: string | null;
   model: string;
   reasoningEffort: string | null;
@@ -282,6 +284,8 @@ export type SessionRun = {
   title: string;
   status: string;
   continueFromJobId: string | null;
+  /** Its place among the session's queued runs (`queuedOrder`); null: creation order. */
+  queuePosition: number | null;
   summary: string | null;
   progress: string | null;
   error: string | null;
@@ -302,6 +306,7 @@ export async function runsOfSession(prisma: PrismaClient, scope: SessionScope, r
       title: row.task.title,
       status: row.status,
       continueFromJobId: row.continueFromJobId,
+      queuePosition: row.queuePosition,
       summary: row.summary,
       progress: row.progress,
       error: row.error,
@@ -331,4 +336,222 @@ export async function sessionOfJob(prisma: PrismaClient, job: { id: string; user
   }
   const resumable = (await resumableJobs(prisma, [job.id])).has(job.id);
   return { id: current?.id ?? job.id, resumable };
+}
+
+// ── A session's queue (Ensemble Node's session manager, docs/35 §8.9) ────────────────────────────
+
+/** On a computer, or on its way there: a session runs one of these at a time. */
+const ON_COMPUTER = new Set<string>(["claimed", "running", "waiting_approval", "stopping"]);
+
+export type QueueEntry = { id: string; status: string; continueFromJobId: string | null; queuePosition: number | null; createdAt: Date };
+
+const byCreated = (a: { createdAt: Date }, b: { createdAt: Date }) => a.createdAt.getTime() - b.createdAt.getTime();
+
+/** Live runs along `continueFromJobId`: how a queue from before queue positions runs. */
+function chainOrder<T extends QueueEntry>(runs: readonly T[]): T[] {
+  const live = runs.filter((row) => LIVE_RUN.has(row.status));
+  const ids = new Set(live.map((row) => row.id));
+  const after = new Map<string, T[]>();
+  for (const row of live) if (row.continueFromJobId && ids.has(row.continueFromJobId)) after.set(row.continueFromJobId, [...(after.get(row.continueFromJobId) ?? []), row]);
+  const out: T[] = [];
+  const seen = new Set<string>();
+  const walk = (row: T) => {
+    if (seen.has(row.id)) return;
+    seen.add(row.id);
+    out.push(row);
+    for (const next of [...(after.get(row.id) ?? [])].sort(byCreated)) walk(next);
+  };
+  for (const head of live.filter((row) => !row.continueFromJobId || !ids.has(row.continueFromJobId)).sort(byCreated)) walk(head);
+  return out;
+}
+
+/**
+ * A session's queued runs in the order they start. Its first run (`rootId`) always goes first; the
+ * others by queue position (set when a message is queued or steers, and when the queue is reordered),
+ * then by when they were made. A queue from before positions follows `continueFromJobId`. The order is
+ * separate from `continueFromJobId`, which is set to the run that actually ran before when a run is
+ * claimed (`sessionTurn`).
+ */
+export function queuedOrder<T extends QueueEntry>(runs: readonly T[], rootId: string): T[] {
+  const queued = runs.filter((row) => row.status === "queued");
+  if (!queued.some((row) => row.queuePosition !== null)) return chainOrder(runs).filter((row) => row.status === "queued");
+  const rank = (row: T) => row.queuePosition ?? Number.MAX_SAFE_INTEGER;
+  return [...queued.filter((row) => row.id === rootId), ...queued.filter((row) => row.id !== rootId).sort((a, b) => rank(a) - rank(b) || byCreated(a, b))];
+}
+
+/** A session's runs still to finish, in the order they run: the one on its computer, then the queue. */
+export function liveOrder<T extends QueueEntry>(runs: readonly T[], rootId: string): T[] {
+  return [...runs.filter((row) => ON_COMPUTER.has(row.status)).sort(byCreated), ...queuedOrder(runs, rootId)];
+}
+
+/** When a run reached its computer: claimed there, or started on this one. */
+const ranAt = (row: { claimedAt: Date | null; startedAt: Date | null }) => row.claimedAt ?? row.startedAt;
+
+type Db = PrismaClient | Prisma.TransactionClient;
+
+const QUEUE_SELECT = {
+  id: true,
+  userId: true,
+  runnerAccountId: true,
+  kind: true,
+  provider: true,
+  status: true,
+  continueFromJobId: true,
+  queuePosition: true,
+  createdAt: true,
+  claimedAt: true,
+  startedAt: true,
+  folderLabel: true,
+  repoUrl: true,
+} as const;
+type QueueRow = Prisma.WorkspaceJobGetPayload<{ select: typeof QUEUE_SELECT }>;
+type Owner = { userId: string; runnerAccountId: string | null };
+
+/**
+ * The session's lock, held to the end of the transaction. Every claim of one of its queued runs and
+ * every change to its queue take it, so a reorder, a cancel or a steer never interleaves with a claim.
+ */
+export async function lockSession(tx: Prisma.TransactionClient, rootId: string): Promise<void> {
+  await tx.$queryRaw`SELECT 1 AS held FROM pg_advisory_xact_lock(hashtext(${`ensemble:session:${rootId}`}))`;
+}
+
+/** The first run of the session a run belongs to: back along `continueFromJobId` while the earlier run is by the same agent. */
+async function rootOfRun(db: Db, run: { id: string; userId: string; provider: string | null; continueFromJobId: string | null }): Promise<string> {
+  let current: { id: string; continueFromJobId: string | null } = run;
+  const seen = new Set([run.id]);
+  for (let hops = 0; current.continueFromJobId && hops < 200; hops += 1) {
+    const parent = await db.workspaceJob.findFirst({ where: { id: current.continueFromJobId, userId: run.userId }, select: { id: true, provider: true, continueFromJobId: true } });
+    if (!parent || parent.provider !== run.provider || seen.has(parent.id)) break;
+    seen.add(parent.id);
+    current = parent;
+  }
+  return current.id;
+}
+
+/** Every run of the session that starts at `root`, by its agent (as `chainFrom`, inside a transaction too). */
+async function queueRows(db: Db, owner: Owner, root: string): Promise<QueueRow[]> {
+  const first = await db.workspaceJob.findFirst({ where: { id: root, userId: owner.userId, runnerAccountId: owner.runnerAccountId }, select: QUEUE_SELECT });
+  if (!first) return [];
+  const rows = [first];
+  const seen = new Set([root]);
+  let frontier = [root];
+  for (let round = 0; frontier.length && round < 200 && rows.length < 500; round += 1) {
+    const next = (await db.workspaceJob.findMany({ where: { userId: owner.userId, runnerAccountId: owner.runnerAccountId, continueFromJobId: { in: frontier }, provider: first.provider }, select: QUEUE_SELECT })).filter((row) => !seen.has(row.id));
+    for (const row of next) seen.add(row.id);
+    rows.push(...next);
+    frontier = next.map((row) => row.id);
+  }
+  return rows;
+}
+
+export type SessionTurn = { wait: true } | { wait: false; links: { continueFromJobId: string; folderLabel?: string | null; repoUrl?: string | null } };
+
+/**
+ * Whether a queued run that continues an agent session may start now, and the run it continues. Called
+ * inside the claim's transaction (`claimQueuedJob`, both the server's queue and a computer's claim),
+ * under the session's lock. It waits while another of the session's runs is on a computer or ahead of
+ * it in the queue. It then continues the run that actually ran last, so resume ancestry stays one true
+ * line whatever was reordered, taken out or steered meanwhile; when nothing in the session ever reached
+ * a computer, it starts afresh in the session's folder. Null: not a run that continues a session.
+ */
+export async function sessionTurn(tx: Prisma.TransactionClient, candidate: Pick<QueueRow, "id" | "userId" | "runnerAccountId" | "kind" | "provider" | "continueFromJobId" | "folderLabel" | "repoUrl">): Promise<SessionTurn | null> {
+  if (candidate.kind !== "code" || !isCodeEngine(candidate.provider) || !candidate.continueFromJobId) return null;
+  const root = await rootOfRun(tx, candidate);
+  if (root === candidate.id) return null;
+  await lockSession(tx, root);
+  const rows = await queueRows(tx, candidate, root);
+  const self = rows.find((row) => row.id === candidate.id);
+  if (!self || self.status !== "queued") return { wait: true };
+  if (rows.some((row) => row.id !== candidate.id && ON_COMPUTER.has(row.status))) return { wait: true };
+  if (queuedOrder(rows, root)[0]?.id !== candidate.id) return { wait: true };
+  const ran = rows
+    .filter((row) => row.id !== candidate.id && ranAt(row))
+    .sort((a, b) => ranAt(b)!.getTime() - ranAt(a)!.getTime() || byCreated(b, a))[0];
+  if (ran) return { wait: false, links: { continueFromJobId: ran.id } };
+  const first = rows.find((row) => row.id === root)!;
+  return { wait: false, links: { continueFromJobId: root, ...(candidate.folderLabel || candidate.repoUrl ? {} : { folderLabel: first.folderLabel, repoUrl: first.repoUrl }) } };
+}
+
+/** A claimed run's links as its claim set them: the run it continues and, for a fresh start, its folder. */
+export async function claimedLinks(db: Db, jobId: string): Promise<{ continueFromJobId: string | null; folderLabel: string | null; repoUrl: string | null }> {
+  const row = await db.workspaceJob.findUnique({ where: { id: jobId }, select: { continueFromJobId: true, folderLabel: true, repoUrl: true } });
+  return { continueFromJobId: row?.continueFromJobId ?? null, folderLabel: row?.folderLabel ?? null, repoUrl: row?.repoUrl ?? null };
+}
+
+/** The queue changed since the order was made: nothing was moved. */
+export class QueueChangedError extends Error {
+  readonly statusCode = 409;
+  readonly expose = true;
+  constructor(message = "The session's queue changed meanwhile. Read it again and reorder that.") {
+    super(message);
+    this.name = "QueueChangedError";
+  }
+}
+
+/** Positions 1, 2, … in this order, each only while the run is still queued. */
+async function writePositions(tx: Prisma.TransactionClient, ordered: readonly QueueRow[]): Promise<void> {
+  for (const [index, row] of ordered.entries()) {
+    if (row.queuePosition === index + 1) continue;
+    const moved = await tx.workspaceJob.updateMany({ where: { id: row.id, status: "queued" }, data: { queuePosition: index + 1 } });
+    if (moved.count !== 1) throw new QueueChangedError();
+  }
+}
+
+/** The session's queue under its lock: its runs, and the queued ones that can move (all but its first run). */
+async function heldQueue(tx: Prisma.TransactionClient, owner: Owner, rootId: string): Promise<{ rows: QueueRow[]; movable: QueueRow[] }> {
+  await lockSession(tx, rootId);
+  const rows = await queueRows(tx, owner, rootId);
+  return { rows, movable: queuedOrder(rows, rootId).filter((row) => row.id !== rootId) };
+}
+
+const ownerOf = (scope: SessionScope): Owner => ({ userId: scope.space, runnerAccountId: scope.runner });
+
+/**
+ * Puts a new run in its session's queue: `first` (a steer, before everything queued) or `last` (a
+ * queued message). Queued runs without a position get theirs in the order they would have run, so the
+ * whole queue goes by position from then on. A run already claimed or ended is left alone.
+ */
+export async function placeInQueue(prisma: PrismaClient, scope: SessionScope, rootId: string, jobId: string, where: "first" | "last"): Promise<void> {
+  if (jobId === rootId) return;
+  await prisma.$transaction(async (tx) => {
+    const { rows, movable } = await heldQueue(tx, ownerOf(scope), rootId);
+    const target = rows.find((row) => row.id === jobId);
+    if (!target || target.status !== "queued") return;
+    const others = movable.filter((row) => row.id !== jobId);
+    await writePositions(tx, where === "first" ? [target, ...others] : [...others, target]);
+  });
+}
+
+/**
+ * Puts the session's queued runs (all but its first run) in this order. Only runs not yet claimed move,
+ * and only all of them at once: an order made from a queue that changed meanwhile (a run claimed, added
+ * or taken out) is refused, so it never undoes what happened since.
+ */
+export async function reorderQueue(prisma: PrismaClient, scope: SessionScope, rootId: string, order: readonly string[]): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const { movable } = await heldQueue(tx, ownerOf(scope), rootId);
+    const byId = new Map(movable.map((row) => [row.id, row]));
+    if (order.length !== movable.length || new Set(order).size !== order.length || order.some((id) => !byId.has(id))) throw new QueueChangedError();
+    await writePositions(tx, order.map((id) => byId.get(id)!));
+  });
+}
+
+/**
+ * Takes queued runs out of the session (cancelled, never started), under its lock, each only while it
+ * is still queued; the rest of the queue keeps its order. Returns the runs taken out.
+ */
+export async function dropFromQueue(prisma: PrismaClient, scope: SessionScope, rootId: string, jobIds: readonly string[], error = "Removed from the queue."): Promise<string[]> {
+  if (!jobIds.length) return [];
+  return prisma.$transaction(async (tx) => {
+    const { rows, movable } = await heldQueue(tx, ownerOf(scope), rootId);
+    const ours = new Set(rows.map((row) => row.id));
+    const dropped: string[] = [];
+    for (const id of jobIds) {
+      if (!ours.has(id)) continue;
+      const cancelled = await tx.workspaceJob.updateMany({ where: { id, status: "queued" }, data: { status: "cancelled", finishedAt: new Date(), error, progress: "Cancelled", queuePosition: null } });
+      if (cancelled.count === 1) dropped.push(id);
+    }
+    if (movable.some((row) => row.queuePosition !== null)) await writePositions(tx, movable.filter((row) => !dropped.includes(row.id)));
+    return dropped;
+  });
 }

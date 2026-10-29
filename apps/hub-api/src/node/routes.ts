@@ -21,6 +21,7 @@ import { mirrorNeedsMe, nodeEventStream, publishTo } from "./events.js";
 import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } from "./model.js";
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import { pausedNotice, stopNodeRuns } from "./sessions.js";
+import { registerSessionRoutes } from "./session-routes.js";
 import { saveSecret, SecretError, secretStuck } from "./node-secrets.js";
 import { createCrew, deleteNode, MAX_NODES, promoteHelper } from "./helpers.js";
 import { stopPlans } from "./plans.js";
@@ -326,6 +327,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
 
   mirrorNeedsMe();
   app.get("/api/node/events", async (request, reply) => nodeEventStream(request, reply, nodeAccount(request)));
+  registerSessionRoutes(app);
 
   // ── nodes ────────────────────────────────────────────────────────────────────────────────
   app.get("/api/node/nodes", async (request) => {
@@ -368,7 +370,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       provider: ProviderPick.optional(),
       model: ModelPick.optional(),
       runProfileId: z.string().max(60).nullable().optional(),
-      autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional(), computerWork: z.enum(["auto", "ask"]).optional() }).optional(),
+      autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional(), computerWork: z.enum(["auto", "ask"]).optional(), answerAgentQuestions: z.boolean().optional() }).optional(),
       status: z.enum(["active", "paused"]).optional(),
       effort: z.enum(["low", "medium", "high"]).optional(),
     }).strict().parse(request.body ?? {});

@@ -10,6 +10,7 @@ import { LIVE_DEVICE_STATUSES } from "./constants.js";
 import { expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
+import { observedUpdate } from "../workspace/engines/observed.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -69,6 +70,7 @@ export async function finishDeviceJob(
               tokensIn: totals.tokensIn ?? 0,
               tokensOut: totals.tokensOut ?? 0,
               evidence: { files: totals.files.map((file) => ({ ...file, path: redactText(file.path).slice(0, 500) })), model: totals.model ?? null, costUsd: totals.costUsd ?? null, ...(totals.reviewId ? { reviewId: totals.reviewId } : {}) } as Prisma.InputJsonValue,
+              ...observedUpdate(totals.observed),
             }
           : {}),
       },

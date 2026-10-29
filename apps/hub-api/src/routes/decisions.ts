@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
-import { decisionBus, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
+import { closedRefusal, closeEndedWork, decideOnce, decisionBus, ENDED_WITH_WORK, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
@@ -31,7 +32,9 @@ const Decide = z.object({
 
 /**
  * The one way a Needs me card is answered, from the Mac or from a phone answer
- * the Mac has already accepted. First pending card to leave `pending` wins.
+ * the Mac has already accepted. The first answer to leave `pending` wins (a
+ * compare-and-set), so the web, a phone and the CLI never both apply one; a
+ * request whose run ended is refused and nothing changes.
  */
 export async function applyAnswer(
   app: FastifyInstance,
@@ -43,12 +46,13 @@ export async function applyAnswer(
   const { prisma } = app;
   const row = await prisma.agentDecision.findFirst({ where: { id, userId } });
   if (!row) throw new AnswerError(404, "Decision not found.");
-  if (row.status !== "pending") {
-    throw new AnswerError(
-      409,
-      row.status === "expired" ? "The tool stopped waiting. It showed its own prompt instead." : row.status === "settled" ? (row.reason ?? "Already answered in the tool.") : "Already answered.",
-    );
+  // A request still pending after its run ended (asked before requests closed with their run) closes now.
+  if (row.status === "pending" && row.source === "ensemble" && row.sessionId && (await closeEndedWork(prisma, [row.sessionId]))) {
+    decisionBus.emit(id);
+    sseHub.publish(userId, { event: "decision", data: { id, status: "expired" } });
+    throw new AnswerError(409, ENDED_WITH_WORK);
   }
+  if (row.status !== "pending") throw new AnswerError(409, closedRefusal(row));
   const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown; runnerAccountId?: unknown; allowCustom?: unknown; confirm?: unknown };
   const deviceId = typeof detail.deviceId === "string" && detail.deviceId.length > 0 ? detail.deviceId : null;
   // In a shared space: a run's question is answered by the person whose computer runs it;
@@ -79,26 +83,34 @@ export async function applyAnswer(
     if (body.decision === "allow" && offered.length > 0 && picked === null) throw new AnswerError(400, "Pick one of the offered answers.");
     scope = "once";
     reason = picked ?? undefined;
-  } else if (row.source === "ensemble") {
-    await saveEnsembleAnswer(app, userId, row, body);
   }
-  const updated = await prisma.agentDecision.update({
-    where: { id },
-    data: { status: "decided", decision: body.decision, scope, reason: deviceId ? (reason ?? null) : body.reason, decidedAt: new Date() },
+  // Checked before the answer is taken; saved only by the answer that wins.
+  const rule = !deviceId && row.source === "ensemble" ? await ensembleRule(userId, row, body) : null;
+  const decided = await prisma.$transaction(async (tx) => {
+    const updated = await decideOnce(tx, id, { status: "decided", decision: body.decision, scope, reason: deviceId ? (reason ?? null) : body.reason, decidedAt: new Date() });
+    if (!updated) return null;
+    const trusted = rule ? await saveRule(tx, rule) : false;
+    if (!deviceId && body.scope !== "once" && row.source !== "ensemble") {
+      const command = (row.detail as { command?: string | null }).command ?? null;
+      await tx.decisionRule.create({
+        data: {
+          userId,
+          source: row.source,
+          toolName: row.toolName,
+          pattern: command ?? "*",
+          decision: body.decision,
+          sessionId: body.scope === "session" ? row.sessionId : null,
+        },
+      });
+    }
+    return { updated, trusted };
   });
-  if (!deviceId && body.scope !== "once" && row.source !== "ensemble") {
-    const command = (row.detail as { command?: string | null }).command ?? null;
-    await prisma.decisionRule.create({
-      data: {
-        userId,
-        source: row.source,
-        toolName: row.toolName,
-        pattern: command ?? "*",
-        decision: body.decision,
-        sessionId: body.scope === "session" ? row.sessionId : null,
-      },
-    });
+  if (!decided) {
+    const now = await prisma.agentDecision.findUnique({ where: { id } });
+    throw new AnswerError(409, now ? closedRefusal(now) : "Decision not found.");
   }
+  const { updated } = decided;
+  if (decided.trusted) trustChanged(app.prisma, app.log);
   decisionBus.emit(id);
   if (deviceId) {
     publishDevice(deviceId, "decision.answered", id, { decision: body.decision, scope, reason: updated.reason });
@@ -233,8 +245,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     if (!owned) return reply.code(404).send({ error: "Decision not found." });
     const row = await waitFor(id, timeout * 1000);
     if (row && row.status === "pending" && row.expiresAt < new Date()) {
-      const expired = await prisma.agentDecision.update({ where: { id }, data: { status: "expired" } });
-      return publicDecision(expired);
+      await prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+      return publicDecision((await prisma.agentDecision.findUnique({ where: { id } }))!);
     }
     return publicDecision(row!);
   });
@@ -318,19 +330,20 @@ class AnswerError extends Error {
   }
 }
 
+type PlannedRule = { data: Prisma.DecisionRuleUncheckedCreateInput; folder: boolean };
+
 /**
- * An Ensemble job's answer. "For this run" is a rule only this job reads.
- * "Always" trusts the job's folder, and only a folder `resolveWorkFolder`
- * accepts; it never turns a command or a path into a folder rule. A push and
- * a path outside the folder are confirmed each time.
+ * The rule an Ensemble job's answer saves, checked before the answer is taken. "For this run" is a
+ * rule only this job reads. "Always" trusts the job's folder, and only a folder `resolveWorkFolder`
+ * accepts; it never turns a command or a path into a folder rule. A push and a path outside the
+ * folder are confirmed each time.
  */
-async function saveEnsembleAnswer(
-  app: FastifyInstance,
+async function ensembleRule(
   userId: string,
   row: { toolName: string; sessionId: string | null; cwd: string | null; event: string; detail: unknown },
   body: { decision: "allow" | "deny"; scope: "once" | "session" | "always" },
-): Promise<void> {
-  if (row.event === "question" || body.scope === "once") return;
+): Promise<PlannedRule | null> {
+  if (row.event === "question" || body.scope === "once") return null;
   if (row.toolName === "git push") throw new AnswerError(400, "A push is confirmed each time. Choose Allow once.");
   if ((row.toolName === OUTSIDE_TOOL || row.toolName === OUTSIDE_READ_TOOL) && body.scope === "always") {
     throw new AnswerError(400, "A folder outside the run's is allowed for this run, not always.");
@@ -338,23 +351,22 @@ async function saveEnsembleAnswer(
   const command = (row.detail as { command?: string | null }).command ?? "*";
   if (body.scope === "session" || body.decision === "deny") {
     if (!row.sessionId) throw new AnswerError(400, "This request did not come from a run.");
-    await app.prisma.decisionRule.create({
-      data: { userId, source: RUN_RULE_SOURCE, toolName: row.toolName, pattern: command, decision: body.decision, sessionId: row.sessionId },
-    });
-    return;
+    return { data: { userId, source: RUN_RULE_SOURCE, toolName: row.toolName, pattern: command, decision: body.decision, sessionId: row.sessionId }, folder: false };
   }
   if (!row.cwd) throw new AnswerError(400, "This request has no folder to trust.");
   const base = await workspaceRoot();
   const folder = within(base, row.cwd) ? row.cwd : await resolveWorkFolder(row.cwd);
-  const existing = await app.prisma.decisionRule.findFirst({
-    where: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
-  });
-  if (!existing) {
-    await app.prisma.decisionRule.create({
-      data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
-    });
-    trustChanged(app.prisma, app.log);
+  return { data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null }, folder: true };
+}
+
+/** Saves the winning answer's rule. True when it trusted a folder that was not trusted yet. */
+async function saveRule(tx: Prisma.TransactionClient, rule: PlannedRule): Promise<boolean> {
+  if (rule.folder) {
+    const { userId, source, toolName, pattern } = rule.data;
+    if (await tx.decisionRule.findFirst({ where: { userId, source, toolName, pattern, decision: "allow", sessionId: null } })) return false;
   }
+  await tx.decisionRule.create({ data: rule.data });
+  return rule.folder;
 }
 
 /** The tools whose user-level hook file already runs Ensemble's hook. */

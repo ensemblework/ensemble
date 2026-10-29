@@ -108,9 +108,57 @@ export function withPullRequest<T extends AssignInput>(body: T): T {
 export type AssignInput = z.infer<typeof Assign>;
 
 /**
- * A request into an agent session: the session's agent (and, unless one is named, its model with its
- * thinking level, context window and fast mode), its computer under the current pairing, and a
- * continuation of its latest run, so the work happens in that folder and the agent's own
+ * How a run in an agent session takes one of its settings: keep the session's (`inherit`), the
+ * agent's own default (`provider_default`), or a value named for this run (`explicit`). Kept apart so
+ * leaving a setting out never resets it by accident, and naming the default never keeps the old one.
+ */
+export type SettingChoice<T> = { state: "inherit" } | { state: "provider_default" } | { state: "explicit"; value: T };
+
+export type SessionChoices = {
+  model: SettingChoice<string>;
+  effort: SettingChoice<string>;
+  context: SettingChoice<"long_context">;
+  fast: SettingChoice<true>;
+};
+
+/** The settings a session's runs go with: its latest run's. */
+export type SessionTuning = { model: string | null; effort: string | null; contextTier: "long_context" | null; fast: boolean };
+
+const isDefault = (value: string) => value.trim().toLowerCase() === "default";
+
+/**
+ * A request's settings as choices: left out keeps the session's; `"default"` (and `fast: false`) is
+ * the agent's own default; anything else is that value. A model counts only when the request is for
+ * the session's own agent (a request made for Ensemble's agent keeps the session's model).
+ */
+export function sessionChoices(body: Pick<AssignInput, "model" | "reasoningEffort" | "contextTier" | "fast" | "engine">, agent: string): SessionChoices {
+  const text = (value: string | undefined): SettingChoice<string> => {
+    const trimmed = value?.trim();
+    if (!trimmed) return { state: "inherit" };
+    return isDefault(trimmed) ? { state: "provider_default" } : { state: "explicit", value: trimmed };
+  };
+  return {
+    model: body.engine === agent ? text(body.model) : { state: "inherit" },
+    effort: text(body.reasoningEffort),
+    context: body.contextTier === undefined ? { state: "inherit" } : body.contextTier === "long_context" ? { state: "explicit", value: "long_context" } : { state: "provider_default" },
+    fast: body.fast === undefined ? { state: "inherit" } : body.fast ? { state: "explicit", value: true } : { state: "provider_default" },
+  };
+}
+
+/** The settings a run in the session goes with: each one kept, reset to the agent's default, or as named. */
+export function resolveSessionTuning(session: SessionTuning, choices: SessionChoices): { model?: string; reasoningEffort?: string; contextTier?: "long_context"; fast?: true } {
+  const pick = <T>(choice: SettingChoice<T>, kept: T | null): T | undefined => (choice.state === "explicit" ? choice.value : choice.state === "inherit" ? (kept ?? undefined) : undefined);
+  const model = pick(choices.model, session.model && !isDefault(session.model) ? session.model : null);
+  const reasoningEffort = pick(choices.effort, session.effort && !isDefault(session.effort) ? session.effort : null);
+  const contextTier = pick(choices.context, session.contextTier);
+  const fast = pick(choices.fast, session.fast ? (true as const) : null);
+  return { ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}), ...(contextTier ? { contextTier } : {}), ...(fast ? { fast } : {}) };
+}
+
+/**
+ * A request into an agent session: the session's agent, its model, thinking level, context window and
+ * fast mode (each kept unless the request names it, `sessionChoices`), its computer under the current
+ * pairing, and a continuation of its latest run, so the work happens in that folder and the agent's own
  * conversation goes on.
  */
 export async function inSession(prisma: PrismaClient, userId: string, body: AssignInput): Promise<AssignInput> {
@@ -126,19 +174,13 @@ export async function inSession(prisma: PrismaClient, userId: string, body: Assi
     if (!deviceId) throw new GuardError(`The computer that session ran on (${session.computer ?? "a paired computer"}) is no longer paired.`);
     if (body.deviceId && body.deviceId !== deviceId) throw new GuardError(`That session runs on ${session.computer ?? "another computer"}. Leave the computer out to continue it there.`);
   }
-  const named = body.engine === session.agent && body.model?.trim();
+  const tuning = resolveSessionTuning(session, sessionChoices(body, session.agent));
+  const { model: _model, reasoningEffort: _effort, contextTier: _context, fast: _fast, ...rest } = body;
   return {
-    ...body,
+    ...rest,
+    ...tuning,
     kind: "code",
     engine: session.agent,
-    ...(named
-      ? {}
-      : {
-          model: session.model && session.model !== "default" ? session.model : undefined,
-          reasoningEffort: body.reasoningEffort ?? session.effort ?? undefined,
-          contextTier: body.contextTier ?? session.contextTier ?? undefined,
-          fast: body.fast ?? (session.fast || undefined),
-        }),
     continueFromJobId: session.lastJobId,
     deviceId,
     folder: undefined,
@@ -192,6 +234,11 @@ export interface CreateJobOptions {
   /** Stored on `WorkspaceJob.context`. A job claimed from the web carries its hosted id here. */
   context?: Prisma.InputJsonValue;
   actor?: Actor;
+  /**
+   * The request's model, thinking level, context window and fast mode are final (a run in an agent
+   * session, already resolved by `inSession`): the task's model tier adds none of its own.
+   */
+  keepSettings?: boolean;
 }
 
 type AssignTask = NonNullable<Awaited<ReturnType<PrismaClient["task"]["findFirst"]>>>;
@@ -319,10 +366,12 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
     throw error;
   }
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
+  // A run in an agent session keeps the session's settings (or the ones named): the tier adds none.
+  const sessionRun = Boolean(input.session) || options.keepSettings === true;
   // A job on the tier's own model takes the tier's context window as it takes its thinking level (Settings → Models).
-  if (!body.contextTier && !body.model && provider === tier.provider && model === tier.model && tier.context === "long_context") body.contextTier = "long_context";
+  if (!sessionRun && !body.contextTier && !body.model && provider === tier.provider && model === tier.model && tier.context === "long_context") body.contextTier = "long_context";
   // The tier's thinking level belongs to its own provider: another engine or model family does not take it.
-  const tierEffort = provider === tier.provider ? tier.effort : null;
+  const tierEffort = provider === tier.provider && !sessionRun ? tier.effort : null;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tierEffort, settings.orchestration, options);
   // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.
   if (actorFor(userId)) throw new GuardError("In a shared space, the agent runs on your own computer. Pick one of your paired computers.");

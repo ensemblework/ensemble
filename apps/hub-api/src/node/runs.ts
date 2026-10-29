@@ -17,6 +17,8 @@ import { finishStep, runIsStale, stepPending, stepRow } from "./plans.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
 import { parseReport } from "./report.js";
 import { startRoutines } from "./routines.js";
+import { refreshRunCard, settingsLine, storedSettings } from "./settings.js";
+import { startWatchdog, stopWatchdog } from "./watchdog.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 /** How often run states are mirrored: a run's end reaches its node within this time. */
@@ -80,6 +82,8 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   if (status !== run.status || ended) {
     await prisma.nodeRun.update({ where: { id: run.id }, data: { status, ...(ended ? { reportedAt: new Date() } : {}) } });
   }
+  // The card's settings (as asked, sent and reported by the agent) and its session's queue follow the job.
+  if (status !== run.status || ended || shown.progress !== progress) await refreshRunCard(prisma, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not refresh a run card"));
   if (!ended) return;
   // A newer call took this run over (steer, replace, stop, pause): the node already knows.
   if (typeof shown.quiet === "string") return;
@@ -115,6 +119,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
       report ? `The agent reported: ${report.outcome}. ${truncateText(report.summary, 1500)}${report.checks?.length ? `\nChecks: ${report.checks.map((check) => `${check.verdict} ${check.name}`).join("; ")}` : ""}` : "",
       job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
       job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
+      run.settings ? `Run settings: ${settingsLine(storedSettings((await prisma.nodeRun.findUnique({ where: { id: run.id }, select: { settings: true } }))?.settings ?? run.settings))}.` : "",
       next.length ? `Still queued in this session: ${next.map((row) => `“${row.task.title}”`).join(", ")}; it goes on by itself.` : "",
       step
         ? "This run was for your plan step. If the step is finished, report it with node_step_report (outcome, summary, commit, checks). If it needs one more change, send your session the next message (node_session_send) and reply (no reply). If it cannot be done, report it blocked."
@@ -148,6 +153,7 @@ export function startNode(app: FastifyInstance): () => void {
   startOutbox(app);
   startNodeRuns(app);
   const stopRoutines = startRoutines(app);
+  startWatchdog(app);
   // Helpers whose task room went quiet (node/helpers.ts).
   const sweep = setInterval(() => {
     void sweepHelpers(app).catch((error: unknown) => app.log.error({ err: error }, "Could not remove idle node helpers"));
@@ -156,6 +162,7 @@ export function startNode(app: FastifyInstance): () => void {
   return () => {
     clearInterval(sweep);
     stopRoutines();
+    stopWatchdog();
     stopNodeRuns();
     stopOutbox();
     abortAllTurns();
