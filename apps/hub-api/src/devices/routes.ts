@@ -47,6 +47,7 @@ import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
 import { FileAnswer, MAX_UPLOADED_STEPS, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
+import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
@@ -426,6 +427,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           progress: "Claimed",
       });
       if (!won) continue;
+      // The run it continues was set as it was claimed: the one that actually ran before it (workspace/sessions.ts).
+      Object.assign(next, await claimedLinks(prisma, next.id));
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
       sseHub.publish(next.userId, { event: "task", data: { id: next.taskId, action: "agent" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });

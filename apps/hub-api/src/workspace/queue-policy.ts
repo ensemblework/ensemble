@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { loadSettings } from "../lib/settings.js";
 import { within } from "./guard.js";
+import { sessionTurn } from "./sessions.js";
 
 export const NEEDS_ME_GRACE_MS = 60 * 60_000;
 export const OCCUPIED = [
@@ -152,7 +153,11 @@ export async function claimQueuedJob(
     if (draining || !queueHasRoom(active.length, limit, Boolean(overdue)))
       return false;
     if (queueConflict(candidate, active)) return false;
+    // A run in an agent session waits for its turn in the session's queue and continues the run that actually ran before it.
+    const turn = await sessionTurn(tx, candidate);
+    if (turn?.wait) return false;
     if (
+      !turn &&
       candidate.continueFromJobId &&
       (await tx.workspaceJob.findFirst({
         where: {
@@ -165,7 +170,7 @@ export async function claimQueuedJob(
       return false;
     const claimed = await tx.workspaceJob.updateMany({
       where: { id: jobId, status: "queued" },
-      data,
+      data: { ...data, ...(turn ? turn.links : {}) },
     });
     if (claimed.count !== 1) return false;
     const extra = active.length === limit;
