@@ -1120,6 +1120,31 @@ test("C5: back after a day away, the catch-up digest lists every request made of
   }
 });
 
+// ── review of C4–C5 ───────────────────────────────────────────────────────────────────────────
+
+test("review #A: an away person's held events never stop delivery to anyone else, and they are capped", async () => {
+  const { akash, ben, room } = await twoPeople();
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true } })).statusCode, 200);
+  const old = Date.now() - 3_600_000;
+  await h.prisma.nodeRoomEvent.createMany({
+    data: Array.from({ length: 501 }, (_, index) => ({ roomId: room.id, userId: ben.id, kind: "page_edited", subjectKind: "page", subjectId: randomUUID(), title: `Page ${index}`, dedupeKey: `edit:${index}`, deliverAfter: new Date(old), createdAt: new Date(old - (501 - index) * 1000) })),
+  });
+  // Newer than all of Ben's: Ben names Akash in public.
+  await say(ben, room.id, "@akash the export is merged");
+  await deliverRoomEvents(h.app, { now: later() });
+  const toAkash = await notes(akash, room.id);
+  assert.equal(toAkash.length, 1, "Akash hears of it at once");
+  assert.equal(toAkash[0]!.body, "Ben mentioned you in the room: “@akash the export is merged”");
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 200, "at most 200 wait for Ben");
+  assert.equal((await notes(ben, room.id)).length, 0);
+  // Ben's away ended (its time passed) without him coming back: he counts as back, and hears once.
+  const me = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, userId: ben.id, nodeId: null } });
+  await h.prisma.nodeRoomMember.update({ where: { id: me.id }, data: { prefs: { away: { since: new Date(old).toISOString(), until: new Date(Date.now() - 60_000).toISOString(), note: null } } } });
+  await deliverRoomEvents(h.app, { now: new Date(Date.now() + 9 * 3_600_000) });
+  assert.equal((await notes(ben, room.id)).length, 1);
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 0);
+});
+
 // ── C6 results into the room and onto the board: the worked example (extension §19) ──────────
 
 test("C6, extension §19: two people, two features: told once, started in My crew, results on the board and in the room, a review on the requester's task, a digest", async () => {

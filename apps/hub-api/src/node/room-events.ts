@@ -31,6 +31,12 @@ export type EventKind = (typeof EVENT_KINDS)[number];
 
 let BATCH_MS = 60_000;
 let DIGEST_GAP_MS = 8 * 3_600_000;
+/** An away person's events wait out of the delivery queue: until their away ends, or this long before a recheck. */
+const HOLD_MS = 6 * 3_600_000;
+/** Events nobody could deliver (a person away for a long time) go after this long, and at most this many wait per person and room. */
+const HELD_TTL_MS = 14 * 86_400_000;
+const HELD_MAX = 200;
+const DUE_PAGE = 500;
 const SWEEP_MS = 30_000;
 /** A change is read again a little before the last read: one committed just behind it is not missed (keys dedupe). */
 const OVERLAP_MS = 5_000;
@@ -394,7 +400,30 @@ function messageText(lines: string[], offer: string | null): string {
 export async function deliverRoomEvents(app: FastifyInstance, options: { now?: Date } = {}): Promise<number> {
   const prisma = app.prisma;
   const now = options.now ?? new Date();
-  const due = await prisma.nodeRoomEvent.findMany({ where: { deliveredAt: null, deliverAfter: { lte: now } }, orderBy: { createdAt: "asc" }, take: 500 });
+  // Nothing waits for ever: what an away person could not hear in two weeks goes.
+  await prisma.nodeRoomEvent.deleteMany({ where: { deliveredAt: null, createdAt: { lt: new Date(now.getTime() - HELD_TTL_MS) } } });
+  let sent = 0;
+  // Held events leave the due window (their deliverAfter moves), so a page full of them never hides anyone else's.
+  for (let page = 0; page < 10; page++) {
+    const due = await prisma.nodeRoomEvent.findMany({ where: { deliveredAt: null, deliverAfter: { lte: now } }, orderBy: { createdAt: "asc" }, take: DUE_PAGE });
+    if (!due.length) break;
+    sent += await deliverPage(app, due, now);
+    if (due.length < DUE_PAGE) break;
+  }
+  return sent;
+}
+
+/** An away person's events wait until their away ends (or a recheck); only the newest HELD_MAX of them are kept. */
+async function holdFor(app: FastifyInstance, roomId: string, userId: string, until: string | null, now: Date): Promise<void> {
+  const prisma = app.prisma;
+  const at = until ? new Date(Math.max(Date.parse(until), now.getTime() + 60_000)) : new Date(now.getTime() + HOLD_MS);
+  await prisma.nodeRoomEvent.updateMany({ where: { roomId, userId, deliveredAt: null, deliverAfter: { lte: at } }, data: { deliverAfter: at } });
+  const extra = await prisma.nodeRoomEvent.findMany({ where: { roomId, userId, deliveredAt: null }, orderBy: { createdAt: "desc" }, skip: HELD_MAX, select: { id: true } });
+  if (extra.length) await prisma.nodeRoomEvent.deleteMany({ where: { id: { in: extra.map((row) => row.id) } } });
+}
+
+async function deliverPage(app: FastifyInstance, due: NodeRoomEvent[], now: Date): Promise<number> {
+  const prisma = app.prisma;
   const groups = new Map<string, NodeRoomEvent[]>();
   for (const event of due) groups.set(`${event.roomId}:${event.userId}`, [...(groups.get(`${event.roomId}:${event.userId}`) ?? []), event]);
   let sent = 0;
@@ -406,7 +435,12 @@ export async function deliverRoomEvents(app: FastifyInstance, options: { now?: D
       await prisma.nodeRoomEvent.deleteMany({ where: { id: { in: events.map((row) => row.id) } } });
       continue;
     }
-    if (prefsOf(member).away) continue;
+    // Away (and not past its end): theirs wait for the catch-up. An away whose end has passed counts as back.
+    const away = awayNow(prefsOf(member), now.getTime());
+    if (away) {
+      await holdFor(app, roomId, userId, away.until, now);
+      continue;
+    }
     const kept: NodeRoomEvent[] = [];
     const gone: string[] = [];
     for (const event of events) {
