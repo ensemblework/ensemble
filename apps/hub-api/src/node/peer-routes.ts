@@ -12,7 +12,11 @@ import { truncateText } from "../lib/text.js";
 import { wireMessage } from "./store.js";
 import { nodeAccount } from "./routes.js";
 import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
-import { answerSpaceOffer, bindSpace, roomBoard, RoomSpaceError, spaceView, unbindSpace } from "./room-space.js";
+import { answerSpaceOffer, bindSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
+import { cameBack, watchRoomEvents } from "./room-events.js";
+import { publishTo } from "./events.js";
+import { inBackground } from "./queue.js";
+import { roomPeople } from "./store.js";
 import { statusCard, statusCards } from "./status-cards.js";
 import { personRow, prefsOf, SHAREABLE_KINDS, shareableItem, TrustPatch, trustView, updatePrefs } from "./trust.js";
 
@@ -30,6 +34,17 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
   const prisma = app.prisma;
   // Missions made for a request settle its card when they end.
   watchPeerMissions(app);
+  // What concerns each person reaches them once, through their lead (node/room-events.ts).
+  watchRoomEvents(app);
+
+  const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof RoomSpaceError) throw fail(error.statusCode, error.message);
+      throw error;
+    }
+  };
 
   const me = async (roomId: string, accountId: string) => {
     const row = await personRow(prisma, roomId, accountId);
@@ -93,11 +108,32 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body ?? {});
     if (body.away && body.until && Date.parse(body.until) <= Date.now()) throw fail(400, "Pick a time that is still to come.");
     const row = await me(room.id, accountId);
+    const wasAway = prefsOf(row).away;
     await updatePrefs(prisma, row.id, (prefs) => ({
       ...prefs,
       away: body.away ? { since: new Date().toISOString(), until: body.until ? new Date(body.until).toISOString() : null, note: body.note?.trim() ? truncateText(body.note.trim(), 200) : null } : null,
     }));
+    // Back: their lead catches them up on what happened meanwhile.
+    if (wasAway && !body.away) inBackground(app, () => cameBack(app, room, accountId, wasAway.since));
+    publishTo(await roomPeople(prisma, room.id), "node.cards", { roomId: room.id });
     return { card: await statusCard(prisma, room, accountId, { viewerId: accountId }) };
+  });
+
+  // ── pages of the room's space I watch (docs/35 §12.12) ────────────────────────────────────
+
+  app.get("/api/node/rooms/:id/pages", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return { pages: await roomPages(app, room, accountId) };
+  });
+
+  /** I watch a page of the room's linked space (its edits reach me through my lead), or stop. */
+  app.put("/api/node/rooms/:id/pages/:pageId/watch", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { watching } = z.object({ watching: z.boolean() }).strict().parse(request.body ?? {});
+    await spaceCall(() => watchPage(app, room, accountId, z.string().uuid().parse((request.params as { pageId: string }).pageId), watching));
+    return { pages: await roomPages(app, room, accountId) };
   });
 
   // ── items I marked shareable in this room ─────────────────────────────────────────────────
@@ -127,15 +163,6 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── the room's shared space (docs/35 §12.11) ──────────────────────────────────────────────
-
-  const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
-    try {
-      return await work();
-    } catch (error) {
-      if (error instanceof RoomSpaceError) throw fail(error.statusCode, error.message);
-      throw error;
-    }
-  };
 
   /** Which space holds the room's work, my role there, and my membership offer. */
   app.get("/api/node/rooms/:id/space", async (request) => {

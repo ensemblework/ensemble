@@ -23,6 +23,10 @@ const { settleTurns } = await import("./queue.js");
 const { syncPeerMissions } = await import("./peer-requests.js");
 const { setTurnRetryDelaysForTests } = await import("./queue.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
+const { deliverRoomEvents, scanRoomSpaces, setDigestWriterForTests, setRoomEventTimingForTests } = await import("./room-events.js");
+const { SPACE_COOKIE } = await import("../spaces/store.js");
+// Room events wait for their batch; each test delivers them when it chooses (`deliverRoomEvents` with a later `now`).
+setRoomEventTimingForTests({ batchMs: 3_600_000 });
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
@@ -823,4 +827,145 @@ test("C4: work asked between two editors of the room's space becomes a proposed 
   assert.deepEqual([made_.createdByNodeId, made_.createdByAccountId, made_.assigneeAccountId], [bensLead.id, ben.id, ben.id]);
   const notes = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` })).tasks.find((entry: { id: string }) => entry.id === made_.id);
   assert.deepEqual([notes.madeBy.node.id, notes.madeBy.for.name], [bensLead.id, "Ben"]);
+});
+
+// ── C5 events, status cards and catch-up ──────────────────────────────────────────────────────
+
+/** A request as `user` in the space `spaceId` (the Hub's routes, with that space open). */
+const inSpace = (user: HttpUser, spaceId: string, options: { method: "GET" | "POST" | "PATCH" | "DELETE"; url: string; payload?: unknown }) =>
+  h.app.inject({ ...options, headers: { cookie: `${user.cookie}; ${SPACE_COOKIE}=${spaceId}` } } as never);
+const later = () => new Date(Date.now() + 2 * 3_600_000);
+/** Settles background work, reads the followed spaces and delivers every batch now. */
+async function flushEvents() {
+  await settleTurns();
+  await scanRoomSpaces(h.app);
+  await deliverRoomEvents(h.app, { now: later() });
+}
+const notes = async (user: HttpUser, roomId: string) => (await read(user, roomId)).filter((row) => row.data?.type === "room_events");
+
+test("C5: an assignment reaches the assignee once, privately, from their lead; status changes, mentions and the cards follow", async () => {
+  const { akash, ben, lead, builder, bensLead, tester, room, handle } = await twoPeople({ builder: true, tester: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const create = async (title: string, assignee: string) => {
+    const made = await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title, assignee, status: "todo" } });
+    assert.equal(made.statusCode, 201, made.body);
+    return json(made).task as { id: string };
+  };
+  const csv = await create("CSV export", ben.id);
+  await create("Billing page", akash.id);
+  await flushEvents();
+  const bens = await notes(ben, room.id);
+  assert.equal(bens.length, 1, "one private message for the assignment");
+  assert.ok(bens[0]!.private);
+  assert.equal(bens[0]!.authorNodeId, bensLead.id, "from Ben's own lead");
+  assert.equal(bens[0]!.body, `Akash assigned you “CSV export”. Shall I start it with @${handle(tester!.id)}?`);
+  assert.deepEqual(bens[0]!.data.items.map((item: { kind: string; subjectId: string }) => [item.kind, item.subjectId]), [["assigned", csv.id]]);
+  assert.ok(!(await read(akash, room.id)).some((row) => row.id === bens[0]!.id), "nobody else sees it");
+  const akashs = await notes(akash, room.id);
+  assert.equal(akashs.length, 1);
+  assert.equal(akashs[0]!.authorNodeId, lead.id);
+  assert.equal(akashs[0]!.body, `“Billing page” is yours. Shall I start it with @${handle(builder!.id)}?`);
+  assert.equal(seen.length, 0, "no model ran");
+  await flushEvents();
+  assert.equal((await notes(ben, room.id)).length, 1, "and only once");
+
+  // Status cards read the board: Akash sees Ben's task (titles, the default).
+  const cards = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/status` })).cards as Array<{ accountId: string; tasks: Array<{ title: string; status: string }> }>;
+  assert.deepEqual(cards.find((card) => card.accountId === ben.id)!.tasks, [{ title: "CSV export", status: "todo" }]);
+  assert.deepEqual(cards.find((card) => card.accountId === akash.id)!.tasks, [{ title: "Billing page", status: "todo", due: null }], "his own card in full");
+
+  // Ben moving his own task tells nobody; Akash moving it tells Ben.
+  assert.equal((await inSpace(ben, spaceId, { method: "PATCH", url: `/api/tasks/${csv.id}`, payload: { status: "in_progress" } })).statusCode, 200);
+  await flushEvents();
+  assert.equal((await notes(ben, room.id)).length, 1);
+  assert.equal((await inSpace(akash, spaceId, { method: "PATCH", url: `/api/tasks/${csv.id}`, payload: { status: "blocked" } })).statusCode, 200);
+  await flushEvents();
+  assert.equal((await notes(ben, room.id)).at(-1)!.body, "Akash moved “CSV export” to Blocked.");
+
+  // A comment naming Ben, and a public message naming him: no node wakes; his lead tells him, once, in one message.
+  const comment = await inSpace(akash, spaceId, { method: "POST", url: `/api/pages/task/${csv.id}/comments`, payload: { body: { text: `@${handle(bensLead.id)} can Ben check the totals?` } } });
+  assert.equal(comment.statusCode, 201, comment.body);
+  await say(akash, room.id, "@ben the billing API is ready");
+  assert.equal(seen.length, 0, "a person's mention wakes no node");
+  await flushEvents();
+  const last = (await notes(ben, room.id)).at(-1)!;
+  assert.equal(last.body, `- Akash mentioned you in the room: “@ben the billing API is ready”\n- Akash mentioned you on “CSV export”: “@${handle(bensLead.id)} can Ben check the totals?”`);
+  assert.deepEqual(last.data.items.map((item: { kind: string; subjectKind: string }) => [item.kind, item.subjectKind]), [["mention", "message"], ["mention", "comment"]]);
+
+  // Every delivery checks access again: out of the space, a pending task event never reaches Ben.
+  await create("Invoice PDF", ben.id);
+  await settleTurns();
+  await scanRoomSpaces(h.app);
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 1);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/sharing/spaces/${spaceId}/members/${ben.id}` })).statusCode, 204);
+  await deliverRoomEvents(h.app, { now: later() });
+  assert.ok(!(await notes(ben, room.id)).some((row) => row.body.includes("Invoice PDF")));
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 0);
+
+  // Leaving takes what was waiting for him.
+  await say(akash, room.id, "@ben one more thing");
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 1);
+  const me = (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, userId: ben.id, nodeId: null } })).id;
+  assert.equal((await ben.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${me}` })).statusCode, 204);
+  assert.equal(await h.prisma.nodeRoomEvent.count({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } }), 0);
+});
+
+test("C5: back after a day away, the catch-up digest lists every request made of the person; a model only words it", async () => {
+  const { akash, ben, bensLead, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  let facts: { name: string; room: string; lines: string[] } | null = null;
+  setDigestWriterForTests(async (_app, _accountId, given) => {
+    facts = given;
+    return "Akash asked you two things: whether the API is ready, and for invoice download.\nCSV export is yours.\n\n";
+  });
+  script = (turn) => (turn.slug === handle(bensLead.id) ? { text: "Ben is away until tomorrow; the API is in progress." } : { text: "(no reply)" });
+  function handle(nodeId: string) {
+    return membersHandle.get(nodeId)!;
+  }
+  const membersHandle = new Map((await h.prisma.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } } })).map((row) => [row.nodeId!, row.handle]));
+  try {
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true, until: new Date(Date.now() + 86_400_000).toISOString(), note: "Offsite" } })).statusCode, 200);
+    const question = json(await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: ben.id, kind: "question", text: "Is the API ready?" } })).request;
+    const work = json(await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: ben.id, kind: "work", text: "Add invoice download" } })).request;
+    assert.ok(work.taskId, "a proposed task on the board");
+    const made = await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "CSV export", assignee: ben.id, status: "todo" } });
+    assert.equal(made.statusCode, 201, made.body);
+    await flushEvents();
+    assert.equal((await notes(ben, room.id)).length, 0, "while he is away, events wait for him");
+
+    const back = await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: false } });
+    assert.equal(back.statusCode, 200, back.body);
+    await settleTurns();
+    const digests = (await read(ben, room.id)).filter((row) => row.data?.type === "digest");
+    assert.equal(digests.length, 1);
+    const digest = digests[0]!;
+    assert.ok(digest.private);
+    assert.equal(digest.authorNodeId, bensLead.id);
+    assert.equal(digest.body, "Akash asked you two things: whether the API is ready, and for invoice download.\nCSV export is yours.");
+    assert.deepEqual(digest.data.items.asked.map((row: { requestId: string }) => row.requestId), [question.id, work.id], "every request made of him");
+    assert.deepEqual(digest.data.items.proposed.map((row: { title: string }) => row.title), ["Add invoice download"]);
+    assert.deepEqual(digest.data.items.events.map((row: { kind: string; title: string }) => [row.kind, row.title]), [["assigned", "CSV export"]]);
+    assert.ok(facts!.lines.some((line) => line.includes("“Is the API ready?”")) && facts!.lines.some((line) => line.includes("“Add invoice download”")));
+    assert.ok(!(await read(akash, room.id)).some((row) => row.id === digest.id));
+    await deliverRoomEvents(h.app, { now: later() });
+    assert.equal((await notes(ben, room.id)).length, 0, "the digest told him: no batch repeats it");
+
+    // A day without opening the room: the next open brings a digest too.
+    await say(akash, room.id, "Shipping the billing page today.");
+    await h.prisma.nodeRoomMember.updateMany({ where: { roomId: room.id, userId: ben.id, nodeId: null }, data: { seenAt: new Date(Date.now() - 2 * 86_400_000), digestAt: new Date(Date.now() - 2 * 86_400_000) } });
+    const seq = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).lastSeq;
+    assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { seq } })).statusCode, 204);
+    await settleTurns();
+    const again = (await read(ben, room.id)).filter((row) => row.data?.type === "digest");
+    assert.equal(again.length, 2);
+    assert.equal(again.at(-1)!.data.reason, "gap");
+    assert.ok(again.at(-1)!.data.items.room.messages >= 1);
+    assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/read`, payload: { seq } })).statusCode, 204);
+    await settleTurns();
+    assert.equal((await read(ben, room.id)).filter((row) => row.data?.type === "digest").length, 2, "once per return");
+  } finally {
+    setDigestWriterForTests(null);
+  }
 });

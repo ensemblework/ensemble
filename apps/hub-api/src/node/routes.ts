@@ -54,6 +54,7 @@ import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 import { boundSpaceId, offerSpace } from "./room-space.js";
+import { noteMentions, roomOpened } from "./room-events.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -918,6 +919,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const stopped = await stopWork(app, room, accountId, command);
       await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
     } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
+    // A person named in public hears of it privately, from their lead (node/room-events.ts).
+    if (!duplicate) inBackground(app, () => noteMentions(app, room, message));
     return reply.code(duplicate ? 200 : 201).send({ message: wireMessage(message), duplicate });
   });
 
@@ -926,6 +929,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
     const body = z.object({ seq: z.number().int().min(0) }).strict().parse(request.body);
     await prisma.nodeRoomMember.updateMany({ where: { roomId: room.id, userId: accountId, nodeId: null, readSeq: { lt: body.seq } }, data: { readSeq: Math.min(body.seq, room.lastSeq) } });
+    // Back after being away, or a long gap: a catch-up digest (node/room-events.ts).
+    inBackground(app, () => roomOpened(app, room, accountId));
     return reply.code(204).send();
   });
 

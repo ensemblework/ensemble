@@ -2460,6 +2460,10 @@ model NodeRoom {
   runs          NodeRun[]
   invites       NodeRoomInvite[]
   peerRequests  NodePeerRequest[]
+  events        NodeRoomEvent[]
+  seenTasks     NodeRoomTask[]
+  feed          NodeRoomFeed?
+  pages         NodeRoomPage[]
 
   @@index([userId])
   @@map("node_rooms")
@@ -2512,6 +2516,9 @@ model NodeRoomMember {
   /// A person's own settings for a room with other people (node/trust.ts): `{ trust: { everyone, people: { accountId: … } },
   /// budget, away: { until, note, since }, shareable: [{ kind, id, spaceId, title }] }`. Empty for nodes.
   prefs                 Json       @default("{}")
+  /// A person's last read of the room, and their last catch-up digest there (node/room-events.ts).
+  seenAt                DateTime?  @map("seen_at")
+  digestAt              DateTime?  @map("digest_at")
   joinedAt              DateTime   @default(now()) @map("joined_at")
   room                  NodeRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   node                  NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
@@ -2676,6 +2683,83 @@ model NodeTurn {
   @@index([status, createdAt])
   @@index([nodeId, createdAt])
   @@map("node_turns")
+}
+
+/// What concerns one person in a room with other people (node/room-events.ts, docs/35 §12.12): from the
+/// room's linked space (a task assigned to them, a status change, a comment that mentions them or their
+/// node, an edit to a page they watch) or the room (a public message that mentions them). Code batches
+/// them into one private message from their lead, and the catch-up digest reads them.
+model NodeRoomEvent {
+  id             String    @id @default(uuid())
+  roomId         String    @map("room_id")
+  /// The person it is for.
+  userId         String    @map("user_id")
+  /// assigned | status | mention | page_edited
+  kind           String
+  spaceId        String?   @map("space_id")
+  /// task | page | comment | message
+  subjectKind    String    @map("subject_kind")
+  subjectId      String    @map("subject_id")
+  title          String
+  actorAccountId String?   @map("actor_account_id")
+  actorNodeId    String?   @map("actor_node_id")
+  data           Json      @default("{}")
+  /// One event per change: the same change seen twice (a frame and the sweep) is one row.
+  dedupeKey      String    @map("dedupe_key")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deliverAfter   DateTime  @map("deliver_after")
+  deliveredAt    DateTime? @map("delivered_at")
+  /// The private message (a batch or a digest) that told them.
+  messageId      String?   @map("message_id")
+  room           NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId, dedupeKey])
+  @@index([deliveredAt, deliverAfter])
+  @@index([roomId, userId, createdAt])
+  @@map("node_room_events")
+}
+
+/// What a room last saw of each task in its linked space, so code can tell an assignment or a status change.
+model NodeRoomTask {
+  roomId        String   @map("room_id")
+  taskId        String   @map("task_id")
+  /// The account the task is with (the space's owner for their own "me" tasks); null: nobody.
+  assignee      String?
+  status        String
+  taskUpdatedAt DateTime @map("task_updated_at")
+  room          NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, taskId])
+  @@map("node_room_tasks")
+}
+
+/// A room following its linked space: which space, and how far its changes have been read.
+model NodeRoomFeed {
+  roomId    String   @id @map("room_id")
+  spaceId   String   @map("space_id")
+  scannedAt DateTime @map("scanned_at")
+  room      NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([spaceId])
+  @@map("node_room_feeds")
+}
+
+/// A page of the room's linked space that the room follows: `watched`, a `contract` or the `decisions` log
+/// (docs/35 §12.12–12.13). Its watchers hear about edits.
+model NodeRoomPage {
+  id        String   @id @default(uuid())
+  roomId    String   @map("room_id")
+  spaceId   String   @map("space_id")
+  pageId    String   @map("page_id")
+  role      String   @default("watched")
+  watchers  String[] @default([])
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  room      NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, pageId])
+  @@map("node_room_pages")
 }
 
 /// A question, share, review or work request from one person in a room to another, through the other

@@ -267,6 +267,50 @@ export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: 
   };
 }
 
+// ── pages the room follows ──────────────────────────────────────────────────────────────────
+
+/** Pages of the linked space the room follows (watched, a contract, the decisions log), as one person sees them. */
+export async function roomPages(app: FastifyInstance, room: NodeRoom, viewerId: string) {
+  const prisma = app.prisma;
+  const spaceId = boundSpaceId(room);
+  if (!spaceId || !(await roleIn(viewerId, spaceId))) return [];
+  const rows = await prisma.nodeRoomPage.findMany({ where: { roomId: room.id, spaceId }, orderBy: { createdAt: "asc" } });
+  const pages = new Map((await prisma.taskPage.findMany({ where: { id: { in: rows.map((row) => row.pageId) }, userId: spaceId, deletedAt: null }, select: { id: true, title: true, taskId: true, updatedAt: true } })).map((row) => [row.id, row]));
+  return rows
+    .filter((row) => pages.has(row.pageId))
+    .map((row) => {
+      const page = pages.get(row.pageId)!;
+      return { pageId: row.pageId, taskId: page.taskId, title: page.title || "Untitled", role: row.role, watchers: row.watchers.length, watching: row.watchers.includes(viewerId), updatedAt: page.updatedAt.toISOString() };
+    });
+}
+
+/** The page, if it is in the room's linked space and the person can open that space. */
+export async function followedPage(app: FastifyInstance, room: NodeRoom, accountId: string, pageId: string): Promise<{ spaceId: string; pageId: string }> {
+  const spaceId = boundSpaceId(room);
+  if (!spaceId) throw new RoomSpaceError("This room has no shared space.", 404);
+  if (!(await roleIn(accountId, spaceId))) throw new RoomSpaceError("Join the room's space first.", 403);
+  const page = await app.prisma.taskPage.findFirst({ where: { userId: spaceId, deletedAt: null, OR: [{ id: pageId }, { taskId: pageId }] }, select: { id: true } });
+  if (!page) throw new RoomSpaceError("That page is not in the room's space.", 404);
+  return { spaceId, pageId: page.id };
+}
+
+/** One person watches a page of the room's space (its edits reach them through their lead), or stops. */
+export async function watchPage(app: FastifyInstance, room: NodeRoom, accountId: string, pageId: string, watching: boolean): Promise<void> {
+  const prisma = app.prisma;
+  const page = await followedPage(app, room, accountId, pageId);
+  await prisma.nodeRoomPage.upsert({
+    where: { roomId_pageId: { roomId: room.id, pageId: page.pageId } },
+    create: { roomId: room.id, spaceId: page.spaceId, pageId: page.pageId, createdBy: accountId, watchers: [] },
+    update: {},
+  });
+  await prisma.$executeRaw`
+    UPDATE node_room_pages SET updated_at = now(),
+      watchers = CASE WHEN ${watching} THEN (CASE WHEN ${accountId} = ANY(watchers) THEN watchers ELSE array_append(watchers, ${accountId}) END) ELSE array_remove(watchers, ${accountId}) END
+    WHERE room_id = ${room.id} AND page_id = ${page.pageId}`;
+  // A page that is only watched goes when nobody watches it.
+  await prisma.nodeRoomPage.deleteMany({ where: { roomId: room.id, pageId: page.pageId, role: "watched", watchers: { isEmpty: true } } });
+}
+
 // ── proposed tasks ──────────────────────────────────────────────────────────────────────────
 
 /**
