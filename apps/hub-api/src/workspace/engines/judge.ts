@@ -38,6 +38,8 @@ const HARMLESS = new Set([
   "mcp__ensemble__ensemble_list_tasks",
   "mcp__ensemble__ensemble_search",
   "mcp__ensemble__ensemble_create_task",
+  // A saved secret used by reference: the owner's allowed destinations and the run's scope decide (credentials/secret-http.ts).
+  "mcp__ensemble__secret_http",
 ]);
 
 const str = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);

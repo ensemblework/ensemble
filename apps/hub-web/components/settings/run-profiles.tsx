@@ -90,8 +90,30 @@ function ProfileEditor({ profile, onChange }: { profile: RunProfile; onChange: (
           <Toggle checked={profile.markDone} onChange={(markDone) => set({ markDone })} label={`${profile.name}: move to Done`} /> Move the task to Done
         </label>
       </div>
+      <SecretNames profile={profile} onChange={(secrets) => set({ secrets: secrets.length ? secrets : undefined })} />
       <p className="text-[11.5px] text-faint">Branches, pull requests, instructions and limits are in Assign to agent → More options; save them there with “Save to”.</p>
     </div>
+  );
+}
+
+/** The saved secrets a run with this profile may have on the computer, by name (docs/35 §8.7). */
+function SecretNames({ profile, onChange }: { profile: RunProfile; onChange: (names: string[]) => void }) {
+  const saved = (profile.secrets ?? []).join(", ");
+  const [text, setText] = useState(saved);
+  useEffect(() => setText(saved), [saved]);
+  const commit = () => {
+    const names = [...new Set(text.split(/[\s,]+/).map((name) => name.trim().toUpperCase()).filter((name) => /^[A-Z][A-Z0-9_]{1,63}$/.test(name)))].slice(0, 20);
+    setText(names.join(", "));
+    if (names.join(", ") !== saved) onChange(names);
+  };
+  return (
+    <label className="block">
+      <span className="mb-1 block font-medium text-muted">Secrets these runs may have</span>
+      <input className="field w-full font-mono" aria-label={`${profile.name}: secrets`} value={text} placeholder="STRIPE_KEY, NPM_TOKEN" spellCheck={false} onChange={(event) => setText(event.target.value)} onBlur={commit} />
+      <span className="mt-1 block text-[11.5px] text-faint">
+        Names of secrets saved on the computer (<code>ensemble secrets</code>). Listed: a run gets only these. Empty: the computer decides: every saved secret in its compatibility mode, none in named mode.
+      </span>
+    </label>
   );
 }
 

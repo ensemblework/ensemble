@@ -32,5 +32,6 @@ export * from "./settings-map.js";
 export * from "./onboarding-tour.js";
 export * from "./subscriptions.js";
 export * from "./claude-models.js";
+export * from "./seal.js";
 
 export * from "./version.js";

@@ -583,6 +583,15 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
     /** write: the file's whole new text. */
     content: z.string().max(NODE_TOOL_WRITE_BYTES).optional(),
   }),
+  /** A request with a saved secret put in where {{ref}} appears (B12, `capabilities.secretHttp`; credentials/secret-http.ts). */
+  NodeToolBase.extend({
+    tool: z.literal("secret_http"),
+    ref: text(80).min(2),
+    url: text(2000).min(1),
+    method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
+    headers: z.record(text(100), text(8000)).optional(),
+    body: z.string().max(NODE_TOOL_INLINE_BYTES).optional(),
+  }),
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 

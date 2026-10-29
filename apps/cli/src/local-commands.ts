@@ -13,6 +13,9 @@ export type RemoteStatus = {
   paired?: boolean;
   enabled?: boolean;
   folders?: SharedFolder[];
+  /** The key Ensemble on the web encrypts secrets for (docs/35 §8.7). */
+  sealKey?: { kid: string; fingerprint: string } | null;
+  secretsMode?: "all" | "named";
 };
 
 /** `kind` "repo": shared as a repository, so every run from the web works in its own clone of it. */
@@ -99,17 +102,4 @@ export async function withAdminApi<T>(input: {
   return withLocalApi({ sidecarDir: input.sidecarDir, apiBase: input.apiBase, adminOnly: true, run: input.run });
 }
 
-export type SavedSecret = { name: string; updatedAt: string };
-
-/** The run secrets saved on this computer: names only. */
-export async function listSecrets(discovery: Discovery): Promise<SavedSecret[]> {
-  return (await localJson<{ secrets?: SavedSecret[] }>(discovery, "/api/run-secrets")).secrets ?? [];
-}
-
-export async function setSecret(discovery: Discovery, name: string, value: string): Promise<void> {
-  await localJson<unknown>(discovery, `/api/run-secrets/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ value }) });
-}
-
-export async function removeSecret(discovery: Discovery, name: string): Promise<void> {
-  await localJson<unknown>(discovery, `/api/run-secrets/${encodeURIComponent(name)}`, { method: "DELETE" });
-}
+// Run secrets: secrets.ts.

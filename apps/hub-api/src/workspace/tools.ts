@@ -34,6 +34,8 @@ export interface JobContext {
   job: WorkspaceJob;
   /** The person's run secrets saved on this computer (lib/run-secrets.ts), given to coding agents as environment variables. */
   secretEnv?: Record<string, string>;
+  /** Saved secrets this run may use by reference only (secret_http, git): names and allowed destinations, never values (credentials/run-env.ts). */
+  secretRefs?: Array<{ name: string; allow: string[] }>;
   userId: string;
   taskId: string;
   taskTitle: string;

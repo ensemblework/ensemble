@@ -5,7 +5,7 @@
  * helper as the git token, and is only ever read into this process.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "../config.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
@@ -13,6 +13,8 @@ import { prisma } from "../lib/prisma.js";
 import type { ObservedSettings } from "./contract.js";
 
 export const DEVICE_TOKEN_PROVIDER = "ensemble_device";
+/** This pairing's sealing key, beside remote.json (credentials/seal-key.ts). */
+export const SEAL_KEY_FILE = "seal-key.json";
 
 export type SharedFolder = {
   label: string;
@@ -56,6 +58,13 @@ export interface RemoteSettings {
    * computer, not uploaded (`ensemble evidence off`). On by default.
    */
   evidenceUpload: boolean;
+  /**
+   * Which saved secrets a coding-agent run here gets in its environment when nothing names any:
+   * `all` (compatibility mode, the default: every saved secret, as before) or `named` (only the ones
+   * its run profile, task or node step names). Ensemble Node runs always get only what they name.
+   * Set here only (`ensemble secrets mode`); credentials/mode.ts.
+   */
+  secretsMode: "all" | "named";
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -144,6 +153,7 @@ export function loadSettings(): RemoteSettings {
     webEdit: saved.webEdit !== false,
     webTerminal: saved.webTerminal !== false,
     evidenceUpload: saved.evidenceUpload !== false,
+    secretsMode: saved.secretsMode === "named" ? "named" : "all",
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),
@@ -201,4 +211,6 @@ export async function saveDeviceToken(token: string, apiBase: string): Promise<v
 
 export async function dropDeviceToken(): Promise<void> {
   await prisma.modelCredential.deleteMany({ where: { userId: env.ENSEMBLE_DEV_USER_ID, provider: DEVICE_TOKEN_PROVIDER } });
+  // The key the web encrypted secrets for belongs to the pairing: unpaired, nothing can be sent to it.
+  rmSync(join(stateDir(), SEAL_KEY_FILE), { force: true });
 }

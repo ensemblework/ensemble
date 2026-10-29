@@ -18,6 +18,7 @@ import { runNodeFiles } from "./files.js";
 import { runNodeGit } from "./git.js";
 import { decide, type PolicyInput } from "./policy.js";
 import { runNodeCommand } from "./run.js";
+import { nodeSecretHttp } from "../credentials/node-tool.js";
 
 type App = Pick<FastifyInstance, "prisma">;
 
@@ -31,7 +32,7 @@ export function weakSandbox(): boolean {
 }
 
 /** Where the call acts, for the policy: a folder's real path, or a web address's origin. */
-async function scopeOf(request: NodeToolRequest): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> }> {
+async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> }> {
   if (request.tool === "http") {
     const { url } = await checkTarget(request.url);
     return { folder: null, input: { capability: "http", target: url.origin, label: url.origin, scope: "origin" } };
@@ -48,6 +49,11 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
   let grantsUsed: string[] = [];
   const reply = (status: number, body: Record<string, unknown>) => send(answer(status, { ...body, ...(grantsUsed.length ? { grantsUsed } : {}) }));
   try {
+    // A saved secret used by reference: its allowed destinations are the owner's answer (credentials/node-tool.ts).
+    if (request.tool === "secret_http") {
+      const done = await nodeSecretHttp(app, request);
+      return reply(done.status, done.body);
+    }
     const where = await scopeOf(request);
     const settings = loadSettings();
     const verdict = await decide(app.prisma, userId(), { ...where.input, mission: request.mission, attended: request.attended, grants: request.grants }, { weak: weakSandbox(), acceptWeb: settings.acceptWebApprovals });

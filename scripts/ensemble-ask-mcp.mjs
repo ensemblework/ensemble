@@ -19,6 +19,10 @@
  * attach_evidence (a file the owner should see), answered by the same route
  * (hub-api src/evidence/run-tools.ts, docs/30 §9).
  *
+ * In both it offers secret_http: a web request made by this computer's Ensemble with one of the
+ * person's saved secrets put in where {{NAME}} appears, only to the destinations they allowed for it,
+ * the answer coming back with the value hidden (hub-api src/credentials/secret-http.ts, docs/35 §8.7).
+ *
  * For an assistant turn run on the person's own subscription
  * (ENSEMBLE_ASSISTANT_TURN set, docs/30 §8) it offers that turn's Ensemble
  * tools instead, listed and called through /api/engine/assistant/*; when a
@@ -160,8 +164,28 @@ const EVIDENCE_TOOL = {
   },
 };
 
+/** A saved secret used by reference, never seen (hub-api src/credentials/secret-http.ts). */
+const SECRET_HTTP_TOOL = {
+  name: "secret_http",
+  description:
+    "Call a web API with one of your person's saved secrets without ever seeing it. Name the secret in ref (STRIPE_KEY) and put {{STRIPE_KEY}} where its value goes: in a header (Authorization: Bearer {{STRIPE_KEY}}) or inside the body (in a JSON string). " +
+    "It goes only to the destinations your person allowed for that secret, never in the address, redirects are not followed, and the answer (at most 64 KB) comes back with the value hidden. A secret with no allowed destination is refused with how your person can allow one.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      ref: { type: "string", description: "The saved secret's name, for example STRIPE_KEY." },
+      url: { type: "string", description: "The full https address, on one of the secret's allowed origins." },
+      method: { type: "string", enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
+      headers: { type: "object", additionalProperties: { type: "string" }, description: "Request headers; {{NAME}} in a value is replaced by the secret." },
+      body: { type: "string", description: "The request body (JSON as text); {{NAME}} inside it is replaced by the secret." },
+    },
+    required: ["ref", "url"],
+    additionalProperties: false,
+  },
+};
+
 export function toolsFor(env = process.env) {
-  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL];
+  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, SECRET_HTTP_TOOL];
 }
 
 function send(message) {

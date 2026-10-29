@@ -1,3 +1,4 @@
+import type { SecretAnswer, SecretTarget } from "./node-secret";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
 import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
@@ -355,7 +356,7 @@ export type NodeApprovalCard = {
   roomId: string;
   body: string;
   createdAt: string;
-  data: { type?: "tools" | "post" | "session" | "secret"; status?: string; error?: string | null; name?: string; computer?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
+  data: { type?: "tools" | "post" | "session" | "secret"; status?: string; error?: string | null; name?: string; computer?: string | null; allow?: string[]; calls?: Array<{ callId: string; name: string; summary: string }> };
   node: { id: string; slug: string; name: string; role: string } | null;
   room: { id: string; title: string; kind: string } | null;
 };
@@ -791,6 +792,8 @@ export type AssignInput = {
   useCredentials?: boolean;
   sandbox?: boolean;
   network?: boolean;
+  /** The saved secrets the run may have on the computer, by name (from its run profile). */
+  secrets?: string[];
   /** In a sandboxed run, outside the work folder. Default: Settings. */
   outsideAccess?: "none" | "read" | "read-write";
   markDone?: boolean;
@@ -1395,8 +1398,10 @@ export const api = bindClient({
   /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
   nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
   settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),
-  /** A secret a node asked for: relayed straight to the person's computer, never stored by Ensemble on the web. */
-  saveNodeSecret: (id: string, value: string) => post(`/api/node/secrets/${id}`, { value }),
+  /** Where a node's secret request goes: the computer and its key, for a box sealed in this browser (docs/35 §8.7). */
+  nodeSecretTarget: (id: string) => get<SecretTarget>(`/api/node/secrets/${id}`),
+  /** The answer to a node's secret request: sealed for the computer (or, for an older one, the value over HTTPS); never stored by Ensemble on the web. */
+  saveNodeSecret: (id: string, answer: SecretAnswer) => post(`/api/node/secrets/${id}`, answer),
 
   // context
   entities: () => get<{ entities: Entity[] }>("/api/entities"),
@@ -1479,6 +1484,9 @@ export const api = bindClient({
         lastSeenAt: string | null;
         createdAt: string;
         online: boolean;
+        /** The key the web encrypts secrets for, pinned at pairing, and whether the computer now reports another (docs/35 §8.7). */
+        sealKey?: { kid: string; fingerprint: string } | null;
+        sealKeyMismatch?: boolean;
       }>;
     }>("/api/devices"),
   /** The person's AI subscriptions on their computers (docs/30 §8). */

@@ -56,6 +56,7 @@ import { PageDocument } from "@ensemble/shared-types";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
+import { pinReportedSealKey, sealKeyOnPairing, sealKeyView } from "../credentials/device-key.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -146,6 +147,8 @@ function deviceJson(device: Device, now = Date.now()) {
     createdAt: device.createdAt.toISOString(),
     online: device.revokedAt ? false : deviceOnline(device.lastSeenAt, now),
     revokedAt: device.revokedAt?.toISOString() ?? null,
+    // The key the web encrypts secrets for (pinned at pairing) and its fingerprint, to compare on the computer (B12).
+    ...sealKeyView(device),
   };
 }
 
@@ -305,6 +308,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         appVersion: body.appVersion,
         tokenId: token.id,
         capabilities,
+        ...sealKeyOnPairing(body.capabilities),
       },
     });
     await prisma.devicePairing.update({ where: { id: pairing.id }, data: { deviceId: device.id } });
@@ -376,6 +380,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const pathError = body.capabilities ? rejectPathLabels(body.capabilities) : null;
     if (pathError) return reply.code(400).send({ error: pathError });
     const now = new Date();
+    if (body.capabilities) await pinReportedSealKey(prisma, device, body.capabilities);
     await prisma.device.update({
       where: { id: device.id },
       data: {
