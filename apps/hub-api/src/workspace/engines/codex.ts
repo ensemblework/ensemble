@@ -184,6 +184,7 @@ export async function runCodex(
   let stderr = "";
   let threadId: string | null = null;
   let turnId: string | null = null;
+  let reportedWindow: number | null = null;
   let finished: (status: { status: string; error?: string }) => void = () => {};
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
 
@@ -244,9 +245,15 @@ export async function runCodex(
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));
         }
       } else if (method === "thread/tokenUsage/updated") {
-        const total = ((params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number } }).total ?? {};
+        const usage = (params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number }; modelContextWindow?: number | null };
+        const total = usage.total ?? {};
         result.tokensIn = total.inputTokens ?? result.tokensIn;
         result.tokensOut = total.outputTokens ?? result.tokensOut;
+        // The window Codex reports for the model (node/settings.ts observed), once: Codex models have one window.
+        if (typeof usage.modelContextWindow === "number" && usage.modelContextWindow > 0 && usage.modelContextWindow !== reportedWindow) {
+          reportedWindow = usage.modelContextWindow;
+          await ctx.event("engine_context", { size: usage.modelContextWindow, context: "default" });
+        }
       } else if (method === "turn/completed") {
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null };
         // Bounded: a handler stuck writing an event must not hold the turn open.
@@ -333,11 +340,14 @@ export async function runCodex(
             throw new SessionGoneError(`Codex could not reopen the chat's thread: ${error.message}`);
           })
         : await server.request("thread/start", { ...settings, serviceName: "ensemble" })
-    ) as { thread?: { id?: string }; model?: string };
+    ) as { thread?: { id?: string }; model?: string; reasoningEffort?: string | null };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw new Error("Codex did not start a thread.");
     result.model = thread.model ?? null;
-    await ctx.event("engine", { engine: "codex", model: result.model, session: threadId, version: String((init as { userAgent?: string }).userAgent ?? "") });
+    // What Codex says the thread runs: its model, and its thinking level unless the turn sets one (which Codex does not echo).
+    const observedEffort = !options.effort && typeof thread.reasoningEffort === "string" && thread.reasoningEffort ? thread.reasoningEffort : null;
+    const observed = { ...(result.model ? { model: result.model } : {}), ...(observedEffort ? { effort: observedEffort } : {}) };
+    await ctx.event("engine", { engine: "codex", model: result.model, session: threadId, version: String((init as { userAgent?: string }).userAgent ?? ""), observed });
     await ctx.progress(`Codex started${result.model ? ` (${result.model})` : ""}`);
     const turn = (await server.request("turn/start", {
       threadId,

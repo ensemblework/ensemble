@@ -45,7 +45,8 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { FileAnswer, MAX_UPLOADED_STEPS, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { observedUpdate } from "../workspace/engines/observed.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
@@ -82,6 +83,8 @@ const Progress = z.object({
     .optional(),
   /** The run's steps that changed since the last post: tool calls, thinking, messages (previews). */
   steps: z.array(UploadedStep).max(60).default([]),
+  /** What the engine reported the run goes with, when it changed (workspace/engines/observed.ts). */
+  observed: ObservedSettings.optional(),
 });
 
 const Ask = z.object({
@@ -540,6 +543,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         lastProgressAt: held.now,
         leaseUntil: extended,
         ...(nextStatus === "running" && !held.job.startedAt ? { startedAt: held.now } : {}),
+        ...observedUpdate(body.observed),
       },
     });
     if (won.count !== 1) return reply.code(409).send({ error: LEASE_REJECTED });

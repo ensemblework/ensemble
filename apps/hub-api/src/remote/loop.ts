@@ -30,7 +30,8 @@ import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from ".
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
+import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 import { launcherRemoved } from "./installed.js";
@@ -552,7 +553,10 @@ async function sendProgress(app: FastifyInstance, client: HostedClient, job: Hel
   const events = await unreadEvents(app, job, local.id);
   const logs = takeLog(job, local.id);
   const steps = await changedSteps(app, job, local.runId);
-  const changed = statusChanged || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs) || steps.rows.length > 0;
+  // What the engine reported it runs with goes when it changes (servers before it ignore the field).
+  const observed = await observedHere(app.prisma, local.id);
+  const observedChanged = anyObserved(observed) && !sameObserved(observed, job.sentObserved);
+  const changed = statusChanged || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs) || steps.rows.length > 0 || observedChanged;
   if (!changed && (last || Date.now() - job.sentAt < timing().heartbeatMs)) return false;
   await client.progress(job.hostedId, job.leaseToken, {
     ...(status ? { status } : {}),
@@ -560,9 +564,11 @@ async function sendProgress(app: FastifyInstance, client: HostedClient, job: Hel
     events: events.rows,
     ...(logs ? { logs: { seqFrom: logs.seqFrom, seqTo: logs.seqTo, text: logs.text } } : {}),
     ...(steps.rows.length ? { steps: steps.rows } : {}),
+    ...(observedChanged ? { observed } : {}),
   });
   job.eventSeq = events.last;
   job.stepsSent = { ...(job.stepsSent ?? {}), ...steps.sent };
+  if (observedChanged) job.sentObserved = observed;
   if (!last || status) job.sentStatus = status;
   job.sentProgress = progress;
   job.sentAt = Date.now();
@@ -641,6 +647,17 @@ async function changedSteps(app: FastifyInstance, job: HeldJob, runId: string | 
     sent[String(step.index)] = signature;
   }
   return { rows, sent };
+}
+
+/** What the engine reported this run went with (workspace/engines/observed.ts), scrubbed like everything sent. */
+async function observedHere(db: Pick<typeof prisma, "workspaceEvent">, localId: string): Promise<ObservedSettings> {
+  const rows = await db.workspaceEvent.findMany({ where: { jobId: localId, kind: { in: ["engine", "engine_context"] } }, orderBy: { sequence: "desc" }, take: 20, select: { kind: true, data: true } });
+  const found = observedFromEvents(rows.reverse());
+  return {
+    ...found,
+    ...(found.model ? { model: scrubOutgoing(found.model).slice(0, 200) } : {}),
+    ...(found.effort ? { effort: scrubOutgoing(found.effort).slice(0, 40) } : {}),
+  };
 }
 
 /** Event data is a record. Anything else is wrapped so the route accepts it. */
@@ -731,6 +748,7 @@ async function runTotals(local: WorkspaceJob): Promise<RunTotals> {
     costUsd: typeof evidence.costUsd === "number" && evidence.costUsd >= 0 ? evidence.costUsd : null,
     reviewId: (await prisma.codeReview.findUnique({ where: { jobId: local.id }, select: { id: true } }).catch(() => null))?.id ?? null,
     files,
+    observed: await observedHere(prisma, local.id).catch(() => ({})),
   };
 }
 
