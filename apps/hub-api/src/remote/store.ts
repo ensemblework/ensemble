@@ -56,6 +56,12 @@ export interface RemoteSettings {
    * computer, not uploaded (`ensemble evidence off`). On by default.
    */
   evidenceUpload: boolean;
+  /**
+   * Sites the owner never wants captured (no screenshot, video, snapshot or live view) and sites whose
+   * captures they preview before anything is sent (`ensemble capture sites`, docs/25 §10.1). Kept here
+   * only; the browser broker and the capture service read them (capture/runtime.ts).
+   */
+  captureSites: CaptureSites;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -66,6 +72,12 @@ export interface RemoteSettings {
   unreachable: string | null;
   /** This installation's own id, kept through unpairing: a new pairing of it is the same computer to the web. */
   installId: string;
+}
+
+export type CaptureSites = { never: string[]; preview: string[] };
+
+function siteList(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 300))].slice(0, 200) : [];
 }
 
 export type MirroredDecision = { hostedId: string; hash: string; risk: "ordinary" | "high"; settled: boolean };
@@ -144,6 +156,7 @@ export function loadSettings(): RemoteSettings {
     webEdit: saved.webEdit !== false,
     webTerminal: saved.webTerminal !== false,
     evidenceUpload: saved.evidenceUpload !== false,
+    captureSites: { never: siteList(saved.captureSites?.never), preview: siteList(saved.captureSites?.preview) },
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

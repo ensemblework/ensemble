@@ -18,6 +18,11 @@ export function browserBroker(): BrowserBroker {
   return shared;
 }
 
+/** The broker if this runtime started it, else null: for ending work without starting a browser. */
+export function runningBroker(): BrowserBroker | null {
+  return shared;
+}
+
 /** Closes every tab and browser; the next call to `browserBroker` starts afresh. */
 export async function shutdownBrowser(): Promise<void> {
   const broker = shared;
@@ -29,7 +34,7 @@ export { BrowserBroker, BrowserError, BrowserOperation, checkUrl, hasDisplay } f
 export type { BrokerOptions, ConsoleEntry, LiveFrame, NetworkEntry, OpenOptions, OperationOptions, TabInfo } from "./broker.js";
 export { findChromium, playwrightRevisions } from "./chromium.js";
 export { browserDeniedPaths, browserProfileDir, browserRoot, captureStateDir, ensembleDataHome, playwrightBrowsersDir } from "./paths.js";
-export { matchesSite, SENSITIVE_SELECTOR, siteRule } from "./privacy.js";
+export { matchesSite, MAX_SITES, normalizeSite, SENSITIVE_SELECTOR, siteRule } from "./privacy.js";
 export type { PrivacyRules } from "./privacy.js";
 export { BROWSER_TOOLS, browserToolDefinitions, isBrowserTool, runBrowserTool } from "./tools.js";
 export type { BrowserToolContext, ToolCallResult } from "./tools.js";

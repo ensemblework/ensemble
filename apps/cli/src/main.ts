@@ -37,7 +37,7 @@ import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
-import { formatCapture, runCaptureScript } from "./capture.js";
+import { captureSites, formatCapture, formatSites, parseSitesArgs, runCaptureScript } from "./capture.js";
 import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
@@ -86,7 +86,7 @@ Usage:
   ensemble web [status] | files|edit|terminal on|off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
-  ensemble capture [status] [--json] | setup [--dry-run] [--json]
+  ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
@@ -116,7 +116,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   capture:
-    "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json]\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.",
+    "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.\n`sites` lists the sites you never want captured (no screenshot, video, page reading or live view) and those whose captures you preview before anything is sent; `add` and `remove` change them. A site is a host (example.com, which covers its subdomains) or an address (https://mail.example.com). They are kept on this computer only.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
 }).map(([key, value]) => [key, value.replace(/\bensemble\b/g, COMMAND)]));
@@ -691,7 +691,16 @@ async function commandSandbox(args: string[]): Promise<void> {
 async function commandCapture(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.capture);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "status";
-  if (!["status", "setup"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.capture);
+  if (!["status", "setup", "sites"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.capture);
+  if (subcommand === "sites") {
+    const parsedSites = parseSitesArgs(args.slice(1));
+    if ("error" in parsedSites) throw new Error(parsedSites.error);
+    const sitesDir = resolveSidecarDir(import.meta.url);
+    if (!(await sidecarAvailable(sitesDir))) throw new Error(NO_RUNNER);
+    const sites = await withAdminApi({ sidecarDir: sitesDir, run: (discovery) => captureSites(discovery, parsedSites.change) });
+    for (const line of formatSites(sites)) console.log(line);
+    return;
+  }
   const result = parsed(args[0] === subcommand ? args.slice(1) : args, { json: { type: "boolean" }, "dry-run": { type: "boolean" } }, false);
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(`Capture runs in Ensemble's local runtime, which this install does not have. Install the full CLI: ${DOWNLOAD_URL}`);

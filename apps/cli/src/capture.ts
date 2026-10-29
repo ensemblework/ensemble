@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { COMMAND } from "./channel.js";
 import type { CliPaths } from "./paths.js";
+import { localJson, type Discovery } from "./sidecar.js";
 
 export type CaptureTarget = { screenshot: boolean; video: boolean; reason?: string };
 
@@ -78,4 +79,47 @@ export function formatCapture(caps: CaptureReport): string[] {
   if (caps.setup.ensembleInstalls.length) lines.push("", `\`${COMMAND} capture setup\` installs ${caps.setup.ensembleInstalls.join(" and ")} into ${caps.browser.installDir}.`);
   if (caps.setup.systemCommand) lines.push("", caps.platform === "linux" ? "For desktop apps and MP4 video, run this once:" : "For MP4 video, run this once:", `  ${caps.setup.systemCommand}`);
   return lines;
+}
+
+// ── sites the owner never wants captured, or previews first ────────────────
+
+export type CaptureSites = { never: string[]; preview: string[] };
+export type SitesChange = { action: "add" | "remove"; list: keyof CaptureSites; site: string };
+
+/** `ensemble capture sites [list] | add|remove never|preview <site>`, or why the arguments are wrong. */
+export function parseSitesArgs(args: string[]): { change: SitesChange | null } | { error: string } {
+  const [action = "list", list, site, ...rest] = args;
+  if (action === "list" && args.length <= 1) return { change: null };
+  if ((action !== "add" && action !== "remove") || (list !== "never" && list !== "preview") || !site?.trim() || rest.length) {
+    return { error: `Usage: ${COMMAND} capture sites [list] | add never|preview <site> | remove never|preview <site>` };
+  }
+  return { change: { action, list, site: site.trim() } };
+}
+
+/** The lists with one change applied (the local runtime checks and normalises each site). */
+export function changeSites(sites: CaptureSites, change: SitesChange): CaptureSites {
+  const key = change.site.toLowerCase();
+  const next = { never: [...sites.never], preview: [...sites.preview] };
+  next[change.list] = next[change.list].filter((site) => site.toLowerCase() !== key && site.toLowerCase() !== key.replace(/^\*\./, ""));
+  if (change.action === "add") next[change.list].push(change.site);
+  return next;
+}
+
+/** Reads the lists from this computer's runtime, applies the change if any, and returns what is kept. */
+export async function captureSites(discovery: Discovery, change: SitesChange | null): Promise<CaptureSites> {
+  const current = await localJson<{ captureSites?: CaptureSites }>(discovery, "/api/remote");
+  const sites = { never: current.captureSites?.never ?? [], preview: current.captureSites?.preview ?? [] };
+  if (!change) return sites;
+  const saved = await localJson<{ captureSites?: CaptureSites }>(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ captureSites: changeSites(sites, change) }) });
+  return { never: saved.captureSites?.never ?? [], preview: saved.captureSites?.preview ?? [] };
+}
+
+export function formatSites(sites: CaptureSites): string[] {
+  const lines = (list: string[]) => (list.length ? list.map((site) => `  ${site}`) : ["  (none)"]);
+  return [
+    "Never captured (no screenshot, video, page reading or live view):",
+    ...lines(sites.never),
+    "Preview first (captures wait for you before they are sent anywhere):",
+    ...lines(sites.preview),
+  ];
 }

@@ -11,7 +11,8 @@ import { resolveWorkFolder } from "../workspace/guard.js";
 import { checkApiBase, hostedClient, registerDevice, RemoteError } from "./client.js";
 import { parseRegistered } from "./contract.js";
 import { deviceCapabilities, devicePlatform, REMOTE_NOTICE, remotePresence, stopRemoteWork, wakeRemote } from "./loop.js";
-import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type SharedFolder } from "./store.js";
+import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type CaptureSites, type SharedFolder } from "./store.js";
+import { MAX_SITES, siteLists } from "../browser/privacy.js";
 
 const CODE = /^[A-Za-z0-9]{8}$/;
 
@@ -35,6 +36,7 @@ async function status(app: FastifyInstance) {
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
     evidenceUpload: settings.evidenceUpload,
+    captureSites: settings.captureSites,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -59,11 +61,18 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         webEdit: z.boolean().optional(),
         webTerminal: z.boolean().optional(),
         evidenceUpload: z.boolean().optional(),
+        captureSites: z.object({ never: z.array(z.string().max(300)).max(MAX_SITES), preview: z.array(z.string().max(300)).max(MAX_SITES) }).strict().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
       .parse(request.body);
     const current = loadSettings();
+    let captureSites: CaptureSites | undefined;
+    if (body.captureSites) {
+      const lists = siteLists(body.captureSites);
+      if ("error" in lists) return reply.code(400).send({ error: lists.error });
+      captureSites = lists;
+    }
     let apiBase = current.apiBase;
     if (body.apiBase !== undefined) apiBase = body.apiBase ? checkApiBase(body.apiBase) : null;
     if (body.enabled === true) {
@@ -81,6 +90,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.webEdit === undefined ? {} : { webEdit: body.webEdit }),
       ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
       ...(body.evidenceUpload === undefined ? {} : { evidenceUpload: body.evidenceUpload }),
+      ...(captureSites ? { captureSites } : {}),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
@@ -103,6 +113,8 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
                     : "remote.evidence_upload";
       await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal, evidenceUpload: next.evidenceUpload } });
     }
+    // The sites themselves stay on this computer: the ledger keeps how many.
+    if (captureSites) await appendLedger({ userId, actor: "me", action: "remote.capture_sites", payload: { never: captureSites.never.length, preview: captureSites.preview.length } });
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();
     return status(app);

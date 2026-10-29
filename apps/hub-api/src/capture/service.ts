@@ -44,6 +44,8 @@ export type CaptureRequest = {
    * on a computer whose sandbox is weak). Otherwise starting an app needs `wrapCommand`.
    */
   unsandboxedApps?: boolean;
+  /** Whether an app started for this work may use the internet (passed to `wrapCommand`). */
+  network?: boolean;
 };
 
 export type WebTarget = {
@@ -617,7 +619,8 @@ export class CaptureService {
     const tools = linux ? this.tools() : null;
     if (tools && !tools.xvfb) throw new CaptureError("unavailable", "Desktop apps are captured on a private virtual display, which needs Xvfb. Run `ensemble capture setup` to see the command that installs it.");
     // An app the agent built runs its own code: in the OS sandbox it cannot read sign-ins, keys or the browser's cookies.
-    const wrap = this.options.wrapCommand;
+    const wrapCommand = this.options.wrapCommand;
+    const wrap: CommandWrapper | undefined = wrapCommand ? (call) => wrapCommand({ ...call, kind, network: request.network, appEnv: input.env }) : undefined;
     if (!wrap && !request.unsandboxedApps) {
       throw new CaptureError("refused", "Apps started for capture run in this computer's OS sandbox, and none is set up for capture here. The owner can allow running this app without the sandbox for this work.");
     }
