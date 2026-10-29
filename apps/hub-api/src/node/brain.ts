@@ -632,6 +632,7 @@ export function sessionRules(fromNonOwner: boolean, asks: boolean, othersRead = 
     "  - The same line of work in the same repository or folder (the next step, a fix to what it just did, a follow-up on top of it): node_session_send to that session. The agent remembers the work, and its provider reuses the cached conversation, which costs your owner less.",
     "  - Unrelated work, another repository or folder, another computer or agent, or a session whose earlier work has nothing to do with this: node_session_start. Work in two repositories is two sessions.",
     "  - While a run is going on: “then do Y” → delivery queue; “do X this way instead”, “also …” → steer; “stop X and do Y” → replace; “stop” → node_session_stop.",
+    "  - “Also …” or “tell it to …” without naming a session means the session most recently active in this conversation or plan. When two are equally likely, ask one short question naming both by folder and work.",
     step
       ? "  - Write the agent's message as your owner would to their agent: what to do and where, how to check it, what done looks like."
       : "  - Write the agent's message as your owner would to their agent: what to do and where, how to check it, what done looks like. Then tell your owner in a line what you started; the run card shows the rest.",
