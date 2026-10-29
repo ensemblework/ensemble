@@ -12,6 +12,9 @@ const WANTS: Record<string, string> = {
   post: "wants to post for you",
   session: "wants to start work on your computer",
   secret: "needs a secret for work on your computer",
+  node_proposal: "proposes something new for you",
+  disclosure: "asks before sharing something with a room",
+  peer_request: "has a request for you from a room",
 };
 
 /** The value goes once, straight on to the computer on the card; it is not kept in this page after sending. */
