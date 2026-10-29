@@ -421,14 +421,16 @@ function captureTools(scope: NodeScope): AnyHubTool[] {
   );
 }
 
-/** A helper's tool that works only in the folders its parent named (by label, path or last part). */
+/** A helper's tool that works only in the folders its parent named (by label, path or last part); an app it starts for capture too. */
 function onlyIn(tool: AnyHubTool, folders: readonly string[]): AnyHubTool {
   const last = (value: string) => value.trim().replace(/[\\/]+$/, "").split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
   const allowed = (folder: string) => folders.some((name) => name.trim() === folder.trim() || last(name) === last(folder));
   return {
     ...tool,
     async run(ctx, input) {
-      const folder = (input as { folder?: unknown } | null)?.folder;
+      // An app started for capture runs in its folder, as a command does.
+      const given = input as { folder?: unknown; cwd?: unknown } | null;
+      const folder = tool.name === "capture_app_start" ? given?.cwd : given?.folder;
       if (typeof folder === "string" && !allowed(folder)) {
         throw new ToolBlockedError(`You may only use ${folders.map((name) => `“${name}”`).join(", ")}.`, "Those are the folders your node gave you; report what needs another folder.");
       }

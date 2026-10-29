@@ -107,6 +107,9 @@ const MAX_RELAYED = PREVIEW_MAX_BYTES;
 
 export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Promise<void> {
   const { prisma } = app;
+  /** A work's files: at most `MAX_EVIDENCE_PER_JOB`, and a video's poster and preview besides each. */
+  const tooMany = async (where: Prisma.JobEvidenceWhereInput, meta: EvidenceMeta) =>
+    meta.variantOf ? (await prisma.jobEvidence.count({ where })) >= MAX_EVIDENCE_PER_JOB * 3 : (await prisma.jobEvidence.count({ where: { ...where, variantOf: null } })) >= MAX_EVIDENCE_PER_JOB;
   const redis = app.redis as unknown as Parameters<typeof grantOf>[0] & Parameters<typeof keepPreview>[0];
   // Raw bytes for this plugin's upload routes only.
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: UPLOAD_BODY_LIMIT }, (_request, body, done) => done(null, body));
@@ -131,7 +134,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (known.jobId !== job.id) return reply.code(409).send({ error: "That evidence belongs to another run." });
       return reply.code(200).send({ evidence: cardEvidence(known) });
     }
-    if ((await prisma.jobEvidence.count({ where: { jobId: job.id, variantOf: null } })) >= MAX_EVIDENCE_PER_JOB && !meta.variantOf) return reply.code(409).send({ error: `A run keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
+    if (await tooMany({ jobId: job.id }, meta)) return reply.code(409).send({ error: `A run keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
     const checked = checkUpload(meta, raw, name);
     if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
     const owner = device.userId;
@@ -222,9 +225,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (known.operation !== grant.operation || known.userId !== owner) return reply.code(409).send({ error: "That evidence belongs to other work." });
       return reply.code(200).send({ evidence: cardEvidence(known) });
     }
-    if ((await prisma.jobEvidence.count({ where: { operation: grant.operation, jobId: null, variantOf: null } })) >= MAX_EVIDENCE_PER_JOB && !meta.variantOf) {
-      return reply.code(409).send({ error: `This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
-    }
+    if (await tooMany({ operation: grant.operation, jobId: null }, meta)) return reply.code(409).send({ error: `This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
     const checked = checkUpload(meta, raw, name);
     if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
     const key = evidenceKey(owner, `node-${grant.nodeId}`, meta.id);
@@ -292,7 +293,9 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { view, message } = z.object({ view: z.enum(["0", "1"]).optional(), message: z.string().uuid().optional() }).parse(request.query);
     // Its owner, or someone who may read the message that shows it (node/media.ts).
-    const head = (await mediaReadable(prisma, accountId, id, message)) ? await prisma.jobEvidence.findUnique({ where: { id } }) : null;
+    const head = (await mediaReadable(prisma, accountId, id, message))
+      ? await prisma.jobEvidence.findUnique({ where: { id }, select: { id: true, userId: true, deviceId: true, name: true, mime: true, sha256: true, size: true, local: true, held: true } })
+      : null;
     if (!head) return reply.code(404).send({ error: "That evidence is not available." });
     let bytes: Buffer;
     let mime = head.mime;
@@ -313,7 +316,9 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (head.local) return reply.code(409).send({ error: "This file is on the computer that ran the job, not uploaded: evidence upload is off there (`ensemble evidence on` turns it on)." });
       const match = request.headers["if-none-match"];
       if (typeof match === "string" && match.split(",").some((tag) => tag.trim().replace(/^W\//, "") === etag)) return reply.code(304).header("ETag", etag).send();
-      bytes = await evidenceContent(head);
+      const stored = await prisma.jobEvidence.findUnique({ where: { id }, select: { bytes: true, storageKey: true, local: true } });
+      if (!stored) return reply.code(404).send({ error: "That evidence is not available." });
+      bytes = await evidenceContent(stored);
     }
     const media = mime.startsWith("image/") && !isActiveMime(mime) ? true : mime.startsWith("video/");
     if (etag) reply.header("ETag", etag);

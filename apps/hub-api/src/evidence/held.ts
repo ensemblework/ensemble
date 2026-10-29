@@ -47,7 +47,7 @@ async function keeper(app: App, row: Pick<JobEvidence, "deviceId" | "userId" | "
 }
 
 /** Asks the computer to preview, release or discard a file it keeps; resolves with its answer. */
-async function ask(app: App, device: Device, row: JobEvidence, action: "preview" | "release" | "discard", timeoutMs: number): Promise<{ status: number; error?: string }> {
+async function ask(app: App, device: Device, row: Pick<JobEvidence, "id" | "userId">, action: "preview" | "release" | "discard", timeoutMs: number): Promise<{ status: number; error?: string }> {
   const uploadId = action === "discard" ? undefined : await grantUpload(redisOf(app), { mode: action, deviceId: device.id, ownerId: row.userId, evidenceId: row.id });
   const raw = await askDeviceFor(redisOf(app), { deviceId: device.id, event: "evidence.request", data: { evidenceId: row.id, action, ...(uploadId ? { uploadId } : {}) } }, timeoutMs);
   if (!raw) return { status: 504, error: `${device.name} did not answer in time.` };
@@ -58,7 +58,7 @@ async function ask(app: App, device: Device, row: JobEvidence, action: "preview"
 }
 
 /** A held file's bytes, for its owner only: from the computer, kept five minutes. */
-export async function previewHeld(app: App, row: JobEvidence): Promise<{ mime: string; bytes: Buffer }> {
+export async function previewHeld(app: App, row: Pick<JobEvidence, "id" | "userId" | "deviceId" | "name" | "size">): Promise<{ mime: string; bytes: Buffer }> {
   const cached = await previewOf(redisOf(app), row.id);
   if (cached) return cached;
   if (row.size > PREVIEW_MAX_BYTES) throw new HeldError(`“${row.name}” is too large to preview from the computer (${Math.ceil(row.size / 1024 / 1024)} MB); preview its poster, or release it.`, 413);

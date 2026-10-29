@@ -341,6 +341,16 @@ test("a computer too old to browse is asked to update; one without a browser is 
   }
 });
 
+test("looking at a page or a capture is not acting; clicking, typing and capturing are", async () => {
+  const { actsOnTheWorld } = await import("./work-board.js");
+  for (const name of ["browser_tabs", "browser_snapshot", "browser_console", "browser_network_errors", "browser_wait", "capture_status", "capture_apps", "capture_check"]) {
+    assert.equal(actsOnTheWorld(name, false), false, name);
+  }
+  for (const name of ["browser_open", "browser_click", "browser_type", "browser_snapshots", "capture_screenshot", "capture_app_start"]) {
+    assert.equal(actsOnTheWorld(name, false), true, name);
+  }
+});
+
 /** A paired computer running one job of Mira's from her node, with its run card in the node's DM (as evidence.integration.test.ts). */
 async function runningJob() {
   const mira = await person("Mira");
