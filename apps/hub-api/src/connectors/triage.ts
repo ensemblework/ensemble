@@ -19,7 +19,7 @@ import type { Proposal } from "./types.js";
 
 export const TRIAGE_PROMPT = `Identify actionable requests in items the person explicitly chose.
 
-The engineer: <<IDENTITY>>
+The person: <<IDENTITY>>
 Their projects: <<PROJECTS>>
 Today: <<TODAY>>
 
@@ -28,7 +28,7 @@ Include only requests for this person to reply, review, decide, send, attend, fi
 Return JSON only:
 {"todos":[{"id":"<item id>","title":"<imperative, specific, under 90 chars, e.g. Reply to Priya with p95 latency numbers>","priority":"p0|p1|p2","due":"YYYY-MM-DD, a full ISO datetime, or null","due_time":"HH:MM or null","owner":"me|agent","rationale":"<one sentence: who asked what>","excerpt":"<the exact sentence that asks, copied from the item>"}]}
 
-When the email states a time, set due_time to that time as 24-hour HH:MM (or put the time in due as an ISO datetime). If it states a date but no time, omit due_time. Use absolute dates in titles and text (for example "before the Oct 6 release", not "before the release tomorrow"). These rows are proposals: describe them as proposed ("I've proposed a project page — press Apply to create it"). Do not say you have created or drafted them before Apply.
+When the email states a time, set due_time to that time as 24-hour HH:MM (or put the time in due as an ISO datetime). If it states a date but no time, omit due_time. Use absolute dates in titles and text (for example "before the Oct 6 release", not "before the release tomorrow"). Each row is only a proposal the person reviews: never write that anything was created or drafted.
 
 Only include items that need action. owner is "agent" only for a short factual reply or a routine acknowledgement the agent could draft; otherwise "me". p0 means today or blocking someone; p1 this week; p2 whenever.
 
@@ -174,7 +174,7 @@ export async function triage(userId: string, settings: Settings, items: TriageIt
         json: true,
         jsonShape: "triage",
         system: "You are a precise triage classifier. Return only JSON.",
-        prompt: TRIAGE_PROMPT.replace("<<IDENTITY>>", `${user?.name || "the engineer"} <${user?.email ?? settings.email}>`)
+        prompt: TRIAGE_PROMPT.replace("<<IDENTITY>>", `${user?.name || "the person"} <${user?.email ?? settings.email}>`)
           .replace("<<PROJECTS>>", projects.map((row) => row.name).join(", ") || "(none yet)")
           .replace("<<TODAY>>", zonedParts(settings.timezone).date)
           .replace("<<ITEMS>>", batch.map(itemText).join("\n---\n")),

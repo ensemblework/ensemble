@@ -14,7 +14,7 @@ import {
   replyAfterStreamFailure,
   splitCutOffReply,
 } from "./cutoff.js";
-import { ASSISTANT_INSTRUCTIONS, buildSystemPrompt } from "./state.js";
+import { ASSISTANT_INSTRUCTIONS, assistantInstructions } from "./state.js";
 
 const PARTIAL =
   "One, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty";
@@ -48,26 +48,15 @@ test("the next turn's history carries the cut-off marker and the raw reason", ()
   assert.match(length[0]?.content ?? "", /abcd/);
 });
 
-test("state.ts no longer contains the forced-refusal rule", () => {
+test("the assistant's instructions answer plain requests directly and carry no forced-refusal rule", () => {
   const source = readFileSync(new URL("./state.ts", import.meta.url), "utf8");
   assert.equal(source.includes(FORCED_REFUSAL), false);
   assert.equal(source.includes("You act by calling tools."), false);
-  assert.match(source, /Answer plain questions and text requests \(writing, counting, explaining, maths\) directly in text\./);
-  assert.match(source, /If a tool is missing, load its playbook with hub_how_to; if unsupported, explain plainly\./);
   assert.equal(ASSISTANT_INSTRUCTIONS.includes(FORCED_REFUSAL), false);
-  const empty = {
-    proposed: 0,
-    todo: [],
-    inProgress: 0,
-    needsMe: 0,
-    projects: [],
-    people: [],
-    repos: [],
-    skills: [],
-  } as unknown as Parameters<typeof buildSystemPrompt>[0];
-  const prompt = buildSystemPrompt(empty, undefined, undefined, { diagrams: false });
+  const prompt = assistantInstructions({ skills: [] }, { timezone: "UTC", playbooks: [{ name: "tasks" }] });
   assert.equal(prompt.includes(FORCED_REFUSAL), false);
-  assert.match(prompt, /directly in text/);
+  assert.match(prompt, /answer everything else \(writing, maths, explanations\) directly/);
+  assert.match(prompt, /call hub_how_to with its name \(tasks\)/);
   assert.doesNotMatch(prompt, /You act by calling tools/);
 });
 

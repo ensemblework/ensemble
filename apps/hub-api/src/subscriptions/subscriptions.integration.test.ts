@@ -104,9 +104,9 @@ test("a chat turn on the person's Claude plan runs on their computer; the tools 
     const spec = seen.spec as { agent: string; model: string; system: string; prompt: string; tools: Array<{ name: string }> };
     assert.equal(spec.agent, "claude-code");
     assert.equal(spec.model, "haiku");
-    assert.match(spec.system, /## How you run here/);
-    assert.match(spec.system, /Claude subscription/);
-    assert.equal(spec.prompt, "Add buy oat milk to my list");
+    assert.match(spec.system, /You run on their own Claude subscription/);
+    assert.match(spec.prompt, /^<context>\nToday is .*\n<\/context>\n\nAdd buy oat milk to my list$/s, "the message's context, then the message");
+    assert.equal((spec as { session?: unknown }).session, undefined, "a computer before sessions gets no session");
     const names = spec.tools.map((tool) => tool.name);
     assert.ok(names.includes("hub_list_tasks") && names.includes("hub_how_to") && names.includes("hub_use_tool"), names.join(","));
 

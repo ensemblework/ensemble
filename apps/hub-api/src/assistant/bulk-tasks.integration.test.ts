@@ -122,7 +122,7 @@ test("Just do it is the default write mode, and the upgrade moves saved Preview 
   await saveSettings(h.prisma, preview.id, { assistant: { writePolicy: "preview" } });
   assert.equal((await loadSettings(h.prisma, preview.id)).assistant.writePolicy, "preview", "choosing Preview again sticks");
 
-  assert.match(writeModeNote("immediate"), /run as soon as you call them/);
+  assert.match(writeModeNote("immediate"), /Changes in Ensemble happen when you call the tool/);
   assert.match(writeModeNote("preview"), /ready to apply/);
   assert.match(writeModeNote("needs-me"), /Needs me/);
 });

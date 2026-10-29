@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHttpHarness } from "../test/http.js";
-import { sseHub, type Frame } from "../lib/sse.js";
+import type { Frame } from "../lib/sse.js";
 
 test("hosted gates preserve core data and paired execution, with durable transactional quotas", { timeout: 180_000 }, async (t) => {
   const before = { ...process.env };
@@ -76,6 +76,8 @@ test("hosted gates preserve core data and paired execution, with durable transac
     const otherTask = await prisma.task.create({ data: { userId: unverified.id, title: "Unverified", createdBy: "me" } });
     await assert.rejects(createJob(prisma, unverified.id, Assign.parse({ ...payload, taskId: otherTask.id })), { statusCode: 403 });
     assert.equal((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status, "todo", "queued work stays in To do");
+    // Imported after the harness: config read earlier would point the app at a real Redis.
+    const { sseHub } = await import("../lib/sse.js");
     const frames: Array<{ userId: string; frame: Frame }> = [];
     const stop = sseHub.onFrame((event) => frames.push(event));
     try {

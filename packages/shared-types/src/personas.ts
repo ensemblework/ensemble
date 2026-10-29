@@ -13,24 +13,6 @@ const WORK: Record<ActAs, string | null> = {
   maker: "builds products",
 };
 
-/** What that kind of work usually asks of the assistant. Tone and emphasis only. */
-const WANTS: Record<ActAs, string> = {
-  general:
-    "They have not said what kind of work they do, so take the shape of the work from the request. Cite the source, then suggest the next change.",
-  student:
-    "an assignment brief turned into a plan with split tasks, quizzes from their notes, citations checked, and a summary of who did what. If teammates are not in People, ask who they are.",
-  engineer:
-    "an issue triaged into repo-linked tasks, a change explained plainly, the person who knows this code, and release notes drafted from completed work. On a task, summarise the open page and its repo and draft subtasks as proposed todos.",
-  teacher: "a lesson plan or rubric drafted, inline feedback, to know who is falling behind, practice questions, and reminders for due dates.",
-  lawyer:
-    "a clause summarised, two drafts compared, obligations and deadlines pulled into tasks with reminders, and risky wording flagged. Say where you are unsure, and never invent a citation.",
-  researcher:
-    "to know what a source actually claims and the sentence that supports it, with the open questions kept visible and experiments summarised without smoothing over a gap.",
-  manager: "to know who is overloaded and what is blocked, the decision rather than the meeting, and the next 1:1 drafted from the last note.",
-  aspirant: "to know what to revise today and which topic a mock missed, quizzes from their notes, and what they saved this week. No rankings and no news.",
-  maker: "to know what changed since the last spec, the open changes, a summary of the test, and who needs to see it.",
-};
-
 /** Onboarding roles (users.onboarding_role) that imply a persona when Act as is left on general. */
 const ROLE_PERSONA = new Map<string, ActAs>([
   ["student", "student"],
@@ -77,15 +59,14 @@ export function personaFor(actAs: ActAs | null | undefined, onboardingRole?: str
 }
 
 /**
- * A few sentences about the person for the system prompt, e.g. "Mira works as a
- * lawyer; they usually want …". Tone and emphasis only: tools and permissions
- * are decided in code, so the text does not mention them.
+ * One sentence about the person's work for the assistant's instructions ("Mira works as a
+ * lawyer."), or nothing when they have not said. A fact, not a script: tools and permissions are
+ * decided in code, and how to help comes from the request.
  */
 export function personaBlock(actAs: ActAs, name?: string | null): string {
   const who = name?.trim().split(/\s+/)[0] || "The person";
   const work = WORK[actAs];
-  const about = work ? `${who} ${work}; they usually want ${WANTS[actAs]}` : WANTS.general;
-  return `${about} Web research must show sources.`;
+  return work ? `${who} ${work}.` : "";
 }
 
 /** Suggested prompts for one surface. The preset adds its own; neither list changes tools. */

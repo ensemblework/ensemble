@@ -3,6 +3,9 @@ import { env } from "../config.js";
 import { hashPassword } from "./auth.js";
 import { prisma } from "./prisma.js";
 
+/** The desktop's own account: a placeholder, never how the person is named to an agent. */
+export const LOCAL_ACCOUNT_NAME = "Local";
+
 const LOCAL_EMAIL = "local@ensemble.desktop";
 
 /** One local account so the bundled UI opens signed in. The password is random and not stored. */
@@ -28,7 +31,7 @@ export async function ensureDesktopUser(id = env.ENSEMBLE_DEV_USER_ID): Promise<
     create: {
       id,
       email: LOCAL_EMAIL,
-      name: "Local",
+      name: LOCAL_ACCOUNT_NAME,
       passwordHash,
       onboardingCompletedAt: now,
       profileCompletedAt: now,

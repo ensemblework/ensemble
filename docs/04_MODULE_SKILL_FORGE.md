@@ -18,9 +18,9 @@ The UI keeps the editor, enablement, history and any recorded evidence. It does 
 
 | Consumer | What it gets |
 |---|---|
-| Workspace agent brief (`workspace/agent.ts`) | The task's linked enabled skills (`skillIds`), or all enabled skills when none are linked; up to 6, each body cut to 900 characters |
+| Workspace agent brief (`workspace/agent.ts`) | Only the skills linked to the task (`skillIds`), never one with `scope.purpose` (the morning brief's own); up to 6, each body cut to 900 characters |
 | Context Bridge brief (`bridge/service.ts`, `rankSkills`) | Enabled skills ranked: linked on the task +5, scope mentions the repository +3, the project +2, the task type +2. The top 3 with a score (else the top 3), bodies excerpted to 1,800 characters. Only current bodies; version history is never exposed |
-| Hub assistant (`assistant/state.ts`) | The names of enabled skills; it reads a body with `hub_read_skill` when one applies |
+| Hub assistant (`assistant/state.ts`) | The names and descriptions of enabled skills (up to 12, not one with `scope.purpose`) in its instructions; it reads a body with `hub_read_skill` when one applies |
 
 Runs do not record which skills were used: `Run.skillIds` and `Run.skillSignatures` exist in the schema but are not written.
 

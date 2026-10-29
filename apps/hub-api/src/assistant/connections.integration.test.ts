@@ -116,9 +116,10 @@ test("a saved Vercel token is named in the prompt, and asking for Vercel project
 
   const first = asked[0]!;
   for (const name of ["apps_search", "apps_read", "hub_list_connections"]) assert.ok(first.tools.includes(name), `${name} is offered`);
-  assert.match(first.system, /Connected apps in this space \(the complete list\):\n- Vercel \(token, as shaaka127001-8910\): deployments and projects via apps_search\/apps_read app "vercel"\./);
-  assert.match(first.system, /## Playbook: Connected apps and bringing data in/, "naming a connected app loads the apps playbook");
-  assert.match(first.system, /If they name an app that is not in this list, it is not connected in this space/);
+  assert.match(first.system, /Connected apps: Vercel\./);
+  assert.match(first.system, /Any other app is not connected/);
+  const message = String([...first.messages].reverse().find((row) => row.role === "user")?.content ?? "");
+  assert.match(message, /<guide name="Connected apps and bringing data in">/, "naming a connected app loads the apps playbook, as a guide in the message");
   assert.doesNotMatch(JSON.stringify(asked), new RegExp(VERCEL_TOKEN), "the token never reaches the model");
 
   const call = result.toolCalls[0]!;

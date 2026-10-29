@@ -24,7 +24,7 @@ import {
 } from "./apps.js";
 import { APP_TOOL_LIST, catalog, chatToolSpecs, getTool } from "./registry.js";
 import { loadConnections } from "./connections.js";
-import { ASSISTANT_INSTRUCTIONS, buildSystemPrompt } from "./state.js";
+import { ASSISTANT_INSTRUCTIONS, assistantInstructions } from "./state.js";
 import { setAppTokenResolverForTests } from "./tools/apps-common.js";
 import { defineTool, toolOk, type AnyHubTool, type ToolContext } from "./types.js";
 import { z } from "zod";
@@ -133,43 +133,31 @@ test("other sources add per-person tools, the count is capped, and Apply resolve
   assert.deepEqual(spec.parameters, schema, "a tool's own JSON Schema is sent as-is");
 });
 
-test("the prompt describes the situation, the person and the connected apps instead of a role", async () => {
+test("the instructions describe the situation, the person and the connected apps instead of a role", async () => {
   assert.doesNotMatch(ASSISTANT_INSTRUCTIONS, /You are/);
-  assert.match(ASSISTANT_INSTRUCTIONS, /^This conversation is inside Ensemble, where the person keeps their tasks, pages, projects, people and the apps they connected\./);
+  assert.match(ASSISTANT_INSTRUCTIONS, /^You're helping the person in Ensemble, where they keep tasks, pages, projects, people and connected apps\./);
   const tools = [...APP_TOOL_LIST.filter((tool) => tool.app?.provider === "google")];
   const apps = appsPrompt(await loadConnections(ctx(settings(), [GOOGLE]), tools), settings());
-  assert.match(apps, /- Google Workspace \(sign-in, as mira@fieldnote\.example\): Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets, Google Slides via gmail_\* calendar_\* drive_\* docs_\* sheets_\* slides_\*/);
-  assert.match(apps, /via apps_search\/apps_read app "google_workspace"/);
-  assert.doesNotMatch(apps, /Microsoft 365|Zoom|Docusign|Not connected/, "apps that are not connected are not listed");
-  assert.match(apps, /If they name an app that is not in this list, it is not connected in this space/);
-  assert.match(apps, /always waits for Apply/);
-  assert.match(apps, /Only search, read, list recent items, sync or import connected-app content when the person explicitly requests/);
-  assert.match(apps, /general question about files does not authorize reading app content/);
-  assert.match(apps, /Use saved Ensemble files and stored Hub context by default/);
+  assert.match(apps, /^Connected apps: Google Workspace\./);
+  assert.doesNotMatch(apps, /Microsoft 365|Zoom|Docusign|gmail_\*/, "only the connected apps, by name: their tools come from the apps playbook");
+  assert.match(apps, /Any other app is not connected; it can be connected in \[Settings → Connections\]/);
+  assert.match(apps, /waits for Apply: say what will happen and who gets an email/);
+  assert.match(apps, /Search or read them only when asked to \(or given a link to an item there\), remote MCP tools included; otherwise use what is saved in Ensemble/);
   const readOnly = settings({ connectedAppWrites: false });
-  assert.match(appsPrompt(await loadConnections(ctx(readOnly, [GOOGLE]), tools.filter((tool) => !tool.isWrite)), readOnly), /This also applies to remote MCP tools/);
-  assert.match(appsPrompt(await loadConnections(ctx(readOnly, [GOOGLE]), tools.filter((tool) => !tool.isWrite)), readOnly), /switched off/);
-  assert.match(appsPrompt(await loadConnections(ctx(settings()), []), settings()), /^Connected apps in this space: none\.\nIf they ask about an app, say it is not connected in this space/);
+  assert.match(appsPrompt(await loadConnections(ctx(readOnly, [GOOGLE]), tools.filter((tool) => !tool.isWrite)), readOnly), /switched off in their settings, so you can only read them/);
+  assert.match(appsPrompt(await loadConnections(ctx(settings()), []), settings()), /^No apps are connected in this space; they can be connected in \[Settings → Connections\]/);
   const zoomGrant: AppGrant = { provider: "zoom", account: "mira@fieldnote.example", scopes: [] };
-  assert.match(
-    appsPrompt(await loadConnections(ctx(settings(), [zoomGrant]), APP_TOOL_LIST.filter((tool) => tool.app?.provider === "zoom")), settings()),
-    /- Zoom \(sign-in, as mira@fieldnote\.example\): meetings, cloud recordings, transcripts and AI Companion summaries \(read only\) via zoom_\*\./,
-  );
+  assert.match(appsPrompt(await loadConnections(ctx(settings(), [zoomGrant]), APP_TOOL_LIST.filter((tool) => tool.app?.provider === "zoom")), settings()), /^Connected apps: Zoom\./);
 
-  const state = { proposed: 0, todo: [], inProgress: 0, needsMe: 0, projects: [], people: [], repos: [], skills: [], user: { firstName: "Mira", onboardingRole: "lawyer" } };
-  const prompt = buildSystemPrompt(state, undefined, undefined, {
-    persona: personaBlock(personaFor("general", "lawyer"), "Mira"),
-    apps,
-    today: "2026-10-07",
-    weekday: "Wednesday",
-    timezone: "Asia/Kolkata",
-  });
-  assert.match(prompt, /^This conversation is inside Ensemble, where Mira keeps their tasks/);
-  assert.match(prompt, /For a workspace action, call its tool now\./);
-  assert.match(prompt, /Mira works as a lawyer; they usually want a clause summarised/);
-  assert.match(prompt, /Connected apps in this space \(the complete list\):/);
-  for (const rule of [/Use real IDs from results or the open item/, /Choices:/, /proposal until Apply/, /YYYY-MM-DD/, /Cite actual source links/, /follow the diagrams playbook/]) assert.match(prompt, rule);
-  assert.doesNotMatch(prompt, /Act as:|You are Ensemble|This preset changes tone/);
+  const state = { skills: [], user: { firstName: "Mira", onboardingRole: "lawyer" } };
+  const prompt = assistantInstructions(state, { persona: personaBlock(personaFor("general", "lawyer"), "Mira"), apps, timezone: "Asia/Kolkata", writeMode: "Every change waits until the person presses Apply.", playbooks: [{ name: "tasks" }, { name: "diagrams" }] });
+  assert.match(prompt, /^You're helping Mira in Ensemble, where they keep tasks/);
+  assert.match(prompt, /Use the tools for anything in it; answer everything else/);
+  assert.match(prompt, /\nMira works as a lawyer\.\n/);
+  assert.match(prompt, /\nConnected apps: Google Workspace\./);
+  for (const rule of [/use the ids they return/, /Choices:/, /presses Apply/, /YYYY-MM-DD/, /Say where facts come from/, /hub_how_to with its name \(tasks, diagrams\)/]) assert.match(prompt, rule);
+  assert.doesNotMatch(prompt, /Act as:|You are Ensemble|This preset changes tone|they usually want/);
+  assert.doesNotMatch(prompt, /Tasks on the board|Projects:|People:|Map of Ensemble|Today is/, "records, the map and the date are not in the instructions");
 
   assert.equal(personaFor("general", "vibe"), "engineer");
   assert.equal(personaFor("general", "Researcher"), "researcher");
@@ -294,9 +282,10 @@ test("a turn with writePolicy immediate still holds a calendar invite for Apply 
   assert.ok(first.tools.includes("calendar_create_event") && first.tools.includes("hub_create_tasks"));
   assert.equal(first.tools.some((name) => name.startsWith("outlook_")), false);
   const system = String(first.messages[0]?.content ?? "");
-  assert.match(system, /^This conversation is inside Ensemble, where Mira keeps/);
-  assert.match(system, /Mira works as a lawyer; they usually want/, "the onboarding role picks the persona when Act as is general");
-  assert.match(system, /- Google Workspace \(sign-in, as mira@fieldnote\.example\)/);
+  assert.match(system, /^You're helping Mira in Ensemble/);
+  assert.match(system, /\nMira works as a lawyer\.\n/, "the onboarding role picks the persona when Act as is general");
+  assert.match(system, /Changes in Ensemble happen when you call the tool .* Changes in connected apps and settings wait for Apply/, "the write mode is part of the instructions");
+  assert.match(system, /Connected apps: Google Workspace\./);
   assert.doesNotMatch(system, /Microsoft 365/);
   const toolMessage = record.asked[1]!.messages.find((message) => message.role === "tool");
   assert.match(String(toolMessage?.content ?? ""), /Nothing changes in the connected app, and nobody is emailed, until the person presses Apply/);

@@ -10,6 +10,7 @@ import { SUBSCRIPTION_PROVIDERS } from "@ensemble/shared-types";
 import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { TURN_FILES_MAX, TurnFileShape } from "../subscriptions/turn-files.js";
+import { SESSION_KEY } from "../subscriptions/turn-sessions.js";
 import type { HostedClient } from "./client.js";
 
 /** Turns at once on one computer; more are refused with a reason. */
@@ -31,6 +32,8 @@ const Spec = z.object({
   context: z.enum(["default", "long_context"]).nullish(),
   /** Files attached to the person's message (`assistantTurns` 2). Older servers omit it. */
   files: z.array(TurnFileShape).max(TURN_FILES_MAX).optional(),
+  /** The chat's session on this computer (`assistantTurns` 3). Older servers fold the chat into `prompt`. */
+  session: z.object({ key: z.string().regex(SESSION_KEY), history: z.string().max(400_000), position: z.number().int().min(0).optional() }).nullish(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 

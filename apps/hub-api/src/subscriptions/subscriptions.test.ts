@@ -1,3 +1,4 @@
+import { ASSISTANT_TURN_SESSIONS } from "@ensemble/shared-types";
 /**
  * The person's own AI subscriptions (docs/30 §8): how each agent is found and read, the command
  * lines that keep an agent to Ensemble's tools, the answers to its own requests, which computer
@@ -15,7 +16,7 @@ import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
 import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
-import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles } from "./turn.js";
+import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
@@ -157,7 +158,13 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.equal(after("--mcp-config"), "/t/mcp.json");
   assert.equal(after("--allowedTools"), "mcp__ensemble");
   assert.equal(after("--setting-sources"), "user", "the person's own settings, where Claude Code keeps how it signs in; never a folder's");
-  assert.ok(args.includes("--no-session-persistence"));
+  assert.ok(args.includes("--no-session-persistence"), "a one-off turn saves no session");
+  const first = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: false } });
+  assert.equal(first[first.indexOf("--session-id") + 1], "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", "a chat's first turn starts its session with that id");
+  assert.ok(!first.includes("--no-session-persistence") && !first.includes("--resume"));
+  const next = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: true } });
+  assert.equal(next[next.indexOf("--resume") + 1], "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", "its next turn resumes it");
+  assert.ok(next.includes("--system-prompt-file"), "the instructions go with every turn: Claude Code does not keep them in the session");
   assert.ok(args.includes("--include-partial-messages"));
   assert.equal(after("--model"), "haiku");
   assert.equal(after("--effort"), "low");
@@ -168,6 +175,9 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
 
 test("Copilot CLI denies its shell, writes and fetches, and Windows gets a prompt that fits its command line", () => {
   const args = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: "claude-haiku-5.5", effort: null, platform: "darwin" });
+  assert.ok(!args.includes("--session-id"), "a one-off turn names no session");
+  const chat = copilotArgs({ prompt: "hello", mcpFile: "/t/mcp.json", model: null, effort: null, sessionId: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" });
+  assert.equal(chat[chat.indexOf("--session-id") + 1], "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11");
   const denied = args.flatMap((arg, index) => (arg === "--deny-tool" ? [args[index + 1]] : []));
   assert.deepEqual(denied, ["shell", "write", "url"]);
   assert.ok(args.includes("--disable-builtin-mcps"));
@@ -278,10 +288,10 @@ test("a turn's bridge answers only its own secret, and a changed tool list repla
   assert.equal(bridgeFor(opened.credential), null, "a closed turn is gone");
 });
 
-test("the conversation reaches an agent as one system prompt and one message", () => {
-  const { system, prompt } = agentConversation(
+test("the conversation reaches an agent as instructions, the new message, and the chat so far for a new session", () => {
+  const { system, prompt, history } = agentConversation(
     [
-      { role: "system", content: "You are the Ensemble assistant." },
+      { role: "system", content: "You're helping Mira in Ensemble." },
       { role: "system", content: "Reference material." },
       { role: "user", content: "What's due?" },
       { role: "assistant", content: "Two tasks." },
@@ -289,11 +299,20 @@ test("the conversation reaches an agent as one system prompt and one message", (
     ],
     "claude-code",
   );
-  assert.match(system, /^You are the Ensemble assistant\.\n\nReference material\.\n\n## How you run here/);
+  assert.match(system, /^You're helping Mira in Ensemble\.\n\nReference material\.\n\nYou run on their own Claude subscription/);
   assert.match(system, /hub_use_tool/);
-  assert.equal(prompt, "Earlier in this conversation, oldest first:\n\nPerson: What's due?\n\nYou: Two tasks.\n\n---\n\nThe person's new message:\n\nMake a diagram of them.");
-  assert.equal(agentConversation([{ role: "user", content: "hi" }], "codex").prompt, "hi");
+  assert.equal(prompt, "Make a diagram of them.");
+  assert.equal(history, "This chat so far, oldest first:\n\nPerson: What's due?\n\nYou: Two tasks.");
+  assert.deepEqual(agentConversation([{ role: "user", content: "hi" }], "codex"), { system: howYouRun("codex"), prompt: "hi", history: "" });
   assert.match(howYouRun("codex"), /ChatGPT subscription/);
+});
+
+test("a computer that keeps sessions gets the chat as a session; an older one gets the chat folded in front of the message", () => {
+  const input = { prompt: "Make a diagram of them.", history: "This chat so far, oldest first:\n\nPerson: hi", sessionKey: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11" };
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
+  assert.deepEqual(turnSession({ local: false, id: "d", name: "Studio Mac", agent: null, turns: ASSISTANT_TURN_SESSIONS }, input), { prompt: input.prompt, session: { key: input.sessionKey, history: input.history } });
+  assert.deepEqual(turnSession({ local: false, id: "d", name: "Old Mac", agent: null, turns: 2 }, input), { prompt: `${input.history}\n\n---\n\n${input.prompt}` });
+  assert.deepEqual(turnSession({ local: true, name: "Studio Mac" }, { prompt: "Classify this." }), { prompt: "Classify this." }, "a one-off completion keeps no session");
 });
 
 test("a reply's JSON is found inside prose or a fence", () => {

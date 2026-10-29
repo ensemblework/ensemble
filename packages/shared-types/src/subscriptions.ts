@@ -186,9 +186,14 @@ export function parseSubscriptionAgents(value: unknown): SubscriptionAgent[] {
   });
 }
 
-/** The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2 also takes the files attached to the person's message. */
-export const ASSISTANT_TURNS_API = 2;
+/**
+ * The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2
+ * also takes the files attached to the person's message, 3 keeps one agent session per chat.
+ */
+export const ASSISTANT_TURNS_API = 3;
 /** The oldest `assistantTurns` that runs assistant turns at all. */
 export const ASSISTANT_TURNS_MIN = 1;
 /** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
 export const ASSISTANT_TURN_FILES = 2;
+/** The first `assistantTurns` that keeps a chat's agent session; older computers get the chat so far in every message. */
+export const ASSISTANT_TURN_SESSIONS = 3;

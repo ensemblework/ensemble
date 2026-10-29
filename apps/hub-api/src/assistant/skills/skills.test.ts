@@ -12,9 +12,9 @@ import { setAskRuntimeStreamForTests, type RuntimeTurn } from "../../lib/model-t
 import { runAssistantTurn } from "../agent.js";
 import { appNames } from "../connections.js";
 import { APP_TOOL_LIST, TOOL_NAMES, getTool } from "../registry.js";
-import { buildSystemPrompt } from "../state.js";
+import { assistantInstructions } from "../state.js";
 import type { AnyHubTool } from "../types.js";
-import { CORE_TOOLS, advertisedTools, allPlaybooks, appMap, findPlaybook, parsePlaybook, playbookIndex, playbooksFor, routePlaybooks } from "./index.js";
+import { CORE_TOOLS, advertisedTools, allPlaybooks, appMap, findPlaybook, parsePlaybook, playbooksFor, routePlaybooks } from "./index.js";
 
 const KNOWN = new Set([...TOOL_NAMES, ...APP_TOOL_LIST.map((tool) => tool.name), "apps_search", "apps_read", "apps_post_update"]);
 
@@ -41,7 +41,11 @@ test("hub_how_to offers exactly the playbook names", () => {
   const parsed = tool.input.safeParse({ name: "diagrams" });
   assert.ok(parsed.success);
   assert.equal(tool.input.safeParse({ name: "nonsense" }).success, false);
-  for (const playbook of allPlaybooks()) assert.ok(tool.input.safeParse({ name: playbook.name }).success, playbook.name);
+  for (const playbook of allPlaybooks()) {
+    assert.ok(tool.input.safeParse({ name: playbook.name }).success, playbook.name);
+    assert.ok(tool.description.includes(`${playbook.name}: `), `the description says what ${playbook.name} covers`);
+  }
+  assert.ok(tool.input.safeParse({ name: "map" }).success, "the map of Ensemble loads on demand");
 });
 
 const routed = (message: string, extra: { path?: string; mentions?: Array<{ kind: string }> } = {}, modules?: string | null) =>
@@ -68,7 +72,8 @@ test("routing picks the playbook for the owner's example requests", () => {
   ];
   for (const [message, expected] of cases) assert.ok(routed(message).includes(expected), `${message} → ${routed(message).join(", ")}`);
   assert.deepEqual(routed("What is 17 times 23?"), [], "a plain question loads nothing");
-  assert.ok(routed("hello", { path: "/diagrams/abc" }).includes("diagrams"), "the open page routes");
+  assert.deepEqual(routed("hello", { path: "/diagrams/abc" }), [], "the open page alone loads nothing");
+  assert.deepEqual(routed("what tasks are left?", { path: "/board" }), ["tasks"]);
   assert.ok(routed("make it bigger", { mentions: [{ kind: "plot" }] }).includes("plots"), "a mention routes");
   assert.ok(routed("@task:Clone a repo do this on my machine", { mentions: [{ kind: "task" }] }).includes("agents"), "a task to run on their computer");
   assert.ok(routed("assign this task to an agent with my Careful profile").includes("agents"));
@@ -123,16 +128,14 @@ test("a turn shows the core tools plus the tools of the playbooks in play", () =
   }
 });
 
-test("the system prompt names the open space, carries the map and the playbook index", () => {
-  const state = { proposed: 0, todo: [], inProgress: 0, needsMe: 0, projects: [], people: [], repos: [], skills: [], user: { firstName: "Mira", onboardingRole: null, guestOf: null, spaceName: "Lab notebook" } };
-  const playbooks = playbooksFor(undefined);
-  const prompt = buildSystemPrompt(state, undefined, undefined, { map: appMap(), playbooks: playbookIndex(playbooks, [findPlaybook("recap")!]), loaded: "## Playbook: Weekly recap\nsteps" });
-  assert.match(prompt, /The open space is “Lab notebook”\. Everything you can see or change is in this space\. Other spaces are out of reach/);
-  assert.match(prompt, /Map of Ensemble/);
-  assert.match(prompt, /- recap: .*\(loaded below\)/);
-  assert.match(prompt, /- diagrams: /);
-  assert.match(prompt, /## Playbook: Weekly recap\nsteps/);
-  assert.ok(prompt.indexOf("## Playbook: Weekly recap") < prompt.indexOf("What is in the workspace right now:"), "stable playbook precedes live state for prefix caching");
+test("the instructions name the open space and the playbooks, and stay the same for every message", () => {
+  const state = { skills: [], user: { firstName: "Mira", onboardingRole: null, guestOf: null, spaceName: "Lab notebook" } };
+  const prompt = assistantInstructions(state, { timezone: "UTC", playbooks: playbooksFor(undefined) });
+  assert.match(prompt, /in their space “Lab notebook”/);
+  assert.match(prompt, /Only this space is reachable; for another one, they switch spaces in the sidebar/);
+  assert.match(prompt, /call hub_how_to with its name \(agents, apps, .*diagrams.*\)/);
+  assert.doesNotMatch(prompt, /Map of Ensemble|## Playbook/);
+  assert.ok(prompt.length < 2000, `instructions stay short (${prompt.length} chars)`);
 });
 
 // A whole turn with a scripted model --------------------------------------------------
@@ -207,16 +210,18 @@ test("hub_how_to loads a playbook mid-turn and its tools are offered on the next
   assert.equal(asked[0]!.tools.includes("hub_create_diagram"), false, "not offered before the playbook is loaded");
   assert.ok(asked[0]!.tools.includes("hub_how_to"));
   assert.ok(asked[1]!.tools.includes("hub_create_diagram") && asked[1]!.tools.includes("hub_validate_diagram"), "offered after hub_how_to");
-  assert.match(asked[0]!.system, /The open space is “Lab notebook”/);
-  assert.match(asked[0]!.system, /Playbooks: step-by-step know-how/);
+  assert.match(asked[0]!.system, /in their space “Lab notebook”/);
+  assert.match(asked[0]!.system, /call hub_how_to with its name/);
 });
 
-test("a routed turn starts with the playbook's text and tools", async () => {
-  const asked: Array<{ tools: string[]; system: string }> = [];
+test("a routed turn starts with the playbook's text, as a guide in the message, and its tools", async () => {
+  const asked: Array<{ tools: string[]; system: string; message: string }> = [];
   setAskRuntimeStreamForTests(async (args) => {
+    const messages = args.messages as Array<{ content?: unknown }>;
     asked.push({
       tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name),
-      system: String((args.messages as Array<{ content?: unknown }>)[0]?.content ?? ""),
+      system: String(messages[0]?.content ?? ""),
+      message: String(messages[messages.length - 1]?.content ?? ""),
     });
     const turn: RuntimeTurn = { text: "Sure.", toolCalls: [], model: "test-model", credits: 0, tokensIn: 1, tokensOut: 1, reasoning: "", raw: {}, finishReason: "stop", cutOff: false };
     args.onDelta?.(turn.text);
@@ -232,8 +237,10 @@ test("a routed turn starts with the playbook's text and tools", async () => {
     emit: () => undefined,
   });
   assert.ok(asked[0]!.tools.includes("hub_create_diagram"));
-  assert.match(asked[0]!.system, /## Playbook: Diagrams and flowcharts/);
-  assert.match(asked[0]!.system, /Transformer \(encoder–decoder\)/);
+  assert.match(asked[0]!.message, /<guide name="Diagrams and flowcharts">/);
+  assert.match(asked[0]!.message, /Transformer \(encoder–decoder\)/);
+  assert.match(asked[0]!.message, /<\/guide>\n\nDraw a block diagram of the transformer architecture$/, "the message comes last");
+  assert.doesNotMatch(asked[0]!.system, /Diagrams and flowcharts|Transformer/, "a guide never changes the instructions");
 });
 
 test("a playbook with Windows line endings (a Windows checkout) parses like one with LF", () => {

@@ -3,9 +3,7 @@ import { includedCatalogEntry } from "../included/catalog.js";
 import { deviceIncludedCatalogEntry, onDevice } from "../included/device.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { ASSISTANT_INSTRUCTIONS } from "../assistant/state.js";
-import { SKILL_MINING_PROMPT } from "../jobs/skill-mining.js";
-import { TRIAGE_PROMPT } from "../connectors/triage.js";
+import { promptCatalog } from "../prompts/registry.js";
 import { connectionState, listConnectors } from "../connectors/base.js";
 import { fetchAll, syncConnector } from "../connectors/sync.js";
 import { complete, runtime } from "../lib/runtime.js";
@@ -51,48 +49,6 @@ function writeModelCatalog(userId: string, body: unknown): void {
     modelCatalogCache.delete(oldest);
   }
 }
-
-const PROMPTS = [
-  {
-    id: "assistant.system",
-    title: "Hub assistant",
-    when: "Every message you send in the Ensemble chat.",
-    purpose: "Operate the Hub through typed tools. Never invent an entity, never promise work without calling a tool.",
-    body: ASSISTANT_INSTRUCTIONS,
-  },
-  {
-    id: "planner",
-    title: "Planner",
-    when: "When a delegated task starts or resumes after you answer a question.",
-    purpose: "Turn a task and its context into steps with gates. Missing facts become questions, not guesses.",
-  },
-  {
-    id: "drafter",
-    title: "Drafter",
-    when: "Replies, PR descriptions and documents, before any approval.",
-    purpose: "Write in your tone using the matching skill. The draft is shown to you before anything leaves.",
-  },
-  {
-    id: "classifier",
-    title: "Triage",
-    when: "When an explicitly selected item is passed to triage. Manual contact sync does not run this prompt.",
-    purpose: "Decide whether an email, chat or PR needs a todo, and who should own it.",
-    body: TRIAGE_PROMPT.split("<<ITEMS>>")[0]?.trim() ?? "",
-  },
-  {
-    id: "coder",
-    title: "Workspace coder",
-    when: "Repository jobs in the Workspace.",
-    purpose: "Edit files and verify the result while following the run’s file, internet and publishing permissions.",
-  },
-  {
-    id: "skill.miner",
-    title: "Skill miner",
-    when: "After a day’s notice, when older work is ready to leave Completed.",
-    purpose: "Learn reusable preferences and add them to your personal skills, preserving existing instructions. Review and edit them in Skills.",
-    body: SKILL_MINING_PROMPT,
-  },
-];
 
 export async function systemRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -297,7 +253,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, model: answer.model, text: answer.text.trim().slice(0, 200), tokensIn: answer.tokensIn, tokensOut: answer.tokensOut, ms: Date.now() - started };
   });
 
-  app.get("/api/prompts", async () => ({ prompts: PROMPTS }));
+  app.get("/api/prompts", async () => ({ prompts: promptCatalog() }));
 
   // ── deleted items ───────────────────────────────────────────────────────
 

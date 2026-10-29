@@ -7,15 +7,22 @@
  * message are downloaded into the turn's folder and given to the agent in its own input form
  * (turn-files.ts).
  *
+ * A chat is one session of the agent (`spec.session`, turn-sessions.ts): the first turn starts it
+ * with the instructions and the chat so far, later turns resume it with just the new message. A
+ * turn without a session (a one-off completion) leaves nothing saved.
+ *
  * Claude Code: `claude -p` with `--system-prompt-file`, `--tools ""`, only Ensemble's MCP server,
- * the person's own settings (how their Claude Code signs in), no saved session.
- * Codex: `codex app-server`, an ephemeral thread with Ensemble's instructions as its base
- * instructions, a read-only sandbox, no environment, every approval declined.
- * Cursor's agent: ACP, every permission refused except Ensemble's own tools.
- * Copilot CLI: `copilot -p`, shell, file writes and URL fetches denied, no built-in MCP servers.
+ * the person's own settings (how their Claude Code signs in); `--session-id`, then `--resume`.
+ * Codex: `codex app-server`, a thread with Ensemble's instructions as its base instructions, a
+ * read-only sandbox, no environment, every approval declined; `thread/resume` for the next turn.
+ * Cursor's agent and the ACP agents: every permission refused except Ensemble's own tools;
+ * `session/load` (Antigravity: `session/resume`) when the agent offers it.
+ * Copilot CLI: `copilot -p`, shell, file writes and URL fetches denied, no built-in MCP servers;
+ * `--session-id` starts and resumes the chat's session.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -29,6 +36,7 @@ import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
 import { copilotEnv } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
+import { findSession, forgetSession, saveSession, SESSION_KEY, sessionFolder } from "./turn-sessions.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -43,9 +51,23 @@ export type AgentTurnSpec = {
   context?: "default" | "long_context" | null;
   /** Files attached to the person's message, fetched with `AgentTurnIO.readFile`. */
   files?: TurnFile[];
+  /**
+   * The chat this turn belongs to (`assistantTurns` 3): `key` names its session on this computer,
+   * `history` is the chat so far, sent only when the turn starts a new session, and `position` how
+   * many messages the chat had before this one (a session resumes only where it left the chat).
+   */
+  session?: { key: string; history: string; position?: number } | null;
 };
 
-export type AgentTurnResult = { text: string; model: string | null; tokensIn: number | null; tokensOut: number | null; costUsd: number | null };
+export type AgentTurnResult = {
+  text: string;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  costUsd: number | null;
+  /** The turn went on in the chat's earlier session. */
+  resumed?: boolean;
+};
 
 export type AgentTurnIO = {
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
@@ -69,7 +91,20 @@ export class AgentTurnError extends Error {
 
 type McpServer = { command: string; args: string[]; env: Record<string, string> };
 
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; mcp: McpServer; files: SavedTurnFile[] }) => Promise<AgentTurnResult>;
+/**
+ * `session`: the agent session to resume (`resume`), or the id to start one with, for agents that
+ * take one (Claude Code, Copilot); null for a turn that saves no session.
+ */
+type TurnSession = { id: string; resume: boolean } | null;
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<AgentTurnResult & { session?: string | null }>;
+
+/** The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one. */
+class SessionGone extends Error {}
+/** This version of the agent cannot keep a session: the turn runs without one. */
+class SessionUnsupported extends Error {}
+
+/** The first message of a session: Ensemble's instructions, for agents that have no system prompt, then the message. */
+const opening = (spec: AgentTurnSpec, session: TurnSession) => (session?.resume ? spec.prompt : `${spec.system}\n\n---\n\n${spec.prompt}`);
 
 const chosen = (value: string | null | undefined): string | null => (value && value !== "default" ? value : null);
 
@@ -103,7 +138,7 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
@@ -130,7 +165,7 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     // Their MCP servers stay out (--strict-mcp-config), and Ensemble's own hook steps aside (ENSEMBLE_RUN).
     "--setting-sources",
     "user",
-    "--no-session-persistence",
+    ...(input.session ? (input.session.resume ? ["--resume", input.session.id] : ["--session-id", input.session.id]) : ["--no-session-persistence"]),
     "--max-turns",
     String(input.maxTurns),
     ...(launch.model ? ["--model", launch.model] : []),
@@ -138,12 +173,12 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
   ];
 }
 
-const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
+const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const systemFile = join(folder, "system.md");
   const mcpFile = join(folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0 }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: "600000", ENSEMBLE_RUN: "assistant-turn" }),
@@ -190,9 +225,12 @@ const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
     }
     const code = await new Promise<number>((done) => (child.exitCode !== null ? done(child.exitCode) : child.once("close", (value) => done(value ?? 1))));
     if (io.signal.aborted) throw aborted();
+    const said = `${failure ?? ""} ${stderr}`;
+    if (session?.resume && /no conversation found|session.{0,40}not found/i.test(said)) throw new SessionGone(said.trim());
+    if (session && /unknown option.{0,20}(--session-id|--resume)/i.test(said)) throw new SessionUnsupported(said.trim());
     if (failure) throw agentProblem(spec.agent, failure);
     if (code !== 0 || !finished) throw agentProblem(spec.agent, stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
-    return result;
+    return { ...result, session: session?.id ?? null };
   } finally {
     io.signal.removeEventListener("abort", stop);
     stop();
@@ -219,7 +257,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
   }
 }
 
-const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
+const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const child = spawn(bin, ["app-server"], { cwd: folder, env: agentEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -275,7 +313,8 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
       approvalsReviewer: "user",
       sandbox: "read-only",
       baseInstructions: spec.system,
-      ephemeral: true,
+      // A chat's thread is kept for its next turn; a one-off turn's is not.
+      ephemeral: !session,
       serviceName: "ensemble",
       ...(model ? { model } : {}),
       config: {
@@ -283,36 +322,62 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
         mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: 600 } },
       },
     };
-    // No environment: Codex's own shell and file tools are not there at all. An older Codex that
-    // does not know the field starts without it, and every approval is still declined.
-    const thread = (await server.request("thread/start", { ...settings, environments: [] }).catch((error: Error) => {
-      if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", settings);
-      throw error;
-    })) as { thread?: { id?: string }; model?: string };
+    const { serviceName: _serviceName, ephemeral: _ephemeral, ...resumeSettings } = settings;
+    // No environment: Codex's own shell and file tools are not there at all. A resumed thread does not
+    // keep that, so every turn asks for it again (turn/start below).
+    const thread = (
+      session?.resume
+        ? await server.request("thread/resume", { threadId: session.id, ...resumeSettings }).catch((error: Error) => {
+            throw new SessionGone(error.message);
+          })
+        : await server.request("thread/start", { ...settings, environments: [] }).catch((error: Error) => {
+            if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", settings);
+            throw error;
+          })
+    ) as { thread?: { id?: string }; model?: string };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw agentProblem("codex", "it did not start a conversation");
     result.model = thread.model ?? model;
     const effort = chosen(spec.effort);
-    const turn = (await server.request("turn/start", {
-      threadId,
-      input: codexInput(spec.prompt, files),
-      sandboxPolicy: { type: "readOnly", networkAccess: false },
-      ...(effort ? { effort } : {}),
+    const turnParams = { threadId, input: codexInput(spec.prompt, files), sandboxPolicy: { type: "readOnly", networkAccess: false }, ...(effort ? { effort } : {}) };
+    const turn = (await server.request("turn/start", { ...turnParams, environments: [] }).catch((error: Error) => {
+      if (!/environments|unknown field/i.test(error.message)) throw error;
+      // A Codex that cannot drop its environment per turn may only run a thread started without one.
+      if (session?.resume) throw new SessionUnsupported(error.message);
+      return server.request("turn/start", turnParams);
     })) as { turn?: { id?: string } };
     turnId = turn.turn?.id ?? null;
     const done = await turnDone;
     if (io.signal.aborted || done.status === "interrupted") throw aborted();
     if (done.status === "failed") throw agentProblem("codex", done.error ?? "the turn failed");
-    return result;
+    return { ...result, session: session ? threadId : null };
   } catch (error) {
     if (io.signal.aborted) throw aborted();
-    if (error instanceof AgentTurnError) throw error;
+    if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("codex", error instanceof Error ? error.message : String(error));
   } finally {
     io.signal.removeEventListener("abort", stop);
     stopChild(child);
   }
 };
+
+/** Whether an ACP agent can reopen a session (`agentCapabilities.loadSession`). */
+function loadsSessions(init: Record<string, unknown>): boolean {
+  return (init.agentCapabilities as { loadSession?: unknown } | undefined)?.loadSession === true;
+}
+
+/** Reopens an ACP session, its replayed history ignored; one the agent cannot find is gone. */
+async function reopen(rpc: RpcConnection, method: "session/load" | "session/resume", id: string, cwd: string, mcpServers: unknown[], replaying: (on: boolean) => void): Promise<Record<string, unknown>> {
+  replaying(true);
+  try {
+    const loaded = (await rpc.request(method, { sessionId: id, cwd, mcpServers })) as Record<string, unknown>;
+    return { ...loaded, sessionId: id };
+  } catch (error) {
+    throw new SessionGone(error instanceof Error ? error.message : String(error));
+  } finally {
+    replaying(false);
+  }
+}
 
 /** Cursor's own requests during an assistant turn: only Ensemble's tools may run. */
 export function answerCursorTurn(method: string, params: Record<string, unknown>): unknown {
@@ -329,7 +394,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
+const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const model = chosen(spec.model);
   const child = spawn(bin, ["--sandbox", "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
@@ -348,9 +413,11 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
+  // A reopened session replays its history first: that is not this turn's reply.
+  let replaying = false;
   rpc.onRequest = async (method, params) => answerCursorTurn(method, params);
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update") return;
+    if (method !== "session/update" || replaying) return;
     const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
     if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
       reply += update.content.text;
@@ -368,22 +435,22 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   };
   io.signal.addEventListener("abort", stop, { once: true });
   try {
-    const caps = acpPromptCaps(await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } }));
+    const init = await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+    const caps = acpPromptCaps(init);
     await rpc.request("authenticate", { methodId: "cursor_login" }).catch(() => undefined);
-    const session = await rpc.request("session/new", {
-      cwd: folder,
-      mcpServers: [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }],
-    });
-    sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
+    const mcpServers = [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }];
+    if (session && !loadsSessions(init)) throw new SessionUnsupported("Cursor's agent cannot reopen a session");
+    const started = session?.resume ? await reopen(rpc, "session/load", session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
+    sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
     if (!sessionId) throw agentProblem("cursor-agent", "it did not start a session");
-    // ACP has no system prompt: Ensemble's instructions lead the message.
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps, "Cursor's agent") })) as { stopReason?: string };
+    // ACP has no system prompt: Ensemble's instructions lead a session's first message.
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(opening(spec, session), files, caps, "Cursor's agent") })) as { stopReason?: string };
     if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
     if (done.stopReason === "refusal") throw agentProblem("cursor-agent", "it refused the request");
-    return { text: reply.trim(), model, tokensIn: null, tokensOut: null, costUsd: null };
+    return { text: reply.trim(), model, tokensIn: null, tokensOut: null, costUsd: null, session: session ? sessionId : null };
   } catch (error) {
     if (io.signal.aborted) throw aborted();
-    if (error instanceof AgentTurnError) throw error;
+    if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("cursor-agent", error instanceof Error ? error.message : String(error));
   } finally {
     io.signal.removeEventListener("abort", stop);
@@ -405,7 +472,7 @@ export function copilotPrompt(head: string, sections: string[], platform?: NodeJ
 }
 
 /** The arguments for Copilot CLI (exported for tests). */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[] }): string[] {
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null }): string[] {
   const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -429,6 +496,8 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     "--no-auto-update",
     "--additional-mcp-config",
     `@${input.mcpFile}`,
+    // The chat's session: started with this id on the first turn, resumed by it after.
+    ...(input.sessionId ? ["--session-id", input.sessionId] : []),
     ...(input.attachments ?? []).flatMap((path) => ["--attachment", path]),
     ...(chosen(input.model) ? ["--model", input.model!] : []),
     ...(chosen(input.effort) ? ["--reasoning-effort", input.effort!] : []),
@@ -436,12 +505,12 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
   ];
 }
 
-const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
+const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const mcpFile = join(folder, "mcp.json");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"] } } }), "utf8");
   const { attachments, sections } = copilotFiles(files);
-  const prompt = copilotPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, sections);
-  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments }), {
+  const prompt = copilotPrompt(opening(spec, session), sections);
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? null }), {
     cwd: folder,
     env: copilotEnv(mcp.env),
     stdio: ["ignore", "pipe", "pipe"],
@@ -459,8 +528,9 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files }) => {
   try {
     const code = await new Promise<number>((done) => child.once("close", (value) => done(value ?? 1)));
     if (io.signal.aborted) throw aborted();
+    if (code !== 0 && session && /unknown option.{0,20}--session-id/i.test(stderr)) throw new SessionUnsupported(stderr.trim());
     if (code !== 0) throw agentProblem("copilot-cli", stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
-    return output.finish();
+    return { ...output.finish(), session: session?.id ?? null };
   } finally {
     io.signal.removeEventListener("abort", stop);
     stop();
@@ -481,7 +551,7 @@ export function answerAcpTurn(method: string, params: Record<string, unknown>): 
 /** Grok Build, OpenCode, Gemini CLI or Antigravity for one assistant turn, in an empty folder with only Ensemble's tools. */
 const runAcpTurn =
   (id: AcpEngine): Driver =>
-  async ({ spec, io, folder, mcp, files }) => {
+  async ({ spec, io, folder, mcp, files, session }) => {
     const model = chosen(spec.model);
     const launch = await ACP_AGENTS[id].launch({ root: folder, sandboxed: false, trusted: false, model, extraEnv: mcp.env });
     if (!launch) throw new AgentTurnError("not_installed", `${SUBSCRIPTION_INFO[id].label} is not on this computer.`);
@@ -491,9 +561,10 @@ const runAcpTurn =
     let reply = "";
     let stderr = "";
     let sessionId: string | null = null;
+    let replaying = false;
     rpc.onRequest = async (method, params) => answerAcpTurn(method, params);
     rpc.onNotification = (method, params) => {
-      if (method !== "session/update") return;
+      if (method !== "session/update" || replaying) return;
       const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
       if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
         reply += update.content.text;
@@ -511,28 +582,26 @@ const runAcpTurn =
     };
     io.signal.addEventListener("abort", stop, { once: true });
     try {
-      const caps = acpPromptCaps(
-        await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" }, ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}) }),
-      );
+      const init = await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" }, ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}) });
+      const caps = acpPromptCaps(init);
       if (launch.authMethod) await rpc.request("authenticate", { methodId: launch.authMethod });
-      const session = await rpc.request("session/new", {
-        cwd: folder,
-        mcpServers: [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }],
-      });
-      sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
+      const mcpServers = [{ name: "ensemble", command: mcp.command, args: mcp.args, env: Object.entries(mcp.env).map(([name, value]) => ({ name, value })) }];
+      if (session && launch.resume === "session/load" && !loadsSessions(init)) throw new SessionUnsupported(`${SUBSCRIPTION_INFO[id].label} cannot reopen a session`);
+      const started = session?.resume ? await reopen(rpc, launch.resume, session.id, folder, mcpServers, (on) => (replaying = on)) : await rpc.request("session/new", { cwd: folder, mcpServers });
+      sessionId = typeof started.sessionId === "string" ? started.sessionId : null;
       if (!sessionId) throw agentProblem(id, "it did not start a session");
-      const config = Array.isArray(session.configOptions) ? (session.configOptions as ConfigOption[]) : [];
+      const config = Array.isArray(started.configOptions) ? (started.configOptions as ConfigOption[]) : [];
       const { model: modelOption, thought } = configChoices(config);
       if (model && modelOption && optionValues(modelOption).includes(model) && modelOption.currentValue !== model) await rpc.request("session/set_config_option", { sessionId, configId: modelOption.id, value: model });
       if (spec.effort && thought && optionValues(thought).includes(spec.effort)) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: spec.effort });
-      // ACP has no system prompt: Ensemble's instructions lead the message.
-      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(`${spec.system}\n\n---\n\n${spec.prompt}`, files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
+      // ACP has no system prompt: Ensemble's instructions lead a session's first message.
+      const done = (await rpc.request("session/prompt", { sessionId, prompt: acpPrompt(opening(spec, session), files, caps, SUBSCRIPTION_INFO[id].label) })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
       if (io.signal.aborted || done.stopReason === "cancelled") throw aborted();
       if (done.stopReason === "refusal") throw agentProblem(id, "it refused the request");
-      return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null };
+      return { text: reply.trim(), model: model ?? modelOption?.currentValue ?? null, tokensIn: done.usage?.inputTokens ?? null, tokensOut: done.usage?.outputTokens ?? null, costUsd: null, session: session ? sessionId : null };
     } catch (error) {
       if (io.signal.aborted) throw aborted();
-      if (error instanceof AgentTurnError) throw error;
+      if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
       throw agentProblem(id, error instanceof Error ? error.message : String(error));
     } finally {
       io.signal.removeEventListener("abort", stop);
@@ -551,8 +620,25 @@ const DRIVERS: Record<SubscriptionProvider, Driver> = {
   antigravity: runAcpTurn("antigravity"),
 };
 
+/** Turns of one chat, one at a time: they share its session and its folder. */
+const chats = new Map<string, Promise<unknown>>();
+
 /** Runs the turn with the agent's own sign-in; the tools are called through `io.call`. */
 export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promise<AgentTurnResult> {
+  const key = spec.session && SESSION_KEY.test(spec.session.key) ? spec.session.key : null;
+  if (!key) return runTurn(spec, io, null);
+  const before = chats.get(key) ?? Promise.resolve();
+  const turn = before.then(() => runTurn(spec, io, key), () => runTurn(spec, io, key));
+  const settled = turn.catch(() => undefined);
+  chats.set(key, settled);
+  try {
+    return await turn;
+  } finally {
+    if (chats.get(key) === settled) chats.delete(key);
+  }
+}
+
+async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null): Promise<AgentTurnResult> {
   const found = await agentBinary(spec.agent);
   const info = SUBSCRIPTION_INFO[spec.agent];
   if (!found) throw new AgentTurnError("not_installed", `${info.label} is not on this computer. ${info.install.label} (${info.install.url}), sign in, and try again.`);
@@ -565,7 +651,9 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
   const thinking = checkEffort(spec.agent, spec.model ?? "default", spec.effort, { efforts: levels });
   if (!thinking.ok) throw new AgentTurnError("failed", thinking.message);
   spec = { ...spec, effort: thinking.send };
-  const folder = await mkdtemp(join(tmpdir(), "ensemble-turn-"));
+  // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in).
+  const folder = key ? sessionFolder(key) : await mkdtemp(join(tmpdir(), "ensemble-turn-"));
+  if (key) await mkdir(folder, { recursive: true });
   const bridge = openBridge(spec.tools, io.call);
   const mcp: McpServer = {
     command: process.execPath,
@@ -579,9 +667,35 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
       files = fetched.saved;
       spec = { ...spec, prompt: spec.prompt + filesNote(fetched) };
     }
-    return await DRIVERS[spec.agent]({ spec, io, bin: found.path, folder, mcp, files });
+    const history = spec.session?.history.trim() ?? "";
+    // A new session gets the chat so far before the message; a resumed one already has it.
+    const run = (session: TurnSession) =>
+      DRIVERS[spec.agent]({ spec: { ...spec, prompt: !session?.resume && history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt }, io, bin: found.path, folder, mcp, files, session });
+    // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
+    const position = spec.session?.position;
+    const earlier = key ? await findSession(key, spec.agent, spec.system, spec.agent === "claude-code" || spec.agent === "codex", position) : null;
+    let result: AgentTurnResult & { session?: string | null };
+    let resumed = Boolean(earlier);
+    try {
+      result = await run(key ? (earlier ? { id: earlier, resume: true } : { id: randomUUID(), resume: false }) : null);
+    } catch (error) {
+      if (io.signal.aborted || !key) throw error;
+      if (error instanceof SessionGone) {
+        await forgetSession(key);
+        resumed = false;
+        result = await run({ id: randomUUID(), resume: false });
+      } else if (error instanceof SessionUnsupported) {
+        resumed = false;
+        result = await run(null);
+      } else throw error;
+    }
+    // The chat will have this message and its reply: the next turn resumes only from there.
+    if (key && result.session) await saveSession(key, spec.agent, result.session, spec.system, position === undefined ? undefined : position + 2);
+    const { session: _session, ...answer } = result;
+    return { ...answer, resumed };
   } finally {
     bridge.close();
-    await rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    // A chat's folder stays for its next turn; the files of this turn do not.
+    await rm(key ? join(folder, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
   }
 }

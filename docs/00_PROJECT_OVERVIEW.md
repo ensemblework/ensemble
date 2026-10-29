@@ -74,7 +74,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 
 ## 5. Assistant
 
-The Hub assistant operates the app through typed tools. Built-in playbooks (`apps/hub-api/src/assistant/skills/*.md`) route each request to a small toolset; saved personal skills add instructions. [11](11_HOW_THE_ASSISTANT_WORKS.md) explains the loop; [34](34_ASSISTANT_ACTIONS.md) maps every tool.
+The Hub assistant operates the app through typed tools. Its instructions stay the same through a chat; each message brings only its own context (date, view, open item, mentions), and records, playbooks and app details come from tools when needed. Built-in playbooks (`apps/hub-api/src/assistant/skills/*.md`) route each request to a small toolset; saved personal skills add instructions. On the person's own AI subscription, one chat is one session of that agent. Settings → Prompts shows every prompt Ensemble sends. [11](11_HOW_THE_ASSISTANT_WORKS.md) explains the loop; [34](34_ASSISTANT_ACTIONS.md) maps every tool.
 
 | Capability | What works |
 | --- | --- |
