@@ -219,3 +219,81 @@ Evidence and node tools: `src/evidence/files.test.ts` (a link to a key, a hard l
 Worktrees for parallel work: `src/workspace/worktrees.test.ts` (a build's worktree on its branch, its check in the same one, a snapshot, what is refused, and removing only what loses nothing, in a real repository) and `src/node/parallel.integration.test.ts` (the claim's `mission`, and two builds claimed at once).
 
 There is no automatic move to another computer, full database sync, mid-command replay or inbound remote shell or tunnel. A compromised browser session can use whatever the computer's switches allow; local switches and OS rules are the boundary. Redaction is bounded and does not prove content has no sensitive data.
+
+## 10. Browser and capture on the computer
+
+The local runtime has a browser broker (`apps/hub-api/src/browser/`) and a capture service (`apps/hub-api/src/capture/`). Ensemble Node's device tools and a coding agent's run MCP server both call them ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)), through one tool layer: `runBrowserTool` and `runCaptureTool` validate a call and run it for one **operation** (a job attempt, or a node's tool operation), and `browserToolDefinitions()` and `captureToolDefinitions()` give each tool's JSON Schema. The server never runs a browser.
+
+### 10.1 Browser broker
+
+| Setting | Value |
+| --- | --- |
+| Browser | Playwright's Chromium (`playwright-core`, pinned in hub-api). `ENSEMBLE_CHROMIUM` names one; else the revision Playwright expects in `<data>/playwright` or Playwright's own cache, else the newest other revision, else an installed Chrome (`browser/chromium.ts`) |
+| Profiles | One persistent profile per name in `<data>/browser/<profile>` (default `default`): sign-ins stay between tasks. `private: true` opens a separate context for one operation, which can emulate a Playwright device |
+| Window | Headless, unless a tab asks for one (`headed`) and the computer has a display (`DISPLAY` or `WAYLAND_DISPLAY` on Linux; always on macOS and Windows) |
+| Leases | A tab belongs to the operation that opened it; any other gets `not_yours`. Each use renews its lease (10 minutes). The janitor (every 15 s) closes expired tabs, a profile's browser 5 minutes after its last tab, and a private context 30 s after |
+
+Tools: `browser_open` (http and https only), `browser_tabs`, `browser_close`, `browser_snapshot` (the accessibility tree with `[ref=…]` references, cut at 24,000 characters by default), `browser_click`, `browser_type`, `browser_press`, `browser_wait` (a selector, a text, a URL glob or a time), `browser_screenshot` (viewport, full page, one element, another viewport size), `browser_console`, `browser_network_errors`, `browser_record` (a video, or a Playwright trace), `browser_upload` and `browser_download`. There is no script evaluation and no raw CDP, so no tool reads cookies or storage.
+
+What a capture never shows:
+
+- Password, one-time-code and card fields, and elements marked `data-ensemble-sensitive`, are masked in screenshots, in every frame of the page (`SENSITIVE_SELECTOR`), and their values are hidden in snapshots, also when a placeholder puts the value on a line of its own.
+- The owner's saved secret values (as written, and as escaped inside a quoted snapshot value) and key-shaped strings are hidden in snapshots, titles and console text. A screenshot, video or trace of a page that shows one comes back `held: true` with the reason: the owner previews it before it is sent.
+- Page addresses and titles in tool results and the live view have secret query values (`?token=`, `code=` and the like), saved secrets and key shapes hidden.
+- Sites the owner marks never captured are refused for screenshots, snapshots and the live view; a video that reaches one records none of its frames and is held. Sites marked preview-first are held.
+- `browser_type` refuses a saved secret value. Uploads take only regular files with one name from the operation's evidence folder or folders the caller allows, never credential files (`.env*`, keys, certificates) or files containing a saved secret, up to 50 MB; the file is read by descriptor and checked again after opening. Downloads go into the evidence folder, up to 100 MB.
+- A trace records every page of its browser, so it starts only when every page there is this work's and none is in a sign-in. A trace of the shared profile has screenshots only, no page source or network data; a private tab's trace has both, and is held when a page shows a filled password, code or card field.
+
+**Sensitive tabs.** `markSensitive(tab, on)` is for a sign-in or a takeover, not for agents. While on, the tab refuses snapshots, screenshots, recordings, console and network reads and every action; `browser_wait` for a URL still works. A video drops its frames, a trace of its browser (whichever tab started it) is stopped and deleted, and console and network entries are not kept.
+
+**Live view.** An operation's `onLiveFrame` receives a small JPEG of its most recently used tab about every 3 s (masked, quality lowered to keep it near 60 KB). It pauses, saying why, for a sensitive tab, a site the owner marked and a page that shows a secret. The broker keeps no frame.
+
+**Denied to runs.** `browserDeniedPaths()` returns `<data>/browser` and `<data>/capture`: the profiles' cookies and capture's lease file. They sit in the data folder, which the OS sandbox denies ([24](24_DESKTOP_SANDBOXING.md)); a runtime whose data folder is elsewhere (`ENSEMBLE_DATA_HOME`, the testing CLI) adds these paths to the sandbox's deny list.
+
+### 10.2 Capture service
+
+| Target | Screenshot | Video |
+| --- | --- | --- |
+| `web` | A URL opened in a private tab (viewport, device, full page, element), or one of the operation's tabs | Real time or frame-stepped |
+| `electron` | The app's window, from Playwright's Electron launch with the app's own `node_modules/electron` | Real time or frame-stepped |
+| `gui` | Any program started by `capture_app_start` on a private virtual display, grabbed with `ffmpeg -f x11grab` | Real time |
+| `terminal` | A transcript (with its colours) as HTML, or rendered to PNG by Chromium | — |
+| `desktop` | The real screen is refused: not supported | — |
+
+**Virtual displays** (Linux). Each app gets an Xvfb server that picks a free display (`-displayfd`), takes no TCP connections and accepts only its own cookie, kept in a private folder in `$XDG_RUNTIME_DIR` (else the temporary folder) so that an app in the OS sandbox can still read it; plus the first window manager installed (openbox, matchbox, fluxbox, icewm, jwm, xfwm4, metacity, twm). The app's environment has that display and no Wayland socket or session bus, so it never opens on the owner's screen.
+
+**Apps run in the OS sandbox.** An app started for capture runs its own code, so it starts through the runtime's `wrapCommand` (`configureCapture`), which confines it as `prepareSpawn` does for agent commands ([24](24_DESKTOP_SANDBOXING.md)); Electron goes through a small launcher script that does the same. Without a wrapper, `capture_app_start` is refused unless the call says the owner allowed this work to run apps unsandboxed (`unsandboxedApps`). Its window is found by process id (its own or a child's) through xdotool, wmctrl or xwininfo with xprop; else by title; else as the only window; else the whole display is used.
+
+**Frame-stepped video** freezes the page's time and moves it one frame at a time: Playwright's clock for timers, animation frames, `Date` and `performance.now()`; the Web Animations API for CSS animations and transitions (those running when recording starts are seeked from their beginning); and `window.__ensembleSeek(ms)` for code with its own clock. Each frame is a masked screenshot, so frame n is at exactly n/fps seconds however busy the computer is. Real-time video takes the page's screencast and resamples it to a constant rate.
+
+**Media.** MP4 (H.264) when a system ffmpeg has `libx264` or `libopenh264`; otherwise WebM (VP9 or VP8) with Playwright's own ffmpeg. `ENSEMBLE_FFMPEG` names an ffmpeg to try first; each one found is asked what it can encode (`capture/ffmpeg.ts`). Each video has a poster (`<name>.poster.jpg`, or `.png` for a desktop app) and a preview no wider than 320 pixels (`<name>.preview.jpg` or `.png`). Videos stop at two minutes unless the caller raises the limit (`maxVideoMs`, the owner's setting). Size, length, frames and dimensions are read from the written file (`capture/probe.ts`). Files never overwrite each other.
+
+**Privacy.** Web and Electron captures are masked and scanned as in §10.1; a real-time video of an Electron window records no frames of a site the owner never wants captured. A desktop app's window cannot be checked for secrets here, so its captures are always held. Transcripts are redacted before they are written, so they are not held.
+
+**Leases.** Displays, window managers, apps and recordings are process groups under leases (`capture/leases.ts`, recorded in `<data>/capture/leases.json`), and each process carries its lease's id in `ENSEMBLE_CAPTURE_LEASE`. An app's lease runs 30 minutes from its last use. The janitor (every 10 s) ends leases that expired and leases whose process ended; an app's display goes with it. When the runtime exits it kills them all. At start-up (`startCapture`, or the first capture) it stops what a runtime that is no longer running left behind. A group is signalled only while its leader is the process recorded (by start time), or, once the leader is gone, while a member still carries the lease's id (read from `/proc` on Linux), so a reused process id is never hit.
+
+**Checks before sending** (`capture_check`, in the `Check` shape of `node/report.ts`):
+
+| Kind | Passes when |
+| --- | --- |
+| `app` | The app still runs after `aliveSec` (3 s by default); a window is open, with the expected title; its output shows no crash |
+| `image` | The image is not blank: no colour covers 99.5% of it, and its contrast is above 1.5 |
+| `text` | The page or window shows every expected string, in its text or accessible names |
+
+### 10.3 What a computer can capture
+
+`captureCapabilities()` reports the browser and its revision, each ffmpeg and its encoders, the video format, the virtual display pieces, and for each target whether screenshots and video work, with the reason when not. On macOS it also reports the Screen Recording permission, which web pages and Electron apps do not need.
+
+| | Web | Electron | Other apps | Real desktop |
+| --- | --- | --- | --- | --- |
+| Linux (X11, Wayland or no screen) | Yes | With Xvfb | With Xvfb and the system's ffmpeg | No |
+| macOS | Yes | Yes; the window shows on the screen | No | No |
+| Windows | Yes | No | No | No |
+
+`ensemble capture status` prints this. `ensemble capture setup` installs Playwright's Chromium and ffmpeg into `<data>/playwright` with Playwright's own installer and prints the one command for system packages, for example `sudo apt install xvfb ffmpeg openbox xdotool`; it never runs sudo ([26](26_CLI.md)).
+
+### 10.4 Tests and limits
+
+`src/browser/broker.integration.test.ts` and `src/capture/capture.integration.test.ts` drive a headless Chromium against a local server, including a one-second CSS animation recorded at 30 fps and checked frame by frame in the encoded video; `src/browser/browser.test.ts`, `src/capture/capture.test.ts` and `src/capture/leases.test.ts` cover the rest without a browser. Parts that need Xvfb, Electron or an H.264 encoder skip, saying so, where those are missing.
+
+There is no text recognition in images, so a desktop app's captures are always held. Other desktop apps on macOS, anything on Windows beyond web pages, and the real screen are not captured.
