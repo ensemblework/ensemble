@@ -34,6 +34,7 @@ async function status(app: FastifyInstance) {
     browseFiles: settings.browseFiles,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
+    evidenceUpload: settings.evidenceUpload,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -57,6 +58,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         browseFiles: z.boolean().optional(),
         webEdit: z.boolean().optional(),
         webTerminal: z.boolean().optional(),
+        evidenceUpload: z.boolean().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -78,12 +80,13 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.browseFiles === undefined ? {} : { browseFiles: body.browseFiles }),
       ...(body.webEdit === undefined ? {} : { webEdit: body.webEdit }),
       ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
+      ...(body.evidenceUpload === undefined ? {} : { evidenceUpload: body.evidenceUpload }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled !== undefined || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined) {
+    if (body.enabled !== undefined || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined || body.evidenceUpload !== undefined) {
       const action =
         body.enabled === true
           ? "remote.enable"
@@ -95,8 +98,10 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
                 ? "remote.browse_files"
                 : body.webEdit !== undefined
                   ? "remote.web_edit"
-                  : "remote.web_terminal";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal } });
+                  : body.webTerminal !== undefined
+                    ? "remote.web_terminal"
+                    : "remote.evidence_upload";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal, evidenceUpload: next.evidenceUpload } });
     }
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();

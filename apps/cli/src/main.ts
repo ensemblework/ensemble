@@ -1,4 +1,4 @@
-import { answerFor, answerPending, browseFiles, connectedHooks, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, browseFiles, connectedHooks, evidenceUpload, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import { formatSessions, listSessions } from "./sessions.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
@@ -81,6 +81,7 @@ Usage:
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
   ensemble browse [status] | on | off
+  ensemble evidence [status] | on | off
   ensemble web [status] | files|edit|terminal on|off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
@@ -106,6 +107,8 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
   browse:
     "Usage: ensemble browse [status] | on | off\nOn (default): Ensemble on the web shows the files of tasks run here: the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets.",
+  evidence:
+    "Usage: ensemble evidence [status] | on | off\nOn (default): files a run's agent attaches for you (screenshots, reports, logs) go to Ensemble on the web with the run's result, for you only. Off: they stay on this computer, and the web shows their names as on this computer, not uploaded. Keys, .env files and anything holding a saved secret are never attached.",
   web:
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
@@ -616,6 +619,20 @@ async function commandBrowse(args: string[]): Promise<void> {
   );
 }
 
+async function commandEvidence(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.evidence);
+  const subcommand = args[0] ?? "status";
+  if (!["status", "on", "off"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.evidence);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const on = await withAdminApi({ sidecarDir, run: (discovery) => evidenceUpload(discovery, subcommand === "status" ? undefined : subcommand === "on") });
+  console.log(
+    on
+      ? "Evidence upload: on. Files a run's agent attaches (screenshots, reports, logs) go to Ensemble on the web with the run's result, for you only."
+      : "Evidence upload: off. Attached files stay on this computer; the web shows their names as on this computer, not uploaded.",
+  );
+}
+
 async function commandWeb(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.web);
   const [what = "status", value] = args;
@@ -872,6 +889,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandApprovals(rest);
     case "browse":
       return commandBrowse(rest);
+    case "evidence":
+      return commandEvidence(rest);
     case "web":
       return commandWeb(rest);
     case "hooks":

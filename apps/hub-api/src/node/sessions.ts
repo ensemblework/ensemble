@@ -31,6 +31,7 @@ import { stopJob } from "../workspace/worker.js";
 import { postMessage, roomPeople, updateMessageData } from "./store.js";
 import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
+import { secretScopeFor } from "./secret-scope.js";
 
 export type SessionLineage = { rootMessageId: string | null; botDepth: number; fromNonOwner: boolean };
 
@@ -293,7 +294,7 @@ export async function agentModel(prisma: PrismaClient, deviceId: string | null |
 
 async function queueJob(env: SessionEnv, body: JobRequest, context: Record<string, unknown>, cleanup?: () => Promise<unknown>): Promise<string> {
   try {
-    const created = await createJob(env.prisma, env.node.userId, body, { actor: "agent", context: { node: { nodeId: env.node.id }, ...context } as never });
+    const created = await createJob(env.prisma, env.node.userId, body, { actor: "agent", context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...context } as never });
     if (!created) throw new ToolBlockedError("That task is not available any more.");
     return created.jobId;
   } catch (error) {

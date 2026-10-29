@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { bridgeFor, callThroughBridge } from "../subscriptions/bridge.js";
 import { CHAT_TOOLS, runChatTool } from "../workspace/engines/chat-tools.js";
+import { RUN_TOOLS, RunToolError, runRunTool } from "../evidence/run-tools.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { isChatTurn } from "../workspace/trust.js";
 
@@ -58,15 +59,26 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // The person's board for their own agent in Chat: the same run secret, chat turns only.
+  // The person's board for their own agent in Chat, and a task run's report and evidence (evidence/run-tools.ts): the same run secret.
   app.post("/api/engine/tool", async (request, reply) => {
     const host = request.ip.replace(/^::ffff:/, "");
     if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
     const header = request.headers["x-ensemble-run"];
     const run = engineRunFor(Array.isArray(header) ? header[0] : header);
     if (!run) return reply.code(401).send({ error: "This run has ended." });
-    if (!isChatTurn(run.ctx.job.context)) return reply.code(403).send({ error: "Ensemble's board tools are for Chat." });
-    const body = z.object({ name: z.enum(CHAT_TOOLS), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    const body = z.object({ name: z.enum([...CHAT_TOOLS, ...RUN_TOOLS]), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    const chat = isChatTurn(run.ctx.job.context);
+    if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
+      if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
+      try {
+        return { text: await runRunTool(run.ctx, body.name, body.input) };
+      } catch (error) {
+        if (error instanceof RunToolError) return reply.code(400).send({ error: error.message });
+        request.log.error({ err: error }, "run tool failed");
+        return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
+      }
+    }
+    if (!chat) return reply.code(403).send({ error: "Ensemble's board tools are for Chat." });
     try {
       return { text: await runChatTool(run.ctx, body.name, body.input) };
     } catch (error) {

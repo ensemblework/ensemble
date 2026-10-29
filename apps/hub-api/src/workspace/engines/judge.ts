@@ -31,6 +31,9 @@ const HARMLESS = new Set([
   "ListMcpResourcesTool", "ReadMcpResourceTool",
   // Ensemble's own question tool: the question itself is judged when the tool asks (as AskUserQuestion).
   "mcp__ensemble__ask_person",
+  // The run's own result and evidence (evidence/run-tools.ts): a file it attaches is judged there, as a read.
+  "mcp__ensemble__report_result",
+  "mcp__ensemble__attach_evidence",
   // The person's own board, in Chat only (/api/engine/tool refuses other runs): nothing outside Ensemble.
   "mcp__ensemble__ensemble_list_tasks",
   "mcp__ensemble__ensemble_search",

@@ -580,6 +580,7 @@ model WorkspaceJob {
   logChunks            WorkspaceLogChunk[]
   files                JobFile[]
   review               CodeReview?
+  evidenceFiles        JobEvidence[]
 
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
@@ -2766,4 +2767,40 @@ model RunSecret {
 
   @@unique([userId, name])
   @@map("run_secrets")
+}
+
+/// A file the worker of a run attached for its owner (evidence/, docs/32 §7): a screenshot, image, video,
+/// trace, report, log or file. On a computer the bytes stay in the run's evidence folder; on the web they
+/// are in the blob store Files uses, or on the row when this server keeps uploads in the database.
+/// Only the account it belongs to reads it.
+model JobEvidence {
+  /// Made by the computer, so a repeated upload finds the same row.
+  id            String       @id @default(uuid())
+  /// The account whose computer ran the job (its runner, else the space's owner).
+  userId        String       @map("user_id")
+  jobId         String       @map("job_id")
+  /// screenshot | image | video | trace | report | log | file
+  kind          String
+  /// The file's name (no folders).
+  name          String
+  /// The type sniffed from the bytes, never the sender's word.
+  mime          String
+  size          Int
+  sha256        String
+  /// Where the bytes are: the blob key (evidence/<userId>/<jobId>/<id>) on the web, the file's name in the
+  /// run's evidence folder on a computer.
+  storageKey    String       @map("storage_key")
+  /// The bytes, when this server keeps uploads in the database (no blob store).
+  bytes         Bytes?
+  /// Kept on the computer only: evidence upload is off there, so the web has its name and size, not the bytes.
+  local         Boolean      @default(false)
+  caption       String?
+  /// The mission requirement it supports, when the worker named one.
+  requirementId String?      @map("requirement_id")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  job           WorkspaceJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([userId, createdAt])
+  @@map("job_evidence")
 }

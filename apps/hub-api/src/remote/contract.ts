@@ -39,6 +39,8 @@ export const ROUTES = {
   codeAnswer: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}`,
   /** Output of a terminal command the web started here, in order (protocol 4). */
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
+  /** A file the run's worker attached, as raw bytes with `EVIDENCE_HEADERS` (protocol 6). */
+  evidence: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/evidence`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -80,8 +82,11 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * going (`ROUTES.reattach`), and asks to carry on a run it lost by restarting (`ROUTES.resume`); a
  * claim may carry `resume`, which the computer runs in the earlier run's folder and agent session.
  * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
+ * 6 (3 Nov 2026): a claim may carry `secrets` (the saved secrets the run may have; absent: all of them);
+ * complete may carry the worker's `report` (node/report.ts StepReport); the files a worker attached go to
+ * `ROUTES.evidence` before complete.
  */
-export const PROTOCOL = 5;
+export const PROTOCOL = 6;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
 export const MAX_AUTO_RESUMES = 2;
 /** A run interrupted longer ago than this is not carried on by itself. */
@@ -167,6 +172,11 @@ export const JobSpec = z
     resume: z.object({ reason: text(300), attempt: z.number().int().min(1).max(10) }).nullish(),
     /** This run changes the one it continues, which was interrupted for it (Ensemble Node's steer). Older servers omit it. */
     steer: z.object({ update: text(8000) }).nullish(),
+    /**
+     * The saved secrets this run may have in its environment, by name (protocol 6): an Ensemble Node run
+     * lists the ones its step or mission names, possibly none. Absent: every saved secret, as before.
+     */
+    secrets: z.array(text(64)).max(100).nullish(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
@@ -409,3 +419,33 @@ export const TerminalChunk = z.object({
   exitCode: z.number().int().min(-1).max(1_000_000).nullish(),
 });
 export type TerminalChunk = z.infer<typeof TerminalChunk>;
+
+// ── evidence (protocol 6) ───────────────────────────────────────────────────
+
+/** What a worker may attach (evidence/limits.ts holds the size limits and the content checks). */
+export const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log", "file"] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+/** Headers of an evidence upload: the job's lease, and `EvidenceMeta` as base64url JSON. The body is the file's bytes. */
+export const EVIDENCE_HEADERS = { lease: "x-ensemble-job-lease", meta: "x-ensemble-evidence" } as const;
+
+/**
+ * One attached file, as the computer describes it. `local`: evidence upload is off on that computer
+ * (`ensemble evidence off`), so only this goes up and the body is empty; the web shows the file as on
+ * the computer, not uploaded.
+ */
+export const EvidenceMeta = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum(EVIDENCE_KINDS),
+    name: text(200).min(1),
+    size: z.number().int().min(0).max(200 * 1024 * 1024),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    /** The type the computer sniffed; the server sniffs uploaded bytes itself and uses this only for `local`. */
+    mime: text(100).nullish(),
+    caption: text(300).nullish(),
+    requirementId: text(80).nullish(),
+    local: z.boolean().default(false),
+  })
+  .strict();
+export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
