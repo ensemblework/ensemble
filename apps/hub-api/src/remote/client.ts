@@ -59,6 +59,8 @@ export interface HostedClient {
    * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.
    */
   uploadEvidence?(jobId: string, leaseToken: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "unsupported"; error?: string }>;
+  /** Output of a node tool command, in order (protocol 6). False: nobody reads it any more. */
+  toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean }): Promise<boolean>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
@@ -240,6 +242,12 @@ export function hostedClient(base: string, token: string): HostedClient {
     },
     async terminalOutput(runId, chunk) {
       const res = await call("POST", ROUTES.terminalOutput(runId), chunk);
+      if (res.status === 404 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
+      return true;
+    },
+    async toolOutput(runId, chunk) {
+      const res = await call("POST", ROUTES.toolOutput(runId), chunk);
       if (res.status === 404 || res.status === 410) return false;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
       return true;

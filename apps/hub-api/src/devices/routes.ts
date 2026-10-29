@@ -53,6 +53,7 @@ import { endUnconfirmedStops } from "./settle.js";
 import { PageDocument } from "@ensemble/shared-types";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
+import { nodeToolRoutes } from "./tool-runs.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -264,8 +265,9 @@ function taskPageMarkdown(content: unknown, notes: string): string {
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
-  // A run's evidence (evidence/routes.ts), with these routes' device checks.
+  // A run's evidence (evidence/routes.ts) and a node's tool runs on a computer (devices/tool-runs.ts), with these routes' device checks.
   await app.register(evidenceRoutes, { ownDevice, holdLease });
+  await app.register(nodeToolRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);

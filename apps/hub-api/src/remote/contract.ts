@@ -41,6 +41,8 @@ export const ROUTES = {
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
   /** A file the run's worker attached, as raw bytes with `EVIDENCE_HEADERS` (protocol 6). */
   evidence: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/evidence`,
+  /** Output of a node tool command, in order, past what its answer carried (protocol 6, `node.tool.request`). */
+  toolOutput: (runId: string) => `/api/devices/self/tool-runs/${encodeURIComponent(runId)}/output`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -84,7 +86,8 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
  * 6 (3 Nov 2026): a claim may carry `secrets` (the saved secrets the run may have; absent: all of them);
  * complete may carry the worker's `report` (node/report.ts StepReport); the files a worker attached go to
- * `ROUTES.evidence` before complete.
+ * `ROUTES.evidence` before complete; the server may send `node.tool.request` (a node's own tool call on
+ * this computer, `capabilities.nodeTools`), whose long output goes to `ROUTES.toolOutput`.
  */
 export const PROTOCOL = 6;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
@@ -449,3 +452,100 @@ export const EvidenceMeta = z
   })
   .strict();
 export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
+
+// ── node tools (protocol 6) ─────────────────────────────────────────────────
+
+/** `capabilities.nodeTools`: this computer answers `node.tool.request` (a node's own tool calls). */
+export const NODE_TOOLS_API = 1;
+/** What one node tool answer carries inline; a command's longer output goes to `ROUTES.toolOutput`. */
+export const NODE_TOOL_INLINE_BYTES = 64 * 1024;
+/** A command still going after this becomes a background tool run that wakes the node when it ends. */
+export const NODE_TOOL_FOREGROUND_MS = 60_000;
+/** The longest a node's command may run; longer work is an agent session. */
+export const NODE_TOOL_MAX_SECONDS = 900;
+/** What one tool run may print in all; past this the computer stops sending and says so. */
+export const NODE_TOOL_OUTPUT_BYTES = 1024 * 1024;
+/** A file a node may write in one call. */
+export const NODE_TOOL_WRITE_BYTES = 1024 * 1024;
+
+/** An answer the owner gave in Needs me for a node's tools: once, for this mission, or always for the folder or address. */
+export const NodeToolGrant = z.object({ id: text(100).min(1), scope: z.enum(["once", "mission", "always"]), target: text(4096).min(1) }).strict();
+export type NodeToolGrant = z.infer<typeof NodeToolGrant>;
+
+const NodeToolBase = z.object({
+  id: text(100).min(1),
+  nodeId: text(100).min(1),
+  /** The mission (plan) or conversation the call is for: an answer for "This mission" covers it. */
+  mission: text(200).min(1),
+  /** Attended: the first use per folder or address asks the owner once. Unattended: allowed inside the sandbox. */
+  attended: z.boolean(),
+  /** Answers from Needs me this computer has not used yet; it applies the one for the call's folder or address. */
+  grants: z.array(NodeToolGrant).max(20).default([]),
+  /** The call's operation id: the ledger entry names it. */
+  operationId: text(200).optional(),
+});
+
+const Folder = text(4096).min(1);
+
+/**
+ * `node.tool.request` on the event stream: one tool call of a node, run and judged here (docs/25 §4.10).
+ * The answer is a `CodeAnswer`: 200 with the result, 202 for a command still running (its output follows
+ * on `ROUTES.toolOutput` and its end wakes the node), 428 when the owner must answer once in Needs me
+ * (`body.ask`), 403 for the hard floor, 409 when it is switched off or cannot run here.
+ */
+export const NodeToolRequest = z.discriminatedUnion("tool", [
+  NodeToolBase.extend({
+    tool: z.literal("run"),
+    folder: Folder,
+    /** A subfolder to run in, inside the folder. */
+    cwd: text(1000).optional(),
+    command: text(4000).min(1),
+    timeoutSec: z.number().int().min(1).max(NODE_TOOL_MAX_SECONDS).default(120),
+    /** Answer at once and run in the background; its end wakes the node. */
+    background: z.boolean().default(false),
+    /** Saved secrets for this command's environment only, by name. */
+    secrets: z.array(text(64)).max(20).default([]),
+    /** Where its output goes when it does not fit the answer, or runs on. */
+    runId: text(100).min(1),
+    /** The git ceiling of the node's run profile, for git commands. */
+    delivery: z.enum(["local", "commit", "push"]).default("local"),
+    network: z.boolean().default(true),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("git"),
+    folder: Folder,
+    op: z.enum(["status", "diff", "log", "show", "branch"]),
+    args: z.array(text(500)).max(20).default([]),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("http"),
+    url: text(2000).min(1),
+    method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).default("GET"),
+    body: z.string().max(NODE_TOOL_INLINE_BYTES).optional(),
+    contentType: text(200).optional(),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("files"),
+    action: z.enum(["write", "move", "delete"]),
+    folder: Folder,
+    path: text(1000).min(1),
+    /** move: the new path, inside the same folder. */
+    to: text(1000).optional(),
+    /** write: the file's whole new text. */
+    content: z.string().max(NODE_TOOL_WRITE_BYTES).optional(),
+  }),
+]);
+export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
+
+/** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
+export const NodeToolAsk = z.object({
+  capability: z.enum(["run", "git", "http", "files"]),
+  /** What the answer covers: the folder's real path, or the address's origin. */
+  target: text(4096).min(1),
+  /** How the card names it: the folder's label or path, or the origin. */
+  label: text(300).min(1),
+  scope: z.enum(["folder", "origin"]),
+  /** The sandbox here is weak: "Always" is not offered for commands, and asks once per mission instead. */
+  weak: z.boolean().default(false),
+});
+export type NodeToolAsk = z.infer<typeof NodeToolAsk>;
