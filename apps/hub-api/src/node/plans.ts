@@ -39,6 +39,7 @@ import {
 } from "./missions-core.js";
 import { parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
 import { renderConstraints, type Constraints, type PlanInput, type StepInput } from "./plan-contract.js";
+import { missionOriginFor } from "./peer-requests.js";
 
 export { ENDED, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
@@ -392,7 +393,7 @@ export async function addStep(
       visibleTo: input.visibleTo,
     });
     await db.nodeMission.create({
-      data: { id: message.id, userId: input.lead.userId, leadNodeId: input.lead.id, originRoomId: input.originRoomId, originPrivate: input.originPrivate, leadTurnId: input.turnId, kind: input.kind ?? "plan", contract: 3, status: "draft", goal: input.goal ?? null },
+      data: { id: message.id, userId: input.lead.userId, leadNodeId: input.lead.id, originRoomId: input.originRoomId, originPrivate: input.originPrivate, leadTurnId: input.turnId, kind: input.kind ?? "plan", contract: 3, status: "draft", goal: input.goal ?? null, ...(await missionOriginFor(db, input.turnId)) },
     });
     plan = await loadPlan(db, message.id);
     if (!plan) throw new Error("The new plan could not be read back.");
@@ -822,6 +823,8 @@ export async function createPlan(
     acceptance: row.acceptance.map((item) => ({ id: item.id, text: item.text, mandatory: item.mandatory !== false })),
     ...(row.evidence?.length ? { evidence: row.evidence } : {}),
   }));
+  // An accepted peer request (node/peer-requests.ts): who asked, where the result goes, its principals.
+  const origin = await missionOriginFor(db, input.turnId, input.plan.constraints);
   await db.$transaction(async (tx) => {
     await tx.nodeMission.create({
       data: {
@@ -838,6 +841,7 @@ export async function createPlan(
         constraints: input.plan.constraints as Prisma.InputJsonValue,
         requirements: requirements as unknown as Prisma.InputJsonValue,
         deferred: input.plan.deferred as unknown as Prisma.InputJsonValue,
+        ...origin,
       },
     });
     for (const [index, step] of input.plan.steps.entries()) {

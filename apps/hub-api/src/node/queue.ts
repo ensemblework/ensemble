@@ -12,17 +12,14 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeMessage, NodeTurn, Prisma } from "@prisma/client";
-import type { ModelTier } from "@ensemble/shared-types";
-import { complete } from "../lib/runtime.js";
-import { loadSettings } from "../lib/settings.js";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn } from "./brain.js";
 import type { Mention } from "./mentions.js";
-import { defaultChatModel } from "./model.js";
-import { MAX_BOT_STREAK, botStreak, parseRelevance, relevancePrompt, whoSpeaks, type RelevanceCandidate, type RouteNode } from "./router.js";
+import { MAX_BOT_STREAK, botStreak, whoSpeaks, type RouteNode, type RouteTarget } from "./router.js";
 import { publishTo } from "./events.js";
 import { postMessage, roomSettings } from "./store.js";
 import { missionEnded, planTurnEnded } from "./plans.js";
+import { postStatusCards } from "./status-cards.js";
 
 const PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_PARALLEL ?? 4) || 4);
 /** Conversation turns in parallel on this server (kept apart from work, so talking never waits behind work). */
@@ -398,40 +395,6 @@ export async function settleTurns(): Promise<void> {
   while (chains.size || background.size) await Promise.allSettled([...chains.values(), ...background]);
 }
 
-type Relevance = (input: { authorId: string; system: string; prompt: string }) => Promise<unknown>;
-let relevanceForTests: Relevance | null = null;
-
-export function setNodeRelevanceForTests(fn: Relevance | null): void {
-  relevanceForTests = fn;
-}
-
-/** A small model call, paid by the message's author, picks which representatives answer. */
-async function relevant(app: FastifyInstance, message: NodeMessage, candidates: RelevanceCandidate[]): Promise<string[]> {
-  const prisma = app.prisma;
-  const [author, recent] = await Promise.all([
-    prisma.user.findUnique({ where: { id: message.userId }, select: { name: true, email: true } }),
-    prisma.nodeMessage.findMany({ where: { roomId: message.roomId, seq: { lt: message.seq }, kind: "text", visibleTo: { isEmpty: true } }, orderBy: { seq: "desc" }, take: 6 }),
-  ]);
-  const { system, prompt } = relevancePrompt(
-    message.body,
-    author?.name?.trim() || author?.email.split("@")[0] || "someone",
-    candidates,
-    recent.reverse().map((row) => truncateText(row.body, 300)),
-  );
-  try {
-    if (relevanceForTests) return parseRelevance(await relevanceForTests({ authorId: message.userId, system, prompt }), candidates);
-    const settings = await loadSettings(prisma, message.userId);
-    const model = defaultChatModel(settings);
-    if (!model) return [];
-    const easy = { provider: model.provider as ModelTier["provider"], model: model.model, effort: "default" as const };
-    const answer = await complete({ userId: message.userId, settings: { ...settings, models: { ...settings.models, easy } }, tier: "easy", system, prompt, json: true, purpose: "Ensemble Node routing" });
-    return parseRelevance(answer.json, candidates);
-  } catch (error) {
-    app.log.warn({ err: error }, "Node relevance routing failed; nobody answers");
-    return [];
-  }
-}
-
 /** Wakes the nodes that should answer a message. */
 export async function dispatchMessage(app: FastifyInstance, message: NodeMessage): Promise<void> {
   if (message.kind !== "text" || message.authorKind === "system") return;
@@ -444,7 +407,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   const wakes = (node: { id: string; userId: string }) => message.authorKind === "human" && message.userId === node.userId && (room.kind === "dm" || mentioned.has(node.id));
   const nodes: RouteNode[] = members
     .filter((row) => row.node)
-    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active" || wakes(row.node!), representative: row.representative, role: row.node!.role }));
+    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active" || wakes(row.node!), representative: row.representative, role: row.node!.role, handle: row.handle }));
   const recent = await prisma.nodeMessage.findMany({
     where: { roomId: room.id, seq: { lte: message.seq }, ...(message.visibleTo.length ? {} : { visibleTo: { isEmpty: true } }) },
     orderBy: { seq: "desc" },
@@ -456,6 +419,8 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       kind: message.kind,
       authorKind: message.authorKind as "human" | "node" | "system",
       authorNodeId: message.authorNodeId,
+      authorId: message.userId,
+      text: message.body,
       visibleTo: message.visibleTo,
       mentions: (Array.isArray(message.mentions) ? message.mentions : []) as Mention[],
       botDepth: message.botDepth,
@@ -464,17 +429,9 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
     nodes,
     botStreak(recent),
   );
-  let ids: string[] = decision.nodeIds;
-  if (decision.reason === "relevance") {
-    const owners = await prisma.user.findMany({ where: { id: { in: nodes.map((row) => row.ownerId) } }, select: { id: true, name: true, email: true } });
-    const ownerName = new Map(owners.map((row) => [row.id, row.name?.trim() || row.email.split("@")[0]!]));
-    const duties = roomSettings(room).responsibilities;
-    const candidates = decision.candidates.map((id) => {
-      const row = members.find((member) => member.nodeId === id)!;
-      return { id, handle: row.handle, owner: ownerName.get(row.userId) ?? "someone", role: row.node!.role, focus: duties[row.userId] ?? "" };
-    });
-    ids = await relevant(app, message, candidates);
-  }
+  // `@leads status` in a room with other people: every person's status card, built by code (node/status-cards.ts).
+  if (decision.reason === "status") return postStatusCards(app, room, message);
+  const targets: RouteTarget[] = decision.reason === "none" ? [] : (decision.targets ?? decision.nodeIds.map((nodeId) => ({ nodeId, private: message.visibleTo.length > 0, audience: "owner" as const })));
   if (decision.reason === "none" && decision.brake) {
     // Said once: not again until a person writes here.
     const lastPerson = await prisma.nodeMessage.findFirst({ where: { roomId: room.id, authorKind: "human" }, orderBy: { seq: "desc" }, select: { seq: true } });
@@ -503,10 +460,10 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   if (room.kind === "crew" && message.authorKind === "human") {
     for (const row of members) if (row.node && row.node.status === "paused" && mentioned.has(row.node.id) && row.node.userId === message.userId) await resumeNode(app, row.node);
   }
-  for (const nodeId of ids) {
-    const node = members.find((row) => row.nodeId === nodeId)?.node;
+  for (const target of targets) {
+    const node = members.find((row) => row.nodeId === target.nodeId)?.node;
     if (node?.status === "paused" && wakes(node)) await resumeNode(app, node);
-    await enqueueTurn(app, { nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: message.visibleTo.length > 0 });
+    await enqueueTurn(app, { nodeId: target.nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: target.private, audience: target.audience, note: target.note ?? null });
   }
 }
 

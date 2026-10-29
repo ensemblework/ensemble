@@ -14,6 +14,7 @@ import { sessionOfJob } from "../workspace/sessions.js";
 import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
 import { finishStep, planLinkOf } from "./plans.js";
+import { roomDraftPosted, settleRoomCard } from "./audience.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -113,6 +114,9 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   const prisma = app.prisma;
   const { card, node } = await ownCard(app, accountId, messageId);
   const type = (card.data as { type?: unknown }).type;
+  // Rooms with other people: disclosure and peer-request cards (node/audience.ts, node/peer-requests.ts).
+  const roomCard = await settleRoomCard(app, card, node, input);
+  if (roomCard) return roomCard;
 
   if (type === "post") {
     PostCard.parse(card.data);
@@ -137,6 +141,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
       botDepth: card.botDepth,
     });
     await dispatchMessage(app, message);
+    await roomDraftPosted(app, card, message);
     return updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "posted", postedMessageId: message.id }, body);
   }
 

@@ -2440,6 +2440,7 @@ model NodeRoom {
   messages      NodeMessage[]
   runs          NodeRun[]
   invites       NodeRoomInvite[]
+  peerRequests  NodePeerRequest[]
 
   @@index([userId])
   @@map("node_rooms")
@@ -2489,6 +2490,9 @@ model NodeRoomMember {
   privateSeenSeq        Int        @default(0) @map("private_seen_seq")
   /// The newest message seq this person has read.
   readSeq               Int        @default(0) @map("read_seq")
+  /// A person's own settings for a room with other people (node/trust.ts): `{ trust: { everyone, people: { accountId: … } },
+  /// budget, away: { until, note, since }, shareable: [{ kind, id, spaceId, title }] }`. Empty for nodes.
+  prefs                 Json       @default("{}")
   joinedAt              DateTime   @default(now()) @map("joined_at")
   room                  NodeRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   node                  NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
@@ -2578,7 +2582,7 @@ model NodeTurn {
   userId           String    @map("user_id")
   nodeId           String    @map("node_id")
   roomId           String?   @map("room_id")
-  /// mentioned | dm | lead | relevance | run | approval | plan
+  /// mentioned | dm | lead | run | approval | plan | request (a peer request) | answer, disclose (the owner's answer to a disclosure card)
   reason           String
   /// The owner's private thread in the room rather than the shared one.
   private          Boolean   @default(false)
@@ -2607,6 +2611,10 @@ model NodeTurn {
   sideEffectsAt    DateTime? @map("side_effects_at")
   /// Tools the turn ran, written as each one ends: [{ name, state, summary }]. A restart reads them.
   receipts         Json      @default("[]")
+  /// The peer request this turn answers or plans (node/peer-requests.ts): a mission it makes carries `requestedBy`.
+  peerRequestId    String?   @map("peer_request_id")
+  /// For a turn done for someone other than the owner: { data, billing, executionDevice, approver, askedBy } account ids.
+  principals       Json      @default("{}")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?
@@ -2619,6 +2627,43 @@ model NodeTurn {
   @@index([status, createdAt])
   @@index([nodeId, createdAt])
   @@map("node_turns")
+}
+
+/// A question, share, review or work request from one person in a room to another, through the other
+/// person's lead (node/peer-requests.ts). The requester sees its status and public answers; the target
+/// owner sees everything and decides. Work and reviews never start before the target owner accepts.
+model NodePeerRequest {
+  id            String    @id @default(uuid())
+  roomId        String    @map("room_id")
+  fromAccountId String    @map("from_account_id")
+  /// The requester's node when it relayed the request for them.
+  fromNodeId    String?   @map("from_node_id")
+  toAccountId   String    @map("to_account_id")
+  /// The target person's lead when the request was made.
+  toNodeId      String    @map("to_node_id")
+  /// question | share | review | work
+  kind          String
+  text          String
+  /// [{ kind, id, title }]: tasks, pages, files or links the request names.
+  refs          Json      @default("[]")
+  /// A review's pinned candidate: { repo?, commit?, url? }.
+  candidate     Json?
+  /// open | answered | awaiting_owner | approved | declined | done | cancelled
+  status        String    @default("open")
+  /// The public answer, a decline note, or the result line when the work ended.
+  answer        String?
+  missionId     String?   @map("mission_id")
+  /// The public card in the room, and the target owner's private card.
+  cardId        String?   @map("card_id")
+  ownerCardId   String?   @map("owner_card_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  decidedAt     DateTime? @map("decided_at")
+  room          NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@index([toAccountId, status])
+  @@map("node_peer_requests")
 }
 
 /// What a node keeps between conversations. The owner sees, edits and deletes every row.

@@ -49,6 +49,8 @@ import {
 import { CREW_TEMPLATES, NODE_TEMPLATES, nodeTemplate } from "./templates.js";
 import { registerOutbox } from "./outbox.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
+import { registerPeerRoutes } from "./peer-routes.js";
+import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -286,6 +288,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   // Mission changes deliver their effects (node/outbox.ts) wherever the Node API runs.
   registerOutbox();
   const prisma = app.prisma;
+  // Rooms with other people: trust, status cards, peer requests, Share to room (node/peer-routes.ts).
+  await registerPeerRoutes(app);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};
@@ -536,7 +540,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (nodes.length !== ids.length) throw fail(404, "That node is not available.");
     const lead = nodes.find((node) => node.id === body.leadNodeId) ?? nodes[0]!;
     const room = await prisma.$transaction(async (tx) => {
-      const created = await tx.nodeRoom.create({ data: { userId: accountId, kind: "room", title, settings: {} } });
+      const created = await tx.nodeRoom.create({ data: { userId: accountId, kind: "room", title, settings: { version: 2 } } });
       await addPerson(tx, created.id, accountId, "owner");
       for (const id of ids) await addNode(tx, created.id, nodes.find((node) => node.id === id)!, id === lead.id);
       return created;
@@ -782,9 +786,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       throw fail(400, "Keep at least one of your nodes in a room, or leave the room.");
     }
     const people = await roomPeople(prisma, room.id);
-    await prisma.$transaction(async (tx) => {
+    const revoked: Revoked | null = await prisma.$transaction(async (tx) => {
       // A person who leaves takes their nodes along.
       await tx.nodeRoomMember.deleteMany({ where: member.nodeId ? { id: member.id } : { roomId: room.id, userId: member.userId } });
+      // …and what others gave them here: trust, undecided requests, queued turns, pending cards (node/peer-requests.ts).
+      const lost = !member.nodeId && room.kind === "room" ? await revokeOnLeave(tx, room.id, member.userId) : null;
       const next = theirs.find((row) => row.id !== member.id);
       if (member.representative && next) await tx.nodeRoomMember.update({ where: { id: next.id }, data: { representative: true } });
       // A crew whose lead left is led by its manager, else its first remaining node.
@@ -796,9 +802,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
         await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
       }
+      return lost;
     });
     if (member.nodeId) await stopTurns(app, [member.nodeId], room.id);
     else await stopTurns(app, theirs.map((row) => row.nodeId!), room.id);
+    if (revoked) await afterLeave(app, revoked);
     await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: `@${member.handle} left.` });
     publishTo(people, "node.room", { roomId: room.id });
     return reply.code(204).send();

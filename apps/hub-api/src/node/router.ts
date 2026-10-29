@@ -1,16 +1,19 @@
 /**
- * Who speaks after a message in an Ensemble Node room (docs/35 §5). Pure: the caller loads the
+ * Who speaks after a message in an Ensemble Node room (docs/35 §4). Pure: the caller loads the
  * room, its nodes and the recent tail, and enqueues a turn for each node returned.
  *
  *   - Cards and system lines never wake anyone.
  *   - A node sees only what its owner may see, so a private message wakes only that person's nodes.
  *   - In a crew one node answers a person: the one node they mention, else the lead, which
  *     coordinates the others through a plan (node/plans.ts). Nodes' messages there wake nobody.
+ *   - In a room with other people (rooms v2, docs/35 §12): public talk is people and their leads.
+ *     Only a mention wakes a node; only leads answer in public, as room-bound turns; a person's own
+ *     other nodes answer them privately (My crew); another person's other node is answered by that
+ *     person's lead; `@leads status` is a card built by code; nodes' messages wake nobody.
  *   - Elsewhere a node's message wakes only the nodes it mentions, under two brakes: consecutive
  *     node messages in the room, and the depth of the bot chain under one person's message.
  *   - A person's message wakes the nodes it mentions; mentioning only people wakes nobody;
- *     otherwise the DM's node, or in a group the one representative (several: a small relevance
- *     call picks at most two).
+ *     otherwise the DM's node.
  */
 import type { Mention } from "./mentions.js";
 
@@ -18,26 +21,48 @@ export const MAX_BOT_STREAK = 8;
 export const MAX_BOT_DEPTH = 12;
 export const MAX_HUMAN_FANOUT = 6;
 export const MAX_NODE_FANOUT = 3;
-export const MAX_RELEVANT = 2;
 
 export type RouteMessage = {
   kind: string;
   authorKind: "human" | "node" | "system";
   authorNodeId: string | null;
+  /** The author's account: the person, or the node's owner. */
+  authorId?: string;
+  /** The message's words: `@leads status` is recognised from them. */
+  text?: string;
   visibleTo: readonly string[];
   mentions: readonly Mention[];
   botDepth: number;
 };
 
 export type RouteRoom = { kind: "dm" | "crew" | "room" | "task"; leadNodeIds: readonly string[] };
-export type RouteNode = { id: string; ownerId: string; active: boolean; representative: boolean; role: string };
+export type RouteNode = { id: string; ownerId: string; active: boolean; representative: boolean; role: string; handle?: string };
+
+/** One turn to start: which node, in which thread, for whom it answers. */
+export type RouteTarget = {
+  nodeId: string;
+  /** The owner's private thread (My crew) rather than the shared one. */
+  private: boolean;
+  /** room: everyone in the room reads the answer, so the turn is room-bound (node/audience.ts). */
+  audience: "owner" | "room";
+  /** A hint for the turn, for example that another node was named and only leads answer in public. */
+  note?: string;
+};
 
 export type RouteDecision =
-  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[] }
-  | { reason: "relevance"; nodeIds: []; candidates: string[] }
+  | { reason: "mentioned" | "dm" | "lead"; nodeIds: string[]; targets?: RouteTarget[] }
+  | { reason: "status"; nodeIds: [] }
   | { reason: "none"; nodeIds: []; brake?: "streak" | "depth" };
 
 const none = (brake?: "streak" | "depth"): RouteDecision => ({ reason: "none", nodeIds: [], ...(brake ? { brake } : {}) });
+
+/**
+ * `@leads status`, and the same with punctuation ("@leads, status?", "@Leads: status!"): nothing else.
+ * In a room with other people it is answered by code with every person's status card, without a model.
+ */
+export function leadsStatus(text: string): boolean {
+  return /^\s*@leads\b[\s,:;.!?\u2013\u2014-]*status\s*[?!.]*\s*$/i.test(text);
+}
 
 /** Node messages at the end of the room (newest first), not counting cards. */
 export function botStreak(recentNewestFirst: ReadonlyArray<{ authorKind: string; kind: string }>): number {
@@ -50,11 +75,63 @@ export function botStreak(recentNewestFirst: ReadonlyArray<{ authorKind: string;
   return count;
 }
 
+/**
+ * Rooms v2 (docs/35 §12): a room with other people. Unaddressed messages wake nobody; a lead answers
+ * in public only when it is mentioned; a person's own other nodes answer them in private.
+ */
+function roomRoute(message: RouteMessage, nodes: readonly RouteNode[]): RouteDecision {
+  if (message.authorKind !== "human") return none();
+  if (leadsStatus(message.text ?? "")) return { reason: "status", nodeIds: [] };
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const leadOf = (ownerId: string) => nodes.find((node) => node.ownerId === ownerId && node.representative);
+  const named = message.mentions.filter((row) => row.kind === "node").map((row) => byId.get(row.id)).filter((node): node is RouteNode => Boolean(node));
+  const targets: RouteTarget[] = [];
+  const add = (target: RouteTarget) => {
+    const same = targets.find((row) => row.nodeId === target.nodeId && row.private === target.private);
+    if (!same) targets.push(target);
+    else if (target.note) same.note = [same.note, target.note].filter(Boolean).join("\n");
+  };
+
+  if (message.visibleTo.length) {
+    // My crew: only the person's own nodes, in private. Their lead answers unless they named their own node.
+    const own = (node: RouteNode) => message.visibleTo.includes(node.ownerId) && node.active;
+    const picked = named.filter(own);
+    if (picked.length) {
+      const ids = picked.slice(0, MAX_HUMAN_FANOUT).map((node) => node.id);
+      return { reason: "mentioned", nodeIds: ids, targets: ids.map((nodeId) => ({ nodeId, private: true, audience: "owner" })) };
+    }
+    const lead = message.authorId ? leadOf(message.authorId) : undefined;
+    return lead && own(lead) ? { reason: "lead", nodeIds: [lead.id], targets: [{ nodeId: lead.id, private: true, audience: "owner" }] } : none();
+  }
+
+  for (const node of named) {
+    if (node.representative) {
+      if (node.active) add({ nodeId: node.id, private: false, audience: "room" });
+    } else if (node.ownerId === message.authorId) {
+      // The person's own other node answers them in My crew, never in public.
+      if (node.active) add({ nodeId: node.id, private: true, audience: "owner" });
+    } else {
+      const lead = leadOf(node.ownerId);
+      if (lead?.active) {
+        add({
+          nodeId: lead.id,
+          private: false,
+          audience: "room",
+          note: `@${node.handle ?? "a node"} (your owner's node) was named in this message. Only leads answer in public, so you answer for your owner; @${node.handle ?? "it"} does not.`,
+        });
+      }
+    }
+  }
+  const picked = targets.slice(0, MAX_HUMAN_FANOUT);
+  return picked.length ? { reason: "mentioned", nodeIds: picked.map((row) => row.nodeId), targets: picked } : none();
+}
+
 export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonly RouteNode[], streak: number): RouteDecision {
   if (message.kind !== "text" || message.authorKind === "system") return none();
   const eligible = nodes.filter(
     (node) => node.active && node.id !== message.authorNodeId && (message.visibleTo.length === 0 || message.visibleTo.includes(node.ownerId)),
   );
+  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId));
   const eligibleIds = new Set(eligible.map((node) => node.id));
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 
@@ -79,35 +156,5 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
   if (message.mentions.length) return none();
   if (!eligible.length) return none();
   if (room.kind === "dm") return { reason: "dm", nodeIds: [eligible[0]!.id] };
-  if (lead) return { reason: "lead", nodeIds: [lead] };
-  const representatives = eligible.filter((node) => node.representative);
-  const pool = representatives.length ? representatives : eligible;
-  if (pool.length === 1) return { reason: "lead", nodeIds: [pool[0]!.id] };
-  return { reason: "relevance", nodeIds: [], candidates: pool.map((node) => node.id) };
-}
-
-export type RelevanceCandidate = { id: string; handle: string; owner: string; role: string; focus: string };
-
-export function relevancePrompt(text: string, author: string, candidates: readonly RelevanceCandidate[], recent: readonly string[]): { system: string; prompt: string } {
-  return {
-    system:
-      "You route messages in a group chat where each person has an AI teammate (a node) that represents them. " +
-      'Pick the nodes whose owner the message concerns. Reply with JSON only: {"nodes": ["handle"]}. ' +
-      `At most ${MAX_RELEVANT}. An empty list when the message is small talk, is addressed to people, or concerns no listed owner.`,
-    prompt: [
-      "Nodes:",
-      ...candidates.map((row) => `- @${row.handle}: represents ${row.owner} (${row.role})${row.focus ? `; ${row.owner} handles: ${row.focus}` : ""}`),
-      "",
-      recent.length ? `Recent messages:\n${recent.join("\n")}\n` : "",
-      `New message from ${author}:`,
-      text,
-    ].join("\n"),
-  };
-}
-
-/** The ids of the handles a relevance answer named, in the candidates' order, capped. */
-export function parseRelevance(answer: unknown, candidates: readonly RelevanceCandidate[]): string[] {
-  const list = answer && typeof answer === "object" && Array.isArray((answer as { nodes?: unknown }).nodes) ? (answer as { nodes: unknown[] }).nodes : [];
-  const named = new Set(list.filter((value): value is string => typeof value === "string").map((value) => value.replace(/^@/, "").toLowerCase()));
-  return candidates.filter((row) => named.has(row.handle.toLowerCase())).map((row) => row.id).slice(0, MAX_RELEVANT);
+  return lead ? { reason: "lead", nodeIds: [lead] } : none();
 }
