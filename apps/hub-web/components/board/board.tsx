@@ -4,7 +4,6 @@ import { useAssistantSurface } from "@/lib/assistant-surface";
 import {
   DndContext,
   closestCorners,
-  useDroppable,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
@@ -29,6 +28,7 @@ import { ShareButton } from "../sharing/share-dialog";
 import { PagePeople } from "../sharing/page-people";
 
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
+import { BoardColumn } from "./board-column";
 import { BoardInsights } from "./insights";
 import { focusLabel, IN_PROGRESS_STATUSES, matchesFocus, type BoardFocus } from "./insight-data";
 import "../desk/desk.css";
@@ -102,66 +102,37 @@ function Column({
   /** A search or filter is hiding cards, so an empty column says that rather than its usual hint. */
   filtered?: boolean;
 }) {
-  const { setNodeRef } = useDroppable({ id });
   const label = STATUS[pill].label;
   return (
-    <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={label}>
-    <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2" data-empty={ids.length === 0}>
-      <div className="mb-2 flex items-center justify-between px-1">
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium">{label}</span>
-          <span className="bdg-n text-[12px] tabular-nums text-muted">{ids.length}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button type="button" className="icon-btn h-6 w-6" title="New task in this column" onClick={onCreate}>
-            <Plus size={14} />
-          </button>
-        </div>
-      </div>
-      <div
-        className="flex min-h-[60px] flex-col gap-1.5 rounded-lg p-1"
-      >
-        {ids.length === 0 && <div className="board-column-empty">{filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
-        <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
-          {ids.map((taskId) => {
-            const task = tasks.get(taskId);
-            return task ? (
-              <SortableCard
-                key={taskId}
-                task={task}
-                active={activeId === taskId}
-                selected={picked.includes(taskId)}
-                motion={motion}
-                onOpen={onOpen}
-                onToggleSelect={onToggleSelect}
-                onDelete={onDelete}
-              />
-            ) : null;
-          })}
-        </SortableContext>
-          <button
-            type="button"
-            onClick={onCreate}
-            className="row-tile flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[13px] text-muted"
-          >
-            <Plus size={13} />
-            New task
-          </button>
-        {moreHref ? (
-          <Link href={moreHref} className="px-2 py-1 text-[12px] text-accent hover:underline">
-            All completed
-          </Link>
-        ) : null}
-      </div>
-    </div>
-    <div
-      ref={setNodeRef}
-      data-bdg-list=""
-      data-over={over}
-      className="pointer-events-none"
-      style={{ position: "absolute", left: 0, right: 0, top: 0, height: "max(100%, 240px)" }}
-    />
-    </div>
+    <BoardColumn
+      id={id}
+      label={label}
+      name={label}
+      count={ids.length}
+      over={over}
+      createLabel="New task"
+      onCreate={onCreate}
+      empty={filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "done" ? "Finished work lands here." : "Ready when you are."}
+      footer={moreHref ? <Link href={moreHref} className="px-2 py-1 text-[12px] text-accent hover:underline">All completed</Link> : null}
+    >
+      <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
+        {ids.map((taskId) => {
+          const task = tasks.get(taskId);
+          return task ? (
+            <SortableCard
+              key={taskId}
+              task={task}
+              active={activeId === taskId}
+              selected={picked.includes(taskId)}
+              motion={motion}
+              onOpen={onOpen}
+              onToggleSelect={onToggleSelect}
+              onDelete={onDelete}
+            />
+          ) : null;
+        })}
+      </SortableContext>
+    </BoardColumn>
   );
 }
 
