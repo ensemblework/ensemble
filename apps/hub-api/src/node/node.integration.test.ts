@@ -868,11 +868,11 @@ test("a node asks for a secret in a secure box: the value goes to the computer o
   assert.equal((await tom.inject({ method: "POST", url: `/api/node/secrets/${second.id}`, payload: { value: "x" } })).statusCode, 404, "only the owner answers");
 });
 
-test("a node brings in a temporary helper: a read-only task room, reports through its node, goes when idle", async () => {
+test("a node brings in a temporary helper: a read-only thread, reports through its node, goes when idle", async () => {
   const mira = await person("Mira");
   const { node, room } = await createNode(mira, "assistant");
   script = (turn) => {
-    if (turn.slug === "assistant-auditor") return { text: "@assistant Checked: the launch page says 14 November." };
+    if (turn.slug === "assistant-auditor") return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Checked: the launch page says 14 November." } }], then: "(no reply)" };
     if (turn.slug === "assistant" && turn.transcript.includes("Checked:")) return { text: "The auditor confirms 14 November." };
     if (turn.slug === "assistant" && turn.transcript.includes("independent audit")) {
       return { calls: [{ name: "node_helper", arguments: { task: "Independently check that the launch is on 14 November.", name: "Auditor", role: "auditor" } }], then: "I asked an auditor to check it." };
@@ -886,7 +886,7 @@ test("a node brings in a temporary helper: a read-only task room, reports throug
   const helperTurn = seen.find((turn) => turn.slug === "assistant-auditor")!;
   assert.match(helperTurn.system, /a temporary helper in Mira's Ensemble Node, made by @assistant/);
   assert.match(helperTurn.transcript, /Independently check that the launch is on 14 November/);
-  assert.ok(!helperTurn.tools.some((name) => name.startsWith("node_")), "a helper has no node tools");
+  assert.deepEqual(helperTurn.tools.filter((name) => name.startsWith("node_")).sort(), ["node_step_blocked", "node_step_report"], "a helper has only its report tools");
   assert.ok(!helperTurn.tools.includes("hub_create_tasks"), "and changes nothing");
   assert.equal(helperTurn.effort, "low", "helpers think briefly");
 
@@ -894,11 +894,15 @@ test("a node brings in a temporary helper: a read-only task room, reports throug
   const taskRoom = rooms.find((row) => row.kind === "task")!;
   assert.equal(taskRoom.title, "Assistant · Auditor");
   const inTask = await read(mira, taskRoom.id);
-  assert.ok(inTask.some((row) => row.authorNodeId === node.id && row.body.startsWith("@assistant-auditor Independently")), "the brief is in the task room");
+  assert.ok(inTask.some((row) => row.authorNodeId === node.id && row.body.startsWith("Independently check")), "the brief is in its thread");
   assert.ok(inTask.some((row) => row.authorNodeId === helper.id && row.body.includes("Checked:")), "and the helper's report");
   assert.ok(!inTask.some((row) => row.body.includes("The auditor confirms")), "the node's answer is not posted there");
   const dm = await read(mira, room.id);
-  assert.ok(dm.some((row) => row.authorNodeId === node.id && row.body === "The auditor confirms 14 November."), "it tells its owner in the DM");
+  assert.deepEqual(
+    dm.filter((row) => row.kind === "text" && row.authorKind === "node").map((row) => row.body),
+    ["The auditor confirms 14 November."],
+    "it tells its owner once, in the DM (its first line opened the plan card)",
+  );
   assert.ok(!dm.some((row) => row.authorNodeId === helper.id), "the helper never talks to the owner");
 
   const refused = await mira.inject({ method: "POST", url: `/api/node/rooms/${taskRoom.id}/messages`, payload: { body: "hello" } });
@@ -928,12 +932,22 @@ test("a node makes a lasting node and a crew when its owner asks; its thinking l
   const mira = await person("Mira");
   const { node, room } = await createNode(mira, "assistant");
   script = (turn) =>
-    turn.transcript.includes("make a node")
-      ? { calls: [{ name: "node_create", arguments: { name: "Release watcher", role: "researcher", charter: "Track our releases and tell me what shipped.", templateId: "researcher" } }], then: "Made @release-watcher." }
-      : turn.transcript.includes("make a group")
-        ? { calls: [{ name: "node_create_group", arguments: { title: "Releases", members: ["assistant", "release-watcher"], lead: "release-watcher" } }], then: "Made the crew." }
-        : { text: "ok" };
+    turn.transcript.includes("approved your proposal")
+      ? { text: "(no reply)" }
+      : turn.transcript.includes("make a node")
+        ? { calls: [{ name: "node_create", arguments: { name: "Release watcher", role: "researcher", charter: "Track our releases and tell me what shipped.", templateId: "researcher" } }], then: "Proposed @release-watcher: approve the card." }
+        : turn.transcript.includes("make a group")
+          ? { calls: [{ name: "node_create_group", arguments: { title: "Releases", members: ["assistant", "release-watcher"], lead: "release-watcher" } }], then: "Made the crew." }
+          : { text: "ok" };
   await say(mira, room.id, "make a node that tracks our releases");
+  // By default a node proposes: nothing is made until its owner approves the card.
+  assert.equal(await h.prisma.nodeAgent.count({ where: { userId: mira.id, name: "Release watcher" } }), 0);
+  const proposal = (await read(mira, room.id)).find((row) => row.data?.type === "node_proposal")!;
+  assert.match(proposal.body, /Make a node: Release watcher \(researcher\)/);
+  const approved = await mira.inject({ method: "POST", url: `/api/node/approvals/${proposal.id}`, payload: { decision: "approve" } });
+  assert.equal(approved.statusCode, 200, approved.body);
+  await settleTurns();
+  assert.ok(seen.some((turn) => /approved your proposal: made @release-watcher/.test(turn.transcript)), "the node hears it was made");
   const made = await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: mira.id, name: "Release watcher" } });
   assert.equal(made.parentNodeId, null, "a lasting node, not a helper");
   assert.equal(made.slug, "release-watcher", "its handle follows its name, not its template");
@@ -942,6 +956,8 @@ test("a node makes a lasting node and a crew when its owner asks; its thinking l
   assert.ok(listed.some((row) => row.id === made.id), "it is in the sidebar");
   assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ kind: string; title: string }>).some((row) => row.kind === "dm" && row.title === "Release watcher"), "with its own chat");
 
+  // The owner lets it make nodes and crews without asking.
+  assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { autonomy: { createNodes: "auto" } } })).statusCode, 200);
   await say(mira, room.id, "make a group with you and the release watcher");
   const crew = await h.prisma.nodeRoom.findFirstOrThrow({ where: { userId: mira.id, kind: "crew", title: "Releases" } });
   assert.deepEqual((crew.settings as { leadNodeIds: string[] }).leadNodeIds, [made.id]);
@@ -951,7 +967,7 @@ test("a node makes a lasting node and a crew when its owner asks; its thinking l
   assert.equal(patched.statusCode, 200, patched.body);
   assert.equal(json(patched).node.effort, "high");
   assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { effort: "max" } })).statusCode, 400);
-  assert.deepEqual(seen.map((turn) => turn.effort), ["low", "low"], "a node thinks briefly by default");
+  assert.ok(seen.length >= 2 && seen.every((turn) => turn.effort === "low"), "a node thinks briefly by default");
   seen.length = 0;
   await say(mira, room.id, "hello");
   assert.deepEqual(seen.map((turn) => turn.effort), ["high"], "until its owner turns it up");
@@ -968,7 +984,7 @@ test("a helper brought in from a private thread reports privately; only working 
   assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } })).statusCode, 201);
   await h.prisma.nodeAgent.update({ where: { id: node.id }, data: { autonomy: { sharedRooms: "auto" } } });
   script = (turn) => {
-    if (turn.slug.startsWith("assistant-auditor")) return { text: "@assistant Checked: the budget is 40k." };
+    if (turn.slug.startsWith("assistant-auditor")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Checked: the budget is 40k." } }], then: "(no reply)" };
     if (turn.transcript.includes("Checked:")) return { text: "The auditor confirms the budget is 40k." };
     if (turn.transcript.includes("independent audit")) return { calls: [{ name: "node_helper", arguments: { task: "Check the budget.", name: "Auditor" } }], then: "Asked an auditor." };
     return { text: "(no reply)" };

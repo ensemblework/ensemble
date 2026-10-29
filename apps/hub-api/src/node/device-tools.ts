@@ -20,6 +20,7 @@ import { loadSettings } from "../lib/settings.js";
 import { CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
 import { askOwner, markGrantsUsed, pendingGrants, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
+import { helperFolders, helperGrant } from "./helpers.js";
 import type { NodeScope } from "./tools.js";
 
 const ASK_MS = 30_000;
@@ -148,11 +149,13 @@ const Folder = z.string().min(1).max(4096).describe("A folder the computer share
 
 export function deviceTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
-  // Only where only the owner reads and the owner started the turn; never a helper's.
-  if (!scope.ownerOnly || scope.lineage.fromNonOwner || node.parentNodeId) return [];
+  // Only where only the owner reads and the owner started the turn; a helper only with a computer grant.
+  if (!scope.ownerOnly || scope.lineage.fromNonOwner) return [];
+  if (node.parentNodeId && helperGrant(node) !== "computer") return [];
+  const folders = node.parentNodeId ? helperFolders(node) : [];
   const redis = (ctx: ToolContext) => ctx.app.redis as unknown as Redisish;
 
-  return [
+  const tools: AnyHubTool[] = [
     defineTool({
       name: "computer_run",
       area: "tasks",
@@ -312,4 +315,21 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       },
     }),
   ];
+  return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
+}
+
+/** A helper's tool that works only in the folders its parent named (by label, path or last part). */
+function onlyIn(tool: AnyHubTool, folders: readonly string[]): AnyHubTool {
+  const last = (value: string) => value.trim().replace(/[\\/]+$/, "").split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  const allowed = (folder: string) => folders.some((name) => name.trim() === folder.trim() || last(name) === last(folder));
+  return {
+    ...tool,
+    async run(ctx, input) {
+      const folder = (input as { folder?: unknown } | null)?.folder;
+      if (typeof folder === "string" && !allowed(folder)) {
+        throw new ToolBlockedError(`You may only use ${folders.map((name) => `“${name}”`).join(", ")}.`, "Those are the folders your node gave you; report what needs another folder.");
+      }
+      return tool.run(ctx, input as never);
+    },
+  } as AnyHubTool;
 }

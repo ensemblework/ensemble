@@ -364,7 +364,8 @@ export type NewStep = {
   kind?: StepKind;
   /** Handle of the node whose latest step this one verifies (verify steps). */
   verifies?: string;
-  executor?: "node" | "self";
+  /** node: one of the owner's nodes; self: the lead itself; helper: the lead's temporary helper (node/helpers.ts). */
+  executor?: "node" | "self" | "helper";
 };
 
 /** What a node's role suggests a step is, when the lead does not say. */

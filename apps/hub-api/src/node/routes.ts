@@ -378,7 +378,18 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       provider: ProviderPick.optional(),
       model: ModelPick.optional(),
       runProfileId: z.string().max(60).nullable().optional(),
-      autonomy: z.object({ sharedRooms: z.enum(["ask", "auto"]).optional(), computerFiles: z.boolean().optional(), computerWork: z.enum(["auto", "ask"]).optional(), answerAgentQuestions: z.boolean().optional() }).optional(),
+      autonomy: z
+        .object({
+          sharedRooms: z.enum(["ask", "auto"]).optional(),
+          computerFiles: z.boolean().optional(),
+          computerWork: z.enum(["auto", "ask"]).optional(),
+          answerAgentQuestions: z.boolean().optional(),
+          // Nodes and crews it makes: proposed on a card (ask, the default) or made at once (auto).
+          createNodes: z.enum(["ask", "auto"]).optional(),
+          // Helpers working at once (0: no limit); the account allows twice this.
+          helpers: z.number().int().min(0).max(100).optional(),
+        })
+        .optional(),
       status: z.enum(["active", "paused"]).optional(),
       effort: z.enum(["low", "medium", "high"]).optional(),
     }).strict().parse(request.body ?? {});

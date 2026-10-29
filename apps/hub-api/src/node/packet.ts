@@ -39,7 +39,7 @@ function located(data: Pick<PlanData, "constraints">): boolean {
  * nudge are turns of their node.
  */
 export function dispatchable(data: Pick<PlanData, "contract" | "constraints" | "steps">, step: Pick<PlanStep, "kind" | "executor" | "verifies">, reason: AttemptReason): boolean {
-  if (data.contract < 3 || reason === "nudge" || step.executor === "self" || !located(data)) return false;
+  if (data.contract < 3 || reason === "nudge" || step.executor !== "node" || !located(data)) return false;
   if (step.kind === "build" || step.kind === "write") return true;
   if (step.kind === "verify") {
     const target = data.steps.find((row) => row.id === step.verifies);

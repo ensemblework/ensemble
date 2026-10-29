@@ -14,6 +14,8 @@ import { sessionOfJob } from "../workspace/sessions.js";
 import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
 import { finishStep, planLinkOf } from "./plans.js";
+import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
+import { ToolBlockedError } from "../assistant/types.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -143,6 +145,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   }
 
   if (type === "session") return settleSession(app, card, node, input);
+  if (type === "node_proposal") return settleProposal(app, card, node, input);
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);
     throw new ApprovalError("Type the secret into its box: it goes straight to your computer.", 400);
@@ -245,6 +248,43 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
     note: `Your owner approved and it started: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
     private: parsed.private === true,
     ...(planLinkOf(card.data) ?? {}),
+  });
+  return updated;
+}
+
+const ProposalCard = z.union([
+  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("node"), input: NewNode, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("crew"), input: NewCrew, private: z.boolean().optional() }).passthrough(),
+]);
+
+/** A node or crew a node proposed (node/helpers.ts): made exactly as shown once approved; the node hears it. */
+async function settleProposal(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = ProposalCard.parse(card.data);
+  const data = await claim(app, card);
+  const current = { ...card, data: data as Prisma.JsonValue };
+  if (input.decision === "discard") return updateMessageData(prisma, current, { status: "discarded" });
+  let made: { summary: string; result: Record<string, unknown> };
+  try {
+    if (parsed.action === "node") {
+      const created = await makeNode(prisma, node, parsed.input);
+      made = { summary: `made @${created.slug} (${created.name}); its chat is in your owner's sidebar`, result: { nodeId: created.id, handle: created.slug } };
+    } else {
+      const room = await makeCrew(prisma, node.userId, parsed.input);
+      made = { summary: `made the crew “${room.title}”`, result: { roomId: room.id } };
+    }
+  } catch (error) {
+    // Nothing was made (a name taken meanwhile, a node gone): the owner can try again or discard.
+    const message = error instanceof ToolBlockedError ? [error.message, error.remedy].filter(Boolean).join(" ") : error instanceof Error ? error.message : String(error);
+    return updateMessageData(prisma, current, { status: "pending", error: message });
+  }
+  const updated = await updateMessageData(prisma, current, { status: "applied", error: null, result: { summary: made.summary, ...made.result } });
+  await enqueueTurn(app, {
+    nodeId: node.id,
+    roomId: card.roomId,
+    reason: "approval",
+    note: `Your owner approved your proposal: ${made.summary}. Continue if there is more to do (node_delegate hands it work); otherwise reply ${"(no reply)"}.`,
+    private: parsed.private === true,
   });
   return updated;
 }

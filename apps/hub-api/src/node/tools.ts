@@ -15,7 +15,7 @@ import { CodeAnswer } from "../remote/contract.js";
 import { refusedPath } from "../workspace/folder-read.js";
 import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
-import { helperGrant, helperTools } from "./helpers.js";
+import { helperGrant, helperRoomOf, helperTools } from "./helpers.js";
 import { deviceTools } from "./device-tools.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
@@ -221,11 +221,6 @@ async function pickComputer(prisma: PrismaClient, ownerId: string, name: string 
 
 export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
-  // A temporary helper only answers the node that made it: read-only assistant tools, plus what its parent granted.
-  if (node.parentNodeId) {
-    const grant = helperGrant(node);
-    return grant === "sessions" ? sessionTools(scope) : [];
-  }
   const remember = defineTool({
     name: "node_remember",
     area: "tasks",
@@ -241,7 +236,12 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       return toolOk("Remembered.");
     },
   });
-  const own = [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope), overviewTool(scope), ...deviceTools(scope)];
+  // A temporary helper answers only the node that made it: read-only assistant tools, plus what its parent granted.
+  const grant = helperGrant(node);
+  const granted = grant === "sessions" ? sessionTools(scope) : grant === "computer" ? deviceTools(scope) : [];
+  const own = node.parentNodeId
+    ? granted
+    : [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope), overviewTool(scope), ...deviceTools(scope)];
   // A step of a plan: the node does its own step and reports it; it hands nothing on and posts nothing.
   const step = scope.plan?.planStep ? { planId: scope.plan.planId, stepId: scope.plan.planStep } : null;
   if (step) {
@@ -255,6 +255,11 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       // A report that contradicts its own checks goes back to the worker to fix, rather than being guessed at.
       if (verdict.problem && input.outcome !== "blocked") throw new ToolBlockedError(verdict.problem, "Report again: name each check with its verdict, and choose the outcome they support.");
       await finishStep(ctx.app, step.planId, step.stepId, { status: input.outcome === "blocked" ? "blocked" : "done", result: input.summary, report: input });
+      // A helper's thread shows what it reported (posted by code: it wakes nobody).
+      if (node.parentNodeId) {
+        const thread = await helperRoomOf(prisma, node.id);
+        if (thread) await postMessage(prisma, { roomId: thread.id, userId: node.userId, authorKind: "node", authorNodeId: node.id, body: input.summary, data: { report: { outcome: input.outcome, planId: step.planId, step: step.stepId } } });
+      }
       return toolOk(
         verdict.outcome === "pass" || verdict.outcome === "done"
           ? "Your step is reported. Reply exactly (no reply)."
@@ -288,9 +293,10 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
           return report(ctx, { outcome: "blocked", summary: input.reason, ...(input.blockedBy ? { blockedBy: input.blockedBy } : {}) });
         },
       }),
-      remember,
+      ...(node.parentNodeId ? [] : [remember]),
     ];
   }
+  if (node.parentNodeId) return own;
   const show = defineTool({
     name: "node_show",
     area: "tasks",
@@ -311,7 +317,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   return [
     ...own,
     show,
-    ...helperTools({ ...scope, postBrief: (room, body) => postAsNode(scope, room, body, null) }),
+    ...helperTools(scope),
     ...planTools(scope),
     ...routineTools(scope),
     defineTool({
@@ -449,7 +455,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         const working = plan.data.steps.filter((row) => row.status === "working");
         if (!working.length) throw new ToolBlockedError("Nothing in that work is running now.");
         for (const row of working) {
-          await enqueueTurn(ctx.app, { nodeId: row.nodeId, roomId: plan.message.roomId, reason: "plan", note: `Your owner adds, for this step: ${input.note}`, planId: plan.mission.id, planStep: row.id });
+          const roomId = row.executor === "helper" ? ((await helperRoomOf(prisma, row.nodeId))?.id ?? plan.message.roomId) : plan.message.roomId;
+          await enqueueTurn(ctx.app, { nodeId: row.nodeId, roomId, reason: "plan", note: `Your owner adds, for this step: ${input.note}`, planId: plan.mission.id, planStep: row.id });
         }
         return toolOk(`Passed on to ${working.map((row) => `@${row.handle}`).join(", ")}.`);
       },

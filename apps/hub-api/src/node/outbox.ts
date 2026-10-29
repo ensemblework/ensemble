@@ -13,6 +13,7 @@ import { endPlan, finishStep, loadPlan, onMissionEffects, reportNote, stepNote, 
 import { updateMessageData } from "./store.js";
 import type { AttemptReason } from "./missions-core.js";
 import { dispatchStep } from "./dispatch.js";
+import { helperRoomOf } from "./helpers.js";
 
 const CLAIM_MS = 60_000;
 const SWEEP_MS = Number(process.env.ENSEMBLE_NODE_OUTBOX_SWEEP_MS ?? 5_000) || 5_000;
@@ -90,9 +91,11 @@ async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData
   const note = dispatched
     ? `${stepNote(data, step, reason)}\n\nEnsemble could not hand this step straight to a coding agent: ${dispatched.why}\nDecide where it runs (node_session_start, or node_session_send to your session), or report it blocked with why.`
     : stepNote(data, step, reason);
+  // A helper works in its own thread (node/helpers.ts), the only room it is in.
+  const roomId = step.executor === "helper" ? ((await helperRoomOf(app.prisma, step.nodeId))?.id ?? planRoomId) : planRoomId;
   const queued = await enqueueTurn(app, {
     nodeId: step.nodeId,
-    roomId: planRoomId,
+    roomId,
     reason: "plan",
     note,
     planId: data.missionId,

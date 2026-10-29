@@ -176,12 +176,9 @@ export async function markActed(app: FastifyInstance, turnId: string): Promise<v
 
 /** Records a tool the turn ran, as it ends (a restart reads them). */
 export async function addReceipt(app: FastifyInstance, turnId: string, receipt: { name: string; state: string; summary?: string | null }): Promise<void> {
-  const row = await app.prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { receipts: true } });
-  if (!row) return;
-  const receipts = Array.isArray(row.receipts) ? (row.receipts as unknown[]) : [];
-  if (receipts.length >= 40) return;
-  receipts.push({ name: receipt.name, state: receipt.state, summary: receipt.summary ? truncateText(receipt.summary, 200) : null });
-  await app.prisma.nodeTurn.update({ where: { id: turnId }, data: { receipts: receipts as Prisma.InputJsonValue } });
+  const entry = JSON.stringify([{ name: receipt.name, state: receipt.state, summary: receipt.summary ? truncateText(receipt.summary, 200) : null }]);
+  // One statement: tools that end together each keep their receipt.
+  await app.prisma.$executeRaw`UPDATE node_turns SET receipts = receipts || ${entry}::jsonb WHERE id = ${turnId} AND jsonb_array_length(receipts) < 40`;
 }
 
 function laneKey(turn: Pick<NodeTurn, "nodeId" | "lane" | "roomId" | "private" | "planId" | "planStep">): string {

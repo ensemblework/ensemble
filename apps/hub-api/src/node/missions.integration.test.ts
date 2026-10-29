@@ -592,3 +592,55 @@ test("a helper may run its own agent session when its parent grants it, and can 
   const plain = await createNode(mira, "researcher");
   assert.equal((await mira.inject({ method: "POST", url: `/api/node/nodes/${plain.node.id}/promote`, payload: {} })).statusCode, 409, "only helpers are promoted");
 });
+
+test("B18: two helpers in parallel report into one plan and their node tells its owner once; a computer grant gives folder-limited computer tools", async () => {
+  const mira = await person("Mira");
+  const { room } = await createNode(mira, "assistant");
+  script = (turn) => {
+    if (turn.slug === "assistant-alpha") return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Alpha costs 10 a seat (alpha.example/pricing)." } }], then: "(no reply)" };
+    if (turn.slug === "assistant-beta") {
+      return {
+        calls: [
+          { name: "computer_run", arguments: { folder: "~/private/keys", command: "ls" } },
+          { name: "node_step_report", arguments: { outcome: "done", summary: "Beta costs 12 a seat (beta.example/pricing)." } },
+        ],
+        then: "(no reply)",
+      };
+    }
+    if (turn.slug === "assistant" && turn.transcript.includes("Alpha costs 10") && turn.transcript.includes("Beta costs 12")) return { text: "Alpha is cheaper: 10 a seat against 12." };
+    if (turn.slug === "assistant" && turn.transcript.includes("compare the two vendors")) {
+      return {
+        calls: [
+          { name: "node_helper", arguments: { task: "Find vendor Alpha's price per seat.", name: "Alpha" } },
+          { name: "node_helper", arguments: { task: "Find vendor Beta's price per seat.", name: "Beta", can: "computer", folders: ["notes"] } },
+        ],
+        then: "Two helpers are on it.",
+      };
+    }
+    return { text: "(no reply)" };
+  };
+  await say(mira, room.id, "compare the two vendors' prices");
+
+  const messages = await read(mira, room.id);
+  const card = messages.find((row) => row.kind === "plan")!;
+  assert.equal(card.body, "Two helpers are on it.", "its first line opened the plan");
+  assert.deepEqual(card.data.steps.map((step: { executor: string; status: string }) => [step.executor, step.status]), [["helper", "done"], ["helper", "done"]]);
+  assert.deepEqual(
+    messages.filter((row) => row.kind === "text" && row.authorKind === "node").map((row) => row.body),
+    ["Alpha is cheaper: 10 a seat against 12."],
+    "one message for both helpers",
+  );
+  assert.equal(seen.filter((turn) => turn.slug === "assistant").length, 2, "the node thought twice: to bring them in, and once with both results");
+
+  const alpha = seen.find((turn) => turn.slug === "assistant-alpha")!;
+  const beta = seen.find((turn) => turn.slug === "assistant-beta")!;
+  assert.ok(!alpha.tools.includes("computer_run"), "a read helper has no computer tools");
+  assert.ok(beta.tools.includes("computer_run") && !beta.tools.includes("node_session_start"), "a computer grant gives computer tools, not sessions");
+  const betaNode = await h.prisma.nodeAgent.findFirstOrThrow({ where: { slug: "assistant-beta" } });
+  const receipts = (await h.prisma.nodeTurn.findMany({ where: { nodeId: betaNode.id } })).flatMap((row) => (row.receipts as Array<{ name: string; summary: string | null }>) ?? []);
+  assert.match(receipts.find((row) => row.name === "computer_run")?.summary ?? "", /only use “notes”/, "only in the folders it was given");
+
+  // Each thread shows its brief and what the helper reported.
+  const thread = await h.prisma.nodeRoom.findFirstOrThrow({ where: { kind: "task", members: { some: { nodeId: betaNode.id } } } });
+  assert.deepEqual((await read(mira, thread.id)).map((row) => row.body), ["Find vendor Beta's price per seat.", "Beta costs 12 a seat (beta.example/pricing)."]);
+});
