@@ -14,7 +14,7 @@ text  →  parse  →  model (JSON)  →  layout  →  render
 
 1. **Parse.** Each line is read on its own. A line that cannot be read is reported with its line number and skipped. Every other line still applies.
 2. **Model.** Version 1 document. Blocks, groups, lines, text boxes, and positions are maps keyed by stable ids (see [JSON model](#json-model)).
-3. **Layout.** ELK layered layout, with crossing minimisation. Locked blocks keep their x,y. This runs in a web worker when the browser allows it.
+3. **Layout.** ELK layered layout, with crossing minimisation (`packages/block-diagrams/src/layout.ts`). Groups are laid out as frames around their members, nested groups inside their parent, so sibling frames never cover each other or a block outside them. Line labels get room between layers; a label that would still sit on a block or a frame's title is moved into a gap by bending its line. Locked blocks keep their x,y. This runs in a web worker when the browser allows it.
 4. **Render.** The Hub draws with React Flow. The same geometry (SVG paths and the 8 ports) lives in a DOM-free package, so another renderer can replace it.
 
 `parseDiagram(text)` also accepts a Mermaid `flowchart` or `graph`. The editor then rewrites it as Ensemble text.
@@ -210,7 +210,7 @@ edge api > cache curve curved : "optional"
 
 `width`, `head`, `bend` and the text style come after the label (when the label is quoted) and are written by the printer in that order: `edge a > b : "calls" curve curved width 2 head 14 bend -30 font 12 italic`. In an unquoted label, words such as `bold` stay part of the label.
 
-A bend moves with the blocks: it is a distance from the straight line between the two ends, so the line keeps its curve when either block is dragged. On the canvas, select a line and drag its middle (its label, or the dot) to bend it; dragging it back near the straight line snaps it straight.
+A bend moves with the blocks: it is a distance from the straight line between the two ends, so the line keeps its curve when either block is dragged. On the canvas, select a line and drag its middle (its label, or the dot) to bend it; dragging it back near the straight line snaps it straight. A label whose line is not selected lets the pointer through to a block under it, so a label never stops a block from being dragged; click the line, or its label where no block is under it, to select it.
 
 ## Text size and emphasis
 
@@ -275,6 +275,8 @@ edge api > db
 
 Deleting a group on the canvas keeps its members and moves them up to the parent.
 
+On the canvas a frame is drawn around its members: 16 px at the sides and bottom, 40 px on top for the title, and at least as wide as the title. Drag a group by its title or its border to move it with everything inside it, as one undo step. Click the title to select the group; Lock and Delete then act on it. The inside of a frame lets clicks through, so the blocks in it stay easy to grab (`apps/hub-web/components/diagrams/canvas.tsx`, `nodes.tsx`).
+
 ## Text boxes
 
 A text box is not a shape. It is free text you can drag. It does not take connectors.
@@ -304,7 +306,11 @@ layout
 
 `locked` on a block, a text box, a group, or a layout line means Reorganize, Fit vertically, and Fit horizontally will not move it. A locked group also holds every member that already has a position. The first time something has no position, layout assigns one. After that, the lock keeps it.
 
-Dragging a locked block on the canvas updates its saved position. The lock stops Reorganize, not your hand.
+On the canvas, a locked block, text box or group, and everything in a locked group, cannot be dragged or resized; a group that holds a locked block stays where it is. Unlock first (Lock, Alt+Shift+L). A locked group shows a lock on its title.
+
+A dragged block lands exactly where it is dropped. Nothing else is pushed aside; group frames refit around their members. Reorganize is what separates blocks.
+
+When a diagram opens with a saved layout whose blocks or group frames cover each other (`layoutOverlaps`), the editor shows *Some blocks overlap.* with **Tidy up**. Tidy up runs Reorganize as one undoable change and keeps locked items where they are. Dismissing the notice hides it until the diagram is opened again.
 
 ```udl
 title Floor

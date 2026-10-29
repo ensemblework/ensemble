@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { Inbox } from "lucide-react";
 import { useState } from "react";
 import { WIDGET_REGISTRY, type TileConfig, type WidgetId } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
@@ -37,12 +38,15 @@ function within(iso: string | null, horizon: number): boolean {
   return days !== null && days <= horizon;
 }
 
+/** The widgets' empty state: centred, a small icon in a soft circle, one line and its hint. Matches the desk tiles. */
 function Empty({ type, hint }: { type: WidgetId; hint?: string }) {
   const spec = WIDGET_REGISTRY[type];
+  const line = hint ?? spec.blurb;
   return (
-    <div className="flex h-full min-h-[4.5rem] flex-col justify-end">
-      <p className="text-[14px] text-ink">{spec.empty ?? "Nothing here yet."}</p>
-      <p className="mt-1 text-[12.5px] leading-snug text-muted">{hint ?? spec.blurb}</p>
+    <div className="flex h-full min-h-[4.5rem] flex-col items-center justify-center gap-1.5 px-2 text-center" data-widget-empty>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-hover text-muted" aria-hidden="true"><Inbox size={14} /></span>
+      <p className="text-[13px] leading-snug text-muted">{spec.empty ?? "Nothing here yet."}</p>
+      {line ? <p className="line-clamp-2 max-w-[38ch] text-[12px] leading-snug text-faint">{line}</p> : null}
     </div>
   );
 }

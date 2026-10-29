@@ -90,7 +90,8 @@ function surfaceStyle(theme: IdeTheme): CSSProperties {
   return style as CSSProperties;
 }
 
-export function IdeSpace({ className, children, diagram = false }: { className?: string; children: ReactNode; diagram?: boolean }) {
+/** `root`: Code's window, which its panels measure (`ide-chrome.tsx`). */
+export function IdeSpace({ className, children, diagram = false, root = false }: { className?: string; children: ReactNode; diagram?: boolean; root?: boolean }) {
   const toast = useToast();
   const client = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: hub.settings, staleTime: 30_000 });
@@ -254,7 +255,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
   return (
     <ApiContext.Provider value={controls}>
       <IdeThemeContext.Provider value={shown}>
-        <div className={cx("ide-space", className)} style={surfaceStyle(shown)} data-ide-theme={shown.id} data-ide-kind={shown.kind} {...(diagram ? { "data-diagram-editor": "" } : {})}>
+        <div className={cx("ide-space", className)} style={surfaceStyle(shown)} data-ide-theme={shown.id} data-ide-kind={shown.kind} {...(diagram ? { "data-diagram-editor": "" } : {})} {...(root ? { "data-ide-root": "" } : {})}>
           {children}
         </div>
       </IdeThemeContext.Provider>

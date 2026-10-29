@@ -103,7 +103,7 @@ test("limitation, mocks, and hearings stay on the desk payload", async (t) => {
     const body = live.json() as {
       today: string;
       limitation: Array<{ title: string; due: string; days: number; shifted: boolean; note: string | null }>;
-      tasks: Array<{ title: string; taskType: string | null; measure: number | null; court: string | null }>;
+      tasks: Array<{ title: string; taskType: string | null; measure: number | null; court: string | null; priority: string | null }>;
     };
     const pin = body.limitation.find((row) => row.title === "Rao v Sunrise");
     assert.ok(pin);
@@ -114,6 +114,7 @@ test("limitation, mocks, and hearings stay on the desk payload", async (t) => {
     assert.equal(pin?.days, expectedDays);
     assert.ok(body.tasks.some((row) => row.taskType === "mock" && row.measure === 112));
     assert.ok(body.tasks.some((row) => row.taskType === "hearing" && row.court === "Court 32"));
+    assert.ok(body.tasks.every((row) => typeof row.priority === "string"), "Today's Focus now and list chips sort by priority");
     const concept = await app.inject({
       method: "POST",
       url: "/api/desk/entries",

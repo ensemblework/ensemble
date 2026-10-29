@@ -29,8 +29,9 @@ import {
   type PortName,
   type ShapeId,
 } from "@ensemble/block-diagrams";
+import { layoutOverlaps } from "@ensemble/block-diagrams/layout";
 import { SHORTCUTS, eventMatchesChord } from "@ensemble/shared-types";
-import { ChevronRight, Lock, Type } from "lucide-react";
+import { ChevronRight, LayoutGrid, Lock, Type, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
@@ -133,6 +134,8 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   };
   const [fitTick, setFitTick] = useState(0);
   const [busy, setBusy] = useState(false);
+  // A saved layout that has blocks or group frames on top of each other offers a one-click tidy up.
+  const [overlapNotice, setOverlapNotice] = useState<"hidden" | "shown" | "dismissed">("hidden");
   const loaded = useRef(false);
   const epoch = useRef(0);
   const printed = useRef("");
@@ -182,7 +185,10 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     setDiagnostics(mermaid ? [] : parsed.diagnostics);
     setVersion(row.version);
     const missing = Object.keys(parsed.model.nodes).some((nodeId) => !parsed.model.layout[nodeId]) || Object.keys(parsed.model.texts).some((textId) => !parsed.model.layout[textId]);
-    if (!missing) return;
+    if (!missing) {
+      if (layoutOverlaps(parsed.model).length) setOverlapNotice("shown");
+      return;
+    }
     const ticket = ++epoch.current;
     void layoutInBackground(parsed.model).then((laid) => {
       if (ticket !== epoch.current) return;
@@ -208,6 +214,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     setDirty(false);
     setSaveState("saved");
     setFitTick((value) => value + 1);
+    setOverlapNotice(layoutOverlaps(parsed.model).length ? "shown" : "hidden");
     void client.invalidateQueries({ queryKey: ["diagram", id] });
   };
 
@@ -558,6 +565,10 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   }, []); // handlers read refs; the listener stays for the life of the editor
 
   useEffect(() => {
+    if (overlapNotice === "shown" && model && !layoutOverlaps(model).length) setOverlapNotice("hidden");
+  }, [model, overlapNotice]);
+
+  useEffect(() => {
     if (!diagnostics.length) {
       sawProblems.current = false;
       setActiveProblem(null);
@@ -648,7 +659,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   // aria-disabled rather than disabled, so the reason shows on hover and focus.
   const lockTitle = selected.nodes.length
     ? "Lock or unlock the selection, so it cannot be moved (Alt+Shift+L)"
-    : "Select blocks or text boxes first, then lock them in place (Alt+Shift+L)";
+    : "Select blocks, text boxes or groups first, then lock them in place (Alt+Shift+L)";
   const problemCount = diagnostics.length;
   const problemLabel = problemCount === 0 ? "No problems" : problemCount === 1 ? "1 problem" : `${problemCount} problems`;
   const markedId = activeProblem == null ? null : diagnostics[activeProblem]?.target ?? null;
@@ -824,6 +835,18 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
             }}
           />
           {readOnly ? null : <FormatBar model={model} nodes={selected.nodes} edges={selected.edges} onAction={format} />}
+          {overlapNotice === "shown" && !readOnly ? (
+            <div className="diagram-overlap-notice flex items-center gap-2 rounded-xl border border-line-strong bg-panel py-1 pl-3 pr-1 text-[12.5px] text-ink shadow-pop" role="status">
+              <LayoutGrid size={14} className="shrink-0 text-accent" aria-hidden />
+              <span className="min-w-0">Some blocks overlap.</span>
+              <button type="button" className="btn-primary px-2.5 py-0.5 text-[12.5px]" disabled={busy} title="Lay the diagram out again, keeping locked blocks where they are" onClick={() => void reorganize()}>
+                {busy ? "Tidying…" : "Tidy up"}
+              </button>
+              <button type="button" className="icon-btn h-6 w-6" aria-label="Dismiss" onClick={() => setOverlapNotice("dismissed")}>
+                <X size={14} aria-hidden />
+              </button>
+            </div>
+          ) : null}
           {focus ? (
             <div className="diagram-focus-palette" role="toolbar" aria-label="Blocks">
               {SHAPES.map((item) => (

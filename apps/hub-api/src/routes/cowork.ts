@@ -28,6 +28,7 @@ import {
   summarizeMeetings,
   trashMeetingSession,
   weeklyRecap,
+  setMeetingProject,
 } from "../cowork/service.js";
 
 const textBody = z.object({ text: z.string().min(1).max(2000) });
@@ -37,7 +38,10 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/notifications", async (request) => ({ notifications: await listNotifications(db, request.userId) }));
 
-  app.post("/api/notifications/read", async (request) => markAllNotificationsRead(db, request.userId));
+  app.post("/api/notifications/read", async (request) => {
+    const body = z.object({ ids: z.array(z.string().uuid()).max(200).optional() }).nullish().parse(request.body);
+    return markAllNotificationsRead(db, request.userId, body?.ids);
+  });
 
   app.post("/api/notifications/:id/read", async (request) => {
     const { id } = request.params as { id: string };
@@ -103,7 +107,7 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/meetings/sessions", async (request, reply) => {
-    const body = z.object({ artifactId: z.string().nullable().optional(), title: z.string().max(200).optional() }).parse(request.body ?? {});
+    const body = z.object({ artifactId: z.string().nullable().optional(), title: z.string().max(200).optional(), projectId: z.string().uuid().nullable().optional() }).parse(request.body ?? {});
     const created = await startMeetingSession(db, request.userId, body);
     return reply.code(201).send(created);
   });
@@ -111,11 +115,14 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/api/meetings/sessions/:id", async (request) => {
     const { id } = request.params as { id: string };
     const body = z
-      .object({ notes: z.string().max(100_000).optional(), content: PageDocument.optional(), title: z.string().trim().min(1).max(200).optional() })
+      .object({ notes: z.string().max(100_000).optional(), content: PageDocument.optional(), title: z.string().trim().min(1).max(200).optional(), projectId: z.string().uuid().nullable().optional() })
       .strict()
-      .refine((value) => value.notes !== undefined || value.content !== undefined || value.title !== undefined, "Supply notes, content or a title.")
+      .refine((value) => value.notes !== undefined || value.content !== undefined || value.title !== undefined || value.projectId !== undefined, "Supply notes, content, a title or a project.")
       .parse(request.body);
-    return saveMeetingNotes(db, request.userId, id, body);
+    const { projectId, ...notes } = body;
+    if (projectId !== undefined && notes.notes === undefined && notes.content === undefined && notes.title === undefined) return setMeetingProject(db, request.userId, id, projectId);
+    if (projectId !== undefined) await setMeetingProject(db, request.userId, id, projectId);
+    return saveMeetingNotes(db, request.userId, id, notes);
   });
 
   app.post("/api/meetings/sessions/:id/end", async (request) => {
@@ -160,7 +167,7 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/recap/week", async (request) => {
     const query = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).parse(request.query);
-    return weeklyRecap(db, request.userId, query.date);
+    return weeklyRecap(db, request.userId, query.date, accountIdOf(request));
   });
 
   app.get("/api/nudges", async (request) => {

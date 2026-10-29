@@ -181,11 +181,10 @@ async function main() {
 
   const projects = new Map<string, string>();
   for (const row of pack.projects) {
-    const project = await prisma.project.upsert({
-      where: { userId_name: { userId, name: row.name } },
-      create: { userId, name: row.name, summary: row.summary, createdBy: "me", confidence: 0.95, evidence: ["demo:branch"] },
-      update: { summary: row.summary, deletedAt: null, status: "active" },
-    });
+    const found = await prisma.project.findFirst({ where: { userId, name: row.name }, orderBy: { createdAt: "asc" }, select: { id: true } });
+    const project = found
+      ? await prisma.project.update({ where: { id: found.id }, data: { summary: row.summary, deletedAt: null, status: "active" } })
+      : await prisma.project.create({ data: { userId, name: row.name, summary: row.summary, createdBy: "me", confidence: 0.95, evidence: ["demo:branch"] } });
     projects.set(row.key, project.id);
     for (let i = 0; i < row.people.length; i += 1) {
       const personId = people.get(row.people[i]!);

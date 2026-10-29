@@ -225,6 +225,8 @@ export function sameModel(asked: string | null | undefined, answered: string | n
 
 export function duration(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return "";
+  // Clocks on two machines can put an end a moment before its start.
+  if (ms < 1) return "<1ms";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;

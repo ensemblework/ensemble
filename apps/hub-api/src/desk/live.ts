@@ -165,6 +165,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       id: row.id,
       title: row.title,
       status: row.status,
+      priority: row.priority,
       taskType: row.taskType,
       due: iso(row.due),
       startsAt: stamp(row.startsAt),

@@ -1,0 +1,103 @@
+/* Block diagram canvas: group frames you can pick up, and the overlap notice. */
+
+/* A frame's inside lets clicks through to the blocks in it. Its title tab and a thin band along
+   its border take the pointer: click to select the group, drag to move it with its members. */
+.diagram-flow .diagram-group {
+  position: relative;
+  transition: border-color 150ms var(--ease);
+}
+.diagram-flow .diagram-group-label {
+  pointer-events: auto;
+  max-width: calc(100% - 20px);
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease),
+    color 150ms var(--ease);
+}
+.diagram-flow .diagram-group.is-static .diagram-group-label {
+  pointer-events: none;
+}
+.diagram-group-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diagram-group-edge {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+}
+.diagram-group-edge.is-top {
+  top: -4px;
+  right: 0;
+  left: 0;
+  height: 8px;
+}
+.diagram-group-edge.is-bottom {
+  right: 0;
+  bottom: -4px;
+  left: 0;
+  height: 8px;
+}
+.diagram-group-edge.is-left {
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+}
+.diagram-group-edge.is-right {
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+}
+.diagram-flow .diagram-group.is-movable .diagram-group-label {
+  cursor: grab;
+}
+.diagram-flow .react-flow__node-frame.dragging .diagram-group-label,
+.diagram-flow .react-flow__node-frame.dragging .diagram-group-edge {
+  cursor: grabbing;
+}
+.diagram-flow .diagram-group.is-movable:has(.diagram-group-handle:hover),
+.diagram-flow .diagram-group.is-selected {
+  border-color: var(--accent);
+}
+.diagram-flow .diagram-group.is-selected {
+  border-style: solid;
+}
+.diagram-flow .diagram-group.is-movable .diagram-group-label:hover,
+.diagram-flow .diagram-group.is-selected .diagram-group-label {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.diagram-flow .react-flow__node-frame:focus-visible {
+  outline: none;
+}
+.diagram-flow .react-flow__node-frame:focus-visible .diagram-group {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* "Some blocks overlap. Tidy up" floats at the bottom of the canvas. */
+.diagram-overlap-notice {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 6;
+  max-width: calc(100% - 32px);
+  translate: -50% 0;
+  animation: diagram-notice-in 180ms var(--ease) both;
+}
+@keyframes diagram-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diagram-overlap-notice {
+    animation: none;
+  }
+}

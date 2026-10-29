@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Pin, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
@@ -11,7 +11,8 @@ import { usePersistentState } from "@/lib/prefs";
 import Link from "next/link";
 import { resolveExtras } from "@/lib/desk-extras";
 import { DESKS, type DeskId } from "./desks";
-import { LiveBoard, liveLine, ownCount, PreviewTiles, useDeskLayout } from "./live-board";
+import { LiveBoard, liveCount, ownCount, PreviewTiles, useDeskLayout } from "./live-board";
+import { GlancePills, greeting, longDate } from "./glance";
 import { ChartTypePanel, PlotsGalleryPanel } from "./plots-panel";
 import { AddTileButton, AddedTiles } from "./add-tile";
 import { sampleLive } from "../onboarding/sample";
@@ -20,12 +21,6 @@ import "./desk.css";
 
 const SAMPLE_KEY = "desk.sample";
 const PLOTS_KEY = "desk.plots";
-
-function kickDate(now = new Date()) {
-  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][now.getDay()];
-  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"][now.getMonth()];
-  return `${weekday}, ${now.getDate()} ${month}`;
-}
 
 function flagValue(preferences: Array<{ key: string; value: unknown }> | undefined, key: string) {
   return preferences?.find((row) => row.key === key)?.value === true;
@@ -113,23 +108,21 @@ export function DeskView({
   return (
     <div className="desk page" data-desk={deskId} data-enter={enter ? "1" : undefined} data-phone={phone ? "1" : undefined} data-plots={plots ? "1" : undefined} data-sample={sample ? "1" : undefined}>
       <div className="phead">
-        <div>
-          <div className="kick">
-            {kickDate()}
+        <div className="min-w-0">
+          <div className="kick" suppressHydrationWarning>
+            {longDate()}
             {sample ? <span className="sample-mark">Sample</span> : null}
           </div>
-          <h1 className="display">Today</h1>
-          <div className="sub">
-            {sample ? (
-              liveLine(deskId, sampleData) ?? desk.empty
-            ) : !liveQuery.isFetched ? (
-              <span className="sub-skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} data-motion-loading={showSkeleton ? "1" : "0"} aria-hidden />
-            ) : filled && liveData ? (
-              liveLine(deskId, liveData) ?? desk.empty
-            ) : (
-              desk.empty
-            )}
-          </div>
+          <h1 className="display" data-today-title suppressHydrationWarning>{greeting(new Date(), shell.data?.user.name)}</h1>
+          {sample ? (
+            <GlancePills live={sampleData} sample />
+          ) : !liveQuery.isFetched ? (
+            <div className="sub"><span className="sub-skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} data-motion-loading={showSkeleton ? "1" : "0"} aria-hidden /></div>
+          ) : liveData && liveCount(liveData) > 0 ? (
+            <GlancePills live={liveData} />
+          ) : (
+            <div className="sub">{desk.empty}</div>
+          )}
         </div>
         <div className="row gap8">
           <AddTileButton deskId={deskId} plots={plots} startOpen={add} />
@@ -151,14 +144,14 @@ export function DeskView({
         </div>
       ) : null}
       {liveData?.pinnedTasks?.length ? (
-        <section className="mb-5" data-today-pins aria-label="Pinned to Today">
-          <h2 className="mb-2 text-[12px] font-medium text-muted">Pinned</h2>
-          <div className="flex flex-wrap gap-2">{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="rounded-lg border border-line bg-panel px-3 py-2 text-[13px] font-medium hover:border-line-strong [overflow-wrap:anywhere]">{task.title}</Link>)}</div>
+        <section className="today-pins" data-today-pins aria-label="Pinned to Today">
+          <h2><Pin size={12} aria-hidden />Pinned</h2>
+          <div>{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="today-pin" title={task.title}>{task.title}</Link>)}</div>
         </section>
       ) : null}
       <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk">
         {sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
-          <div key={index} className="tile skel sk" data-span={span.c} data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
+          <div key={index} className="tile skel sk" data-span={phone ? 4 : span.c} data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${phone ? 4 : span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
         ))}
       </div>
       <AddedTiles />

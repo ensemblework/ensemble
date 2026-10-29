@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { applyDiagramEdits, explainDiagram, parseDiagram, printDiagram, type DiagramOp } from "@ensemble/block-diagrams";
+import { applyDiagramEdits, explainDiagram, parseDiagram, printDiagram, withoutOverlappingLayout, type DiagramModel, type DiagramOp } from "@ensemble/block-diagrams";
 import { rememberRevision } from "../../diagrams/history.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 
@@ -24,6 +24,13 @@ function diagnosticsOf(text: string) {
   const errors = diagnostics.filter((item) => item.severity === "error").length;
   const warnings = diagnostics.filter((item) => item.severity === "warning").length;
   return { parsed, diagnostics, errors, warnings, ok: errors === 0 && warnings === 0 };
+}
+
+/** A written `layout` that stacks blocks or group frames on top of each other is dropped (locked positions stay), so the editor lays the diagram out. */
+function tidyLayout(model: DiagramModel): { model: DiagramModel; dropped: boolean; note: string } {
+  const tidy = withoutOverlappingLayout(model);
+  const dropped = tidy !== model;
+  return { model: tidy, dropped, note: dropped ? " Its layout had overlapping blocks, so the editor lays it out when it opens." : "" };
 }
 
 async function ownedDiagram(ctx: ToolContext, id: string) {
@@ -140,14 +147,15 @@ export const diagramTools = [
       if (!report.ok) {
         throw Object.assign(new Error("That diagram text still has problems. Call hub_validate_diagram and fix them first."), { statusCode: 400 });
       }
-      const source = printDiagram(report.parsed.model);
+      const laid = tidyLayout(report.parsed.model);
+      const source = printDiagram(laid.model);
       const row = await inTransaction(ctx, async (tx) => {
         const created = await tx.blockDiagram.create({
           data: {
             userId: ctx.userId,
             title: input.title.trim().slice(0, 200),
             source,
-            document: report.parsed.model as object,
+            document: laid.model as object,
           },
         });
         for (const link of input.links ?? []) {
@@ -158,7 +166,7 @@ export const diagramTools = [
         }
         return created;
       });
-      return toolOk(`Created diagram “${row.title}”.`, { id: row.id, title: row.title }, { invalidate: ["diagrams"], href: `/diagrams/${row.id}` });
+      return toolOk(`Created diagram “${row.title}”.${laid.note}`, { id: row.id, title: row.title, ...(laid.dropped ? { layoutDropped: true } : {}) }, { invalidate: ["diagrams"], href: `/diagrams/${row.id}` });
     },
   }),
   defineTool({
@@ -202,7 +210,8 @@ export const diagramTools = [
       if (!report.ok) {
         throw Object.assign(new Error("That diagram text still has problems. Call hub_validate_diagram and fix them first."), { statusCode: 400 });
       }
-      const source = printDiagram(report.parsed.model);
+      const laid = tidyLayout(report.parsed.model);
+      const source = printDiagram(laid.model);
       await rememberRevision(ctx.prisma, {
         id: current.id,
         userId: current.userId,
@@ -215,14 +224,14 @@ export const diagramTools = [
         tx.blockDiagram.update({
           where: { id: current.id },
           data: {
-            title: report.parsed.model.meta.title.trim().slice(0, 200) || current.title,
+            title: laid.model.meta.title.trim().slice(0, 200) || current.title,
             source,
-            document: report.parsed.model as object,
+            document: laid.model as object,
             version: { increment: 1 },
           },
         }),
       );
-      return toolOk(`Updated “${updated.title}”.`, { id: updated.id, version: updated.version }, { invalidate: ["diagrams"], href: `/diagrams/${updated.id}` });
+      return toolOk(`Updated “${updated.title}”.${laid.note}`, { id: updated.id, version: updated.version, ...(laid.dropped ? { layoutDropped: true } : {}) }, { invalidate: ["diagrams"], href: `/diagrams/${updated.id}` });
     },
   }),
   defineTool({

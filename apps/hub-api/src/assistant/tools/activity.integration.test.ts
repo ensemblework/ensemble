@@ -108,8 +108,8 @@ test("hub_stop_activity refuses another space's work, unknown ids and this chat'
   assert.equal(stop.isWrite, true);
   assert.equal(stop.area, "runs");
   for (const id of [`job:${side.running.id}`, `import:${side.importJob.id}`, side.reply, "job:00000000-0000-0000-0000-000000000000"]) {
-    await assert.rejects(() => preview("hub_stop_activity", ctx(mira.id), { id }), /Nothing with id .* is running in this space/, id);
-    await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id }), /Nothing with id/, id);
+    await assert.rejects(() => preview("hub_stop_activity", ctx(mira.id), { id }), /no longer running in this space/, id);
+    await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id }), /no longer running in this space/, id);
   }
   await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: selfReply }), /this chat's own reply/);
   assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: side.running.id } })).status, "running");
@@ -212,7 +212,7 @@ test("someone a space is shared with sees only this space's replies and runs, ne
     assert.ok(!rows.some((row) => row.kind === "import"), "imports are the owner's");
     assert.equal(rows.find((row) => row.id === `job:${ownersRun.id}`)?.canStop, false, "a run on the owner's computer is theirs to stop");
     await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: `job:${ownersRun.id}` }), /someone else's computer/);
-    await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: `import:${ownersImport.id}` }), /Nothing with id/);
+    await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: `import:${ownersImport.id}` }), /no longer running in this space/);
   });
   assert.equal((await db.importJob.findUniqueOrThrow({ where: { id: ownersImport.id } })).status, "running");
   assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: ownersRun.id } })).status, "running");

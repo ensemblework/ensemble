@@ -1,0 +1,80 @@
+/* Code's window (components/code/ide-chrome.tsx): sashes, the activity bar's marker and the status bar. */
+
+.ide-sash {
+  position: absolute;
+  z-index: 25;
+  touch-action: none;
+  outline: none;
+}
+.ide-sash[aria-orientation="vertical"] {
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+.ide-sash[aria-orientation="horizontal"] {
+  left: 0;
+  right: 0;
+  top: -3px;
+  height: 6px;
+  cursor: row-resize;
+}
+.ide-sash::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+  transition: background-color 150ms ease;
+}
+.ide-sash[aria-orientation="vertical"]::after {
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  width: 4px;
+}
+.ide-sash[aria-orientation="horizontal"]::after {
+  left: 0;
+  right: 0;
+  top: 1px;
+  height: 4px;
+}
+.ide-sash:hover::after {
+  background: rgb(var(--accent-rgb) / 0.55);
+  transition-delay: 250ms;
+}
+.ide-sash:focus-visible::after,
+.ide-sash[data-active]::after {
+  background: rgb(var(--accent-rgb));
+  transition-delay: 0ms;
+}
+html[data-ide-resizing] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+html[data-ide-resizing="vertical"] * {
+  cursor: col-resize !important;
+}
+html[data-ide-resizing="horizontal"] * {
+  cursor: row-resize !important;
+}
+
+.ide-activity {
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.ide-activity[data-active]::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(var(--accent-rgb));
+}
+
+.ide-statusbar {
+  scrollbar-width: none;
+}
+.ide-statusbar::-webkit-scrollbar {
+  display: none;
+}

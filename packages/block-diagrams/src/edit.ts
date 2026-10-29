@@ -14,7 +14,7 @@ import {
   type ShapeId,
   type TextStyle,
 } from "./model.js";
-import { refitGroups } from "./layout.js";
+import { freeSpot, groupContents, isLocked, refitGroups } from "./layout.js";
 import { minNodeSize, minTextSize, nodeSize, textSize } from "./shapes.js";
 
 function clone<T>(value: T): T {
@@ -33,7 +33,7 @@ export function addBlock(model: DiagramModel, shape: ShapeId, at: { x: number; y
   const id = uniqueId([...Object.keys(next.nodes), ...Object.keys(next.groups), ...Object.keys(next.texts)], shape === "rectangle" ? "block" : shape);
   const size = nodeSize(shape, name);
   next.nodes[id] = { label: name, shape, color: null, group: null, locked: false };
-  next.layout[id] = { x: at.x, y: at.y, w: size.w, h: size.h };
+  next.layout[id] = { ...freeSpot(next, id, { x: at.x, y: at.y, w: size.w, h: size.h }), w: size.w, h: size.h };
   return refitGroups(next);
 }
 
@@ -42,7 +42,7 @@ export function addTextBox(model: DiagramModel, at: { x: number; y: number }, te
   const id = uniqueId([...Object.keys(next.nodes), ...Object.keys(next.groups), ...Object.keys(next.texts)], "note");
   const size = textSize(text);
   next.texts[id] = { text, group: null, locked: false };
-  next.layout[id] = { x: at.x, y: at.y, w: size.w, h: size.h };
+  next.layout[id] = { ...freeSpot(next, id, { x: at.x, y: at.y, w: size.w, h: size.h }), w: size.w, h: size.h };
   return refitGroups(next);
 }
 
@@ -68,22 +68,34 @@ export function connectBlocks(
 }
 
 export function moveItem(model: DiagramModel, id: string, x: number, y: number): DiagramModel {
-  if (model.nodes[id]?.locked || model.texts[id]?.locked) return model;
-  const next = clone(model);
-  const current = next.layout[id];
-  if (!current) return model;
-  next.layout[id] = { ...current, x, y };
-  return refitGroups(next);
+  return moveItems(model, [{ id, x, y }]);
 }
 
-/** Several items dragged together. Locked ones stay. */
+/**
+ * Several items dragged together. Each lands exactly where it was dropped; nothing else is pushed
+ * aside, and group frames are refitted around their members. A group id moves the group: every
+ * block, text box and group inside it shifts by the same amount (one change, one undo). Locked
+ * items, members of a locked group, and a group holding a locked block stay.
+ */
 export function moveItems(model: DiagramModel, moves: Array<{ id: string; x: number; y: number }>): DiagramModel {
-  const next = clone(model);
+  // Frames the saved text has no box for are measured around their members first.
+  const next = refitGroups(clone(model));
+  const explicit = new Set(moves.map((move) => move.id));
   let moved = false;
   for (const { id, x, y } of moves) {
-    if (next.nodes[id]?.locked || next.texts[id]?.locked) continue;
+    if (isLocked(model, id)) continue;
     const current = next.layout[id];
     if (!current || (current.x === x && current.y === y)) continue;
+    if (model.groups[id]) {
+      const inside = groupContents(model, id);
+      if (inside.some((child) => (model.nodes[child] || model.texts[child]) && isLocked(model, child))) continue;
+      const dx = x - current.x;
+      const dy = y - current.y;
+      for (const child of inside) {
+        const box = next.layout[child];
+        if (box && !explicit.has(child)) next.layout[child] = { ...box, x: box.x + dx, y: box.y + dy };
+      }
+    }
     next.layout[id] = { ...current, x, y };
     moved = true;
   }
@@ -116,7 +128,7 @@ function fitText(model: DiagramModel, id: string): void {
 
 /** A block or text box resized on the canvas. It never goes below the size its text needs. */
 export function resizeItem(model: DiagramModel, id: string, box: LayoutBox): DiagramModel {
-  if (model.nodes[id]?.locked || model.texts[id]?.locked || !model.layout[id]) return model;
+  if (isLocked(model, id) || !model.layout[id]) return model;
   const min = minItemSize(model, id, box.w);
   let w = Math.max(min.w, Math.round(box.w));
   let h = Math.max(min.h, Math.round(box.h));

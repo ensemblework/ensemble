@@ -123,11 +123,12 @@ export async function finishDeviceJob(
         },
       });
     }
-    await tx.notification.create({
+    // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
+    if (outcome !== "succeeded" && outcome !== "cancelled") await tx.notification.create({
       data: {
         userId: job.userId,
         kind: "agent",
-        title: outcome === "succeeded" ? `Agent finished: ${job.task.title}` : `Agent ${outcome === "cancelled" ? "stopped" : "needs you"}: ${job.task.title}`,
+        title: `Agent needs you: ${job.task.title}`,
         body: (error ?? summary).slice(0, 300),
         url: `/tasks/${job.taskId}`,
       },

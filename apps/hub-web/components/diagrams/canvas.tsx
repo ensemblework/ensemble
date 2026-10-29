@@ -29,8 +29,10 @@ import {
   type LayoutBox,
   type PortName,
 } from "@ensemble/block-diagrams";
+import { groupContents, isLocked, refitGroups } from "@ensemble/block-diagrams/layout";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import "@xyflow/react/dist/style.css";
+import "./diagrams.css";
 import { DiagramEdgeView, type DiagramEdgeData } from "./edge";
 import { GroupNode, ShapeNode, TextNode, type GroupNodeData, type ShapeNodeData, type TextNodeData } from "./nodes";
 import { SNAP_PX, snapMove, snapResize, type Box, type Guide } from "./snap";
@@ -50,6 +52,36 @@ type Handlers = {
   onEdit: (id: string | null) => void;
 };
 
+/** Frames sit under lines and blocks; a nested frame sits just above its parent's. */
+const FRAME_Z = -20;
+/** React Flow lifts a selected node by this much. A frame must stay under the blocks inside it. */
+const SELECTED_LIFT = 1000;
+
+function groupDepth(model: DiagramModel, id: string): number {
+  let depth = 0;
+  const seen = new Set<string>([id]);
+  let parent = model.groups[id]?.parent ?? null;
+  while (parent && model.groups[parent] && !seen.has(parent)) {
+    seen.add(parent);
+    depth += 1;
+    parent = model.groups[parent]!.parent;
+  }
+  return Math.min(depth, 15);
+}
+
+/** Cancel React Flow's lift on a selected frame so it never covers its own members. */
+function settleFrames(nodes: Node[]): Node[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.type !== "frame") return node;
+    const z = (node.data as GroupNodeData).z - (node.selected ? SELECTED_LIFT : 0);
+    if (node.zIndex === z) return node;
+    changed = true;
+    return { ...node, zIndex: z };
+  });
+  return changed ? next : nodes;
+}
+
 function toFlow(model: DiagramModel, handlers: () => Handlers, markedId: string | null, readOnly = false): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const boxes: Record<string, { x: number; y: number; w: number; h: number }> = {};
@@ -66,20 +98,38 @@ function toFlow(model: DiagramModel, handlers: () => Handlers, markedId: string 
     boxes[id] = next;
     return next;
   };
+  // Frames are drawn around their members, as every edit refits them, even when the saved text has no box for them.
+  const frames = refitGroups(model).layout;
   for (const [id, group] of Object.entries(model.groups)) {
-    const box = model.layout[id];
+    const box = frames[id];
     if (!box) continue;
+    const locked = isLocked(model, id);
+    const holdsLocked = groupContents(model, id).some((child) => (model.nodes[child] || model.texts[child]) && isLocked(model, child));
+    const z = FRAME_Z + groupDepth(model, id);
     nodes.push({
       id,
       type: "frame",
       position: { x: box.x, y: box.y },
       width: box.w,
       height: box.h,
-      zIndex: -1,
-      selectable: false,
-      draggable: false,
+      zIndex: z,
+      selectable: !readOnly,
+      draggable: !readOnly && !locked && !holdsLocked,
+      // Only the title tab and the border pick the group up; inside, the blocks stay grabbable.
+      dragHandle: ".diagram-group-handle",
       style: { pointerEvents: "none" },
-      data: { label: group.label, width: box.w, height: box.h, problem: id === markedId } satisfies GroupNodeData,
+      ariaLabel: `Group ${group.label}`,
+      data: {
+        label: group.label,
+        width: box.w,
+        height: box.h,
+        z,
+        locked,
+        movable: !readOnly && !locked && !holdsLocked,
+        holdsLocked,
+        readOnly,
+        problem: id === markedId,
+      } satisfies GroupNodeData,
     });
   }
   for (const [id, node] of Object.entries(model.nodes)) {
@@ -91,13 +141,14 @@ function toFlow(model: DiagramModel, handlers: () => Handlers, markedId: string 
       width: size.w,
       height: size.h,
       zIndex: 1,
-      draggable: !readOnly && !node.locked,
+      draggable: !readOnly && !isLocked(model, id),
       data: {
         label: node.label,
         shape: node.shape,
         color: node.color,
         font: node.font,
         locked: node.locked,
+        held: isLocked(model, id),
         readOnly,
         width: size.w,
         height: size.h,
@@ -116,11 +167,12 @@ function toFlow(model: DiagramModel, handlers: () => Handlers, markedId: string 
       width: size.w,
       height: size.h,
       zIndex: 2,
-      draggable: !readOnly && !text.locked,
+      draggable: !readOnly && !isLocked(model, id),
       data: {
         text: text.text,
         font: text.font,
         locked: text.locked,
+        held: isLocked(model, id),
         readOnly,
         width: size.w,
         height: size.h,
@@ -167,10 +219,11 @@ function Fit({ tick }: { tick: number }) {
   fitRef.current = fitView;
   useEffect(() => {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const frame = requestAnimationFrame(() => {
+    // The new nodes reach React Flow's store a frame or two after the model changes (a Reorganize).
+    const timer = window.setTimeout(() => {
       void fitRef.current({ padding: 0.25, maxZoom: 1.4, duration: reduce ? 0 : 180 });
-    });
-    return () => cancelAnimationFrame(frame);
+    }, 80);
+    return () => window.clearTimeout(timer);
   }, [tick]);
   return null;
 }
@@ -245,17 +298,36 @@ function Surface(props: SurfaceProps) {
   const resizing = useRef<Map<string, Box>>(new Map());
   const free = useRef(false);
   const flow = useReactFlow();
-  useEffect(() => {
+  // Where every node was when a drag began, so a dragged frame can carry its members along.
+  const dragOrigin = useRef<Map<string, { x: number; y: number }> | null>(null);
+  // The model changed (autosave, someone else's edit, layout on open) while a drag or resize was
+  // in progress. Apply it when the hand lets go, not under it.
+  const stale = useRef(false);
+  const builtRef = useRef(built);
+  builtRef.current = built;
+  const sync = useCallback((next: { nodes: Node[]; edges: Edge[] }) => {
     // Keep what is selected when the model comes back from an edit.
     setNodes((current) => {
       const picked = new Set(current.filter((node) => node.selected).map((node) => node.id));
-      return built.nodes.map((node) => (picked.has(node.id) ? { ...node, selected: true } : node));
+      return settleFrames(next.nodes.map((node) => (picked.has(node.id) ? { ...node, selected: true } : node)));
     });
     setEdges((current) => {
       const picked = new Set(current.filter((edge) => edge.selected).map((edge) => edge.id));
-      return built.edges.map((edge) => (picked.has(edge.id) ? { ...edge, selected: true } : edge));
+      return next.edges.map((edge) => (picked.has(edge.id) ? { ...edge, selected: true } : edge));
     });
-  }, [built]);
+  }, []);
+  const flushStale = useCallback(() => {
+    if (!stale.current) return;
+    stale.current = false;
+    sync(builtRef.current);
+  }, [sync]);
+  useEffect(() => {
+    if (dragOrigin.current || resizing.current.size) {
+      stale.current = true;
+      return;
+    }
+    sync(built);
+  }, [built, sync]);
   useEffect(() => {
     // Alt held: move and resize freely, without snapping.
     const set = (event: KeyboardEvent) => {
@@ -272,7 +344,7 @@ function Surface(props: SurfaceProps) {
   selectionRef.current = props.onSelection;
   const handleSelection = useCallback((params: OnSelectionChangeParams) => {
     selectionRef.current({
-      nodes: params.nodes.filter((node) => node.type !== "frame").map((node) => node.id),
+      nodes: params.nodes.map((node) => node.id),
       edges: params.edges.map((edge) => edge.id),
     });
   }, []);
@@ -290,7 +362,7 @@ function Surface(props: SurfaceProps) {
       const finished: string[] = [];
 
       const drags = changes.filter((change): change is Extract<NodeChange, { type: "position" }> => change.type === "position" && Boolean(change.dragging) && Boolean(change.position));
-      if (drags.length === 1 && snapping) {
+      if (drags.length === 1 && snapping && byId.get(drags[0]!.id)?.type !== "frame") {
         const change = drags[0]!;
         const node = byId.get(change.id);
         if (node) {
@@ -301,6 +373,52 @@ function Surface(props: SurfaceProps) {
         }
       } else if (drags.length) shown = [];
       if (changes.some((change) => change.type === "position" && change.dragging === false)) shown = [];
+
+      // A dragged frame carries everything inside it, by the same distance.
+      const origin = dragOrigin.current;
+      const frames = drags.filter((change) => byId.get(change.id)?.type === "frame");
+      if (origin && frames.length) {
+        const moving = new Set(changes.flatMap((change) => (change.type === "position" ? [change.id] : [])));
+        const carried: NodeChange[] = [];
+        for (const change of frames) {
+          const from = origin.get(change.id);
+          if (!from) continue;
+          const dx = change.position!.x - from.x;
+          const dy = change.position!.y - from.y;
+          for (const child of groupContents(propsRef.current.model, change.id)) {
+            const start = origin.get(child);
+            if (!start || moving.has(child)) continue;
+            moving.add(child);
+            carried.push({ type: "position", id: child, position: { x: start.x + dx, y: start.y + dy } });
+          }
+        }
+        next = [...next, ...carried];
+      }
+
+      // Arrow keys move the selection (React Flow sends no drag start or stop): carry frame members
+      // the same way and save the move.
+      const keyed = origin
+        ? []
+        : changes.filter((change): change is Extract<NodeChange, { type: "position" }> => change.type === "position" && change.dragging === false && Boolean(change.position));
+      const keyMoves: Array<{ id: string; x: number; y: number }> = [];
+      if (keyed.length) {
+        const moving = new Set(keyed.map((change) => change.id));
+        const carried: NodeChange[] = [];
+        for (const change of keyed) {
+          keyMoves.push({ id: change.id, x: Math.round(change.position!.x), y: Math.round(change.position!.y) });
+          const node = byId.get(change.id);
+          if (node?.type !== "frame") continue;
+          const dx = change.position!.x - node.position.x;
+          const dy = change.position!.y - node.position.y;
+          for (const child of groupContents(propsRef.current.model, change.id)) {
+            const at = byId.get(child);
+            if (!at || moving.has(child)) continue;
+            moving.add(child);
+            carried.push({ type: "position", id: child, position: { x: at.position.x + dx, y: at.position.y + dy } });
+          }
+        }
+        next = [...next, ...carried];
+      }
 
       for (const change of changes) {
         if (change.type !== "dimensions" || !change.dimensions) continue;
@@ -332,16 +450,35 @@ function Surface(props: SurfaceProps) {
         }
       }
       if (shown) setGuides(shown);
-      const applied = applyNodeChanges(next, current);
+      const applied = settleFrames(applyNodeChanges(next, current));
       nodesRef.current = applied;
       setNodes(applied);
       for (const id of finished) {
         const node = applied.find((item) => item.id === id);
         if (node) propsRef.current.onResize(id, boxOf(node));
       }
+      if (finished.length) flushStale();
+      if (keyMoves.length) propsRef.current.onMove(keyMoves);
     },
-    [flow],
+    [flow, flushStale],
   );
+
+  const startDrag = () => {
+    dragOrigin.current = new Map(nodesRef.current.map((node) => [node.id, { ...node.position }]));
+  };
+  const endDrag = (dragged: Node[]) => {
+    setGuides([]);
+    dragOrigin.current = null;
+    if (!readOnly) {
+      const byId = new Map(nodesRef.current.map((node) => [node.id, node]));
+      // A frame's move stands for its members; the model shifts them with it.
+      props.onMove(dragged.map((item) => {
+        const node = byId.get(item.id) ?? item;
+        return { id: item.id, x: Math.round(node.position.x), y: Math.round(node.position.y) };
+      }));
+    }
+    flushStale();
+  };
 
   const cursors = useCursorBroadcast(diagramId ?? "");
   const shownEdges = useMemo(
@@ -361,15 +498,10 @@ function Surface(props: SurfaceProps) {
       nodesConnectable={!readOnly}
       onNodesChange={onNodesChange}
       onEdgesChange={(changes: EdgeChange[]) => setEdges((current) => applyEdgeChanges(changes, current))}
-      onNodeDragStop={(_event, _node, dragged) => {
-        setGuides([]);
-        if (readOnly) return;
-        const byId = new Map(nodesRef.current.map((node) => [node.id, node]));
-        props.onMove(dragged.map((item) => {
-          const node = byId.get(item.id) ?? item;
-          return { id: item.id, x: Math.round(node.position.x), y: Math.round(node.position.y) };
-        }));
-      }}
+      onNodeDragStart={startDrag}
+      onNodeDragStop={(_event, _node, dragged) => endDrag(dragged)}
+      onSelectionDragStart={startDrag}
+      onSelectionDragStop={(_event, dragged) => endDrag(dragged)}
       onEdgeDoubleClick={(_event, edge) => {
         if (!readOnly) setEditingEdge(edge.id);
       }}
@@ -381,7 +513,7 @@ function Surface(props: SurfaceProps) {
       connectionLineStyle={{ stroke: "var(--diagram-line)", strokeWidth: 1.5 }}
       fitView
       fitViewOptions={{ padding: 0.25, maxZoom: 1.4 }}
-      minZoom={0.25}
+      minZoom={0.1}
       maxZoom={2}
       // Double-click edits a label; it does not zoom.
       zoomOnDoubleClick={false}

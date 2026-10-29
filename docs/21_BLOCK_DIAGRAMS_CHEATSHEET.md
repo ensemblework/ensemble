@@ -52,7 +52,7 @@ A bad line is skipped. A missing `)` or `:` is kept, with a warning. An unknown 
 
 A text that starts with `flowchart` or `graph` is read as Mermaid and then saved as the statements above.
 
-Leave `layout` out of anything you write from scratch. The editor fills it in when someone moves a block or presses Reorganize. `locked` keeps that position on Reorganize, Fit vertically, and Fit horizontally.
+Leave `layout` out of anything you write from scratch. The editor fills it in when someone moves a block or presses Reorganize. Reorganize lays each group out as its own frame, clear of the others. `locked` keeps that position on Reorganize, Fit vertically, and Fit horizontally.
 
 `curve` defaults to `straight`. Set it once for the diagram, and again on a line only when that line should differ. `elbow` turns at right angles. Fit vertically writes `direction down`. Fit horizontally writes `direction right`.
 

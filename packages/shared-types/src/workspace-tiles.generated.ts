@@ -337,6 +337,24 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "agents",
+          "title": "Agents at work",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     },
@@ -723,6 +741,18 @@ export const WORKSPACE_TILES = {
           "key": "due-week",
           "title": "Week ahead",
           "c": 6,
+          "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
           "r": 3
         }
       ]
@@ -1117,6 +1147,18 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     },
@@ -1492,6 +1534,18 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     },
@@ -1846,6 +1900,18 @@ export const WORKSPACE_TILES = {
           "key": "due-week",
           "title": "Week ahead",
           "c": 6,
+          "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
           "r": 3
         }
       ]
@@ -2216,6 +2282,18 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     },
@@ -2494,6 +2572,18 @@ export const WORKSPACE_TILES = {
           "key": "due-week",
           "title": "Week ahead",
           "c": 6,
+          "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
           "r": 3
         }
       ]
@@ -2834,6 +2924,24 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "agents",
+          "title": "Agents at work",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     },
@@ -3159,6 +3267,24 @@ export const WORKSPACE_TILES = {
           "title": "Week ahead",
           "c": 6,
           "r": 3
+        },
+        {
+          "key": "focus-now",
+          "title": "Focus now",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "agents",
+          "title": "Agents at work",
+          "c": 4,
+          "r": 3
+        },
+        {
+          "key": "your-week",
+          "title": "Your week",
+          "c": 4,
+          "r": 3
         }
       ]
     }
@@ -3170,6 +3296,12 @@ export const WORKSPACE_TILES = {
           "key": "people",
           "title": "People",
           "c": 4,
+          "r": 4
+        },
+        {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
           "r": 4
         },
         {
@@ -3539,6 +3671,12 @@ export const WORKSPACE_TILES = {
           "r": 4
         },
         {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
+          "r": 4
+        },
+        {
           "key": "artifacts",
           "title": "Artifacts",
           "c": 8,
@@ -3902,6 +4040,12 @@ export const WORKSPACE_TILES = {
           "key": "people",
           "title": "People",
           "c": 4,
+          "r": 4
+        },
+        {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
           "r": 4
         },
         {
@@ -4271,6 +4415,12 @@ export const WORKSPACE_TILES = {
           "r": 4
         },
         {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
+          "r": 4
+        },
+        {
           "key": "artifacts",
           "title": "Artifacts",
           "c": 8,
@@ -4634,6 +4784,12 @@ export const WORKSPACE_TILES = {
           "key": "people",
           "title": "People",
           "c": 4,
+          "r": 4
+        },
+        {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
           "r": 4
         },
         {
@@ -5003,6 +5159,12 @@ export const WORKSPACE_TILES = {
           "r": 4
         },
         {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
+          "r": 4
+        },
+        {
           "key": "artifacts",
           "title": "Artifacts",
           "c": 8,
@@ -5366,6 +5528,12 @@ export const WORKSPACE_TILES = {
           "key": "people",
           "title": "People",
           "c": 4,
+          "r": 4
+        },
+        {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
           "r": 4
         },
         {
@@ -5735,6 +5903,12 @@ export const WORKSPACE_TILES = {
           "r": 4
         },
         {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
+          "r": 4
+        },
+        {
           "key": "artifacts",
           "title": "Artifacts",
           "c": 8,
@@ -6098,6 +6272,12 @@ export const WORKSPACE_TILES = {
           "key": "people",
           "title": "People",
           "c": 4,
+          "r": 4
+        },
+        {
+          "key": "projects",
+          "title": "Projects",
+          "c": 8,
           "r": 4
         },
         {
@@ -6740,6 +6920,18 @@ export const WORKSPACE_TILES = {
         "title": "Week ahead",
         "c": 6,
         "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
+        "r": 3
       }
     ],
     "teacher": [
@@ -6998,6 +7190,18 @@ export const WORKSPACE_TILES = {
         "title": "Week ahead",
         "c": 6,
         "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
+        "r": 3
       }
     ],
     "lawyer": [
@@ -7223,6 +7427,18 @@ export const WORKSPACE_TILES = {
         "key": "due-week",
         "title": "Week ahead",
         "c": 6,
+        "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
         "r": 3
       }
     ],
@@ -7458,6 +7674,24 @@ export const WORKSPACE_TILES = {
         "title": "Week ahead",
         "c": 6,
         "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "agents",
+        "title": "Agents at work",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
+        "r": 3
       }
     ],
     "vibe": [
@@ -7678,6 +7912,24 @@ export const WORKSPACE_TILES = {
         "title": "Week ahead",
         "c": 6,
         "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "agents",
+        "title": "Agents at work",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
+        "r": 3
       }
     ],
     "manager": [
@@ -7875,6 +8127,18 @@ export const WORKSPACE_TILES = {
         "key": "due-week",
         "title": "Week ahead",
         "c": 6,
+        "r": 3
+      },
+      {
+        "key": "focus-now",
+        "title": "Focus now",
+        "c": 4,
+        "r": 3
+      },
+      {
+        "key": "your-week",
+        "title": "Your week",
+        "c": 4,
         "r": 3
       }
     ]

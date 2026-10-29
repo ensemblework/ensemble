@@ -116,7 +116,9 @@ export function inline(text: string, base: Style = {}): Line {
     else if (token.startsWith("`")) out.push({ ...base, text: token.slice(1, -1), color: "cyan" });
     else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)!;
-      out.push({ ...base, text: link[1]!, underline: true }, { ...base, text: ` (${link[2]})`, dim: true });
+      // Record links (`ensemble://task/<id>`, `/tasks/<id>`) cannot open in a terminal: the title is enough.
+      const record = /^(?:ensemble:\/\/|\/)/i.test(link[2]!);
+      out.push({ ...base, text: link[1]!, underline: true }, ...(record ? [] : [{ ...base, text: ` (${link[2]})`, dim: true }]));
     }
     last = match.index! + token.length;
   }
