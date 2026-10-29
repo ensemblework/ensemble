@@ -74,3 +74,34 @@ test("constraints render once as rules for every step, and merge with clearing",
   assert.match(text, /Web app only\./);
   assert.deepEqual(mergeConstraints({ branch: "a", publish: "push" }, { branch: "", publish: "commit" }), { publish: "commit" });
 });
+
+test("parallel worktrees: builds that work apart are integrated once, after their checks, and checked again", () => {
+  const requirements = [req("a", ["a1"]), req("b", ["b1"])];
+  const builds = [step("ba", "build", ["a"]), step("ta", "verify", ["a"], ["ba"], "ba"), step("bb", "build", ["b"]), step("tb", "verify", ["b"], ["bb"], "bb")];
+  const constraints: PlanShape["constraints"] = { folder: "live-test", parallel: "worktrees" };
+  assert.match(validatePlan({ requirements, deferred: [], constraints, steps: builds }).join(" "), /add an integration step that brings “ba”, “bb” into the folder/);
+  assert.match(validatePlan({ requirements, deferred: [], constraints: { parallel: "worktrees" }, steps: builds }).join(" "), /name it in constraints\.folder/);
+
+  const integrate = (after: string[], over: Record<string, unknown> = {}) => ({ ...step("in", "build", ["a", "b"], after), integrates: ["ba", "bb"], ...over });
+  const early = validatePlan({ requirements, deferred: [], constraints, steps: [...builds, integrate(["ba", "bb"])] }).join(" ");
+  assert.match(early, /must come after “ba” and its checks: add “ta” to after/);
+  assert.match(early, /needs a verify step after it \(verifies “in”\)/);
+  const whole = [...builds, integrate(["ta", "tb"]), step("tin", "verify", ["a", "b"], ["in"], "in")];
+  assert.deepEqual(validatePlan({ requirements, deferred: [], constraints, steps: whole }), []);
+  assert.deepEqual(validatePlan({ requirements, deferred: [], constraints: { ...constraints, order: "serial" }, steps: whole.map((row) => (row.id === "bb" ? { ...row, after: ["ta"] } : row)) }), [], "an integration covering two features is not a grouped build");
+
+  assert.match(validatePlan({ requirements, deferred: [], constraints, steps: [...builds, integrate(["ta", "tb"], { integrates: ["ba", "ta"] }), step("tin", "verify", [], ["in"], "in")] }).join(" "), /integrates “ta”, which is not a build step/);
+  assert.match(validatePlan({ requirements, deferred: [], constraints: { folder: "live-test" }, steps: whole }).join(" "), /works in one checkout: set constraints\.parallel/);
+  assert.match(validatePlan({ requirements, deferred: [], constraints: { ...constraints, parallel: "snapshots", integrate: "rebase" }, steps: whole }).join(" "), /Snapshots have no branches to rebase/);
+  assert.deepEqual(validatePlan({ requirements: [req("a", ["a1"])], deferred: [], constraints, steps: builds.slice(0, 2) }), [], "one build alone needs no integration");
+});
+
+test("parallel constraints render once, with how the work comes together", () => {
+  assert.match(renderConstraints({ parallel: "worktrees" }), /Parallel work: each build works in its own git worktree[^\n]*merges their branches into the folder's current branch\. The builds' branches stay on the computer/);
+  assert.match(renderConstraints({ parallel: "worktrees", integrate: "rebase" }), /an integration step replays their commits/);
+  assert.match(renderConstraints({ parallel: "worktrees", integrate: "merge", publish: "none" }), /an integration step applies their changes to the folder/, "with nothing committed there is nothing to merge");
+  assert.match(renderConstraints({ parallel: "snapshots" }), /detached copy of the folder[^\n]*applies each one's changes/);
+  assert.match(renderConstraints({ parallel: "serial" }), /Parallel work: one checkout of the folder; steps that change it take turns\./);
+  assert.equal(renderConstraints({ folder: "app" }).includes("Parallel"), false, "the default says nothing new");
+  assert.deepEqual(mergeConstraints({ parallel: "worktrees", folder: "app" }, { parallel: "" as never }), { folder: "app" });
+});

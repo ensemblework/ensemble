@@ -115,6 +115,20 @@ export const ONLINE_WINDOW_MS = 90_000;
 
 const text = (max: number) => z.string().max(max);
 
+/** Worktree and branch names Ensemble makes: letters, digits and . _ - / only, never starting with - or . */
+const RefName = z.string().max(200).regex(/^(?![-.])[A-Za-z0-9._/-]+$/).refine((value) => !value.includes("..") && !value.endsWith(".lock") && !value.endsWith("/"));
+
+export const MissionSpec = z.object({
+  id: text(100).min(1),
+  step: text(100).min(1),
+  /** Work in this git worktree of the shared folder: on `branch` (made from the folder's last commit when new), or detached; `reuse`: a check of a build, in that build's worktree. */
+  worktree: z.object({ name: z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), branch: RefName.nullish(), detached: z.boolean().optional(), reuse: z.boolean().optional() }).nullish(),
+  port: z.number().int().min(1024).max(65535).nullish(),
+  /** An integration step's worktrees (names): removed after it succeeds, when clean and nothing would be lost. */
+  integrates: z.array(z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)).max(20).nullish(),
+});
+export type MissionSpec = z.infer<typeof MissionSpec>;
+
 /** The job spec claim returns: instructions, repo URL, folder label, delivery, model id. No argv. */
 export const JobSpec = z
   .object({
@@ -180,9 +194,27 @@ export const JobSpec = z
      * lists the ones its step or mission names, possibly none. Absent: every saved secret, as before.
      */
     secrets: z.array(text(64)).max(100).nullish(),
+    /**
+     * An Ensemble Node plan step's run (B13): its mission and step, the git worktree of the shared folder it
+     * works in, its development-server port, and the worktrees an integration step brings in. Older servers
+     * omit it; an older computer ignores it and works in the folder itself. Read with `parseMission`, so a
+     * value this computer does not understand never refuses the whole job.
+     */
+    mission: z.unknown().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
+
+/** A claim's (or a job context's) `mission`, when it is a valid one. */
+export function parseMission(value: unknown): MissionSpec | null {
+  const parsed = MissionSpec.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** A job's `context.mission`, when it is a valid one. */
+export function missionOf(context: unknown): MissionSpec | null {
+  return parseMission(typeof context === "object" && context !== null ? (context as { mission?: unknown }).mission : undefined);
+}
 
 /** Claim answers 204 when there is nothing, or the spec, bare or under `job`. */
 export function parseClaim(body: unknown): JobSpec {

@@ -39,6 +39,8 @@ import {
 } from "./missions-core.js";
 import { parseReport, STEP_KINDS, type StepKind, type StepOutcome } from "./report.js";
 import { renderConstraints, type Constraints, type PlanInput, type StepInput } from "./plan-contract.js";
+import { claimEvents, releaseIn, stepHolder } from "./claims.js";
+import { staleChecks, type Stale } from "./parallel.js";
 
 export { ENDED, missionEnded } from "./missions-core.js";
 export type { StepStatus } from "./missions-core.js";
@@ -66,6 +68,8 @@ export type PlanStep = {
   /** Steps that must be done (or passed) before this one starts. */
   after: string[];
   verifies: string | null;
+  /** An integration step: the builds whose worktrees or snapshots it brings into the folder (B13). */
+  integrates?: string[];
   requirementIds: string[];
   status: StepStatus;
   held: boolean;
@@ -73,6 +77,8 @@ export type PlanStep = {
   outcome: StepOutcome;
   attempt: number;
   attempts: Attempt[];
+  /** A check that passed, after which another step left a different candidate in the same place (B13). */
+  staleAfter?: Stale;
   result: string | null;
   progress: string | null;
   startedAt: string | null;
@@ -197,6 +203,9 @@ export function ledger(requirements: Requirement[], deferred: PlanData["deferred
 function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): PlanData {
   const steps = rows.map(stepState);
   const view = { steps };
+  const constraints = (mission.constraints && typeof mission.constraints === "object" ? mission.constraints : {}) as Constraints;
+  const integratesOf = (row: NodeStep) => (Array.isArray(row.integrates) ? row.integrates : []);
+  const stale = staleChecks({ missionId: mission.id, constraints, steps: steps.map((step, index) => ({ ...step, integrates: integratesOf(rows[index]!) })) });
   return {
     type: "plan",
     version: mission.version,
@@ -211,7 +220,7 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
     status: mission.status as PlanStatus,
     revision: mission.revision,
     goal: mission.goal,
-    constraints: (mission.constraints && typeof mission.constraints === "object" ? mission.constraints : {}) as Constraints,
+    constraints,
     requirements: ledger(storedRequirements(mission), storedDeferred(mission), steps, missionEnded(mission.status)),
     deferred: storedDeferred(mission),
     routine: mission.routine && typeof mission.routine === "object" ? (mission.routine as RoutineLink) : null,
@@ -229,6 +238,7 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
         ...(row.run && typeof row.run === "object" && Object.values(row.run as object).some(Boolean) ? { run: row.run as StepRun } : {}),
         after: step.after,
         verifies: step.verifies,
+        ...(integratesOf(row).length ? { integrates: integratesOf(row) } : {}),
         requirementIds: step.requirementIds,
         status: step.status,
         held: Boolean(holder),
@@ -236,6 +246,7 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
         outcome: step.outcome,
         attempt: step.attempt,
         attempts: step.attempts,
+        ...(stale.has(step.id) ? { staleAfter: stale.get(step.id)! } : {}),
         result: step.result,
         progress: step.progress,
         startedAt: step.startedAt,
@@ -269,6 +280,11 @@ let outboxKick: ((app: FastifyInstance) => void) | null = null;
 /** node/outbox.ts registers how a committed change wakes it (kept here so plans.ts does not import the outbox). */
 export function onMissionEffects(kick: (app: FastifyInstance) => void): void {
   outboxKick = kick;
+}
+
+/** Wakes the outbox for rows written outside a mission change (a resource handed to a step waiting for it). */
+export function kickMissions(app: FastifyInstance): void {
+  outboxKick?.(app);
 }
 
 function effectRow(effect: Effect, mission: NodeMission, steps: StepState[], version: number): { kind: string; payload: Record<string, unknown>; key: string } {
@@ -325,6 +341,9 @@ export async function mutateMission(ctx: Ctx, planId: string, change: Change, op
       where: { id: planId },
       data: { status: draft.mission.status, version, ...(missionEnded(draft.mission.status) && !mission.endedAt ? { endedAt: now } : {}) },
     });
+    // What ended steps (or the ended mission) held on the computer goes to the next in line (node/claims.ts).
+    const ended = draft.steps.filter((step) => draft.dirty.has(step.id) && ENDED.has(step.status)).map((step) => stepHolder(planId, step.id));
+    const handovers = await releaseIn(tx, missionEnded(draft.mission.status) ? { missionId: planId } : { holders: ended });
     for (const effect of draft.effects) {
       const { kind, payload, key } = effectRow(effect, mission, draft.steps, version);
       const operationId = `${planId}:${key}`;
@@ -336,11 +355,12 @@ export async function mutateMission(ctx: Ctx, planId: string, change: Change, op
     const card = existing
       ? await tx.nodeMessage.update({ where: { id: planId }, data: { data: data as unknown as Prisma.InputJsonValue, ...(typeof verdict === "object" && verdict.body !== undefined ? { body: verdict.body } : {}) } })
       : null;
-    return { mission: updated, rows: fresh, leadHandle, card, changed: true, kicked: draft.effects.length > 0 };
+    return { mission: updated, rows: fresh, leadHandle, card, changed: true, kicked: draft.effects.length > 0 || handovers.length > 0, handed: handovers.length > 0 };
   });
   if (!result) return null;
   const data = project(result.mission, result.rows, result.leadHandle);
   if (result.changed && result.card) await announce(db, result.card, "node.message.updated");
+  if ("handed" in result && result.handed) claimEvents.emit("released");
   if (result.kicked && ctx.app && outboxKick) outboxKick(ctx.app);
   return { data, message: result.card, changed: result.changed };
 }
@@ -787,6 +807,12 @@ export function reportNote(data: PlanData, judgement: string[] = []): string {
   const ok = data.steps.every((row) => row.outcome === "done" || row.outcome === "pass");
   const failed = data.steps.filter((row) => row.outcome === "fail");
   const held = data.steps.filter((row) => row.held);
+  const stale = data.steps.filter((row) => row.staleAfter).map((row) => {
+    const tested = [...row.attempts].reverse().find((attempt) => attempt.outcome === "pass")?.candidate;
+    const was = tested?.commit ?? tested?.contentHash;
+    const after = row.staleAfter!;
+    return `- @${row.handle}'s check passed${was ? ` for ${was.slice(0, 12)}` : ""}, but @${after.handle}'s step then left ${after.candidate.slice(0, 12)} in the same place: that pass does not cover it.`;
+  });
   const routine = data.routine
     ? [
         `This was your routine “${data.routine.title}”${data.routine.trigger ? ` (${data.routine.trigger})` : ""}.`,
@@ -798,6 +824,7 @@ export function reportNote(data: PlanData, judgement: string[] = []): string {
     data.kind === "self" ? "Your own work ended. Its report:" : "Your plan has nothing left to run. The steps:",
     ...data.steps.map((row) => resultLine(data, row)),
     ...(failed.length ? ["", "Failed checks:", ...failed.map((row) => `- @${row.handle}:\n${checksLine(row.attempts.at(-1)) || `  ${truncateText(row.result ?? "", 400)}`}`)] : []),
+    ...(stale.length ? ["", "Passing checks a later change made stale (tell your owner; only a new check would cover it):", ...stale] : []),
     ...(data.requirements.length ? ["", "Requirements:", ...data.requirements.map((row) => `- ${row.status}: ${row.text}`)] : []),
     ...(judgement.length ? ["", "Needs your judgement:", ...judgement.map((line) => `- ${line}`)] : []),
     "",
@@ -885,6 +912,7 @@ export async function createPlan(
           brief: truncateText(step.brief.trim(), 4000),
           after: step.after.map((id) => ids.get(id)!).filter(Boolean),
           verifies: step.verifies ? (ids.get(step.verifies) ?? null) : null,
+          integrates: (step.integrates ?? []).map((id) => ids.get(id)!).filter(Boolean),
           requirementIds: step.requirementIds,
           ...(run ? { run: run as Prisma.InputJsonValue } : {}),
         },
@@ -947,6 +975,7 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
           brief: truncateText(step.brief.trim(), 4000),
           after,
           verifies: step.verifies ? (resolve(step.verifies) ?? null) : null,
+          integrates: (step.integrates ?? []).map((ref) => resolve(ref)).filter((id): id is string => Boolean(id)),
           requirementIds: step.requirementIds,
           ...(run ? { run: run as Prisma.InputJsonValue } : {}),
         },

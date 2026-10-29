@@ -25,6 +25,10 @@ export const Constraints = z
     context: z.enum(["default", "long_context"]).optional(),
     substitution: z.enum(["forbid", "ask", "allow"]).optional(),
     order: z.enum(["serial", "parallel_ok"]).optional(),
+    /** How builds share the folder (B13): one checkout in turn (the default), a git worktree each on a local branch, or a detached copy each. */
+    parallel: z.enum(["serial", "worktrees", "snapshots"]).optional(),
+    /** How an integration step combines worktrees or snapshots: merge (default for worktrees), rebase, or patch (default for snapshots). */
+    integrate: z.enum(["merge", "rebase", "patch"]).optional(),
     notes: z.array(z.string().trim().min(1).max(500)).max(12).optional(),
   })
   .strict();
@@ -55,6 +59,8 @@ export const StepInput = z
     brief: z.string().trim().min(1).max(4000),
     after: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
     verifies: Id.optional(),
+    /** An integration step (a build): the build steps whose worktrees or snapshots it combines into the folder (B13). */
+    integrates: z.array(Id).max(20).optional(),
     run: Run.optional(),
   })
   .strict();
@@ -76,7 +82,7 @@ export type PlanInput = z.infer<typeof PlanInput>;
 /** Briefs carry only the step's own objective: constraints are on the mission. */
 export const BRIEF_MAX = 1500;
 
-type StepLike = { id: string; kind: string; after: string[]; verifies?: string | null; requirementIds: string[]; brief?: string };
+type StepLike = { id: string; kind: string; after: string[]; verifies?: string | null; requirementIds: string[]; brief?: string; integrates?: readonly string[] | null };
 
 /** Ancestors of a step through `after` (transitively). */
 function ancestors(steps: Map<string, StepLike>, id: string, seen = new Set<string>()): Set<string> {
@@ -112,11 +118,62 @@ function hasCycle(steps: Map<string, StepLike>): string | null {
 export type PlanShape = {
   requirements: Array<{ id: string; acceptance: Array<{ id: string }> }>;
   deferred: Array<{ requirementId: string }>;
-  constraints: Pick<Constraints, "order">;
+  constraints: Pick<Constraints, "order" | "parallel" | "integrate" | "folder">;
   steps: StepLike[];
   /** Ids of steps that already exist (revisions): `after` may name them. */
   existing?: ReadonlySet<string>;
 };
+
+/** Whether builds work apart (worktrees or snapshots) and come together in an integration step. */
+export function worksApart(constraints: Pick<Constraints, "parallel"> | null | undefined): boolean {
+  return constraints?.parallel === "worktrees" || constraints?.parallel === "snapshots";
+}
+
+/**
+ * Parallel work in one repository (B13): builds that work apart need the folder they come from and an
+ * integration step that brings each in once, after the build and its checks, checked again itself.
+ */
+function parallelProblems(plan: PlanShape, steps: Map<string, StepLike>): string[] {
+  const problems: string[] = [];
+  const apart = worksApart(plan.constraints);
+  if (apart && !plan.constraints.folder) problems.push(`Parallel ${plan.constraints.parallel} are made from a folder on the computer: name it in constraints.folder.`);
+  if (plan.constraints.parallel === "snapshots" && (plan.constraints.integrate === "merge" || plan.constraints.integrate === "rebase")) {
+    problems.push(`Snapshots have no branches to ${plan.constraints.integrate}: integrate them as a patch (integrate: patch), or use parallel: worktrees.`);
+  }
+  const integrated = new Map<string, string>();
+  for (const step of plan.steps) {
+    if (!step.integrates?.length) continue;
+    if (step.kind !== "build") problems.push(`Step “${step.id}” integrates other steps' work, so it is a build step (kind build).`);
+    if (!apart) problems.push(`Step “${step.id}” integrates other steps, but the plan works in one checkout: set constraints.parallel to worktrees or snapshots, or leave out integrates.`);
+    const before = ancestors(steps, step.id);
+    for (const id of step.integrates) {
+      const target = steps.get(id);
+      if (id === step.id || (target && (target.kind !== "build" || target.integrates?.length)) || (!target && !plan.existing?.has(id))) {
+        problems.push(`Step “${step.id}” integrates “${id}”, which is not a build step of this plan.`);
+        continue;
+      }
+      if (integrated.has(id)) problems.push(`Build “${id}” is integrated by both “${integrated.get(id)}” and “${step.id}”: one integration step brings in each build.`);
+      integrated.set(id, step.id);
+      const checks = plan.steps.filter((row) => row.kind === "verify" && row.verifies === id).map((row) => row.id);
+      const missing = [id, ...checks].filter((need) => steps.has(need) && !before.has(need));
+      if (missing.length) problems.push(`Integration step “${step.id}” must come after “${id}” and its checks: add ${missing.map((need) => `“${need}”`).join(", ")} to after.`);
+    }
+    const checked = step.integrates.some((id) => plan.steps.some((row) => row.kind === "verify" && row.verifies === id));
+    if (checked && !plan.steps.some((row) => row.kind === "verify" && row.verifies === step.id)) {
+      problems.push(`Integration step “${step.id}” needs a verify step after it (verifies “${step.id}”): the checks run again on the integrated result.`);
+    }
+  }
+  if (apart) {
+    const builds = plan.steps.filter((step) => step.kind === "build" && !step.integrates?.length);
+    const loose = builds.filter((step) => !integrated.has(step.id)).map((step) => step.id);
+    if (builds.length > 1 && loose.length) {
+      problems.push(
+        `Parallel ${plan.constraints.parallel}: each build works apart, so add an integration step that brings ${loose.map((id) => `“${id}”`).join(", ")} into the folder ({kind: build, integrates: [the builds], after: [the builds and their checks]}), with a verify step after it.`,
+      );
+    }
+  }
+  return problems;
+}
 
 /**
  * What is wrong with a plan, as sentences for the lead to fix (empty when it is valid): unknown or
@@ -155,6 +212,7 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
   }
   const cycle = hasCycle(steps);
   if (cycle) problems.push(`The steps' order has a cycle through “${cycle}”.`);
+  if (!cycle) problems.push(...parallelProblems(plan, steps));
   const deferred = new Set(plan.deferred.map((row) => row.requirementId));
   for (const id of deferred) if (!requirementIds.has(id)) problems.push(`Deferred “${id}” is not a requirement of this plan.`);
   const covering = (id: string) => plan.steps.filter((step) => step.requirementIds.includes(id));
@@ -167,7 +225,7 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
   if (plan.constraints.order === "serial" && !cycle) {
     for (const step of plan.steps) {
       const features = step.requirementIds.filter((id) => !deferred.has(id));
-      if (step.kind === "build" && features.length > 1) problems.push(`Serial order: build step “${step.id}” covers ${features.length} requirements; give each feature its own build step.`);
+      if (step.kind === "build" && !step.integrates?.length && features.length > 1) problems.push(`Serial order: build step “${step.id}” covers ${features.length} requirements; give each feature its own build step.`);
     }
     for (let index = 1; index < active.length; index += 1) {
       const previous = covering(active[index - 1]!.id);
@@ -210,8 +268,23 @@ export function renderConstraints(constraints: Constraints | null | undefined, o
   if (constraints.substitution === "forbid") lines.push("- Never substitute another agent or model.");
   if (constraints.substitution === "ask") lines.push("- Ask before substituting another agent or model.");
   if (constraints.order === "serial") lines.push("- Features go one at a time: each is checked before the next starts.");
+  if (constraints.parallel) lines.push(`- Parallel work: ${parallelLine(constraints)}`);
   for (const note of constraints.notes ?? []) lines.push(`- ${note}`);
   return lines.join("\n");
+}
+
+/** How an integration step combines the builds: as the mission says, else merge (worktrees) or patch (snapshots); with nothing committed (publish none), always as patches. */
+export function integrateHow(constraints: Pick<Constraints, "parallel" | "integrate" | "publish">): "merge" | "rebase" | "patch" {
+  if (constraints.publish === "none") return "patch";
+  return constraints.integrate ?? (constraints.parallel === "snapshots" ? "patch" : "merge");
+}
+
+function parallelLine(constraints: Constraints): string {
+  const how = integrateHow(constraints);
+  const together = how === "merge" ? "merges their branches into the folder's current branch" : how === "rebase" ? "replays their commits onto the folder's current branch" : "applies their changes to the folder";
+  if (constraints.parallel === "worktrees") return `each build works in its own git worktree of the folder, on a local branch of its own; an integration step ${together}. The builds' branches stay on the computer: never push them.`;
+  if (constraints.parallel === "snapshots") return "each build works in its own detached copy of the folder (a git worktree without a branch); an integration step applies each one's changes to the folder.";
+  return "one checkout of the folder; steps that change it take turns.";
 }
 
 /** Merges a revision's constraints into the current ones (a key set to an empty string clears it). */
