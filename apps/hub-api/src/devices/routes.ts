@@ -4,6 +4,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  * client codes against. A device token reaches only `/api/devices/self/*`,
  * and only the device that token belongs to.
  */
+import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -634,7 +635,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           tier: body.tier,
         },
         sessionId: held.job.id,
-        expiresAt: new Date(Date.now() + 24 * 3600_000),
+        // A routine's work (nobody started it in a chat) waits briefly; work its owner started waits a day.
+        expiresAt: new Date(Date.now() + ((await backgroundJob(prisma, held.job.id)) ? backgroundWaitMs() : 24 * 3600_000)),
       },
     });
     await prisma.notification.create({

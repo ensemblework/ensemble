@@ -18,7 +18,8 @@ import { addStep, createPlan, currentPlan, missionEnded, PlanError, planVisibili
 import { BRIEF_MAX, PlanInput, validatePlan } from "./plan-contract.js";
 import { CronError, describeCron, nextRun, parseCron, validTimeZone } from "./cron.js";
 import { nodeSpaces } from "./spaces.js";
-import { inBackground } from "./queue.js";
+import { enqueueTurn, inBackground } from "./queue.js";
+import { updateMessageDataIf } from "./store.js";
 import { publishTo } from "./events.js";
 
 /** The owner's site reads its routines again (no content in the event). */
@@ -28,6 +29,51 @@ export function routineChanged(ownerId: string, id: string): void {
 import { crewRoomFor } from "./tools.js";
 
 const TICK_MS = Number(process.env.ENSEMBLE_NODE_ROUTINE_TICK_MS ?? 20_000) || 20_000;
+/** How long a question or card from background work (a routine's run) waits for its owner (design B5): 30 minutes by default. */
+export function backgroundWaitMs(env: NodeJS.ProcessEnv = process.env): number {
+  return (Number(env.ENSEMBLE_BACKGROUND_DECISION_MINUTES ?? 30) || 30) * 60_000;
+}
+
+/** Whether a computer job is a routine's work: nobody started it in a chat, so its questions do not wait long. */
+export async function backgroundJob(prisma: PrismaClient, jobId: string): Promise<boolean> {
+  const run = await prisma.nodeRun.findUnique({ where: { jobId }, select: { planId: true } });
+  if (!run?.planId) return false;
+  const mission = await prisma.nodeMission.findUnique({ where: { id: run.planId }, select: { routine: true } });
+  return Boolean(mission?.routine);
+}
+
+/**
+ * Cards a routine's work raised (approvals, secrets) that waited longer than `backgroundWaitMs` expire,
+ * saying so, and the step's node goes on without the answer or reports what it could not do.
+ */
+export async function expireBackgroundCards(app: FastifyInstance, now = Date.now()): Promise<number> {
+  const prisma = app.prisma;
+  const missions = await prisma.nodeMission.findMany({ where: { routine: { not: Prisma.DbNull }, status: { in: ["running", "reporting"] } }, select: { id: true }, take: 200 });
+  let expired = 0;
+  for (const mission of missions) {
+    const cards = await prisma.nodeMessage.findMany({
+      where: { kind: "approval", createdAt: { lt: new Date(now - backgroundWaitMs()) }, AND: [{ data: { path: ["plan", "id"], equals: mission.id } }, { data: { path: ["status"], equals: "pending" } }] },
+    });
+    for (const card of cards) {
+      const minutes = Math.round(backgroundWaitMs() / 60_000);
+      const updated = await updateMessageDataIf(prisma, card, { data: { path: ["status"], equals: "pending" } }, { status: "expired", expiredReason: `Background work waits ${minutes} minutes for an answer.` });
+      if (!updated) continue;
+      expired += 1;
+      const step = (card.data as { plan?: { step?: unknown } }).plan?.step;
+      if (typeof step === "string" && card.authorNodeId) {
+        await enqueueTurn(app, {
+          nodeId: card.authorNodeId,
+          roomId: card.roomId,
+          reason: "approval",
+          note: `Your owner did not answer within ${minutes} minutes, and this is background work, so the request expired. Finish your step without it, or report it blocked with what it needs.`,
+          planId: mission.id,
+          planStep: step,
+        });
+      }
+    }
+  }
+  return expired;
+}
 /** A scheduled time missed by more than this (Ensemble was not running) is recorded as missed, not run late. */
 const LATE_MS = 60 * 60_000;
 const EVENT_ITEMS = 50;
@@ -572,6 +618,7 @@ export function startRoutines(app: FastifyInstance): () => void {
     timer = setInterval(() => {
       void refreshWatches(app.prisma).catch(() => undefined);
       void tickRoutines(app).catch((error: unknown) => app.log.error({ err: error }, "Routine tick failed"));
+      void expireBackgroundCards(app).catch((error: unknown) => app.log.error({ err: error }, "Could not expire background cards"));
     }, TICK_MS);
     timer.unref?.();
   }

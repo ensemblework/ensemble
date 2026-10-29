@@ -15,7 +15,7 @@ import type { RuntimeTurn } from "../lib/model-turn.js";
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
 const { settleTurns } = await import("./queue.js");
-const { tickRoutines, refreshRoutineWatches, watchRoutineEvents } = await import("./routines.js");
+const { tickRoutines, refreshRoutineWatches, watchRoutineEvents, expireBackgroundCards } = await import("./routines.js");
 const { sseHub } = await import("../lib/sse.js");
 const unwatch = watchRoutineEvents(h.app);
 after(async () => {
@@ -298,4 +298,33 @@ test("a saved plan runs as a plan of the owner's nodes, and a bad schedule or pl
   assert.equal(mission.originRoomId, lead.room.id);
   const texts = (await read(mira, lead.room.id)).filter((row) => row.kind === "text" && row.authorKind === "node");
   assert.deepEqual(texts.map((row) => row.body), ["Competitors shipped two things this week."]);
+});
+
+test("a routine's card waits 30 minutes for its owner, then expires and its step goes on without it", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "researcher");
+  const made = await routine(mira, { title: "Nightly check", nodeId: node.id, instruction: "Check the build.", cron: "0 2 * * *" });
+  // The work turn waits on its owner (a card); nothing else happens yet.
+  script = (turn) => (turn.transcript.includes("did not answer within 30 minutes") ? { calls: [{ name: "node_step_report", arguments: { outcome: "blocked", summary: "Needed the owner's approval to run the check." } }], then: "(no reply)" } : { text: "(no reply)" });
+  await mira.inject({ method: "POST", url: `/api/node/routines/${made.routine.id}/run` });
+  await settleTurns();
+  await tick();
+  const run = await h.prisma.nodeRoutineRun.findFirstOrThrow({ where: { routineId: made.routine.id } });
+  const step = await h.prisma.nodeStep.findFirstOrThrow({ where: { missionId: run.missionId! } });
+  // As if its work were still waiting on the card.
+  await h.prisma.nodeStep.update({ where: { missionId_id: { missionId: step.missionId, id: step.id } }, data: { status: "working", endedAt: null } });
+  await h.prisma.nodeMission.update({ where: { id: step.missionId }, data: { status: "running", endedAt: null, reportedAt: null } });
+  const card = await h.prisma.nodeMessage.create({
+    data: { roomId: room.id, seq: 9_000, userId: mira.id, authorKind: "node", authorNodeId: node.id, kind: "approval", body: "Start the check?", data: { type: "session", status: "pending", plan: { id: run.missionId, step: step.id } }, visibleTo: [mira.id], createdAt: new Date(Date.now() - 20 * 60_000) },
+  });
+  assert.equal(await expireBackgroundCards(h.app), 0, "20 minutes is not long enough");
+  await h.prisma.nodeMessage.update({ where: { id: card.id }, data: { createdAt: new Date(Date.now() - 31 * 60_000) } });
+  assert.equal(await expireBackgroundCards(h.app), 1);
+  await settleTurns();
+  const expired = await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
+  assert.equal((expired.data as { status: string }).status, "expired");
+  assert.match((expired.data as { expiredReason: string }).expiredReason, /waits 30 minutes/);
+  assert.ok(seen.some((turn) => turn.transcript.includes("did not answer within 30 minutes")), "its node hears it and goes on");
+  // Work its owner started in a chat has no such timer: only routines' cards expire.
+  assert.equal(await expireBackgroundCards(h.app, Date.now() + 86_400_000), 0);
 });
