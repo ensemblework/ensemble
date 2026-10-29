@@ -221,8 +221,9 @@ async function deliverResult(app: FastifyInstance, mission: NodeMission, roomId:
   const request = typeof requestId === "string" ? await prisma.nodePeerRequest.findUnique({ where: { id: requestId } }) : null;
   // A request delivers only when both people are still there (node/peer-requests.ts marks it done, or cancelled).
   if (request && request.status !== "done") return;
-  const spaceId = boundSpaceId(room);
-  const task = taskId && spaceId ? await prisma.task.findFirst({ where: { id: taskId, userId: spaceId, deletedAt: null } }) : null;
+  // The task's own space, wherever the room links now.
+  const task = taskId ? await prisma.task.findFirst({ where: { id: taskId, deletedAt: null } }) : null;
+  const spaceId = task?.userId ?? null;
   const ledger = await ledgerOf(prisma, mission, task, request?.text ?? null);
   const media = await missionMedia(prisma, mission.id, owner);
   let files: Array<{ id: string; name: string }> = [];

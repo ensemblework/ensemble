@@ -41,10 +41,13 @@ const SWEEP_MS = 30_000;
 /** A change is read again a little before the last read: one committed just behind it is not missed (keys dedupe). */
 const OVERLAP_MS = 5_000;
 
-/** Tests: deliver at once, and treat a shorter gap as being away. */
-export function setRoomEventTimingForTests(timing: { batchMs?: number; digestGapMs?: number }): void {
+let BACKGROUND = true;
+
+/** Tests: the batch window, the gap that counts as being away, and whether the background sweep runs (tests sweep by hand). */
+export function setRoomEventTimingForTests(timing: { batchMs?: number; digestGapMs?: number; background?: boolean }): void {
   if (timing.batchMs !== undefined) BATCH_MS = timing.batchMs;
   if (timing.digestGapMs !== undefined) DIGEST_GAP_MS = timing.digestGapMs;
+  if (timing.background !== undefined) BACKGROUND = timing.background;
 }
 
 type NewEvent = {
@@ -715,7 +718,7 @@ export function watchRoomEvents(app: FastifyInstance): void {
     schedule(app);
   });
   const sweep = setInterval(() => {
-    if (!sweeping) inBackground(app, () => sweepRoomEvents(app).then(() => undefined));
+    if (!sweeping && BACKGROUND) inBackground(app, () => sweepRoomEvents(app).then(() => undefined));
   }, SWEEP_MS);
   sweep.unref?.();
   app.addHook("onClose", async () => {

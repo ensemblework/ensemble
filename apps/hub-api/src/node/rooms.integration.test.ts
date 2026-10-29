@@ -25,8 +25,8 @@ const { setTurnRetryDelaysForTests } = await import("./queue.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
 const { deliverRoomEvents, scanRoomSpaces, setDigestWriterForTests, setRoomEventTimingForTests, setScanObserverForTests, sweepRoomEvents } = await import("./room-events.js");
 const { SPACE_COOKIE } = await import("../spaces/store.js");
-// Room events wait for their batch; each test delivers them when it chooses (`deliverRoomEvents` with a later `now`).
-setRoomEventTimingForTests({ batchMs: 3_600_000 });
+// Room events wait for their batch; each test delivers them (`deliverRoomEvents` with a later `now`) and sweeps when it chooses.
+setRoomEventTimingForTests({ batchMs: 3_600_000, background: false });
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
@@ -1199,7 +1199,7 @@ test("review #C: the digest shows every event it marks told, keeps when the away
   assert.equal((await awayRow()).away.since, began, "away again keeps when it began");
   // Something arrives while the model writes the digest.
   setDigestWriterForTests(async () => {
-    await h.prisma.nodeRoomEvent.create({ data: { roomId: room.id, userId: ben.id, kind: "page_edited", subjectKind: "page", subjectId: randomUUID(), title: "Late page", dedupeKey: "late", deliverAfter: new Date() } });
+    await h.prisma.nodeRoomEvent.create({ data: { roomId: room.id, userId: ben.id, kind: "page_edited", subjectKind: "page", subjectId: randomUUID(), title: "Late page", dedupeKey: "late", deliverAfter: new Date(Date.now() + 3_600_000) } });
     return "Welcome back.";
   });
   try {
@@ -1236,6 +1236,35 @@ test("review #D: sweeps never overlap, and read only the rooms whose space stirr
   } finally {
     setScanObserverForTests(null);
   }
+});
+
+test("review #E: a shared run works in its task's own space, and only while the person asked can still edit there", async () => {
+  const { akash, ben, room } = await twoPeople();
+  script = (turn) => {
+    if (turn.transcript.includes("Your step in")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Done." } }], then: "(no reply)" };
+    if (turn.transcript.includes("Your owner accepted")) return { calls: [{ name: "node_work_start", arguments: { title: "Requested work", brief: "Do the requested work.", kind: "other" } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const first = await linkSpace(akash, room.id, "First space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const ofAkash = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Shared thing for Akash" } })).request;
+  const ofBen = json(await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: ben.id, kind: "work", text: "Shared thing for Ben" } })).request;
+  assert.ok(ofAkash.taskId && ofBen.taskId);
+  // The room links another space before anyone accepts.
+  await linkSpace(akash, room.id, "Second space");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${ofAkash.id}/accept`, payload: { mode: "shared" } })).statusCode, 200);
+  await settleTurns();
+  const planned = seen.find((row) => row.transcript.includes("Your owner accepted Ben's request"))!;
+  assert.match(planned.transcript, /Your owner chose a shared run: work in the room's space “First space”/);
+  const akashs = await h.prisma.nodeMission.findFirstOrThrow({ where: { requestedBy: { path: ["requestId"], equals: ofAkash.id } } });
+  assert.equal(akashs.spaceId, first, "the task's own space, not the room's new one");
+  // Ben can no longer edit the task's space: his shared run is private work.
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/sharing/spaces/${first}/members/${ben.id}` })).statusCode, 204);
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/requests/${ofBen.id}/accept`, payload: { mode: "shared" } })).statusCode, 200);
+  await settleTurns();
+  const bens = await h.prisma.nodeMission.findFirstOrThrow({ where: { requestedBy: { path: ["requestId"], equals: ofBen.id } } });
+  assert.equal(bens.spaceId, null);
+  assert.ok(seen.some((row) => row.transcript.includes("Your owner accepted Akash's request") && row.transcript.includes("Your owner chose private work with a shared result")));
 });
 
 // ── C6 results into the room and onto the board: the worked example (extension §19) ──────────

@@ -28,7 +28,7 @@ import { loadPlan } from "./plans.js";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { announce, personIn, postMessage, roomPeople, updateMessageData, type MessageKind } from "./store.js";
 import { PEER_KINDS, awayNow, personRow, prefsOf, revokeTrustTo, trustFor, updatePrefs, type PeerKind } from "./trust.js";
-import { boundSpaceId, modeLine, proposeTask, requesterTask, syncRequestTask } from "./room-space.js";
+import { modeLine, proposeTask, requesterTask, roleIn, syncRequestTask } from "./room-space.js";
 import { forgetPerson } from "./room-events.js";
 import { followMission, roomTaskOrigin, syncMissionResults } from "./room-results.js";
 import { nodeSpace } from "./spaces.js";
@@ -363,8 +363,9 @@ async function startAccepted(app: FastifyInstance, request: NodePeerRequest, lea
   const from = who.get(request.fromAccountId) ?? "Someone";
   const room = await prisma.nodeRoom.findUnique({ where: { id: request.roomId } });
   const candidate = request.candidate as Candidate | null;
-  const spaceId = room ? boundSpaceId(room) : null;
-  const where = request.taskId && spaceId && request.kind === "work" ? modeLine(request, (await nodeSpace(prisma, request.toAccountId, spaceId))?.name ?? null) : "";
+  // Where it runs: the proposed task's own space (wherever the room links now), shared only while they can edit there.
+  const space = request.kind === "work" ? await requestSpace(prisma, request) : null;
+  const where = space ? modeLine({ ...request, mode: space.shared ? "shared" : "private" }, (await nodeSpace(prisma, request.toAccountId, space.spaceId))?.name ?? null) : "";
   const note =
     request.kind === "review"
       ? `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for a review: “${request.text}”${refsLine(request)}. The candidate: ${candidateLine(candidate)}. ` +
@@ -549,6 +550,15 @@ export async function turnOrigin(db: Db, turn: TurnLink): Promise<{ operationId:
   return { operationId: first?.operationId ?? null, peerRequestId: first?.peerRequestId ?? null };
 }
 
+/** A work request's proposed task's space, and whether its run is shared there (chosen, and the person asked can still edit there). */
+async function requestSpace(db: Db, request: Pick<NodePeerRequest, "taskId" | "mode" | "toAccountId">): Promise<{ spaceId: string; shared: boolean } | null> {
+  if (!request.taskId) return null;
+  const task = await db.task.findFirst({ where: { id: request.taskId, deletedAt: null }, select: { userId: true } });
+  if (!task) return null;
+  const role = request.mode === "shared" ? await roleIn(request.toAccountId, task.userId) : null;
+  return { spaceId: task.userId, shared: role === "owner" || role === "editor" };
+}
+
 export type MissionOrigin = {
   spaceId?: string;
   requestedBy?: Prisma.InputJsonValue;
@@ -592,9 +602,9 @@ export async function missionOriginFor(db: Db, turnId: string, constraints?: Con
   if (!request || request.status !== "approved" || request.toAccountId !== turn.userId || !WORK.has(request.kind)) return {};
   const owner = request.toAccountId;
   const candidate = request.candidate as Candidate | null;
-  // A shared run works in the room's space; private work keeps the mission in the owner's own (null).
-  const room = request.taskId && request.kind === "work" && request.mode === "shared" ? await db.nodeRoom.findUnique({ where: { id: request.roomId }, select: { settings: true } }) : null;
-  const sharedSpace = room ? boundSpaceId(room) : null;
+  // A shared run works in its task's own space, while the person asked can still edit there; private work keeps the mission in the owner's own (null).
+  const space = request.kind === "work" ? await requestSpace(db, request) : null;
+  const sharedSpace = space?.shared ? space.spaceId : null;
   return {
     requestedBy: { accountId: request.fromAccountId, nodeId: request.fromNodeId, roomId: request.roomId, requestId: request.id, kind: request.kind, ...(candidate ? { candidate } : {}) },
     deliverTo: { roomId: request.roomId, audience: "room", ...(request.taskId ? { taskId: request.taskId } : {}) },
