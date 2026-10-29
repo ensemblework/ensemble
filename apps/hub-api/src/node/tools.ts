@@ -73,7 +73,7 @@ export async function postAsNode(
   room: NodeRoom,
   body: string,
   privateTo: string[] | null,
-  extra: { data?: Record<string, unknown> } = {},
+  extra: { data?: Record<string, unknown>; roomBound?: string } = {},
 ): Promise<{ message: NodeMessage; drafted: boolean }> {
   const { prisma, node, lineage } = scope;
   const owner = node.userId;
@@ -82,7 +82,11 @@ export async function postAsNode(
   const shared = people.some((accountId) => accountId !== owner);
   const visibleTo = privateTo ?? [];
   const lineageData = { fromNonOwner: lineage.fromNonOwner };
-  if (visibleTo.length === 0 && shared && !sharedRoomsAuto(node)) {
+  // Where other people read, only a room-bound turn's own reply in that room (`roomBound`, node/audience.ts) may
+  // post at once, and only when the owner lets this node post there. Anything else (node_post, a helper's reply,
+  // any owner-wide turn) would move what it read to a wider audience: it is always the owner's draft.
+  const direct = sharedRoomsAuto(node) && extra.roomBound === room.id;
+  if (visibleTo.length === 0 && shared && !direct) {
     const { message } = await postMessage(prisma, {
       roomId: room.id,
       userId: owner,
@@ -484,7 +488,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       area: "tasks",
       description:
         "Post a message in another room you are in (see Your rooms), for example to report back in the group once your crew finished. " +
-        "In a room with other people your owner approves the post first unless they let you post there yourself.",
+        "In a room with other people it is always a draft your owner approves first.",
       input: z.object({
         room: z.string().min(1).max(200).describe("The room's id, or its exact title."),
         body: z.string().min(1).max(6000),

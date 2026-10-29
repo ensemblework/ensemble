@@ -697,6 +697,19 @@ test("direct chats and crews keep owner-wide turns", async () => {
   assert.ok(seen[0]!.tools.includes("node_plan") && seen[0]!.tools.includes("node_remember"));
 });
 
+// ── security review of C1–C3 ──────────────────────────────────────────────────────────────────
+
+test("security: an owner-wide turn never posts straight into a room with other people, even where its lead may post itself", async () => {
+  const { akash, ben, lead, room, dm } = await twoPeople();
+  assert.equal((await autoPost(akash, lead.id)).statusCode, 200);
+  script = (turn) => (turn.slug === "manager" && turn.transcript.includes("tell the room") ? { calls: [{ name: "node_post", arguments: { room: room.id, body: "The launch slips to May." } }], then: "Drafted it for you." } : { text: "(no reply)" });
+  await say(akash, dm.id, "tell the room the launch slips");
+  assert.ok(!(await read(ben, room.id)).some((row) => row.body.includes("slips to May")), "nothing public");
+  const draft = (await cards(akash, room.id, "post")).find((row) => row.body === "The launch slips to May.")!;
+  assert.equal(draft.data.status, "pending", "Akash's draft, whatever his lead may post itself");
+  assert.equal(draft.private, true);
+});
+
 // ── C4 the room's shared space and proposed tasks ─────────────────────────────────────────────
 
 /** Akash makes and links a space for the room (named `name`); its id. */

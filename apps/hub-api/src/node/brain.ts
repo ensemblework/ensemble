@@ -574,7 +574,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
     const named = result.refs?.length ? { refs: result.refs } : {};
-    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData } });
+    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData }, ...(bound ? { roomBound: room.id } : {}) });
     await bound?.afterReply(posted);
   } else if (mediaData.media && !drafted) {
     // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
