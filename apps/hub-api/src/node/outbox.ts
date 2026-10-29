@@ -12,6 +12,7 @@ import { enqueueTurn, inBackground } from "./queue.js";
 import { endPlan, finishStep, loadPlan, onMissionEffects, reportNote, stepNote, type PlanData } from "./plans.js";
 import { updateMessageData } from "./store.js";
 import type { AttemptReason } from "./missions-core.js";
+import { dispatchStep } from "./dispatch.js";
 
 const CLAIM_MS = 60_000;
 const SWEEP_MS = Number(process.env.ENSEMBLE_NODE_OUTBOX_SWEEP_MS ?? 5_000) || 5_000;
@@ -83,11 +84,17 @@ async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData
   // The attempt it was for is over (stopped, ended, superseded): nothing to deliver.
   if (!step || step.status !== "working" || step.attempt !== attempt) return;
   if (data.status !== "running" && data.status !== "reporting") return;
+  // Work in files goes straight to a coding agent from its packet (B8); the node takes a turn otherwise.
+  const dispatched = await dispatchStep(app, data, step, reason, planRoomId);
+  if (dispatched?.done) return;
+  const note = dispatched
+    ? `${stepNote(data, step, reason)}\n\nEnsemble could not hand this step straight to a coding agent: ${dispatched.why}\nDecide where it runs (node_session_start, or node_session_send to your session), or report it blocked with why.`
+    : stepNote(data, step, reason);
   const queued = await enqueueTurn(app, {
     nodeId: step.nodeId,
     roomId: planRoomId,
     reason: "plan",
-    note: stepNote(data, step, reason),
+    note,
     planId: data.missionId,
     planStep: step.id,
     operationId: row.operationId,

@@ -13,7 +13,8 @@ import { truncateText } from "../lib/text.js";
 import { abortAllTurns, enqueueTurn, recoverTurns } from "./queue.js";
 import { updateMessageData } from "./store.js";
 import { sweepHelpers } from "./helpers.js";
-import { finishStep, runIsStale, stepPending, stepRow } from "./plans.js";
+import { finishStep, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
+import { askForReport } from "./dispatch.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
 import { parseReport } from "./report.js";
 import { startRoutines } from "./routines.js";
@@ -100,6 +101,15 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     }
   }
 
+  // Handed straight from its packet and ended without its result: the same session is asked once before its node judges (B8).
+  if (step && !report && status === "succeeded" && typeof shown.told === "string" && !shown.reportAsked) {
+    const row = await stepRow(prisma, step.planId, step.planStep);
+    if (row?.status === "working" && !(await stepPending(prisma, step.planId, step.planStep)) && (await askForReport(app, run))) return;
+  }
+  // A step its node has not seen yet (it went straight to the agent): the node is told what the step is.
+  const plan = step && typeof shown.told === "string" ? await loadPlan(prisma, step.planId) : null;
+  const planStep = plan?.data.steps.find((row) => row.id === step?.planStep);
+
   const title = job?.task?.title ?? card?.body ?? "the task";
   const words = status === "succeeded" ? "finished" : status === "failed" ? "failed" : status === "interrupted" ? "was interrupted" : "was cancelled";
   const queued = run.sessionId
@@ -121,6 +131,7 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
       job?.error ? `Error: ${truncateText(job.error, 800)}` : "",
       run.settings ? `Run settings: ${settingsLine(storedSettings((await prisma.nodeRun.findUnique({ where: { id: run.id }, select: { settings: true } }))?.settings ?? run.settings))}.` : "",
       next.length ? `Still queued in this session: ${next.map((row) => `“${row.task.title}”`).join(", ")}; it goes on by itself.` : "",
+      planStep ? `Your step (${planStep.kind}), which Ensemble handed straight to the agent: ${truncateText(planStep.brief.replace(/\s+/g, " "), 800)}` : "",
       step
         ? "This run was for your plan step. If the step is finished, report it with node_step_report (outcome, summary, commit, checks). If it needs one more change, send your session the next message (node_session_send) and reply (no reply). If it cannot be done, report it blocked."
         : "Report the result to whoever asked (mention them if it was another node), and say what is next.",

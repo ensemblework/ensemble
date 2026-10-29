@@ -178,7 +178,7 @@ test("a packet stays within the limit: earlier results go first, constraints and
   assert.ok(packet.prompt.includes("z".repeat(1500)), "the step's own part is kept whole");
 });
 
-test("only building, checking what was built, and writing files on a computer go straight to an agent", () => {
+test("only building, checking what was built, and writing files where the mission names them go straight to an agent", () => {
   const build = step({ id: "b", kind: "build" });
   const research = step({ id: "r", kind: "research" });
   const write = step({ id: "w", kind: "write" });
@@ -188,6 +188,9 @@ test("only building, checking what was built, and writing files on a computer go
   const onComputer = plan([build, research, write, checkBuild, checkResearch, own]);
   const nowhere = plan([build, research, write, checkBuild, checkResearch, own], { constraints: {} });
   assert.equal(dispatchable(onComputer, build, "first"), true);
+  assert.equal(dispatchable(nowhere, build, "first"), false, "with no folder or repository its node decides where");
+  assert.equal(dispatchable(plan([build], { constraints: { computer: "Laptop" } }), build, "first"), false);
+  assert.equal(dispatchable(plan([build], { constraints: { repos: ["ensemblework/ensemble"] } }), build, "first"), true);
   assert.equal(dispatchable(onComputer, build, "repair"), true);
   assert.equal(dispatchable(onComputer, build, "nudge"), false);
   assert.equal(dispatchable(onComputer, research, "first"), false);

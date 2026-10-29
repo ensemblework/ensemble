@@ -27,23 +27,23 @@ export type Packet = { title: string; prompt: string; sections: Array<{ name: Se
 
 const KIND_WORD: Record<string, string> = { build: "Build", verify: "Check", write: "Write", research: "Research", other: "Work" };
 
-/** Work in files on a computer: what the mission's constraints say about where it happens. */
-function onComputer(data: Pick<PlanData, "constraints">): boolean {
+/** The mission says where the files are: a folder, or a repository. Without it, the step's node decides. */
+function located(data: Pick<PlanData, "constraints">): boolean {
   const where = data.constraints ?? {};
-  return Boolean(where.folder || where.repos?.length || where.computer);
+  return Boolean(where.folder || where.repos?.length);
 }
 
 /**
- * Steps code hands straight to a coding agent: building, checking what was built, and writing files on
- * a computer. Research, other work and the node's own work are turns of their node, as is a nudge.
+ * Steps code hands straight to a coding agent: building, checking what was built, and writing files,
+ * where the mission names the folder or repository. Research, other work, the node's own work and a
+ * nudge are turns of their node.
  */
 export function dispatchable(data: Pick<PlanData, "contract" | "constraints" | "steps">, step: Pick<PlanStep, "kind" | "executor" | "verifies">, reason: AttemptReason): boolean {
-  if (data.contract < 3 || reason === "nudge" || step.executor === "self") return false;
-  if (step.kind === "build") return true;
-  if (step.kind === "write") return onComputer(data);
+  if (data.contract < 3 || reason === "nudge" || step.executor === "self" || !located(data)) return false;
+  if (step.kind === "build" || step.kind === "write") return true;
   if (step.kind === "verify") {
     const target = data.steps.find((row) => row.id === step.verifies);
-    return target ? target.kind === "build" || (target.kind === "write" && onComputer(data)) : onComputer(data);
+    return !target || target.kind === "build" || target.kind === "write";
   }
   return false;
 }
