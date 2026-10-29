@@ -351,6 +351,19 @@ export async function proposeTask(app: FastifyInstance, request: NodePeerRequest
 }
 
 /**
+ * A review's result goes on the requester's own task: the first task the request refers to that is on the
+ * board of the room's space, while the requester can edit there. Null otherwise (the result stays in the room).
+ */
+export async function requesterTask(app: FastifyInstance, request: NodePeerRequest, room: NodeRoom): Promise<string | null> {
+  const spaceId = boundSpaceId(room);
+  if (!spaceId || !canEdit(await roleIn(request.fromAccountId, spaceId))) return null;
+  const ids = (Array.isArray(request.refs) ? (request.refs as Array<{ kind?: unknown; id?: unknown }>) : []).filter((ref) => ref.kind === "task" && typeof ref.id === "string").map((ref) => ref.id as string);
+  if (!ids.length) return null;
+  const tasks = await app.prisma.task.findMany({ where: { id: { in: ids }, userId: spaceId, deletedAt: null }, select: { id: true } });
+  return ids.find((id) => tasks.some((task) => task.id === id)) ?? null;
+}
+
+/**
  * Keeps a request's proposed task in step with the request: accepted → in progress (with the edited
  * text), declined or cancelled → dropped. Done is C6's (the result is delivered to the task).
  */

@@ -63,6 +63,8 @@ export type RoomPrefs = {
   budget?: number | null;
   away?: Away | null;
   shareable?: Shareable[];
+  /** A finished result moves my task to Done (`auto`, the default), or I close it myself (`me`) (node/room-results.ts). */
+  closeTasks?: "auto" | "me";
 };
 
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
@@ -87,6 +89,7 @@ export function prefsOf(member: Pick<NodeRoomMember, "prefs"> | null | undefined
     budget: typeof raw.budget === "number" && Number.isFinite(raw.budget) && raw.budget >= 0 ? raw.budget : null,
     away: typeof away.since === "string" ? { since: away.since, until: typeof away.until === "string" ? away.until : null, note: typeof away.note === "string" ? away.note : null } : null,
     shareable: Array.isArray(raw.shareable) ? (raw.shareable as Shareable[]).filter((row) => row && typeof row.id === "string" && (SHAREABLE_KINDS as readonly string[]).includes(row.kind)) : [],
+    closeTasks: raw.closeTasks === "me" ? "me" : "auto",
   };
 }
 

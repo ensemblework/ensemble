@@ -35,6 +35,7 @@ import { nodeSpace, nodeSpaceGateway } from "./spaces.js";
 import { cardText, statusCard } from "./status-cards.js";
 import { personIn, postMessage, roomPeople, roomSettings, updateMessageData } from "./store.js";
 import { awayNow, budgetSpent, prefsOf, publicTrust, shareableText, trustFor, type TrustSettings } from "./trust.js";
+import { resultPosted } from "./room-results.js";
 
 /** Hub tools a room-bound turn never gets, even in the room's shared space: the owner's own settings, models, runs and agents. */
 const OWNER_ONLY = new Set([
@@ -611,6 +612,8 @@ export async function roomDraftPosted(app: FastifyInstance, draft: NodeMessage, 
     if (card) await updateMessageData(app.prisma, card, { shared: posted.id });
   }
   if (typeof data.peerRequest === "string") await requestReplied(app, data.peerRequest, posted, false);
+  // A result draft (node/room-results.ts): the post says it is one.
+  await resultPosted(app, draft, posted);
 }
 
 /** Settles the room cards this module and node/peer-requests.ts make; null for other cards. */

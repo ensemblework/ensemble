@@ -28,8 +28,9 @@ import { loadPlan } from "./plans.js";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { announce, personIn, postMessage, roomPeople, updateMessageData, type MessageKind } from "./store.js";
 import { PEER_KINDS, awayNow, personRow, prefsOf, revokeTrustTo, trustFor, updatePrefs, type PeerKind } from "./trust.js";
-import { boundSpaceId, modeLine, proposeTask, syncRequestTask } from "./room-space.js";
+import { boundSpaceId, modeLine, proposeTask, requesterTask, syncRequestTask } from "./room-space.js";
 import { forgetPerson } from "./room-events.js";
+import { followMission, roomTaskOrigin, syncMissionResults } from "./room-results.js";
 import { nodeSpace } from "./spaces.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -256,8 +257,8 @@ export async function createPeerRequest(app: FastifyInstance, input: NewRequestI
   const { data, body } = await cardView(prisma, request);
   // "request" is a card kind of its own (not in store.ts's MessageKind): it never wakes a node, like every card.
   const { message: card } = await postMessage(prisma, { roomId: room.id, userId: input.fromAccountId, authorKind: "system", kind: "request" as unknown as MessageKind, body, data });
-  // Between two editors of the room's space, work becomes a proposed task there (node/room-space.ts).
-  const taskId = input.kind === "work" ? await proposeTask(app, request, room) : null;
+  // Between two editors of the room's space, work becomes a proposed task there; a review's result goes on the requester's own task (node/room-space.ts).
+  const taskId = input.kind === "work" ? await proposeTask(app, request, room) : input.kind === "review" ? await requesterTask(app, request, room) : null;
   await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { cardId: card.id, ...(taskId ? { taskId } : {}) } });
   if (taskId) request.taskId = taskId;
   if (WORK.has(input.kind)) {
@@ -314,7 +315,9 @@ async function ownerCard(app: FastifyInstance, request: NodePeerRequest, lead: N
       nodes: nodes.filter((row) => row.node).map((row) => ({ handle: row.handle, name: row.node!.name, role: row.node!.role, lead: row.representative })),
       cost: "If you accept, your lead plans it with your nodes, on your computer and your subscriptions and credits.",
       // A proposed task in the room's space: accepting asks one question, private work with a shared result (default) or a shared run.
-      ...(request.taskId ? { taskId: request.taskId, modes: ["private", "shared"], defaultMode: "private" } : {}),
+      ...(request.taskId && request.kind === "work" ? { taskId: request.taskId, modes: ["private", "shared"], defaultMode: "private" } : {}),
+      // A review of work on the requester's own task: its result goes on that task (node/room-results.ts).
+      ...(request.taskId && request.kind === "review" ? { taskId: request.taskId, resultTo: "requester_task" } : {}),
     },
     visibleTo: [request.toAccountId],
   });
@@ -361,11 +364,11 @@ async function startAccepted(app: FastifyInstance, request: NodePeerRequest, lea
   const room = await prisma.nodeRoom.findUnique({ where: { id: request.roomId } });
   const candidate = request.candidate as Candidate | null;
   const spaceId = room ? boundSpaceId(room) : null;
-  const where = request.taskId && spaceId ? modeLine(request, (await nodeSpace(prisma, request.toAccountId, spaceId))?.name ?? null) : "";
+  const where = request.taskId && spaceId && request.kind === "work" ? modeLine(request, (await nodeSpace(prisma, request.toAccountId, spaceId))?.name ?? null) : "";
   const note =
     request.kind === "review"
       ? `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for a review: “${request.text}”${refsLine(request)}. The candidate: ${candidateLine(candidate)}. ` +
-        "Plan it now with node_plan for your owner, on their computer: a verify step that checks out exactly that candidate in a fresh clone, with no secrets in its environment, sandboxed, with network only for what the checks need, and reports pass or fail with each check. Fix nothing: the repair stays with the person who asked. The mission's constraints carry this. " +
+        "Plan it now with node_plan for your owner, on their computer: one checking step (kind other, since nothing in this plan builds the candidate) for the node that tests, which checks out exactly that candidate in a fresh clone, with no secrets in its environment, sandboxed, with network only for what the checks need, and reports each check with its verdict (pass or fail). Fix nothing: the repair stays with the person who asked. The mission's constraints carry this. " +
         "When it ends, the request's card in the room shows how it ended; your detailed report stays here with your owner."
       : `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for work: “${request.text}”${refsLine(request)}.${where} ` +
         "Plan it now with node_plan for your owner (their nodes, their computer, their credits). When it ends, the request's card in the room shows how it ended; your detailed report stays here with your owner, who can share it to the room.";
@@ -405,7 +408,7 @@ export async function acceptRequest(app: FastifyInstance, accountId: string, req
   const text = input.text?.trim();
   const claimed = await prisma.nodePeerRequest.updateMany({
     where: { id: request.id, status: { in: UNDECIDED } },
-    data: { status: "approved", decidedAt: new Date(), toNodeId: lead.node.id, ...(text ? { text: truncateText(text, 4000) } : {}), ...(request.taskId ? { mode: input.mode ?? "private" } : {}) },
+    data: { status: "approved", decidedAt: new Date(), toNodeId: lead.node.id, ...(text ? { text: truncateText(text, 4000) } : {}), ...(request.taskId && request.kind === "work" ? { mode: input.mode ?? "private" } : {}) },
   });
   if (!claimed.count) throw fail("That request was already settled.", 409);
   if (input.always) {
@@ -578,18 +581,19 @@ function reviewConstraints(base: Constraints, candidate: Candidate | null): Cons
  */
 export async function missionOriginFor(db: Db, turnId: string, constraints?: Constraints): Promise<MissionOrigin> {
   const turn = await db.nodeTurn
-    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, userId: true } })
+    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, userId: true, private: true, triggerMessageId: true } })
     .catch(() => null);
   if (!turn) return {};
   const link = await turnOrigin(db, turn);
   const requestId = link.peerRequestId ?? /^request:([0-9a-f-]{36}):accepted$/.exec(link.operationId ?? "")?.[1];
-  if (!requestId) return {};
+  // Not a request: perhaps the owner's own task on the room's board (node/room-results.ts).
+  if (!requestId) return roomTaskOrigin(db, turn, link.operationId);
   const request = await db.nodePeerRequest.findUnique({ where: { id: requestId } });
   if (!request || request.status !== "approved" || request.toAccountId !== turn.userId || !WORK.has(request.kind)) return {};
   const owner = request.toAccountId;
   const candidate = request.candidate as Candidate | null;
   // A shared run works in the room's space; private work keeps the mission in the owner's own (null).
-  const room = request.taskId && request.mode === "shared" ? await db.nodeRoom.findUnique({ where: { id: request.roomId }, select: { settings: true } }) : null;
+  const room = request.taskId && request.kind === "work" && request.mode === "shared" ? await db.nodeRoom.findUnique({ where: { id: request.roomId }, select: { settings: true } }) : null;
   const sharedSpace = room ? boundSpaceId(room) : null;
   return {
     requestedBy: { accountId: request.fromAccountId, nodeId: request.fromNodeId, roomId: request.roomId, requestId: request.id, kind: request.kind, ...(candidate ? { candidate } : {}) },
@@ -646,9 +650,20 @@ export function watchPeerMissions(app: FastifyInstance): void {
     if (frame.event !== "node.message.updated" && frame.event !== "node.message") return;
     const message = frame.data as { id?: unknown; kind?: unknown } | null;
     if (message?.kind !== "plan" || typeof message.id !== "string") return;
-    inBackground(app, () => missionDelivered(app, message.id as string));
+    inBackground(app, async () => {
+      await missionDelivered(app, message.id as string);
+      // Its result onto the room's board and into the room (node/room-results.ts).
+      await followMission(app, message.id as string);
+    });
   });
-  const sweep = setInterval(() => inBackground(app, () => syncPeerMissions(app)), 60_000);
+  const sweep = setInterval(
+    () =>
+      inBackground(app, async () => {
+        await syncPeerMissions(app);
+        await syncMissionResults(app);
+      }),
+    60_000,
+  );
   sweep.unref?.();
   app.addHook("onClose", async () => clearInterval(sweep));
 }

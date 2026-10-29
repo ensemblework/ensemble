@@ -14,6 +14,7 @@ import { nodeAccount } from "./routes.js";
 import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
 import { answerSpaceOffer, bindSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
+import { RoomResultError, startRoomTask } from "./room-results.js";
 import { publishTo } from "./events.js";
 import { inBackground } from "./queue.js";
 import { roomPeople } from "./store.js";
@@ -117,6 +118,39 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     if (wasAway && !body.away) inBackground(app, () => cameBack(app, room, accountId, wasAway.since));
     publishTo(await roomPeople(prisma, room.id), "node.cards", { roomId: room.id });
     return { card: await statusCard(prisma, room, accountId, { viewerId: accountId }) };
+  });
+
+  // ── my preferences for this room, and starting my tasks (docs/35 §12.13) ─────────────────
+
+  app.get("/api/node/rooms/:id/prefs", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return { prefs: { closeTasks: prefsOf(await me(room.id, accountId)).closeTasks } };
+  });
+
+  /** `closeTasks`: a delivered result moves my task to Done (`auto`), or I close it myself (`me`). */
+  app.put("/api/node/rooms/:id/prefs", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const body = z.object({ closeTasks: z.enum(["auto", "me"]).optional() }).strict().parse(request.body ?? {});
+    const row = await me(room.id, accountId);
+    const prefs = await updatePrefs(prisma, row.id, (current) => ({ ...current, ...(body.closeTasks ? { closeTasks: body.closeTasks } : {}) }));
+    return { prefs: { closeTasks: prefs.closeTasks ?? "auto" } };
+  });
+
+  /** I start one of my tasks on the room's board: my lead plans it in My crew; its result goes to the task and the room. */
+  app.post("/api/node/rooms/:id/tasks/:taskId/start", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { mode } = z.object({ mode: z.enum(["private", "shared"]).default("private") }).strict().parse(request.body ?? {});
+    await requireVerifiedUser(accountId);
+    try {
+      await startRoomTask(app, room, accountId, z.string().uuid().parse((request.params as { taskId: string }).taskId), mode);
+    } catch (error) {
+      if (error instanceof RoomResultError) throw fail(error.statusCode, error.message);
+      throw error;
+    }
+    return reply.code(202).send({ started: true });
   });
 
   // ── pages of the room's space I watch (docs/35 §12.12) ────────────────────────────────────

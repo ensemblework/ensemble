@@ -350,6 +350,7 @@ async function describe(db: Db, events: NodeRoomEvent[], builderHandle: string |
   const items: Array<Record<string, unknown>> = [];
   // Several edits of one page are one line.
   const edits = new Map<string, NodeRoomEvent[]>();
+  const start: string[] = [];
   let assigned = 0;
   for (const event of events) {
     const data = event.data as Record<string, unknown>;
@@ -361,6 +362,7 @@ async function describe(db: Db, events: NodeRoomEvent[], builderHandle: string |
     }
     if (event.kind === "assigned") {
       assigned += 1;
+      if (!start.includes(event.subjectId)) start.push(event.subjectId);
       lines.push(data.self || event.actorAccountId === event.userId ? `“${event.title}” is yours.` : actor ? `${actor} assigned you “${event.title}”.` : `“${event.title}” is now assigned to you.`);
     } else if (event.kind === "status") {
       const to = STATUS_WORDS[String(data.to)] ?? String(data.to);
@@ -375,7 +377,7 @@ async function describe(db: Db, events: NodeRoomEvent[], builderHandle: string |
     lines.push(`${names.join(" and ") || "Someone"} edited “${group[0]!.title}”${group.length > 1 ? ` (${group.length} changes)` : ""}.`);
   }
   const offer = assigned ? (builderHandle ? `Shall I start ${assigned > 1 ? "them" : "it"} with @${builderHandle}?` : `Shall I plan ${assigned > 1 ? "them" : "it"}?`) : null;
-  return { lines, offer, items };
+  return { lines, offer, items, start };
 }
 
 /** One line as a sentence; several as a list; the offer to start last. */
@@ -421,7 +423,7 @@ export async function deliverRoomEvents(app: FastifyInstance, options: { now?: D
     if (!mine.length) continue;
     try {
       const { lead, builder } = await crewOf(prisma, roomId, userId);
-      const { lines, offer, items } = await describe(prisma, mine, builder?.handle ?? null);
+      const { lines, offer, items, start } = await describe(prisma, mine, builder?.handle ?? null);
       const { message } = await postMessage(prisma, {
         roomId,
         userId,
@@ -429,7 +431,8 @@ export async function deliverRoomEvents(app: FastifyInstance, options: { now?: D
         authorNodeId: lead?.nodeId ?? null,
         kind: lead?.nodeId ? "text" : "status",
         body: messageText(lines, offer),
-        data: { type: "room_events", items, ...(builder ? { suggest: { nodeId: builder.nodeId, handle: builder.handle } } : {}) },
+        // `start`: the tasks the Start button (or the person's yes) starts (node/room-results.ts).
+        data: { type: "room_events", items, ...(start.length ? { start: { taskIds: start } } : {}), ...(builder ? { suggest: { nodeId: builder.nodeId, handle: builder.handle } } : {}) },
         visibleTo: [userId],
         clientId: `room-events:${mine[0]!.id}`,
       });
