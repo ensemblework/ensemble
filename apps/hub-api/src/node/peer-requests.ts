@@ -15,7 +15,7 @@
  * Also here: what leaving a room takes away, and Share to room.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeAgent, NodeMessage, NodePeerRequest, NodeRoom, Prisma, PrismaClient } from "@prisma/client";
+import type { NodeAgent, NodeMessage, NodePeerRequest, NodeRoom, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
 import { sseHub } from "../lib/sse.js";
@@ -486,6 +486,22 @@ export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerI
 
 // ── missions made for a request ─────────────────────────────────────────────────────────────
 
+type TurnLink = Pick<NodeTurn, "id" | "nodeId" | "roomId" | "reason" | "note" | "attempt" | "operationId" | "peerRequestId">;
+
+/**
+ * A turn's operation and peer request, or those of the turn it retries: a rate-limited turn is tried
+ * again as a new row with the same note but without them (node/queue.ts `retryLater`).
+ */
+export async function turnOrigin(db: Db, turn: TurnLink): Promise<{ operationId: string | null; peerRequestId: string | null }> {
+  if (turn.operationId || turn.peerRequestId || !turn.attempt || !turn.note) return { operationId: turn.operationId, peerRequestId: turn.peerRequestId };
+  const first = await db.nodeTurn.findFirst({
+    where: { nodeId: turn.nodeId, roomId: turn.roomId, reason: turn.reason, note: turn.note, attempt: 0, id: { not: turn.id } },
+    orderBy: { createdAt: "desc" },
+    select: { operationId: true, peerRequestId: true },
+  });
+  return { operationId: first?.operationId ?? null, peerRequestId: first?.peerRequestId ?? null };
+}
+
 export type MissionOrigin = {
   requestedBy?: Prisma.InputJsonValue;
   deliverTo?: Prisma.InputJsonValue;
@@ -516,9 +532,13 @@ function reviewConstraints(base: Constraints, candidate: Candidate | null): Cons
  * for every other mission. Called where node/plans.ts creates missions.
  */
 export async function missionOriginFor(db: Db, turnId: string, constraints?: Constraints): Promise<MissionOrigin> {
-  const turn = await db.nodeTurn.findUnique({ where: { id: turnId.split(":")[0]! }, select: { peerRequestId: true, operationId: true, userId: true } }).catch(() => null);
-  const requestId = turn?.peerRequestId ?? /^request:([0-9a-f-]{36}):accepted$/.exec(turn?.operationId ?? "")?.[1];
-  if (!turn || !requestId) return {};
+  const turn = await db.nodeTurn
+    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, userId: true } })
+    .catch(() => null);
+  if (!turn) return {};
+  const link = await turnOrigin(db, turn);
+  const requestId = link.peerRequestId ?? /^request:([0-9a-f-]{36}):accepted$/.exec(link.operationId ?? "")?.[1];
+  if (!requestId) return {};
   const request = await db.nodePeerRequest.findUnique({ where: { id: requestId } });
   if (!request || request.status !== "approved" || request.toAccountId !== turn.userId || !WORK.has(request.kind)) return {};
   const owner = request.toAccountId;

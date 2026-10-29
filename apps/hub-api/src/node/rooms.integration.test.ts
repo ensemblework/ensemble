@@ -21,10 +21,12 @@ const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
 const { settleTurns } = await import("./queue.js");
 const { syncPeerMissions } = await import("./peer-requests.js");
+const { setTurnRetryDelaysForTests } = await import("./queue.js");
+const { RuntimeError } = await import("../lib/runtime-error.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
-type Step = { calls?: Call[]; text?: string; then?: string };
+type Step = { calls?: Call[]; text?: string; then?: string; rateLimited?: boolean };
 /** One model request: the node, its instructions, this turn's room transcript, the tools offered, and everything it was sent. */
 type Seen = { slug: string; system: string; transcript: string; tools: string[]; all: string };
 let script: (turn: Seen) => Step = () => ({ text: "(no reply)" });
@@ -47,6 +49,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { slug, system, transcript, tools, all };
   if (!second) seen.push(current);
   const step = script(current);
+  if (step.rateLimited) throw new RuntimeError("Ensemble is rate-limiting this key. Wait about 1s and try again.", 429, false, "rate_limit");
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "(no reply)");
   const turn: RuntimeTurn = {
@@ -614,6 +617,37 @@ test("a person's own lead relays a request for them from My crew, attributed to 
   assert.ok(carol.id);
   await say(ben, room.id, "@manager ask yourself to ask me");
   assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 1, "a lead records requests for its own owner only");
+});
+
+test("a planning turn the model's rate limit cut off keeps its request when it runs again", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  setTurnRetryDelaysForTests([0, 0, 0]);
+  let limited = true;
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (turn.transcript.includes("Your owner accepted Ben's request")) {
+      if (limited) {
+        limited = false;
+        return { rateLimited: true };
+      }
+      return { calls: [{ name: "node_work_start", arguments: { title: "Footer fix", brief: "Fix the footer links.", kind: "other" } }], then: "(no reply)" };
+    }
+    if (turn.transcript.includes("Your step in @manager's plan (your own work")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Footer fixed." } }], then: "(no reply)" };
+    if (turn.transcript.includes("Your own work ended")) return { text: "Footer fixed." };
+    return { text: "(no reply)" };
+  };
+  try {
+    const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Fix the footer links" } })).request;
+    assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${made.id}/accept`, payload: {} })).statusCode, 200);
+    await settleTurns();
+    const planning = (await turnsOf([lead.id], room.id)).filter((row) => row.reason === "request");
+    assert.deepEqual(planning.map((row) => [row.attempt, row.status, Boolean(row.operationId)]), [[0, "failed", true], [1, "done", false]], "tried again as a new turn, without its operation id");
+    const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id } });
+    assert.equal((mission.requestedBy as { requestId?: string }).requestId, made.id, "the mission still records who asked");
+    assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: made.id } })).status, "done");
+  } finally {
+    setTurnRetryDelaysForTests(null);
+  }
 });
 
 test("a request whose mission ended unseen (a restart in between) is settled by the sweep", async () => {

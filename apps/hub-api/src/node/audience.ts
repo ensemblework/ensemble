@@ -28,7 +28,7 @@ import { openedSpace } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { runInScope, type RequestScope } from "../sharing/context.js";
 import type { Decision } from "./approvals.js";
-import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, settlePeerCard } from "./peer-requests.js";
+import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, settlePeerCard, turnOrigin } from "./peer-requests.js";
 import { enqueueTurn } from "./queue.js";
 import { NO_REPLY } from "./reply.js";
 import { nodeSpace, nodeSpaceGateway } from "./spaces.js";
@@ -159,7 +159,7 @@ export async function roomBoundTurn(
   const ownerRow = members.find((row) => !row.nodeId && row.userId === owner);
   const prefs = prefsOf(ownerRow);
   const cardRequest = trigger?.kind === "request" ? (trigger.data as { requestId?: unknown } | null)?.requestId : null;
-  const requestId = turn.peerRequestId ?? (typeof cardRequest === "string" ? cardRequest : null);
+  const requestId = (await turnOrigin(prisma, turn)).peerRequestId ?? (typeof cardRequest === "string" ? cardRequest : null);
   const request = requestId ? await prisma.nodePeerRequest.findUnique({ where: { id: requestId } }) : null;
   // A request settled meanwhile (cancelled when its asker left, or already answered) needs no answer.
   if (request && turn.reason === "request" && !["open", "awaiting_owner"].includes(request.status)) return held();
@@ -280,7 +280,9 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
     "How you answer:",
     `- You cannot see ${ownerName}'s private workspace, chats, memories, plans, other rooms or computer. When an answer needs something private, call node_ask_owner once (what was asked, and what you would share), then say in a line that you have asked ${ownerName}. Never guess or invent it.` +
       (trust.shareOther === "never" ? ` ${ownerName} shares nothing beyond the above in this room: say so instead of asking.` : ""),
-    `- Requests for work (build, change, fix, review or run something): record them with node_peer_request; they wait for ${ownerName}'s decision. Never start, plan or promise work.`,
+    ctx.askerId === ctx.owner
+      ? `- Work for ${ownerName} (build, change, fix or run something) is asked for in My crew, where you can plan and start it: say so in a line. To ask someone else here for something, use node_peer_request.`
+      : `- Requests for work (build, change, fix, review or run something): record them with node_peer_request; they wait for ${ownerName}'s decision. Never start, plan or promise work.`,
     "- Nodes never talk to each other in public: do not address or mention other nodes.",
     "- Short and plain, with a result or an honest “I don't know”. No acknowledgements or status updates.",
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
@@ -522,9 +524,9 @@ async function settleDisclosure(app: FastifyInstance, card: NodeMessage, node: N
  */
 export async function draftDisclosure(
   app: FastifyInstance,
-  input: { turn: Pick<NodeTurn, "operationId">; node: NodeAgent; room: NodeRoom; text: string; lineage: { rootMessageId: string | null; botDepth: number } },
+  input: { turn: NodeTurn; node: NodeAgent; room: NodeRoom; text: string; lineage: { rootMessageId: string | null; botDepth: number } },
 ): Promise<boolean> {
-  const cardId = /^disclose:(.+)$/.exec(input.turn.operationId ?? "")?.[1];
+  const cardId = /^disclose:(.+)$/.exec((await turnOrigin(app.prisma, input.turn)).operationId ?? "")?.[1];
   if (!cardId) return false;
   const card = await app.prisma.nodeMessage.findUnique({ where: { id: cardId } });
   const data = card?.data as unknown as DisclosureData | undefined;
