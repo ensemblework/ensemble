@@ -219,7 +219,13 @@ export async function requestReplied(app: FastifyInstance, requestId: string, me
 
 // ── making a request ──────────────────────────────────────────────────────────────────────────
 
-export type NewRequestInput = z.infer<typeof NewRequest> & { room: NodeRoom; fromAccountId: string; fromNodeId?: string | null };
+export type NewRequestInput = z.infer<typeof NewRequest> & {
+  room: NodeRoom;
+  fromAccountId: string;
+  fromNodeId?: string | null;
+  /** False when who asked rests on a lead's reading of several people's messages: it then never starts at once. */
+  mayAutoAccept?: boolean;
+};
 
 /** Records a request, posts its public card, and either asks the target owner (work, review) or wakes their lead (question, share). */
 export async function createPeerRequest(app: FastifyInstance, input: NewRequestInput): Promise<NodePeerRequest> {
@@ -259,7 +265,7 @@ export async function createPeerRequest(app: FastifyInstance, input: NewRequestI
     const prefs = prefsOf(target);
     const trust = trustFor(prefs, input.fromAccountId);
     // Work its owner chose to accept from this person starts at once, unless they are away (or their lead is paused): then it waits for them.
-    if (trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs) && lead.node?.status === "active") {
+    if (input.mayAutoAccept !== false && trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs) && lead.node?.status === "active") {
       await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { status: "approved", decidedAt: new Date() } });
       const fresh = (await prisma.nodePeerRequest.findUnique({ where: { id: request.id } }))!;
       await postMessage(prisma, {
@@ -452,44 +458,65 @@ export async function settlePeerCard(app: FastifyInstance, card: NodeMessage, no
 }
 
 /** The node tool: record a request. In a room-bound turn, for someone asking this node's owner; in My crew, the owner's own, to someone else. */
-export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerId: string }): AnyHubTool {
+/**
+ * `node_peer_request`. In My crew (and when the owner asked in public) it asks another person for the
+ * owner, attributed to them and relayed by their lead. In a room-bound turn it records a request someone
+ * here made of the owner: `from` names their message, which must be one this turn read from a person
+ * other than the owner (`batch`); its author is who asked. The person who asked is never the turn's.
+ */
+export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerId: string; batch?: ReadonlyArray<{ seq: number; userId: string }> }): AnyHubTool {
   const { node, room, askerId } = input;
-  const forOwner = askerId !== node.userId;
+  const batch = input.batch ?? null;
+  const ownerAsks = askerId === node.userId;
   return defineTool({
     name: "node_peer_request",
     area: "context",
-    description: forOwner
-      ? "Record a request for work or a review from the person who asked, for your owner to decide. Nothing runs until your owner accepts. Then tell them in a line that it waits for your owner."
+    description: batch
+      ? "Record a request for work or a review that someone here made of your owner, for your owner to decide: from is the #number of their message. Nothing runs until your owner accepts. Then tell them in a line that it waits for your owner." +
+        (ownerAsks ? " Your owner asked here too: to ask someone else something for your owner, give to (their handle or their lead's) instead of from." : "")
       : "Ask another person in this room something, through their lead, for your owner: a question, a share (an artefact), a review of your owner's candidate (a commit or URL), or work. It is attributed to your owner and shows as a card in the room.",
     input: z.object({
       kind: z.enum(PEER_KINDS),
       text: z.string().trim().min(1).max(4000).describe("The request, standing alone."),
-      to: z.string().trim().max(80).optional().describe(forOwner ? "Leave out: it is for your owner." : "The person: their handle or their lead's handle."),
+      ...(batch ? { from: z.number().int().min(1).optional().describe("The #number of the message the request comes from.") } : {}),
+      to: z.string().trim().max(80).optional().describe(batch && !ownerAsks ? "Leave out: it is for your owner." : "The person: their handle or their lead's handle."),
       refs: z.array(Ref).max(10).optional(),
       candidate: Candidate.optional().describe("For a review: the repository and exact commit, or a URL."),
     }).strict(),
     isWrite: false,
     risk: "low",
-    async run(ctx, value) {
-      if (forOwner && !WORK.has(value.kind)) throw new ToolBlockedError("Answer questions yourself, within what this room may see; ask your owner (node_ask_owner) for anything private.");
-      if (forOwner && value.to && (await resolvePerson(ctx.prisma, room.id, value.to)) !== node.userId) throw new ToolBlockedError("You record requests for your owner only. Other people's leads answer for them.");
-      if (!forOwner && !value.to) throw new ToolBlockedError("Name who it is for (their handle, or their lead's).");
+    async run(ctx, raw) {
+      const value = raw as { kind: PeerKind; text: string; from?: number; to?: string; refs?: z.infer<typeof Ref>[]; candidate?: z.infer<typeof Candidate> };
+      const recording = Boolean(batch) && (value.from !== undefined || !ownerAsks);
+      let fromAccountId = node.userId;
+      if (recording) {
+        if (!WORK.has(value.kind)) throw new ToolBlockedError("Answer questions yourself, within what this room may see; ask your owner (node_ask_owner) for anything private.");
+        const source = batch!.find((row) => row.seq === value.from);
+        if (!source) throw new ToolBlockedError(value.from === undefined ? "Give from: the #number of the message the request comes from." : `#${value.from} is not a message someone here wrote to your owner in this conversation.`);
+        if (value.to && (await resolvePerson(ctx.prisma, room.id, value.to)) !== node.userId) throw new ToolBlockedError("You record requests for your owner only. Other people's leads answer for them.");
+        if (!(await personIn(ctx.prisma, room.id, source.userId))) throw new ToolBlockedError("They are no longer in this room.");
+        fromAccountId = source.userId;
+      } else if (!value.to) {
+        throw new ToolBlockedError("Name who it is for (their handle, or their lead's).");
+      }
       try {
         const request = await createPeerRequest(ctx.app, {
           room,
-          fromAccountId: askerId,
-          fromNodeId: forOwner ? null : node.id,
-          to: forOwner ? node.userId : value.to!,
+          fromAccountId,
+          fromNodeId: recording ? null : node.id,
+          to: recording ? node.userId : value.to!,
           kind: value.kind,
           text: value.text,
           ...(value.refs ? { refs: value.refs } : {}),
           ...(value.candidate ? { candidate: value.candidate } : {}),
+          // Several people wrote in this conversation: who asked is the lead's reading, so the owner decides.
+          ...(recording ? { mayAutoAccept: new Set(batch!.map((row) => row.userId)).size === 1 } : {}),
         });
         return toolOk(
           request.status === "approved"
             ? "Recorded and accepted at once (your owner's setting); it is planned in their My crew."
             : WORK.has(request.kind)
-              ? `Recorded: it waits for ${forOwner ? "your owner" : "them"} to accept or decline. Say so in a line; promise nothing.`
+              ? `Recorded: it waits for ${recording ? "your owner" : "them"} to accept or decline. Say so in a line; promise nothing.`
               : "Recorded: their lead answers it in the room.",
           { request: request.id, status: request.status },
         );

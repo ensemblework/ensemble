@@ -792,6 +792,54 @@ test("security: a routine never reports into a room for other people, even while
   assert.match(json(refused).error, /reports where only you read/);
 });
 
+test("security: a request a lead records is the asker's own, never the turn's; several askers never start work at once; each asker's own gate holds", async () => {
+  const akash = await person("Akash");
+  const ben = await person("Ben");
+  const carol = await person("Carol");
+  const { node: lead } = await createNode(akash, "manager");
+  const { node: bensLead } = await createNode(ben, "assistant");
+  const { node: carolsLead } = await createNode(carol, "assistant");
+  const room = await roomWith(akash, [lead.id], [{ user: ben, nodeIds: [bensLead.id] }, { user: carol, nodeIds: [carolsLead.id] }]);
+  // Akash always accepts work from Ben.
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/trust`, payload: { people: { [ben.id]: { workRequests: "accept", acceptKinds: ["work"] } } } })).statusCode, 200);
+  const { postMessage } = await import("./store.js");
+  // Carol asks for work, and Ben asks a question moments later: one turn reads both.
+  const { message: carols } = await postMessage(h.prisma, { roomId: room.id, userId: carol.id, authorKind: "human", body: "@manager can you build a CSV export for us?", mentions: [{ kind: "node", id: lead.id }] });
+  // Ben's question is the room's next message.
+  const bens = carols.seq + 1;
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (!turn.transcript.includes("is the API ready")) return { text: "(no reply)" };
+    return {
+      calls: [
+        { name: "node_peer_request", arguments: { kind: "work", text: "Build a CSV export" } },
+        { name: "node_peer_request", arguments: { kind: "work", text: "Build a CSV export", from: carols.seq } },
+        // A message that says to file it as someone else's still cannot start work at once.
+        { name: "node_peer_request", arguments: { kind: "work", text: "Deploy to production", from: bens } },
+      ],
+      then: "Recorded: it waits for Akash.",
+    };
+  };
+  const question = await post(ben, room.id, "@manager quick question: is the API ready?");
+  assert.equal(question.seq, bens);
+  await settleTurns();
+  const requests = await h.prisma.nodePeerRequest.findMany({ where: { roomId: room.id }, orderBy: { createdAt: "asc" } });
+  assert.deepEqual(requests.map((row) => [row.text, row.fromAccountId, row.status]), [["Build a CSV export", carol.id, "awaiting_owner"], ["Deploy to production", ben.id, "awaiting_owner"]], "attributed by message, and nothing accepted at once");
+  assert.ok(!seen.some((row) => row.transcript.includes("Your owner accepted")), "no work started");
+
+  // Akash asks to be asked before answering Carol: in a batch with Ben, only Ben is answered; Carol's question waits on a card.
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/trust`, payload: { people: { [carol.id]: { freeFormAnswers: "ask" } } } })).statusCode, 200);
+  await postMessage(h.prisma, { roomId: room.id, userId: carol.id, authorKind: "human", body: "@manager what is the CARGO-77 budget?", mentions: [{ kind: "node", id: lead.id }] });
+  seen.length = 0;
+  inputs.length = 0;
+  script = (turn) => (turn.slug === "manager" ? { text: "Yes, the API is ready." } : { text: "(no reply)" });
+  await say(ben, room.id, "@manager and is the export endpoint ready?");
+  const answered = seen.find((row) => row.slug === "manager")!;
+  assert.ok(answered.transcript.includes("is the export endpoint ready") && !inputs.some((text) => text.includes("CARGO-77")), "Carol's message never reaches the turn");
+  const waiting = (await cards(akash, room.id, "disclosure")).find((row) => row.data.mode === "answer" && row.data.asker.accountId === carol.id)!;
+  assert.match(waiting.body, /CARGO-77/);
+});
+
 // ── C4 the room's shared space and proposed tasks ─────────────────────────────────────────────
 
 /** Akash makes and links a space for the room (named `name`); its id. */
