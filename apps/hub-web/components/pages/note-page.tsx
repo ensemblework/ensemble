@@ -32,6 +32,7 @@ import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from ".
 import { collabStatusText, useCollab } from "./use-collab";
 import { KeptEdits } from "./kept-edits";
 import { PageBoardPicker } from "./page-board-picker";
+import { usePeek } from "../shell/peek";
 
 function useBlockEditor() {
   const [Editor, setEditor] = useState(() => blockEditor);
@@ -52,15 +53,20 @@ function useBlockEditor() {
 export function NotePage({
   pageId,
   focusTitle = false,
+  variant = "page",
   shared,
 }: {
   pageId: string;
   focusTitle?: boolean;
+  /** `peek`: open in the side peek (a custom board's card); leaving closes the peek instead of going to Pages. */
+  variant?: "page" | "peek";
   /** Opened from a share link: no board or delete actions, and read-only unless it may be edited. `gone`: the owner stopped sharing it while it was open. */
   shared?: { role: "view" | "edit"; link?: boolean; gone?: boolean };
 }) {
   const client = useQueryClient();
   const router = useRouter();
+  const peek = usePeek();
+  const inPeek = variant === "peek";
   const toast = useToast();
   const entities = useEntities();
   const Editor = useBlockEditor();
@@ -109,6 +115,8 @@ export function NotePage({
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["pages"] });
       void client.invalidateQueries({ queryKey: ["standalone-page", pageId] });
+      // A custom board's card shows this title.
+      void client.invalidateQueries({ queryKey: ["boards"] });
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
@@ -123,7 +131,8 @@ export function NotePage({
     setLeaving(true);
     void client.cancelQueries({ predicate: (query) => about(query.queryKey) });
     void client.invalidateQueries({ predicate: (query) => !about(query.queryKey) });
-    router.push("/pages");
+    if (inPeek) peek.close();
+    else router.push("/pages");
   };
   useEffect(() => () => {
     const removed = trashed.current;
@@ -139,7 +148,7 @@ export function NotePage({
       return api.deletePage(pageId);
     },
     onSuccess: () => {
-      toast("Page moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+      toast("Page moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); if (inPeek) peek.open(pageId, "page"); else router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
       leaveTrashed([]);
     },
     onError: (error: Error) => {
@@ -202,7 +211,8 @@ export function NotePage({
         catch (error) { needsOptions = true; toast((error as Error).message, { tone: "error" }); }
         void client.invalidateQueries();
       }
-      router.push(`/tasks/${result.id}${needsOptions ? "?assign=1" : ""}`);
+      if (inPeek && !needsOptions) peek.open(result.id);
+      else router.push(`/tasks/${result.id}${needsOptions ? "?assign=1" : ""}`);
     },
     onError: (error: Error) => {
       setLeaving(false);
@@ -240,7 +250,7 @@ export function NotePage({
     <div
       ref={focusMode.layer}
       tabIndex={focusMode.active ? -1 : undefined}
-      className={focusMode.active ? PAGE_FOCUS_CLASS : "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10"}
+      className={focusMode.active ? PAGE_FOCUS_CLASS : inPeek ? "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-8" : "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10"}
       inert={leaving}
       data-page-focus={focusMode.active ? "true" : undefined}
     >

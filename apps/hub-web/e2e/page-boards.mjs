@@ -96,9 +96,11 @@ try {
   await page.getByRole("heading", { name: "Research", exact: true }).waitFor();
   const boardId = new URL(page.url()).searchParams.get("board");
   await page.getByRole("button", { name: "New page in On-going experiments", exact: true }).click();
-  await page.waitForURL(/\/pages\//);
-  const pageId = new URL(page.url()).pathname.split("/").at(-1);
-  await page.locator(".ProseMirror").waitFor();
+  // A new page opens in the side peek, title first, like a new task on the Ensemble board.
+  await page.waitForURL(/[?&]peek=.*kind=page/);
+  const pageId = new URL(page.url()).searchParams.get("peek");
+  await page.locator("[data-peek-kind=page] .ProseMirror").waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Page title");
   const record = await api(`/api/pages/${pageId}`);
   await api(`/api/pages/${pageId}`, "PATCH", { title: "Control group notes" });
   await api(`/api/pages/${pageId}`, "PUT", { revision: record.revision, content: doc });
@@ -114,15 +116,22 @@ try {
   await page.getByRole("region", { name: "Done", exact: true }).getByText("Control group notes", { exact: true }).waitFor();
   const donut = page.getByRole("img", { name: /On-going experiments: 0.*Done: 1/ });
   await donut.waitFor();
-  const grip = page.getByRole("button", { name: "Move Control group notes. Press Space, then use arrow keys.", exact: true });
-  await grip.focus();
+  // The card is the Ensemble board's: the whole card moves, its trash button shows on hover, a click opens the peek.
+  const card = page.locator("[data-bdg-card]", { hasText: "Control group notes" });
+  await card.hover();
+  await card.getByRole("button", { name: "Delete Control group notes", exact: true }).waitFor();
+  assert.equal(await card.locator("a").count(), 0, "a card opens the peek, not the Pages tab");
+  await card.focus();
   await page.keyboard.press("Space", { delay: 100 });
   await page.keyboard.press("ArrowLeft");
-  await page.locator('.cb-column[aria-label="On-going experiments"][data-over]').waitFor();
+  await page.locator('[role=region][aria-label="On-going experiments"] [data-bdg-list][data-over]').waitFor();
   await page.keyboard.press("Space");
   await page.getByRole("region", { name: "On-going experiments", exact: true }).getByText("Control group notes", { exact: true }).waitFor();
   await page.reload();
   await page.getByRole("region", { name: "On-going experiments", exact: true }).getByText("Control group notes", { exact: true }).waitFor();
+  await page.getByRole("region", { name: "On-going experiments", exact: true }).getByText("Control group notes", { exact: true }).click();
+  await page.waitForURL(/[?&]peek=.*kind=page/);
+  assert.match(new URL(page.url()).pathname, /^\/board/, "the page opens beside the board");
   if (process.env.EVIDENCE) await page.screenshot({ path: `${process.env.EVIDENCE}.board.png` });
   await page.goto(`${WEB}/pages`);
   await page.getByRole("link", { name: /Independent journal/ }).first().waitFor();

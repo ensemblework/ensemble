@@ -17,7 +17,8 @@ import {
 } from "@/lib/page-width";
 import { usePersistentState } from "@/lib/prefs";
 
-export type PeekKind = "task" | "deliverable" | "project";
+/** `page`: a standalone page, as on custom boards. */
+export type PeekKind = "task" | "deliverable" | "project" | "page";
 type PeekMode = "side" | "page";
 
 type PeekState = {
@@ -45,7 +46,7 @@ const PeekContext = createContext<PeekState>({
 export const usePeek = () => useContext(PeekContext);
 
 function asKind(value: string | null): PeekKind {
-  if (value === "deliverable" || value === "project" || value === "task") return value;
+  if (value === "deliverable" || value === "project" || value === "task" || value === "page") return value;
   return "task";
 }
 
@@ -88,6 +89,7 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
     (id: string, nextKind: PeekKind = "task") => {
       if (mode === "page" && nextKind === "task") router.push(`/tasks/${id}`);
       else if (mode === "page" && nextKind === "project") router.push(`/projects/${id}`);
+      else if (mode === "page" && nextKind === "page") router.push(`/pages/${id}`);
       else router.push(withPeek(id, nextKind), { scroll: false });
     },
     [mode, router, withPeek],
