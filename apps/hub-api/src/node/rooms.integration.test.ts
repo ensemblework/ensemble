@@ -1183,6 +1183,41 @@ test("review #B: when the owner removes someone, their open offer is withdrawn a
   assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/space` })).offer.status, "expired");
 });
 
+test("review #C: the digest shows every event it marks told, keeps when the away began, and leaves what came while it was written", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const awayRow = async () => (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, userId: ben.id, nodeId: null } })).prefs as any;
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true, note: "Offsite" } })).statusCode, 200);
+  const began = (await awayRow()).away.since;
+  assert.equal((await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "CSV export", assignee: ben.id, status: "todo" } })).statusCode, 201);
+  await flushEvents();
+  // 250 more waiting, from before the away began; then Ben changes his away note.
+  const early = new Date(Date.parse(began) - 3_600_000);
+  await h.prisma.nodeRoomEvent.createMany({ data: Array.from({ length: 250 }, (_, index) => ({ roomId: room.id, userId: ben.id, kind: "page_edited", subjectKind: "page", subjectId: randomUUID(), title: `Page ${index}`, dedupeKey: `early:${index}`, deliverAfter: new Date(Date.now() + 86_400_000), createdAt: early })) });
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true, note: "Still offsite" } })).statusCode, 200);
+  assert.equal((await awayRow()).away.since, began, "away again keeps when it began");
+  // Something arrives while the model writes the digest.
+  setDigestWriterForTests(async () => {
+    await h.prisma.nodeRoomEvent.create({ data: { roomId: room.id, userId: ben.id, kind: "page_edited", subjectKind: "page", subjectId: randomUUID(), title: "Late page", dedupeKey: "late", deliverAfter: new Date() } });
+    return "Welcome back.";
+  });
+  try {
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: false } })).statusCode, 200);
+    await settleTurns();
+  } finally {
+    setDigestWriterForTests(null);
+  }
+  const digest = (await read(ben, room.id)).filter((row) => row.data?.type === "digest").at(-1)!;
+  assert.equal(digest.data.since, new Date(began).toISOString());
+  assert.equal(digest.data.items.events.length, 251, "every waiting event, however old or many");
+  assert.ok(digest.data.items.events.some((row: { kind: string; title: string }) => row.kind === "assigned" && row.title === "CSV export"));
+  const waiting = await h.prisma.nodeRoomEvent.findMany({ where: { roomId: room.id, userId: ben.id, deliveredAt: null } });
+  assert.deepEqual(waiting.map((row) => row.title), ["Late page"], "only what it showed is told");
+  await deliverRoomEvents(h.app, { now: later() });
+  assert.equal((await notes(ben, room.id)).at(-1)!.body, "Someone edited “Late page”.");
+});
+
 // ── C6 results into the room and onto the board: the worked example (extension §19) ──────────
 
 test("C6, extension §19: two people, two features: told once, started in My crew, results on the board and in the room, a review on the requester's task, a digest", async () => {

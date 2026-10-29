@@ -517,6 +517,8 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const prisma = app.prisma;
   const member = await personRow(prisma, room.id, personId);
   if (!member || room.kind !== "room") return null;
+  // Everything up to now is this digest's; what arrives while it is written waits for the next.
+  const started = new Date();
   const from = member.digestAt && member.digestAt > since ? member.digestAt : since;
   const spaceId = await linkedSpace(app, room);
   const role = spaceId ? await roleIn(personId, spaceId) : null;
@@ -532,9 +534,31 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const mine = spaceId && owner ? (owner === personId ? { owner: "me" as const, assigneeAccountId: null } : { owner: "me" as const, assigneeAccountId: personId }) : null;
   const waiting = spaceId && mine ? await prisma.task.findMany({ where: { userId: spaceId, deletedAt: null, status: "proposed", ...mine }, orderBy: { createdAt: "asc" }, take: 20, select: { id: true, title: true, requestedByAccountId: true } }) : [];
   const proposed = await Promise.all(waiting.map(async (row) => ({ taskId: row.id, title: row.title, requestedBy: row.requestedByAccountId ? await nameFor(row.requestedByAccountId) : null })));
-  const rows = await prisma.nodeRoomEvent.findMany({ where: { roomId: room.id, userId: personId, createdAt: { gte: from } }, orderBy: { createdAt: "asc" }, take: 200 });
+  // Every event still waiting for them, however old, and those already told since `from`, all of them.
+  const held: NodeRoomEvent[] = [];
+  for (let cursor: string | null = null; ; ) {
+    const page: NodeRoomEvent[] = await prisma.nodeRoomEvent.findMany({ where: { roomId: room.id, userId: personId, deliveredAt: null, createdAt: { lte: started } }, orderBy: { id: "asc" }, take: 500, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+    held.push(...page);
+    if (page.length < 500) break;
+    cursor = page.at(-1)!.id;
+  }
+  const told: NodeRoomEvent[] = [];
+  for (let cursor: string | null = null; ; ) {
+    const page: NodeRoomEvent[] = await prisma.nodeRoomEvent.findMany({ where: { roomId: room.id, userId: personId, deliveredAt: { not: null }, createdAt: { gte: from, lte: started } }, orderBy: { id: "asc" }, take: 500, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+    told.push(...page);
+    if (page.length < 500) break;
+    cursor = page.at(-1)!.id;
+  }
+  const rows = [...held, ...told].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const allowed: NodeRoomEvent[] = [];
-  for (const row of rows) if (await stillFor(prisma, row, room, spaceId)) allowed.push(row);
+  const lost: string[] = [];
+  for (const row of rows) {
+    if (await stillFor(prisma, row, room, spaceId)) allowed.push(row);
+    else if (!row.deliveredAt) lost.push(row.id);
+  }
+  // What they may no longer see is never shown, and never delivered.
+  if (lost.length) await prisma.nodeRoomEvent.deleteMany({ where: { id: { in: lost } } });
+  const shown = new Set(allowed.filter((row) => !row.deliveredAt).map((row) => row.id));
   const { lines: eventLines, items: events } = await describe(prisma, allowed, null);
   const touched = new Set([...allowed.map((row) => row.subjectId), ...waiting.map((row) => row.id)]);
   const board = spaceId && role ? (await prisma.task.findMany({ where: { userId: spaceId, deletedAt: null, updatedAt: { gte: from } }, orderBy: { updatedAt: "desc" }, take: 20, select: { id: true, title: true, status: true } })).filter((row) => !touched.has(row.id)).slice(0, 8) : [];
@@ -551,7 +575,7 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const decisions = notes.filter((row) => (row.data as { type?: unknown }).type === "decision_logged").map((row) => ({ messageId: row.id, text: truncateText(String((row.data as { text?: unknown }).text ?? row.body), 200) }));
 
   if (!asked.length && !proposed.length && !events.length && !board.length && !said.length && !results.length && !decisions.length) {
-    await prisma.nodeRoomMember.update({ where: { id: member.id }, data: { digestAt: new Date() } });
+    await prisma.nodeRoomMember.update({ where: { id: member.id }, data: { digestAt: started } });
     return null;
   }
   const facts: string[] = [
@@ -573,7 +597,6 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const summary = text.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 5).map((line) => truncateText(line, 240));
   const body = (summary.length ? summary : facts.slice(0, 5)).join("\n");
   const { lead } = await crewOf(prisma, room.id, personId);
-  const now = new Date();
   const { message } = await postMessage(prisma, {
     roomId: room.id,
     userId: personId,
@@ -585,9 +608,9 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
     visibleTo: [personId],
     clientId: `digest:${member.id}:${from.toISOString()}`,
   });
-  // What the digest told them is delivered: no batch repeats it.
-  await prisma.nodeRoomEvent.updateMany({ where: { roomId: room.id, userId: personId, deliveredAt: null, createdAt: { lte: now } }, data: { deliveredAt: now, messageId: message.id } });
-  await prisma.nodeRoomMember.update({ where: { id: member.id }, data: { digestAt: now } });
+  // What the digest showed them is delivered (only that): no batch repeats it.
+  if (shown.size) await prisma.nodeRoomEvent.updateMany({ where: { id: { in: [...shown] }, deliveredAt: null }, data: { deliveredAt: started, messageId: message.id } });
+  await prisma.nodeRoomMember.update({ where: { id: member.id }, data: { digestAt: started } });
   return message;
 }
 

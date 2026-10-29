@@ -115,7 +115,8 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     const wasAway = prefsOf(row).away;
     await updatePrefs(prisma, row.id, (prefs) => ({
       ...prefs,
-      away: body.away ? { since: new Date().toISOString(), until: body.until ? new Date(body.until).toISOString() : null, note: body.note?.trim() ? truncateText(body.note.trim(), 200) : null } : null,
+      // Away again while away keeps when it began: the catch-up covers the whole time.
+      away: body.away ? { since: prefs.away?.since ?? new Date().toISOString(), until: body.until ? new Date(body.until).toISOString() : null, note: body.note?.trim() ? truncateText(body.note.trim(), 200) : null } : null,
     }));
     // Back: their lead catches them up on what happened meanwhile.
     if (wasAway && !body.away) inBackground(app, () => cameBack(app, room, accountId, wasAway.since));
