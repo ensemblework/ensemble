@@ -60,7 +60,7 @@ import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptio
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
-import { ToolBlockedError, type AnyHubTool, type CodeSession, type ToolContext } from "./types.js";
+import { ToolBlockedError, type AnyHubTool, type CallSpace, type CodeSession, type SpaceGateway, type ToolContext } from "./types.js";
 import { codePreamble, codeTools } from "./tools/code.js";
 import {
   assistantEcho,
@@ -161,6 +161,11 @@ export interface AssistantTurnArgs {
   withoutTools?: readonly string[];
   /** Records this surface showed the model by id (Ensemble Node's rooms), so replies can name them by title. */
   extraRefs?: AssistantRef[];
+  /**
+   * Ensemble Node: the turn's Hub tools take an optional `space` and act there with the node owner's
+   * current access (node/spaces.ts). The assistant never sets it: it stays in one space per conversation.
+   */
+  spaces?: SpaceGateway;
   /** Metrics and credit purpose for the model calls. Default "Hub chat". */
   purpose?: string;
 }
@@ -247,7 +252,8 @@ async function drive(
   let stage: AttachStage = 0;
   const verified = { images: modelReadsImages(args.provider, args.model), files: documentsFor(args.provider, args.model) };
   const subscription = isSubscriptionProvider(args.provider);
-  const tools = [...(await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name)), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
+  const hubTools = (await toolsForTurn(ctx, grants)).filter((tool) => !args.withoutTools?.includes(tool.name));
+  const tools = [...(args.spaces ? args.spaces.wrap(hubTools) : hubTools), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])].filter((tool) => !subscription || tool.name !== "hub_view_file");
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);
@@ -277,6 +283,7 @@ async function drive(
     // A guest's instructions already say the owner's apps are private.
     apps: isGuestIn(userId) ? undefined : appsPrompt(connections, settings),
     playbooks,
+    ...(args.spaces ? { spaces: await args.spaces.instructions() } : {}),
   });
   const context = turnContext(openPage, {
     today: clock.date,
@@ -286,7 +293,7 @@ async function drive(
     reference: args.referenceContext,
     playbooks: [...active.values()].map((playbook) => ({ title: playbook.title, text: playbookText(playbook, args.message) })),
   });
-  const prior = await priorTurns(app, args.conversationId, args.messageId);
+  const prior = await priorTurns(app, args.conversationId, args.messageId, args.spaces);
   const history = prior.messages;
   const attached = await messageAttachments(app.prisma, userId, args.mentions, { signal: stop.signal });
   // Every record the model is shown by id, so a reply that names one by id can show its title instead.
@@ -699,7 +706,7 @@ export function holdsAssistantWrite(
 }
 
 async function runOne(
-  ctx: ToolContext,
+  base: ToolContext,
   args: AssistantTurnArgs,
   requested: { id: string; name: string; arguments: string },
   offered: ReadonlyMap<string, AnyHubTool>,
@@ -726,6 +733,19 @@ async function runOne(
     const call = failed(requested, tool.area, describe(error));
     return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
   }
+  // A tool that takes a `space` (Ensemble Node, node/spaces.ts): where this call acts, checked now,
+  // since access can change during a turn. The receipt and the result name it.
+  let space: CallSpace | undefined;
+  if (tool.spaceFor) {
+    try {
+      space = await tool.spaceFor(base, input);
+    } catch (error) {
+      const call = failed(requested, tool.area, describe(error), tool.isWrite);
+      return { call, forModel: { error: call.error } };
+    }
+  }
+  const ctx: ToolContext = space ? { ...base, space, refs: known } : base;
+  const where = space ? { space: { id: space.id, name: space.name } } : {};
   if (tool.prepare) {
     try {
       input = await tool.prepare(ctx, input);
@@ -735,7 +755,9 @@ async function runOne(
     }
   }
 
-  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
+  // The stricter policy holds: this turn's, and the person's own in the space the call acts in.
+  const holds = (settings: Settings) => holdsAssistantWrite(settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
+  const held = tool.isWrite && (holds(ctx.settings) || Boolean(space?.settings && holds(space.settings)));
   if (held) {
     let preview: string;
     try {
@@ -759,6 +781,7 @@ async function runOne(
       input: input as Record<string, unknown>,
       state: "awaiting_approval",
       isWrite: true,
+      ...where,
     };
     const created = tool.name === "hub_create_tasks";
     const warning = pastScheduleWarning(input as { due?: string | null; dueDate?: string | null; dueTime?: string | null; tasks?: Array<{ due?: string | null }> }, ctx.settings.timezone);
@@ -773,6 +796,7 @@ async function runOne(
       call,
       forModel: {
         status: "awaiting_approval",
+        ...(space ? { space: space.name } : {}),
         note: warning ? `${note} ${warning}` : note,
       },
     };
@@ -783,7 +807,7 @@ async function runOne(
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.
     const summary = withPastScheduleWarning(formatEntityText(result.summary, [...refs, ...known.values()], { plain: true }), input, ctx.settings.timezone);
-    const forModel = { ok: true, summary, ...trim(result.data) };
+    const forModel = { ok: true, ...(space ? { space: space.name } : {}), summary, ...trim(result.data) };
     const call: AssistantToolCall = {
       id: requested.id,
       name: tool.name,
@@ -796,18 +820,22 @@ async function runOne(
       ...(result.href ? { href: result.href } : {}),
       ...(result.undoEntryId ? { undoEntryId: result.undoEntryId } : {}),
       ...(refs.length ? { refs } : {}),
+      ...where,
     };
     if (result.invalidate?.length) {
-      sseHub.publish(ctx.userId, {
-        event: "assistant.acted",
-        data: {
-          at: new Date().toISOString(),
-          conversationId: ctx.conversationId,
-          tool: tool.name,
-          summary,
-          keys: [...result.invalidate],
-        },
-      });
+      // Told where it happened, as the person acting there (their tabs in that space refresh).
+      const acted = async () =>
+        sseHub.publish(space?.id ?? ctx.userId, {
+          event: "assistant.acted",
+          data: {
+            at: new Date().toISOString(),
+            conversationId: ctx.conversationId,
+            tool: tool.name,
+            summary,
+            keys: [...result.invalidate!],
+          },
+        });
+      await (space ? space.run(acted) : acted());
     }
     return { call, forModel, ...(result.pictures?.length ? { pictures: result.pictures } : {}) };
   } catch (error) {
@@ -961,6 +989,7 @@ async function priorTurns(
   app: FastifyInstance,
   conversationId: string,
   excluded?: string,
+  spaces?: SpaceGateway,
 ): Promise<{ messages: ModelMessage[]; refs: AssistantRef[] }> {
   const rows = await app.prisma.assistantMessage.findMany({
     where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
@@ -968,12 +997,28 @@ async function priorTurns(
     take: 12,
     select: { role: true, content: true, toolCalls: true, mentions: true },
   });
+  // A turn that reaches several spaces (Ensemble Node): an answer that used a space this turn cannot
+  // reach any more (access lost, or a conversation other people read) leaves history with its records.
+  const reachable = spaces ? await spaces.reachable() : null;
   // An earlier message's files are named, not resent: the model reads them again if it needs them.
   const ordered = rows.reverse().map((row) => {
+    if (reachable && usedOtherSpace(row.toolCalls, reachable)) return { role: row.role, content: LEFT_OUT, toolCalls: [], mentions: null };
     const note = row.role === "user" ? attachedNote(row.mentions) : "";
     return note ? { ...row, content: `${row.content}\n\n${note}` } : row;
   });
   return { messages: historyEntries(ordered), refs: historyRefs(ordered) };
+}
+
+const LEFT_OUT = "(An earlier answer is left out here: it used a space that cannot be reached any more.)";
+
+/** Whether a saved reply's calls acted in a space outside `reachable` (each receipt records its space). */
+function usedOtherSpace(toolCalls: unknown, reachable: ReadonlySet<string>): boolean {
+  if (!Array.isArray(toolCalls)) return false;
+  return toolCalls.some((call) => {
+    const row = (call ?? {}) as { space?: { id?: unknown }; input?: { space?: unknown } };
+    const id = typeof row.space?.id === "string" ? row.space.id : typeof row.input?.space === "string" ? row.input.space : null;
+    return id !== null && !reachable.has(id);
+  });
 }
 
 export { randomUUID as newId };

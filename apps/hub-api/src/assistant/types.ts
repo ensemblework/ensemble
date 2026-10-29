@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ContentPart } from "../files/model-input.js";
-import type { AssistantPageContext, AssistantToolArea, CodeEngine, Settings } from "@ensemble/shared-types";
+import type { AssistantPageContext, AssistantRef, AssistantToolArea, CodeEngine, Settings } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 
@@ -39,6 +39,41 @@ export interface ToolContext {
   /** Original request credentials, used only inside the API; never sent to a model. */
   requestHeaders?: Record<string, string>;
   toolCallId?: string;
+  /** The space this call acts in, already resolved and checked for it (Ensemble Node, node/spaces.ts). */
+  space?: CallSpace;
+  /** Records the turn knows by id, so a preview can name them by title. */
+  refs?: ReadonlyMap<string, AssistantRef>;
+}
+
+/**
+ * The space one tool call acts in when a turn reaches more than one (Ensemble Node acting for its
+ * owner, node/spaces.ts). Resolved and access-checked for that call; never cached across calls.
+ */
+export interface CallSpace {
+  id: string;
+  name: string;
+  /** Calls that name no space act here. */
+  home: boolean;
+  /** The acting person's settings there: their write areas and write policy. Set for write tools. */
+  settings?: Settings;
+  /** The context for a call there: the space as `userId`, its modules, request credentials for it. */
+  context(base: ToolContext): ToolContext;
+  /** Runs work with that space's request scope (sharing/context.ts): who acts, for whom, with what access. */
+  run<T>(work: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * Lets one assistant turn act in more than one space: Ensemble Node acting for its owner in every
+ * space they can open (node/spaces.ts). The assistant itself never has one: it stays in one space
+ * per conversation.
+ */
+export interface SpaceGateway {
+  /** The turn's Hub tools, each taking an optional `space`. Connected-app tools are left as they are. */
+  wrap(tools: readonly AnyHubTool[]): AnyHubTool[];
+  /** The instructions' paragraph about spaces: which are reachable and how to name one. */
+  instructions(): Promise<string>;
+  /** Spaces reachable now. Earlier answers that used any other space drop out of the history. */
+  reachable(): Promise<ReadonlySet<string>>;
 }
 
 export interface ToolResult {
@@ -83,6 +118,11 @@ export interface AnyHubTool {
   prepare?: (ctx: ToolContext, input: unknown) => Promise<unknown>;
   preview?: (ctx: ToolContext, input: unknown) => Promise<string> | string;
   run: (ctx: ToolContext, input: unknown) => Promise<ToolResult>;
+  /**
+   * Set on tools that take a `space` (node/spaces.ts): resolves the space this call acts in and
+   * checks, now, that the acting person may use this tool there. Throws ToolBlockedError otherwise.
+   */
+  spaceFor?: (ctx: ToolContext, input: unknown) => Promise<CallSpace>;
 }
 
 export function defineTool<I extends z.ZodTypeAny>(tool: {

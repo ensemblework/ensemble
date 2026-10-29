@@ -71,6 +71,8 @@ export const AssistantToolCall = z.object({
   error: z.string().optional(),
   /** Records the result names, so a reply can show their titles and link to them instead of printing ids. */
   refs: z.array(AssistantRef).optional(),
+  /** The space the call acted in, when a turn reaches more than one (an Ensemble Node acting for its owner). */
+  space: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 export type AssistantToolCall = z.infer<typeof AssistantToolCall>;
 

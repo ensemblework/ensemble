@@ -36,6 +36,7 @@ import { RuntimeError } from "../lib/runtime.js";
 import { persistAssistantText, safePublicError, stripLoneSurrogates, truncateText } from "../lib/text.js";
 import { env } from "../config.js";
 import { assistantHeaders } from "../assistant/request.js";
+import { conversationSpaces } from "../node/spaces.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 
@@ -145,13 +146,16 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           : [];
     if (!batch.length) return reply.code(400).send({ error: "Nothing to apply." });
     const settings = await loadSettings(app.prisma, request.userId);
+    // An Ensemble Node's conversation: each held call names its space, checked again now (node/spaces.ts).
+    const spaces = body.conversationId ? await conversationSpaces(app, body.conversationId) : null;
     const planned: Array<{
       call: { name: string; input: Record<string, unknown>; callId?: string };
       tool: AnyHubTool;
       input: unknown;
     }> = [];
     for (const call of batch) {
-      const tool = (code ? codeTool(call.name) : undefined) ?? (await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name));
+      const found = (code ? codeTool(call.name) : undefined) ?? (await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name));
+      const tool = found && spaces ? spaces.wrap([found])[0]! : found;
       if (!tool || !tool.isWrite || !toolAllowedFor(tool, request.modules)) return reply.code(404).send({ error: `There is no write tool called ${call.name}.` });
       const refusal = writeRefusal(tool, settings);
       if (refusal) return reply.code(403).send({ error: refusal });
@@ -219,8 +223,8 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         summary: withPastScheduleWarning(formatEntityText(outcome.result.summary, refs, { plain: true }), item.input, settings.timezone),
         refs,
         href: outcome.result.href ?? null,
-        // An outside write cannot be undone; only Hub writes share the batch's undo entry.
-        undoEntryId: isOutsideWrite(item.tool) ? null : undoEntryId,
+        // An outside write cannot be undone; Hub writes share their space's batch Undo entry.
+        undoEntryId: isOutsideWrite(item.tool) ? null : (outcome.undoEntryId ?? null),
         invalidate: outcome.result.invalidate ?? [],
       };
     });
@@ -315,6 +319,12 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       event: "assistant.acted",
       data: { tool: pending[0]!.tool.name, keys: landed.flatMap((piece) => piece.invalidate) },
     });
+    // Changes made in another space (an Ensemble Node's calls) are announced there, as the person acting.
+    const elsewhere = new Map(outcomes.flatMap((outcome) => (outcome.ok && outcome.space && outcome.space.id !== request.userId ? [[outcome.space.id, outcome.space] as const] : [])));
+    for (const space of elsewhere.values()) {
+      const keys = outcomes.flatMap((outcome) => (outcome.ok && outcome.space?.id === space.id ? (outcome.result.invalidate ?? []) : []));
+      await space.run(async () => sseHub.publish(space.id, { event: "assistant.acted", data: { tool: pending[0]!.tool.name, keys } }));
+    }
     const refs = mergeRefs(landed.map((piece) => piece.refs), MAX_CALL_REFS);
     return { summary, href, undoEntryId, replies, ...(refs.length ? { refs } : {}), ...(partial ? { partial: true, failed } : {}) };
   });
