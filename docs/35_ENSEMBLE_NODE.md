@@ -401,7 +401,7 @@ A public answer is read by the whole room, so what it may disclose (status, deta
 
 | Part | Shown at |
 | --- | --- |
-| Lead, presence (online: an open Node stream or a message in the last 5 minutes; away; offline), away status | Every level |
+| Lead, presence (online: an open Node stream, or a message in this room in the last 5 minutes; away; offline), away status | Every level |
 | Missions for this room (started here or delivering here; live, or ended in the last 3 days): title and status | `titles`, `details` |
 | Tasks assigned to them in the room's bound space, open ones, when every reader can open that space | `titles`, `details` |
 | Requirement status, steps done, due dates | `details` |

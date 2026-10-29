@@ -20,6 +20,7 @@ import type { RuntimeTurn } from "../lib/model-turn.js";
 const h = await createHttpHarness();
 const { setAskRuntimeStreamForTests } = await import("../lib/model-turn.js");
 const { settleTurns } = await import("./queue.js");
+const { syncPeerMissions } = await import("./peer-requests.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
@@ -613,6 +614,21 @@ test("a person's own lead relays a request for them from My crew, attributed to 
   assert.ok(carol.id);
   await say(ben, room.id, "@manager ask yourself to ask me");
   assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 1, "a lead records requests for its own owner only");
+});
+
+test("a request whose mission ended unseen (a restart in between) is settled by the sweep", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Fix the footer" } })).request;
+  await h.prisma.nodePeerRequest.update({ where: { id: made.id }, data: { status: "approved", decidedAt: new Date() } });
+  const mission = await h.prisma.nodeMission.create({
+    data: { id: randomUUID(), userId: akash.id, leadNodeId: lead.id, originRoomId: room.id, originPrivate: true, status: "failed", endedAt: new Date(), requestedBy: { accountId: ben.id, roomId: room.id, requestId: made.id }, deliverTo: { roomId: room.id, audience: "room" } },
+  });
+  await syncPeerMissions(h.app);
+  await settleTurns();
+  const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: made.id } });
+  assert.deepEqual([done.status, done.missionId], ["done", mission.id]);
+  const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === made.id)!;
+  assert.deepEqual([card.data.status, card.data.outcome], ["done", "failed"]);
 });
 
 test("direct chats and crews keep owner-wide turns", async () => {

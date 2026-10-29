@@ -163,8 +163,9 @@ const monthStart = (now = new Date()) => new Date(Date.UTC(now.getUTCFullYear(),
 
 /** Credits the owner's nodes spent this month answering other people in this room in their own words. */
 export async function budgetUsed(db: Db, roomId: string, ownerId: string): Promise<number> {
+  const nodes = await db.nodeAgent.findMany({ where: { userId: ownerId }, select: { id: true } });
   const turns = await db.nodeTurn.findMany({
-    where: { roomId, userId: ownerId, audience: "room", createdAt: { gte: monthStart() }, credits: { not: null } },
+    where: { nodeId: { in: nodes.map((row) => row.id) }, createdAt: { gte: monthStart() }, roomId, audience: "room", credits: { not: null } },
     select: { credits: true, principals: true },
   });
   return turns.reduce((sum, row) => {

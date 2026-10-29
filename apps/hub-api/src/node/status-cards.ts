@@ -40,10 +40,10 @@ export type StatusCard = {
   tasks: Array<{ title: string; status: string; due?: string | null }>;
 };
 
-/** Online: an open Node stream on this server, or a message written in the last few minutes. */
-export async function online(db: Db, accountId: string): Promise<boolean> {
+/** Online: an open Node stream on this server, or a message they wrote in this room in the last few minutes. */
+export async function online(db: Db, accountId: string, roomId: string): Promise<boolean> {
   if (sseHub.listeners(nodeChannel(accountId)) > 0) return true;
-  const recent = await db.nodeMessage.findFirst({ where: { userId: accountId, authorKind: "human", createdAt: { gte: new Date(Date.now() - ACTIVE_MS) } }, select: { id: true } });
+  const recent = await db.nodeMessage.findFirst({ where: { roomId, userId: accountId, authorKind: "human", createdAt: { gte: new Date(Date.now() - ACTIVE_MS) } }, select: { id: true } });
   return Boolean(recent);
 }
 
@@ -77,7 +77,7 @@ export async function statusCard(db: Db, room: NodeRoom, accountId: string, view
     name: user?.name?.trim() || user?.email.split("@")[0] || "Someone",
     handle: person.handle,
     lead: lead?.node ? { nodeId: lead.node.id, handle: lead.handle, name: lead.node.name } : null,
-    presence: away ? "away" : (await online(db, accountId)) ? "online" : "offline",
+    presence: away ? "away" : (await online(db, accountId, room.id)) ? "online" : "offline",
     away: away ? { until: away.until, note: away.note } : null,
     detail,
     asks,

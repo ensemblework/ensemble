@@ -115,11 +115,10 @@ async function cardView(db: Db, request: NodePeerRequest) {
   let outcome: string | null = null;
   let requirements: Array<{ text: string; status: string }> = [];
   if (request.status === "done" && request.missionId) {
-    const plan = await loadPlan(db, request.missionId);
-    if (plan) {
-      outcome = plan.mission.status;
-      requirements = plan.data.requirements.map((row) => ({ text: truncateText(row.text, 200), status: row.status }));
-    }
+    const mission = await db.nodeMission.findUnique({ where: { id: request.missionId }, select: { status: true } });
+    const plan = mission ? await loadPlan(db, request.missionId) : null;
+    outcome = mission?.status ?? null;
+    requirements = (plan?.data.requirements ?? []).map((row) => ({ text: truncateText(row.text, 200), status: row.status }));
   }
   const data = {
     type: "peer_request",
@@ -556,13 +555,16 @@ export async function missionDelivered(app: FastifyInstance, missionId: string):
 
 /** Requests whose missions ended while nobody was listening (a restart): settled on a sweep. */
 export async function syncPeerMissions(app: FastifyInstance): Promise<void> {
-  const open = await app.prisma.nodePeerRequest.findMany({ where: { status: "approved" }, orderBy: { updatedAt: "asc" }, take: 100, select: { id: true, missionId: true } });
-  for (const request of open) {
-    const mission = request.missionId
-      ? { id: request.missionId }
-      : await app.prisma.nodeMission.findFirst({ where: { requestedBy: { path: ["requestId"], equals: request.id } }, orderBy: { createdAt: "desc" }, select: { id: true } });
-    if (mission) await missionDelivered(app, mission.id);
+  const prisma = app.prisma;
+  // Linked ones are checked by id; one not linked yet (its plan card's change was missed) only while recent.
+  const linked = await prisma.nodePeerRequest.findMany({ where: { status: "approved", missionId: { not: null } }, orderBy: { updatedAt: "desc" }, take: 200, select: { missionId: true } });
+  const recent = await prisma.nodePeerRequest.findMany({ where: { status: "approved", missionId: null, decidedAt: { gte: new Date(Date.now() - 86_400_000) } }, orderBy: { decidedAt: "desc" }, take: 50, select: { id: true } });
+  const ids = new Set(linked.map((row) => row.missionId!));
+  for (const request of recent) {
+    const mission = await prisma.nodeMission.findFirst({ where: { requestedBy: { path: ["requestId"], equals: request.id } }, orderBy: { createdAt: "desc" }, select: { id: true } });
+    if (mission) ids.add(mission.id);
   }
+  for (const id of ids) await missionDelivered(app, id);
 }
 
 let watching = false;
