@@ -89,7 +89,7 @@ async function acting<T>(work: () => Promise<T>): Promise<T> {
 async function recentRuns(prisma: PrismaClient, runs: SessionRun[], rootId: string, take = 20) {
   const order = new Map(liveOrder(runs, rootId).map((row, index) => [row.id, index]));
   const recent = [...runs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take);
-  const nodeRuns = await prisma.nodeRun.findMany({ where: { jobId: { in: recent.map((row) => row.id) } }, select: { jobId: true, prompt: true, settings: true, messageId: true } });
+  const nodeRuns = await prisma.nodeRun.findMany({ where: { jobId: { in: recent.map((row) => row.id) } }, select: { jobId: true, prompt: true, settings: true, messageId: true, roomId: true } });
   const byJob = new Map(nodeRuns.map((row) => [row.jobId, row]));
   return recent.map((row) => ({
     jobId: row.id,
@@ -101,6 +101,7 @@ async function recentRuns(prisma: PrismaClient, runs: SessionRun[], rootId: stri
     error: row.error ? truncateText(row.error, 300) : null,
     settings: byJob.get(row.id)?.settings ?? null,
     messageId: byJob.get(row.id)?.messageId ?? null,
+    roomId: byJob.get(row.id)?.roomId ?? null,
     createdAt: row.createdAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString() ?? null,
   }));
@@ -117,11 +118,25 @@ export function registerSessionRoutes(app: FastifyInstance): void {
     const accountId = owner(request);
     const query = ListQuery.parse(request.query ?? {});
     const sessions = await listSessions(prisma, { space: accountId, runner: null }, { query: query.q, limit: query.limit });
-    const owners = await sessionOwners(prisma, accountId, sessions.map((row) => row.id));
+    const ids = sessions.map((row) => row.id);
+    const owners = await sessionOwners(prisma, accountId, ids);
+    // Each session's newest run card, so the list can open it in its conversation.
+    const cards = await prisma.nodeRun.findMany({
+      where: { userId: accountId, messageId: { not: null }, OR: [{ sessionId: { in: ids } }, { sessionId: null, jobId: { in: ids } }] },
+      orderBy: { createdAt: "desc" },
+      select: { sessionId: true, jobId: true, messageId: true, roomId: true },
+      take: 500,
+    });
+    const newest = new Map<string, { messageId: string | null; roomId: string }>();
+    for (const card of cards) {
+      const id = card.sessionId ?? card.jobId;
+      if (!newest.has(id)) newest.set(id, { messageId: card.messageId, roomId: card.roomId });
+    }
     return {
       sessions: sessions.map((row) => ({
         id: row.id,
         nodeId: owners.get(row.id) ?? null,
+        card: newest.get(row.id) ?? null,
         status: row.status,
         agent: row.agent,
         agentName: row.agentName,

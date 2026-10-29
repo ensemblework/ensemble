@@ -390,11 +390,15 @@ test("a session goes to another node when its node hands it over or from its car
   assert.equal(sessionEventLine((await sessionEvents(h.prisma, writer.node.id, { sessionId: elsewhere.id }))[0]!).split(" (")[0], "You took the session over");
 
   // The owner's list of sessions names who manages each, so a session from the Hub can be given to a node; only theirs.
-  const listed = json(await ama.inject({ method: "GET", url: "/api/node/sessions" })).sessions as Array<{ id: string; nodeId: string | null; agentName: string; folder: string }>;
+  const listed = json(await ama.inject({ method: "GET", url: "/api/node/sessions" })).sessions as Array<{ id: string; nodeId: string | null; card: { messageId: string; roomId: string } | null }>;
   assert.deepEqual(
     [root.id, elsewhere.id].map((id) => listed.find((row) => row.id === id)?.nodeId),
     [builder.node.id, writer.node.id],
   );
+  assert.deepEqual(listed.find((row) => row.id === root.id)?.card, { messageId: docsRun.messageId, roomId: writer.room.id }, "its newest run card, to open it in its conversation");
+  assert.equal(listed.find((row) => row.id === elsewhere.id)?.card, null, "a session from the Hub has no card in Node");
+  const opened = json(await ama.inject({ method: "GET", url: `/api/node/sessions/${root.id}` })).session as { runs: Array<{ jobId: string; roomId: string | null }> };
+  assert.equal(opened.runs.find((row) => row.jobId === docsRun.jobId)?.roomId, writer.room.id);
   assert.equal(json(await ama.inject({ method: "GET", url: "/api/node/sessions?q=version" })).sessions.length, 1, "it searches");
   assert.ok(!(json(await kwame.inject({ method: "GET", url: "/api/node/sessions" })).sessions as Array<{ id: string }>).some((row) => row.id === root.id));
   assert.equal((await (await h.asToken(ama, "full")).inject({ method: "GET", url: "/api/node/sessions" })).statusCode, 403, "the owner's browser only");

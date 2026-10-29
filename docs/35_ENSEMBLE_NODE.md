@@ -330,8 +330,8 @@ The owner controls a session from its card with the same functions the node's to
 
 | Route | Effect |
 | --- | --- |
-| `GET /api/node/sessions?q=&limit=` | The owner's sessions, most recently active first (20 by default, at most 50): `{ sessions: [{ id, nodeId, status, agent, agentName, model, computer, folder, title, latestTask, summary, runs, lastActiveAt }] }`; `nodeId` is the node that manages it, null for none (a session started in the Hub or the CLI) |
-| `GET /api/node/sessions/:id` | `{ session: { id, nodeId, status, agent, agentName, model, computer, folder, running, queue, runs } }`; `runs` are the 20 newest with their status, position, prompt, summary and settings |
+| `GET /api/node/sessions?q=&limit=` | The owner's sessions, most recently active first (20 by default, at most 50): `{ sessions: [{ id, nodeId, card, status, agent, agentName, model, computer, folder, title, latestTask, summary, runs, lastActiveAt }] }`; `nodeId` is the node that manages it, null for none (a session started in the Hub or the CLI); `card` is its newest run card `{ messageId, roomId }`, null when it has none |
+| `GET /api/node/sessions/:id` | `{ session: { id, nodeId, status, agent, agentName, model, computer, folder, running, queue, runs } }`; `runs` are the 20 newest with their status, position, prompt, summary, settings and card (`messageId`, `roomId`) |
 | `POST /api/node/sessions/:id/control {action, prompt?, title?, queued?}` | `queue`, `steer` or `replace` with `prompt` (as `node_session_send`), or `stop` with `queued: keep \| drop` (as `node_session_stop`); `{ ok, jobId? }` |
 | `POST /api/node/sessions/:id/queue {order}` | Every queued message's `jobId` in the new order |
 | `DELETE /api/node/sessions/:id/queue/:jobId` | Takes one queued message out: it is cancelled and never starts (204) |
