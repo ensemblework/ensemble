@@ -167,6 +167,8 @@ test("a screenshot masks password and code fields and is held when the page show
     const snap = await op.snapshot(opened.tab);
     assert.ok(!snap.snapshot.includes(SECRET));
     assert.match(snap.snapshot, /\[hidden\]/);
+    const withToken = await op.open(`${base}/plain?access_token=abc123secret&page=2`, { tab: opened.tab });
+    assert.equal(withToken.url, `${base}/plain?access_token=[redacted]&page=2`, "secret query values never reach the agent");
   } finally {
     await broker.shutdown();
   }

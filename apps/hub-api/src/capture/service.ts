@@ -17,7 +17,8 @@ import type { Check } from "../node/report.js";
 import { BrowserBroker, BrowserError, elementSelector } from "../browser/broker.js";
 import { readableSnapshot, scanPage, sensitiveMasks } from "../browser/page-scan.js";
 import { captureStateDir, ensembleDataHome } from "../browser/paths.js";
-import { hasSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "../browser/privacy.js";
+import { hasSecrets, hideSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "../browser/privacy.js";
+import { redactRequestUrl } from "../lib/redact.js";
 import { startCommand, startElectron, virtualDisplayEnv, type CommandWrapper, type StartedElectron, type StartedProcess } from "./apps.js";
 import { captureCapabilities, type CaptureCapabilities } from "./capabilities.js";
 import { checkImage, checkTextIn, crashLine } from "./checks.js";
@@ -260,7 +261,7 @@ export class CaptureService {
     const path = await reserveFile(dir, name, "png");
     await page.screenshot({ path, mask: sensitiveMasks(page), caret: "hide", timeout: 20_000 });
     const reason = scan.site === "preview" ? PREVIEW_REASON : holdReason(scan.hits);
-    return { ...(await stillFile(path)), kind: "image", held: Boolean(reason), ...(reason ? { reason } : {}), title: await page.title().catch(() => "") };
+    return { ...(await stillFile(path)), kind: "image", held: Boolean(reason), ...(reason ? { reason } : {}), title: hideSecrets(await page.title().catch(() => ""), rules) };
   }
 
   private async electronWindow(entry: AppEntry, title?: string): Promise<Page> {
@@ -302,7 +303,7 @@ export class CaptureService {
     const path = await reserveFile(request.evidenceDir, slugName(name, `app-${entry.id}`), "png");
     const result = await runCommand(grabber.path, x11ScreenshotArgs({ display: entry.display!.display, ...window }, path), { env: virtualDisplayEnv(process.env, entry.display!.env), timeoutMs: 20_000 });
     if (result.code !== 0) throw new CaptureError("failed", `The screenshot failed: ${result.stderr.trim().slice(0, 500) || result.error}`);
-    return { ...(await stillFile(path)), kind: "image", held: true, reason: UNCHECKED_REASON, title: window.title };
+    return { ...(await stillFile(path)), kind: "image", held: true, reason: UNCHECKED_REASON, title: hideSecrets(window.title, await this.broker.privacyRules()) };
   }
 
   private async terminalCapture(request: CaptureRequest, target: TerminalTarget, name?: string): Promise<MediaFile> {
@@ -400,7 +401,7 @@ export class CaptureService {
           throw error;
         }
         const file = await encoder.finish();
-        return { ...file, held: Boolean(held), ...(held ? { reason: held } : {}), truncated: truncatedByLimit || file.truncated, url: page.url() };
+        return { ...file, held: Boolean(held), ...(held ? { reason: held } : {}), truncated: truncatedByLimit || file.truncated, url: hideSecrets(redactRequestUrl(page.url()), rules) };
       }
 
       const fps = Math.min(30, Math.max(5, Math.round(input.fps ?? 25)));
@@ -546,7 +547,7 @@ export class CaptureService {
       preview,
       held: true,
       reason: UNCHECKED_REASON,
-      title: window.title,
+      title: hideSecrets(window.title, await this.broker.privacyRules()),
     };
   }
 
@@ -570,6 +571,7 @@ export class CaptureService {
 
   private async info(entry: AppEntry): Promise<AppInfo> {
     const lease = this.leases.get(entry.leaseId);
+    const rules = await this.broker.privacyRules();
     let window: AppInfo["window"] = null;
     let pid = 0;
     let running = false;
@@ -580,14 +582,14 @@ export class CaptureService {
       const page = entry.electron.app.windows()[0];
       if (page) {
         const size = page.viewportSize();
-        window = { title: await page.title().catch(() => ""), width: size?.width ?? 0, height: size?.height ?? 0, found: "pid" };
+        window = { title: hideSecrets(await page.title().catch(() => ""), rules), width: size?.width ?? 0, height: size?.height ?? 0, found: "pid" };
       }
     } else if (entry.process) {
       pid = entry.process.child.pid ?? 0;
       running = entry.process.child.exitCode === null && entry.process.child.signalCode === null;
       if (running && entry.display) {
         const found = await this.locate(entry).catch(() => null);
-        if (found) window = { title: found.title, width: found.width, height: found.height, found: found.how };
+        if (found) window = { title: hideSecrets(found.title, rules), width: found.width, height: found.height, found: found.how };
       }
     }
     return {
@@ -667,7 +669,7 @@ export class CaptureService {
 
   private async stopEntry(entry: AppEntry, reason: string): Promise<{ output: string }> {
     this.apps.delete(entry.id);
-    const output = (entry.electron?.output ?? entry.process?.output)?.text(40) ?? "";
+    const output = hideSecrets((entry.electron?.output ?? entry.process?.output)?.text(40) ?? "", await this.broker.privacyRules());
     if (entry.electron) await entry.electron.app.close().catch(() => undefined);
     await this.leases.end(entry.leaseId, reason);
     if (entry.display) await entry.display.stop(reason);
@@ -694,7 +696,8 @@ export class CaptureService {
     const aliveMs = Math.min(Math.max(0, input.aliveMs ?? 3_000), 60_000);
     await sleep(Math.max(0, entry.startedAt + aliveMs - Date.now()));
     const info = await this.info(entry);
-    const output = (entry.electron?.output ?? entry.process?.output)?.text(40) ?? "";
+    const rules = await this.broker.privacyRules();
+    const output = hideSecrets((entry.electron?.output ?? entry.process?.output)?.text(40) ?? "", rules);
     const seconds = `${Math.round(aliveMs / 100) / 10} s`;
     const checks: Check[] = [
       info.running
@@ -702,11 +705,11 @@ export class CaptureService {
         : { name: `The app is still running after ${seconds}`, verdict: "fail", detail: `It exited.${output ? ` Last output:\n${output.slice(-1_500)}` : ""}` },
     ];
     const titleWanted = input.title ?? entry.title;
-    let windowTitle: string | null = info.window && info.window.found !== "display" ? info.window.title : null;
+    let windowTitle: string | null = info.window && info.window.found !== "display" ? hideSecrets(info.window.title, rules) : null;
     if (entry.electron && titleWanted) {
       for (const window of entry.electron.app.windows()) {
         const title = await window.title().catch(() => "");
-        if (title.toLowerCase().includes(titleWanted.toLowerCase())) windowTitle = title;
+        if (title.toLowerCase().includes(titleWanted.toLowerCase())) windowTitle = hideSecrets(title, rules);
       }
     }
     const windowName = titleWanted ? `A window titled “${titleWanted}” is open` : "A window is open";

@@ -327,10 +327,15 @@ export class BrowserBroker {
     return dir;
   }
 
-  private info(tab: Tab): TabInfo {
+  /** A page address as an agent may read it: secret query values, saved secrets and key shapes hidden. */
+  private safeUrl(url: string, rules: PrivacyRules): string {
+    return hideSecrets(redactRequestUrl(url), rules);
+  }
+
+  private info(tab: Tab, rules: PrivacyRules = {}): TabInfo {
     return {
       tab: tab.id,
-      url: tab.page.isClosed() ? "" : tab.page.url(),
+      url: tab.page.isClosed() || tab.sensitive ? "" : this.safeUrl(tab.page.url(), rules),
       title: "",
       profile: tab.entry.profile,
       headless: tab.entry.headless,
@@ -341,8 +346,9 @@ export class BrowserBroker {
   }
 
   private async describe(tab: Tab): Promise<TabInfo> {
-    const info = this.info(tab);
-    info.title = tab.sensitive || tab.page.isClosed() ? "" : await tab.page.title().catch(() => "");
+    const rules = await this.rules();
+    const info = this.info(tab, rules);
+    info.title = tab.sensitive || tab.page.isClosed() ? "" : hideSecrets(await tab.page.title().catch(() => ""), rules);
     return info;
   }
 
@@ -581,7 +587,7 @@ export class BrowserBroker {
       text = `${text.slice(0, cut > 0 ? cut : limit)}\n- note: ${rest} more lines not shown; the page is longer than this snapshot`;
       truncated = true;
     }
-    return { tab: tab.id, url: tab.page.url(), title: hideSecrets(await tab.page.title().catch(() => ""), rules), snapshot: text, truncated };
+    return { tab: tab.id, url: this.safeUrl(tab.page.url(), rules), title: hideSecrets(await tab.page.title().catch(() => ""), rules), snapshot: text, truncated };
   }
 
   private async settle(page: Page): Promise<void> {
@@ -664,7 +670,7 @@ export class BrowserBroker {
       const message = error instanceof Error ? error.message.split("\n")[0]! : String(error);
       throw new BrowserError(/timeout/i.test(message) ? "timeout" : "failed", /timeout/i.test(message) ? `Still waiting after ${timeout} ms.` : message);
     }
-    return { tab: tab.id, waitedMs: Date.now() - started, url: tab.page.url() };
+    return { tab: tab.id, waitedMs: Date.now() - started, url: tab.sensitive ? "" : this.safeUrl(tab.page.url(), await this.rules()) };
   }
 
   /** Masked, scanned screenshot of a tab, written to the operation's evidence folder. */
@@ -687,7 +693,7 @@ export class BrowserBroker {
       else await page.screenshot({ ...options, fullPage: Boolean(input.fullPage) });
       const still = await stillFile(path);
       const reason = scan.site === "preview" ? PREVIEW_REASON : holdReason(scan.hits);
-      return { ...still, kind: "image", held: Boolean(reason), ...(reason ? { reason } : {}), masked, url: page.url(), title: hideSecrets(await page.title().catch(() => ""), rules) };
+      return { ...still, kind: "image", held: Boolean(reason), ...(reason ? { reason } : {}), masked, url: this.safeUrl(page.url(), rules), title: hideSecrets(await page.title().catch(() => ""), rules) };
     } catch (error) {
       await rm(path, { force: true });
       throw this.actionError(error, input.element);
@@ -789,7 +795,7 @@ export class BrowserBroker {
       await download.saveAs(path);
       const size = (await stat(path)).size;
       if (size > MAX_DOWNLOAD) throw new BrowserError("refused", "The download is larger than 100 MB, so it was not kept.");
-      return { tab: tab.id, path, name: suggested, size, mime: mimeFor(suggested), url: redactRequestUrl(download.url()) };
+      return { tab: tab.id, path, name: suggested, size, mime: mimeFor(suggested), url: this.safeUrl(download.url(), await this.rules()) };
     } catch (error) {
       await rm(path, { force: true });
       if (error instanceof BrowserError) throw error;
@@ -872,7 +878,7 @@ export class BrowserBroker {
         throw new BrowserError("failed", error instanceof CaptureError ? error.message : `The video could not be finished: ${String(error)}`);
       }
       if (recording.watch.held) Object.assign(file, { held: true, reason: recording.watch.held });
-      return { tab: tab.id, recording: null, file: { ...file, url: tab.page.isClosed() ? undefined : tab.page.url() } };
+      return { tab: tab.id, recording: null, file: { ...file, url: tab.page.isClosed() || tab.sensitive ? undefined : this.safeUrl(tab.page.url(), await this.rules()) } };
     }
     if (tab.entry.tracing?.tab !== tab.id) throw new BrowserError("not_found", `Tab ${tab.id} is not recording a trace.`);
     const dir = this.evidenceDir(operation);
@@ -954,13 +960,14 @@ export class BrowserBroker {
     if (!tab || tab.page.isClosed()) return;
     live.busy = true;
     try {
-      const base = { operation: op.id, tab: tab.id, url: tab.sensitive ? "" : tab.page.url(), title: "", at: new Date(this.now()).toISOString() };
+      const rules = await this.rules();
+      const base = { operation: op.id, tab: tab.id, url: tab.sensitive ? "" : this.safeUrl(tab.page.url(), rules), title: "", at: new Date(this.now()).toISOString() };
       const pause = (reason: NonNullable<LiveFrame["paused"]>) => {
         if (live.paused !== reason) send({ ...base, paused: reason });
         live.paused = reason;
       };
       if (tab.sensitive) return pause("sensitive");
-      const scan = await scanPage(tab.page, await this.rules());
+      const scan = await scanPage(tab.page, rules);
       if (tab.sensitive) return pause("sensitive");
       if (scan.site === "never") return pause("private_site");
       if (hasSecrets(scan.hits)) return pause("secret_on_screen");
@@ -970,7 +977,7 @@ export class BrowserBroker {
       live.quality = jpeg.length > 80_000 ? Math.max(20, live.quality - 10) : jpeg.length < 30_000 ? Math.min(60, live.quality + 5) : live.quality;
       const size = tab.page.viewportSize();
       live.paused = null;
-      send({ ...base, title: await tab.page.title().catch(() => ""), jpeg, width: size?.width, height: size?.height });
+      send({ ...base, title: hideSecrets(await tab.page.title().catch(() => ""), rules), jpeg, width: size?.width, height: size?.height });
     } catch (error) {
       this.log(`live view of ${tab.id}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
     } finally {
