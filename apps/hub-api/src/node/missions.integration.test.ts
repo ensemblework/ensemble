@@ -566,3 +566,29 @@ test("node_plan_revise: new constraints reach the next instructions; waiting ste
   assert.ok(docsNotes.every((note) => /Branch: main-fix/.test(note)), "later steps read the revised constraints");
   assert.equal((await planCard(kofi, crew.id)).data.status, "partially_completed", "a cancelled step means the plan did not do everything it first set out to");
 });
+
+test("a helper may run its own agent session when its parent grants it, and can be kept as a lasting node", async () => {
+  const mira = await person("Mira");
+  await laptopFor(mira);
+  const { node, room } = await createNode(mira, "assistant");
+  script = (turn) => {
+    if (turn.slug === node.slug && turn.transcript.includes("reproduce the bug")) return { calls: [{ name: "node_helper", arguments: { task: "Reproduce the login bug in the ensemble folder.", name: "Repro", can: "sessions" } }], then: "A helper is reproducing it." };
+    if (turn.slug !== node.slug && turn.transcript.includes("Reproduce the login bug")) return { calls: [{ name: "node_session_start", arguments: { title: "Reproduce login bug", prompt: "Reproduce the login bug.", folder: "ensemble" } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  await say(mira, room.id, "please reproduce the bug with a helper");
+  const helper = await h.prisma.nodeAgent.findFirstOrThrow({ where: { parentNodeId: node.id } });
+  const helperTurn = seen.find((row) => row.slug === helper.slug)!;
+  assert.ok(helperTurn.tools.includes("node_session_start"), "a sessions grant gives the helper its own session tools");
+  assert.match(helperTurn.system, /run the work on your owner's computer in one agent session of your own/);
+  const run = await h.prisma.nodeRun.findFirstOrThrow({ where: { nodeId: helper.id } });
+  assert.ok(run.jobId, "the helper's session runs on the owner's computer");
+
+  const kept = await mira.inject({ method: "POST", url: `/api/node/nodes/${helper.id}/promote`, payload: {} });
+  assert.equal(kept.statusCode, 201, kept.body);
+  const promoted = await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: helper.id } });
+  assert.equal(promoted.parentNodeId, null);
+  assert.ok(await h.prisma.nodeRoom.findFirst({ where: { kind: "dm", members: { some: { nodeId: helper.id } } } }), "it gets its own chat");
+  const plain = await createNode(mira, "researcher");
+  assert.equal((await mira.inject({ method: "POST", url: `/api/node/nodes/${plain.node.id}/promote`, payload: {} })).statusCode, 409, "only helpers are promoted");
+});

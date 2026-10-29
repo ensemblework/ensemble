@@ -104,14 +104,27 @@ export async function createCrew(prisma: PrismaClient, accountId: string, title:
   });
 }
 
+/** What a helper may do, as its parent granted (never more than the parent itself may do). */
+export type HelperGrant = "read" | "sessions" | "computer";
+
+export function helperGrant(node: Pick<NodeAgent, "autonomy" | "parentNodeId">): HelperGrant | null {
+  if (!node.parentNodeId) return null;
+  const grant = (node.autonomy as { grant?: unknown } | null)?.grant;
+  return grant === "sessions" || grant === "computer" ? grant : "read";
+}
+
 /** The helper's charter: the one task, and the rules a helper keeps. */
-function helperCharter(parent: NodeAgent, task: string): string {
+function helperCharter(parent: NodeAgent, task: string, grant: HelperGrant = "read"): string {
   return [
     `You are a temporary helper of @${parent.slug} (${parent.name}), made for one task:`,
     task,
     "",
     `- Only @${parent.slug} instructs you. Your owner reads this room but does not write here; you never address them.`,
-    "- Do the task with the Ensemble tools you have: search the workspace and the web, read pages, tasks, files and connected apps. You do not change anything and do not run work on a computer.",
+    grant === "sessions"
+      ? "- Do the task with the Ensemble tools you have, and run the work on your owner's computer in one agent session of your own (node_session_start, then node_session_send for the same line of work). You do not change the Ensemble workspace."
+      : grant === "computer"
+        ? "- Do the task with the Ensemble tools you have, and check things on your owner's computer with your computer tools, in the folders you were given. You do not change the Ensemble workspace."
+        : "- Do the task with the Ensemble tools you have: search the workspace and the web, read pages, tasks, files and connected apps. You do not change anything and do not run work on a computer.",
     `- Be independent: check claims yourself rather than trusting what you were told. Reply with what you found, with sources, and mention @${parent.slug} so it hears you.`,
   ].join("\n");
 }
@@ -133,6 +146,11 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
           task: z.string().min(1).max(4000).describe("The self-contained task: what to look at, what to check, what to report back."),
           name: z.string().min(1).max(40).optional().describe("A short name for the helper, for example Auditor or Fact-checker."),
           role: z.string().min(1).max(40).optional().describe("Its role in a word or two, for example auditor."),
+          can: z
+            .enum(["read", "sessions", "computer"])
+            .default("read")
+            .describe("What it may do: read (default: workspace, web, connected apps), sessions (also run its own coding-agent session on your owner's computer), computer (also check things on the computer with computer tools)."),
+          folders: z.array(z.string().min(1).max(300)).max(5).optional().describe("For computer: the folders it may use."),
         })
         .strict(),
       isWrite: false,
@@ -161,13 +179,13 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
               slug,
               name,
               role: (input.role?.trim() || "helper").slice(0, 40),
-              charter: helperCharter(node, input.task),
+              charter: helperCharter(node, input.task, input.can),
               avatar: { shape: avatar.shape ?? "orb", color: "#9AA5B1", eyes: avatar.eyes === "wide" ? "dot" : "wide" } as Prisma.InputJsonValue,
               provider: node.provider,
               model: node.model,
               effort: "low",
               parentNodeId: node.id,
-              autonomy: { sharedRooms: "ask" },
+              autonomy: { sharedRooms: "ask", grant: input.can, ...(input.folders?.length ? { folders: input.folders } : {}) },
             },
           });
           const title = await freeRoomTitle(tx, owner, `${node.name} · ${name}`);
@@ -181,7 +199,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
         });
         publishTo([owner], "node.room", { roomId: room.id });
         await scope.postBrief(room, `@${helper.slug} ${input.task}`);
-        return toolOk(`@${helper.slug} is on it in “${room.title}”; it reports back to you there. Tell your owner in a line, then wait.`, { helper: helper.slug, room: room.title });
+        return toolOk(`@${helper.slug} is on it in “${room.title}”${input.can === "read" ? "" : ` (it may ${input.can === "sessions" ? "run its own agent session" : "use computer tools"})`}; it reports back to you there. Tell your owner in a line, then wait.`, { helper: helper.slug, room: room.title });
       },
     }),
     defineTool({
@@ -235,4 +253,28 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
       },
     }),
   ];
+}
+
+
+/**
+ * Keeps a helper as a lasting node (the owner's choice): it leaves its parent, keeps its charter and
+ * memories, gets its own chat in the sidebar, and its task room stays as history.
+ */
+export async function promoteHelper(prisma: PrismaClient, accountId: string, helperId: string): Promise<{ node: NodeAgent; room: NodeRoom }> {
+  const helper = await prisma.nodeAgent.findFirst({ where: { id: helperId, userId: accountId, parentNodeId: { not: null } } });
+  if (!helper) throw new ToolBlockedError("That is not one of your helpers.");
+  if ((await prisma.nodeAgent.count({ where: { userId: accountId, parentNodeId: null } })) >= MAX_NODES) throw new ToolBlockedError(`You have ${MAX_NODES} nodes, the most one account can have.`);
+  return prisma.$transaction(async (tx) => {
+    const autonomy = { ...((helper.autonomy ?? {}) as Record<string, unknown>) };
+    delete autonomy.grant;
+    delete autonomy.folders;
+    const node = await tx.nodeAgent.update({
+      where: { id: helper.id },
+      data: { parentNodeId: null, autonomy: autonomy as Prisma.InputJsonValue, charter: helper.charter.replace(/^You are a temporary helper of [^\n]*\n/, "") },
+    });
+    const room = await tx.nodeRoom.create({ data: { userId: accountId, kind: "dm", title: node.name } });
+    await addPerson(tx, room.id, accountId, "owner");
+    await addNode(tx, room.id, node, true);
+    return { node, room };
+  });
 }

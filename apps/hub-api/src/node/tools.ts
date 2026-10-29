@@ -15,7 +15,7 @@ import { CodeAnswer } from "../remote/contract.js";
 import { refusedPath } from "../workspace/folder-read.js";
 import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
-import { helperTools } from "./helpers.js";
+import { helperGrant, helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
@@ -217,8 +217,11 @@ async function pickComputer(prisma: PrismaClient, ownerId: string, name: string 
 
 export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
-  // A temporary helper only answers the node that made it, with the read-only assistant tools.
-  if (node.parentNodeId) return [];
+  // A temporary helper only answers the node that made it: read-only assistant tools, plus what its parent granted.
+  if (node.parentNodeId) {
+    const grant = helperGrant(node);
+    return grant === "sessions" ? sessionTools(scope) : [];
+  }
   const remember = defineTool({
     name: "node_remember",
     area: "tasks",

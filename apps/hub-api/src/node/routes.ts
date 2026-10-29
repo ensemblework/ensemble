@@ -22,7 +22,7 @@ import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } f
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import { pausedNotice, stopNodeRuns } from "./sessions.js";
 import { saveSecret, SecretError, secretStuck } from "./node-secrets.js";
-import { createCrew, deleteNode, MAX_NODES } from "./helpers.js";
+import { createCrew, deleteNode, MAX_NODES, promoteHelper } from "./helpers.js";
 import { stopPlans } from "./plans.js";
 import { SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { ON_BOARD } from "../lib/node-tasks.js";
@@ -455,6 +455,19 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     for (const helper of await prisma.nodeAgent.findMany({ where: { parentNodeId: node.id } })) await deleteNode(app, helper);
     await deleteNode(app, node);
     return reply.code(204).send();
+  });
+
+  /** Keeps a helper as a lasting node: it leaves its parent and gets its own chat (node/helpers.ts). */
+  app.post("/api/node/nodes/:id/promote", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    try {
+      const { node, room } = await promoteHelper(prisma, accountId, (request.params as { id: string }).id);
+      publishTo([accountId], "node.room", { roomId: room.id });
+      return reply.code(201).send({ node: wireNode(node), room: { id: room.id, title: room.title } });
+    } catch (error) {
+      if (error instanceof Error && error.name === "ToolBlockedError") throw fail(409, error.message);
+      throw error;
+    }
   });
 
   app.get("/api/node/nodes/:id/memory", async (request) => {
