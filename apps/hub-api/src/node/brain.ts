@@ -381,7 +381,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const audience = privateTo ?? people;
   // Someone in the room asked for ids: the reply shows them as written.
   const showIds = transcriptRows.some((row) => row.authorKind === "human" && asksForIds(row.body));
-  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
+  // Which thread the live reply belongs to: My crew (only its owner reads it) or the shared one, and its root message.
+  const where = { private: Boolean(privateTo), threadRootId: lineage.rootMessageId };
+  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking", ...where });
   let result: AssistantTurnResult;
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
@@ -434,7 +436,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         // A step's words are its report, not a message: nothing is written out live.
         if (step && frame.type === "delta") return;
         if (frame.type === "delta" || frame.type === "tool" || frame.type === "pending" || frame.type === "refs") {
-          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, frame, ...(showIds ? { showIds } : {}) });
+          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, ...where, frame, ...(showIds ? { showIds } : {}) });
         }
       },
     });
@@ -455,7 +457,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       app.log.warn({ nodeId: node.id, model: pick.model }, "Node turn rate-limited; answering with the fallback model");
     }
   }
-  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle" });
+  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
   if (deps.signal?.aborted && deps.signal.reason === "coalesce") {
     // A newer message from the owner came before this turn acted: the next turn answers both, so this one leaves no trace.
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);

@@ -1556,3 +1556,26 @@ test("web #1: Share to room carries the media of the message the owner shares; r
   assert.equal((await open(copy.id)).statusCode, 200);
   assert.equal((await open(reply.id)).statusCode, 404, "the private original still shows it to nobody else");
 });
+
+test("web #2: a turn's live status and frames say which thread it is in, and its root message", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const { sseHub } = await import("../lib/sse.js");
+  const frames: Array<{ event: string; data: any }> = [];
+  const stop = sseHub.onFrame(({ frame }) => {
+    if (frame.event === "node.status" || frame.event === "node.frame") frames.push({ event: frame.event, data: frame.data });
+  });
+  try {
+    script = (turn) => (turn.slug === "manager" ? { text: "On it." } : { text: "(no reply)" });
+    const mine = await say(akash, room.id, "@manager a private check", { private: true });
+    const privately = frames.filter((row) => row.data.roomId === room.id);
+    assert.ok(privately.some((row) => row.event === "node.status") && privately.some((row) => row.event === "node.frame"));
+    assert.ok(privately.every((row) => row.data.private === true && row.data.threadRootId === mine.id), "My crew");
+    frames.length = 0;
+    const asked = await say(ben, room.id, "@manager a public check");
+    const shared = frames.filter((row) => row.data.roomId === room.id && row.event === "node.status");
+    assert.ok(shared.length && shared.every((row) => row.data.private === false && row.data.threadRootId === asked.id), "the shared thread");
+    assert.deepEqual(Object.keys(shared[0]!.data).sort(), ["nodeId", "private", "roomId", "state", "threadRootId"], "still no content");
+  } finally {
+    stop();
+  }
+});
