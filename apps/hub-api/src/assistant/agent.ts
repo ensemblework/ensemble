@@ -144,6 +144,8 @@ export interface AssistantTurnArgs {
    */
   actAs?: ActAs;
   signal?: AbortSignal;
+  /** Called just before a tool runs (not for held writes): Ensemble Node marks a turn that acts from this point. */
+  onToolStart?: (call: { name: string; isWrite: boolean }) => void | Promise<void>;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
   /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
@@ -779,6 +781,7 @@ async function runOne(
   }
 
   try {
+    await args.onToolStart?.({ name: tool.name, isWrite: tool.isWrite });
     const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const refs = refsFromResult(tool.name, result.data, result.summary);
     // The summary is display text: a record id a tool still writes there shows as its title.

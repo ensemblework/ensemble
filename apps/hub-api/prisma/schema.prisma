@@ -2605,6 +2605,8 @@ model NodeTurn {
   /// Set when the turn first dispatched a tool that changes something: from then on it is not
   /// aborted to coalesce a new message, and a restart reconciles it instead of running it again.
   sideEffectsAt    DateTime? @map("side_effects_at")
+  /// Tools the turn ran, written as each one ends: [{ name, state, summary }]. A restart reads them.
+  receipts         Json      @default("[]")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?
@@ -2717,6 +2719,8 @@ model NodeStep {
   progress       String?
   /// The agent session this step's runs use, once it has one.
   sessionId      String?     @map("session_id")
+  /// The step node's own assistant conversation for this step (work lanes never share the room's).
+  conversationId String?     @map("conversation_id")
   /// The worker was asked once to report; another miss makes the attempt unverified.
   nudged         Boolean     @default(false)
   startedAt      DateTime?   @map("started_at")

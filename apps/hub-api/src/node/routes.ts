@@ -47,6 +47,8 @@ import {
   wireNode,
 } from "./store.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES, nodeTemplate } from "./templates.js";
+import { registerOutbox } from "./outbox.js";
+import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -281,6 +283,8 @@ async function messageFiles(prisma: PrismaClient, accountId: string, ids: string
 }
 
 export async function nodeRoutes(app: FastifyInstance): Promise<void> {
+  // Mission changes deliver their effects (node/outbox.ts) wherever the Node API runs.
+  registerOutbox();
   const prisma = app.prisma;
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
@@ -851,7 +855,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       mentions: mentionsFor(text, members, visibleTo),
       clientId: body.clientId ?? null,
     });
-    if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
+    // "stop" / "stop all" from a person with nodes here stops their work at once, without a model (node/stop.ts).
+    const command = !duplicate && !files.length ? stopCommand(text) : null;
+    if (command && members.some((row) => row.nodeId && row.userId === accountId)) {
+      const stopped = await stopWork(app, room, accountId, command);
+      await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
+    } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
     return reply.code(duplicate ? 200 : 201).send({ message: wireMessage(message), duplicate });
   });
 
@@ -872,16 +881,13 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     return { stopped: await stopPlans(app, { planId: plan.id, userId: accountId }) };
   });
 
+  /** Stops what my nodes do in this conversation: replies, plans and the agent runs started here (all: everywhere). */
   app.post("/api/node/rooms/:id/stop", async (request) => {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
-    const mine = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id, userId: accountId, nodeId: { not: null } } });
-    for (const member of mine) {
-      for (const conversationId of [member.conversationId, member.privateConversationId]) if (conversationId) abortAssistantTurn(conversationId);
-    }
-    // Plans here stop too, with the agent runs their steps started.
-    const plans = await stopPlans(app, { roomId: room.id, userId: accountId });
-    return { stopped: (await stopTurns(app, mine.map((row) => row.nodeId!), room.id)) + plans };
+    const scope = z.object({ scope: z.enum(["room", "all"]).default("room") }).strict().parse(request.body ?? {}).scope;
+    const stopped = await stopWork(app, room, accountId, scope);
+    return { stopped: stopped.turns + stopped.plans + stopped.runs, detail: stopped, line: stoppedLine(stopped) };
   });
 
   /** Deletes one of my own messages: its text goes, a "deleted" line stays so replies still make sense. */

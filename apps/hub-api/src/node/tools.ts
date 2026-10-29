@@ -3,6 +3,7 @@
  * Talking in rooms is what a node is for, so these never wait for Apply; what they post still
  * follows the room's rules (private threads stay private, shared rooms ask the owner first).
  */
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/client";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
@@ -16,7 +17,9 @@ import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
 import { helperTools } from "./helpers.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
-import { addStep, finishStep, PlanError, planVisibility, type PlanLink } from "./plans.js";
+import { addStep, finishStep, kindFromRole, loadPlan, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
+import { enqueueTurn } from "./queue.js";
+import { BLOCKED_BY, STEP_KINDS, StepReport, verdictOf } from "./report.js";
 
 export const MAX_MEMORIES = 200;
 
@@ -234,19 +237,47 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   // A step of a plan: the node does its own step and reports it; it hands nothing on and posts nothing.
   const step = scope.plan?.planStep ? { planId: scope.plan.planId, stepId: scope.plan.planStep } : null;
   if (step) {
+    const report = async (ctx: Parameters<AnyHubTool["run"]>[0], input: StepReport) => {
+      if (await stepPending(prisma, step.planId, step.stepId)) {
+        throw new ToolBlockedError("An agent run (or a card) of this step is still going on.", "Wait for it to end (you get a turn), or stop it first; then report.");
+      }
+      const row = await prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: step.planId, id: step.stepId } }, select: { kind: true, status: true } });
+      if (!row || !["waiting", "working"].includes(row.status)) throw new ToolBlockedError("This step has already ended.");
+      const verdict = verdictOf(row.kind, input);
+      // A report that contradicts its own checks goes back to the worker to fix, rather than being guessed at.
+      if (verdict.problem && input.outcome !== "blocked") throw new ToolBlockedError(verdict.problem, "Report again: name each check with its verdict, and choose the outcome they support.");
+      await finishStep(ctx.app, step.planId, step.stepId, { status: input.outcome === "blocked" ? "blocked" : "done", result: input.summary, report: input });
+      return toolOk(
+        verdict.outcome === "pass" || verdict.outcome === "done"
+          ? "Your step is reported. Reply exactly (no reply)."
+          : `Your step is reported as ${verdict.outcome}; the plan handles what comes next. Reply exactly (no reply).`,
+        { outcome: verdict.outcome },
+      );
+    };
     return [
       ...own,
+      defineTool({
+        name: "node_step_report",
+        area: "tasks",
+        description:
+          "Report your plan step when it is finished (or cannot be). This is your result: a reply in prose does not count. " +
+          "outcome: done (a build, writing, research), pass or fail (a verification: pass only if every check passed, fail with the failing check), blocked (cannot be done: say why in summary). " +
+          "Put the commit (or URL) you built or tested in subject, each check with its verdict in checks, and links or files in evidence.",
+        input: StepReport,
+        isWrite: false,
+        risk: "low",
+        run: report,
+      }),
       defineTool({
         name: "node_step_blocked",
         area: "tasks",
         description:
-          "Your step cannot be finished: a decision only your owner can make, access you do not have, or a failure you cannot fix. Ends your step with why; the plan's lead tells your owner. Do not use it while an agent run of yours is still going on.",
-        input: z.object({ reason: z.string().min(1).max(2000).describe("What stopped it and what would unblock it, in a few lines.") }).strict(),
+          "Your step cannot be finished: a decision only your owner can make, access you do not have, or a failure you cannot fix. Ends your step as blocked with why; the plan's lead tells your owner. Do not use it while an agent run of yours is still going on.",
+        input: z.object({ reason: z.string().min(1).max(2000).describe("What stopped it and what would unblock it, in a few lines."), blockedBy: z.enum(BLOCKED_BY).optional() }).strict(),
         isWrite: false,
         risk: "low",
         async run(ctx, input) {
-          await finishStep(ctx.app, step.planId, step.stepId, { status: "blocked", result: input.reason });
-          return toolOk("Your step ended as blocked; the plan's lead tells your owner. Reply exactly (no reply).");
+          return report(ctx, { outcome: "blocked", summary: input.reason, ...(input.blockedBy ? { blockedBy: input.blockedBy } : {}) });
         },
       }),
       remember,
@@ -270,6 +301,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
         model: z.string().max(120).optional().describe("Only when your owner names a model for the agent runs (as they wrote it, for example GPT 6.1 Sol)."),
         effort: z.string().max(20).optional().describe("Only when your owner names a thinking level (low, medium, high, extra high, max)."),
         context: z.enum(["default", "long_context"]).optional().describe("long_context when your owner asks for the long (1M) context window."),
+        kind: z.enum(STEP_KINDS).optional().describe("build (code), verify (an independent check of a build: give it after the build and verifies), write (docs, copy), research, or other. Defaults from the node's role."),
+        verifies: Handle.optional().describe("For a verify step: the node whose (latest) build step it checks. A failed check sends that build back for repair automatically, then this check runs again; steps after the check wait until it passes."),
       }).strict(),
       isWrite: false,
       risk: "low",
@@ -319,7 +352,15 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
             originRoomId: scope.room.id,
             originPrivate: Boolean(scope.privateTo),
             visibleTo,
-            step: { node: target, handle: member.handle, brief: input.brief, after: input.after ?? [], run: { agent: input.agent, model: input.model, effort: input.effort, context: input.context } },
+            step: {
+              node: target,
+              handle: member.handle,
+              brief: input.brief,
+              after: input.after ?? [],
+              run: { agent: input.agent, model: input.model, effort: input.effort, context: input.context },
+              kind: input.kind ?? kindFromRole(target.role),
+              ...(input.verifies ? { verifies: input.verifies } : {}),
+            },
           });
           const after = input.after?.length ? ` after ${input.after.map((handle) => `@${handle}`).join(", ")}` : "";
           return toolOk(
@@ -330,6 +371,74 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
           if (error instanceof PlanError) throw new ToolBlockedError(error.message);
           throw error;
         }
+      },
+    }),
+    defineTool({
+      name: "node_work_start",
+      area: "tasks",
+      description:
+        "Start longer work you do yourself, in the background: browsing or researching several sources, writing a report, page or file, checking a site in several steps. " +
+        "It runs apart from this conversation, so you keep answering your owner meanwhile; its card shows progress, and you hear once when it ends (then tell your owner the result). " +
+        "Use it for anything that needs more than a few tool calls. Code and commands on the computer go to an agent session instead.",
+      input: z.object({
+        title: z.string().min(1).max(120).describe("A short name for the work, shown on its card."),
+        brief: z.string().min(1).max(4000).describe("What to do, the sources or places to use, what done looks like and where the result goes."),
+        kind: z.enum(["research", "write", "other"]).optional(),
+      }).strict(),
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can give you work.");
+        if (scope.plan) throw new ToolBlockedError("This turn already belongs to a plan; do the work in it.");
+        const visibleTo = await planVisibility(prisma, node.userId, scope.room, scope.privateTo);
+        const added = await addStep(prisma, {
+          lead: node,
+          turnId: `${scope.turnId}:work:${randomUUID().slice(0, 8)}`,
+          continuing: null,
+          room: scope.room,
+          originRoomId: scope.room.id,
+          originPrivate: Boolean(scope.privateTo),
+          visibleTo,
+          kind: "self",
+          goal: input.title,
+          step: { node, handle: node.slug, brief: input.brief, after: [], kind: input.kind ?? "research", executor: "self" },
+        });
+        await startPlan(ctx.app, added.planId, input.title);
+        return toolOk(`Started “${input.title}” in the background; its card shows it and you hear when it ends. Answer your owner now in a line if needed, otherwise reply exactly (no reply).`, { work: added.planId });
+      },
+    }),
+    defineTool({
+      name: "node_work_steer",
+      area: "tasks",
+      description: "Tell work you lead (your own background work, or your plan's working steps) something new while it runs: a correction or an addition from your owner. Its next turn reads it.",
+      input: z.object({ work: z.string().uuid().describe("The work's id, from your work board."), note: z.string().min(1).max(2000) }).strict(),
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can change your work.");
+        const plan = await loadPlan(prisma, input.work);
+        if (!plan || plan.mission.leadNodeId !== node.id) throw new ToolBlockedError("That is not work you lead.", "Read the ids on your work board.");
+        const working = plan.data.steps.filter((row) => row.status === "working");
+        if (!working.length) throw new ToolBlockedError("Nothing in that work is running now.");
+        for (const row of working) {
+          await enqueueTurn(ctx.app, { nodeId: row.nodeId, roomId: plan.message.roomId, reason: "plan", note: `Your owner adds, for this step: ${input.note}`, planId: plan.mission.id, planStep: row.id });
+        }
+        return toolOk(`Passed on to ${working.map((row) => `@${row.handle}`).join(", ")}.`);
+      },
+    }),
+    defineTool({
+      name: "node_work_stop",
+      area: "tasks",
+      description: "Stop work you lead (your own background work or a plan): its running steps and the agent runs they started stop; what is done stays.",
+      input: z.object({ work: z.string().uuid().describe("The work's id, from your work board.") }).strict(),
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can stop your work.");
+        const plan = await loadPlan(prisma, input.work);
+        if (!plan || plan.mission.leadNodeId !== node.id) throw new ToolBlockedError("That is not work you lead.", "Read the ids on your work board.");
+        const stopped = await stopPlans(ctx.app, { planId: plan.mission.id, userId: node.userId });
+        return toolOk(stopped ? "Stopped." : "It had already ended.");
       },
     }),
     defineTool({

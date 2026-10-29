@@ -18,14 +18,15 @@ import { loadSettings } from "../lib/settings.js";
 import { effortToSend } from "../lib/model-meta.js";
 import { persistAssistantText, safePublicError, truncateText } from "../lib/text.js";
 import { publishTo } from "./events.js";
-import { chatModelFor } from "./model.js";
+import { chatModelFor, defaultChatModel, type ChatModel } from "./model.js";
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
 import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
 import { computerWorkAsks } from "./sessions.js";
 import { RuntimeError } from "../lib/runtime-error.js";
-import { mayRetry } from "./queue.js";
-import { afterReport, currentPlan, finishStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
+import { addReceipt, markActed, mayRetry } from "./queue.js";
+import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
+import { actsOnTheWorld, workBoard } from "./work-board.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -37,7 +38,8 @@ export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessi
 
 
 /** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
-export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry"; model?: string; credits?: number | null; error?: string };
+/** coalesced: a newer message from the owner came before this turn acted; the next turn answers both. */
+export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced"; model?: string; credits?: number | null; error?: string };
 export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<void>; signal?: AbortSignal };
 
 /** Background turns call Ensemble's own routes as the owner, like a signed-in request would. */
@@ -120,15 +122,19 @@ async function persona(
       ? `- This turn is a step of a plan, given in the update below. ${STEP_RULES.replace(/\n/g, "\n  ")}`
       : "- Your reply is posted in the room as you. Write it for the room: short and plain, no preamble. Mention @handles only to wake a node that must act (each turn costs credits).",
     "- Say something only when you have a result or need your owner. No acknowledgements (“on it”, “I'll start”, “I'm waiting for…”), no status updates, and never repeat what a card already shows.",
+    step ? "" : "- Your work board (in each update) lists the work in progress: your plans, your own work, your agent sessions and what waits for your owner. Answer questions about work in progress from it, and steer or stop the right one when your owner asks.",
     step ? "" : "- You are the one your owner talks to; choose who does the work:",
-    step ? "" : "  - Quick work (look something up, search, read, summarise, write a short report or plan, answer a question): do it yourself in this turn.",
+    step ? "" : "  - Quick work (look something up, search, read, summarise, answer a question): do it yourself in this turn.",
+    step
+      ? ""
+      : "  - Longer work you do yourself (research across several sources, a report or page to write, a site to check in several steps): node_work_start. It runs in the background and you stay free to talk; you hear once when it ends, then tell your owner the result. Change or stop it with node_work_steer or node_work_stop.",
     step ? "" : "  - Code, files, commands, tests or long work on your owner's computer: an agent session (below).",
     step ? "" : "  - A side task that should be independent of you (an audit, a second opinion, a parallel investigation, a check of your own answer): node_helper. It reports to you; you tell your owner.",
     step
       ? ""
       : "  - Work for your owner's other nodes: node_delegate, once per piece of work, builds one plan that runs in order without any chat between nodes; you hear back once, when it ends. A node or a crew your owner asks for (“make a node that…”, “make a group with…”): node_create, node_create_group. Report in another room with node_post.",
     !step && leadsHere
-      ? `- You lead this crew: your owner's messages here come to you, the others never read the chat and do nothing until your plan gives them a step. When your owner asks for work by several nodes (or to coordinate), make the whole plan in this one turn: node_delegate per piece of work, with after for order (build first, test after the builds, docs last). Put into every brief what your owner said about where to work and what not to do, and pass the agent, model, thinking level and context they named on every step (node_delegate agent, model, effort, context: the step's runs then use them). Your reply opens the plan: one or two lines, not the list of steps (the card shows them). When the plan ends you get every report at once; then tell your owner once.`
+      ? `- You lead this crew: your owner's messages here come to you, the others never read the chat and do nothing until your plan gives them a step. When your owner asks for work by several nodes (or to coordinate), make the whole plan in this one turn: node_delegate per piece of work, with after for order and kind for what it is (build, verify, write, research). A check is a verify step after its build with verifies naming the builder: if the check fails, the build goes back for repair and the check runs again by itself, and steps after the check wait until it passes. When your owner wants each feature tested before the next, chain them: build A, verify A, build B (after the check of A), verify B. Put into every brief what your owner said about where to work and what not to do, and pass the agent, model, thinking level and context they named on every step (node_delegate agent, model, effort, context: the step's runs then use them). Your reply opens the plan: one or two lines, not the list of steps (the card shows them). When nothing is left to run you get every report at once; then tell your owner once.`
       : "",
     !step && room.kind === "crew" && !leadsHere ? `- In this crew your owner talks to ${leadHandle ? `@${leadHandle}` : "the lead"}; you answer here only when your owner mentions you alone. Work for a plan comes to you as a step.` : "",
     !step && room.kind === "room" ? "- When another node asked you for something, finish by mentioning it (for example @manager) with the result." : "",
@@ -241,15 +247,21 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const thread = turn.private
     ? { privateTo: [owner] as string[] | null, cursor: self.privateSeenSeq, conversationId: self.privateConversationId, where: visibleWhere(owner) }
     : { privateTo: null as string[] | null, cursor: self.seenSeq, conversationId: self.conversationId, where: { visibleTo: { isEmpty: true } } };
-  const saveCursor = (seq: number) =>
-    prisma.nodeRoomMember.update({ where: { id: self.id }, data: turn.private ? { privateSeenSeq: seq } : { seenSeq: seq } });
+  // A work turn (a plan step, or the node's own work) runs in its own lane: it never reads the room or
+  // moves the room's cursor, so the conversation lane keeps answering the owner meanwhile.
+  const work = Boolean(turn.planId && turn.planStep);
+  const saveCursor = async (seq: number) => {
+    if (!work) await prisma.nodeRoomMember.update({ where: { id: self.id }, data: turn.private ? { privateSeenSeq: seq } : { seenSeq: seq } });
+  };
   const trigger = turn.triggerMessageId ? await prisma.nodeMessage.findUnique({ where: { id: turn.triggerMessageId } }) : null;
   if (trigger && (!canSee(trigger, owner) || (!turn.private && trigger.visibleTo.length > 0))) return { status: "skipped" };
-  const fresh = await prisma.nodeMessage.findMany({
-    where: { roomId: room.id, seq: { gt: thread.cursor }, ...thread.where },
-    orderBy: { seq: "desc" },
-    take: thread.cursor ? 40 : 20,
-  });
+  const fresh: NodeMessage[] = work
+    ? []
+    : await prisma.nodeMessage.findMany({
+        where: { roomId: room.id, seq: { gt: thread.cursor }, ...thread.where },
+        orderBy: { seq: "desc" },
+        take: thread.cursor ? 40 : 20,
+      });
   fresh.reverse();
   const readUpTo = fresh.reduce((max, row) => Math.max(max, row.seq), thread.cursor);
   const transcriptRows = fresh.filter((row) => row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status") && !(row.data as { deleted?: unknown } | null)?.deleted);
@@ -259,7 +271,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   }
 
   const tainted = (row: NodeMessage | null) => Boolean(row && (row.userId !== owner || (row.data as { fromNonOwner?: unknown } | null)?.fromNonOwner === true));
-  const fromNonOwner = turn.reason === "run" || turn.reason === "approval" || turn.reason === "plan" ? false : tainted(trigger);
+  const fromNonOwner = ["run", "approval", "plan", "tool", "attention", "work"].includes(turn.reason) ? false : tainted(trigger);
   const step = turn.planId && turn.planStep ? { planId: turn.planId, stepId: turn.planStep } : null;
   // A step whose plan was stopped, or that already ended, does nothing more.
   if (step && !(await stepLive(prisma, step.planId, step.stepId))) {
@@ -283,11 +295,15 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     const names = files.map((file) => `“${file.name}”`).join(", ");
     return row.userId === owner && row.authorKind === "human" ? ` [attached ${names}]` : ` [attached ${names}, which you cannot open: they are in that person's Files]`;
   };
-  const transcript = [
-    `Room “${room.title}”. New messages since your last turn:`,
-    ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
-    turn.note ? `\nUpdate for you: ${turn.note}` : "",
-  ].filter(Boolean).join("\n");
+  const board = work || fromNonOwner ? "" : await workBoard(prisma, node, room.id);
+  const transcript = work
+    ? (turn.note ?? "Continue your step, then report it with node_step_report.")
+    : [
+        `Room “${room.title}”. New messages since your last turn:`,
+        ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
+        turn.note ? `\nUpdate for you: ${turn.note}` : "",
+        board ? `\nYour work board (live, for answering questions about work in progress):\n${board}` : "",
+      ].filter(Boolean).join("\n");
 
   const settings = await loadSettings(prisma, spaceId);
   const turnSettings = node.parentNodeId
@@ -312,13 +328,16 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     }
   }
 
-  let conversationId = thread.conversationId;
+  // A work turn keeps its own conversation per step (across its attempts), apart from the room's.
+  const stepRecord = step ? await stepRow(prisma, step.planId, step.stepId) : null;
+  let conversationId = step ? (stepRecord?.conversationId ?? null) : thread.conversationId;
   if (!conversationId || !(await prisma.assistantConversation.findFirst({ where: { id: conversationId, userId: spaceId }, select: { id: true } }))) {
     const conversation = await prisma.assistantConversation.create({
-      data: { userId: spaceId, accountId: null, startedOn: "node", title: truncateText(`Node · ${node.name} · ${room.title}${turn.private ? " · private" : ""}`, 80) },
+      data: { userId: spaceId, accountId: null, startedOn: "node", title: truncateText(step ? `Node · ${node.name} · work` : `Node · ${node.name} · ${room.title}${turn.private ? " · private" : ""}`, 80) },
     });
     conversationId = conversation.id;
-    await prisma.nodeRoomMember.update({ where: { id: self.id }, data: turn.private ? { privateConversationId: conversationId } : { conversationId } });
+    if (step) await prisma.nodeStep.update({ where: { missionId_id: { missionId: step.planId, id: step.stepId } }, data: { conversationId } });
+    else await prisma.nodeRoomMember.update({ where: { id: self.id }, data: turn.private ? { privateConversationId: conversationId } : { conversationId } });
   }
   const userRow = await prisma.assistantMessage.create({ data: { conversationId, userId: spaceId, role: "user", content: transcript } });
 
@@ -330,20 +349,20 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   let result: AssistantTurnResult;
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
-  try {
-    const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
-    const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
-    result = await runAssistantTurn({
+  const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
+  const nodePersona = await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
+  const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
+    runAssistantTurn({
       app,
       userId: spaceId,
-      conversationId,
+      conversationId: conversationId!,
       message: transcript,
       messageId: userRow.id,
       ...(attachedFiles.length ? { mentions: attachedFiles.map((file) => ({ kind: "file" as const, id: file.id, label: file.name })) } : {}),
       settings: turnSettings,
-      model: choice.model,
-      provider: choice.provider,
-      reasoningEffort: await turnEffort(owner, node, choice.provider, choice.model),
+      model: pick.model,
+      provider: pick.provider,
+      reasoningEffort: await turnEffort(owner, node, pick.provider, pick.model),
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
       agentPersona: nodePersona.text,
@@ -363,8 +382,15 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       }),
       purpose: "Ensemble Node",
       signal: deps.signal,
+      async onToolStart(call) {
+        // From the first tool that changes something, the turn is not aborted to merge a newer message.
+        if (actsOnTheWorld(call.name, call.isWrite)) await markActed(app, turn.id);
+      },
       emit(frame) {
-        if (frame.type === "tool" || frame.type === "pending") toolsRan += 1;
+        if (frame.type === "tool" || frame.type === "pending") {
+          toolsRan += 1;
+          void addReceipt(app, turn.id, { name: frame.call.name, state: String(frame.call.state ?? "ok"), summary: frame.call.summary ?? null }).catch(() => undefined);
+        }
         // A step's words are its report, not a message: nothing is written out live.
         if (step && frame.type === "delta") return;
         if (frame.type === "delta" || frame.type === "tool" || frame.type === "pending" || frame.type === "refs") {
@@ -372,19 +398,41 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         }
       },
     });
-  } catch (error) {
+  // A conversation turn the model's rate limit cuts off before it ran a tool tries the fast default model once,
+  // so the owner still gets an answer; work turns wait and try again later.
+  const fallback = work ? null : defaultChatModel(settings);
+  const picks: ChatModel[] = [choice, ...(fallback && (fallback.model !== choice.model || fallback.provider !== choice.provider) ? [fallback] : [])];
+  let failure: unknown = null;
+  for (const [index, pick] of picks.entries()) {
+    try {
+      result = await ask(pick);
+      failure = null;
+      break;
+    } catch (error) {
+      failure = error;
+      const limited = error instanceof RuntimeError && error.kind === "rate_limit";
+      if (!(limited && !toolsRan && !deps.signal?.aborted && index < picks.length - 1)) break;
+      app.log.warn({ nodeId: node.id, model: pick.model }, "Node turn rate-limited; answering with the fallback model");
+    }
+  }
+  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle" });
+  if (deps.signal?.aborted && deps.signal.reason === "coalesce") {
+    // A newer message from the owner came before this turn acted: the next turn answers both, so this one leaves no trace.
+    await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
+    return { status: "coalesced" };
+  }
+  if (failure) {
+    const error = failure;
     const aborted = deps.signal?.aborted || (error instanceof Error && error.name === "AbortError");
     if (!aborted && !toolsRan && error instanceof RuntimeError && error.kind === "rate_limit" && mayRetry(turn) && !(await madePlan(prisma, node.id, turn.id))) {
       // Tried again later in full: this try leaves no trace in the room or the conversation.
-      publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle" });
       await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
       return { status: "retry", error: error.message };
     }
     const shown = aborted ? "Stopped." : error instanceof IncludedLimitError ? error.message : safePublicError(error, "The model could not answer. Nothing was changed.");
     result = { failed: true, content: shown, toolCalls: [], model: choice.model, credits: null, mutated: false, interrupted: aborted };
-  } finally {
-    publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle" });
   }
+  result = result!;
 
   await persistAssistantText(
     async (content) => {
@@ -443,15 +491,23 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const planTag = turn.planId ? { plan: { id: turn.planId, step: turn.planStep } } : {};
 
   if (step) {
-    // A step's reply is its report: the step ends with it, unless runs it started will wake it again.
+    // A step reports with node_step_report. A reply in prose is not a result: the worker is asked once
+    // to report, then the attempt ends unverified. Runs or cards still to come back wake it again.
     const report = cleanReply(result.content, true);
     const said = report && report !== NO_REPLY ? report : "";
-    const runs = await stepRuns(prisma, step.planId, step.stepId);
-    const cards = await stepCardsWaiting(prisma, step.planId, step.stepId);
-    if (runs.pending || held.length || cards) {
-      if (said) await stepProgress(prisma, step.planId, step.stepId, said);
-    } else {
-      await finishStep(app, step.planId, step.stepId, said ? { status: "done", result: said } : { status: "blocked", result: `@${node.slug} ended its step without a report.` });
+    if (await stepLive(prisma, step.planId, step.stepId)) {
+      const runs = await stepRuns(prisma, step.planId, step.stepId);
+      const cards = await stepCardsWaiting(prisma, step.planId, step.stepId);
+      const mission = await prisma.nodeMission.findUnique({ where: { id: step.planId }, select: { contract: true } });
+      if (runs.pending || held.length || cards) {
+        if (said) await stepProgress(prisma, step.planId, step.stepId, said);
+      } else if ((mission?.contract ?? 3) < 3) {
+        await finishStep(app, step.planId, step.stepId, said ? { status: "done", result: said } : { status: "blocked", result: `@${node.slug} ended its step without a report.` });
+      } else if (!stepRecord?.nudged && (await nudgeStep(app, step.planId, step.stepId))) {
+        if (said) await stepProgress(prisma, step.planId, step.stepId, said);
+      } else {
+        await finishStep(app, step.planId, step.stepId, { status: "blocked", outcome: "unverified", result: said ? `Not reported (prose only): ${said}` : `@${node.slug} ended its step without a report.` });
+      }
     }
     if (held.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, held, planTag);
     return { status: "done", model: result.model, credits: result.credits };

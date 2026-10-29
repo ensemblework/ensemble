@@ -78,6 +78,9 @@ async function person(name: string): Promise<HttpUser> {
 
 const json = (response: LightMyRequestResponse) => response.json() as any;
 
+/** A plan step's result, as its node reports it (node_step_report): prose alone is not a result. */
+const reportCall = (outcome: "done" | "pass" | "fail" | "blocked", summary: string, extra: Record<string, unknown> = {}): Step => ({ calls: [{ name: "node_step_report", arguments: { outcome, summary, ...extra } }], then: "(no reply)" });
+
 async function createNode(user: HttpUser, templateId: string) {
   const response = await user.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId } });
   assert.equal(response.statusCode, 201, response.body);
@@ -490,12 +493,12 @@ test("a crew works through one plan: only the lead answers, steps run in order a
         then: "Plan: @builder and @builder-2 build, then @tester checks, then @docs. I'll report when it's done.",
       };
     }
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Done: boards, page bar and Needs Me expiry are in, tested, and documented." };
-    if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) return { text: "Boards match the default board; the page bar resizes down to 200px. Tests pass." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Done: boards, page bar and Needs Me expiry are in, tested, and documented." };
+    if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) return reportCall("done", "Boards match the default board; the page bar resizes down to 200px. Tests pass.");
     if (turn.slug === "builder") return { ...startCall("Board parity and page bar", "Make custom boards match the default board and let the page bar resize."), then: "(no reply)" };
-    if (turn.slug === "builder-2") return { text: "Needs Me requests now expire when their task ends." };
-    if (turn.slug === "tester") return { text: "All three changes pass." };
-    if (turn.slug === "docs") return { text: "Docs updated." };
+    if (turn.slug === "builder-2") return reportCall("done", "Needs Me requests now expire when their task ends.");
+    if (turn.slug === "tester") return reportCall("pass", "All three changes pass.", { checks: [{ name: "boards, page bar and expiry", verdict: "pass" }] });
+    if (turn.slug === "docs") return reportCall("done", "Docs updated.");
     return { text: "unexpected" };
   };
   const asked = await say(kofi, crew.id, "Now lets divide the work. @manager please co-ordinate. @builder you will work on boards and the page bar, @builder-2 on Needs Me expiry. Then @tester tests, and @docs updates the docs.");
@@ -505,7 +508,7 @@ test("a crew works through one plan: only the lead answers, steps run in order a
   assert.ok(seen[0]!.tools.includes("node_delegate"));
   assert.deepEqual(seen.slice(1).map((row) => row.slug).sort(), ["builder", "builder-2"], "the testers and docs wait for their turn in the plan");
   const builderTurn = seen.find((row) => row.slug === "builder")!;
-  assert.match(builderTurn.transcript, /Your step in @manager's plan \(step 1 of 4\)/);
+  assert.match(builderTurn.transcript, /Your step in @manager's plan \(step 1 of 4, build\)/);
   assert.ok(!builderTurn.tools.includes("node_delegate") && !builderTurn.tools.includes("node_post"), "a step's node hands nothing on and posts nothing");
   assert.ok(builderTurn.tools.includes("node_step_blocked"));
   const plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
@@ -522,15 +525,15 @@ test("a crew works through one plan: only the lead answers, steps run in order a
   await pollRuns(h.app);
   await settleTurns();
   assert.deepEqual(seen.map((row) => row.slug), ["builder", "tester", "docs", "manager"], "in the plan's order, one turn each");
-  assert.match(seen.find((row) => row.slug === "tester")!.transcript, /Done before yours:[\s\S]*@builder \(done\): Boards match[\s\S]*@builder-2 \(done\): Needs Me requests/);
+  assert.match(seen.find((row) => row.slug === "tester")!.transcript, /Done before yours:[\s\S]*@builder \(build, done\): Boards match[\s\S]*@builder-2 \(build, done\): Needs Me requests/);
   const report = seen.find((row) => row.slug === "manager")!;
-  assert.match(report.transcript, /Your plan ended[\s\S]*@docs \(done\): Docs updated\./);
+  assert.match(report.transcript, /nothing left to run[\s\S]*@docs \(write, done\): Docs updated\./);
 
   const after = (await read(kofi, crew.id)).filter((row) => row.id !== asked.id && !row.planId);
   assert.deepEqual(after.map((row) => row.kind), ["plan", "text"], "the owner sees the plan card and one report, nothing else");
   assert.equal(after[1]!.body, "Done: boards, page bar and Needs Me expiry are in, tested, and documented.");
   const final = after[0]!;
-  assert.equal(final.data.status, "done");
+  assert.equal(final.data.status, "succeeded");
   assert.ok(final.data.steps.every((row: { status: string }) => row.status === "done"));
   const rooms = json(await kofi.inject({ method: "GET", url: "/api/node/rooms" })).rooms as Array<{ id: string; unread: number }>;
   assert.equal(rooms.find((row) => row.id === crew.id)!.unread, 2, "cards inside the plan are not unread messages");
@@ -567,7 +570,7 @@ test("stopping a crew stops its plan and the runs its steps started; a step whos
 
   // A step whose runs keep failing: after the cap the session tools refuse and the node reports.
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "The build kept failing; it needs you." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build kept failing; it needs you." };
     if (turn.slug === "manager" && turn.transcript.includes("again")) return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it again." } }], then: "Planned." };
     if (turn.slug === "builder") return { ...startCall("Build it again", "Build it again."), then: "(no reply)" };
     return { text: "unexpected" };
@@ -1069,7 +1072,7 @@ test("steps that finish together start the next one once; a declined step card l
   for (const template of ["manager", "feature-engineer", "feature-engineer", "tester"]) ids.push((await createNode(kofi, template)).node.id);
   const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "All done." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "All done." };
     if (turn.slug === "manager") {
       return {
         calls: [
@@ -1080,8 +1083,8 @@ test("steps that finish together start the next one once; a declined step card l
         then: "Planned.",
       };
     }
-    if (turn.slug === "tester") return { text: "Both pass." };
-    return { text: `${turn.slug} done.` };
+    if (turn.slug === "tester") return reportCall("pass", "Both pass.", { checks: [{ name: "both parts", verdict: "pass" }] });
+    return reportCall("done", `${turn.slug} done.`);
   };
   await say(kofi, crew.id, "do both parts, then test");
   assert.deepEqual(seen.map((row) => row.slug).sort(), ["builder", "builder-2", "manager", "manager", "tester"], "the tester and the report run once each");
@@ -1090,9 +1093,9 @@ test("steps that finish together start the next one once; a declined step card l
   await h.prisma.nodeAgent.update({ where: { id: ids[1] }, data: { autonomy: { computerWork: "ask" } } });
   seen.length = 0;
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "The build was not run: you declined it." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The build was not run: you declined it." };
     if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it on the laptop." } }], then: "Planned." };
-    if (turn.slug === "builder" && turn.transcript.includes("declined")) return { text: "Nothing was run: my owner declined the build." };
+    if (turn.slug === "builder" && turn.transcript.includes("declined")) return reportCall("blocked", "Nothing was run: my owner declined the build.", { blockedBy: "needs_owner" });
     if (turn.slug === "builder") return { ...startCall("Build it", "Build it."), then: "(no reply)" };
     return { text: "unexpected" };
   };
@@ -1104,7 +1107,7 @@ test("steps that finish together start the next one once; a declined step card l
   assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 200);
   await settleTurns();
   const after = (await read(kofi, crew.id)).find((row) => row.id === plan.id)!;
-  assert.equal(after.data.status, "done");
+  assert.equal(after.data.status, "partially_completed", "a blocked step is not a success");
   assert.match(after.data.steps[0].result, /declined/);
   assert.ok((await read(kofi, crew.id)).some((row) => row.body === "The build was not run: you declined it."));
 
@@ -1130,9 +1133,9 @@ test("a step whose turn fails after it started a run waits for that run instead 
   const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Docs team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
   let docsCalls = 0;
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Docs updated." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Docs updated." };
     if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "docs", brief: "Update the README." } }], then: "Planned." };
-    if (turn.slug === "docs" && turn.transcript.includes("This run was for your plan step")) return { text: "README updated." };
+    if (turn.slug === "docs" && turn.transcript.includes("This run was for your plan step")) return reportCall("done", "README updated.");
     // The first call starts a run; the model then fails on its final answer.
     if (turn.slug === "docs") return ++docsCalls === 1 ? startCall("Update the README", "Update the README.") : { rateLimited: true };
     return { text: "unexpected" };
@@ -1145,7 +1148,7 @@ test("a step whose turn fails after it started a run waits for that run instead 
   await pollRuns(h.app);
   await settleTurns();
   plan = (await read(kofi, crew.id)).find((row) => row.kind === "plan")!;
-  assert.deepEqual([plan.data.status, plan.data.steps[0].status, plan.data.steps[0].result], ["done", "done", "README updated."]);
+  assert.deepEqual([plan.data.status, plan.data.steps[0].status, plan.data.steps[0].result], ["succeeded", "done", "README updated."]);
 });
 
 test("a step may keep its session going as long as its runs work", async () => {
@@ -1156,12 +1159,12 @@ test("a step may keep its session going as long as its runs work", async () => {
   const crew = json(await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Long work", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
   let session = "";
   script = (turn) => {
-    if (turn.slug === "manager" && turn.transcript.includes("Your plan ended")) return { text: "Done in six rounds." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "Done in six rounds." };
     if (turn.slug === "manager") return { calls: [{ name: "node_delegate", arguments: { to: "builder", brief: "Build it in rounds." } }], then: "Planned." };
     if (turn.slug === "builder" && turn.transcript.includes("This run was for your plan step")) {
       const round = seen.filter((row) => row.slug === "builder" && row.transcript.includes("This run was for your plan step")).length;
       if (round < 6) return { ...sendCall(session, `Round ${round + 1}.`, "queue", `Round ${round + 1}`), then: "(no reply)" };
-      return { text: "Built in six rounds." };
+      return reportCall("done", "Built in six rounds.");
     }
     if (turn.slug === "builder") return { ...startCall("Round 1", "Round 1."), then: "(no reply)" };
     return { text: "unexpected" };
