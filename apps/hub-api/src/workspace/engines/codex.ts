@@ -17,7 +17,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { ensembleDataDenies } from "../data-denies.js";
 import { askpassPath, ENSEMBLE_SOURCE, SECRET_PATHS, workspaceRoot } from "../guard.js";
 import { bundledCodex } from "../handoff.js";
 import { appendLive, touchLive } from "../live-log.js";
@@ -306,7 +306,7 @@ export async function runCodex(
     const home = homedir();
     // Folders other runs are changing stay out of reach too, so changing one comes through an approval and waits its turn (folder-claims.ts).
     held.push(...(await heldElsewhere(ctx)));
-    const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files"), ...held];
+    const closed = [...SECRET_PATHS.map((name) => join(home, name)), ...ensembleDataDenies({ home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files"), ...held];
     const paths = await engineSandboxPaths(ctx);
     // Codex's sandbox has no deny list: no writable root may hold a closed path (a home folder holding Ensemble's code, the workspace holding its git helper).
     const writable = await openRoots(claudeFilesystem({ access: paths.access, home, writable: paths.writable, closed, homeEntries: paths.access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite, closed);

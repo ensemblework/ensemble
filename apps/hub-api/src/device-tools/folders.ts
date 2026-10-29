@@ -12,6 +12,7 @@ import { DEFAULT_KEY_FILE } from "../lib/secrets.js";
 import { protectedDeviceFolders } from "../evidence/files.js";
 import { ENSEMBLE_SOURCE, GuardError, holdsProtected, knownWorkspace, resolveWorkFolder, SECRET_PATHS, within } from "../workspace/guard.js";
 import { loadSettings } from "../remote/store.js";
+import { isEnsembleData } from "../workspace/data-denies.js";
 
 export type ToolFolder = { path: string; label: string };
 
@@ -21,7 +22,7 @@ export async function resolveToolFolder(input: string): Promise<ToolFolder> {
   const shared = loadSettings().folders.find((row) => row.label === named);
   const path = await resolveWorkFolder(shared ? shared.path : named);
   if (holdsProtected(path)) throw new GuardError("That folder holds keys, sign-ins or Ensemble's own files, so no node may work in it.");
-  if (protectedDeviceFolders().some((folder) => within(folder, path) || within(path, folder))) throw new GuardError("Ensemble's own data folder is off limits.");
+  if (isEnsembleData(path) || protectedDeviceFolders().some((folder) => within(path, folder))) throw new GuardError("Ensemble's own data folder is off limits.");
   const home = homedir();
   return { path, label: shared ? shared.label : within(home, path, false) ? `~/${relative(home, path).split(/[\\/]/).join("/")}` : path };
 }

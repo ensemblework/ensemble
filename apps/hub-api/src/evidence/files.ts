@@ -15,6 +15,7 @@ import type { JobEvidence, PrismaClient } from "@prisma/client";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { expandHome, GuardError, outsideRefusal, within } from "../workspace/guard.js";
 import { stateDir } from "../remote/store.js";
+import { isEnsembleData } from "../workspace/data-denies.js";
 import type { EvidenceKind } from "../remote/contract.js";
 import { credentialPathReason, evidenceLimit, evidenceName, kindMismatch, MAX_EVIDENCE_PER_JOB, sha256Hex, sniffMime } from "./limits.js";
 
@@ -92,7 +93,7 @@ export function evidenceFloor(real: string, home = homedir()): string | null {
   if (named) return named;
   if (within(evidenceRoot(), real)) return null;
   if (within(browserProfileDir(), real)) return "The browser's profile (cookies and saved sign-ins) is never attached.";
-  if (protectedDeviceFolders(home).some((folder) => within(folder, real))) return "Ensemble's own data is never attached.";
+  if (isEnsembleData(real, { home })) return "Ensemble's own data is never attached.";
   return outsideRefusal(real, false, home);
 }
 
