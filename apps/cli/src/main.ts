@@ -37,6 +37,7 @@ import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
+import { formatCapture, runCaptureScript } from "./capture.js";
 import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
@@ -84,6 +85,7 @@ Usage:
   ensemble web [status] | files|edit|terminal on|off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
+  ensemble capture [status] [--json] | setup [--dry-run] [--json]
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
@@ -110,6 +112,8 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
+  capture:
+    "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json]\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
 }).map(([key, value]) => [key, value.replace(/\bensemble\b/g, COMMAND)]));
@@ -667,6 +671,31 @@ async function commandSandbox(args: string[]): Promise<void> {
   if (!result.ok) process.exitCode = 1;
 }
 
+async function commandCapture(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.capture);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "status";
+  if (!["status", "setup"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.capture);
+  const result = parsed(args[0] === subcommand ? args.slice(1) : args, { json: { type: "boolean" }, "dry-run": { type: "boolean" } }, false);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(`Capture runs in Ensemble's local runtime, which this install does not have. Install the full CLI: ${DOWNLOAD_URL}`);
+  const paths = resolveCliPaths();
+  if (subcommand === "status") {
+    const caps = await runCaptureScript({ sidecarDir, paths, command: "status" });
+    if (result.values.json) return void console.log(JSON.stringify(caps, null, 2));
+    for (const line of formatCapture(caps)) console.log(line);
+    return;
+  }
+  if (!result.values.json) console.log("Checking what this computer can capture, and installing what Ensemble can install itself.");
+  const setup = await runCaptureScript({ sidecarDir, paths, command: "setup", dryRun: Boolean(result.values["dry-run"]), onProgress: (line) => console.error(line) });
+  if (result.values.json) console.log(JSON.stringify(setup, null, 2));
+  else {
+    for (const step of setup.steps) console.log(`${step.ok ? "done" : "failed"}: ${step.name}. ${step.detail}`);
+    console.log("");
+    for (const line of formatCapture(setup.after)) console.log(line);
+  }
+  if (!setup.steps.every((step) => step.ok)) process.exitCode = 1;
+}
+
 /** At login on Windows, turn the sandbox on while someone is there to approve the prompt. */
 async function offerSandboxSetup(sidecarDir: string, paths: CliPaths): Promise<void> {
   if (process.platform !== "win32") return;
@@ -878,6 +907,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandHooks(rest);
     case "sandbox":
       return commandSandbox(rest);
+    case "capture":
+      return commandCapture(rest);
     case "doctor":
       return commandDoctor(rest);
     case "update":
