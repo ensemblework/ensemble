@@ -14,7 +14,7 @@ import test, { after, afterEach } from "node:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { LightMyRequestResponse } from "fastify";
-import { createHttpHarness, type HttpUser } from "../test/http.js";
+import { createHttpHarness, HTTP_TEST_PASSWORD, type HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
 
 const h = await createHttpHarness();
@@ -629,6 +629,18 @@ test("a request whose mission ended unseen (a restart in between) is settled by 
   assert.deepEqual([done.status, done.missionId], ["done", mission.id]);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === made.id)!;
   assert.deepEqual([card.data.status, card.data.outcome], ["done", "failed"]);
+});
+
+test("account export and deletion include the peer requests a person made or received", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Export my invoices" } })).request;
+  await settleTurns();
+  const exported = await ben.inject({ method: "GET", url: "/api/auth/export" });
+  assert.equal(exported.statusCode, 200, exported.body);
+  assert.ok((json(exported).tables.node_peer_requests as Array<{ id: string }>).some((row) => row.id === made.id));
+  const gone = await ben.inject({ method: "DELETE", url: "/api/auth/account", payload: { confirmation: "DELETE", current: HTTP_TEST_PASSWORD } });
+  assert.equal(gone.statusCode, 204, gone.body);
+  assert.equal(await h.prisma.nodePeerRequest.count({ where: { id: made.id } }), 0, "gone with the account, though the room is Akash's");
 });
 
 test("direct chats and crews keep owner-wide turns", async () => {
