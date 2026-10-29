@@ -45,6 +45,32 @@ function OwnerMark({ task }: { task: TaskRecord }) {
   );
 }
 
+/** The card's trash button, shown on hover or focus. Neither drags nor opens the card. */
+export function CardDelete({ label, onDelete }: { label: string; onDelete: () => void }) {
+  return (
+    <button
+      type="button"
+      className="icon-btn absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+      aria-label={`Delete ${label}`}
+      title="Delete"
+      // The card drags on pointer down and opens on click; the button does neither.
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onDelete();
+      }}
+    >
+      <Trash2 size={13} />
+    </button>
+  );
+}
+
+/** Where the trash button goes when there is none: a quiet handle for people who may only move cards, and the drag copy. */
+export function CardHandle() {
+  return <GripVertical size={14} className="absolute right-1.5 top-2 text-faint opacity-0 transition-opacity group-hover:opacity-100" />;
+}
+
 /** The card. `onDelete` adds a trash button that shows on hover; the drag overlay copy has none. */
 export function CardBody({ task, onDelete }: { task: TaskRecord; onDelete?: (id: string) => void }) {
   const due = dueLabel(task.due, task.status === "done");
@@ -60,28 +86,7 @@ export function CardBody({ task, onDelete }: { task: TaskRecord; onDelete?: (id:
         {due ? <span className={due.overdue ? "text-[color:var(--tag-red-fg)]" : undefined}>{due.text}</span> : null}
         <LabelChips labels={task.labels} />
       </div>
-      {onDelete ? (
-        <button
-          type="button"
-          className="icon-btn absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
-          aria-label={`Delete ${task.title || "task"}`}
-          title="Delete"
-          // The card drags on pointer down and opens on click; the button does neither.
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete(task.id);
-          }}
-        >
-          <Trash2 size={13} />
-        </button>
-      ) : (
-        <GripVertical
-          size={14}
-          className="absolute right-1.5 top-2 text-faint opacity-0 transition-opacity group-hover:opacity-100"
-        />
-      )}
+      {onDelete ? <CardDelete label={task.title || "task"} onDelete={() => onDelete(task.id)} /> : <CardHandle />}
     </div>
   );
 }
@@ -90,6 +95,77 @@ export type BoardCardMotion = {
   transition: { duration: number; easing: string } | null;
   animateLayoutChanges: AnimateLayoutChanges;
 };
+
+/**
+ * A draggable board card, shared by the Ensemble board and custom boards: the whole card drags,
+ * a click (or Enter) opens it, Shift-click selects it. `children` is what the card shows.
+ */
+export function SortableBoardCard({
+  id,
+  active,
+  selected,
+  disabled = false,
+  motion,
+  onOpen,
+  onToggleSelect,
+  onWarm,
+  children,
+}: {
+  id: string;
+  active: boolean;
+  selected?: boolean;
+  disabled?: boolean;
+  motion: BoardCardMotion;
+  onOpen: (id: string) => void;
+  onToggleSelect?: (id: string) => void;
+  onWarm?: () => void;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+    transition: motion.transition,
+    animateLayoutChanges: motion.animateLayoutChanges,
+  });
+  const { onKeyDown, ...pointerListeners } = listeners ?? {};
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        // translate, not transform: a transform on a tile replaces the add-limitation popup's centering.
+        translate: transform ? `${Math.round(transform.x)}px ${Math.round(transform.y)}px` : undefined,
+        transition: transition ? transition.replace(/\btransform\b/g, "translate") : undefined,
+      }}
+      className="cursor-pointer outline-none"
+      data-bdg-card=""
+      data-id={id}
+      data-bdg-ph={isDragging || undefined}
+      onClick={(event) => {
+        if (event.shiftKey && onToggleSelect) {
+          event.preventDefault();
+          onToggleSelect(id);
+          return;
+        }
+        onOpen(id);
+      }}
+      onContextMenu={(event) => event.preventDefault()}
+      data-active={active || undefined}
+      {...attributes}
+      {...pointerListeners}
+      // A card that cannot move still opens from the keyboard.
+      tabIndex={0}
+      aria-disabled={undefined}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.key === "Enter" && !event.defaultPrevented) onOpen(id);
+      }}
+      onMouseEnter={onWarm}
+      onFocus={onWarm}
+    >
+      <div className={cx((active || selected) && "rounded-md ring-1 ring-line-strong")}>{children}</div>
+    </div>
+  );
+}
 
 export function SortableCard({
   task,
@@ -109,46 +185,9 @@ export function SortableCard({
   onDelete?: (id: string) => void;
 }) {
   const client = useQueryClient();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: task.id,
-    transition: motion.transition,
-    animateLayoutChanges: motion.animateLayoutChanges,
-  });
-  const { onKeyDown, ...pointerListeners } = listeners ?? {};
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        // translate, not transform: a transform on a tile replaces the add-limitation popup's centering.
-        translate: transform ? `${Math.round(transform.x)}px ${Math.round(transform.y)}px` : undefined,
-        transition: transition ? transition.replace(/\btransform\b/g, "translate") : undefined,
-      }}
-      className="cursor-pointer outline-none"
-      data-bdg-card=""
-      data-id={task.id}
-      data-bdg-ph={isDragging || undefined}
-      onClick={(event) => {
-        if (event.shiftKey && onToggleSelect) {
-          event.preventDefault();
-          onToggleSelect(task.id);
-          return;
-        }
-        onOpen(task.id);
-      }}
-      onContextMenu={(event) => event.preventDefault()}
-      data-active={active || undefined}
-      {...attributes}
-      {...pointerListeners}
-      onKeyDown={(event) => {
-        onKeyDown?.(event);
-        if (event.key === "Enter" && !event.defaultPrevented) onOpen(task.id);
-      }}
-      onMouseEnter={() => warmTask(client, task.id)}
-      onFocus={() => warmTask(client, task.id)}
-    >
-      <div className={cx((active || selected) && "rounded-md ring-1 ring-line-strong")}>
-        <CardBody task={task} onDelete={onDelete} />
-      </div>
-    </div>
+    <SortableBoardCard id={task.id} active={active} selected={selected} motion={motion} onOpen={onOpen} onToggleSelect={onToggleSelect} onWarm={() => warmTask(client, task.id)}>
+      <CardBody task={task} onDelete={onDelete} />
+    </SortableBoardCard>
   );
 }

@@ -10,12 +10,16 @@ import { TaskPage } from "../task/task-page";
 import { usePeek, type PeekKind } from "./peek";
 import { ShareButton } from "../sharing/share-dialog";
 import { TaskExportMenu } from "../task/task-export";
+import { NotePage } from "../pages/note-page";
+import { takeFreshPage } from "../pages/fresh-page";
+import { useState } from "react";
 
 
 export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }) {
   const router = useRouter();
   const { close, fullscreen, setFullscreen, open } = usePeek();
   const task = useQuery({ queryKey: ["task", id], queryFn: () => api.task(id), enabled: kind === "task" });
+  const page = useQuery({ queryKey: ["standalone-page", id], queryFn: () => api.standalonePage(id), enabled: kind === "page" });
   const deliverables = useQuery({
     queryKey: ["deliverables", true],
     queryFn: () => api.deliverables(true),
@@ -24,8 +28,8 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
   const project = useQuery({ queryKey: ["project", id], queryFn: () => api.project(id).then(result => result.project), enabled: kind === "project" });
   const deliverable = (deliverables.data?.deliverables ?? []).find((row) => row.id === id);
   const title =
-    kind === "task" ? (task.data?.task.title ?? "Page") : kind === "deliverable" ? (deliverable?.title ?? "Deliverable") : (project.data?.name ?? "Project");
-  const fullHref = kind === "project" ? `/projects/${id}` : kind === "task" ? `/tasks/${id}` : null;
+    kind === "task" ? (task.data?.task.title ?? "Page") : kind === "page" ? (page.data?.title || "Page") : kind === "deliverable" ? (deliverable?.title ?? "Deliverable") : (project.data?.name ?? "Project");
+  const fullHref = kind === "project" ? `/projects/${id}` : kind === "task" ? `/tasks/${id}` : kind === "page" ? `/pages/${id}` : null;
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-bg" data-peek-kind={kind}>
@@ -56,9 +60,15 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
         {kind === "task" ? <TaskPage taskId={id} variant="peek" /> : null}
         {kind === "deliverable" ? <DeliverablePeek row={deliverable} onOpenProject={(projectId) => open(projectId, "project")} /> : null}
         {kind === "project" ? <ProjectPage key={id} id={id} variant="peek" /> : null}
+        {kind === "page" ? <PagePeek key={id} id={id} /> : null}
       </div>
     </div>
   );
+}
+
+function PagePeek({ id }: { id: string }) {
+  const [focusTitle] = useState(() => takeFreshPage(id));
+  return <NotePage pageId={id} variant="peek" focusTitle={focusTitle} />;
 }
 
 function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | undefined; onOpenProject: (projectId: string) => void }) {
