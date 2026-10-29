@@ -1532,3 +1532,27 @@ test("C7: the room's steward, only on request, writes notes whose action items b
   assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/steward` })).statusCode, 200);
   assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/steward` })).steward, null);
 });
+
+// ── what the Node website needs ───────────────────────────────────────────────────────────────
+
+/** A screenshot on `user`'s computer, uploaded (its bytes on the server). */
+async function screenshot(user: HttpUser, name: string) {
+  const job = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: (await h.prisma.task.create({ data: { userId: user.id, title: "runs", owner: "agent", status: "todo", createdBy: "agent" } })).id, kind: "code", provider: "codex", model: "default", status: "succeeded", executionMode: "sandbox" } });
+  return h.prisma.jobEvidence.create({ data: { userId: user.id, jobId: job.id, kind: "screenshot", name, mime: "image/png", size: 4, sha256: randomBytes(8).toString("hex"), storageKey: `k-${name}`, bytes: Buffer.from("data") } });
+}
+
+test("web #1: Share to room carries the media of the message the owner shares; room members open it through the copy only", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  const shot = await screenshot(akash, "board.png");
+  const { postMessage } = await import("./store.js");
+  const media = [{ evidenceId: shot.id, kind: "screenshot", name: "board.png", mime: "image/png", caption: null, size: 4 }];
+  const { message: reply } = await postMessage(h.prisma, { roomId: room.id, userId: akash.id, authorKind: "node", authorNodeId: lead.id, body: "Here is the board.", data: { media }, visibleTo: [akash.id] });
+  const open = (messageId: string) => ben.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${messageId}` });
+  assert.equal((await open(reply.id)).statusCode, 404, "not while it is Akash's alone");
+  const shared = await akash.inject({ method: "POST", url: `/api/node/messages/${reply.id}/share`, payload: { as: "lead" } });
+  assert.equal(shared.statusCode, 201, shared.body);
+  const copy = json(shared).message;
+  assert.deepEqual(copy.data.media.map((row: { evidenceId: string }) => row.evidenceId), [shot.id]);
+  assert.equal((await open(copy.id)).statusCode, 200);
+  assert.equal((await open(reply.id)).statusCode, 404, "the private original still shows it to nobody else");
+});

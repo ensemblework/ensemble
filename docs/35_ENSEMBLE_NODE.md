@@ -585,7 +585,7 @@ Statuses: `open`, `answered`, `awaiting_owner`, `approved`, `declined`, `done`, 
 
 ### 12.7 Share to room
 
-`POST /api/node/messages/:id/share {as: me|lead}` publishes one of the owner's own private messages, or their own node's private reply, in the room. As `me` it is the person's message; as `lead`, their lead's, with `data.sharedBy`. Both keep `data.sharedFrom {id, seq, authorKind, authorNodeId}`, refs and files. A shared message wakes nobody, and sharing the same message twice returns the first copy.
+`POST /api/node/messages/:id/share {as: me|lead}` publishes one of the owner's own private messages, or their own node's private reply, in the room. As `me` it is the person's message; as `lead`, their lead's, with `data.sharedBy`. Both keep `data.sharedFrom {id, seq, authorKind, authorNodeId}`, refs, files and media (the copy is the message that shows the media to the room: `GET /api/node/evidence/:id?message=<copy id>` opens it for the room's people; the private original still shows it to nobody else). A shared message wakes nobody, and sharing the same message twice returns the first copy.
 
 ### 12.8 Leaving
 
@@ -620,7 +620,7 @@ Migration `20261110120000_node_rooms_v2` switches every room with other people t
 | Catch-up digest (`kind: "text"`, the person's lead, private) | `{type: "digest", reason: back\|gap, since, items: {asked [{requestId, kind, from {accountId, name}, text, status, taskId}], proposed [{taskId, title, requestedBy}], events [as above], board [{taskId, title, status}], results [{messageId, text}], decisions [{messageId, text}], room {messages, from}}}` |
 | Disclosure card (`kind: "approval"`) | `{type: "disclosure", mode: share\|answer, status: pending\|applying\|approved\|declined\|expired, key, asker {accountId, name}, question, need, triggerMessageId, requestId, shared?, why?}` |
 | Status cards (`kind: "status"`, system) | `{type: "status_cards", cards [{accountId, name, handle, lead, presence, away, detail, asks, missions, tasks}], replyTo {id, seq}}` |
-| Shared message (`kind: "text"`) | `{sharedFrom {id, seq, authorKind, authorNodeId}, sharedBy? (as lead), refs?, files?}` |
+| Shared message (`kind: "text"`) | `{sharedFrom {id, seq, authorKind, authorNodeId}, sharedBy? (as lead), refs?, files?, media?}` |
 | A draft answering someone (`kind: "approval"`, `type: "post"`) | adds `disclosure` (card id) and/or `peerRequest` (request id) |
 
 ### 12.11 The room's shared space
