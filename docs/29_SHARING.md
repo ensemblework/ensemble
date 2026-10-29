@@ -39,9 +39,11 @@ A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scope
 | `member` | the `ensemble_space` cookie naming a space in `space_members` for you | `role` viewer or editor |
 | `share` | `x-ensemble-share: <shareId>`, for a share whose recipient is you | One item, `role` view or edit |
 | `link` | `x-ensemble-link` and `x-ensemble-visitor` (§9) | One public item |
-| `gone` | a share header that is not yours or no longer exists | 404 `SHARE_GONE` on every request |
+| `gone` | a share header that is not yours or no longer exists; a node's request for a space its owner cannot open | 404 `SHARE_GONE` on every request |
 
-`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openableSpace()` in `spaces/store.ts` checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
+`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
+
+**An Ensemble Node acting for its owner** ([35 §5.2](35_ENSEMBLE_NODE.md#52-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id. It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space. It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it. Tool calls that do not go through a route run in the same scope (`node/spaces.ts`).
 
 `ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
 
@@ -49,6 +51,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 
 - `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.
 - `actorFor(spaceId)`: the acting person when not the owner, stamped on undo entries, comments, assistant conversations, ledger entries (`payload.byAccountId`) and jobs (`runner_account_id`).
+- `nodeActingIn(spaceId)`: the node acting for the person, if any, stamped on ledger entries (`payload.byNodeId`) and undo entries (`source` `node:<id>`).
 
 ### The route policy
 
@@ -76,7 +79,7 @@ A computer downloads a run's attachments (`GET /api/devices/self/jobs/:id/attach
 - **Settings** (`lib/settings.ts`): `loadSettings`/`saveSettings` resolve to your account, so theme, models, assistant tone and page width are yours. `/api/auth/me` and `/api/shell` report your account.
 - **Model keys** (`lib/runtime.ts`, `lib/model-turn.ts`): model calls send your account; the runtime uses it only for keys, pacing and host access.
 - **Connected apps**: for a guest, `guestMayUse` (`assistant/apps.ts`) removes connected-app, reminder and sync tools and `OWNER_TOOLS` (calendar events, layout edits, app relationships, imports, Fetch now, repo links, watchers); viewers get no write tools. The prompt says whose space it is and that their apps are private (`assistant/state.ts`); `loadConnections` returns nothing and `hub_list_connections` says the apps are private.
-- **Assistant actions** that call routes forward the person's own request credentials (`assistant/request.ts`), never an owner token, so route classes apply; workflows recheck each nested tool (`assistant/tools/workflows.ts`). See [34](34_ASSISTANT_ACTIONS.md).
+- **Assistant actions** that call routes forward the person's own request credentials (`assistant/request.ts`), never an owner token, so route classes apply; workflows recheck each nested tool (`assistant/tools/workflows.ts`). See [34](34_ASSISTANT_ACTIONS.md). A node's actions send its delegated identity for the space each call acts in (§2).
 - **Assistant chats** carry `account_id`; each person sees only their own, and stream frames go only to the asker. `hub_list_due` omits the owner's reminders, inline asks about Today or Needs me are refused (`/api/ensemble/invoke`), and shorthand like "mock 7/10" never writes to the owner's desk (`askEnsemble`).
 - **Preferences** (`routes/context.ts`): `ui.*` (your shortcuts) is stored on your account; `desk.*`, `hub.*` and `hosted.*` are the owner's; editors may change other context preferences. `hub.settings` is never written or deleted as a preference.
 - **Undo** (`lib/undo.ts`): one history per person per space (`undo_entries.actor_account_id`).

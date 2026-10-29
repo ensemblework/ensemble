@@ -28,6 +28,7 @@ import { RuntimeError } from "../lib/runtime-error.js";
 import { addReceipt, markActed, mayRetry } from "./queue.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
+import { nodeSpaceGateway } from "./spaces.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -371,6 +372,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       agentPersona: nodePersona.text,
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
+      spaces: nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" }),
       extraTools: nodeTools({
         prisma,
         node,

@@ -118,7 +118,7 @@ export function newApiToken(): { token: string; hash: string; prefix: string } {
   return { token, hash: sha256(token), prefix: token.slice(0, 8) };
 }
 
-export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop" | "link";
+export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop" | "link" | "node";
 export type TokenScope = "full" | "bridge" | "device" | "hooks";
 
 /**
@@ -128,6 +128,42 @@ export type TokenScope = "full" | "bridge" | "device" | "hooks";
 export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; modules: string | null; access?: Access };
 
 export const SHARE_HEADER = "x-ensemble-share";
+
+/**
+ * Ensemble Node's delegated identity: the internal token plus these headers is a request a node makes
+ * for its owner (the account) in one space, with the owner's current access there. Server-side only.
+ */
+export const NODE_ACCOUNT_HEADER = "x-ensemble-node-account";
+export const NODE_SPACE_HEADER = "x-ensemble-space";
+export const NODE_HEADER = "x-ensemble-node";
+
+/** Headers for a request node `nodeId` makes for its owner `accountId` in `spaceId` (node/spaces.ts). */
+export function nodeRequestHeaders(input: { accountId: string; spaceId: string; nodeId: string }): Record<string, string> {
+  return {
+    "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN,
+    [NODE_ACCOUNT_HEADER]: input.accountId,
+    [NODE_SPACE_HEADER]: input.spaceId,
+    [NODE_HEADER]: input.nodeId,
+  };
+}
+
+/** A space an account can open right now, and how: its owner, or a member with a role. */
+export type OpenedSpace = { id: string; moduleSet: string | null; access: { kind: "owner" } | { kind: "member"; role: "viewer" | "editor"; ownerId: string } };
+
+/**
+ * What `accountId` may do in `spaceId` now, read from the database each time: owner of its own account
+ * row or of a space row, a member through `space_members`, or nothing (null). Browser requests (the
+ * space cookie) and Ensemble Node's delegated requests resolve a space with this one function.
+ */
+export async function openedSpace(accountId: string, spaceId: string): Promise<OpenedSpace | null> {
+  if (spaceId === accountId) {
+    const own = await prisma.user.findUnique({ where: { id: accountId }, select: { moduleSet: true, ownerId: true } });
+    return own && !own.ownerId ? { id: accountId, moduleSet: own.moduleSet, access: { kind: "owner" } } : null;
+  }
+  const space = await openableSpace(prisma, accountId, spaceId);
+  if (!space) return null;
+  return { id: space.id, moduleSet: space.moduleSet, access: space.member ? { kind: "member", role: space.member.role, ownerId: space.member.ownerId } : { kind: "owner" } };
+}
 
 /** The signed-in account. Falls back to userId where nothing set it (service calls, test apps). */
 export function accountIdOf(request: { userId: string; accountId?: string }): string {
@@ -203,15 +239,10 @@ async function inSpace(request: FastifyRequest, who: Identity): Promise<Identity
       },
     };
   }
-  const space = await openableSpace(prisma, account, readCookie(request, SPACE_COOKIE));
+  const cookie = readCookie(request, SPACE_COOKIE);
+  const space = cookie && cookie !== account ? await openedSpace(account, cookie) : null;
   if (!space) return { ...who, accountId: account, access: { kind: "owner" } };
-  return {
-    ...who,
-    userId: space.id,
-    accountId: account,
-    modules: space.moduleSet,
-    access: space.member ? { kind: "member", role: space.member.role, ownerId: space.member.ownerId } : { kind: "owner" },
-  };
+  return { ...who, userId: space.id, accountId: account, modules: space.moduleSet, access: space.access };
 }
 
 async function modulesForUser(userId: string): Promise<string | null> {
@@ -219,9 +250,32 @@ async function modulesForUser(userId: string): Promise<string | null> {
   return user?.moduleSet ?? null;
 }
 
+/**
+ * A node acting for its owner in one space (node/spaces.ts): the owner's account, the space as
+ * `userId`, and the owner's current access there, checked on every request. It installs the same
+ * scope a member's own request gets, so the route policy and the assistant's guest rules apply
+ * unchanged, and it is never a browser: browser-only routes refuse it. A space the owner can no
+ * longer open answers 404 everywhere; nothing falls back to another space.
+ */
+async function nodeIdentity(request: FastifyRequest, accountId: string): Promise<Identity | null> {
+  const nodeId = headerValue(request, NODE_HEADER);
+  const spaceId = headerValue(request, NODE_SPACE_HEADER) || accountId;
+  if (!nodeId) return null;
+  const [account, node] = await Promise.all([
+    prisma.user.findUnique({ where: { id: accountId }, select: { ownerId: true, moduleSet: true } }),
+    prisma.nodeAgent.findFirst({ where: { id: nodeId, userId: accountId }, select: { id: true } }),
+  ]);
+  if (!account || account.ownerId || !node) return null;
+  const space = await openedSpace(accountId, spaceId);
+  if (!space) return { userId: accountId, accountId, via: "node", modules: account.moduleSet, access: { kind: "gone" } };
+  return { userId: space.id, accountId, via: "node", modules: space.moduleSet, access: { ...space.access, node: node.id } };
+}
+
 export async function identify(request: FastifyRequest): Promise<Identity | null> {
   const internal = request.headers["x-ensemble-internal"];
   if (internal && internal === env.ENSEMBLE_INTERNAL_TOKEN) {
+    const delegated = headerValue(request, NODE_ACCOUNT_HEADER);
+    if (delegated !== undefined) return nodeIdentity(request, delegated);
     const user = request.headers["x-ensemble-user"];
     const userId = (Array.isArray(user) ? user[0] : user) || env.ENSEMBLE_DEV_USER_ID;
     return { userId, via: "internal", modules: await modulesForUser(userId) };
