@@ -30,7 +30,7 @@ import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWa
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
-import { draftDisclosure, roomBoundTurn } from "./audience.js";
+import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -297,7 +297,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   }
 
   const tainted = (row: NodeMessage | null) => Boolean(row && (row.userId !== owner || (row.data as { fromNonOwner?: unknown } | null)?.fromNonOwner === true));
-  const fromNonOwner = ["run", "approval", "plan", "tool", "attention", "work"].includes(turn.reason) ? false : tainted(trigger);
+  // An approved disclosure drafts an answer to someone else's words: it reads with its owner's access and does nothing else (node/audience.ts).
+  const drafting = turn.reason === "disclose";
+  const fromNonOwner = drafting || (["run", "approval", "plan", "tool", "attention", "work"].includes(turn.reason) ? false : tainted(trigger));
   const step = turn.planId && turn.planStep ? { planId: turn.planId, stepId: turn.planStep } : null;
   // A step whose plan was stopped, or that already ended, does nothing more.
   if (step && !(await stepLive(prisma, step.planId, step.stepId))) {
@@ -383,7 +385,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   let result: AssistantTurnResult;
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
-  const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
+  const ownerOnly = (drafting || !fromNonOwner) && (Boolean(privateTo) || people.every((id) => id === owner));
   const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
     (bound ? bound.run : runAssistantTurn)({
@@ -403,18 +405,21 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" }),
-      extraTools: nodeTools({
-        prisma,
-        node,
-        room,
-        lineage,
-        privateTo,
-        ownerOnly,
-        redis: app.redis as never,
-        dispatch: deps.dispatch,
-        turnId: turn.id,
-        plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
-      }),
+      extraTools: draftingTools(
+        turn,
+        nodeTools({
+          prisma,
+          node,
+          room,
+          lineage,
+          privateTo,
+          ownerOnly,
+          redis: app.redis as never,
+          dispatch: deps.dispatch,
+          turnId: turn.id,
+          plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
+        }),
+      ),
       purpose: "Ensemble Node",
       signal: deps.signal,
       async onToolStart(call) {

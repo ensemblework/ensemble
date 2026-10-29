@@ -294,7 +294,8 @@ async function ownerCard(app: FastifyInstance, request: NodePeerRequest, lead: N
     authorKind: "node",
     authorNodeId: lead.id,
     kind: "approval",
-    body: `${fromName} asks for ${request.kind === "review" ? "a review" : "work"}: “${truncateText(request.text, 600)}”${pinned ? ` (candidate: ${pinned})` : ""}. Accept, edit or decline.`,
+    // The whole request: the owner accepts exactly what their lead's planning turn reads.
+    body: `${fromName} asks for ${request.kind === "review" ? "a review" : "work"}: “${request.text}”${refsLine(request)}${pinned ? ` (candidate: ${pinned})` : ""}. Accept, edit or decline.`,
     data: {
       type: "peer_request",
       status: "pending",

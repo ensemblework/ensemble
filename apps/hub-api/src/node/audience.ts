@@ -426,7 +426,8 @@ async function raiseDisclosure(ctx: BoundCtx, input: { mode: "share" | "answer";
     requestId: ctx.requestId,
   };
   const who = ctx.askerId === ctx.owner ? "You asked in public" : `${ctx.askerName} asked`;
-  const body = input.mode === "share" ? `${who}: “${truncateText(input.question, 400)}”. May I share: ${truncateText(input.need, 400)}?` : `${ctx.askerName} asked me: “${truncateText(input.question, 400)}”. Answer it? It uses your credits.`;
+  // The card shows the question and the need in full: the owner approves exactly what the drafting turn reads.
+  const body = input.mode === "share" ? `${who}: “${input.question}”. May I share: ${input.need}?` : `${ctx.askerName} asked me: “${input.question}”. Answer it? It uses your credits.`;
   const { message } = await postMessage(prisma, {
     roomId: ctx.room.id,
     userId: ctx.owner,
@@ -516,6 +517,12 @@ async function settleDisclosure(app: FastifyInstance, card: NodeMessage, node: N
   }
   if (data.requestId) await prisma.nodeTurn.updateMany({ where: { operationId, peerRequestId: null }, data: { peerRequestId: data.requestId } });
   return updateMessageData(prisma, current, { status: "approved", error: null });
+}
+
+/** What a turn drafting an approved disclosure may use of its node's own tools: reads only, never work, posts or memories. */
+const DRAFTING_TOOLS = new Set(["node_overview"]);
+export function draftingTools(turn: Pick<NodeTurn, "reason">, tools: AnyHubTool[]): AnyHubTool[] {
+  return turn.reason === "disclose" ? tools.filter((tool) => DRAFTING_TOOLS.has(tool.name)) : tools;
 }
 
 /**
