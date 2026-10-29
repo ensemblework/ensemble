@@ -336,6 +336,19 @@ test("stop needs no model: it stops the conversation's work and says what stoppe
   assert.equal(status.authorKind, "system");
   assert.match(status.body, /Stopped 1 agent run/);
   assert.equal((await h.prisma.nodeTurn.count({ where: { nodeId: node.id, status: "queued" } })), 0);
+
+  // A reply in progress that had done nothing: the status line is the only answer, nothing from the node.
+  let release: () => void = () => undefined;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  script = () => ({ text: "A long answer that never comes.", wait: slow });
+  await post(mira, room.id, "tell me everything about pipes");
+  for (let i = 0; i < 50 && !seen.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  const before = (await read(mira, room.id)).length;
+  await say(mira, room.id, "stop");
+  release();
+  await settleTurns();
+  const after = (await read(mira, room.id)).slice(before);
+  assert.deepEqual(after.map((row) => [row.authorKind, row.body]), [["human", "stop"], ["system", "Stopped the reply in progress. What was already done stays."]]);
 });
 
 test("an outbox effect delivered twice starts one turn; a restart re-runs a turn that had not acted and resumes one that had", async () => {

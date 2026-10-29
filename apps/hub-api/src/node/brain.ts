@@ -498,8 +498,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
     if (made?.data.status === "draft") await stopPlans(app, { planId: made.message.id, userId: owner });
     if (turn.planId && !turn.planStep) await afterReport(app, turn.planId);
-    if (!step && room.kind === "dm") {
-      const said = cleanReply(result.content, true);
+    // The stop already said so in a status line: a DM hears more only when the turn had done something.
+    if (!step && room.kind === "dm" && result.toolCalls.length) {
+      const said = cleanReply(result.content.replace(/\n*Stopped before finishing\.\s*$/i, ""), true);
       if (said && said !== NO_REPLY) await postAsNode({ prisma, node, lineage, dispatch: deps.dispatch }, room, said, privateTo);
     }
     return { status: "done", model: result.model, credits: result.credits };
@@ -511,7 +512,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     else if (step && (await stepPending(prisma, step.planId, step.stepId))) await stepProgress(prisma, step.planId, step.stepId, "Waiting for its agent run.");
     else if (step) await finishStep(app, step.planId, step.stepId, { status: "blocked", result: `@${node.slug} could not do its step: ${result.content}` });
     else {
-      await ownerNotice(app, node, room.id, result.content);
+      // A stop or a pause already said so; only a real failure needs a notice.
+      if (!result.interrupted) await ownerNotice(app, node, room.id, result.content);
       // Steps the lead added before its turn failed still run; a stopped turn's plan stops with it.
       const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
       if (made?.data.status === "draft") {
