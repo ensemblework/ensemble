@@ -357,8 +357,8 @@ test("a session goes to another node when its node hands it over or from its car
   await say(ama, builder.room.id, "also add a test");
   assert.match(results.at(-1)!, /belongs to another of your owner's nodes/);
   const { sessionsForNode } = await import("./sessions.js");
-  assert.ok(!(await sessionsForNode(h.prisma, builder.node)).some((row) => row.id === root.id));
-  assert.equal((await sessionsForNode(h.prisma, writer.node)).find((row) => row.id === root.id)?.yours, true);
+  assert.ok(!(await sessionsForNode(h.prisma, { id: builder.node.id, userId: ama.id })).some((row) => row.id === root.id));
+  assert.equal((await sessionsForNode(h.prisma, { id: writer.node.id, userId: ama.id })).find((row) => row.id === root.id)?.yours, true);
 
   // Its card acts as that node, from that node's chat, where the new run's card goes.
   const queued = await control(ama, root.id, { action: "queue", prompt: "Then write the docs.", title: "Docs" });
@@ -382,11 +382,11 @@ test("a session goes to another node when its node hands it over or from its car
   const elsewhere = await h.prisma.workspaceJob.create({
     data: { userId: ama.id, taskId: task.id, kind: "code", provider: "codex", model: "default", executionMode: "sandbox", deviceId: laptop.id, folderLabel: "ensemble", status: "succeeded", startedAt: new Date(), finishedAt: new Date(), summary: "Bumped the version." },
   });
-  assert.equal((await sessionsForNode(h.prisma, builder.node)).find((row) => row.id === elsewhere.id)?.yours, false);
+  assert.equal((await sessionsForNode(h.prisma, { id: builder.node.id, userId: ama.id })).find((row) => row.id === elsewhere.id)?.yours, false);
   script = (turn) => (turn.slug === writer.node.slug ? call("node_session_adopt", { session: elsewhere.id }) : { text: "(no reply)" });
   await say(ama, writer.room.id, "look after the version bump session");
-  assert.equal((await sessionsForNode(h.prisma, writer.node)).find((row) => row.id === elsewhere.id)?.yours, true);
-  assert.ok(!(await sessionsForNode(h.prisma, builder.node)).some((row) => row.id === elsewhere.id), "other nodes no longer see it");
+  assert.equal((await sessionsForNode(h.prisma, { id: writer.node.id, userId: ama.id })).find((row) => row.id === elsewhere.id)?.yours, true);
+  assert.ok(!(await sessionsForNode(h.prisma, { id: builder.node.id, userId: ama.id })).some((row) => row.id === elsewhere.id), "other nodes no longer see it");
   assert.equal(sessionEventLine((await sessionEvents(h.prisma, writer.node.id, { sessionId: elsewhere.id }))[0]!).split(" (")[0], "You took the session over");
 });
 

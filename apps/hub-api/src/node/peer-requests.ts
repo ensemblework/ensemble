@@ -486,13 +486,18 @@ export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerI
 
 // ── missions made for a request ─────────────────────────────────────────────────────────────
 
-type TurnLink = Pick<NodeTurn, "id" | "nodeId" | "roomId" | "reason" | "note" | "attempt" | "operationId" | "peerRequestId">;
+type TurnLink = Pick<NodeTurn, "id" | "nodeId" | "roomId" | "reason" | "note" | "attempt" | "operationId" | "peerRequestId" | "originTurnId">;
 
 /**
- * A turn's operation and peer request, or those of the turn it retries: a rate-limited turn is tried
- * again as a new row with the same note but without them (node/queue.ts `retryLater`).
+ * A turn's operation and peer request, or those of the turn it continues: a rate-limited turn tried
+ * again, or a turn resumed after a restart, is a new row pointing at the first (`originTurnId`;
+ * node/queue.ts `retryLater`, `recoverTurns`). Older retries are found by their note.
  */
 export async function turnOrigin(db: Db, turn: TurnLink): Promise<{ operationId: string | null; peerRequestId: string | null }> {
+  if (turn.originTurnId) {
+    const origin = await db.nodeTurn.findUnique({ where: { id: turn.originTurnId }, select: { operationId: true, peerRequestId: true } });
+    if (origin) return { operationId: turn.operationId ?? origin.operationId, peerRequestId: turn.peerRequestId ?? origin.peerRequestId };
+  }
   if (turn.operationId || turn.peerRequestId || !turn.attempt || !turn.note) return { operationId: turn.operationId, peerRequestId: turn.peerRequestId };
   const first = await db.nodeTurn.findFirst({
     where: { nodeId: turn.nodeId, roomId: turn.roomId, reason: turn.reason, note: turn.note, attempt: 0, id: { not: turn.id } },
@@ -533,7 +538,7 @@ function reviewConstraints(base: Constraints, candidate: Candidate | null): Cons
  */
 export async function missionOriginFor(db: Db, turnId: string, constraints?: Constraints): Promise<MissionOrigin> {
   const turn = await db.nodeTurn
-    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, userId: true } })
+    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, originTurnId: true, userId: true } })
     .catch(() => null);
   if (!turn) return {};
   const link = await turnOrigin(db, turn);

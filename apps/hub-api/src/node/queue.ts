@@ -11,7 +11,7 @@
  * runs again.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeMessage, NodeTurn, Prisma } from "@prisma/client";
+import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn } from "./brain.js";
 import type { Mention } from "./mentions.js";
@@ -53,7 +53,8 @@ const talkPool = new Pool(TALK_PARALLEL);
 const workPool = new Pool(WORK_PARALLEL);
 const nodeWork = new Map<string, Pool>();
 const chains = new Map<string, Promise<void>>();
-type LiveTurn = { controller: AbortController; turnId: string; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null; lane: string; acted: boolean };
+/** `mergeable`: a person's message turn with nothing bound to it, which a newer message may stop and take over (`coalesce`). */
+type LiveTurn = { controller: AbortController; turnId: string; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null; lane: string; acted: boolean; mergeable: boolean };
 const live = new Map<string, LiveTurn>();
 
 /** The lane a turn runs in: a plan step's own work lane, else the room thread's conversation lane. */
@@ -90,6 +91,11 @@ export type TurnRequest = {
   operationId?: string | null;
   /** owner (default) or room: where the answer goes (C1). */
   audience?: "owner" | "room";
+  /** The peer request this turn answers or plans, and for whom it is done (node/peer-requests.ts). */
+  peerRequestId?: string | null;
+  principals?: Record<string, unknown> | null;
+  /** The first turn this one continues (a resume after a restart): it keeps that turn's operation and request. */
+  originTurnId?: string | null;
 };
 
 /** Rate-limited turns try again quietly this many times, this far apart. */
@@ -122,10 +128,14 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       [queued.triggerMessageId, request.triggerMessageId].map((id) => (id ? prisma.nodeMessage.findUnique({ where: { id }, select: { userId: true, data: true } }) : null)),
     );
     const keep = tainted(held ?? null, node.userId) && !tainted(incoming ?? null, node.userId);
-    const note = queued.note && request.note && queued.note.includes(request.note) ? queued.note : [queued.note, request.note].filter(Boolean).join("\n") || null;
     await prisma.nodeTurn.update({
       where: { id: queued.id },
-      data: { note, ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }) },
+      data: {
+        note: mergedNote(queued.note, request.note),
+        ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }),
+        ...(request.peerRequestId && !queued.peerRequestId ? { peerRequestId: request.peerRequestId, principals: (request.principals ?? {}) as Prisma.InputJsonValue } : {}),
+        ...(request.originTurnId && !queued.originTurnId && !queued.operationId ? { originTurnId: request.originTurnId } : {}),
+      },
     });
     coalesce(request, lane, node.userId);
     return true;
@@ -145,11 +155,35 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       lane,
       audience: request.audience ?? "owner",
       operationId: request.operationId ?? null,
+      peerRequestId: request.peerRequestId ?? null,
+      principals: (request.principals ?? {}) as Prisma.InputJsonValue,
+      originTurnId: request.originTurnId ?? null,
     },
   });
   coalesce(request, lane, node.userId);
   schedule(app, turn);
   return true;
+}
+
+function mergedNote(held: string | null, incoming: string | null | undefined): string | null {
+  if (held && incoming && held.includes(incoming)) return held;
+  return [held, incoming].filter(Boolean).join("\n") || null;
+}
+
+/** A person's message turn with nothing bound to it: an approval, a run's end, a request or an outbox effect is never stopped to merge. */
+function mergeable(turn: Pick<NodeTurn, "reason" | "operationId" | "peerRequestId" | "originTurnId">): boolean {
+  return PERSON_REASONS.has(turn.reason) && !turn.operationId && !turn.peerRequestId && !turn.originTurnId;
+}
+
+/** What a turn stopped to merge was told (a run's end merged into it, a routing note) goes on with the turn that answers instead. */
+async function carryNote(prisma: PrismaClient, turn: NodeTurn): Promise<void> {
+  const note = (await prisma.nodeTurn.findUnique({ where: { id: turn.id }, select: { note: true } }))?.note;
+  if (!note) return;
+  const next = await prisma.nodeTurn.findFirst({
+    where: { nodeId: turn.nodeId, roomId: turn.roomId, status: "queued", private: turn.private, planId: null, planStep: null },
+    orderBy: { createdAt: "asc" },
+  });
+  if (next) await prisma.nodeTurn.update({ where: { id: next.id }, data: { note: mergedNote(note, next.note) } });
 }
 
 /**
@@ -159,7 +193,7 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
 function coalesce(request: TurnRequest, lane: string, _ownerId: string): void {
   if (isWorkLane(lane) || !request.triggerMessageId || !PERSON_REASONS.has(request.reason)) return;
   for (const entry of live.values()) {
-    if (entry.nodeId === request.nodeId && entry.lane === lane && !entry.acted && !entry.planId) entry.controller.abort("coalesce");
+    if (entry.nodeId === request.nodeId && entry.lane === lane && !entry.acted && !entry.planId && entry.mergeable) entry.controller.abort("coalesce");
   }
 }
 
@@ -207,7 +241,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
     const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
     const controller = new AbortController();
     const lane = turn.lane ?? laneFor(turn);
-    live.set(turnId, { controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt) });
+    live.set(turnId, { controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn) });
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
@@ -218,6 +252,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
       }
       if (outcome.status === "coalesced") {
         await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "done", error: "Merged into the next turn: a newer message came first.", finishedAt: new Date() } });
+        await carryNote(prisma, turn);
         return;
       }
       await prisma.nodeTurn.update({
@@ -290,6 +325,9 @@ async function retryLater(app: FastifyInstance, turn: NodeTurn): Promise<void> {
       attempt: turn.attempt + 1,
       lane: turn.lane,
       audience: turn.audience,
+      peerRequestId: turn.peerRequestId,
+      principals: (turn.principals ?? {}) as Prisma.InputJsonValue,
+      originTurnId: turn.originTurnId ?? turn.id,
       runAfter: new Date(Date.now() + retryDelays[Math.min(turn.attempt, retryDelays.length - 1)]!),
     },
   });
@@ -362,7 +400,20 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
       turn.note ?? "",
     ].filter(Boolean).join("\n");
     const resumed = turn.roomId
-      ? await enqueueTurn(app, { nodeId: turn.nodeId, roomId: turn.roomId, reason: turn.reason, triggerMessageId: turn.triggerMessageId, note, private: turn.private, planId: turn.planId, planStep: turn.planStep })
+      ? await enqueueTurn(app, {
+          nodeId: turn.nodeId,
+          roomId: turn.roomId,
+          reason: turn.reason,
+          triggerMessageId: turn.triggerMessageId,
+          note,
+          private: turn.private,
+          planId: turn.planId,
+          planStep: turn.planStep,
+          audience: turn.audience === "room" ? "room" : "owner",
+          peerRequestId: turn.peerRequestId,
+          principals: (turn.principals ?? {}) as Record<string, unknown>,
+          originTurnId: turn.originTurnId ?? turn.id,
+        })
       : false;
     if (!resumed) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
   }

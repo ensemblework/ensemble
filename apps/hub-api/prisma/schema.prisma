@@ -2651,6 +2651,9 @@ model NodeTurn {
   peerRequestId    String?   @map("peer_request_id")
   /// For a turn done for someone other than the owner: { data, billing, executionDevice, approver, askedBy } account ids.
   principals       Json      @default("{}")
+  /// The first turn this one continues: a retry after a rate limit or a resume after a restart keeps
+  /// that turn's operation and peer request through it.
+  originTurnId     String?   @map("origin_turn_id")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?

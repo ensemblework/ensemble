@@ -277,6 +277,49 @@ test("a newer message from the owner merges with a turn that has not acted yet",
   assert.match(turns[0]!.error ?? "", /Merged into the next turn/);
 });
 
+test("a newer message never stops a turn bound to something else (an approval); a merged turn's update goes on with the turn that answers", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  const { enqueueTurn } = await import("./queue.js");
+  let release: () => void = () => undefined;
+  let slow = new Promise<void>((resolve) => (release = resolve));
+  script = (turn) => {
+    if (turn.transcript.includes("Your owner approved the CSV export")) return { text: "The CSV export is applied.", wait: slow };
+    return { text: turn.transcript.includes("how is it going") ? "Going well." : "unexpected" };
+  };
+  await enqueueTurn(h.app, { nodeId: node.id, roomId: room.id, reason: "approval", note: "Your owner approved the CSV export." });
+  for (let i = 0; i < 50 && !seen.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  await post(mira, room.id, "how is it going");
+  for (let i = 0; i < 100 && !(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, status: "queued" } })); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  release();
+  await settleTurns();
+  let replies = (await read(mira, room.id)).filter((row) => row.authorNodeId === node.id).map((row) => row.body);
+  assert.deepEqual(replies, ["The CSV export is applied.", "Going well."], "the approval's turn finished; the message was answered next");
+
+  // A message turn that took in a run's end is stopped by a newer message; the run's end is not lost.
+  seen.length = 0;
+  slow = new Promise<void>((resolve) => (release = resolve));
+  let first = true;
+  script = (turn) => {
+    if (first) {
+      first = false;
+      return { text: "Answering the first only.", wait: slow };
+    }
+    return { text: turn.transcript.includes("The build run ended: all tests pass.") && turn.transcript.includes("and the docs?") ? "Build done; docs next." : "lost the update" };
+  };
+  const firstMessage = await post(mira, room.id, "is the build done?");
+  for (let i = 0; i < 50 && !seen.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  const running = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: node.id, triggerMessageId: firstMessage.id } });
+  await h.prisma.nodeTurn.update({ where: { id: running.id }, data: { note: "The build run ended: all tests pass." } });
+  await post(mira, room.id, "and the docs?");
+  for (let i = 0; i < 100 && !(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, status: "queued" } })); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  release();
+  await settleTurns();
+  replies = (await read(mira, room.id)).filter((row) => row.authorNodeId === node.id).map((row) => row.body);
+  assert.equal(replies.at(-1), "Build done; docs next.");
+  assert.match((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: running.id } })).error ?? "", /Merged into the next turn/);
+});
+
 test("stop needs no model: it stops the conversation's work and says what stopped", async () => {
   const mira = await person("Mira");
   await laptopFor(mira);
@@ -339,6 +382,17 @@ test("an outbox effect delivered twice starts one turn; a restart re-runs a turn
   await settleTurns();
   assert.equal((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: acted.id } })).status, "failed");
   assert.match(seen[0]?.transcript ?? "", /cut off by a server restart[\s\S]*node_session_start \(ok\): Started Build/);
+
+  // A resumed turn keeps what it was for: its peer request, and through its first turn, its operation.
+  const { turnOrigin } = await import("./peer-requests.js");
+  const bound = await h.prisma.nodeTurn.create({
+    data: { userId: kofi.id, nodeId: step.nodeId, roomId: crew.id, reason: "request", status: "running", private: true, operationId: `request:${randomBytes(4).toString("hex")}:accepted`, sideEffectsAt: new Date(), note: "Plan Ben's request." },
+  });
+  script = () => ({ text: "(no reply)" });
+  await recoverTurns(h.app);
+  await settleTurns();
+  const resumed = await h.prisma.nodeTurn.findFirstOrThrow({ where: { originTurnId: bound.id } });
+  assert.equal((await turnOrigin(h.prisma, resumed)).operationId, bound.operationId);
 });
 
 test("cards of ended work close: an answer after the step ended changes nothing", async () => {
