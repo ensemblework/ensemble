@@ -71,13 +71,16 @@ export function xauthorityEntry(cookie: Buffer): Buffer {
 export type WindowInfo = { id: string; title: string; x: number; y: number; width: number; height: number; pid?: number };
 export type FoundWindow = WindowInfo & { how: "pid" | "title" | "only-window" | "display" };
 
+/** An X offset as xwininfo prints it: `+100`, `-20`, or `+-1` for minus one. */
+const offset = (text: string) => Number(text.replace(/^\+/, ""));
+
 /** Windows in `xwininfo -root -tree` output, at any depth, with absolute positions. */
 export function parseXwininfoTree(text: string): WindowInfo[] {
   const windows: WindowInfo[] = [];
   for (const line of text.split("\n")) {
     const match = /^\s+(0x[0-9a-f]+)\s+(?:"((?:[^"\\]|\\.)*)"|\(has no name\)).*?\s(\d+)x(\d+)[+-]-?\d+[+-]-?\d+\s+([+-]-?\d+)([+-]-?\d+)\s*$/i.exec(line);
     if (!match) continue;
-    windows.push({ id: match[1]!, title: match[2] ?? "", width: Number(match[3]), height: Number(match[4]), x: Number(match[5]), y: Number(match[6]) });
+    windows.push({ id: match[1]!, title: match[2] ?? "", width: Number(match[3]), height: Number(match[4]), x: offset(match[5]!), y: offset(match[6]!) });
   }
   return windows;
 }

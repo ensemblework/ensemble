@@ -34,7 +34,10 @@ export type FfmpegInfo = {
 export type VideoCodec = "h264" | "vp9" | "vp8";
 export type VideoChoice = { ffmpeg: FfmpegInfo; codec: VideoCodec; container: "mp4" | "webm"; mime: string; extension: string };
 
-/** Names in the second column of `ffmpeg -encoders`, `-decoders`, `-formats` style listings. */
+/**
+ * Names in `ffmpeg -encoders`, `-decoders`, `-demuxers`, `-muxers` and `-devices` listings: the
+ * first word after the flag columns (`V....D`, `D`, `DE`, and `d` for a device), after the rule.
+ */
 export function parseListing(text: string): Set<string> {
   const names = new Set<string>();
   let started = false;
@@ -44,8 +47,11 @@ export function parseListing(text: string): Set<string> {
       continue;
     }
     if (!started) continue;
-    const match = /^\s*[A-Z.]{1,7}\s+(\S+)/.exec(line);
-    if (match) for (const name of match[1]!.split(",")) names.add(name);
+    const words = line.trim().split(/\s+/);
+    let index = 0;
+    while (index < words.length - 1 && /^(?:[A-Z.]{1,7}|d)$/.test(words[index]!)) index += 1;
+    if (index === 0 || !words[index]) continue;
+    for (const name of words[index]!.split(",")) names.add(name);
   }
   return names;
 }

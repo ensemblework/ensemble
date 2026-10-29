@@ -44,7 +44,7 @@ export const BROWSER_TOOLS = [
       .strict(),
   },
   { name: "browser_tabs", description: "List this work's open tabs: id, URL, title, and whether one is recording or paused for a sign-in.", input: z.object({}).strict() },
-  { name: "browser_close", description: "Close a tab.", input: z.object({ tab }).strict() },
+  { name: "browser_close", description: "Close one of this work's tabs. A recording running in it is finished and saved first.", input: z.object({ tab }).strict() },
   {
     name: "browser_snapshot",
     description: "Read the page as an accessibility tree, with a [ref=…] for each element to use in browser_click and browser_type. Password and code fields never show their values. Long pages are cut at maxChars.",

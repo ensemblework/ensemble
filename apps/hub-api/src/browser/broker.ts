@@ -282,14 +282,25 @@ export class BrowserBroker {
       if (!options.onLiveFrame && op.live && "onLiveFrame" in options) this.stopLive(op);
     }
     this.updateLive(op);
-    return new BrowserOperation(this, id);
+    return new BrowserOperation(this, id, op.options);
   }
 
-  private op(id: string): Operation {
-    const op = this.operations.get(id);
-    if (!op) throw new BrowserError("not_found", "Unknown operation.");
+  /** The operation's record, made again with the facade's options if the janitor forgot it while it was idle. */
+  private op(id: string, revive?: OperationOptions): Operation {
+    let op = this.operations.get(id);
+    if (!op) {
+      if (!revive) throw new BrowserError("not_found", "Unknown operation.");
+      op = { id, options: { ...revive }, live: null, lastUsed: this.now() };
+      this.operations.set(id, op);
+    }
     op.lastUsed = this.now();
     return op;
+  }
+
+  /** For the facade: keeps the operation known, with the options it was given. */
+  keep(id: string, options: OperationOptions): void {
+    const op = this.op(id, options);
+    this.updateLive(op);
   }
 
   private tabsOf(operation: string): Tab[] {
@@ -1024,9 +1035,16 @@ export class BrowserBroker {
 /** The broker's tool set for one operation: what both callers expose to an agent. */
 export class BrowserOperation {
   constructor(
-    private readonly broker: BrowserBroker,
+    private readonly owner: BrowserBroker,
     readonly id: string,
+    private readonly options: OperationOptions = {},
   ) {}
+
+  /** The broker, with this operation known to it again if the janitor forgot it while idle. */
+  private get broker(): BrowserBroker {
+    this.owner.keep(this.id, this.options);
+    return this.owner;
+  }
 
   open(url: string, options?: OpenOptions) {
     return this.broker.open(this.id, url, options);
@@ -1074,6 +1092,6 @@ export class BrowserOperation {
     this.broker.renew(this.id);
   }
   release() {
-    return this.broker.release(this.id);
+    return this.owner.release(this.id);
   }
 }

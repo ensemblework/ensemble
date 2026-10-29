@@ -113,9 +113,9 @@ export class LeaseTable {
     return record.owner.pid === this.ops.selfPid && record.owner.identity === this.selfIdentity;
   }
 
-  /** Writes this runtime's leases, keeping those of any other live runtime. */
-  private write(): void {
-    const others = this.read().filter((record) => !this.mine(record) && !this.leases.has(record.id));
+  /** Writes this runtime's leases, keeping other runtimes' leases except those in `drop`. */
+  private write(drop: ReadonlySet<string> = new Set()): void {
+    const others = this.read().filter((record) => !this.mine(record) && !this.leases.has(record.id) && !drop.has(record.id));
     const state: StateFile = { version: 1, leases: [...others, ...this.leases.values()] };
     try {
       mkdirSync(dirname(this.stateFile), { recursive: true, mode: 0o700 });
@@ -227,7 +227,7 @@ export class LeaseTable {
       reaped.push(record.id);
       this.log(`capture: removed ${record.label}, left by a runtime that stopped`);
     }
-    if (reaped.length) this.write();
+    if (reaped.length) this.write(new Set(reaped));
     return reaped;
   }
 
