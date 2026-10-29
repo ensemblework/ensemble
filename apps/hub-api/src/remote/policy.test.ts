@@ -21,6 +21,7 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   webEdit: true,
   webTerminal: true,
   evidenceUpload: true,
+  captureSites: { never: [], preview: [] },
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",
