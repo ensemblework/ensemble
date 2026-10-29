@@ -48,6 +48,7 @@ import {
 } from "./store.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES, nodeTemplate } from "./templates.js";
 import { registerOutbox } from "./outbox.js";
+import { registerRoutineRoutes } from "./routine-routes.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -285,6 +286,7 @@ async function messageFiles(prisma: PrismaClient, accountId: string, ids: string
 export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   // Mission changes deliver their effects (node/outbox.ts) wherever the Node API runs.
   registerOutbox();
+  registerRoutineRoutes(app);
   const prisma = app.prisma;
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {

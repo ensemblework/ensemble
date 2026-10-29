@@ -68,6 +68,7 @@ function plan(steps: PlanStep[], over: Partial<PlanData> = {}): PlanData {
     ],
     deferred: [],
     steps,
+    routine: null,
     ...over,
   };
 }

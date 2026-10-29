@@ -102,7 +102,12 @@ export type PlanData = {
   requirements: Requirement[];
   deferred: Array<{ requirementId: string; reason: string }>;
   steps: PlanStep[];
+  /** The routine whose occurrence started it (node/routines.ts). */
+  routine: RoutineLink | null;
 };
+
+/** A routine's occurrence, on the mission it started: notify says when its result is posted. */
+export type RoutineLink = { id: string; runId: string; title: string; notify: "always" | "needed" | "never"; trigger?: string };
 
 export type PlanLink = { planId: string; planStep: string | null };
 
@@ -209,6 +214,7 @@ function project(mission: NodeMission, rows: NodeStep[], leadHandle: string): Pl
     constraints: (mission.constraints && typeof mission.constraints === "object" ? mission.constraints : {}) as Constraints,
     requirements: ledger(storedRequirements(mission), storedDeferred(mission), steps, missionEnded(mission.status)),
     deferred: storedDeferred(mission),
+    routine: mission.routine && typeof mission.routine === "object" ? (mission.routine as RoutineLink) : null,
     steps: steps.map((step, index) => {
       const row = rows[index]!;
       const holder = heldBy(view, step);
@@ -377,7 +383,7 @@ export function kindFromRole(role: string | null | undefined): StepKind {
  */
 export async function addStep(
   db: PrismaClient,
-  input: { lead: NodeAgent; turnId: string; continuing: string | null; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; step: NewStep; kind?: "plan" | "self"; goal?: string },
+  input: { lead: NodeAgent; turnId: string; continuing: string | null; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; step: NewStep; kind?: "plan" | "self"; goal?: string; routine?: RoutineLink },
 ): Promise<{ planId: string; step: PlanStep; position: number }> {
   let plan = await currentPlan(db, input.lead.id, input.turnId, input.continuing);
   if (!plan) {
@@ -388,11 +394,25 @@ export async function addStep(
       authorNodeId: input.lead.id,
       kind: "plan",
       body: "",
-      data: { type: "plan", version: 0, contract: 3, missionId: "", kind: input.kind ?? "plan", leadNodeId: input.lead.id, leadHandle: input.lead.slug, leadTurnId: input.turnId, originRoomId: input.originRoomId, originPrivate: input.originPrivate, status: "draft", goal: input.goal ?? null, requirements: [], deferred: [], steps: [] },
+      data: { type: "plan", version: 0, contract: 3, missionId: "", kind: input.kind ?? "plan", leadNodeId: input.lead.id, leadHandle: input.lead.slug, leadTurnId: input.turnId, originRoomId: input.originRoomId, originPrivate: input.originPrivate, status: "draft", goal: input.goal ?? null, requirements: [], deferred: [], steps: [], routine: input.routine ?? null },
       visibleTo: input.visibleTo,
+      // A routine's runs are listed with the routine, not in the timeline: only what it reports is a message.
+      planId: input.routine?.id ?? null,
     });
     await db.nodeMission.create({
-      data: { id: message.id, userId: input.lead.userId, leadNodeId: input.lead.id, originRoomId: input.originRoomId, originPrivate: input.originPrivate, leadTurnId: input.turnId, kind: input.kind ?? "plan", contract: 3, status: "draft", goal: input.goal ?? null },
+      data: {
+        id: message.id,
+        userId: input.lead.userId,
+        leadNodeId: input.lead.id,
+        originRoomId: input.originRoomId,
+        originPrivate: input.originPrivate,
+        leadTurnId: input.turnId,
+        kind: input.kind ?? "plan",
+        contract: 3,
+        status: "draft",
+        goal: input.goal ?? null,
+        ...(input.routine ? { routine: input.routine as unknown as Prisma.InputJsonValue } : {}),
+      },
     });
     plan = await loadPlan(db, message.id);
     if (!plan) throw new Error("The new plan could not be read back.");
@@ -767,7 +787,14 @@ export function reportNote(data: PlanData, judgement: string[] = []): string {
   const ok = data.steps.every((row) => row.outcome === "done" || row.outcome === "pass");
   const failed = data.steps.filter((row) => row.outcome === "fail");
   const held = data.steps.filter((row) => row.held);
+  const routine = data.routine
+    ? [
+        `This was your routine “${data.routine.title}”${data.routine.trigger ? ` (${data.routine.trigger})` : ""}.`,
+        data.routine.notify === "needed" ? "Post only if something failed, changed or needs your owner; otherwise reply exactly (no reply)." : "",
+      ].filter(Boolean)
+    : [];
   return [
+    ...routine,
     data.kind === "self" ? "Your own work ended. Its report:" : "Your plan has nothing left to run. The steps:",
     ...data.steps.map((row) => resultLine(data, row)),
     ...(failed.length ? ["", "Failed checks:", ...failed.map((row) => `- @${row.handle}:\n${checksLine(row.attempts.at(-1)) || `  ${truncateText(row.result ?? "", 400)}`}`)] : []),
@@ -800,7 +827,7 @@ function runFor(step: Pick<StepInput, "run">, constraints: Constraints): StepRun
  */
 export async function createPlan(
   db: PrismaClient,
-  input: { lead: NodeAgent; turnId: string; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; plan: PlanInput; nodes: Map<string, PlanNode> },
+  input: { lead: NodeAgent; turnId: string; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; plan: PlanInput; nodes: Map<string, PlanNode>; routine?: RoutineLink },
 ): Promise<{ planId: string; steps: Map<string, string> }> {
   if (await currentPlan(db, input.lead.id, input.turnId, null)) throw new PlanError("This turn already made a plan; add to it with node_delegate or revise it with node_plan_revise.");
   const { message } = await postMessage(db, {
@@ -810,8 +837,9 @@ export async function createPlan(
     authorNodeId: input.lead.id,
     kind: "plan",
     body: "",
-    data: { type: "plan", version: 0, contract: 3, missionId: "", kind: "plan", leadNodeId: input.lead.id, leadHandle: input.lead.slug, leadTurnId: input.turnId, originRoomId: input.originRoomId, originPrivate: input.originPrivate, status: "draft", goal: input.plan.goal, requirements: [], deferred: [], steps: [] },
+    data: { type: "plan", version: 0, contract: 3, missionId: "", kind: "plan", leadNodeId: input.lead.id, leadHandle: input.lead.slug, leadTurnId: input.turnId, originRoomId: input.originRoomId, originPrivate: input.originPrivate, status: "draft", goal: input.plan.goal, requirements: [], deferred: [], steps: [], routine: input.routine ?? null },
     visibleTo: input.visibleTo,
+    planId: input.routine?.id ?? null,
   });
   const ids = new Map<string, string>();
   input.plan.steps.forEach((step, index) => ids.set(step.id, `s${index + 1}-${randomUUID().slice(0, 6)}`));
@@ -838,6 +866,7 @@ export async function createPlan(
         constraints: input.plan.constraints as Prisma.InputJsonValue,
         requirements: requirements as unknown as Prisma.InputJsonValue,
         deferred: input.plan.deferred as unknown as Prisma.InputJsonValue,
+        ...(input.routine ? { routine: input.routine as unknown as Prisma.InputJsonValue } : {}),
       },
     });
     for (const [index, step] of input.plan.steps.entries()) {

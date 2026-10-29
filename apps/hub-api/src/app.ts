@@ -96,7 +96,9 @@ export function bypassesGlobalAuth(path: string): boolean {
     path === "/api/engine/ask" ||
     path === "/api/engine/tool" ||
     path === "/api/engine/assistant/tools" ||
-    path === "/api/engine/assistant/tool"
+    path === "/api/engine/assistant/tool" ||
+    // A routine's webhook authenticates with the routine's own token (node/routine-routes.ts).
+    /^\/api\/node\/hooks\/routines\/[0-9a-f-]{36}$/.test(path)
   );
 }
 

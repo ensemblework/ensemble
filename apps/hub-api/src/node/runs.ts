@@ -16,6 +16,7 @@ import { sweepHelpers } from "./helpers.js";
 import { finishStep, runIsStale, stepPending, stepRow } from "./plans.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
 import { parseReport } from "./report.js";
+import { startRoutines } from "./routines.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 /** How often run states are mirrored: a run's end reaches its node within this time. */
@@ -146,6 +147,7 @@ export function startNode(app: FastifyInstance): () => void {
   void recoverTurns(app).catch((error: unknown) => app.log.error({ err: error }, "Could not resume node turns"));
   startOutbox(app);
   startNodeRuns(app);
+  const stopRoutines = startRoutines(app);
   // Helpers whose task room went quiet (node/helpers.ts).
   const sweep = setInterval(() => {
     void sweepHelpers(app).catch((error: unknown) => app.log.error({ err: error }, "Could not remove idle node helpers"));
@@ -153,6 +155,7 @@ export function startNode(app: FastifyInstance): () => void {
   sweep.unref?.();
   return () => {
     clearInterval(sweep);
+    stopRoutines();
     stopNodeRuns();
     stopOutbox();
     abortAllTurns();

@@ -2415,6 +2415,7 @@ model NodeAgent {
   memberships  NodeRoomMember[]
   memories     NodeMemory[]
   turns        NodeTurn[]
+  routines     NodeRoutine[]
 
   @@unique([userId, slug])
   @@index([parentNodeId])
@@ -2670,6 +2671,8 @@ model NodeMission {
   deliverTo     Json?      @map("deliver_to")
   /// { data, billing, executionDevice, approver }: account ids; empty means the owner for all four.
   principals    Json       @default("{}")
+  /// { id, runId, title, notify } when a routine's occurrence started it (node/routines.ts).
+  routine       Json?
   /// The lead was told the outcome (its report turn ran).
   reportedAt    DateTime?  @map("reported_at")
   createdAt     DateTime   @default(now()) @map("created_at")
@@ -2770,4 +2773,66 @@ model RunSecret {
 
   @@unique([userId, name])
   @@map("run_secrets")
+}
+
+/// Work a node does on a schedule, on an Ensemble event or on a webhook (node/routines.ts, B14).
+model NodeRoutine {
+  id          String           @id @default(uuid())
+  userId      String           @map("user_id")
+  nodeId      String           @map("node_id")
+  /// Where it reports: the node's DM, or a crew only its owner reads.
+  roomId      String           @map("room_id")
+  title       String
+  /// prompt: the node does `instruction` as its own work. plan: `template` (a node_plan input) runs as a plan.
+  action      String           @default("prompt")
+  instruction String?
+  template    Json?
+  /// schedule | event | webhook (any routine can also be run now)
+  trigger     String           @default("schedule")
+  /// Five-field cron in `timezone` (schedule).
+  cron        String?
+  timezone    String           @default("UTC")
+  /// { on: task | page, actions?, space?, windowSeconds } (event)
+  event       Json?
+  /// sha256 of the webhook token (webhook); the token is shown once.
+  hookHash    String?          @map("hook_hash")
+  /// always | needed | never: when its result is posted.
+  notify      String           @default("always")
+  /// active | paused
+  status      String           @default("active")
+  nextRunAt   DateTime?        @map("next_run_at")
+  lastRunAt   DateTime?        @map("last_run_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  node        NodeAgent        @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  runs        NodeRoutineRun[]
+
+  @@index([userId])
+  @@index([status, trigger, nextRunAt])
+  @@map("node_routines")
+}
+
+/// One occurrence of a routine. The key is unique per routine, so each occurrence starts once.
+model NodeRoutineRun {
+  id            String      @id @default(uuid())
+  routineId     String      @map("routine_id")
+  userId        String      @map("user_id")
+  /// at:<scheduled time> | event:<window> | hook:<window> | manual:<id>
+  occurrenceKey String      @map("occurrence_key")
+  /// schedule | event | webhook | manual
+  trigger       String
+  /// What happened (events gathered in its window, webhook deliveries): information, never instructions.
+  payload       Json?
+  /// pending | starting | started | skipped | failed
+  status        String      @default("pending")
+  dueAt         DateTime    @default(now()) @map("due_at")
+  missionId     String?     @map("mission_id")
+  error         String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  startedAt     DateTime?   @map("started_at")
+  routine       NodeRoutine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+
+  @@unique([routineId, occurrenceKey])
+  @@index([status, dueAt])
+  @@map("node_routine_runs")
 }

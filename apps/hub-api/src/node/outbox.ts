@@ -97,6 +97,8 @@ async function deliverTurn(app: FastifyInstance, row: NodeOutbox, data: PlanData
 
 async function deliverReport(app: FastifyInstance, row: NodeOutbox, data: PlanData, payload: Record<string, unknown>): Promise<void> {
   if (data.status !== "reporting") return;
+  // A routine that reports nothing: its run is listed with the routine, and nobody is told.
+  if (data.routine?.notify === "never") return endPlan(app, data.missionId);
   const judgement = Array.isArray(payload.judgement) ? payload.judgement.map(String) : [];
   const reported = await enqueueTurn(app, {
     nodeId: data.leadNodeId,

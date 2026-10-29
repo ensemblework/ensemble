@@ -9,6 +9,7 @@ export type RouteAuth =
   | "device-registration-proof"
   | "connector-oauth-state"
   | "engine-run-secret"
+  | "routine-hook-token"
   | "internal-token"
   | "identity";
 export type HttpMethod = NonNullable<InjectOptions["method"]>;
@@ -31,6 +32,7 @@ export function routeAuth(method: string, path: string): RouteAuth {
   if (path === "/api/engine/ask" || path === "/api/engine/tool" || path === "/api/engine/assistant/tools" || path === "/api/engine/assistant/tool") return "engine-run-secret";
   if (path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path))) return "public";
   if (path.startsWith("/api/internal/")) return "internal-token";
+  if (path === "/api/node/hooks/routines/:id") return "routine-hook-token";
   return "identity";
 }
 
