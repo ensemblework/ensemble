@@ -247,8 +247,8 @@ export async function createPeerRequest(app: FastifyInstance, input: NewRequestI
     const target = await personRow(prisma, room.id, to);
     const prefs = prefsOf(target);
     const trust = trustFor(prefs, input.fromAccountId);
-    // Work its owner chose to accept from this person starts at once, unless they are away: then it waits for them.
-    if (trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs)) {
+    // Work its owner chose to accept from this person starts at once, unless they are away (or their lead is paused): then it waits for them.
+    if (trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs) && lead.node?.status === "active") {
       await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { status: "approved", decidedAt: new Date() } });
       const fresh = (await prisma.nodePeerRequest.findUnique({ where: { id: request.id } }))!;
       await postMessage(prisma, {

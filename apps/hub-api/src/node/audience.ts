@@ -161,6 +161,8 @@ export async function roomBoundTurn(
   const cardRequest = trigger?.kind === "request" ? (trigger.data as { requestId?: unknown } | null)?.requestId : null;
   const requestId = turn.peerRequestId ?? (typeof cardRequest === "string" ? cardRequest : null);
   const request = requestId ? await prisma.nodePeerRequest.findUnique({ where: { id: requestId } }) : null;
+  // A request settled meanwhile (cancelled when its asker left, or already answered) needs no answer.
+  if (request && turn.reason === "request" && !["open", "awaiting_owner"].includes(request.status)) return held();
   // Messages that came together are answered together: when the owner asked this node too, it is the owner's turn.
   const ownerAsked = input.rows.some((row) => row.authorKind === "human" && row.userId === owner && Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id));
   const askerId = ownerAsked ? owner : (request?.fromAccountId ?? (trigger && trigger.authorKind !== "system" ? trigger.userId : owner));
