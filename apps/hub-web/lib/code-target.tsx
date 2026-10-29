@@ -8,7 +8,7 @@
  * on it unchanged.
  */
 import { createContext, useContext, useMemo } from "react";
-import { api, type ActionsResult, type CodeFile, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
+import { api, type ActionsResult, type CodeFile, type CodeRepos, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
 
 export type CodeTarget = { kind: "local" } | { kind: "device"; deviceId: string };
 
@@ -27,7 +27,7 @@ function query(values: Record<string, string | boolean | undefined | null>): Rec
 }
 
 export type CodeApi = {
-  codeRepos(): Promise<{ repos: string[]; roots: string[] }>;
+  codeRepos(): Promise<CodeRepos>;
   reviews(filter: "needs" | "reviewed" | "all", expired: boolean): Promise<{ reviews: ReviewSummary[]; ttlDays: number }>;
   codeSource(source: Source): Promise<CodeSource>;
   codeDiff(source: Source, path: string, untracked: boolean): Promise<{ diff: FileDiff; decisions: Array<{ chunkKey: string; decision: string }> }>;

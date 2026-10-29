@@ -8,7 +8,7 @@ Tasks, pages and records keep one identity across views. Saved, pending, failed 
 
 ## 2. Information architecture & navigation
 
-`app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while keeping its add action.
+`app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while keeping its add action. The Pages browser panel (`components/pages/pages-panel.tsx`) resizes from its inner edge like the sidebar (`components/shell/panel-resize.tsx`): 220–520 px and at most 42% of the window, double-click resets, arrow keys nudge when the edge is focused; the width is kept in `ensemble.pages.width` (`PAGES_PANEL_WIDTH` in `lib/panel-width.ts`) and restored before first paint. Row actions float over page titles instead of taking their width, so titles stay readable at the narrowest width.
 
 Navigation follows the signup profession, enabled modules and access. Code, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Runs is visible when Agent queue (`workspace`) or run history (`runs`) is enabled; each section keeps its own API permission. Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 
@@ -20,7 +20,7 @@ Navigation follows the signup profession, enabled modules and access. Code, Runs
 | `/meetings`, `/files`, `/files/[id]` | Notes shelf, file library and original-file preview |
 | `/diagrams`, `/diagrams/[id]`, `/plots`, `/plots/[id]` | Diagrams, datasets and figures |
 | `/needs-me`, `/runs`, `/code`, `/code/review` | Decisions, live agent queue and run history, code review. `/workspace` opens `/runs` |
-| `/skills`, `/morning-brief`, `/recap`, `/metrics` | Personal instructions, briefing preferences, recap and usage |
+| `/skills`, `/morning-brief`, `/recap`, `/metrics` | Personal instructions, briefing preferences, weekly review and usage |
 | `/completed`, `/trash` | Completed work and recoverable deletion |
 | `/connect`, `/connect/[app]`, `/settings` | Editor connection guides and settings |
 | `/spaces`, `/spaces/new`, `/shared`, `/shared-by-me` | Spaces and sharing |
@@ -38,6 +38,8 @@ Native desks store geometry in `desk.layout.<desk>` preferences; Context panels 
 
 Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears in focus. Snooze saves a date/time, not another task status. Private reminders: §14.
 
+The native desk header (`components/desk/view.tsx`, `glance.tsx`) shows the date, a greeting and day-at-a-glance links: open, due today and overdue (from `/api/desk/live`), needs you (the Needs me count), agents working (`/api/agent/state`, workspace module on) and meetings today (a one-day `/api/calendar` read, shown once a calendar is connected). Every tile's empty state is `TileEmpty` (`components/desk/ui.tsx`): an icon, one line and one action. List tiles (`components/desk/rows.tsx`) draw only the whole rows the tile holds, each with status, a due or overdue chip and a High/Urgent chip, then View all N. `/api/desk/live` task rows include `priority`. Add a tile also offers Focus now (the next three open tasks with Done and Undo), Your week (finished tasks per day, the streak and a link to `/recap`) and, for engineer and builder profiles, Agents at work (running and queued agent jobs, the Needs you count, a link to `/runs`) (`components/desk/now-tiles.tsx`).
+
 Pin to Today is in the task's More menu. Open pinned tasks appear above every native desk, independent of its tiles, through `pinnedTasks` in `/api/desk/live`. Completed, deleted and currently snoozed tasks are excluded; pins are not lost when a task falls outside the recent-task window.
 
 ### 3.2 Board (Kanban)
@@ -50,7 +52,7 @@ The Ensemble Kanban collapses independently of Board overview. Its columns are P
 
 Automatic moves to Done play once per observed completion, scoped to the open space or share for the browser tab. Returning from another screen can show a new completion, but opening a peek, the assistant, or resizing the board does not replay one. Animation clones are excluded from card measurements; system motion uses a viewport layer below active peeks, menus and the assistant (`components/motion/board-drag/board-drag-dnd-kit.tsx`).
 
-A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas.
+A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px. Add a page and Board tiles are in the toolbar's More (⋯) menu; Import and New task stay visible.
 
 **Custom boards** appear as cards below the Ensemble board (`components/board/custom-boards.tsx`). New board sets a name, description and 1–20 named, colored columns. Each opens at `/board?board=<id>` with its own Kanban, page search, add-existing-page picker and overview. Cards are real standalone or task pages, not copies. New page in a column creates a standalone page; drag handles support pointer, touch and keyboard column moves and ordering (`custom-board.tsx`).
 
@@ -72,9 +74,9 @@ Tool input and output use a readable JSON view (`lib/run-trace.ts`, `components/
 
 ### 3.5 Context
 
-Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
+Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. On Overview (`components/desk/context-lens.tsx`), People lists each person with role, open tasks and last contact; Projects shows active projects with a done/total bar (`/api/widgets/feed`) and opens the project peek. Empty Overview tiles fold into one Get started strip of first steps and return as tiles once they have content. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
 
-Projects open the same `components/project/project-page.tsx` in a side peek or at `/projects/[id]`: page-style title, summary and notes, linked people/repos, deliverables, tasks, diagrams and meeting notes. It reuses `PageTitleField` and `HumanDescription`; project notes remain plain text, separate from standalone documents. Graph interaction help is behind its information icon.
+Projects open the same `components/project/project-page.tsx` in a side peek or at `/projects/[id]`: page-style title and one-line summary (`PageTitleField`, `HumanDescription`), properties (status, people, repositories, linked sources), app items, then the project's page and its linked work. **New project** creates an untitled project at once (`POST /api/projects` with no name gives "Untitled project") and opens it with the name focused, like a new page; names may repeat. The page body is the block editor (`components/project/project-body.tsx`), saved in order 600 ms after typing stops as `content` through `PATCH /api/projects/:id`; its Markdown is kept in `notes` for search and the assistant, and older plain notes open as its first paragraphs. Below it, `components/project/linked-work.tsx` lists Tasks, Deliverables and Meeting notes: each adds a new one in place (Enter adds and keeps the row open), Tasks and Meeting notes also link existing ones from a search picker, and a row's × takes it off the project. Deliverables tick complete in place. Meeting notes made there open in Meeting notes, which can also choose a project from its header. Graph interaction help is behind its information icon.
 
 ### 3.6 Skills
 
@@ -119,6 +121,10 @@ The detail page's connect panel has one **Step-by-step guide** disclosure, open 
 
 Files lists uploaded originals and app content the person explicitly saved or imported. Viewers offer supported previews, original download, text/cell editing and page conversion/export. A saved file and its extracted text are distinct from a transient connected-item search result. Caps, formats and edit limits: [32](32_FILES.md).
 
+### 3.11 Weekly recap
+
+`/recap` (`components/recap/recap-view.tsx`) reviews one Monday–Sunday week in the person's time zone. ‹ › and This week move between weeks with `?date=YYYY-MM-DD`; Export copies or downloads the Markdown. A summary sentence written from the numbers (no model call) leads, followed by six figures with their change against last week (during the current week, against the same moment last week): tasks done (by you and by agents), tasks added, agent runs, Active in Ensemble, decisions and pages edited. Tiles: Daily rhythm (tasks finished per day by you and by agents, tasks added as a dashed bar; a bulk-add day is clipped and labelled), Highlights (delivered milestones, high-priority tasks, best day, project progress, active days, first agent run, Needs me clear), When you worked (weekday × hour) and Where time went (top five areas), Projects moved, Agent work (success rate, runs by agent), Looking ahead (due through the end of next week, overdue, waiting in Needs me; a past week shows what it left open) and the week item by item. Active in Ensemble is the signed-in person's own screen time from the interaction log ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)), not hours worked. A week with nothing recorded shows one "A quiet week" card.
+
 ## 4. Interaction patterns
 
 Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
@@ -158,8 +164,9 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Comments and inline requests | `/api/pages/:kind/:id/comments`, `/api/comments/:id`, `/api/comments/:id/reply`, `/api/pages/:kind/:id/ensemble`, `/api/ensemble/replies`; `routes/comments.ts`, `ensemble.ts` |
 | Context and entities | `/api/context/board`, `/api/context/graph`, `/api/entities`, `/api/people`, `/api/people/:id/merge`, `/api/projects`, `/api/repos`, `/api/artifacts`, `/api/preferences/:key`; `routes/context.ts`. `/api/context/search`; `routes/cowork.ts`. `/api/project-links`; `routes/project-links.ts` |
 | Morning brief/capture | `/api/brief/today`, `/api/brief/skill`, `/api/brief/prompt`, `/api/capture/preview`, `/api/capture`; `routes/cowork.ts` |
-| Meetings | `/api/meetings/sessions`, `/api/meetings/imported`, `/api/meetings/notes/:id`; `routes/cowork.ts`, `meeting-notes.ts` |
-| Needs me, reminders, notices | `/api/decisions`, `/api/decisions/:id/decide`, `/api/approvals/:id/decide`, `/api/reminders`, `/api/notifications`; `routes/decisions.ts`, `misc.ts`, `board.ts`, `cowork.ts` |
+| Weekly recap | `GET /api/recap/week?date=YYYY-MM-DD` (the Monday–Sunday week containing the date, default this week, in the person's time zone): `done`, `decided`, `slipped`, `meetings`, `markdown`, plus `narrative`, `stats`/`previous`, `days`, `rhythm` (7×24 active minutes), `surfaces`, `projects`, `highlights`, `ahead`, `agents`; `cowork/service.ts` (`weeklyRecap`), pure parts in `cowork/recap.ts`; `routes/cowork.ts` |
+| Meetings | `/api/meetings/sessions` (`projectId` on create; `PATCH /api/meetings/sessions/:id` with `projectId` links or, with null, unlinks a project), `/api/meetings/imported`, `/api/meetings/notes/:id`; `routes/cowork.ts`, `meeting-notes.ts` |
+| Needs me, reminders, notices | `/api/decisions`, `/api/decisions/:id/decide`, `/api/approvals/:id/decide`, `/api/reminders`, `GET /api/notifications` (unread only, newest 60), `POST /api/notifications/:id/read`, `POST /api/notifications/read` (every unread one, or `{ ids }`); `routes/decisions.ts`, `misc.ts`, `board.ts`, `cowork.ts` |
 | Live updates | `/api/events` (SSE), `/api/events/ticket`; `routes/misc.ts` |
 | Settings/models | `/api/settings`, `/api/settings/modules`, `/api/models`, `/api/models/refresh`, `/api/models/test`, `/api/model-keys/:provider`; `routes/settings.ts`, `system.ts` |
 | Spaces | `/api/spaces`, `/api/spaces/:id`, `/api/spaces/:id/switch`, `/api/spaces/settings/copy`, `/api/spaces/settings/sync`; `spaces/routes.ts`, [28 §3](28_ENSEMBLE_SPACES.md#3-routes) |
@@ -276,7 +283,9 @@ Manual meeting sessions use the block editor with serialized, debounced saving. 
 
 Graph derives connections from saved records and mentions; it never starts a provider fetch. Phones use the list view. Data and suppression: [03](03_MODULE_CONTEXT_ENGINE.md).
 
-## 14. Private reminders
+## 14. Notifications and private reminders
+
+The top bar's bell (`components/shell/notification-bell.tsx`) lists **unread notifications only**: reading one removes it, and there is no history. Its tabs are Unread (everything), Needs me (agent questions and runs that stopped needing the person), Reminders (reminders, nudges, the morning brief) and Sharing; it opens on Unread. The panel sizes to its rows up to 560 px, then scrolls. Opening a row marks it read; × (or a sideways swipe on touch) dismisses it, and Clear dismisses the open tab. The badge counts unread notifications and turns amber while something needs the person. An agent run that finishes or is stopped creates no notification (the board and Runs show it); a failed or interrupted one does.
 
 Reminders belong to the person, not to shared task context. A due reminder creates a notification. Platform delivery needs permission and a running browser tab or desktop app; quiet hours and OS Focus still apply. Snooze saves a real next time. Reminders are excluded from Context Bridge and search briefs. See [07 §1.2](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#12-private-reminders-and-platform-notifications).
 

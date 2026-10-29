@@ -27,14 +27,13 @@ import {
   FolderOpen,
   GitBranch,
   HelpCircle,
+  House,
   Keyboard,
   Laptop,
   Lock,
   Maximize2,
   Minimize2,
-  Minus,
   PanelLeft,
-  Plus,
   RotateCcw,
   Search,
   TerminalSquare,
@@ -43,8 +42,9 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ActivityBar, BottomPanel, FontSizeControl, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
 import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
 import { CommitPanel } from "@/components/code/commit-panel";
@@ -57,6 +57,7 @@ import { api, ApiError, type ChangedFile, type CodeTreeEntry, type CodeVersions 
 import { useCodeApi, type Source } from "@/lib/code-target";
 import { openTab } from "@/lib/code-tabs";
 import { dateTime, languageFor } from "@/lib/format";
+import { looksLikeId, repoName, repoViews, shortBranch, viewFor } from "@/lib/code-repos";
 import { usePersistentState } from "@/lib/prefs";
 
 type EditorModule = typeof import("@/components/code/review-editor");
@@ -81,10 +82,6 @@ function useReviewEditor(): EditorModule["ReviewEditor"] | null {
 }
 
 const STATUS_COLOR: Record<string, string> = { A: "text-ok", U: "text-ok", M: "text-warn", D: "text-danger", R: "text-accent" };
-const SIDEBAR_DEFAULT = 260;
-const FONT_DEFAULT = 13;
-const FONT_MIN = 10;
-const FONT_MAX = 24;
 const SAVE_MS = 700;
 
 type Panel = "files" | "search" | "scm";
@@ -144,27 +141,14 @@ export function CodeIde({ source }: { source: Source }) {
   const info = useQuery({ queryKey: ["code-source", key, source], queryFn: () => code.codeSource(source), retry: false });
   const isReview = info.data?.kind === "review";
   const progress = useQuery({ queryKey: ["code-progress", key, source], queryFn: () => code.progress(source), enabled: Boolean(isReview), staleTime: 5_000 });
+  // Names the checkout as Code's Welcome listed it, without asking again (`lib/code-repos.ts`).
+  const knownRepos = useQuery({ queryKey: key === "local" ? ["code-repos"] : ["code-repos", key], queryFn: () => code.codeRepos(), enabled: false });
   const scm = useQuery({ queryKey: ["scm", key, info.data?.repo], queryFn: () => code.scm(info.data!.repo), enabled: Boolean(info.data?.repo) && !viewOnly, refetchInterval: 15_000, retry: false });
 
   const [panel, setPanel] = usePersistentState<Panel>("ensemble.code.sidebarPanel", "files");
-  const [sidebar, setSidebar] = usePersistentState("ensemble.code.panel", true);
-  const [phone, setPhone] = useState(false);
-  const [mobileSidebar, setMobileSidebar] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)");
-    const update = () => setPhone(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
-  const sideOpen = phone ? mobileSidebar : sidebar;
-  const setSideOpen = useCallback((open: boolean) => {
-    if (phone) setMobileSidebar(open);
-    else setSidebar(open);
-  }, [phone, setSidebar]);
-  const [width, setWidth] = usePersistentState("ensemble.code.sidebarWidth", SIDEBAR_DEFAULT);
-  const [fontSize, setFontSize] = usePersistentState("ensemble.code.fontSize", FONT_DEFAULT);
-  const [terminal, setTerminal] = usePersistentState("ensemble.code.terminal", false);
+  const layout = useIdeLayout();
+  useIdeKeys(layout);
+  const { sideOpen, setSideOpen, closeOverlay, fontSize, setFontSize, terminal, setTerminal } = layout;
   const [full, setFull] = useState(false);
   const [help, setHelp] = useState(false);
   const [tabs, setTabs] = useState<string[]>([]);
@@ -267,10 +251,10 @@ export function CodeIde({ source }: { source: Source }) {
       setTabs(next.tabs);
       if (next.closed) release(next.closed);
       setActive(path);
-      setMobileSidebar(false);
+      closeOverlay();
       if (line) setReveal({ path, line, nonce: Date.now() });
     },
-    [active, release, save, saveState, tabs, toast],
+    [active, closeOverlay, release, save, saveState, tabs, toast],
   );
 
   const close = useCallback(
@@ -311,26 +295,11 @@ export function CodeIde({ source }: { source: Source }) {
     setModes((current) => ({ ...current, [active]: next }));
   };
 
-  // Keys that work anywhere in the IDE. None is a bare letter: every letter types.
+  // The editor's own keys (the window's are in useIdeKeys). None is a bare letter: every letter types.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
-      if (mod && event.key === "`") {
-        event.preventDefault();
-        setTerminal(!terminal);
-      } else if (mod && !event.shiftKey && event.key.toLowerCase() === "b") {
-        event.preventDefault();
-        setSideOpen(!sideOpen);
-      } else if (mod && event.shiftKey && (event.key === "+" || event.key === "=")) {
-        event.preventDefault();
-        setFontSize(Math.min(FONT_MAX, fontSize + 1));
-      } else if (mod && event.shiftKey && (event.key === "_" || event.key === "-")) {
-        event.preventDefault();
-        setFontSize(Math.max(FONT_MIN, fontSize - 1));
-      } else if (mod && event.shiftKey && (event.key === ")" || event.key === "0")) {
-        event.preventDefault();
-        setFontSize(FONT_DEFAULT);
-      } else if (event.key === "F4") {
+      if (event.key === "F4") {
         event.preventDefault();
         setMode(mode === "changes" ? "file" : "changes");
       } else if (event.altKey && !mod && event.key === "ArrowRight" && !typing(event.target)) {
@@ -405,19 +374,6 @@ export function CodeIde({ source }: { source: Source }) {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
 
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width;
-    const move = (moveEvent: PointerEvent) => setWidth(Math.round(Math.min(window.innerWidth / 2, Math.max(180, startWidth + moveEvent.clientX - startX))));
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-
   if (info.isLoading) return <div className="p-10"><Spinner /></div>;
   if (info.error || !info.data) {
     return (
@@ -431,15 +387,20 @@ export function CodeIde({ source }: { source: Source }) {
   const totals = progress.data;
   const activeState = active ? saveState[active] ?? "saved" : "saved";
   const where = target.kind === "device" ? computer?.name ?? "your computer" : null;
+  const repoView = viewFor(data.repo, repoViews(knownRepos.data));
+  const repoLabel = repoName(repoView);
+  // A run's checkout is a folder named by its job id: it is shown by its task or origin instead.
+  const title = !isReview && looksLikeId(data.title) ? repoView.name : data.title;
 
   return (
-    <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")}>
+    <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")} root>
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-2 text-[13px]" data-testid="ide-titlebar">
         <Link href="/code" className="icon-btn" title="Back to Code"><ArrowLeft size={15} /></Link>
-        <span className="truncate font-semibold">{data.title}</span>
-        <span className="truncate text-muted">
-          {data.repo.split("/").slice(-2).join("/")} · {data.branch}
+        <span className="truncate font-semibold">{title}</span>
+        <span className="truncate text-muted" title={data.repo}>
+          {repoLabel === title ? "" : `${repoLabel} · `}
+          {shortBranch(data.branch)}
           {where ? ` · on ${where}` : ""}
         </span>
         <div className="flex-1" />
@@ -483,82 +444,53 @@ export function CodeIde({ source }: { source: Source }) {
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        {/* Activity bar */}
-        <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-line bg-sidebar py-2" aria-label="Code views">
-          {(
-            [
-              ["files", Files, "Explorer (Ctrl+B)"],
-              ["search", Search, "Find in files"],
-              ...(viewOnly ? [] : [["scm", GitBranch, "Source control"]]),
-            ] as Array<[Panel, ComponentType<{ size?: number }>, string]>
-          ).map(([id, Icon, label]) => (
-            <button
-              key={id}
-              type="button"
-              title={label}
-              aria-label={label}
-              aria-pressed={sideOpen && panel === id}
-              onClick={() => {
+        <ActivityBar
+          items={[
+            { id: "home", icon: House, label: "Code home", href: "/code" },
+            ...(
+              [
+                ["files", Files, "Explorer (Ctrl+B)"],
+                ["search", Search, "Find in files"],
+                ...(viewOnly ? [] : [["scm", GitBranch, "Source control"] as const]),
+              ] satisfies Array<readonly [Panel, typeof Files, string]>
+            ).map(([id, icon, label]) => ({
+              id,
+              icon,
+              label,
+              active: sideOpen && panel === id,
+              onClick: () => {
                 if (sideOpen && panel === id) setSideOpen(false);
                 else {
                   setPanel(id);
                   setSideOpen(true);
                 }
-              }}
-              className={cx("flex h-9 w-9 items-center justify-center rounded-md text-muted hover:text-ink", sideOpen && panel === id && "bg-hover text-ink")}
-            >
-              <Icon size={17} />
-            </button>
-          ))}
-          <div className="flex-1" />
-          {!viewOnly ? (
-            <button type="button" title="Terminal (Ctrl+`)" aria-label="Terminal" aria-pressed={terminal} onClick={() => setTerminal(!terminal)} className={cx("flex h-9 w-9 items-center justify-center rounded-md text-muted hover:text-ink", terminal && "bg-hover text-ink")}>
-              <TerminalSquare size={17} />
-            </button>
-          ) : null}
-        </nav>
+              },
+            })),
+          ]}
+          bottom={viewOnly ? [] : [{ id: "terminal", icon: TerminalSquare, label: "Terminal (Ctrl+`)", active: terminal, onClick: () => setTerminal(!terminal) }]}
+        />
 
-        {/* Side panel */}
-        {phone && sideOpen ? <button type="button" className="absolute inset-y-0 left-11 right-0 z-10 bg-black/40" aria-label="Close code panel" onClick={() => setMobileSidebar(false)} /> : null}
-        {sideOpen ? (
-          <aside className="relative flex min-w-0 shrink-0 flex-col border-r border-line bg-sidebar max-md:absolute max-md:inset-y-0 max-md:left-11 max-md:z-20 max-md:max-w-[calc(100%-44px)] max-md:shadow-xl" style={{ width }} aria-label="Side panel">
-            {panel === "files" ? (
-              <Explorer
-                source={source}
-                changed={changed}
-                unreviewable={data.unreviewable}
-                review={Boolean(isReview)}
-                active={active}
-                progressOf={progressOf}
-                onOpen={open}
-              />
-            ) : panel === "search" ? (
-              <SearchPanel source={source} onOpen={open} />
-            ) : (
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Source control</div>
-                <CommitPanel source={source} draftKey={source.review ?? `${target.kind === "device" ? `${target.deviceId}:` : ""}${data.repo}`} beforeCommit={saveAll} pending={progress.data?.pending ?? 0} />
-                <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} commitForm={false} />
-              </div>
-            )}
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize the side panel"
-              aria-valuenow={width}
-              tabIndex={0}
-              onPointerDown={startResize}
-              onDoubleClick={() => setWidth(SIDEBAR_DEFAULT)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowLeft") setWidth(Math.max(180, width - 16));
-                else if (event.key === "ArrowRight") setWidth(Math.min(window.innerWidth / 2, width + 16));
-                else return;
-                event.preventDefault();
-              }}
-              className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-[var(--accent-soft)] focus:bg-[var(--accent-soft)] focus:outline-none max-md:hidden"
+        <SidePanel layout={layout}>
+          {panel === "files" ? (
+            <Explorer
+              source={source}
+              changed={changed}
+              unreviewable={data.unreviewable}
+              review={Boolean(isReview)}
+              active={active}
+              progressOf={progressOf}
+              onOpen={open}
             />
-          </aside>
-        ) : null}
+          ) : panel === "search" ? (
+            <SearchPanel source={source} onOpen={open} />
+          ) : (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Source control</div>
+              <CommitPanel source={source} draftKey={source.review ?? `${target.kind === "device" ? `${target.deviceId}:` : ""}${data.repo}`} beforeCommit={saveAll} pending={progress.data?.pending ?? 0} />
+              <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} commitForm={false} />
+            </div>
+          )}
+        </SidePanel>
 
         {/* Editor column */}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -637,38 +569,37 @@ export function CodeIde({ source }: { source: Source }) {
             </div>
           )}
 
-          {terminal && !viewOnly ? <Terminal initialCwd={data.repo} target={target} fontSize={fontSize} onClose={() => setTerminal(false)} /> : null}
-
-          {/* Status bar */}
-          <div className="flex h-6 shrink-0 items-center gap-3 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-3 text-[11.5px] text-muted" data-testid="ide-statusbar">
-            <span className="flex items-center gap-1"><GitBranch size={11} /> {scm.data?.branch ?? data.branch}</span>
-            {scm.data?.ahead ? <span className="flex items-center"><ArrowUp size={10} />{scm.data.ahead}</span> : null}
-            {scm.data?.behind ? <span className="flex items-center"><ArrowDown size={10} />{scm.data.behind}</span> : null}
-            {isReview && totals ? (
-              <span data-testid="ide-progress">
-                {totals.total - totals.pending} / {totals.total} — {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
-              </span>
-            ) : null}
-            {where ? <span className="flex items-center gap-1"><Laptop size={11} /> {where}</span> : null}
-            <div className="flex-1" />
-            {active ? <span>Ln {cursor.line}, Col {cursor.column}</span> : null}
-            {active ? <span>{languageFor(active)}</span> : null}
-            {active ? <EolLabel source={source} path={active} /> : null}
-            <span>UTF-8</span>
-            {active ? (
-              <span className={activeState === "error" || activeState === "conflict" ? "text-danger" : undefined} data-testid="ide-save-state">
-                {activeState === "dirty" ? "• Unsaved" : activeState === "saving" ? "Saving…" : activeState === "error" ? "Not saved" : activeState === "conflict" ? "Changed on disk" : "Saved"}
-              </span>
-            ) : null}
-            <span className="flex items-center gap-0.5">
-              <button type="button" className="icon-btn h-5 w-5" title="Smaller code (Ctrl+Shift+-)" onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}><Minus size={10} /></button>
-              <button type="button" className="tabular-nums" title="Reset code size (Ctrl+Shift+0)" onClick={() => setFontSize(FONT_DEFAULT)}>{fontSize}px</button>
-              <button type="button" className="icon-btn h-5 w-5" title="Bigger code (Ctrl+Shift+=)" onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}><Plus size={10} /></button>
-            </span>
-            {data.model ? <span className="hidden lg:inline">agent · {data.model} · {data.createdAt ? dateTime(data.createdAt) : ""}</span> : null}
-          </div>
+          {terminal && !viewOnly ? (
+            <BottomPanel layout={layout}>
+              <Terminal initialCwd={data.repo} target={target} fontSize={fontSize} onClose={() => setTerminal(false)} />
+            </BottomPanel>
+          ) : null}
         </div>
       </div>
+
+      <StatusBar>
+        <StatusItem icon={GitBranch} title={scm.data?.branch ?? data.branch}>{shortBranch(scm.data?.branch ?? data.branch)}</StatusItem>
+        {scm.data?.ahead ? <StatusItem icon={ArrowUp} title="Commits to push">{scm.data.ahead}</StatusItem> : null}
+        {scm.data?.behind ? <StatusItem icon={ArrowDown} title="Commits to pull">{scm.data.behind}</StatusItem> : null}
+        {isReview && totals ? (
+          <span className="px-1.5" data-testid="ide-progress">
+            {totals.total - totals.pending} / {totals.total} — {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
+          </span>
+        ) : null}
+        {where ? <StatusItem icon={Laptop}>{where}</StatusItem> : null}
+        <div className="flex-1" />
+        {active ? <span className="px-1.5">Ln {cursor.line}, Col {cursor.column}</span> : null}
+        {active ? <span className="px-1.5">{languageFor(active)}</span> : null}
+        {active ? <EolLabel source={source} path={active} /> : null}
+        <span className="px-1.5">UTF-8</span>
+        {active ? (
+          <span className={cx("px-1.5", (activeState === "error" || activeState === "conflict") && "text-danger")} data-testid="ide-save-state">
+            {activeState === "dirty" ? "• Unsaved" : activeState === "saving" ? "Saving…" : activeState === "error" ? "Not saved" : activeState === "conflict" ? "Changed on disk" : "Saved"}
+          </span>
+        ) : null}
+        <FontSizeControl fontSize={fontSize} setFontSize={setFontSize} />
+        {data.model ? <span className="hidden px-1.5 lg:inline">agent · {data.model} · {data.createdAt ? dateTime(data.createdAt) : ""}</span> : null}
+      </StatusBar>
 
       {help ? <ShortcutSheet onClose={() => setHelp(false)} /> : null}
     </IdeSpace>
@@ -679,7 +610,7 @@ function EolLabel({ source, path }: { source: Source; path: string }) {
   const { key } = useCodeApi();
   const client = useQueryClient();
   const versions = client.getQueryData<CodeVersions>(["code-versions", key, source, path]);
-  return <span>{versions?.eol === "crlf" ? "CRLF" : "LF"}</span>;
+  return <span className="px-1.5">{versions?.eol === "crlf" ? "CRLF" : "LF"}</span>;
 }
 
 function ShortcutSheet({ onClose }: { onClose: () => void }) {

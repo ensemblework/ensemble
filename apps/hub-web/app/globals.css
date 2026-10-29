@@ -2903,7 +2903,18 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 .main-sidebar-slot { position: relative; width: var(--sidebar-w, 192px); }
 html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="true"]) .main-sidebar-slot { width: 56px; }
 html[data-sidebar-hover="true"] .main-sidebar-slot .app-sidebar { position: absolute; inset: 0 auto 0 0; z-index: 50; width: var(--sidebar-w, 192px); box-shadow: 12px 0 30px rgb(0 0 0 / .16); }
-.pages-panel { width: clamp(230px, 22vw, 300px); }
+.pages-panel { position: relative; width: clamp(220px, var(--pages-w, clamp(240px, 20vw, 288px)), max(220px, 42vw)); }
+/* The inner edge: same sash as the sidebar. Hidden on phones, where the panel is a drawer. */
+.panel-resize { position: absolute; top: 0; bottom: 0; z-index: 30; width: 7px; cursor: col-resize; touch-action: none; }
+.panel-resize[data-edge="right"] { right: -4px; }
+.panel-resize[data-edge="left"] { left: -4px; }
+.panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2.5px; width: 2px; background: transparent; transition: background 120ms ease; }
+.panel-resize:hover::after, .panel-resize[data-active]::after, .panel-resize:focus-visible::after { background: rgb(var(--accent-rgb) / 0.45); }
+.panel-resize:focus-visible { outline: none; }
+/* Row actions float over the title instead of reserving its width, so narrow panels keep readable names. */
+.page-row-actions { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; padding-left: 16px; border-radius: 0 8px 8px 0; background: linear-gradient(90deg, transparent, var(--sidebar) 16px); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+.group:hover > .page-row-actions, .page-row-actions:focus-within { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .page-row-actions { opacity: 1; pointer-events: auto; } }
 .pages-panel[data-side="left"] { border-right-width: 1px; }
 .pages-panel[data-side="right"] { border-left-width: 1px; }
 .pages-browser .field { background: rgb(var(--panel-rgb) / .45); }

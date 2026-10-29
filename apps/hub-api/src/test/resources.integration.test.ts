@@ -307,6 +307,27 @@ test("linked writes cannot cross user boundaries or silently ignore missing neig
   await check(a, "POST", "/api/deliverables", 404, "relation-isolation", { title: "Missing", projectId: MISSING_ID });
 });
 
+test("projects start untitled like pages, names may repeat, the page body saves as Markdown, and meeting notes link to owned projects only", async () => {
+  const first = await check(a, "POST", "/api/projects", 201, "happy-path", {});
+  const second = await check(a, "POST", "/api/projects", 201, "happy-path", {});
+  assert.equal(first.project.name, "Untitled project");
+  assert.equal(second.project.name, "Untitled project");
+  assert.notEqual(first.project.id, second.project.id);
+  const id = first.project.id as string;
+  const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Ship by Friday" }] }] };
+  await check(a, "PATCH", `/api/projects/${id}`, 200, "happy-path", { content });
+  const detail = (await check(a, "GET", `/api/projects/${id}`, 200, "happy-path")).project;
+  assert.match(detail.notes, /Ship by Friday/);
+  assert.equal(detail.content.content[0].type, "paragraph");
+  const meeting = (await check(a, "POST", "/api/meetings/sessions", 201, "happy-path", { title: "Kickoff", projectId: id })).session;
+  assert.equal(meeting.projectId, id);
+  assert.deepEqual((await check(a, "GET", `/api/projects/${id}`, 200, "happy-path")).project.meetingSessions.map((row: { id: string }) => row.id), [meeting.id]);
+  const foreign = (await check(b, "POST", "/api/projects", 201, "happy-path", { name: "Foreign" })).project.id;
+  await check(a, "PATCH", `/api/meetings/sessions/${meeting.id}`, 404, "relation-isolation", { projectId: foreign });
+  await check(a, "POST", "/api/meetings/sessions", 404, "relation-isolation", { title: "Stolen", projectId: foreign });
+  assert.equal((await check(a, "PATCH", `/api/meetings/sessions/${meeting.id}`, 200, "happy-path", { projectId: null })).session.projectId, null);
+});
+
 test("deliverables and reminders have isolated CRUD, and invalid dates are 400", async () => {
   const projectId = await created("/api/projects", "project", { name: "Delivery" });
   const id = await created("/api/deliverables", "deliverable", { title: "Private deliverable", projectId, due: "2030-01-01" });

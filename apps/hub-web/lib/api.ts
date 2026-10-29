@@ -298,6 +298,10 @@ export type ProjectDetail = {
   deliverables: Array<{ id: string; title: string; status: string; due: string | null }>;
   tasks: Array<{ id: string; title: string; status: TaskStatus; priority: Priority }>;
   meetingNotes: Array<{ id: string; title: string; askedAt: string }>;
+  /** Meeting notes written in Ensemble and linked to this project. */
+  meetingSessions?: Array<{ id: string; title: string; startedAt: string; status: string }>;
+  /** The project page body; null until it is first edited (then `notes` seeds it). */
+  content?: PageDocument | null;
 };
 
 const collabPath = (kind: "page" | "task", id: string) => (kind === "page" ? `/api/pages/${id}/collab` : `/api/tasks/${id}/page/collab`);
@@ -889,6 +893,10 @@ export type ReviewSummary = {
   reachable: boolean;
 };
 
+/** How the Code tab names a checkout (`GET /api/code/repos`'s `details`; older computers send only `repos`). */
+export type CodeRepoDetail = { path: string; name: string; kind: "folder" | "workspace" | "run"; remote?: string | null; branch?: string | null; taskTitle?: string | null; at?: string | null };
+export type CodeRepos = { repos: string[]; roots: string[]; details?: CodeRepoDetail[] };
+
 export type ChangedFile = { path: string; status: "A" | "M" | "D" | "R" | "U"; added: number; removed: number; binary: boolean };
 
 export type CodeSource = {
@@ -1401,7 +1409,7 @@ export const api = bindClient({
   deletePerson: (id: string) => del(`/api/people/${id}`),
   projects: () => get<{ projects: ProjectRecord[] }>("/api/projects"),
   project: (id: string) => get<{ project: ProjectDetail }>(`/api/projects/${id}`),
-  createProject: (data: { name: string; summary?: string }) => post<{ project: { id: string } }>("/api/projects", data),
+  createProject: (data: { name?: string; summary?: string } = {}) => post<{ project: { id: string; name: string } }>("/api/projects", data),
   patchProject: (id: string, data: Record<string, unknown>) => patch(`/api/projects/${id}`, data),
   deleteProject: (id: string) => del(`/api/projects/${id}`),
   repos: () => get<{ repos: RepoRecord[] }>("/api/repos"),
@@ -1536,7 +1544,7 @@ export const api = bindClient({
     get<{ chunks: Array<{ seq: number; text: string }>; done: boolean; exitCode: number | null }>(`/api/devices/${encodeURIComponent(deviceId)}/terminal/output${qs({ run, after })}`),
 
   // code
-  codeRepos: () => get<{ repos: string[]; roots: string[] }>("/api/code/repos"),
+  codeRepos: () => get<CodeRepos>("/api/code/repos"),
   /** Checks a folder for "Folders Code can use" and returns its real path. Saving goes through saveSettings. */
   resolveCodeFolder: (path: string) => post<{ path: string }>("/api/code/folders/resolve", { path }),
   reviews: (filter: "needs" | "reviewed" | "all", expired: boolean) =>
@@ -1691,7 +1699,7 @@ export const api = bindClient({
 
   notifications: () => get<{ notifications: HubNotification[] }>("/api/notifications"),
   readNotification: (id: string) => post<{ updated: number }>(`/api/notifications/${id}/read`),
-  readNotifications: () => post<{ updated: number }>("/api/notifications/read"),
+  readNotifications: (ids?: string[]) => post<{ updated: number }>("/api/notifications/read", ids ? { ids } : undefined),
   capture: (text: string) =>
     post<{
       task: TaskRecord;
@@ -1729,8 +1737,10 @@ export const api = bindClient({
     }>(`/api/meetings/notes/${id}`),
   meetingSession: (id: string) =>
     get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
-  startMeeting: (artifactId: string | null, title?: string) =>
-    post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title }),
+  startMeeting: (artifactId: string | null, title?: string, projectId?: string) =>
+    post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title, ...(projectId ? { projectId } : {}) }),
+  /** Links meeting notes to a project; null unlinks them. */
+  setMeetingProject: (id: string, projectId: string | null) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { projectId } }),
   updateMeeting: (id: string, data: { notes?: string; content?: PageDocument; title?: string }) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, surviveNavigation: true }),
   deleteMeeting: (id: string) => del<{ deleted: boolean }>(`/api/meetings/sessions/${id}`),
   saveMeetingNotes: (id: string, notes: string) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { notes }, surviveNavigation: true }),
@@ -1750,6 +1760,26 @@ export const api = bindClient({
       decided: Array<{ title: string; href: string; detail?: string }>;
       slipped: Array<{ title: string; href: string; detail?: string }>;
       meetings: Array<{ title: string; when: string; summary: string; href: string }>;
+      today: string;
+      timeZone: string;
+      current: boolean;
+      compare: "to_date" | "full";
+      narrative: string;
+      stats: RecapStats;
+      previous: RecapStats;
+      days: Array<{ date: string; completedByYou: number; completedByAgents: number; created: number; activeMinutes: number; future: boolean }>;
+      rhythm: number[][];
+      surfaces: Array<{ surface: string; minutes: number }>;
+      projects: Array<{ id: string; name: string; href: string; completed: number; created: number; open: number }>;
+      highlights: Array<{ kind: string; title: string; detail: string; href?: string }>;
+      ahead: {
+        dueNextWeek: Array<{ title: string; href: string; due: string; detail?: string }>;
+        dueRange: { from: string; until: string };
+        overdue: Array<{ title: string; href: string; detail?: string }>;
+        overdueTotal: number;
+        waiting: { count: number; href: string };
+      };
+      agents: { runs: number; succeeded: number; failed: number; byAgent: Array<{ name: string; runs: number; succeeded: number }> };
     }>(`/api/recap/week${qs({ date })}`),
   nudges: () => get<{ days: number; nudges: Array<{ id: string; title: string; question: string; reasons: string[] }> }>("/api/nudges"),
   nudge: (taskId: string, action: "keep" | "snooze" | "done" | "trash") =>
@@ -2010,6 +2040,8 @@ export type DeskLive = {
     id: string;
     title: string;
     status: string;
+    /** Absent from sample rows and older servers. */
+    priority?: Priority | null;
     taskType: string | null;
     due: string | null;
     startsAt: string | null;
@@ -2069,10 +2101,24 @@ export type MeetingSessionRecord = {
   status: string;
   attachState: string;
   personIds: string[];
+  projectId?: string | null;
   startedAt: string;
   endedAt: string | null;
   href: string;
 };
+/** GET /api/recap/week numbers. `activeMinutes` is screen time in Ensemble, not hours worked. */
+export type RecapStats = {
+  completed: number;
+  completedByAgents: number;
+  created: number;
+  agentRuns: number;
+  agentSucceeded: number;
+  activeMinutes: number;
+  meetings: number;
+  decisions: number;
+  pagesEdited: number;
+};
+export type WeeklyRecap = Awaited<ReturnType<typeof api.weeklyRecap>>;
 export type MeetingCue = {
   kind: "prep" | "live" | "follow_up" | string;
   artifactId: string | null;

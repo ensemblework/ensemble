@@ -50,7 +50,7 @@ const noop = () => undefined;
  * sent it when the run ended), then the task's whole folder, read from the computer one folder or
  * file at a time when you open it. Read-only. Full screen fills the window.
  */
-export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialPath?: string | null; onClose?: () => void }) {
+export function RunCode({ job, initialPath, onClose, embedded = false }: { job: AgentJob; initialPath?: string | null; onClose?: () => void; /** Fills an editor area (Code's window) instead of a card. */ embedded?: boolean }) {
   const [full, setFull] = useState(false);
   const [selected, setSelected] = useState<Selected | null>(initialPath ? { path: initialPath, live: false } : null);
   const [browsing, setBrowsing] = useState(false);
@@ -84,7 +84,7 @@ export function RunCode({ job, initialPath, onClose }: { job: AgentJob; initialP
 
   return (
     <div
-      className={cx("flex min-h-0 flex-col overflow-hidden border border-line bg-bg", full ? "fixed inset-0 z-[70]" : "h-[72vh] rounded-lg")}
+      className={cx("flex min-h-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : embedded ? "min-w-0 flex-1" : "h-[72vh] rounded-lg border border-line")}
       data-testid="run-code"
       role={full ? "dialog" : undefined}
       aria-label={full ? `Code of ${job.title}` : undefined}

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FolderKanban } from "lucide-react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, type MeetingSessionRecord } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
@@ -16,6 +17,39 @@ import { ExportMenu } from "../export-menu";
 import { ShareButton } from "../sharing/share-dialog";
 import { confirmAction } from "../ask-dialog";
 import { useToast } from "../toast";
+import { MenuItem, Popover } from "../ui";
+
+/** Which project these notes belong to; they then also show on that project's page. */
+function MeetingProject({ session }: { session: MeetingSessionRecord }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [wanted, setWanted] = useState(false);
+  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects, enabled: wanted || Boolean(session.projectId) });
+  const set = useMutation({
+    mutationFn: (projectId: string | null) => api.setMeetingProject(session.id, projectId),
+    onSuccess: (result) => {
+      client.setQueryData<Awaited<ReturnType<typeof api.meetingSession>>>(["meeting-session", session.id], (cached) => cached ? { ...cached, session: { ...cached.session, projectId: result.session.projectId } } : cached);
+      void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
+      void client.invalidateQueries({ predicate: (query) => query.queryKey[0] === "project" });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const current = projects.data?.projects.find((row) => row.id === session.projectId);
+  const active = (projects.data?.projects ?? []).filter((row) => row.status !== "done" || row.id === session.projectId);
+  return (
+    <Popover width={260} trigger={(open, toggle) => (
+      <button type="button" className="btn" aria-expanded={open} onPointerDown={() => setWanted(true)} onFocus={() => setWanted(true)} onClick={toggle}>
+        <FolderKanban size={14} /> {session.projectId ? current?.name ?? "Project" : "Add to project"}
+      </button>
+    )}>
+      {(close) => <>
+        {projects.isPending ? <p className="px-2 py-2 text-[12.5px] text-muted">Loading…</p> : active.length ? active.map((row) => (
+          <MenuItem key={row.id} active={row.id === session.projectId} hint={row.id === session.projectId ? "✓" : undefined} onClick={() => { set.mutate(row.id === session.projectId ? null : row.id); close(); }}>{row.name}</MenuItem>
+        )) : <p className="px-2 py-2 text-[12.5px] text-muted">No projects yet. Start one in Context › Projects.</p>}
+      </>}
+    </Popover>
+  );
+}
 
 /** The page editor's props this field uses. Tests pass a stand-in; the app loads the block editor. */
 export type NotesEditor = ComponentType<{
@@ -181,10 +215,10 @@ export function MeetingNotesFields({ session, onRemoved, editor }: { session: Me
     <div className="flex flex-wrap items-center gap-2">
       <div className="w-full"><PageTitleField value={draft.title} restoreValue={savedTitle.current} label="Meeting title" onDraft={(title) => edit({ ...latest.current, title })} onSave={(title) => edit({ ...latest.current, title })} onCommit={() => { void flushRef.current(); }} /></div>
       <ExportMenu load={() => meetingDoc({ ...session, title: latest.current.title, content: latest.current.content })} />
+      <MeetingProject session={session} />
       <ShareButton target={{ kind: "meeting", resourceId: session.id, title: draft.title }} />
       <button type="button" className="btn" disabled={removing} onClick={() => void remove()}>Delete notes</button>
     </div>
-    <p className="mt-1 text-[12px] text-muted">Type your notes below. Microphone recording is not available yet.</p>
     <PageContent status={status} error={failed} actions={failed ? <button type="button" className="btn" onClick={() => void flushRef.current()}>Retry save</button> : null} onBlur={() => { void flushRef.current(); }}>
       {Editor ? (
         <Editor

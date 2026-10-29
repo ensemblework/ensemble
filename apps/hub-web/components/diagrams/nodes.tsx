@@ -2,6 +2,7 @@
 
 import { Handle, NodeResizer, Position, type Node, type NodeProps } from "@xyflow/react";
 import { LABEL_SIZE, labelMetrics, labelPadding, outlineSize, paintFor, shapeGeometry, textFrame, textStyle, type PortName, type ShapeId, type TextStyle } from "@ensemble/block-diagrams";
+import { Lock } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { useDiagramTheme } from "./glyph";
 
@@ -20,6 +21,8 @@ export type ShapeNodeData = Sizing & {
   color: string | null;
   font?: TextStyle;
   locked: boolean;
+  /** Locked itself or inside a locked group: it cannot be dragged or resized. */
+  held?: boolean;
   readOnly?: boolean;
   width: number;
   height: number;
@@ -31,6 +34,7 @@ export type TextNodeData = Sizing & {
   text: string;
   font?: TextStyle;
   locked: boolean;
+  held?: boolean;
   readOnly?: boolean;
   width: number;
   height: number;
@@ -42,6 +46,15 @@ export type GroupNodeData = {
   label: string;
   width: number;
   height: number;
+  /** Stacking order without React Flow's lift for a selected node. */
+  z: number;
+  /** The group, or a group around it, is locked. */
+  locked: boolean;
+  /** The title tab and the border drag the whole group. */
+  movable: boolean;
+  /** A locked block inside keeps the group where it is. */
+  holdsLocked: boolean;
+  readOnly?: boolean;
   problem?: boolean;
 };
 
@@ -65,10 +78,10 @@ export function fontCss(font: TextStyle | undefined, base: number, weight: numbe
   };
 }
 
-function Resizer({ data, selected, keepAspectRatio }: { data: Sizing & { locked: boolean; readOnly?: boolean }; selected: boolean; keepAspectRatio?: boolean }) {
+function Resizer({ data, selected, keepAspectRatio }: { data: Sizing & { locked: boolean; held?: boolean; readOnly?: boolean }; selected: boolean; keepAspectRatio?: boolean }) {
   return (
     <NodeResizer
-      isVisible={selected && !data.readOnly && !data.locked}
+      isVisible={selected && !data.readOnly && !data.locked && !data.held}
       minWidth={data.min.w}
       minHeight={data.min.h}
       keepAspectRatio={keepAspectRatio}
@@ -98,7 +111,7 @@ export function ShapeNode({ data, selected, width, height }: NodeProps<Node<Shap
     else setDraft(data.label);
   };
   return (
-    <div className={["diagram-shape", selected ? "is-selected" : "", data.problem ? "is-problem" : ""].filter(Boolean).join(" ")} style={{ width: w, height: h }}>
+    <div className={["diagram-shape", selected ? "is-selected" : "", data.problem ? "is-problem" : "", data.held ? "is-held" : ""].filter(Boolean).join(" ")} style={{ width: w, height: h }}>
       <Resizer data={data} selected={selected} keepAspectRatio={data.shape === "circle"} />
       <svg width={w} height={h} className="block overflow-visible" aria-hidden>
         <path
@@ -180,7 +193,7 @@ export function TextNode({ data, selected, width, height }: NodeProps<Node<TextN
   const font = fontCss(data.font, LABEL_SIZE.text, 500, 1.6);
   return (
     <div
-      className={["diagram-text", selected ? "is-selected" : "", data.problem ? "is-problem" : ""].filter(Boolean).join(" ")}
+      className={["diagram-text", selected ? "is-selected" : "", data.problem ? "is-problem" : "", data.held ? "is-held" : ""].filter(Boolean).join(" ")}
       style={{ width: w, height: h }}
       onDoubleClick={(event) => {
         event.stopPropagation();
@@ -208,10 +221,31 @@ export function TextNode({ data, selected, width, height }: NodeProps<Node<TextN
   );
 }
 
-export function GroupNode({ data }: NodeProps<Node<GroupNodeData>>) {
+export function GroupNode({ data, selected }: NodeProps<Node<GroupNodeData>>) {
+  const handle = data.movable ? " diagram-group-handle" : "";
+  const title = data.readOnly
+    ? undefined
+    : data.movable
+      ? "Drag the title or the border to move the group"
+      : data.locked
+        ? "Locked group: its blocks stay where they are"
+        : data.holdsLocked
+          ? "Holds a locked block, so the group stays where it is"
+          : undefined;
   return (
-    <div className={data.problem ? "diagram-group is-problem" : "diagram-group"}>
-      <span className="diagram-group-label">{data.label}</span>
+    <div className={["diagram-group", selected ? "is-selected" : "", data.problem ? "is-problem" : "", data.movable ? "is-movable" : "", data.readOnly ? "is-static" : ""].filter(Boolean).join(" ")}>
+      {data.movable ? (
+        <>
+          <span className={`diagram-group-edge is-top${handle}`} aria-hidden />
+          <span className={`diagram-group-edge is-right${handle}`} aria-hidden />
+          <span className={`diagram-group-edge is-bottom${handle}`} aria-hidden />
+          <span className={`diagram-group-edge is-left${handle}`} aria-hidden />
+        </>
+      ) : null}
+      <span className={`diagram-group-label${handle}`} title={title}>
+        {data.locked ? <Lock size={10} strokeWidth={2.4} aria-label="Locked" className="shrink-0" /> : null}
+        <span className="diagram-group-title">{data.label}</span>
+      </span>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { ZodError } from "zod";
 import { prisma } from "../lib/prisma.js";
 import "../types.js";
 import { codeRoutes } from "./code.js";
+import { env } from "../config.js";
 
 const MODULES = "code,diagrams,metrics,runs,skills,workspace";
 
@@ -255,6 +256,43 @@ test("commit exactly the ticked files with hooks off, open a pull request, and k
     await prisma.codeReview.deleteMany({ where: { userId: user.id } });
     await prisma.workspaceJob.deleteMany({ where: { userId: user.id } });
     await prisma.auditLedger.deleteMany({ where: { userId: user.id } });
+    await prisma.task.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+  }
+});
+
+test("the repository list names a run's checkout by its task and origin, never its folder id or the origin's sign-in", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  // The parsed config is read at startup; this test points it at its own scratch workspace.
+  const previousRoot = env.ENSEMBLE_WORKSPACE_ROOT;
+  (env as { ENSEMBLE_WORKSPACE_ROOT: string }).ENSEMBLE_WORKSPACE_ROOT = base;
+  t.after(() => { (env as { ENSEMBLE_WORKSPACE_ROOT: string }).ENSEMBLE_WORKSPACE_ROOT = previousRoot; });
+  const user = await prisma.user.create({ data: { email: `code-repos-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Repos" } });
+  const task = await prisma.task.create({ data: { userId: user.id, title: "Tidy the widgets", createdBy: "me", status: "todo" } });
+  const job = await prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, executionMode: "sandbox", model: "test" } as never });
+  const run = join(base, "runs", job.id);
+  const folder = join(base, "live", "app");
+  for (const repo of [run, folder]) {
+    mkdirSync(repo, { recursive: true });
+    git(repo, "init", "-q");
+  }
+  git(run, "remote", "add", "origin", "https://person:secret-token@github.com/acme/widgets.git");
+  git(run, "checkout", "-q", "-b", "ensemble/tidy");
+  const app = await build(user.id);
+  try {
+    const res = await app.inject({ method: "GET", url: "/api/code/repos" });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.doesNotMatch(res.body, /secret-token/);
+    const body = res.json() as { repos: string[]; details: Array<Record<string, unknown>> };
+    assert.ok(body.repos.includes(run) && body.repos.includes(folder), "repos stays a list of paths");
+    assert.equal(body.details.length, body.repos.length);
+    const runDetail = body.details.find((row) => row.path === run);
+    assert.deepEqual({ ...runDetail, at: undefined }, { path: run, name: "acme/widgets", kind: "run", remote: "acme/widgets", branch: "ensemble/tidy", taskTitle: "Tidy the widgets", at: undefined });
+    assert.ok(typeof runDetail?.at === "string");
+    assert.deepEqual(body.details.find((row) => row.path === folder), { ...body.details.find((row) => row.path === folder), name: "app", kind: "workspace", remote: null, taskTitle: null });
+  } finally {
+    await app.close();
+    await prisma.workspaceJob.deleteMany({ where: { userId: user.id } });
     await prisma.task.deleteMany({ where: { userId: user.id } });
     await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
   }

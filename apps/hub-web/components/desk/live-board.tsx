@@ -3,11 +3,14 @@ import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { ProposalsWidget } from "../today/proposals-widget";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   BookOpen,
+  Bot,
   Boxes,
+  ChartColumn,
+  Crosshair,
   CalendarClock,
   FileText,
   Flag,
@@ -31,7 +34,7 @@ import { useToast } from "@/components/toast";
 import { DESK_IDS, type DeskId } from "./desks";
 import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout } from "./layout";
 import { CalendarAgenda } from "./calendar-agenda";
-import { TileVisuals } from "./tile-visuals";
+import { tileVisual } from "./tile-visuals";
 import { deskRole, tileFitsRole } from "./tile-catalog";
 import { liveHero } from "./live-heroes";
 import { DeskPreviewProvider, Tile } from "./ui";
@@ -363,10 +366,10 @@ function specsFor(id: DeskId): Spec[] {
         fields: [{ key: "name", label: "Name" }, { key: "env", label: "Env", optional: true, placeholder: "prod" }],
         rows: (live) => live.deploys.map((row) => ({ id: row.id, title: row.name, meta: row.env })),
       }),
-      task("issues", "Issues", ListTodo, 6, 3, "task", "Add an issue", "Open work", (live) => openTasks(live).filter((row) => row.taskType !== "review").slice(0, 4).map((row) => ({ id: row.id, title: row.title }))),
+      task("issues", "Issues", ListTodo, 6, 3, "task", "Add an issue", "Open work", (live) => byUrgency(openTasks(live).filter((row) => row.taskType !== "review")).map((row) => ({ id: row.id, title: row.title }))),
       task("wip", "In progress", Layers, 4, 2, "task", "Name the work in progress", "The cap stays honest", (live) => live.tasks.filter((row) => row.status === "in_progress").map((row) => ({ id: row.id, title: row.title }))),
       task("blocked", "Blocked", Flag, 4, 2, "task", "Log a blocker", "What is stuck", (live) => live.tasks.filter((row) => row.status === "blocked").map((row) => ({ id: row.id, title: row.title }))),
-      task("done", "Done", Target, 4, 2, "task", "Add a note", "Finished this week", (live) => live.tasks.filter((row) => row.status === "done").slice(0, 3).map((row) => ({ id: row.id, title: row.title }))),
+      task("done", "Done", Target, 4, 2, "task", "Add a note", "Finished this week", (live) => live.tasks.filter((row) => row.status === "done").map((row) => ({ id: row.id, title: row.title }))),
     ];
   }
   if (id === "bench") {
@@ -398,7 +401,7 @@ function specsFor(id: DeskId): Spec[] {
     task("day", "Your day", CalendarClock, 8, 4, "task", "Add what needs you", "A decision or a review", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })), { hero: true }),
     task("needs", "Needs you", Flag, 4, 2, "task", "Add a task", "Waiting on you", (live) => openTasks(live).slice(0, 2).map((row) => ({ id: row.id, title: row.title }))),
     tile({ key: "brief", title: "Reminders", icon: CalendarClock, c: 4, r: 2, kind: "deadline", action: "Add a reminder", ghost: "A date you should see", fields: [{ key: "title", label: "Reminder" }, { key: "day", label: "Date", input: "date", optional: true }], rows: (live) => live.reminders.map((row) => ({ id: row.id, title: row.title, meta: when(row.dueDate, live.today) })) }),
-    task("focus", "Focus", ListTodo, 6, 3, "task", "Add what needs you", "Open work", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title }))),
+    task("focus", "Focus", ListTodo, 6, 3, "task", "Add what needs you", "Open work", (live) => byUrgency(openTasks(live)).map((row) => ({ id: row.id, title: row.title }))),
     task("proposed", "Proposed", Layers, 6, 3, "task", "Add a proposal", "Not decided yet", (live) => live.tasks.filter((row) => row.status === "proposed").map((row) => ({ id: row.id, title: row.title }))),
     tile({ key: "dels", title: "Deliverables", icon: Flag, c: 4, r: 3, kind: "deadline", action: "Name a deliverable", ghost: "So the date stays visible", fields: [{ key: "title", label: "Deliverable" }, { key: "day", label: "Due", input: "date", optional: true }], rows: (live) => live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })) }),
     tile({ key: "people", title: "People", icon: Users, c: 4, r: 3, kind: "person", action: "Add a person", ghost: "People on the work", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name })) }),
@@ -448,6 +451,8 @@ export function extraGates(deskId: DeskId, extras: ReadonlySet<DeskExtraId>) {
   return { extras: on, blocked };
 }
 
+const DERIVED_ICON: Record<string, LucideIcon> = { calendar: CalendarClock, agenda: CalendarClock, "focus-now": Crosshair, agents: Bot, "your-week": ChartColumn };
+
 let POOL: Map<string, Spec> | null = null;
 /** Every live tile any desk can draw, first desk wins on a shared key. A layout may borrow from here. */
 export function specPool(): ReadonlyMap<string, Spec> {
@@ -462,7 +467,10 @@ export function specPool(): ReadonlyMap<string, Spec> {
     ["calendar", "Calendar", "Your dates, with room to plan", 4, 5],
     ["time-split", "Time breakdown", "Where your logged hours go", 4, 3],
     ["due-week", "Week ahead", "Dated work across the next seven days", 6, 3],
-  ] as const) pool.set(key, { key, title, ghost, c, r, icon: ["calendar", "agenda"].includes(key) ? CalendarClock : LineChart, kind: "task", action: "Open your board", derived: true, fields: [], rows: () => [], stat: () => ({ v: "0" }) });
+    ["focus-now", "Focus now", "Your next three tasks, by date and priority", 4, 3],
+    ["agents", "Agents at work", "Agent runs working now and next in line", 4, 3],
+    ["your-week", "Your week", "What you finished each day, and your streak", 4, 3],
+  ] as const) pool.set(key, { key, title, ghost, c, r, icon: DERIVED_ICON[key] ?? LineChart, kind: "task", action: "Open your board", derived: true, fields: [], rows: () => [], stat: () => ({ v: "0" }) });
   POOL = pool;
   return pool;
 }
@@ -631,6 +639,9 @@ const ADD_NOUN: Record<string, string> = {
 
 const TILE_HREF: Record<string, string> = {
   agenda: "/settings?tab=connections",
+  "focus-now": "/board",
+  agents: "/runs",
+  "your-week": "/recap",
   reviews: "/code",
   repos: "/code",
   checks: "/runs",
@@ -645,7 +656,7 @@ const TILE_HREF: Record<string, string> = {
   proposed: "/board",
 };
 
-function tileHref(key: string): string | undefined {
+export function tileHref(key: string): string | undefined {
   return TILE_HREF[key];
 }
 
@@ -659,13 +670,18 @@ export function tileFilled(spec: Pick<Spec, "rows" | "stat">, live: DeskLive): b
   return spec.rows(live).length > 0 || Boolean(spec.stat?.(live));
 }
 
-export function TileBody({ spec, live, preview = false, interactivePreview = false }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean }) {
+/** A tile's content. `footer` is its quiet action; list tiles put it beside "View all", other tiles below the picture. */
+export function TileBody({ spec, live, preview = false, interactivePreview = false, footer }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean; footer?: ReactNode }) {
   const rows = spec.rows(live);
   const stat = spec.stat?.(live) ?? null;
   const hero = spec.hero ? liveHero({ specKey: spec.key, live, rows, stat }) : null;
-  return <div className="visual-body" data-live-count={rows.length} data-live-hero={hero ? spec.key : undefined}>
-    {spec.key === "agenda" ? <CalendarAgenda live={live} preview={preview} /> : hero || <TileVisuals spec={spec} live={live} preview={preview} interactive={!preview || interactivePreview} />}
-  </div>;
+  const visual = spec.key === "agenda" || hero ? null : tileVisual({ spec, live, preview, interactive: !preview || interactivePreview, footer, href: tileHref(spec.key) ?? (live.tasks.some((task) => task.id === rows[0]?.id) ? "/board" : undefined) });
+  return <>
+    <div className="visual-body" data-live-count={rows.length} data-live-hero={hero ? spec.key : undefined} data-list={visual?.list ? "1" : undefined}>
+      {spec.key === "agenda" ? <CalendarAgenda live={live} preview={preview} /> : hero || visual?.node}
+    </div>
+    {visual?.list ? null : footer}
+  </>;
 }
 
 function stubLive(live: DeskLive, kind: string, values: Record<string, string>): DeskLive {
@@ -688,6 +704,9 @@ function stubLive(live: DeskLive, kind: string, values: Record<string, string>):
   }
   return { ...live, tasks: [{ id, title: values.title || values.name || kind, status: "todo", taskType: kind, due: values.day || null, startsAt: null, court: values.court || null, matterStage: null, orderDate: null, subject: values.subject || null, weight: null, wordCount: null, pipelineStage: null, measure: null, rule: null, projectId: null }, ...live.tasks] };
 }
+
+/** Tiles that draw their own footer link. */
+const OWN_FOOTER = new Set(["focus-now", "agents", "your-week"]);
 
 /** Desk entries saved as open tasks: they are on the board too, so the form and toast say so. */
 const BOARD_KINDS = new Set(["hearing", "matter", "filing", "draft", "task", "paper", "reading", "exam", "phase", "revision", "deadline", "review", "concept", "hold"]);
@@ -750,6 +769,11 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
         const filled = tileFilled(spec, live);
         const size = tiles.sizeOf(spec);
         const control = tiles.controls(spec);
+        const footer = spec.key === "agenda" || OWN_FOOTER.has(spec.key) ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : (
+          <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => setForm(spec)}>
+            {quietAdd(spec)}
+          </button>
+        );
         return (
           <Tile
             key={spec.key}
@@ -763,7 +787,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
             grip={control.grip}
             onHide={control.onHide}
             corner={control.corner}
-            meta={spec.derived ? "Live" : filled ? String(spec.count?.(live) ?? (rows.length || 1)) : "Nothing yet"}
+            meta={OWN_FOOTER.has(spec.key) ? undefined : spec.derived ? "Live" : filled ? String(spec.count?.(live) ?? (rows.length || 1)) : "Nothing yet"}
             onAdd={filled && !spec.derived ? () => setForm(spec) : undefined}
             openHref={filled ? tileHref(spec.key) ?? (spec.derived ? "/board" : undefined) : undefined}
             ghost={
@@ -773,12 +797,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
             }
           >
             {filled ? (
-              <>
-                {spec.key === "proposed" ? <ProposalsWidget /> : <TileBody spec={spec} live={live} />}
-                {spec.key === "agenda" ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => setForm(spec)}>
-                  {quietAdd(spec)}
-                </button>}
-              </>
+              spec.key === "proposed" ? <><ProposalsWidget />{footer}</> : <TileBody spec={{ ...spec, c: size.c, r: size.r }} live={live} footer={footer} />
             ) : null}
           </Tile>
         );

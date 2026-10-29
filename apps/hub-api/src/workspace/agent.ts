@@ -1385,16 +1385,12 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     runId: run.id,
     payload: { jobId: job.id, kind: job.kind, model: job.model, turns: counts.turns, tools: counts.tools, ms: Date.now() - started, root: ctx.root || null, error },
   });
-  await prisma.notification.create({
+  // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
+  if (outcome !== "success" && outcome !== "cancelled") await prisma.notification.create({
     data: {
       userId,
       kind: "agent",
-      title:
-        outcome === "success"
-          ? `Agent finished: ${job.task.title}`
-          : outcome === "interrupted"
-            ? `Agent interrupted: ${job.task.title}`
-            : `Agent ${outcome === "cancelled" ? "stopped" : "needs you"}: ${job.task.title}`,
+      title: outcome === "interrupted" ? `Agent interrupted: ${job.task.title}` : `Agent needs you: ${job.task.title}`,
       body: (error ?? summary).slice(0, 300),
       url: `/tasks/${job.taskId}`,
     },

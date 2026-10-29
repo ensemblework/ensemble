@@ -494,11 +494,10 @@ async function upsertRepo(data: {
 }
 
 async function upsertProject(data: { name: string; summary: string; people: Array<[string, string]>; repos: string[] }) {
-  const project = await prisma.project.upsert({
-    where: { userId_name: { userId: USER, name: data.name } },
-    create: { userId: USER, name: data.name, summary: data.summary, createdBy: "me", evidence: ["seed"], confidence: 0.9 },
-    update: { summary: data.summary, deletedAt: null, status: "active" },
-  });
+  const found = await prisma.project.findFirst({ where: { userId: USER, name: data.name }, orderBy: { createdAt: "asc" }, select: { id: true } });
+  const project = found
+    ? await prisma.project.update({ where: { id: found.id }, data: { summary: data.summary, deletedAt: null, status: "active" } })
+    : await prisma.project.create({ data: { userId: USER, name: data.name, summary: data.summary, createdBy: "me", evidence: ["seed"], confidence: 0.9 } });
   for (const [personId, role] of data.people) {
     await prisma.projectPerson.upsert({
       where: { projectId_personId: { projectId: project.id, personId } },

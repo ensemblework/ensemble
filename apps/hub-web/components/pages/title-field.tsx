@@ -11,7 +11,6 @@ import { focusPageBody } from "../editor/page-body";
  */
 const UNTITLED = "Untitled";
 
-const shown = (value: string) => (value === UNTITLED ? "" : value);
 
 /** The page title. A newly created note focuses this field, empty under its "Untitled" placeholder. */
 export function PageTitleField({
@@ -22,7 +21,10 @@ export function PageTitleField({
   onDraft,
   restoreValue,
   onCommit,
+  untitled = UNTITLED,
 }: {
+  /** The name a new record is created with; the field shows it as its placeholder. */
+  untitled?: string;
   value: string;
   onSave: (value: string) => void;
   autoFocus?: boolean;
@@ -31,6 +33,7 @@ export function PageTitleField({
   onCommit?: () => void;
   onDraft?: (value: string) => void;
 }) {
+  const shown = (text: string) => (text === untitled ? "" : text);
   const errorId = useId();
   const [error, setError] = useState("");
   const [draft, setDraft] = useState(shown(value));
@@ -81,7 +84,7 @@ export function PageTitleField({
         // Enter carries on writing in the page; focus must not fall to the page, where keys are shortcuts.
         if (!focusPageBody(event.currentTarget)) event.currentTarget.blur();
       }}
-      placeholder={UNTITLED}
+      placeholder={untitled}
       className="w-full resize-none overflow-hidden bg-transparent text-[34px] font-bold leading-tight tracking-tight outline-none placeholder:text-faint"
     />
     {error ? <p id={errorId} role="status" className="mt-1 text-[13px] text-danger">{error}</p> : null}

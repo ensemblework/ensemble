@@ -4,15 +4,18 @@ import { InfoTip } from "@/components/ui";
 
 import { Fragment } from "react";
 import dynamic from "next/dynamic";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api, type DeskLive } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { resolveExtras } from "@/lib/desk-extras";
 import { lensSections, TileBody } from "./live-board";
 import {
+  ArrowRight,
   Briefcase,
   Database,
+  FolderKanban,
+  Sparkles,
   FileCode2,
   FileText,
   GitFork,
@@ -30,6 +33,12 @@ import {
 import type { DeskId } from "./desks";
 import { DESKS } from "./desks";
 import { accentVars, Av, Sk, Tile, type State } from "./ui";
+import { useFitRows } from "./rows";
+import { activeProjects, personLine, type FeedProject } from "./tile-data";
+import { usePeek } from "@/components/shell/peek";
+import { useToast } from "@/components/toast";
+import { markNewProject, UNTITLED_PROJECT } from "@/components/project/new-project";
+import type { LucideIcon } from "lucide-react";
 import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
@@ -282,10 +291,12 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             <ArrangedLens
               deskId={deskId}
               tab={tabKey(active)}
+              tabs={tabs}
               sections={sections}
               live={live.data}
               ready={live.isSuccess}
               onPeople={() => choose("People")}
+              onTab={choose}
               onArtifact={(id) => router.push(filesHref("apps", id))}
               onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
             />
@@ -313,11 +324,6 @@ function SamplePanel({ deskId, tab }: { deskId: DeskId; tab: string }) {
   );
 }
 
-function personActivity(person: { openTasks?: number; recentTitle?: string | null }) {
-  const open = person.openTasks ? `${person.openTasks} open` : "No open tasks";
-  return person.recentTitle ? `${open} · ${person.recentTitle}` : open;
-}
-
 type Placed = { size: { c: number; r: number }; control: TileControls };
 
 /** A tile whose data is still on its way: no count, no empty-state invitation. */
@@ -331,9 +337,21 @@ function TileLoading({ rows = 3 }: { rows?: number }) {
   );
 }
 
-function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) {
-  const people = useQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 15_000 });
+/** Rows that fit a desktop tile `r` grid rows tall, before it is measured. */
+function fitEstimate(r: number, rowH: number) {
+  return Math.max(1, Math.floor((r * 72 + (r - 1) * 12 - 58 - 30) / rowH));
+}
+
+function MoreLink({ count, onClick, label }: { count: number; onClick: () => void; label: string }) {
+  return <div className="lfoot"><button type="button" className="lmore" onClick={onClick} aria-label={label}>View all {count}<ArrowRight size={12} aria-hidden="true" /></button></div>;
+}
+
+type PersonRow = Awaited<ReturnType<typeof api.people>>["people"][number];
+
+function LivePeople({ people, onOpen, onPerson, size, control }: { people: UseQueryResult<Awaited<ReturnType<typeof api.people>>>; onOpen: () => void; onPerson: (name: string) => void } & Placed) {
   const rows = people.data?.people ?? [];
+  const fit = useFitRows(fitEstimate(size.r, 48), 48, 230, 4);
+  const shown = rows.slice(0, fit.count);
   return (
     <Tile
       title="People"
@@ -343,22 +361,56 @@ function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) 
       {...control}
       meta={people.isSuccess ? String(rows.length) : undefined}
       onAdd={onOpen}
-      ghost={people.isSuccess && rows.length === 0 ? { label: "Add the people you work with", sub: "Teammates, clients, advisors, or classmates. They link to tasks, pages, and the graph.", action: "Add a person", kind: "person", onAction: onOpen } : false}
+      ghost={people.isSuccess && rows.length === 0 ? { label: "Add the people you work with", action: "Add a person", kind: "person", onAction: onOpen } : false}
     >
       {people.isPending ? <TileLoading /> : null}
       {people.isError && !people.data ? <LoadError compact error={people.error} onRetry={() => void people.refetch()} retrying={people.isFetching} what="your people" /> : null}
-      {rows.length ? <div className="visual-body"><div className="visual-people" data-lens-people>
-        {rows.map((person) => (
-          <button type="button" onClick={onOpen} key={person.id} className="visual-person text-left" data-person={person.id} data-person-name={person.name}>
-            <Av n={person.name} s={28} />
-            <div className="col" style={{ minWidth: 0, flex: 1, gap: 1 }}>
-              <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }} title={person.name}>{person.name}</span>
-              {person.role ? <span className="trunc faint" style={{ fontSize: 11.5 }}>{person.role}{person.team ? ` · ${person.team}` : ""}</span> : null}
-              <span className="trunc" style={{ fontSize: 11.5, color: "var(--muted)" }}>{personActivity(person)}</span>
-            </div>
-          </button>
-        ))}
-      </div></div> : null}
+      {rows.length ? (
+        <div className="lwrap">
+          <div ref={fit.ref} className="people-list" data-lens-people style={{ gridTemplateColumns: `repeat(${fit.cols}, minmax(0, 1fr))` }}>
+            {shown.map((person: PersonRow) => (
+              <button type="button" onClick={() => onPerson(person.name)} key={person.id} className="person-row" data-person={person.id} data-person-name={person.name} title={person.name}>
+                <Av n={person.name} s={28} />
+                <span className="person-text">
+                  <span className="person-name">{person.name}</span>
+                  <span className="person-line">{personLine(person)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          {rows.length > shown.length ? <MoreLink count={rows.length} onClick={onOpen} label={`View all ${rows.length} people`} /> : null}
+        </div>
+      ) : null}
+    </Tile>
+  );
+}
+
+function LiveProjects({ projects, ready, size, control, onAll, onNew }: { projects: FeedProject[]; ready: boolean; onAll: () => void; onNew: () => void } & Placed) {
+  const peek = usePeek();
+  const fit = useFitRows(fitEstimate(size.r, 46), 46, 260, 8);
+  const shown = projects.slice(0, fit.count);
+  return (
+    <Tile title="Projects" icon={FolderKanban} c={size.c} r={size.r} {...control} meta={ready ? String(projects.length) : undefined} onAdd={onNew}>
+      {!ready ? <TileLoading /> : (
+        <div className="lwrap">
+          <div ref={fit.ref} className="project-list" data-lens-projects style={{ gridTemplateColumns: `repeat(${fit.cols}, minmax(0, 1fr))` }}>
+            {shown.map((project) => {
+              const share = project.total ? project.done / project.total : 0;
+              const untitled = project.name === UNTITLED_PROJECT;
+              return (
+                <button key={project.id} type="button" className="project-row" data-project={project.id} title={project.name} aria-label={`${project.name}: ${project.total ? `${project.done} of ${project.total} tasks done` : "no tasks yet"}`} onClick={() => peek.open(project.id, "project")}>
+                  <span className="project-head">
+                    <span className="project-name" data-untitled={untitled ? "1" : undefined}>{project.name}</span>
+                    <span className="project-count">{project.total ? `${project.done}/${project.total}` : "No tasks"}</span>
+                  </span>
+                  <span className="project-bar" aria-hidden="true"><i style={{ width: `${share * 100}%` }} /></span>
+                </button>
+              );
+            })}
+          </div>
+          {projects.length > shown.length ? <MoreLink count={projects.length} onClick={onAll} label={`View all ${projects.length} projects`} /> : null}
+        </div>
+      )}
     </Tile>
   );
 }
@@ -374,27 +426,61 @@ function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive[
       r={size.r}
       {...control}
       meta={ready ? String(rows.length) : undefined}
-      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Files and links you upload or ask Ensemble to save appear here.", ...(guest ? {} : { action: "Add a file", onAction: () => window.location.assign("/files") }) } : false}
+      ghost={ready && rows.length === 0 ? { label: "Files and links you upload or ask Ensemble to save appear here.", ...(guest ? {} : { action: "Add a file", onAction: () => window.location.assign("/files") }) } : false}
     >
       {ready ? null : <TileLoading />}
       {rows.length ? <div className="visual-body"><div className="context-file-grid" data-lens-artifacts>
-        {rows.filter((row) => row.kind in ARTIFACT_KIND_LABEL && row.title.trim()).slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id} title={row.title}><FileText size={19} /><strong>{row.title}</strong><small data-artifact-type>{artifactLine(row)}</small><span>{shortWhen(row.ts)}</span></button>)}
+        {rows.slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id} title={row.title}><FileText size={19} /><strong>{row.title}</strong><small data-artifact-type>{artifactLine(row)}</small><span>{shortWhen(row.ts)}</span></button>)}
       </div></div> : null}
     </Tile>
   );
 }
 
 type Section = ReturnType<typeof lensSections>[number];
+type Starter = { key: string; icon: LucideIcon; label: string; run?: () => void };
+
+/** Overview lanes with nothing in them, as one row of first steps instead of a wall of empty tiles. */
+function GetStarted({ items, alone }: { items: Starter[]; alone: boolean }) {
+  return (
+    <section className="lens-start" data-lens-start aria-label="Get started">
+      <div className="lens-start-head">
+        <span className="lens-start-icon" aria-hidden="true"><Sparkles size={14} /></span>
+        <div>
+          <h2>Get started</h2>
+          <p>{alone ? "Your context fills in as you work. Start with one of these." : "Empty sections wait here until they have something in them."}</p>
+        </div>
+      </div>
+      <div className="lens-start-chips">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return item.run ? (
+            <button key={item.key} type="button" className="lens-start-chip" data-start={item.key} onClick={item.run}><Icon size={13} aria-hidden="true" />{item.label}</button>
+          ) : (
+            <span key={item.key} className="lens-start-chip" data-start={item.key} data-static="1"><Icon size={13} aria-hidden="true" />{item.label}</span>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** What the first step for an empty Overview section says. */
+const START_LABEL: Record<string, string> = { repos: "Add a repo", reviews: "Add a review", checks: "Add a check", deploys: "Log a deploy" };
 
 /**
  * The live tiles of one Context tab, arranged by the person: moved, resized, hidden.
- * Saved per desk and tab as `desk.context.<desk>.<tab>`.
+ * Saved per desk and tab as `desk.context.<desk>.<tab>`. On Overview, empty tiles fold into Get started.
  */
-function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact, onSection }: { deskId: DeskId; tab: string; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onArtifact: (id: string) => void; onSection: (kind: string) => void }) {
+function ArrangedLens({ deskId, tab, tabs, sections, live, ready, onPeople, onTab, onArtifact, onSection }: { deskId: DeskId; tab: string; tabs: string[]; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onTab: (label: string) => void; onArtifact: (id: string) => void; onSection: (kind: string) => void }) {
   // Today is the space owner's own: someone it is shared with is not sent there.
   const guest = useSpaceAccess().guest;
+  const router = useRouter();
+  const client = useQueryClient();
+  const toast = useToast();
+  const peek = usePeek();
+  const overview = tab === "overview";
   const defaults: Arrangeable[] = [
-    ...(tab === "overview" ? [{ key: "people", title: "People", c: 4, r: 4 }, { key: "artifacts", title: "Artifacts", c: 8, r: 4 }] : []),
+    ...(overview ? [{ key: "people", title: "People", c: 4, r: 4 }, { key: "projects", title: "Projects", c: 8, r: 4 }, { key: "artifacts", title: "Artifacts", c: 8, r: 4 }] : []),
     ...sections.map((section) => ({ key: `section:${section.title.toLowerCase()}`, title: section.title, c: section.rows.length > 3 ? 6 : 4, r: 3 })),
   ];
   const { layout, save } = useLayoutPreference(`desk.context.${deskId}.${tab}`);
@@ -405,13 +491,59 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact
   const customized = !isDefaultLayout(layout, shown, defaults);
   const tiles = useTileControls({ shown, hidden: hidden.map((spec) => spec.key), save, customized, restoreHint: "Bring it back below the tiles." });
   const byKey = new Map(sections.map((section) => [`section:${section.title.toLowerCase()}`, section]));
+  const showsPeople = shown.some((spec) => spec.key === "people");
+  const people = useQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 15_000, enabled: showsPeople });
+  const showsProjects = shown.some((spec) => spec.key === "projects");
+  const feed = useQuery({ queryKey: ["widget-feed"], queryFn: api.widgetFeed, staleTime: 30_000, enabled: showsProjects });
+  const projects = activeProjects(feed.data?.projects ?? []);
+  const artifacts = (live?.artifacts ?? []).filter((row) => row.kind in ARTIFACT_KIND_LABEL && row.title.trim());
+  const createProject = useMutation({
+    mutationFn: () => api.createProject(),
+    onSuccess: ({ project }) => {
+      markNewProject(project.id);
+      void client.invalidateQueries({ queryKey: ["projects"] });
+      void client.invalidateQueries({ queryKey: ["widget-feed"] });
+      peek.open(project.id, "project");
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const hasTab = (label: string) => tabs.includes(label);
+  const openPerson = (name: string) => router.push(`/context?tab=people&who=${encodeURIComponent(name)}`);
+  const newProject = () => { if (!createProject.isPending) createProject.mutate(); };
+
+  /** On Overview, a tile with nothing to show becomes a Get started chip. */
+  const starters: Starter[] = [];
+  const empty = (spec: Arrangeable): boolean => {
+    if (!overview) return false;
+    if (spec.key === "people") return people.isSuccess && (people.data?.people.length ?? 0) === 0;
+    if (spec.key === "projects") return feed.isSuccess && projects.length === 0;
+    if (spec.key === "artifacts") return ready && artifacts.length === 0;
+    const section = byKey.get(spec.key);
+    return Boolean(section && ready && !section.filled);
+  };
+  for (const spec of shown) {
+    if (!empty(spec)) continue;
+    if (spec.key === "people") starters.push({ key: spec.key, icon: Users, label: "Add a person", run: guest ? undefined : onPeople });
+    else if (spec.key === "projects") starters.push({ key: spec.key, icon: FolderKanban, label: "New project", run: guest ? undefined : newProject });
+    else if (spec.key === "artifacts") starters.push({ key: spec.key, icon: FileText, label: "Add a file", run: guest ? undefined : () => router.push("/files") });
+    else {
+      const section = byKey.get(spec.key)!;
+      const name = section.spec.key;
+      const label = START_LABEL[name] ?? section.spec.action;
+      // Repositories are added on the Repos widget tab; other sections take their first entry on Today.
+      const run = guest ? undefined : name === "repos" ? () => router.push("/context?view=widgets&tab=repos") : () => onSection(section.kind);
+      starters.push({ key: spec.key, icon: section.icon, label: guest ? section.title : label, run });
+    }
+  }
+  const drawn = shown.filter((spec) => !empty(spec));
   return (
     <>
-      {shown.map((spec) => {
+      {drawn.map((spec) => {
         const size = tiles.sizeOf(spec);
         const control = tiles.controls(spec);
-        if (spec.key === "people") return <LivePeople key={spec.key} onOpen={onPeople} size={size} control={control} />;
-        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={live?.artifacts ?? []} ready={ready} size={size} control={control} onOpen={onArtifact} />;
+        if (spec.key === "people") return <LivePeople key={spec.key} people={people} onOpen={onPeople} onPerson={openPerson} size={size} control={control} />;
+        if (spec.key === "projects") return <LiveProjects key={spec.key} projects={projects} ready={feed.isSuccess} size={size} control={control} onAll={() => (hasTab("Projects") ? onTab("Projects") : router.push("/context?tab=projects"))} onNew={newProject} />;
+        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={artifacts} ready={ready} size={size} control={control} onOpen={onArtifact} />;
         const section = byKey.get(spec.key);
         if (!section) return null;
         const count = live && section.filled ? (section.spec.count?.(live) ?? section.rows.length) : 0;
@@ -421,6 +553,7 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact
           </Tile>
         );
       })}
+      {starters.length ? <GetStarted items={starters} alone={!drawn.length} /> : null}
       {hidden.length || customized ? (
         <div className="lens-hidden" style={{ gridColumn: "1 / -1" }} data-lens-hidden>
           {hidden.length ? <span>Hidden:</span> : null}

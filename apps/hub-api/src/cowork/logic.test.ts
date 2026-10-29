@@ -7,7 +7,7 @@ import { parseCapture } from "./capture.js";
 import { weekBounds } from "./dates.js";
 import { extractiveAnswer, meetingPhase, parseCrossMeetingQuestion, participantNames } from "./meetings.js";
 import { nudgeQuestion, nudgeReasons, pathToDone } from "./nudges.js";
-import { renderWeeklyRecap, slippedLinks } from "./recap.js";
+import { recapHighlights, recapNarrative, renderWeeklyRecap, slippedLinks, weekShape, type RecapStats } from "./recap.js";
 
 const WEDNESDAY: { date: string; weekday: string } = { date: "2026-09-30", weekday: "Wednesday" };
 
@@ -211,6 +211,81 @@ test("slipped lists every open task past due, not only this week's", () => {
   assert.match(markdown, /Due last month/);
   assert.doesNotMatch(markdown, /Nothing past due is still open/);
   assert.deepEqual(slippedLinks(tasks, "2025-06-01", "2026-10-16").map((row) => row.title), ["Due last year"], "a past week counts what was due before its end");
+});
+
+test("recap days and hours follow the person's time zone, across a DST change", () => {
+  const task = (id: string, at: string, byAgent = false) => ({ id, title: id, priority: "p1", projectId: null, at: new Date(at), byAgent });
+  const kolkata = weekShape({
+    start: "2026-10-26",
+    today: "2026-11-01",
+    timeZone: "Asia/Kolkata",
+    completed: [task("monday-early", "2026-10-25T19:00:00Z"), task("sunday-late", "2026-11-01T18:29:00Z", true), task("next-week", "2026-11-01T18:31:00Z")],
+    created: [new Date("2026-10-25T18:00:00Z"), new Date("2026-10-27T06:00:00Z")],
+    views: [
+      { at: new Date("2026-10-27T04:20:00Z"), durationMs: 20 * 60_000, surface: "board" },
+      { at: new Date("2026-10-28T10:00:00Z"), durationMs: 5 * 60_000, surface: "pages" },
+    ],
+  });
+  assert.deepEqual(kolkata.days.map((day) => day.date), ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01"]);
+  assert.equal(kolkata.days[0]!.completedByYou, 1, "00:30 in Kolkata on Monday is still Sunday in UTC");
+  assert.equal(kolkata.days[6]!.completedByAgents, 1);
+  assert.equal(kolkata.days.reduce((sum, day) => sum + day.completedByYou + day.completedByAgents, 0), 2, "after Sunday midnight local is next week");
+  assert.deepEqual(kolkata.days.map((day) => day.created), [0, 1, 0, 0, 0, 0, 0]);
+  // 09:50 local for 20 minutes: ten minutes in the 9 o'clock hour, ten in the 10 o'clock hour.
+  assert.equal(kolkata.rhythm[1]![9], 10);
+  assert.equal(kolkata.rhythm[1]![10], 10);
+  assert.equal(kolkata.days[1]!.activeMinutes, 20);
+  assert.deepEqual(kolkata.surfaces, [{ surface: "board", minutes: 20 }, { surface: "pages", minutes: 5 }]);
+  // New York leaves daylight time on 1 Nov 2026: 04:30 UTC on 2 Nov is 23:30 on Sunday, not 00:30 on Monday.
+  const newYork = weekShape({ start: "2026-10-26", today: "2026-10-29", timeZone: "America/New_York", completed: [task("late", "2026-11-02T04:30:00Z")], created: [], views: [] });
+  assert.equal(newYork.days[6]!.completedByYou, 1);
+  assert.deepEqual(newYork.days.map((day) => day.future), [false, false, false, false, true, true, true]);
+});
+
+test("recap narrative compares with last week and highlights are deterministic", () => {
+  const stats = (patch: Partial<RecapStats>): RecapStats => ({ completed: 0, completedByAgents: 0, created: 0, agentRuns: 0, agentSucceeded: 0, activeMinutes: 0, meetings: 0, decisions: 0, pagesEdited: 0, ...patch });
+  const day = (date: string, you: number, agents = 0, activeMinutes = 0) => ({ date, completedByYou: you, completedByAgents: agents, created: 0, activeMinutes, future: false });
+  const days = [day("2026-10-26", 1), day("2026-10-27", 0, 0, 30), day("2026-10-28", 4, 2), day("2026-10-29", 2), day("2026-10-30", 0), day("2026-10-31", 0), day("2026-11-01", 0)];
+  const week = stats({ completed: 9, completedByAgents: 2, agentRuns: 4, agentSucceeded: 4, activeMinutes: 30 });
+  assert.equal(
+    recapNarrative({ stats: week, previous: stats({ completed: 5 }), days, current: false }),
+    "You and your agents finished 9 tasks, 4 more than the week before; agents handled 2 of them. Wednesday was your busiest day.",
+  );
+  assert.match(recapNarrative({ stats: stats({ completed: 2 }), previous: stats({ completed: 3 }), days, current: true }), /^You have finished 2 tasks, 1 fewer than this time last week\./);
+  assert.match(recapNarrative({ stats: stats({}), previous: stats({ completed: 3 }), days, current: false }), /^A quiet week/);
+  const at = (iso: string) => new Date(iso);
+  const highlights = recapHighlights({
+    days,
+    stats: week,
+    completed: [
+      { id: "b", title: "Ship the API", priority: "p0", projectId: null, at: at("2026-10-28T10:00:00Z"), byAgent: false },
+      { id: "a", title: "Fix the outage", priority: "critical", projectId: null, at: at("2026-10-27T10:00:00Z"), byAgent: false },
+    ],
+    deliverables: [{ title: "Mobile release", href: "/projects/p" }],
+    projectsDone: [],
+    projects: [{ id: "p", name: "Mobile", href: "/projects/p", completed: 3, created: 0, open: 2 }],
+    firstRun: false,
+    current: false,
+    waiting: 0,
+    decided: 1,
+  });
+  assert.deepEqual(highlights.map((row) => row.kind), ["deliverable", "priority", "best_day", "project_push", "streak", "agents"]);
+  assert.equal(highlights[1]!.title, "2 high-priority tasks done");
+  assert.equal(highlights[1]!.href, "/tasks/a", "the earliest finished high-priority task leads");
+  assert.equal(highlights[4]!.title, "Active 4 of 7 days");
+  const markdown = renderWeeklyRecap({
+    label: "26 Oct – 1 Nov",
+    done: [],
+    decided: [],
+    slipped: [],
+    meetings: [],
+    summary: { narrative: "A good week.", stats: week, previous: stats({ completed: 5 }), current: false, highlights, dueSoon: [{ title: "Send the deck", href: "/tasks/c", due: "2026-11-03" }] },
+  });
+  assert.match(markdown, /A good week\.\n\n## At a glance/);
+  assert.match(markdown, /- Done: 9 tasks \(7 by you, 2 by agents\) \(4 more than the week before\)/);
+  assert.match(markdown, /## Highlights\n\n- Delivered “Mobile release”/);
+  assert.match(markdown, /Send the deck — due 3 Nov/);
+  assert.match(markdown, /## Meetings/);
 });
 
 test("ask answer keeps source links and finds useful words", () => {

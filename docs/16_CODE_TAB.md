@@ -1,36 +1,62 @@
 # 16 · The Code tab — review, rewrite, commit (and a guarded terminal)
 
-The **Code** sidebar item lists every run that changed files. A review opens as an IDE showing exactly what the agent changed, hunk by hunk: accept or reject each change, edit any file, see the whole file, commit, push, open a pull request, or run git in a small guarded terminal.
+The **Code** sidebar item opens Code's window on its **Welcome** tab: agent changes to review, recent repositories and recent code runs. A review or a repository opens in the same window as an IDE showing exactly what the agent changed, hunk by hunk: accept or reject each change, edit any file, see the whole file, commit, push, open a pull request, or run git in a small guarded terminal.
 
 ## Where Code runs
 
 **On the computer** (desktop app or a local server), Code works on the folders in *Settings → Folders Code can use* and Ensemble's workspace through `/api/code/*`.
 
-**On Ensemble on the web**, the server's own folders, repository operations and shell are operator-only (`lib/hosted-access.ts`); `/api/shell` reports this as `hostCode` (`canUseHostCredentials`, `routes/views.ts`). While it is false (`useHostCode` in `lib/use-module.ts`) the web makes no `/api/code/*` call: the Code page (`app/(hub)/code/page.tsx`) lists your computers; sidebar prefetch (`lib/prefetch.ts`), the repository lists in Settings and the Assign dialog (including `/api/workspace/*` checkouts and trusted folders) skip those reads; Today's *Reviews* tile points to Code. The API's `HOST_ACCESS_DENIED` is the fallback before the shell loads. The host terminal is off when `ENSEMBLE_TERMINAL=off`, and in hosted production unless `ENSEMBLE_TERMINAL=on`.
+**On Ensemble on the web**, the server's own folders, repository operations and shell are operator-only (`lib/hosted-access.ts`); `/api/shell` reports this as `hostCode` (`canUseHostCredentials`, `routes/views.ts`). While it is false (`useHostCode` in `lib/use-module.ts`) the web makes no `/api/code/*` call: Code (`app/(hub)/code/page.tsx`) lists your computers; sidebar prefetch (`lib/prefetch.ts`), the repository lists in Settings and the Assign dialog (including `/api/workspace/*` checkouts and trusted folders) skip those reads; Today's *Reviews* tile points to Code. The API's `HOST_ACCESS_DENIED` is the fallback before the shell loads. The host terminal is off when `ENSEMBLE_TERMINAL=off`, and in hosted production unless `ENSEMBLE_TERMINAL=on`.
 
-On the web the tab works on your paired computers (`components/code/computers-code.tsx`). Each computer shows its **agent changes to review** and its **repositories** (its Code folders and Ensemble's workspace), read from that computer. Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the passkey-unlocked **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
+On the web the tab works on your paired computers (`lib/code-home.ts`). The Explorer has a section per computer (`components/code/computers-code.tsx`) with its **agent changes to review** and its **repositories** (its Code folders and Ensemble's workspace), read from that computer; the Welcome merges every computer's changes and repositories, naming the computer. Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`), with Source control (stage, commit, push, pull, Actions), the IDE theme and the passkey-unlocked **Terminal** (§5). Each call is relayed to Ensemble on that computer ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `lib/code-target.tsx`):
 
 - only from you, in your browser; never an API key, an agent or the assistant;
 - never git's own files or secrets files; keys in code are hidden and a file holding one is read-only; files over 1 MB are read-only;
 - the computer's switches decide what the web may do: *Show task files on the web* (reading), *Change code from the web* (every change), *Terminal from the web* (Settings → This computer, or `ensemble web`).
 
-The computer must be online with CLI 0.3.8+ or desktop app 0.3.5+ (0.3.9+ / 0.3.6+ for the full editor); otherwise its card or the editor says what is missing. With no paired computer, the page explains how to pair one.
+The computer must be online with CLI 0.3.8+ or desktop app 0.3.5+ (0.3.9+ / 0.3.6+ for the full editor); otherwise its Explorer section or the editor says what is missing. With no paired computer, the Welcome says so in one line and offers *Pair a computer*.
 
 Failed review or repository queries show the error and Retry; they never claim there is no work. A denied terminal-status request shows an error, not "Opening the terminal…".
 
-**Runs on your computers** (`components/code/device-changes.tsx`) lists code runs from the last 14 days with computer, folder label, branch, changed files with lines added and removed, pull request or commit links, and *Review & edit*, *Open code*, *View run*, *Open task*. A repository the agent cloned is not a change; its edits inside one are. The task page's *Review changes* opens the same review.
+The task page's *Review changes* opens the same review. A repository the agent cloned is not a change; its edits inside one are.
 
-**Open code** (`components/code/run-code.tsx`, `/code?job=<id>&file=<path>`) shows a run like an editor: the changed files (A, M or D with line counts) and *Folder on <computer>* on the left, the file read-only and highlighted (CodeMirror) on the right. On the desktop app and local servers a changed file opens from the copy the computer sent when the run ended (*as the run left it*); *Now* reads it again. **Ensemble on the web keeps no copy** (`keepsRunFileText` in `lib/hosted-access.ts`, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)): every file is read from the computer when opened, so it must be online. The folder is read one folder or file at a time under the rules in [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web); only the person whose computer ran the task sees file text. It needs CLI 0.3.7+ or desktop app 0.3.4+ and *Show task files on the web* (`ensemble browse on`). Full screen fills the window (Esc leaves). The run preview's *Files* and the task's *Agent output* link here.
+**A run's files** (`components/code/run-code.tsx`, `/code?job=<id>&file=<path>`) open in a second tab of Code's window, read-only: the changed files (A, M or D with line counts) and *Folder on <computer>* on the left, the file read-only and highlighted (CodeMirror) on the right. On the desktop app and local servers a changed file opens from the copy the computer sent when the run ended (*as the run left it*); *Now* reads it again. **Ensemble on the web keeps no copy** (`keepsRunFileText` in `lib/hosted-access.ts`, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)): every file is read from the computer when opened, so it must be online. The folder is read one folder or file at a time under the rules in [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web); only the person whose computer ran the task sees file text. It needs CLI 0.3.7+ or desktop app 0.3.4+ and *Show task files on the web* (`ensemble browse on`). Full screen fills the window (Esc leaves). The run preview's *Files*, the task's *Agent output* and a run on a computer in the Welcome's *Recent agent runs* link here.
 
 ---
 
 ## 1. Using it
 
-The review is an IDE (`components/code/ide.tsx`): activity bar (Explorer, Find in files, Source control, Terminal), side panel, file tabs, editor, terminal and a status bar (branch with ahead/behind, review progress, computer, line and column, language, line endings, save state, code size). The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
+### The window
+
+`/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area.
+
+- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*.
+- **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl+B shows or hides it.
+- **Terminal panel** under the editor: drag its top edge, 140 px to three quarters of the window; double-click resets (280 px); arrow keys as above. Ctrl+` shows or hides it. On the web it is the selected computer's terminal (§5).
+- **Status bar**: on the Welcome the computer with an online dot (a menu when there are several), Ensemble's version there, changes to review, code runs working now and the code size; in a review, the items in the next paragraph.
+
+Panel sizes, which panels are open, the selected computer and the theme are kept in this browser (`ensemble.code.*`). Below 768 px the side panel is an overlay (below).
+
+### The Welcome
+
+- **Start**: *Open a repository…* (opens the Explorer and its *Find a repository* box), *Review agent changes*, *Open terminal*, and *Folders Code can use* (on the web, *Your computers*).
+- **Needs review**: agent changes not yet reviewed, newest first: task, repository, branch, files, model, when, lines added and removed. Six show; *View all* lists the rest in place.
+- **Recent repositories**: up to eight, most recently used first, with branch and (on the web) computer.
+- **Recent agent runs**: the last five code runs with their state, repository and computer, opening the run (`/runs?run=<id>`).
+
+*Changes to review* in the side panel filters *To review*, *Reviewed* or *All*; on the computer it can also *Show expired*. `/code#reviews` opens it and `/code#local-repositories` opens the Explorer.
+
+### Repository names
+
+`GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use). They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<job id>`) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*. Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`. The Explorer folds run checkouts under *Run checkouts*; the Welcome lists one only when it was used within the review window (14 days) and has a task or an origin.
+
+### The review
+
+The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (branch with ahead/behind, review progress, computer, line and column, language, line endings, save state, code size). The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
 
 | You want to… | Do this |
 |---|---|
-| See what a run changed | Code → the run (or *Review changes* on the task page, *Review & edit* on a run on your computer) |
+| See what a run changed | Code → *Needs review* (or *Review changes* on the task page or its run) |
 | Keep an agent change | *Accept*, or Alt+Y with the cursor in it. Nothing on disk changes |
 | Undo an agent change | *Reject*, or Alt+N. The old lines go back on disk; Ctrl+Z brings the change back |
 | Change something yourself | Type, in either view. Your edits show in **blue** with *Revert* (Alt+N) |
@@ -41,7 +67,7 @@ The review is an IDE (`components/code/ide.tsx`): activity bar (Explorer, Find i
 | Move around | F7 / Shift+F7 next/previous change (past the last, the next file); Alt+→ / Alt+← next/previous changed file |
 | Find / replace in the file | Ctrl+F |
 | Focus | Full screen (Esc leaves), Ctrl+B explorer, `?` shortcuts (outside the editor) |
-| Resize the explorer | Drag its edge (up to half the width; double-click resets; arrow keys when focused) |
+| Resize the explorer or the terminal | Drag the edge (§1 *The window*; double-click resets; arrow keys when focused) |
 | Code text size | Status bar size, or Ctrl+Shift+= / - / 0 (10–24 px, editor and terminal only) |
 | Commit / push | *Source control* |
 | Run git yourself | The terminal button, or Ctrl+` |
@@ -52,7 +78,7 @@ It is an **editor first**. Typing in either view saves automatically: 0.7 s afte
 
 On the computer, binary files are not shown and files over 5 MB are not opened.
 
-Below 768 CSS pixels the editor starts with its side panel closed. Explorer, Find and Source control open a bounded overlay; choosing a file or tapping outside closes it. This does not change the desktop panel preference. The read-only run browser has a Files / Show code switch instead of squeezing the file list and editor side by side. Editor toolbars and code keep their own horizontal scrolling.
+Below 768 CSS pixels Code's window starts with its side panel closed and the Welcome is one column. The side panel opens as a bounded overlay; choosing a file or tapping outside closes it. This does not change the desktop panel preference. The read-only run browser has a Files / Show code switch instead of squeezing the file list and editor side by side. Editor toolbars and code keep their own horizontal scrolling.
 
 ### Folders Code can use
 
@@ -77,7 +103,7 @@ Progress shows as *"17 / 23 — 2 files left"* in the status bar, a ring per fil
 
 If another program writes the file while you have unsaved typing, **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays until you choose. With nothing unsaved the file simply reloads (it is reread every 10 seconds and when the window regains focus).
 
-In a checkout (Local repositories) the same editor compares with the index: *Stage* (Alt+Y) stages that change as shown, *Discard* (Alt+N) puts the staged lines back.
+In a repository opened from the Explorer the same editor compares with the index: *Stage* (Alt+Y) stages that change as shown, *Discard* (Alt+N) puts the staged lines back.
 
 The theme picker (`components/code/ide-theme.tsx`, shared with plot code panes) saves built-in and Open VSX color themes in account settings; Marketplace VSIX packages and JSON/JSONC color files import into that browser only, reading bounded color data and never extension scripts. Code always uses a coding font (Cascadia Code → Consolas, ligatures off) at its own size.
 
@@ -124,10 +150,10 @@ The Assign dialog's *Optional information* has *Which branch the agent works on*
 
 ## 5. The terminal — for you only
 
-A small terminal under the editor for what would otherwise send you to a shell: make or switch a branch, install a package, run tests, commit and push. It opens:
+A terminal panel under the editor (resizable, §1) for what would otherwise send you to a shell: make or switch a branch, install a package, run tests, commit and push. It opens:
 
 - **on the computer itself**, at Ensemble's page on `localhost` (`routes/terminal.ts`). The desktop app's window shows a note instead, because its webview cannot run the passkey check (`components/code/terminal-desktop-note.tsx`);
-- **on Ensemble on the web, for a paired computer**: the Terminal button on its card in Code, or in a review of its code. Commands run on that computer through the relay ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `remote/terminal.ts`).
+- **on Ensemble on the web, for a paired computer**: the Terminal button on its Explorer section in Code, *Terminal* with that computer selected, or in a review of its code. Commands run on that computer through the relay ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web), `remote/terminal.ts`).
 
 **It is not a shell:**
 
@@ -154,9 +180,9 @@ On the web, Settings shows **Unlock to manage passkeys**, which runs the same ch
 
 ## 7. In a space shared with you
 
-Code is view only for people a space is shared with ([29](29_SHARING.md)): they read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal stay with the owner. A paired computer's code on the web is only ever its owner's, whichever space is open. The review page shows **View only** instead of the terminal and review actions, and the editor is read-only. A single "code" share opens the review list the same way.
+Code is view only for people a space is shared with ([29](29_SHARING.md)): they read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal stay with the owner. A paired computer's code on the web is only ever its owner's, whichever space is open. Code's window shows **View only** instead of the terminal and review actions, and the editor is read-only. A single "code" share opens the review list the same way.
 
-The **Search and jump** dialog offers **Local repositories** and **Code reviews** as destinations (`/code#local-repositories`, `/code#reviews`).
+The **Search and jump** dialog offers **Local repositories** and **Code reviews** as destinations (`/code#local-repositories` opens the Explorer, `/code#reviews` the *Changes to review* panel).
 
 ## 8. Limits and residual risks
 

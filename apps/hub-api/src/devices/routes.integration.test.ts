@@ -654,6 +654,9 @@ test("revoke and complete clear pending decisions and the task", async (t) => {
       assert.equal(finished.statusCode, 200, expected.outcome);
       assert.equal((await prisma.agentDecision.findUniqueOrThrow({ where: { id: decisionId } })).status, "expired");
       assert.equal((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status, expected.task);
+      // Finished and stopped runs show on the board and in Runs; only a run that needs the person notifies.
+      const notified = await prisma.notification.count({ where: { userId: user.id, kind: "agent", url: `/tasks/${task.id}` } });
+      assert.equal(notified, expected.outcome === "succeeded" || expected.outcome === "cancelled" ? 0 : 1, expected.outcome);
     }
 
     const lingering = await prisma.task.create({ data: { userId: user.id, title: "Revoke me", createdBy: "me", status: "todo" } });

@@ -104,7 +104,7 @@ export const importTools = [
     async preview(ctx, input) {
       const app = await assertImportable(ctx, input);
       await assertRoom(ctx);
-      return `Bring ${input.name ? `“${input.name}”` : `the ${input.kind === "attachment" ? "attachment" : "file"} ${input.id}`} from ${app} into Files`;
+      return `Bring ${input.name ? `“${input.name}”` : `the ${input.kind === "attachment" ? "attachment" : "file"}`} from ${app} into Files`;
     },
     async run(ctx, input) {
       await requireVerifiedUser(ctx.userId);

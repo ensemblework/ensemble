@@ -2,6 +2,7 @@
 
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, useReactFlow, useStoreApi, type Edge, type EdgeProps, type InternalNode } from "@xyflow/react";
 import { LABEL_SIZE, bendFromPoint, edgeEnds, edgeRoute, type DiagramEdge, type LayoutBox, type ShapeId } from "@ensemble/block-diagrams";
+import { edgeLabelSize } from "@ensemble/block-diagrams/layout";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { fontCss } from "./nodes";
 
@@ -30,7 +31,9 @@ function liveBox(node: InternalNode | undefined): LayoutBox | null {
 /**
  * A line between two blocks, drawn from the same route as the SVG export. Its ends follow the
  * blocks as they move. Selected, its middle (the label, or a dot) drags to bend it; double-click
- * the line or its label to type a label.
+ * the line or its label to type a label. An unselected label is drawn over the blocks but lets the
+ * pointer through, so a block under it can always be grabbed; a hit area under the blocks, in the
+ * line's own layer, still selects the line where the label is clear of blocks.
  */
 export function DiagramEdgeView({ id, source, target, selected, data }: EdgeProps<Edge<DiagramEdgeData>>) {
   const from = liveBox(useInternalNode(source));
@@ -96,9 +99,23 @@ export function DiagramEdgeView({ id, source, target, selected, data }: EdgeProp
   };
 
   const showPill = Boolean(label) || data.editing;
+  const interactive = selected || data.editing;
+  const pill = label ? edgeLabelSize(label, edge.font) : null;
   return (
     <>
       <BaseEdge id={id} path={route.d} interactionWidth={18} style={{ stroke: color, strokeWidth: route.width, strokeDasharray: dash, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" }} />
+      {pill && !interactive ? (
+        <rect
+          x={route.label.x - pill.w / 2}
+          y={route.label.y - pill.h / 2}
+          width={pill.w}
+          height={pill.h}
+          rx={pill.h / 2}
+          fill="transparent"
+          style={{ pointerEvents: "all" }}
+          aria-hidden
+        />
+      ) : null}
       {route.heads.map((head) => (
         <path key={head} d={head} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
       ))}
@@ -115,7 +132,8 @@ export function DiagramEdgeView({ id, source, target, selected, data }: EdgeProp
               transform: `translate(-50%, -50%) translate(${route.label.x}px, ${route.label.y}px)`,
               // React Flow draws labels under the blocks. Above blocks (z 1–2), below a selected
               // block (z 1000+) unless this line is selected or its label is being typed.
-              zIndex: selected || data.editing ? 1500 : 10,
+              zIndex: interactive ? 1500 : 10,
+              pointerEvents: interactive ? "all" : "none",
               ...(showPill ? fontCss(edge.font, LABEL_SIZE.edge, 600) : {}),
             }}
             title={canBend ? "Drag to bend the line. Double-click to edit its label." : undefined}
