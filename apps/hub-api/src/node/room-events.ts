@@ -26,7 +26,7 @@ import { awayNow, personRow, prefsOf, updatePrefs } from "./trust.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export const EVENT_KINDS = ["assigned", "status", "mention", "page_edited"] as const;
+export const EVENT_KINDS = ["assigned", "status", "mention", "page_edited", "contract_changed"] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 let BATCH_MS = 60_000;
@@ -50,7 +50,7 @@ export function setRoomEventTimingForTests(timing: { batchMs?: number; digestGap
   if (timing.background !== undefined) BACKGROUND = timing.background;
 }
 
-type NewEvent = {
+export type NewEvent = {
   roomId: string;
   userId: string;
   kind: EventKind;
@@ -64,7 +64,7 @@ type NewEvent = {
   dedupeKey: string;
 };
 
-async function addEvents(db: Db, events: NewEvent[]): Promise<number> {
+export async function addEvents(db: Db, events: NewEvent[]): Promise<number> {
   if (!events.length) return 0;
   const deliverAfter = new Date(Date.now() + BATCH_MS);
   const made = await db.nodeRoomEvent.createMany({
@@ -308,7 +308,8 @@ export async function scanRoom(app: FastifyInstance, roomId: string): Promise<nu
     for (const page of pages) {
       const row = watched.find((entry) => entry.pageId === page.id)!;
       const editor = page.editorAccountId ?? owner;
-      for (const person of row.watchers) {
+      // A contract's watchers hear what changed and what it touches instead (node/room-pages.ts).
+      for (const person of row.role === "contract" ? [] : row.watchers) {
         if (!people.has(person) || person === editor) continue;
         events.push({ roomId, spaceId, userId: person, kind: "page_edited", subjectKind: "page", subjectId: page.id, title: page.title || "Untitled", actorAccountId: editor, actorNodeId: page.editorNodeId, data: { revision: page.revision, role: row.role }, dedupeKey: `page:${page.id}:${page.revision}` });
       }
@@ -415,6 +416,7 @@ async function describe(db: Db, events: NodeRoomEvent[], builderHandle: string |
   const edits = new Map<string, NodeRoomEvent[]>();
   const start: string[] = [];
   let assigned = 0;
+  let contracts = 0;
   for (const event of events) {
     const data = event.data as Record<string, unknown>;
     const actor = who(event.actorAccountId);
@@ -433,13 +435,25 @@ async function describe(db: Db, events: NodeRoomEvent[], builderHandle: string |
     } else if (event.kind === "mention") {
       const excerpt = typeof data.excerpt === "string" && data.excerpt ? `: “${truncateText(data.excerpt, 140)}”` : ".";
       lines.push(event.subjectKind === "message" ? `${actor ?? "Someone"} mentioned you in the room${excerpt}` : `${actor ?? "Someone"} mentioned you on “${event.title}”${excerpt}`);
+    } else if (event.kind === "contract_changed") {
+      contracts += 1;
+      const diff = (data.diff ?? {}) as { added?: string[]; removed?: string[] };
+      const changes = [...(diff.added ?? []).map((line) => `+ ${line}`), ...(diff.removed ?? []).map((line) => `− ${line}`)].slice(0, 4);
+      const tasks = Array.isArray(data.tasks) ? (data.tasks as Array<{ title?: string }>).map((task) => `“${task.title}”`) : [];
+      const head = `${actor ?? "Someone"} changed the contract “${event.title}”${changes.length ? `: ${changes.join("; ")}` : ""}`;
+      lines.push(`${head}${/[.!?]$/.test(head) ? "" : "."}${tasks.length ? ` It touches your ${tasks.join(", ")}.` : ""}`);
     }
   }
   for (const group of edits.values()) {
     const names = [...new Set(group.map((row) => who(row.actorAccountId)).filter(Boolean))];
     lines.push(`${names.join(" and ") || "Someone"} edited “${group[0]!.title}”${group.length > 1 ? ` (${group.length} changes)` : ""}.`);
   }
-  const offer = assigned ? (builderHandle ? `Shall I start ${assigned > 1 ? "them" : "it"} with @${builderHandle}?` : `Shall I plan ${assigned > 1 ? "them" : "it"}?`) : null;
+  const offers = [
+    assigned ? (builderHandle ? `Shall I start ${assigned > 1 ? "them" : "it"} with @${builderHandle}?` : `Shall I plan ${assigned > 1 ? "them" : "it"}?`) : null,
+    // Nothing changes without them: their lead only offers.
+    contracts ? (builderHandle ? `Shall I steer @${builderHandle} to adapt your work to it?` : "Shall I adapt your work to it?") : null,
+  ].filter((line): line is string => Boolean(line));
+  const offer = offers.length ? offers.join(" ") : null;
   return { lines, offer, items, start };
 }
 

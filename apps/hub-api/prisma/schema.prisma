@@ -2464,6 +2464,7 @@ model NodeRoom {
   seenTasks     NodeRoomTask[]
   feed          NodeRoomFeed?
   pages         NodeRoomPage[]
+  decisions     NodeRoomDecision[]
 
   @@index([userId])
   @@map("node_rooms")
@@ -2754,12 +2755,35 @@ model NodeRoomPage {
   role      String   @default("watched")
   watchers  String[] @default([])
   createdBy String   @map("created_by")
+  /// A contract's text as its watchers last heard of it, to tell them what changed (node/room-pages.ts).
+  seenRevision Int?    @map("seen_revision")
+  seenText     String? @map("seen_text")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
   room      NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@unique([roomId, pageId])
   @@map("node_room_pages")
+}
+
+/// A decision in a room's decisions log (node/room-pages.ts, docs/35 §12.14): a room message a person
+/// confirmed (✅ on it, or a reply "log this"), written to the log page; one that replaces an older one links it.
+model NodeRoomDecision {
+  id           String   @id @default(uuid())
+  roomId       String   @map("room_id")
+  spaceId      String   @map("space_id")
+  pageId       String   @map("page_id")
+  messageId    String   @map("message_id")
+  text         String
+  /// Who said it (the message's author, or the node's owner for a node's message), and who confirmed it.
+  saidBy       String   @map("said_by")
+  loggedBy     String   @map("logged_by")
+  supersedesId String?  @map("supersedes_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  room         NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, messageId])
+  @@map("node_room_decisions")
 }
 
 /// A question, share, review or work request from one person in a room to another, through the other

@@ -30,6 +30,7 @@ import { announce, personIn, postMessage, roomPeople, updateMessageData, type Me
 import { PEER_KINDS, awayNow, personRow, prefsOf, revokeTrustTo, trustFor, updatePrefs, type PeerKind } from "./trust.js";
 import { modeLine, proposeTask, requesterTask, roleIn, syncRequestTask } from "./room-space.js";
 import { forgetPerson } from "./room-events.js";
+import { dropStewardOf } from "./steward.js";
 import { followMission, roomTaskOrigin, syncMissionResults } from "./room-results.js";
 import { nodeSpace } from "./spaces.js";
 
@@ -691,6 +692,7 @@ export type Revoked = { requests: string[]; cards: string[] };
 export async function revokeOnLeave(tx: Prisma.TransactionClient, roomId: string, accountId: string): Promise<Revoked> {
   await revokeTrustTo(tx, roomId, accountId);
   await forgetPerson(tx, roomId, accountId);
+  await dropStewardOf(tx, roomId, accountId);
   const open = await tx.nodePeerRequest.findMany({ where: { roomId, status: { in: UNDECIDED }, OR: [{ fromAccountId: accountId }, { toAccountId: accountId }] }, select: { id: true } });
   const ids = open.map((row) => row.id);
   if (ids.length) await tx.nodePeerRequest.updateMany({ where: { id: { in: ids } }, data: { status: "cancelled", answer: "Cancelled: they left the room.", decidedAt: new Date() } });

@@ -37,6 +37,7 @@ import { personIn, postMessage, roomPeople, roomSettings, updateMessageData } fr
 import { awayNow, budgetSpent, prefsOf, publicTrust, shareableText, trustFor, type TrustSettings } from "./trust.js";
 import { resultPosted } from "./room-results.js";
 import { linkedSpace } from "./room-space.js";
+import { stewardOf, stewardPersona, stewardTools } from "./steward.js";
 
 /** Hub tools a room-bound turn never gets, even in the room's shared space: the owner's own settings, models, runs and agents. */
 const OWNER_ONLY = new Set([
@@ -240,8 +241,10 @@ export async function roomBoundTurn(
     data: { audience: "room", principals: { data: owner, billing: owner, executionDevice: null, approver: owner, askedBy: askerId } as Prisma.InputJsonValue },
   });
 
+  // The room's steward (node/steward.ts) acts for whoever asks it: no space of its sponsor's, only its own tools.
+  const steward = stewardOf(room)?.nodeId === node.id;
   // The room's shared space (bound in C4), only while the owner can open it and their settings share from it. No fallback to the owner's own spaces.
-  const bound = await linkedSpace(app, room);
+  const bound = steward ? null : await linkedSpace(app, room);
   let spaceName: string | null = null;
   let gateway: ReturnType<typeof nodeSpaceGateway> | null = null;
   let modules = "";
@@ -263,10 +266,15 @@ export async function roomBoundTurn(
   const spaces = new RoomSpaces(gateway, allowed);
   // The owner acts as a guest of their own account: their connected apps, reminders and syncs stay out of the turn.
   const scope: RequestScope = { spaceId: owner, accountId: owner, access: { kind: "member", role: "editor", ownerId: owner, node: node.id } };
-  const tools = roomTools(ctx);
+  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName })] : roomTools(ctx);
   return {
     held: false,
-    persona: () => roomPersona(ctx, { spaceName, sharedSpaceAsks: Boolean(opened) && trust.shareSpaceArtefacts === "ask", away: awayNow(prefs) }),
+    persona: steward
+      ? async () => ({
+          text: `${stewardPersona({ name: node.name, handle: members.find((row) => row.nodeId === node.id)?.handle ?? node.slug, roomTitle: room.title, sponsorName: input.ownerName, askerName, roster: await rosterOf(ctx, " (your sponsor)") })}\n- If nothing needs saying, reply exactly ${NO_REPLY}`,
+          rooms: [],
+        })
+      : () => roomPersona(ctx, { spaceName, sharedSpaceAsks: Boolean(opened) && trust.shareSpaceArtefacts === "ask", away: awayNow(prefs) }),
     run: (args) =>
       runInScope(scope, () =>
         runAssistantTurn({
@@ -289,8 +297,9 @@ export async function roomBoundTurn(
   };
 }
 
-async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sharedSpaceAsks: boolean; away: ReturnType<typeof awayNow> }): Promise<{ text: string; rooms: AssistantRef[] }> {
-  const { app, node, room, members, ownerName, askerName, trust } = ctx;
+/** The room's members by their public fields, as a room-bound turn sees them. */
+async function rosterOf(ctx: BoundCtx, ownerLabel: string): Promise<string[]> {
+  const { app, node, room, members } = ctx;
   const prisma = app.prisma;
   const [nodes, people] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: members.filter((row) => row.nodeId).map((row) => row.nodeId!) } }, select: { id: true, name: true, role: true } }),
@@ -299,12 +308,17 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
   const nodeById = new Map(nodes.map((row) => [row.id, row]));
   const personName = new Map(people.map((row) => [row.id, nameOf(row)]));
   const duties = roomSettings(room).responsibilities;
-  const roster = members.map((member) => {
-    if (!member.nodeId) return `- @${member.handle}: ${personName.get(member.userId) ?? "a person"}${member.userId === ctx.owner ? " (your owner)" : ""}${duties[member.userId] ? `, handles ${duties[member.userId]}` : ""}`;
+  return members.map((member) => {
+    if (!member.nodeId) return `- @${member.handle}: ${personName.get(member.userId) ?? "a person"}${member.userId === ctx.owner ? ownerLabel : ""}${duties[member.userId] ? `, handles ${duties[member.userId]}` : ""}`;
     if (member.nodeId === node.id) return `- @${member.handle}: you`;
     const other = nodeById.get(member.nodeId);
     return `- @${member.handle}: ${member.userId === ctx.owner ? "your owner's" : `${personName.get(member.userId) ?? "someone"}'s`} node “${other?.name ?? member.handle}” (${other?.role ?? "node"})${member.representative ? ", their lead" : ""}`;
   });
+}
+
+async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sharedSpaceAsks: boolean; away: ReturnType<typeof awayNow> }): Promise<{ text: string; rooms: AssistantRef[] }> {
+  const { node, room, ownerName, askerName, trust } = ctx;
+  const roster = await rosterOf(ctx, " (your owner)");
   const away = extra.away
     ? `${ownerName} is away${extra.away.until ? ` until ${extra.away.until.slice(0, 16).replace("T", " ")} UTC` : ""}${extra.away.note ? ` (${extra.away.note})` : ""}. Say so when it matters, answer status from the status card, and leave requests for work for ${ownerName}: record them with node_peer_request and say they wait for ${ownerName}.`
     : "";
@@ -345,10 +359,11 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
 
 // ── the tools of a room-bound turn ──────────────────────────────────────────────────────────
 
-function roomTools(ctx: BoundCtx): AnyHubTool[] {
-  const { app, node, room, owner, ownerName } = ctx;
+/** This room's public history, from when its newest person joined. */
+function historyTool(ctx: BoundCtx): AnyHubTool {
+  const { app, room } = ctx;
   const prisma = app.prisma;
-  const history = defineTool({
+  return defineTool({
     name: "node_room_history",
     area: "context",
     description: "Read this room's public messages (what everyone here can read), newest first: before a message number, or those containing words.",
@@ -382,6 +397,12 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
       return toolOk(lines.length ? `${lines.length} message(s).` : "No messages like that.", { messages: truncateText(lines.join("\n"), 8000) });
     },
   });
+}
+
+function roomTools(ctx: BoundCtx): AnyHubTool[] {
+  const { app, node, room, owner, ownerName } = ctx;
+  const prisma = app.prisma;
+  const history = historyTool(ctx);
   const status = defineTool({
     name: "node_owner_status",
     area: "context",

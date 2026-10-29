@@ -16,6 +16,8 @@ import { answerSpaceOffer, bindSpace, expireOffersFor, roomBoard, roomPages, Roo
 import { onMemberRevoked } from "../sharing/revoke.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
 import { RoomResultError, startRoomTask } from "./room-results.js";
+import { PAGE_ROLES, roomDecisions, setPageRole, watchRoomPages } from "./room-pages.js";
+import { clearSteward, setSteward, stewardOf } from "./steward.js";
 import { publishTo } from "./events.js";
 import { inBackground } from "./queue.js";
 import { roomPeople } from "./store.js";
@@ -40,6 +42,8 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
   watchRoomEvents(app);
   // Losing a space withdraws a person's open offers to join it through a room (node/room-space.ts).
   onMemberRevoked(expireOffersFor);
+  // Contracts tell the people whose work uses them when they change (node/room-pages.ts).
+  watchRoomPages();
 
   const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
     try {
@@ -163,6 +167,46 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
     return { pages: await roomPages(app, room, accountId) };
+  });
+
+  /** A page of the room's space becomes a contract or the room's decisions log (or only watched again). */
+  app.put("/api/node/rooms/:id/pages/:pageId", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { role } = z.object({ role: z.enum(PAGE_ROLES) }).strict().parse(request.body ?? {});
+    await spaceCall(() => setPageRole(app, room, accountId, z.string().uuid().parse((request.params as { pageId: string }).pageId), role));
+    return { pages: await roomPages(app, room, accountId) };
+  });
+
+  /** The room's logged decisions, newest first (each with the one it replaced). */
+  app.get("/api/node/rooms/:id/decisions", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return { decisions: await roomDecisions(app, room, accountId) };
+  });
+
+  // ── the room's steward (docs/35 §12.14) ───────────────────────────────────────────────────
+
+  app.get("/api/node/rooms/:id/steward", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    return { steward: stewardOf(room) };
+  });
+
+  /** I make one of my own nodes here (not my lead) the room's steward, and sponsor it. */
+  app.put("/api/node/rooms/:id/steward", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { nodeId } = z.object({ nodeId: z.string().uuid() }).strict().parse(request.body ?? {});
+    await requireVerifiedUser(accountId);
+    return { steward: await spaceCall(() => setSteward(app, room, accountId, nodeId)) };
+  });
+
+  app.delete("/api/node/rooms/:id/steward", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    await spaceCall(() => clearSteward(app, room, accountId));
+    return { steward: null };
   });
 
   /** I watch a page of the room's linked space (its edits reach me through my lead), or stop. */

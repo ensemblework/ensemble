@@ -79,7 +79,7 @@ export function botStreak(recentNewestFirst: ReadonlyArray<{ authorKind: string;
  * Rooms v2 (docs/35 §12): a room with other people. Unaddressed messages wake nobody; a lead answers
  * in public only when it is mentioned; a person's own other nodes answer them in private.
  */
-function roomRoute(message: RouteMessage, nodes: readonly RouteNode[]): RouteDecision {
+function roomRoute(message: RouteMessage, nodes: readonly RouteNode[], stewards: readonly string[] = []): RouteDecision {
   if (message.authorKind !== "human") return none();
   if (leadsStatus(message.text ?? "")) return { reason: "status", nodeIds: [] };
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -107,6 +107,9 @@ function roomRoute(message: RouteMessage, nodes: readonly RouteNode[]): RouteDec
   for (const node of named) {
     if (node.representative) {
       if (node.active) add({ nodeId: node.id, private: false, audience: "room" });
+    } else if (stewards.includes(node.id)) {
+      // The room's steward answers whoever named it, in public, for them (node/steward.ts).
+      if (node.active) add({ nodeId: node.id, private: false, audience: "room" });
     } else if (node.ownerId === message.authorId) {
       // The person's own other node answers them in My crew, never in public.
       if (node.active) add({ nodeId: node.id, private: true, audience: "owner" });
@@ -131,7 +134,8 @@ export function whoSpeaks(message: RouteMessage, room: RouteRoom, nodes: readonl
   const eligible = nodes.filter(
     (node) => node.active && node.id !== message.authorNodeId && (message.visibleTo.length === 0 || message.visibleTo.includes(node.ownerId)),
   );
-  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId));
+  // In a room with other people `leadNodeIds` holds only its steward, if it has one.
+  if (room.kind === "room") return roomRoute(message, nodes.filter((node) => node.id !== message.authorNodeId), room.leadNodeIds);
   const eligibleIds = new Set(eligible.map((node) => node.id));
   const mentioned = message.mentions.filter((row) => row.kind === "node" && eligibleIds.has(row.id)).map((row) => row.id);
 

@@ -56,6 +56,7 @@ import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 import { boundSpaceId, offerSpace } from "./room-space.js";
 import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
+import { confirmDecision } from "./room-pages.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -609,6 +610,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       responsibility: z.string().max(300).nullable().optional(),
     }).strict().parse(request.body ?? {});
     if ((body.title !== undefined || body.leadNodeIds !== undefined) && room.userId !== accountId) throw fail(403, "Only the person who made this room can rename it or pick its lead.");
+    // In a room with other people each person's lead is their own, and the steward is chosen by its sponsor (node/steward.ts).
+    if (body.leadNodeIds !== undefined && room.kind === "room") throw fail(400, "Each person picks their own lead here; the room's steward is set with PUT /api/node/rooms/:id/steward.");
     const title = body.title?.trim();
     if (title !== undefined) {
       if (!title) throw fail(400, "Give it a name.");
@@ -924,6 +927,14 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
     // A person named in public hears of it privately, from their lead (node/room-events.ts).
     if (!duplicate) inBackground(app, () => noteMentions(app, room, message));
+    // A reply “log this” confirms the message it replies to as a decision (node/room-pages.ts).
+    if (!duplicate && body.replyToId && /^\s*log this\b/i.test(text)) {
+      const target = body.replyToId;
+      inBackground(app, async () => {
+        const replied = await prisma.nodeMessage.findUnique({ where: { id: target } });
+        if (replied) await confirmDecision(app, replied, accountId);
+      });
+    }
     return reply.code(duplicate ? 200 : 201).send({ message: wireMessage(message), duplicate });
   });
 
@@ -1007,6 +1018,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       return tx.nodeMessage.update({ where: { id }, data: { data: data as Prisma.InputJsonValue } });
     });
     await announce(prisma, updated, "node.message.updated");
+    // ✅ from a person confirms a room message as a decision (node/room-pages.ts).
+    if (body.emoji === "✅" && ((updated.data as { reactions?: Record<string, string[]> } | null)?.reactions?.["✅"] ?? []).includes(accountId)) inBackground(app, () => confirmDecision(app, updated, accountId));
     return { message: wireMessage(updated) };
   });
 
