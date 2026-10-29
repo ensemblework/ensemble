@@ -561,6 +561,14 @@ model WorkspaceJob {
   folderLabel          String?             @map("folder_label")
   /// What a device reported on complete: [{ kind: pr | commit | branch, url, sha? }].
   results              Json?
+  /// The worker's structured result (node/report.ts StepReport), from the run's report_result tool or
+  /// its .ensemble/result.json. Null: the worker reported nothing; the summary is prose only.
+  report               Json?
+  /// Idempotency for a job started by an outbox effect (node/outbox.ts): a redelivered effect finds this job.
+  operationId          String?             @unique @map("operation_id")
+  /// Order among the queued messages of an agent session, separate from continueFromJobId (which stays
+  /// the true resume ancestry and is set when the job is claimed). Null: creation order.
+  queuePosition        Int?                @map("queue_position")
   error                String?
   createdAt            DateTime            @default(now()) @map("created_at")
   startedAt            DateTime?           @map("started_at")
@@ -2547,6 +2555,11 @@ model NodeRun {
   planId     String?   @map("plan_id")
   planStep   String?   @map("plan_step")
   reportedAt DateTime? @map("reported_at")
+  /// The plan step's attempt this run belongs to: a late end from an earlier attempt changes nothing.
+  attempt    Int       @default(1)
+  /// Run settings: { requested, resolved, observed } with agent, model, effort, context, fast
+  /// (node/settings.ts). observed values are "not_reported" when the engine does not say.
+  settings   Json?
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   room       NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -2579,6 +2592,19 @@ model NodeTurn {
   attempt          Int       @default(0)
   /// A retry waits until then.
   runAfter         DateTime? @map("run_after")
+  /// The lane it runs in (node/lanes.ts): conv:<room>:<s|p> for conversation, work:<plan>:<step> for
+  /// work. Turns run in order within a lane and in parallel across lanes. Null: derived (legacy rows).
+  lane             String?
+  /// owner: the answer goes only to the owner (DM, private thread, plan work). room: other people read
+  /// the answer, so only room-safe context is reachable. Set by where the output goes, never widened.
+  audience         String    @default("owner")
+  /// The Ensemble space the turn works in. Null: the node's home space.
+  spaceId          String?   @map("space_id")
+  /// Idempotency for a turn enqueued by an outbox effect.
+  operationId      String?   @unique @map("operation_id")
+  /// Set when the turn first dispatched a tool that changes something: from then on it is not
+  /// aborted to coalesce a new message, and a restart reconciles it instead of running it again.
+  sideEffectsAt    DateTime? @map("side_effects_at")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?
@@ -2604,6 +2630,126 @@ model NodeMemory {
 
   @@index([nodeId, createdAt])
   @@map("node_memories")
+}
+
+/// Work a node owns (node/missions.ts): a crew plan, or a job the node does itself. Its id is its card's
+/// message id, so `planId` everywhere names it. Steps are rows in node_steps; the card's data is a view.
+model NodeMission {
+  id            String     @id
+  /// The owner: whose access, credits and computer the work uses unless principals say otherwise.
+  userId        String     @map("user_id")
+  leadNodeId    String     @map("lead_node_id")
+  /// Where the lead was asked, and so where it reports.
+  originRoomId  String     @map("origin_room_id")
+  originPrivate Boolean    @default(false) @map("origin_private")
+  /// The lead's turn that made it: its reply opens the card.
+  leadTurnId    String?    @map("lead_turn_id")
+  /// plan: a crew plan. self: one step the node does itself (node_work_start).
+  kind          String     @default("plan")
+  /// 1: migrated from the plan card's JSON (steps keep their old meaning). 3: this table.
+  contract      Int        @default(3)
+  /// draft | running | reporting | succeeded | partially_completed | failed | stopped
+  status        String     @default("draft")
+  revision      Int        @default(0)
+  /// Compare-and-set counter for every change.
+  version       Int        @default(0)
+  goal          String?
+  /// { computer, folder, repos, branch, publish, environment, agent, model, effort, context, substitution, order, notes }
+  constraints   Json       @default("{}")
+  /// [{ id, text, acceptance: [{ id, text, mandatory }], evidence, status }]
+  requirements  Json       @default("[]")
+  /// [{ requirementId, reason }]
+  deferred      Json       @default("[]")
+  /// The Ensemble space the work lives in. Null: the owner's home space.
+  spaceId       String?    @map("space_id")
+  /// { accountId, nodeId?, roomId? } when someone other than the owner asked for it.
+  requestedBy   Json?      @map("requested_by")
+  /// { roomId, audience } where the result goes, when not the origin.
+  deliverTo     Json?      @map("deliver_to")
+  /// { data, billing, executionDevice, approver }: account ids; empty means the owner for all four.
+  principals    Json       @default("{}")
+  /// The lead was told the outcome (its report turn ran).
+  reportedAt    DateTime?  @map("reported_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  endedAt       DateTime?  @map("ended_at")
+  steps         NodeStep[]
+
+  @@index([userId, status])
+  @@index([leadNodeId, status])
+  @@index([originRoomId])
+  @@map("node_missions")
+}
+
+/// One step of a mission. Execution (status) and result (outcome) are separate; attempts keep history.
+model NodeStep {
+  missionId      String      @map("mission_id")
+  /// s1-ab12cd: unique in its mission; turns, runs and cards name it as planStep.
+  id             String
+  position       Int
+  nodeId         String      @map("node_id")
+  handle         String
+  name           String
+  /// build | verify | write | research | other
+  kind           String      @default("other")
+  /// node: the step's node takes turns for it. self: the lead's own work. session: dispatched straight to an agent session.
+  executor       String      @default("node")
+  brief          String
+  /// Step ids that must be done (or passed) before this one starts.
+  after          String[]    @default([])
+  /// For a verify step: the build step it checks.
+  verifies       String?
+  requirementIds String[]    @default([]) @map("requirement_ids")
+  /// Agent run settings the lead gave: { agent, model, effort, context }.
+  run            Json?
+  /// waiting | working | done | blocked | skipped | stopped
+  status         String      @default("waiting")
+  /// unknown | done | pass | fail | blocked | unverified: the current attempt's result.
+  outcome        String      @default("unknown")
+  /// The current attempt: 1, 2, …
+  attempt        Int         @default(1)
+  /// Earlier and current attempts: [{ n, reason, outcome, summary, checks, candidate, signature, startedAt, endedAt }]
+  attempts       Json        @default("[]")
+  /// The current attempt's StepReport (node/report.ts).
+  report         Json?
+  /// One-paragraph result shown on the card.
+  result         String?
+  progress       String?
+  /// The agent session this step's runs use, once it has one.
+  sessionId      String?     @map("session_id")
+  /// The worker was asked once to report; another miss makes the attempt unverified.
+  nudged         Boolean     @default(false)
+  startedAt      DateTime?   @map("started_at")
+  endedAt        DateTime?   @map("ended_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  mission        NodeMission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@id([missionId, id])
+  @@unique([missionId, position])
+  @@index([nodeId, status])
+  @@map("node_steps")
+}
+
+/// Effects of committed mission changes (node/outbox.ts): delivered at least once, applied once by the
+/// consumer through operationId (a turn's or job's unique operation_id).
+model NodeOutbox {
+  id           String    @id @default(uuid())
+  operationId  String    @unique @map("operation_id")
+  missionId    String?   @map("mission_id")
+  /// turn | report | refresh | expire_decisions | notify
+  kind         String
+  payload      Json      @default("{}")
+  availableAt  DateTime  @default(now()) @map("available_at")
+  attempts     Int       @default(0)
+  claimedUntil DateTime? @map("claimed_until")
+  deliveredAt  DateTime? @map("delivered_at")
+  error        String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([deliveredAt, availableAt])
+  @@index([missionId])
+  @@map("node_outbox")
 }
 
 /// A secret a person saved on their own computer for its agent runs (lib/run-secrets.ts): given to the
