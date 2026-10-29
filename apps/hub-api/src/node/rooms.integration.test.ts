@@ -23,7 +23,7 @@ const { settleTurns } = await import("./queue.js");
 const { syncPeerMissions } = await import("./peer-requests.js");
 const { setTurnRetryDelaysForTests } = await import("./queue.js");
 const { RuntimeError } = await import("../lib/runtime-error.js");
-const { deliverRoomEvents, scanRoomSpaces, setDigestWriterForTests, setRoomEventTimingForTests } = await import("./room-events.js");
+const { deliverRoomEvents, scanRoomSpaces, setDigestWriterForTests, setRoomEventTimingForTests, setScanObserverForTests, sweepRoomEvents } = await import("./room-events.js");
 const { SPACE_COOKIE } = await import("../spaces/store.js");
 // Room events wait for their batch; each test delivers them when it chooses (`deliverRoomEvents` with a later `now`).
 setRoomEventTimingForTests({ batchMs: 3_600_000 });
@@ -1216,6 +1216,26 @@ test("review #C: the digest shows every event it marks told, keeps when the away
   assert.deepEqual(waiting.map((row) => row.title), ["Late page"], "only what it showed is told");
   await deliverRoomEvents(h.app, { now: later() });
   assert.equal((await notes(ben, room.id)).at(-1)!.body, "Someone edited “Late page”.");
+});
+
+test("review #D: sweeps never overlap, and read only the rooms whose space stirred", async () => {
+  const { akash, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  await settleTurns();
+  const reads: string[] = [];
+  setScanObserverForTests((roomId) => reads.push(roomId));
+  try {
+    assert.equal(await sweepRoomEvents(h.app), true);
+    assert.ok(!reads.includes(room.id), "a quiet room is not read");
+    // A change no frame announced (written straight to the database): the next sweep reads it, once.
+    await h.prisma.task.create({ data: { userId: spaceId, title: "Quiet change", owner: "me", status: "todo", createdBy: "me" } });
+    const both = await Promise.all([sweepRoomEvents(h.app), sweepRoomEvents(h.app)]);
+    assert.deepEqual(both, [true, false], "never two sweeps at once");
+    assert.equal(reads.filter((id) => id === room.id).length, 1);
+    assert.ok(await h.prisma.nodeRoomTask.findFirst({ where: { roomId: room.id } }), "and it saw the task");
+  } finally {
+    setScanObserverForTests(null);
+  }
 });
 
 // ── C6 results into the room and onto the board: the worked example (extension §19) ──────────

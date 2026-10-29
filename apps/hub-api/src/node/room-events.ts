@@ -129,9 +129,14 @@ export async function followSpace(app: FastifyInstance, roomId: string, spaceId:
 }
 
 const scans = new Map<string, { again: boolean }>();
+let scanned: ((roomId: string) => void) | null = null;
+/** Tests: told of every read of a room's space. */
+export function setScanObserverForTests(observer: ((roomId: string) => void) | null): void {
+  scanned = observer;
+}
 
-/** Reads a room's space now, once at a time per room (a second call while one runs reads again after it). */
-function kick(app: FastifyInstance, roomId: string): void {
+/** Reads a room's space, once at a time per room: a call while one runs makes it read again after, and returns. */
+async function guardedScan(app: FastifyInstance, roomId: string): Promise<void> {
   const running = scans.get(roomId);
   if (running) {
     running.again = true;
@@ -139,16 +144,64 @@ function kick(app: FastifyInstance, roomId: string): void {
   }
   const state = { again: false };
   scans.set(roomId, state);
-  inBackground(app, async () => {
-    try {
-      do {
-        state.again = false;
-        await scanRoom(app, roomId);
-      } while (state.again);
-    } finally {
-      scans.delete(roomId);
+  try {
+    do {
+      state.again = false;
+      scanned?.(roomId);
+      await scanRoom(app, roomId);
+    } while (state.again);
+  } finally {
+    scans.delete(roomId);
+  }
+}
+
+/** A frame from a followed space: read it now, in the background. */
+function kick(app: FastifyInstance, roomId: string): void {
+  inBackground(app, () => guardedScan(app, roomId));
+}
+
+/** Whether anything a room follows in its space may have changed since it last read it (cheap; the scan decides). */
+async function stirred(app: FastifyInstance, feed: { roomId: string; spaceId: string; scannedAt: Date }): Promise<boolean> {
+  const prisma = app.prisma;
+  const since = new Date(feed.scannedAt.getTime() - OVERLAP_MS);
+  if (await prisma.task.findFirst({ where: { userId: feed.spaceId, updatedAt: { gt: since } }, select: { id: true } })) return true;
+  if (await prisma.pageDiscussion.findFirst({ where: { userId: feed.spaceId, createdAt: { gt: since } }, select: { id: true } })) return true;
+  const watched = await prisma.nodeRoomPage.findMany({ where: { roomId: feed.roomId }, select: { pageId: true } });
+  if (watched.length && (await prisma.taskPage.findFirst({ where: { id: { in: watched.map((row) => row.pageId) }, updatedAt: { gt: since } }, select: { id: true } }))) return true;
+  // Unlinked, linked elsewhere or gone: the scan settles the feed.
+  const room = await prisma.nodeRoom.findUnique({ where: { id: feed.roomId }, select: { settings: true, archivedAt: true } });
+  return !room || Boolean(room.archivedAt) || boundSpaceId(room) !== feed.spaceId;
+}
+
+let sweeping = false;
+let sweeps = 0;
+const SWEEP_BATCH = 100;
+/** followLinked (a full read of rooms) runs on every this many sweeps: binding follows at once anyway. */
+const FOLLOW_EVERY = 20;
+
+/**
+ * One sweep, never two at once: rooms linked out of band start following now and then, the rooms whose
+ * space stirred since they last read it are read (the longest-unread first, a bounded batch, through the
+ * same one-at-a-time guard as frames), then what is due is delivered. False when a sweep was running.
+ */
+export async function sweepRoomEvents(app: FastifyInstance): Promise<boolean> {
+  if (sweeping) return false;
+  sweeping = true;
+  try {
+    if (sweeps++ % FOLLOW_EVERY === 0) await followLinked(app);
+    await refreshFollowing(app.prisma);
+    const feeds = await app.prisma.nodeRoomFeed.findMany({ orderBy: { scannedAt: "asc" }, take: SWEEP_BATCH });
+    for (const feed of feeds) {
+      const checkedAt = new Date();
+      if (await stirred(app, feed)) await guardedScan(app, feed.roomId);
+      // Nothing changed: it was read up to now (the next read still looks a little further back), and the batch moves on.
+      else await app.prisma.nodeRoomFeed.updateMany({ where: { roomId: feed.roomId, scannedAt: feed.scannedAt }, data: { scannedAt: checkedAt } });
     }
-  });
+    await deliverRoomEvents(app);
+    return true;
+  } finally {
+    sweeping = false;
+  }
 }
 
 /**
@@ -662,12 +715,7 @@ export function watchRoomEvents(app: FastifyInstance): void {
     schedule(app);
   });
   const sweep = setInterval(() => {
-    inBackground(app, async () => {
-      await followLinked(app);
-      await refreshFollowing(app.prisma);
-      await scanRoomSpaces(app);
-      await deliverRoomEvents(app);
-    });
+    if (!sweeping) inBackground(app, () => sweepRoomEvents(app).then(() => undefined));
   }, SWEEP_MS);
   sweep.unref?.();
   app.addHook("onClose", async () => {
@@ -679,12 +727,10 @@ export function watchRoomEvents(app: FastifyInstance): void {
   });
 }
 
-/** Tests and the sweep: read every followed space now. */
-export async function scanRoomSpaces(app: FastifyInstance): Promise<number> {
+/** Tests: read every followed space now (the sweep reads only those that stirred). */
+export async function scanRoomSpaces(app: FastifyInstance): Promise<void> {
   await followLinked(app);
-  let added = 0;
-  for (const feed of await app.prisma.nodeRoomFeed.findMany({ select: { roomId: true } })) added += await scanRoom(app, feed.roomId);
-  return added;
+  for (const feed of await app.prisma.nodeRoomFeed.findMany({ select: { roomId: true } })) await guardedScan(app, feed.roomId);
 }
 
 /** Leaving a room: nothing more reaches the person from it, and they stop watching its pages. */
