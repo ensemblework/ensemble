@@ -59,19 +59,44 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // The person's board for their own agent in Chat, and a task run's report and evidence (evidence/run-tools.ts): the same run secret.
+  // The browser and capture tools a task run's MCP server offers (evidence/capture-tools.ts): listed by this computer.
+  app.get("/api/engine/tools", async (request, reply) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
+    const header = request.headers["x-ensemble-run"];
+    const run = engineRunFor(Array.isArray(header) ? header[0] : header);
+    if (!run) return reply.code(401).send({ error: "This run has ended." });
+    if (isChatTurn(run.ctx.job.context)) return { tools: [] };
+    const { runCaptureToolList } = await import("../evidence/capture-tools.js");
+    return { tools: runCaptureToolList() };
+  });
+
+  // The person's board for their own agent in Chat, a task run's report and evidence (evidence/run-tools.ts), and its browser and capture tools: the same run secret.
   app.post("/api/engine/tool", async (request, reply) => {
     const host = request.ip.replace(/^::ffff:/, "");
     if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
     const header = request.headers["x-ensemble-run"];
     const run = engineRunFor(Array.isArray(header) ? header[0] : header);
     if (!run) return reply.code(401).send({ error: "This run has ended." });
-    const body = z.object({ name: z.enum([...CHAT_TOOLS, ...RUN_TOOLS]), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    // Loaded on the computer only: the hosted server never runs a browser.
+    const { CAPTURE_RUN_TOOLS, isRunCaptureTool, runRunCaptureTool } = await import("../evidence/capture-tools.js");
+    const known = new Set<string>([...CHAT_TOOLS, ...RUN_TOOLS, ...CAPTURE_RUN_TOOLS]);
+    const body = z.object({ name: z.string().refine((name) => known.has(name), "Unknown tool."), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     const chat = isChatTurn(run.ctx.job.context);
+    if (isRunCaptureTool(body.name)) {
+      if (chat) return reply.code(403).send({ error: "The browser and capture tools are for task runs, not Chat." });
+      try {
+        const done = await runRunCaptureTool(run.ctx, body.name, body.input);
+        return done.ok ? { text: done.text } : reply.code(400).send({ error: done.text });
+      } catch (error) {
+        request.log.error({ err: error }, "browser or capture tool failed");
+        return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
+      }
+    }
     if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
       if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
       try {
-        return { text: await runRunTool(run.ctx, body.name, body.input) };
+        return { text: await runRunTool(run.ctx, body.name as (typeof RUN_TOOLS)[number], body.input) };
       } catch (error) {
         if (error instanceof RunToolError) return reply.code(400).send({ error: error.message });
         request.log.error({ err: error }, "run tool failed");
@@ -80,7 +105,7 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     }
     if (!chat) return reply.code(403).send({ error: "Ensemble's board tools are for Chat." });
     try {
-      return { text: await runChatTool(run.ctx, body.name, body.input) };
+      return { text: await runChatTool(run.ctx, body.name as (typeof CHAT_TOOLS)[number], body.input) };
     } catch (error) {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") });
       request.log.error({ err: error }, "chat tool failed");

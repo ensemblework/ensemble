@@ -46,6 +46,8 @@ export type CaptureRequest = {
   unsandboxedApps?: boolean;
   /** Whether an app started for this work may use the internet (passed to `wrapCommand`). */
   network?: boolean;
+  /** The work has the internet off: pages it captures open and load only this computer's own addresses. */
+  loopbackOnly?: boolean;
 };
 
 export type WebTarget = {
@@ -204,7 +206,7 @@ export class CaptureService {
   /** A broker operation for capture's own private tabs, separate from the agent's tabs. */
   private internal(request: CaptureRequest): string {
     const id = `${request.operation}#capture-${(this.counter += 1)}`;
-    this.broker.operation(id, { evidenceDir: request.evidenceDir, maxVideoMs: this.maxVideoMs(request) });
+    this.broker.operation(id, { evidenceDir: request.evidenceDir, maxVideoMs: this.maxVideoMs(request), ...(request.loopbackOnly ? { loopbackOnly: true } : {}) });
     return id;
   }
 

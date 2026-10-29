@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ObservedSettings, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type LiveFramePost, type ObservedSettings, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 
@@ -61,6 +61,13 @@ export interface HostedClient {
   uploadEvidence?(jobId: string, leaseToken: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "unsupported"; error?: string }>;
   /** Output of a node tool command, in order (protocol 6). False: nobody reads it any more. */
   toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean }): Promise<boolean>;
+  /**
+   * A file the web asked for by its upload id (protocol 7): a node's capture, or a held file the owner
+   * released or previews. "gone": nobody waits for it any more.
+   */
+  uploadEvidenceFile?(uploadId: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "gone"; error?: string; evidence?: unknown }>;
+  /** The latest small picture of a run's browser tab (protocol 7). False: the web no longer takes it. */
+  liveFrame?(jobId: string, frame: LiveFramePost): Promise<boolean>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
@@ -280,6 +287,38 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (response.status >= 500) throw new RemoteError(response.status, messageOf(body, "The file could not be stored."));
       if (response.status >= 400) return { result: "refused", error: messageOf(body, `Refused (${response.status}).`) };
       return { result: "stored" };
+    },
+    async uploadEvidenceFile(uploadId, meta, bytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        response = await fetch(`${base}${ROUTES.evidenceUpload(uploadId)}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/octet-stream",
+            [EVIDENCE_HEADERS.meta]: Buffer.from(JSON.stringify(hideSecretsDeep(meta))).toString("base64url"),
+          },
+          body: bytes.byteLength ? Buffer.from(bytes) : undefined,
+          signal: AbortSignal.timeout(10 * 60_000),
+          redirect: "error",
+        });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      const text = await response.text();
+      const body = text ? safeJson(text) : null;
+      if (response.status === 401 || response.status === 403) throw authError(response.status, body);
+      if (response.status === 404 || response.status === 410) return { result: "gone", error: messageOf(body, "Nobody waits for this file any more.") };
+      if (response.status >= 500) throw new RemoteError(response.status, messageOf(body, "The file could not be stored."));
+      if (response.status >= 400) return { result: "refused", error: messageOf(body, `Refused (${response.status}).`) };
+      return { result: "stored", evidence: (body as { evidence?: unknown } | null)?.evidence };
+    },
+    async liveFrame(jobId, frame) {
+      const res = await call("POST", ROUTES.liveFrame(jobId), frame);
+      if (res.status === 404 || res.status === 409 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The live view was refused."));
+      return true;
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);

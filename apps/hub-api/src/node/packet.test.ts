@@ -97,6 +97,8 @@ test("a build packet says each constraint exactly once, settings as facts, and h
   assert.match(packet.prompt, /Evidence to attach: screenshot/);
   assert.match(packet.prompt, /An independent check follows your work/);
   assert.match(packet.prompt, /report_result/);
+  assert.match(packet.prompt, /check it with capture_check/, "captures are checked before they are named");
+  assert.match(packet.prompt, /with the file's id in their evidence/);
   assert.match(packet.prompt, /\.ensemble\/result\.json/);
   assert.deepEqual(
     packet.sections.map((section) => section.name),

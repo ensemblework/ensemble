@@ -56,6 +56,7 @@ import { PageDocument } from "@ensemble/shared-types";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
+import { liveRoutes } from "./live.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -272,6 +273,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   // A run's evidence (evidence/routes.ts) and a node's tool runs on a computer (devices/tool-runs.ts), with these routes' device checks.
   await app.register(evidenceRoutes, { ownDevice, holdLease });
   await app.register(nodeToolRoutes, { ownDevice });
+  await app.register(liveRoutes, { ownDevice, holdLease });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);

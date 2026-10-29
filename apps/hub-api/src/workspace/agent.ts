@@ -1216,6 +1216,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // An engine that stopped or failed never wrote its result: its open tool calls end with the run.
   if (engineTrace && outcome !== "success") await engineTrace.stop(outcome === "failed" || outcome === "blocked" ? "failed" : "skipped", error ?? "The run stopped.");
   if (copies) await removeCopies(ctx, copies).catch((failure: unknown) => app.log.warn({ err: failure }, "could not remove attachment copies"));
+  // Its browser tabs, recordings, apps and displays end with the run; recordings still going are kept as its evidence.
+  if (process.env.ENSEMBLE_DESKTOP === "1") {
+    const { finishRunCapture } = await import("../evidence/capture-tools.js");
+    await finishRunCapture(ctx).catch((failure: unknown) => app.log.warn({ err: failure }, "could not end the run's browser and capture work"));
+  }
   // The worker's own result when it did not call report_result: its .ensemble/result.json and its evidence folder.
   if (job.kind === "code" && !chat && ctx.root && outcome !== "interrupted") {
     await collectRunResult({ ...ctx, signal: new AbortController().signal }, new Date(started)).catch((failure: unknown) => app.log.warn({ err: failure }, "could not read the run's own result"));

@@ -30,7 +30,7 @@ export async function shutdownBrowser(): Promise<void> {
   await broker?.shutdown();
 }
 
-export { BrowserBroker, BrowserError, BrowserOperation, checkUrl, hasDisplay } from "./broker.js";
+export { BrowserBroker, BrowserError, BrowserOperation, checkUrl, hasDisplay, isLoopbackUrl } from "./broker.js";
 export type { BrokerOptions, ConsoleEntry, LiveFrame, NetworkEntry, OpenOptions, OperationOptions, TabInfo } from "./broker.js";
 export { findChromium, playwrightRevisions } from "./chromium.js";
 export { browserDeniedPaths, browserProfileDir, browserRoot, captureStateDir, ensembleDataHome, playwrightBrowsersDir } from "./paths.js";

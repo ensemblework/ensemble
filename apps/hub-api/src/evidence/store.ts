@@ -76,10 +76,37 @@ export async function sweepOrphanEvidence(db: Pick<PrismaClient, "jobEvidence">,
   return removed;
 }
 
-/** One item as a run card and the evidence list show it. `local`: on the computer, not uploaded. */
-export type CardEvidence = { id: string; kind: string; name: string; mime: string; size: number; caption?: string; requirementId?: string; createdAt: string; local?: true };
+/**
+ * One item as a run card and the evidence list show it. `local`: on the computer, not uploaded; `held`:
+ * kept on the computer for the owner to preview first (`holdReason` says why). A video names its poster
+ * and small preview image (their own evidence ids) and what capture measured.
+ */
+export type CardEvidence = {
+  id: string;
+  kind: string;
+  name: string;
+  mime: string;
+  size: number;
+  caption?: string;
+  requirementId?: string;
+  createdAt: string;
+  local?: true;
+  held?: true;
+  holdReason?: string;
+  poster?: string;
+  preview?: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+};
 
-export function cardEvidence(row: Pick<JobEvidence, "id" | "kind" | "name" | "mime" | "size" | "caption" | "requirementId" | "createdAt" | "local">): CardEvidence {
+type CardRow = Pick<JobEvidence, "id" | "kind" | "name" | "mime" | "size" | "caption" | "requirementId" | "createdAt" | "local"> & Partial<Pick<JobEvidence, "held" | "holdReason" | "details" | "variantOf" | "variant">>;
+
+export function cardEvidence(row: CardRow, variants: readonly CardRow[] = []): CardEvidence {
+  const details = (row.details && typeof row.details === "object" && !Array.isArray(row.details) ? row.details : {}) as Record<string, unknown>;
+  const measured = (key: "width" | "height" | "durationMs") => (typeof details[key] === "number" ? { [key]: details[key] as number } : {});
+  const poster = variants.find((item) => item.variant === "poster");
+  const preview = variants.find((item) => item.variant === "preview");
   return {
     id: row.id,
     kind: row.kind,
@@ -90,18 +117,29 @@ export function cardEvidence(row: Pick<JobEvidence, "id" | "kind" | "name" | "mi
     ...(row.requirementId ? { requirementId: row.requirementId } : {}),
     createdAt: row.createdAt.toISOString(),
     ...(row.local ? { local: true as const } : {}),
+    ...(row.held ? { held: true as const, ...(row.holdReason ? { holdReason: row.holdReason } : {}) } : {}),
+    ...(poster ? { poster: poster.id } : {}),
+    ...(preview ? { preview: preview.id } : {}),
+    ...measured("width"),
+    ...measured("height"),
+    ...measured("durationMs"),
   };
 }
 
-/** A run's evidence, oldest first, for its owner. */
-export async function evidenceOf(prisma: Pick<PrismaClient, "jobEvidence">, jobId: string, accountId: string): Promise<CardEvidence[]> {
-  const rows = await prisma.jobEvidence.findMany({
-    where: { jobId, userId: accountId },
-    orderBy: { createdAt: "asc" },
-    take: MAX_EVIDENCE_PER_JOB,
-    select: { id: true, kind: true, name: true, mime: true, size: true, caption: true, requirementId: true, createdAt: true, local: true },
-  });
-  return rows.map(cardEvidence);
+const CARD_FIELDS = { id: true, kind: true, name: true, mime: true, size: true, caption: true, requirementId: true, createdAt: true, local: true, held: true, holdReason: true, details: true, variantOf: true, variant: true } as const;
+
+/** Rows as cards: each video with its poster and preview, which are not listed on their own. */
+export function cardsOf(rows: readonly CardRow[]): CardEvidence[] {
+  const variants = new Map<string, CardRow[]>();
+  for (const row of rows) if (row.variantOf) variants.set(row.variantOf, [...(variants.get(row.variantOf) ?? []), row]);
+  return rows.filter((row) => !row.variantOf || !rows.some((main) => main.id === row.variantOf)).map((row) => cardEvidence(row, variants.get(row.id) ?? []));
+}
+
+/** A run's evidence (or a node's own captures), oldest first, for its owner. */
+export async function evidenceOf(prisma: Pick<PrismaClient, "jobEvidence">, where: string | { jobId: string } | { nodeId: string }, accountId: string): Promise<CardEvidence[]> {
+  const scope = typeof where === "string" ? { jobId: where } : where;
+  const rows = await prisma.jobEvidence.findMany({ where: { ...scope, userId: accountId }, orderBy: { createdAt: "asc" }, take: MAX_EVIDENCE_PER_JOB * 3, select: CARD_FIELDS });
+  return cardsOf(rows);
 }
 
 /**

@@ -7,7 +7,7 @@
  * never run (a download, or `?view=1` inside a sandbox that allows nothing).
  */
 import { mediaReadable } from "../node/media.js";
-import type { Device } from "@prisma/client";
+import type { Device, Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { accountIdOf } from "../lib/auth.js";
@@ -18,6 +18,8 @@ import { isVisitor } from "../sharing/context.js";
 import { EVIDENCE_HEADERS, EvidenceMeta } from "../remote/contract.js";
 import { credentialPathReason, EVIDENCE_MAX_BYTES, evidenceLimit, evidenceName, isActiveMime, isTextMime, kindMismatch, MAX_EVIDENCE_PER_JOB, sha256Hex, sniffMime } from "./limits.js";
 import { cardEvidence, discardEvidence, evidenceContent, evidenceKey, evidenceOf, putEvidence, refreshRunCard } from "./store.js";
+import { dropGrant, dropPreview, grantOf, keepPreview, PREVIEW_MAX_BYTES } from "./grants.js";
+import { HeldError, previewCardForRun, previewHeld, settleHeld } from "./held.js";
 
 type HeldJob = { id: string; userId: string; deviceId: string | null; taskId: string };
 type Held = { ok: false; status: 404 | 409; message: string } | { ok: true; job: HeldJob; now: Date };
@@ -58,9 +60,55 @@ function disposition(kind: "inline" | "attachment", filename: string): string {
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
+type Checked = { ok: true; bytes: Buffer | null; mime: string; size: number; sha256: string } | { ok: false; status: number; error: string };
+
+/**
+ * The bytes a computer sent for one file, checked again here: the size for its kind, the digest, the
+ * type sniffed from the bytes (never the sender's word), text redacted. A file kept on the computer
+ * (upload off there, or held for the owner's preview) comes without bytes: only its description.
+ */
+function checkUpload(meta: EvidenceMeta, raw: Buffer, name: string): Checked {
+  const limit = evidenceLimit(meta.kind);
+  if (meta.local || meta.held) {
+    if (raw.length) return { ok: false, status: 400, error: "A file kept on the computer comes without its bytes." };
+    if (meta.size > limit) return { ok: false, status: 413, error: `A ${meta.kind} can be at most ${limit / 1024 / 1024} MB.` };
+    return { ok: true, bytes: null, mime: plainMime(meta.mime), size: meta.size, sha256: meta.sha256 };
+  }
+  if (raw.length !== meta.size) return { ok: false, status: 400, error: "The file is not the size its description says." };
+  if (raw.length > limit) return { ok: false, status: 413, error: `A ${meta.kind} can be at most ${limit / 1024 / 1024} MB.` };
+  if (sha256Hex(raw) !== meta.sha256) return { ok: false, status: 400, error: "The file changed on the way: its digest does not match." };
+  const mime = sniffMime(raw, name);
+  const mismatch = kindMismatch(meta.kind, mime);
+  if (mismatch) return { ok: false, status: 415, error: mismatch };
+  // Text is redacted before it is kept, as every text a computer sends is.
+  const bytes = isTextMime(mime) ? Buffer.from(redactText(raw.toString("utf8")), "utf8") : raw;
+  return { ok: true, bytes, mime, size: bytes.length, sha256: sha256Hex(bytes) };
+}
+
+function metaOf(request: FastifyRequest): EvidenceMeta | null {
+  try {
+    return EvidenceMeta.parse(JSON.parse(Buffer.from(header(request, EVIDENCE_HEADERS.meta) ?? "", "base64url").toString("utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/** What capture measured, as kept: numbers and the codec only. */
+function detailsOf(meta: EvidenceMeta): Prisma.InputJsonValue | undefined {
+  return meta.details ? (meta.details as Prisma.InputJsonValue) : undefined;
+}
+
+/** A held file, or its image, as described by the computer: the reason kept with it. */
+function holdOf(meta: EvidenceMeta): { held: boolean; holdReason: string | null } {
+  return meta.held ? { held: true, holdReason: meta.holdReason ? redactText(meta.holdReason).slice(0, 300) : "The computer could not check it." } : { held: false, holdReason: null };
+}
+
+const MAX_RELAYED = PREVIEW_MAX_BYTES;
+
 export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Promise<void> {
   const { prisma } = app;
-  // Raw bytes for this plugin's upload route only.
+  const redis = app.redis as unknown as Parameters<typeof grantOf>[0] & Parameters<typeof keepPreview>[0];
+  // Raw bytes for this plugin's upload routes only.
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: UPLOAD_BODY_LIMIT }, (_request, body, done) => done(null, body));
 
   app.post("/api/devices/self/jobs/:id/evidence", { bodyLimit: UPLOAD_BODY_LIMIT }, async (request, reply) => {
@@ -69,12 +117,8 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const lease = z.string().min(1).max(200).safeParse(header(request, EVIDENCE_HEADERS.lease));
     if (!lease.success) return reply.code(400).send({ error: "The job's lease is missing." });
-    let meta: EvidenceMeta;
-    try {
-      meta = EvidenceMeta.parse(JSON.parse(Buffer.from(header(request, EVIDENCE_HEADERS.meta) ?? "", "base64url").toString("utf8")));
-    } catch {
-      return reply.code(400).send({ error: "The file's description could not be read." });
-    }
+    const meta = metaOf(request);
+    if (!meta) return reply.code(400).send({ error: "The file's description could not be read." });
     const held = await gate.holdLease(app, device, id, lease.data);
     if (!held.ok) return reply.code(held.status).send({ error: held.message });
     const job = held.job;
@@ -87,32 +131,12 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (known.jobId !== job.id) return reply.code(409).send({ error: "That evidence belongs to another run." });
       return reply.code(200).send({ evidence: cardEvidence(known) });
     }
-    if ((await prisma.jobEvidence.count({ where: { jobId: job.id } })) >= MAX_EVIDENCE_PER_JOB) return reply.code(409).send({ error: `A run keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
-    const limit = evidenceLimit(meta.kind);
-    let bytes: Buffer | null = null;
-    let mime: string;
-    let size = meta.size;
-    let sha256 = meta.sha256;
-    if (meta.local) {
-      // Upload is off on that computer: its name and size only, shown as there and not uploaded.
-      if (raw.length) return reply.code(400).send({ error: "A file kept on the computer comes without its bytes." });
-      if (meta.size > limit) return reply.code(413).send({ error: `A ${meta.kind} can be at most ${limit / 1024 / 1024} MB.` });
-      mime = plainMime(meta.mime);
-    } else {
-      if (raw.length !== meta.size) return reply.code(400).send({ error: "The file is not the size its description says." });
-      if (raw.length > limit) return reply.code(413).send({ error: `A ${meta.kind} can be at most ${limit / 1024 / 1024} MB.` });
-      if (sha256Hex(raw) !== meta.sha256) return reply.code(400).send({ error: "The file changed on the way: its digest does not match." });
-      mime = sniffMime(raw, name);
-      const mismatch = kindMismatch(meta.kind, mime);
-      if (mismatch) return reply.code(415).send({ error: mismatch });
-      // Text is redacted before it is kept, as every text a computer sends is.
-      bytes = isTextMime(mime) ? Buffer.from(redactText(raw.toString("utf8")), "utf8") : raw;
-      size = bytes.length;
-      sha256 = sha256Hex(bytes);
-    }
+    if ((await prisma.jobEvidence.count({ where: { jobId: job.id, variantOf: null } })) >= MAX_EVIDENCE_PER_JOB && !meta.variantOf) return reply.code(409).send({ error: `A run keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
+    const checked = checkUpload(meta, raw, name);
+    if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
     const owner = device.userId;
     const key = evidenceKey(owner, job.id, meta.id);
-    const stored = bytes ? await putEvidence(key, bytes, mime) : { onRow: null };
+    const stored = checked.bytes ? await putEvidence(key, checked.bytes, checked.mime) : { onRow: null };
     let row;
     try {
       row = await prisma.jobEvidence.create({
@@ -122,34 +146,144 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
           jobId: job.id,
           kind: meta.kind,
           name,
-          mime,
-          size,
-          sha256,
+          mime: checked.mime,
+          size: checked.size,
+          sha256: checked.sha256,
           storageKey: key,
           bytes: stored.onRow ? new Uint8Array(stored.onRow) : null,
-          local: meta.local,
+          local: !checked.bytes,
+          ...holdOf(meta),
+          deviceId: device.id,
+          variantOf: meta.variantOf ?? null,
+          variant: meta.variantOf ? (meta.variant ?? "poster") : null,
+          details: detailsOf(meta),
           caption: meta.caption ? redactText(meta.caption).slice(0, 300) : null,
           requirementId: meta.requirementId ? meta.requirementId.slice(0, 80) : null,
         },
       });
     } catch (error) {
       // The same file sent twice at once: the first row stands, this copy of the bytes goes.
-      if (bytes && !stored.onRow) await discardEvidence(key);
+      if (checked.bytes && !stored.onRow) await discardEvidence(key);
       const again = await prisma.jobEvidence.findUnique({ where: { id: meta.id } });
       if (again?.jobId === job.id) return reply.code(200).send({ evidence: cardEvidence(again) });
       throw error;
     }
-    await appendLedger({ userId: job.userId, actor: "agent", action: "evidence.upload", payload: { jobId: job.id, evidenceId: row.id, kind: row.kind, size: row.size, local: row.local, deviceId: device.id } });
+    await appendLedger({ userId: job.userId, actor: "agent", action: "evidence.upload", payload: { jobId: job.id, evidenceId: row.id, kind: row.kind, size: row.size, local: row.local, held: row.held, deviceId: device.id } });
     await refreshRunCard(prisma, job.id).catch((error: unknown) => request.log.warn({ err: error }, "could not list evidence on the run card"));
+    // A held capture waits for its owner's preview, announced where the run is followed.
+    if (row.held && !row.variantOf) await previewCardForRun(app, job.id, [row]).catch((error: unknown) => request.log.warn({ err: error }, "could not post the preview card"));
     sseHub.publish(job.userId, { event: "workspace", data: { id: job.id } });
     return reply.code(201).send({ evidence: cardEvidence(row) });
   });
 
-  // A run's evidence, for the account whose computer ran it.
-  app.get("/api/node/evidence", async (request) => {
+  // A file the web asked this computer for by an upload id (evidence/grants.ts): a node's capture, or a held file released or previewed.
+  app.post("/api/devices/self/evidence-uploads/:uploadId", { bodyLimit: UPLOAD_BODY_LIMIT }, async (request, reply) => {
+    const device = await gate.ownDevice(app, request, reply);
+    if (!device) return;
+    const { uploadId } = z.object({ uploadId: z.string().min(1).max(100) }).parse(request.params);
+    const grant = await grantOf(redis, uploadId);
+    if (!grant || grant.deviceId !== device.id || grant.ownerId !== device.userId) return reply.code(410).send({ error: "Nobody waits for this file any more." });
+    const meta = metaOf(request);
+    if (!meta) return reply.code(400).send({ error: "The file's description could not be read." });
+    const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+    const name = evidenceName(meta.name);
+    const named = credentialPathReason(name);
+    if (named) return reply.code(422).send({ error: named });
+    const owner = device.userId;
+
+    if (grant.mode === "preview" || grant.mode === "release") {
+      const row = await prisma.jobEvidence.findUnique({ where: { id: grant.evidenceId } });
+      if (!row || row.userId !== owner || meta.id !== row.id) return reply.code(404).send({ error: "That evidence is not here any more." });
+      if (meta.local || meta.held) return reply.code(400).send({ error: "This file must come with its bytes." });
+      const checked = checkUpload(meta, raw, name);
+      if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
+      if (grant.mode === "preview") {
+        // Its owner's preview only: five minutes in Redis, never the database or the blob store.
+        if (checked.size > MAX_RELAYED) return reply.code(413).send({ error: "Too large to preview from the computer." });
+        await keepPreview(redis, row.id, checked.mime, checked.bytes!);
+        return reply.code(200).send({ ok: true });
+      }
+      if (!row.held && !row.local) return reply.code(200).send({ evidence: cardEvidence(row) });
+      const key = row.jobId ? evidenceKey(owner, row.jobId, row.id) : evidenceKey(owner, `node-${row.nodeId ?? "none"}`, row.id);
+      const stored = await putEvidence(key, checked.bytes!, checked.mime);
+      const released = await prisma.jobEvidence.update({
+        where: { id: row.id },
+        data: { held: false, holdReason: null, local: false, mime: checked.mime, size: checked.size, sha256: checked.sha256, storageKey: key, bytes: stored.onRow ? new Uint8Array(stored.onRow) : null },
+      });
+      await dropPreview(redis, row.id);
+      await dropGrant(redis, uploadId);
+      if (row.jobId) await refreshRunCard(prisma, row.jobId).catch(() => undefined);
+      return reply.code(200).send({ evidence: cardEvidence(released) });
+    }
+
+    // A node's own capture: a new file of its tool operation.
+    const known = await prisma.jobEvidence.findUnique({ where: { id: meta.id } });
+    if (known) {
+      if (known.operation !== grant.operation || known.userId !== owner) return reply.code(409).send({ error: "That evidence belongs to other work." });
+      return reply.code(200).send({ evidence: cardEvidence(known) });
+    }
+    if ((await prisma.jobEvidence.count({ where: { operation: grant.operation, jobId: null, variantOf: null } })) >= MAX_EVIDENCE_PER_JOB && !meta.variantOf) {
+      return reply.code(409).send({ error: `This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
+    }
+    const checked = checkUpload(meta, raw, name);
+    if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
+    const key = evidenceKey(owner, `node-${grant.nodeId}`, meta.id);
+    const stored = checked.bytes ? await putEvidence(key, checked.bytes, checked.mime) : { onRow: null };
+    let row;
+    try {
+      row = await prisma.jobEvidence.create({
+        data: {
+          id: meta.id,
+          userId: owner,
+          jobId: null,
+          nodeId: grant.nodeId,
+          operation: grant.operation,
+          kind: meta.kind,
+          name,
+          mime: checked.mime,
+          size: checked.size,
+          sha256: checked.sha256,
+          storageKey: key,
+          bytes: stored.onRow ? new Uint8Array(stored.onRow) : null,
+          local: !checked.bytes,
+          ...holdOf(meta),
+          deviceId: device.id,
+          variantOf: meta.variantOf ?? null,
+          variant: meta.variantOf ? (meta.variant ?? "poster") : null,
+          details: detailsOf(meta),
+          caption: meta.caption ? redactText(meta.caption).slice(0, 300) : null,
+        },
+      });
+    } catch (error) {
+      if (checked.bytes && !stored.onRow) await discardEvidence(key);
+      const again = await prisma.jobEvidence.findUnique({ where: { id: meta.id } });
+      if (again?.operation === grant.operation) return reply.code(200).send({ evidence: cardEvidence(again) });
+      throw error;
+    }
+    await appendLedger({ userId: owner, actor: "agent", action: "evidence.upload", payload: { nodeId: grant.nodeId, evidenceId: row.id, kind: row.kind, size: row.size, local: row.local, held: row.held, deviceId: device.id } });
+    return reply.code(201).send({ evidence: cardEvidence(row) });
+  });
+
+  // A run's evidence, or a node's own captures, for the account whose computer made them.
+  app.get("/api/node/evidence", async (request, reply) => {
     const accountId = reader(request);
-    const { jobId } = z.object({ jobId: z.string().uuid() }).parse(request.query);
-    return { evidence: await evidenceOf(prisma, jobId, accountId) };
+    const query = z.object({ jobId: z.string().uuid().optional(), nodeId: z.string().uuid().optional() }).parse(request.query);
+    if (query.jobId) return { evidence: await evidenceOf(prisma, { jobId: query.jobId }, accountId) };
+    if (query.nodeId) return { evidence: await evidenceOf(prisma, { nodeId: query.nodeId }, accountId) };
+    return reply.code(400).send({ error: "Name a run (jobId) or a node (nodeId)." });
+  });
+
+  // The owner releases a held file (it is uploaded, then usable like any evidence) or discards it.
+  app.post("/api/node/evidence/:id/release", async (request, reply) => {
+    const accountId = reader(request);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const { decision } = z.object({ decision: z.enum(["approve", "discard"]) }).parse(request.body);
+    const row = await prisma.jobEvidence.findUnique({ where: { id }, select: { userId: true, held: true, variantOf: true } });
+    if (!row || row.userId !== accountId || row.variantOf) return reply.code(404).send({ error: "That evidence is not available." });
+    if (!row.held) return reply.code(409).send({ error: "That file is not waiting for a preview." });
+    const settled = await settleHeld(app, accountId, [id], decision);
+    if (settled.failed.length) return reply.code(409).send({ error: settled.failed[0]!.error });
+    return { released: settled.released, discarded: settled.discarded };
   });
 
   // One file's bytes. Images and video show inline; anything else downloads; active formats never run.
@@ -158,26 +292,41 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const { view, message } = z.object({ view: z.enum(["0", "1"]).optional(), message: z.string().uuid().optional() }).parse(request.query);
     // Its owner, or someone who may read the message that shows it (node/media.ts).
-    const head = (await mediaReadable(prisma, accountId, id, message)) ? await prisma.jobEvidence.findUnique({ where: { id }, select: { name: true, mime: true, sha256: true, local: true, size: true } }) : null;
+    const head = (await mediaReadable(prisma, accountId, id, message)) ? await prisma.jobEvidence.findUnique({ where: { id } }) : null;
     if (!head) return reply.code(404).send({ error: "That evidence is not available." });
-    if (head.local) return reply.code(409).send({ error: "This file is on the computer that ran the job, not uploaded: evidence upload is off there (`ensemble evidence on` turns it on)." });
-    const media = head.mime.startsWith("image/") && !isActiveMime(head.mime) ? true : head.mime.startsWith("video/");
-    const etag = `"${head.sha256}"`;
+    let bytes: Buffer;
+    let mime = head.mime;
+    let etag: string | null = `"${head.sha256}"`;
+    if (head.held) {
+      // Held for its owner's preview: only they see it, fetched from the computer that keeps it.
+      if (head.userId !== accountId) return reply.code(404).send({ error: "That evidence is not available." });
+      try {
+        const preview = await previewHeld(app, head);
+        bytes = preview.bytes;
+        mime = preview.mime;
+        etag = null;
+      } catch (error) {
+        if (error instanceof HeldError) return reply.code(error.statusCode).send({ error: error.message });
+        throw error;
+      }
+    } else {
+      if (head.local) return reply.code(409).send({ error: "This file is on the computer that ran the job, not uploaded: evidence upload is off there (`ensemble evidence on` turns it on)." });
+      const match = request.headers["if-none-match"];
+      if (typeof match === "string" && match.split(",").some((tag) => tag.trim().replace(/^W\//, "") === etag)) return reply.code(304).header("ETag", etag).send();
+      bytes = await evidenceContent(head);
+    }
+    const media = mime.startsWith("image/") && !isActiveMime(mime) ? true : mime.startsWith("video/");
+    if (etag) reply.header("ETag", etag);
     reply
-      .header("ETag", etag)
-      .header("Cache-Control", "private, no-cache")
+      // A held file's preview is never kept by a browser or a proxy.
+      .header("Cache-Control", head.held ? "no-store" : "private, no-cache")
       .header("X-Content-Type-Options", "nosniff")
       // Opened directly, nothing in the file runs or loads anything: no scripts, no requests, no forms.
       .header("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox")
       .header("Referrer-Policy", "no-referrer")
       .header("Accept-Ranges", "bytes")
-      .header("Content-Type", head.mime.startsWith("text/") || head.mime === "application/json" || head.mime === "application/xml" || head.mime === "image/svg+xml" ? `${head.mime}; charset=utf-8` : head.mime)
-      .header("Content-Disposition", disposition(media || (view === "1" && !head.mime.startsWith("application/octet")) ? "inline" : "attachment", head.name));
-    const match = request.headers["if-none-match"];
-    if (typeof match === "string" && match.split(",").some((tag) => tag.trim().replace(/^W\//, "") === etag)) return reply.code(304).send();
-    const row = await prisma.jobEvidence.findUnique({ where: { id }, select: { bytes: true, storageKey: true, local: true } });
-    if (!row) return reply.code(404).send({ error: "That evidence is not available." });
-    const bytes = await evidenceContent(row);
+      .header("Content-Type", mime.startsWith("text/") || mime === "application/json" || mime === "application/xml" || mime === "image/svg+xml" ? `${mime}; charset=utf-8` : mime)
+      .header("Content-Disposition", disposition(media || (view === "1" && !mime.startsWith("application/octet")) ? "inline" : "attachment", head.name));
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(request.headers.range ?? "").trim());
     if (range && (range[1] || range[2])) {
       const total = bytes.byteLength;

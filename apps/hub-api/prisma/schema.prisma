@@ -2956,9 +2956,10 @@ model NodeRoutineRun {
 model JobEvidence {
   /// Made by the computer, so a repeated upload finds the same row.
   id            String       @id @default(uuid())
-  /// The account whose computer ran the job (its runner, else the space's owner).
+  /// The account whose computer ran the job (its runner, else the space's owner), or whose node captured it.
   userId        String       @map("user_id")
-  jobId         String       @map("job_id")
+  /// The run that attached or captured it; null for a node's own capture (`nodeId`, `operation`).
+  jobId         String?      @map("job_id")
   /// screenshot | image | video | trace | report | log | file
   kind          String
   /// The file's name (no folders).
@@ -2977,10 +2978,26 @@ model JobEvidence {
   caption       String?
   /// The mission requirement it supports, when the worker named one.
   requirementId String?      @map("requirement_id")
+  /// A node's own capture (its device tools, no job): the node, and the tool operation on the computer.
+  nodeId        String?      @map("node_id")
+  operation     String?
+  /// Kept on the computer for the owner to preview first (a secret on screen, a desktop app's window,
+  /// a preview-first site): never sent to a model or shown in a chat until the owner releases it.
+  held          Boolean      @default(false)
+  holdReason    String?      @map("hold_reason")
+  /// The computer that keeps the file (held, or evidence upload off there).
+  deviceId      String?      @map("device_id")
+  /// A video's poster or small preview image: the video's evidence id, and `poster` or `preview`.
+  variantOf     String?      @map("variant_of")
+  variant       String?
+  /// What capture measured: width, height, durationMs, fps, frames, codec.
+  details       Json?
   createdAt     DateTime     @default(now()) @map("created_at")
-  job           WorkspaceJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job           WorkspaceJob? @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId, createdAt])
   @@index([userId, createdAt])
+  @@index([nodeId, createdAt])
+  @@index([variantOf])
   @@map("job_evidence")
 }

@@ -54,10 +54,11 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
   return "once";
 }
 
-const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call" };
+const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName">): string {
+  if (card.scope === "origin" && card.capability === "browse") return `@${card.nodeSlug} wants to open ${card.label} in the Ensemble browser on ${card.deviceName}`;
   if (card.scope === "origin") return `@${card.nodeSlug} wants to call ${card.label} on ${card.deviceName}`;
   return `@${card.nodeSlug} wants to ${VERBS[card.capability]} in ${card.label} on ${card.deviceName}`;
 }
