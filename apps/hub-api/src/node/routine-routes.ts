@@ -5,7 +5,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { nodeAccount } from "./routes.js";
-import { acceptHook, createRoutine, rotateHookToken, RoutineError, routineView, runNow, runView, updateRoutine } from "./routines.js";
+import { acceptHook, createRoutine, rotateHookToken, RoutineError, routineChanged, routineView, runNow, runView, updateRoutine } from "./routines.js";
 
 const Id = z.object({ id: z.string().uuid() });
 
@@ -49,6 +49,7 @@ export function registerRoutineRoutes(app: FastifyInstance): void {
     const { id } = Id.parse(request.params);
     const removed = await prisma.nodeRoutine.deleteMany({ where: { id, userId: accountId } });
     if (!removed.count) throw Object.assign(new Error("That routine is not yours."), { statusCode: 404 });
+    routineChanged(accountId, id);
     return reply.code(204).send();
   });
 

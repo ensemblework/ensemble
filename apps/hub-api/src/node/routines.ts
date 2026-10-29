@@ -19,6 +19,12 @@ import { BRIEF_MAX, PlanInput, validatePlan } from "./plan-contract.js";
 import { CronError, describeCron, nextRun, parseCron, validTimeZone } from "./cron.js";
 import { nodeSpaces } from "./spaces.js";
 import { inBackground } from "./queue.js";
+import { publishTo } from "./events.js";
+
+/** The owner's site reads its routines again (no content in the event). */
+export function routineChanged(ownerId: string, id: string): void {
+  publishTo([ownerId], "node.routine", { id });
+}
 import { crewRoomFor } from "./tools.js";
 
 const TICK_MS = Number(process.env.ENSEMBLE_NODE_ROUTINE_TICK_MS ?? 20_000) || 20_000;
@@ -153,6 +159,8 @@ export function whenText(routine: Pick<NodeRoutine, "trigger" | "cron" | "timezo
 /** The routine as the owner and the website see it (never the webhook token). */
 export async function routineView(prisma: PrismaClient, routine: NodeRoutine) {
   const runs = await prisma.nodeRoutineRun.findMany({ where: { routineId: routine.id }, orderBy: { createdAt: "desc" }, take: 5 });
+  const watched = routine.trigger === "event" ? ((routine.event ?? {}) as { space?: unknown }).space : undefined;
+  const space = typeof watched === "string" ? await prisma.user.findUnique({ where: { id: watched }, select: { name: true, spaceName: true } }) : null;
   const missions = await prisma.nodeMission.findMany({ where: { id: { in: runs.map((row) => row.missionId).filter((id): id is string => Boolean(id)) } }, select: { id: true, status: true } });
   const status = new Map(missions.map((row) => [row.id, row.status]));
   return {
@@ -166,7 +174,7 @@ export async function routineView(prisma: PrismaClient, routine: NodeRoutine) {
     trigger: routine.trigger,
     cron: routine.cron,
     timezone: routine.timezone,
-    event: routine.event,
+    event: routine.event ? { ...(routine.event as Record<string, unknown>), ...(typeof watched === "string" ? { spaceName: space?.spaceName || space?.name || null } : {}) } : null,
     webhook: routine.trigger === "webhook" ? { path: `/api/node/hooks/routines/${routine.id}`, hasToken: Boolean(routine.hookHash) } : null,
     notify: routine.notify,
     status: routine.status,
@@ -226,6 +234,7 @@ export async function createRoutine(app: FastifyInstance, ownerId: string, raw: 
     },
   });
   refreshSoon(app);
+  routineChanged(ownerId, routine.id);
   return { routine, token };
 }
 
@@ -270,6 +279,7 @@ export async function updateRoutine(app: FastifyInstance, ownerId: string, id: s
     },
   });
   refreshSoon(app);
+  routineChanged(ownerId, id);
   return updated;
 }
 
@@ -384,6 +394,7 @@ async function startOccurrence(app: FastifyInstance, run: NodeRoutineRun): Promi
   busy.add(routine.id);
   await prisma.nodeRoutineRun.update({ where: { id: run.id }, data: { status: "started", missionId: planId, startedAt: new Date(), error: null } });
   await prisma.nodeRoutine.update({ where: { id: routine.id }, data: { lastRunAt: new Date() } });
+  routineChanged(routine.userId, routine.id);
 }
 
 let ticking = false;

@@ -218,7 +218,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
           });
           const title = await freeRoomTitle(tx, owner, `${node.name} · ${name}`);
           // Where the node reports what its helper found: the thread it was asked in, private if that was.
-          const settings = { leadNodeIds: [node.id], parentNodeId: node.id, helperNodeId: helper.id, originRoomId: scope.room.id, originPrivateTo: scope.privateTo };
+          const settings = { leadNodeIds: [node.id], parentNodeId: node.id, helperNodeId: helper.id, originRoomId: scope.room.id, originPrivateTo: scope.privateTo, originMessageId: scope.lineage.rootMessageId };
           const room = await tx.nodeRoom.create({ data: { userId: owner, kind: "task", title, settings: settings as Prisma.InputJsonValue } });
           await addPerson(tx, room.id, owner, "member");
           await addNode(tx, room.id, node);
@@ -230,7 +230,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
         await postMessage(prisma, { roomId: room.id, userId: owner, authorKind: "node", authorNodeId: node.id, body: input.task, data: { brief: { helperNodeId: helper.id } } });
         const continuing = scope.plan && !scope.plan.planStep ? scope.plan.planId : null;
         const visibleTo = await planVisibility(prisma, owner, scope.room, scope.privateTo);
-        await addStep(prisma, {
+        const added = await addStep(prisma, {
           lead: node,
           turnId: scope.turnId,
           continuing,
@@ -240,6 +240,8 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
           visibleTo,
           step: { node: helper, handle: helper.slug, brief: input.task, after: [], kind: "research", executor: "helper" },
         });
+        await prisma.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...(room.settings as Prisma.JsonObject), planId: added.planId } } });
+        publishTo([owner], "node.room", { roomId: room.id });
         return toolOk(
           `@${helper.slug} is on it${input.can === "read" ? "" : ` (it may ${input.can === "sessions" ? "run its own agent session" : "use computer tools"})`}. It starts when your turn ends; you hear once, with every helper's result, when they have all reported. Tell your owner in a line, then wait.`,
           { helper: helper.slug, room: room.title },

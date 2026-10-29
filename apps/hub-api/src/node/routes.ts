@@ -115,10 +115,18 @@ async function names(prisma: PrismaClient, ids: string[]): Promise<Map<string, {
 }
 
 /** A room as one person sees it: other people's emails stay out, other people's nodes show only their public face. */
-function helperOf(room: NodeRoom): { parentNodeId: string | null; helperNodeId: string | null; originRoomId: string | null; originPrivate: boolean } {
+function helperOf(room: NodeRoom) {
   const raw = (room.settings && typeof room.settings === "object" ? room.settings : {}) as Record<string, unknown>;
   const text = (value: unknown) => (typeof value === "string" ? value : null);
-  return { parentNodeId: text(raw.parentNodeId), helperNodeId: text(raw.helperNodeId), originRoomId: text(raw.originRoomId), originPrivate: Array.isArray(raw.originPrivateTo) && raw.originPrivateTo.length > 0 };
+  return {
+    parentNodeId: text(raw.parentNodeId),
+    helperNodeId: text(raw.helperNodeId),
+    originRoomId: text(raw.originRoomId),
+    originPrivate: Array.isArray(raw.originPrivateTo) && raw.originPrivateTo.length > 0,
+    // The message that asked for it, and the plan card its step is in: where the site shows the thread.
+    originMessageId: text(raw.originMessageId),
+    planId: text(raw.planId),
+  };
 }
 
 async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom) {
@@ -909,6 +917,15 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Stops one of my plans: its steps that have not ended and the agent runs they started (node/plans.ts). */
+  /** One of my plans (or a routine's run) with its steps' run cards, which are not in the timeline. */
+  app.get("/api/node/plans/:id", async (request) => {
+    const accountId = nodeAccount(request);
+    const plan = await prisma.nodeMessage.findUnique({ where: { id: (request.params as { id: string }).id } });
+    if (!plan || plan.kind !== "plan" || !canSee(plan, accountId) || !(await personIn(prisma, plan.roomId, accountId))) throw fail(404, "That plan is not available.");
+    const runs = await prisma.nodeMessage.findMany({ where: { planId: plan.id, kind: "run", ...visibleWhere(accountId) }, orderBy: { seq: "asc" }, take: 200 });
+    return { message: wireMessage(plan), runs: runs.map(wireMessage) };
+  });
+
   app.post("/api/node/plans/:id/stop", async (request) => {
     const accountId = nodeAccount(request);
     const plan = await prisma.nodeMessage.findUnique({ where: { id: (request.params as { id: string }).id } });
