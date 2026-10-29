@@ -131,6 +131,10 @@ async function persona(
       ? ""
       : "  - Longer work you do yourself (research across several sources, a report or page to write, a site to check in several steps): node_work_start. It runs in the background and you stay free to talk; you hear once when it ends, then tell your owner the result. Change or stop it with node_work_steer or node_work_stop.",
     step ? "" : "  - Code, files, commands, tests or long work on your owner's computer: an agent session (below).",
+    !step && ownerOnly && !fromNonOwner
+      ? "  - A quick check on your owner's computer (run one command, read git, call their development server, change a small file): the computer_* tools, yourself, in this turn. Their computer decides what may run and asks them at most once per folder. Building, refactoring or anything long stays an agent session."
+      : "",
+    !step && ownerOnly && !fromNonOwner ? "  - Work your owner wants done regularly or when something happens (“every weekday at 9…”, “whenever a task is assigned to me…”): node_routines, only when they ask." : "",
     step ? "" : "  - A side task that should be independent of you (an audit, a second opinion, a parallel investigation, a check of your own answer): node_helper. It reports to you; you tell your owner.",
     step
       ? ""

@@ -18,6 +18,7 @@ import { loadSettings } from "../lib/settings.js";
 import { decrypt } from "../lib/secrets.js";
 import { PROVIDERS as MODEL_PROVIDERS } from "../runtime/credentials.js";
 import { redactText } from "../lib/redact.js";
+import { secretScopeOf } from "../lib/run-secrets.js";
 import { sliceBytes } from "../lib/text.js";
 import { sseHandler, sseHub } from "../lib/sse.js";
 import {
@@ -52,6 +53,9 @@ import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
 import { PageDocument } from "@ensemble/shared-types";
+import { parseReport } from "../node/report.js";
+import { evidenceRoutes } from "../evidence/routes.js";
+import { nodeToolRoutes } from "./tool-runs.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -126,6 +130,8 @@ const Complete = z.object({
   summary: z.string().max(20_000).default(""),
   results: z.array(Result).max(20).default([]),
   totals: RunTotals.optional(),
+  /** The worker's own result (protocol 6), kept on the job when it is a valid StepReport (node/report.ts). */
+  report: z.unknown().optional(),
 });
 
 function deviceJson(device: Device, now = Date.now()) {
@@ -191,7 +197,7 @@ async function stillMember(app: FastifyInstance, job: { userId: string; runnerAc
   return Boolean(await app.prisma.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId: job.userId, accountId: job.runnerAccountId } }, select: { id: true } }));
 }
 
-async function holdLease(app: FastifyInstance, device: Device, jobId: string, leaseToken: string): Promise<HeldLease> {
+export async function holdLease(app: FastifyInstance, device: Device, jobId: string, leaseToken: string): Promise<HeldLease> {
   const now = new Date();
   const job = await loadHeldJob(app, device, jobId);
   if (!job || !(await stillMember(app, job))) return { ok: false, status: 404, message: "Job not found." };
@@ -263,6 +269,9 @@ function taskPageMarkdown(content: unknown, notes: string): string {
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+  // A run's evidence (evidence/routes.ts) and a node's tool runs on a computer (devices/tool-runs.ts), with these routes' device checks.
+  await app.register(evidenceRoutes, { ownDevice, holdLease });
+  await app.register(nodeToolRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);
@@ -495,6 +504,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         attempt: next.attempt + 1,
         ...(resumeOf(next.context) ? { resume: resumeOf(next.context) } : {}),
         ...(steerOf(next.context) ? { steer: steerOf(next.context) } : {}),
+        // The saved secrets the run may have (an Ensemble Node run's scope); absent: all of them.
+        ...(secretScopeOf(next.context) !== "all" ? { secrets: secretScopeOf(next.context) } : {}),
       };
     }
     return reply.code(204).send();
@@ -693,7 +704,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const held = await holdLease(app, device, id, body.leaseToken);
     if (!held.ok) return reply.code(held.status).send({ error: held.message });
     const results: DeviceResult[] = body.results.map((result) => ({ kind: result.kind, url: result.url, ...(result.sha ? { sha: result.sha } : {}) }));
-    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals });
+    const report = body.report === undefined ? null : parseReport(body.report);
+    if (body.report !== undefined && !report) request.log.warn({ jobId: id }, "a computer sent a report that is not a valid StepReport; it was not kept");
+    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     return { status: body.outcome };
   });

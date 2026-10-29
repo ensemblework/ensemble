@@ -15,6 +15,7 @@ import { updateMessageData } from "./store.js";
 import { sweepHelpers } from "./helpers.js";
 import { finishStep, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
 import { askForReport } from "./dispatch.js";
+import { evidenceOf } from "../evidence/store.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
 import { parseReport } from "./report.js";
 import { startRoutines } from "./routines.js";
@@ -70,7 +71,10 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   const progress = job?.progress ?? null;
   const report = parseReport(job?.report ?? null);
   if (card && (shown.status !== status || shown.progress !== progress || (RUN_ENDED.has(status) && (shown.summary !== (job?.summary ?? null) || (report && !shown.report))))) {
-    await updateMessageData(prisma, card, {
+    // Read again just before writing, with the evidence rows, so an upload meanwhile is never dropped.
+    const fresh = (await prisma.nodeMessage.findUnique({ where: { id: card.id } })) ?? card;
+    await updateMessageData(prisma, fresh, {
+      evidence: await evidenceOf(prisma, run.jobId, run.userId),
       status,
       progress,
       summary: job?.summary ?? null,

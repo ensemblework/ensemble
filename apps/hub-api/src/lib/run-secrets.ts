@@ -1,9 +1,11 @@
 /**
  * Secrets a person saves on their own computer for its agent runs (docs/35 §8.7): an API key, a
  * GitHub token. The computer keeps each one encrypted with its own key (lib/secrets.ts) and gives them
- * to every coding-agent run there as environment variables. No model is ever given a value: a node or
- * an agent knows only the names, and every redaction hides the values (lib/redact.ts). Ensemble on the
- * web never stores one; a value saved from the web only passes through to the computer.
+ * to coding-agent runs there as environment variables: every saved secret to a run from the Hub or the
+ * CLI, and only the ones it names to a run with a secret scope (an Ensemble Node run, `secretScopeOf`).
+ * No model is ever given a value: a node or an agent knows only the names, and every redaction hides
+ * the values (lib/redact.ts). Ensemble on the web never stores one; a value saved from the web only
+ * passes through to the computer.
  */
 import type { PrismaClient } from "@prisma/client";
 import { rememberSecretValues } from "./redact.js";
@@ -50,25 +52,54 @@ export async function listRunSecrets(prisma: PrismaClient, userId: string): Prom
   return rows.map((row) => ({ name: row.name, updatedAt: row.updatedAt.toISOString() }));
 }
 
-/** The environment a run on this computer gets: every saved secret. Their values are hidden by every redaction from now on. */
-export async function runSecretEnv(prisma: PrismaClient, userId: string): Promise<Record<string, string>> {
+/**
+ * Which saved secrets a run gets: `all` (a run from the Hub or the CLI, as before scopes existed) or
+ * exactly the names listed, possibly none (an Ensemble Node run: the names its step or mission names,
+ * or that its node asked the owner for). Kept on the job's context as `secrets`.
+ */
+export type SecretScope = "all" | string[];
+
+/** The secret scope on a job's context: a list of names, else `all` (no scope, or `"all"`). */
+export function secretScopeOf(context: unknown): SecretScope {
+  const value = typeof context === "object" && context !== null ? (context as { secrets?: unknown }).secrets : undefined;
+  if (!Array.isArray(value)) return "all";
+  return [...new Set(value.filter((name): name is string => typeof name === "string" && !secretNameProblem(name)))].slice(0, MAX_SECRETS);
+}
+
+/** Every saved secret this computer's key can open, by name. Their values are hidden by every redaction from now on. */
+async function savedSecrets(prisma: PrismaClient, userId: string): Promise<Record<string, string>> {
   const rows = await prisma.runSecret.findMany({ where: { userId }, select: { name: true, value: true } });
-  const env: Record<string, string> = {};
+  const all: Record<string, string> = {};
   for (const row of rows) {
     if (secretNameProblem(row.name)) continue;
     try {
-      env[row.name] = decrypt(row.value);
+      all[row.name] = decrypt(row.value);
     } catch {
       // A value this computer's key cannot open (the key changed) is left out rather than failing the run.
     }
   }
-  rememberSecretValues(Object.values(env));
-  return env;
+  rememberSecretValues(Object.values(all));
+  return all;
+}
+
+/**
+ * The environment a run on this computer gets: every saved secret for `all`, else only the names in
+ * the scope. Every saved value is remembered for redaction either way, so output never shows one.
+ */
+export async function runSecretEnv(prisma: PrismaClient, userId: string, scope: SecretScope = "all"): Promise<Record<string, string>> {
+  const all = await savedSecrets(prisma, userId);
+  if (scope === "all") return all;
+  return Object.fromEntries(Object.entries(all).filter(([name]) => scope.includes(name)));
+}
+
+/** Every saved value (for checks such as "this file holds a saved secret"); never put into an environment. */
+export async function savedSecretValues(prisma: PrismaClient, userId: string): Promise<string[]> {
+  return Object.values(await savedSecrets(prisma, userId));
 }
 
 /** Remembers every saved value for redaction, at start-up: before the computer sends anything (runs that ended before a restart included). */
 export async function rememberRunSecrets(prisma: PrismaClient, userId: string): Promise<void> {
-  await runSecretEnv(prisma, userId);
+  await savedSecrets(prisma, userId);
 }
 
 /** The lines a run's agent is told: names only, and how to use them without showing them. */

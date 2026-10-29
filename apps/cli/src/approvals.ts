@@ -169,6 +169,15 @@ export async function browseFiles(discovery: Discovery, on?: boolean): Promise<b
   return body.browseFiles !== false;
 }
 
+/** Whether files a run's agent attaches go to Ensemble on the web (`evidenceUpload`, on by default). */
+export async function evidenceUpload(discovery: Discovery, on?: boolean): Promise<boolean> {
+  const body =
+    on === undefined
+      ? await localJson<{ evidenceUpload?: boolean }>(discovery, "/api/remote")
+      : await localJson<{ evidenceUpload?: boolean }>(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ evidenceUpload: on }) });
+  return body.evidenceUpload !== false;
+}
+
 /** What Ensemble on the web may do here: read task files and code, change code, open the terminal. */
 export type WebAccess = { browseFiles: boolean; webEdit: boolean; webTerminal: boolean };
 

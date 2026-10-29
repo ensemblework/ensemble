@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { ROUTES, type CodeAnswer, type FileAnswer, type ObservedSettings, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ObservedSettings, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 
@@ -53,7 +53,14 @@ export interface HostedClient {
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown }): Promise<void>;
+  /**
+   * One file the run's worker attached (protocol 6), its bytes as the body, before complete. "stored" or
+   * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.
+   */
+  uploadEvidence?(jobId: string, leaseToken: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "unsupported"; error?: string }>;
+  /** Output of a node tool command, in order (protocol 6). False: nobody reads it any more. */
+  toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean }): Promise<boolean>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
@@ -238,6 +245,41 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (res.status === 404 || res.status === 410) return false;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
       return true;
+    },
+    async toolOutput(runId, chunk) {
+      const res = await call("POST", ROUTES.toolOutput(runId), chunk);
+      if (res.status === 404 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
+      return true;
+    },
+    async uploadEvidence(jobId, leaseToken, meta, bytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        // Raw bytes, never through the JSON path: a file holding a saved secret value was refused before this.
+        response = await fetch(`${base}${ROUTES.evidence(jobId)}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/octet-stream",
+            [EVIDENCE_HEADERS.lease]: leaseToken,
+            [EVIDENCE_HEADERS.meta]: Buffer.from(JSON.stringify(hideSecretsDeep(meta))).toString("base64url"),
+          },
+          body: bytes.byteLength ? Buffer.from(bytes) : undefined,
+          signal: AbortSignal.timeout(10 * 60_000),
+          redirect: "error",
+        });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      const text = await response.text();
+      const body = text ? safeJson(text) : null;
+      if (response.status === 401 || response.status === 403) throw authError(response.status, body);
+      if (response.status === 404 && !(body as { error?: unknown } | null)?.error?.toString().startsWith("Job")) return { result: "unsupported" };
+      if (response.status === 409 && messageOf(body, "") === "Lease rejected.") throw new RemoteError(409, "Lease rejected.");
+      if (response.status >= 500) throw new RemoteError(response.status, messageOf(body, "The file could not be stored."));
+      if (response.status >= 400) return { result: "refused", error: messageOf(body, `Refused (${response.status}).`) };
+      return { result: "stored" };
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);

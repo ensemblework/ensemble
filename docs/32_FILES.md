@@ -43,8 +43,9 @@ Every file, previewable or not, can be attached to pages and downloaded.
 **Blob storage.** By default the bytes sit on the row. With `ENSEMBLE_FILE_STORAGE=azure-blob`, `AZURE_STORAGE_CONNECTION_STRING` and optionally `AZURE_STORAGE_CONTAINER` (default `ensemble-files`), the server's blob store is on (`lib/blob-store.ts`, shared with plot tables, [20 §2](20_PLOTS_DESIGN.md#2-data-ingestion)):
 
 - Every new or replaced original goes to the Azure Blob container as `documents/<userId>/<documentId>/<sha256>`; the row keeps only `blobKey` with `original` null (migration `20261021090000_document_blob_originals`; a check constraint requires one of the two). Rows that hold their bytes in `original` still read.
+- Evidence a run's agent attached ([§7](#evidence-from-agent-runs)) goes there too, as `evidence/<userId>/<jobId>/<evidenceId>`.
 - Every read (download, preview, text extraction, page conversion, cell and text edits, assistant tools) goes through `originalBytes` in `files/originals.ts`.
-- A replaced version, a purged file or a deleted account leaves a blob no row uses; the scheduler's hourly sweep (`jobs/blob-sweep.ts`, `sweepOrphanOriginals`) deletes those once they are an hour old.
+- A replaced version, a purged file or a deleted account leaves a blob no row uses; the scheduler's hourly sweep (`jobs/blob-sweep.ts`, `sweepOrphanOriginals`, and `sweepOrphanEvidence` for evidence) deletes those once they are an hour old.
 - Unreachable storage answers 503 "File storage is not reachable right now. Try again in a minute." and saves no row; text extraction stays queued and runs again when Files is listed.
 - Production refuses to start with an unknown `ENSEMBLE_FILE_STORAGE` or without the connection string (`lib/production.ts`).
 
@@ -200,6 +201,17 @@ File text is always passed on as information, not instructions. Which files each
 - **Editors over MCP** (Context Bridge and hosted `/mcp`): search finds files by name and text, the brief lists a task's files, and `ensemble_read` gives a file's details and its link in Ensemble, not its text. Original bytes are never sent over MCP.
 - **Extracted text and models.** A file's extracted text is used for search, previews and page conversion in the Hub, and is not given to models or agents: `EXTRACTED_TEXT_TO_MODELS` in `files/extracted-text-policy.ts` is off ([38 §4](38_AGENT_READABLE_FILES.md#4-ensembles-extracted-text-is-not-sent-to-models)).
 
+### Evidence from agent runs
+
+A coding agent can attach files for its owner to see with the run's result: screenshots, videos, traces, reports, logs and other files ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). They are not Files: they do not count toward the limits in §3, are not searched and are not given to models. Code: `apps/hub-api/src/evidence/`.
+
+- **On the computer** each run has one evidence folder in Ensemble's data folder, never in the repository. The runtime checks each file and copies it in: no links or hard links, no credential files, no file holding a saved secret value, and the path checked again after opening ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). Folders are removed 30 days after their run.
+- **On the web** each file is a `job_evidence` row (`JobEvidence`, migration `20261103120000_node_device_evidence`): kind, name, media type, size, SHA-256, caption, requirement id and `local`. The bytes are where Files keeps originals (§2): the blob store, else the row's `bytes`. Deleting the run or the account deletes the rows; the hourly sweep removes their blobs.
+- **Upload** (`POST /api/devices/self/jobs/:id/evidence`, with the job's lease; [25 §4.11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#411-the-workers-report-and-evidence)). The server checks everything again: at most 20 MB per file, or 100 MB for video and traces; 100 files per run; credential names refused. The media type is sniffed from the bytes (`sniffMime` in `evidence/limits.ts`), never taken from the name or the computer, and must suit the kind. Text (any `text/` type, JSON, XML, SVG and JavaScript) is redacted (`redactText`) before it is kept.
+- **Kept on the computer.** With `ensemble evidence off` only the name and size reach the web (`local`). The run's card says "on this computer, not uploaded".
+- **Reading** is for the account whose computer ran the job only: another account gets 404, and link visitors and narrow keys 403. Pictures (not SVG) and video show inline. Everything else downloads (`attachment`). Active formats (HTML, SVG, XML, JavaScript) never run: every answer has `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox`, so `?view=1` shows a file inline with no script, request or form. A file kept on the computer answers 409.
+- Ensemble Node lists a run's files on its run card (`data.evidence`, [35 §8.12](35_ENSEMBLE_NODE.md#812-results-and-evidence)).
+
 ## 8. API
 
 | Method | Path | Body → Response |
@@ -220,6 +232,8 @@ File text is always passed on as information, not instructions. Which files each
 | GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | Connected-item browser (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
 | GET | `/api/artifacts/:id` | → `{ artifact }` with `text`, `participants`, `origin`, `documentId` |
 | DELETE | `/api/artifacts/:id` | Owner only → 204; 409 `{ error, documentId }` for an uploaded file's text |
+| GET | `/api/node/evidence?jobId=` | A run's evidence ([§7](#evidence-from-agent-runs)) → `{ evidence: [{ id, kind, name, mime, size, caption?, requirementId?, createdAt, local? }] }`; only for the account whose computer ran it |
+| GET | `/api/node/evidence/:id` | Bytes; the sniffed type, `nosniff`, a sandbox CSP, `inline` for pictures and video and `attachment` for the rest (`?view=1`: inline in the sandbox), `ETag`/304, ranges; 409 when kept on the computer |
 
 - Hosted, uploads, edits and imports need a verified email. App imports are limited to 60 per 10 minutes per person (429 with `Retry-After`).
 - Space members may use files like other shared content (viewers read only).
@@ -242,6 +256,7 @@ File text is always passed on as information, not instructions. Which files each
 | `packages/shared-types/src/page-images.test.ts`, `page-markdown.test.ts` | The header reader per format, the limit and refusal messages, image Markdown |
 | `apps/hub-api/src/pages/collab.test.ts`, `files/attached.integration.test.ts` | Co-editing steps with oversized `data:` images; an image on a task page as an attached file, in agent text, and through a Markdown round trip |
 | `apps/hub-api/src/files/originals.integration.test.ts` | Blob storage (§2): key-only rows, reads, replace/purge and the sweep, 503 when unreachable, rows that keep their bytes, the storage settings check |
+| `apps/hub-api/src/evidence/evidence.integration.test.ts`, `evidence/files.test.ts` | Evidence (§7): the upload's lease, sizes, sniffed types, credential names, redaction, active formats as downloads in a sandbox, owner-only reads, files kept on the computer, the blob store and its sweep; on the computer, links, hard links, swapped files, saved secret values |
 | `apps/hub-api/src/files/extract.test.ts` | Extraction per format and its limits |
 | `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts` | Import sources and states, downloads per app, attached files for agents, `view_attachment` / `save_attachment`, no extracted text to models |
 | `apps/hub-api/src/routes/artifacts.integration.test.ts` | §11: the list, reader, Remove and suppression, re-attach, the 409 for uploads, isolation, members refused |

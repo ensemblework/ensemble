@@ -50,6 +50,12 @@ export interface RemoteSettings {
    * idle, 8 hours at most), with the same allow-list as the terminal on this computer. On by default.
    */
   webTerminal: boolean;
+  /**
+   * Files a run's worker attaches (screenshots, reports, logs) go to Ensemble on the web for the
+   * owner, with the run's result. Off: they stay here, and the web shows their names as on this
+   * computer, not uploaded (`ensemble evidence off`). On by default.
+   */
+  evidenceUpload: boolean;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -90,6 +96,10 @@ export interface HeldJob {
   decisions: Record<string, MirroredDecision>;
   /** Set when the Mac refused the spec before a local job existed. */
   refusal?: { code: string; message: string };
+  /** Evidence rows already sent (or refused by the server), by id (protocol 6). */
+  evidenceSent?: string[];
+  /** The server has no evidence route: nothing more is sent for this job. */
+  evidenceUnsupported?: boolean;
 }
 
 export function stateDir(): string {
@@ -133,6 +143,7 @@ export function loadSettings(): RemoteSettings {
     browseFiles: saved.browseFiles !== false,
     webEdit: saved.webEdit !== false,
     webTerminal: saved.webTerminal !== false,
+    evidenceUpload: saved.evidenceUpload !== false,
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

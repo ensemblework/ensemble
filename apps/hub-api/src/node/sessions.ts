@@ -40,6 +40,7 @@ import { enqueueTurn } from "./queue.js";
 import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction } from "./session-queue.js";
 import { appliedLine, requestedSettings, startingSettings, tuningProblem, type SettingValues, type Tuning } from "./settings.js";
 import { questionTools } from "./session-questions.js";
+import { secretScopeFor } from "./secret-scope.js";
 
 export { sessionOwners };
 
@@ -353,7 +354,7 @@ async function refuseUnhonoured(prisma: PrismaClient, deviceId: string | null | 
 
 async function queueJob(env: SessionEnv, body: JobRequest, context: Record<string, unknown>, cleanup?: () => Promise<unknown>, keepSettings = false): Promise<string> {
   try {
-    const created = await createJob(env.prisma, env.node.userId, body, { actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, ...context } as never });
+    const created = await createJob(env.prisma, env.node.userId, body, { actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...context } as never });
     if (!created) throw new ToolBlockedError("That task is not available any more.");
     return created.jobId;
   } catch (error) {

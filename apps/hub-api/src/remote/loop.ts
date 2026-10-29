@@ -27,10 +27,14 @@ import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
+import { answerNodeToolRequest } from "../device-tools/answer.js";
+import { stopNodeCommands } from "../device-tools/run.js";
+import { sendEvidence } from "../evidence/upload.js";
+import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -118,6 +122,12 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
+    // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
+    nodeTools: NODE_TOOLS_API,
+    // Files a run's worker attaches go to the web, unless the person turned it off here (`ensemble evidence off`).
+    evidenceUpload: settings.evidenceUpload,
+    // A run from Ensemble Node gets only the saved secrets it names (the claim's `secrets`).
+    secretScope: 1,
   };
 }
 
@@ -135,6 +145,7 @@ async function agentsNow(): Promise<SubscriptionAgent[]> {
  */
 export async function stopRemoteWork(app: FastifyInstance, message: string, report: "cancelled" | "none"): Promise<void> {
   stopWebTerminal();
+  stopNodeCommands();
   stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();
@@ -292,6 +303,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
         if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
         if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
+        // A node's own tool call (protocol 6): judged and run here; a lost answer times out on the web.
+        if (event === "node.tool.request") void answerNodeToolRequest(app, client, data).catch(() => undefined);
         // A secret typed on the web for this computer's runs: kept here only.
         if (event === "secret.save") void answerSecretSave(client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
@@ -438,6 +451,8 @@ async function mirror(app: FastifyInstance, client: HostedClient, signal: AbortS
         continue;
       }
       await relayDecisions(app, client, job, local, signal);
+      // Files the worker attached go as soon as they are attached, while the run holds its lease.
+      await sendEvidence(app, client, job, local);
       await sendProgress(app, client, job, local);
     } catch (error) {
       // The lease ran out while this computer was cut off and the run kept going: take it back; the next sync sends.
@@ -700,12 +715,17 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const outcome = local.status === "succeeded" ? "succeeded" : local.status === "cancelled" ? "cancelled" : local.status === "blocked" ? "blocked" : "failed";
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
+  const report = (job.protocol ?? 1) >= 6 ? parseReport(local.report) : null;
   const send = async () => {
-    // The changed files' text first: the lease ends with complete.
+    // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
       if (authRejected(error)) throw error;
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}) });
+    await sendEvidence(app, client, job, local).catch((error: unknown) => {
+      if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
+      app.log.warn({ err: error }, "could not send the run's evidence");
+    });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}) });
   };
   try {
     await send();

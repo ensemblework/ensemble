@@ -36,6 +36,8 @@ export interface RunOptions {
   readOnly?: string[];
   /** Writable grant. Defaults to the job root plus the cache. */
   readWrite?: string[];
+  /** Kept out of reach in the sandbox even where a grant covers it (a node's commands: keys, Ensemble's data, the browser profile). */
+  deny?: string[];
   timeoutMs: number;
   signal?: AbortSignal;
   /** Groups children so a job or terminal session can be killed as one. */
@@ -190,7 +192,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
         cwd: options.cwd,
         readWrite,
         readOnly: options.readOnly ?? [],
-        deny: [],
+        deny: options.deny ?? [],
         network: options.network ? "outbound" : "none",
         env,
         who: options.who,

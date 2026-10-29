@@ -134,8 +134,8 @@ test("ask_person marks the recommended option and returns the person's answer as
   assert.match(answerText(input, { decision: "deny", message: "skipped" }), /^No answer: skipped/);
 });
 
-test("the run's ensemble MCP server offers the person's board only in Chat", () => {
-  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person"]);
+test("the run's ensemble MCP server offers the person's board only in Chat, and the run's report and evidence in a task run", () => {
+  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person", "report_result", "attach_evidence"]);
   assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search"]);
 });
 
