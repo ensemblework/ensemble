@@ -185,7 +185,7 @@ export function validatePlan(plan: PlanShape, options: { briefMax?: number } = {
 }
 
 /** The constraints as lines for a worker's note: the authoritative rules for where and how to work. */
-export function renderConstraints(constraints: Constraints | null | undefined): string {
+export function renderConstraints(constraints: Constraints | null | undefined, options: { agentSettings?: boolean } = {}): string {
   if (!constraints) return "";
   const lines: string[] = [];
   const where = [constraints.computer ? `computer ${constraints.computer}` : "", constraints.folder ? `folder ${constraints.folder}` : "", constraints.repos?.length ? `repositories ${constraints.repos.join(", ")}` : ""].filter(Boolean);
@@ -206,7 +206,7 @@ export function renderConstraints(constraints: Constraints | null | undefined): 
     );
   }
   const agent = [constraints.agent, constraints.model, constraints.effort ? `${constraints.effort} effort` : "", constraints.context === "long_context" ? "long context" : ""].filter(Boolean);
-  if (agent.length) lines.push(`- Agent: ${agent.join(", ")} (already applied to your runs; do not check them).`);
+  if (agent.length && options.agentSettings !== false) lines.push(`- Agent: ${agent.join(", ")} (already applied to your runs; do not check them).`);
   if (constraints.substitution === "forbid") lines.push("- Never substitute another agent or model.");
   if (constraints.substitution === "ask") lines.push("- Ask before substituting another agent or model.");
   if (constraints.order === "serial") lines.push("- Features go one at a time: each is checked before the next starts.");
