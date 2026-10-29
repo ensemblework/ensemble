@@ -76,6 +76,7 @@ apps/hub-api/src/
 ├── workspace/                Agent execution: queue worker, engines/, sandbox/, trust, runner (docs/06)
 ├── repo/                     Repository reads and mirrors for the Code tab and diagrams
 ├── remote/, devices/         Remote tasks on a paired computer (docs/25)
+├── browser/, capture/        The computer's browser broker and capture service: screenshots and video (docs/25 §10)
 ├── subscriptions/            Subscription sign-in, detection and assistant turns on paired computers (docs/30)
 ├── included/                 Included-model catalog, budget and accounting (docs/33)
 ├── spaces/, sharing/         Spaces (docs/28); sharing policy, gate, links, presence (docs/29)

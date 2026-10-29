@@ -18,6 +18,7 @@ The website lives in its own repository (`ensemblework/ensemble-node`, served fr
 | Mentions, handles; how a reply is posted | `node/mentions.ts`, `node/reply.ts` (pure) |
 | Templates | `node/templates.ts`: Assistant, Manager, Feature engineer, Tester, Docs writer, Researcher (their charters run work through agent sessions); crews Software team, Research desk |
 | Live frames | `node/events.ts`: an SSE channel per account (`GET /api/node/events`) |
+| Browsing and capture on a computer | The local runtime's `apps/hub-api/src/browser/` (browser broker) and `src/capture/` (screenshots, video, checks before sending), §8.8 and [25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer) |
 | CLI overview | `GET /api/bridge/node` (read-only), the CLI's Node tab ([26](26_CLI.md)) |
 | Tables | `node_agents`, `node_rooms`, `node_room_members`, `node_messages`, `node_runs`, `node_turns`, `node_memories` (migration `20261022120000_ensemble_node`); `node_room_invites` (`20261023120000_node_rooms_invites`, which also renamed `group` rooms to `room` and numbered duplicate names); `node_runs.session_id`, `prompt` and `direct` (`20261028120000_node_sessions`); template charters that nobody edited follow the templates' current text (`20261028130000_node_template_charters`). Account export and deletion include invites the account sent or received (`lib/account-data.ts`). |
 
@@ -202,6 +203,21 @@ Work often needs a secret (an API key, a token). No model is ever given one, and
 - The computer keeps the value encrypted with its own key (`run_secrets`, `lib/secrets.ts`) and gives every saved secret to its coding-agent runs as environment variables (`runSecretEnv`; Codex gets them through `shell_environment_policy.set`, since it leaves `*KEY*`/`*TOKEN*` variables out of commands). The agent's brief names them (`$NAME`) and says never to print one; when a run needs one it does not have, it says which name it needs rather than asking for the value.
 - Every value the computer knows is hidden in anything it sends to the server (`hideSecretsDeep` in `remote/client.ts`) and in every redaction (`lib/redact.ts`); it loads them for this at start-up (`rememberRunSecrets`), before it sends anything.
 - When saved, the node hears the name only and continues the session, telling the agent to use `$NAME`. The person can also manage them on the computer: `ensemble secrets`, `ensemble secrets set NAME` (typed without echo) and `ensemble secrets remove NAME` ([26](26_CLI.md)), or the local `GET/PUT/DELETE /api/run-secrets`.
+
+### 8.8 Browsing and capture
+
+On a paired computer a node and the coding agents it runs can browse and capture, through the computer's browser broker and capture service ([25 §10](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#10-browser-and-capture-on-the-computer)). The node reaches them with its device tools; a coding agent with its run's MCP server. Both offer the same tools, run under the same rules on the computer:
+
+| Tools | What they do |
+| --- | --- |
+| `browser_open`, `browser_tabs`, `browser_close`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_press`, `browser_wait` | Browse in the computer's own Ensemble browser, with one persistent profile per owner (sign-ins stay) or a private tab; read pages as an accessibility tree and act on its references |
+| `browser_screenshot`, `browser_record`, `browser_console`, `browser_network_errors`, `browser_upload`, `browser_download` | Evidence from a tab: masked screenshots, a video or trace, its errors; files in and out of the run's evidence folder |
+| `capture_screenshot`, `capture_video` | Screenshots and video of a web page or `localhost` app (at any viewport or emulated device), an Electron app, any other desktop app on a private virtual display, or a terminal transcript. `mode: "frames"` records an animation frame by frame, smooth whatever the load |
+| `capture_app_start`, `capture_app_stop`, `capture_apps` | Start an app to capture on a private virtual display (Linux), never on the owner's screen |
+| `capture_check` | The checks before sending media: the app runs and has its window, the image is not blank, the page shows the expected text. Each is a `Check` for the step's report (§6.2) |
+| `capture_status` | What this computer can capture, and what `ensemble capture setup` would add |
+
+Files land in the run's evidence folder: images, MP4 or WebM videos with a poster and a preview, traces and transcripts. A capture the computer cannot clear (it shows a saved secret or something key-shaped, it is a desktop app's window, or the owner asked to see captures of that site first) comes back held, with the reason: the owner sees it before it goes anywhere. Sites the owner marks never captured, and tabs in a sign-in, are not captured at all. While a tab is in use, the computer can send a small picture of it about every 3 seconds for the run card's live view.
 
 ## 9. Routes
 
