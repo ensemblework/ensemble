@@ -104,24 +104,31 @@ export function holdReason(hits: SecretHits): string | null {
   return null;
 }
 
-/** Text with saved secret values and key shapes replaced: what a model may read. */
+/**
+ * Text with saved secret values and key shapes replaced: what a model may read. Each value is also
+ * looked for as it appears inside a quoted string (an aria snapshot escapes `"` and `\`).
+ */
 export function hideSecrets(text: string, rules: PrivacyRules): string {
   let out = text;
-  const values = [...(rules.secretValues ?? [])].filter((value) => value.length >= SECRET_MIN_LENGTH).sort((a, b) => b.length - a.length);
-  for (const value of values) if (out.includes(value)) out = out.split(value).join("[hidden]");
+  const values = (rules.secretValues ?? []).filter((value) => value.length >= SECRET_MIN_LENGTH).flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]);
+  for (const value of [...new Set(values)].sort((a, b) => b.length - a.length)) if (out.includes(value)) out = out.split(value).join("[hidden]");
   return redactKeys(out);
 }
 
 const VALUE_ROLES = /^\s*- (?:textbox|searchbox|spinbutton|combobox)\b/;
 const REF = /\[ref=([a-z0-9]+)\]/;
 
-/** Refs of fields in an aria snapshot that show a value: candidates for the sensitive-field check. */
+/**
+ * Refs of fields in an aria snapshot that show a value: candidates for the sensitive-field check.
+ * The value is on the field's line, or (when the field also has a placeholder) on lines under it.
+ */
 export function valueFieldRefs(snapshot: string): string[] {
   const refs: string[] = [];
   for (const line of snapshot.split("\n")) {
     if (!VALUE_ROLES.test(line)) continue;
     const ref = REF.exec(line);
-    if (ref && /\]:\s*\S/.test(line.slice(ref.index))) refs.push(ref[1]!);
+    const rest = ref ? line.slice(ref.index) : "";
+    if (ref && (/\]:\s*\S/.test(rest) || /:\s*$/.test(rest))) refs.push(ref[1]!);
   }
   return refs;
 }
@@ -130,14 +137,18 @@ const indentOf = (line: string) => line.length - line.trimStart().length;
 
 /**
  * The snapshot with the values of the given fields hidden, then secrets and key shapes hidden.
- * A multi-line value (a YAML block under the field's line) goes with it.
+ * Everything under such a field's line goes too (a multi-line value, or the `- text:` that carries
+ * the value when the field has a placeholder), except its placeholder.
  */
 export function redactSnapshot(snapshot: string, sensitiveRefs: ReadonlySet<string>, rules: PrivacyRules): string {
   const out: string[] = [];
   let hidingBelow = -1;
   for (const line of snapshot.split("\n")) {
     if (hidingBelow >= 0) {
-      if (line.trim() && indentOf(line) > hidingBelow) continue;
+      if (line.trim() && indentOf(line) > hidingBelow) {
+        if (/^\s*- \/placeholder:/.test(line)) out.push(line);
+        continue;
+      }
       hidingBelow = -1;
     }
     const ref = REF.exec(line);
@@ -147,7 +158,7 @@ export function redactSnapshot(snapshot: string, sensitiveRefs: ReadonlySet<stri
       continue;
     }
     out.push(`${line.slice(0, colon + 2)} [hidden]`);
-    if (/^[|>]/.test(line.slice(colon + 2).trim())) hidingBelow = indentOf(line);
+    hidingBelow = indentOf(line);
   }
   return hideSecrets(out.join("\n"), rules);
 }

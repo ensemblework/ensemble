@@ -18,9 +18,9 @@ import { chooseVideoEncoder, findFfmpegs } from "../capture/ffmpeg.js";
 import { RealtimeRecording } from "../capture/frames.js";
 import { CaptureError, DEFAULT_MAX_DURATION_MS, reserveFile, slugName, stillFile, VideoEncoder, type MediaFile } from "../capture/media.js";
 import { findChromium, type ChromiumChoice } from "./chromium.js";
-import { scanPage, sensitiveMasks, sensitiveSnapshotRefs } from "./page-scan.js";
+import { readableSnapshot, scanPage, sensitiveMasks } from "./page-scan.js";
 import { browserProfileDir, ensembleDataHome, isProfileName } from "./paths.js";
-import { hasSecrets, hideSecrets, holdReason, redactSnapshot, SECRET_MIN_LENGTH, SENSITIVE_SELECTOR, siteRule, type PrivacyRules } from "./privacy.js";
+import { hasSecrets, hideSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "./privacy.js";
 
 export type BrowserErrorCode = "not_found" | "not_yours" | "sensitive" | "refused" | "bad_input" | "unavailable" | "busy" | "timeout" | "failed";
 
@@ -113,10 +113,10 @@ type ContextEntry = {
   context: BrowserContext;
   headless: boolean;
   idleSince: number | null;
-  tracing: { operation: string; tab: string; held: string | null } | null;
+  tracing: { operation: string; tab: string; held: string | null; timer: NodeJS.Timeout } | null;
 };
 
-type Recording = { kind: "video"; video: RealtimeRecording; watch: { held: string | null } } | { kind: "trace" };
+type Recording = { kind: "video"; video: RealtimeRecording; watch: { held: string | null; never: boolean; rules: PrivacyRules } } | { kind: "trace" };
 
 type Tab = {
   id: string;
@@ -444,7 +444,7 @@ export class BrowserBroker {
   private async closeContext(entry: ContextEntry): Promise<void> {
     this.contexts.delete(entry.key);
     for (const tab of [...this.tabs.values()]) if (tab.entry === entry) await this.closeTab(tab);
-    if (entry.tracing) await entry.context.tracing.stop().catch(() => undefined);
+    if (entry.tracing) await this.discardTrace(entry, "its browser closed");
     await entry.context.close().catch(() => undefined);
   }
 
@@ -515,10 +515,7 @@ export class BrowserBroker {
 
   private async closeTab(tab: Tab): Promise<void> {
     if (tab.recording?.kind === "video") await tab.recording.video.stop().catch(() => undefined);
-    if (tab.entry.tracing?.tab === tab.id) {
-      await tab.entry.context.tracing.stop().catch(() => undefined);
-      tab.entry.tracing = null;
-    }
+    if (tab.entry.tracing?.tab === tab.id) await this.discardTrace(tab.entry, "its tab closed");
     tab.recording = null;
     this.forgetTab(tab);
     await tab.page.close().catch(() => undefined);
@@ -570,15 +567,12 @@ export class BrowserBroker {
     const tab = this.tab(operation, id, "observe");
     const rules = await this.rules();
     if (siteRule(tab.page.url(), rules) === "never") throw new BrowserError("refused", "The owner marked this site as never captured, so it cannot be read either.");
-    let raw: string;
+    let text: string;
     try {
-      raw = await tab.page.ariaSnapshot({ mode: "ai", timeout: 15_000 });
+      text = await readableSnapshot(tab.page, rules);
     } catch (error) {
       throw new BrowserError("failed", `Could not read the page: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
     }
-    const { refs, unchecked } = await sensitiveSnapshotRefs(tab.page, raw);
-    for (const ref of unchecked) refs.add(ref);
-    let text = redactSnapshot(raw, refs, rules);
     const limit = Math.min(Math.max(1_000, input.maxChars ?? this.options.snapshotChars), 100_000);
     let truncated = false;
     if (text.length > limit) {
@@ -687,7 +681,7 @@ export class BrowserBroker {
     try {
       if (input.viewport) await page.setViewportSize(input.viewport);
       const masks = sensitiveMasks(page);
-      const masked = await page.locator(SENSITIVE_SELECTOR).count().catch(() => 0);
+      const masked = (await Promise.all(masks.map((mask) => mask.count().catch(() => 0)))).reduce((sum, count) => sum + count, 0);
       const options = { path, type: format, mask: masks, caret: "hide" as const, timeout: 20_000, ...(format === "jpeg" ? { quality: 90 } : {}) };
       if (input.element) await page.locator(elementSelector(input.element)).first().screenshot(options);
       else await page.screenshot({ ...options, fullPage: Boolean(input.fullPage) });
@@ -822,19 +816,23 @@ export class BrowserBroker {
         const maxDurationMs = op.options.maxVideoMs ?? DEFAULT_MAX_DURATION_MS;
         const output = await reserveFile(dir, slugName(input.name, `video-${tab.id}`), choice.extension);
         const encoder = new VideoEncoder({ choice, output, fps, width: size.width, height: size.height, maxDurationMs, poster: { frame: "last" } });
-        // Screencast frames cannot be masked, so anything sensitive seen while recording holds the video.
-        const watch = { held: holdReason(scan.hits) ?? (scan.site === "preview" ? PREVIEW_REASON : scan.exposedFields ? EXPOSED_REASON : null) };
+        // Screencast frames cannot be masked: anything sensitive seen while recording holds the video, and
+        // frames of a site the owner never wants captured are not recorded at all.
+        const watch = { held: holdReason(scan.hits) ?? (scan.site === "preview" ? PREVIEW_REASON : scan.exposedFields ? EXPOSED_REASON : null), never: false, rules };
         const check = async () => {
-          if (tab.page.isClosed() || tab.sensitive || watch.held) return;
-          const now = await scanPage(tab.page, await this.rules()).catch(() => null);
+          if (tab.page.isClosed() || tab.sensitive) return;
+          watch.rules = await this.rules();
+          const now = await scanPage(tab.page, watch.rules).catch(() => null);
           if (!now) return;
-          if (now.site) watch.held = now.site === "never" ? "The recording reached a site the owner never wants captured." : PREVIEW_REASON;
-          else if (hasSecrets(now.hits)) watch.held = holdReason(now.hits);
-          else if (now.exposedFields) watch.held = EXPOSED_REASON;
+          watch.never = now.site === "never";
+          if (now.site) watch.held ??= now.site === "never" ? "The recording reached a site the owner never wants captured." : PREVIEW_REASON;
+          else if (hasSecrets(now.hits)) watch.held ??= holdReason(now.hits);
+          else if (now.exposedFields) watch.held ??= EXPOSED_REASON;
         };
+        const paused = () => tab.sensitive || watch.never || (!tab.page.isClosed() && siteRule(tab.page.url(), watch.rules) === "never");
         let video: RealtimeRecording;
         try {
-          video = await RealtimeRecording.start(tab.page, encoder, { fps, maxDurationMs, size, paused: () => tab.sensitive, check });
+          video = await RealtimeRecording.start(tab.page, encoder, { fps, maxDurationMs, size, paused, check });
         } catch (error) {
           await encoder.abort();
           throw new BrowserError("failed", `Could not start recording: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
@@ -842,11 +840,24 @@ export class BrowserBroker {
         tab.recording = { kind: "video", video, watch };
         return { tab: tab.id, recording: "video" };
       }
-      const others = [...this.tabs.values()].some((other) => other.entry === tab.entry && other.operation !== operation);
-      if (others || tab.entry.tracing) throw new BrowserError("busy", "A trace covers the whole browser profile, and other work is using it. Use a private tab (private: true) or record a video.");
+      // A trace records every page of its context, so every page there must be this work's own.
+      const foreign = tab.entry.context.pages().some((page) => {
+        const owner = this.pageTabs.get(page);
+        return !owner || owner.operation !== operation || owner.sensitive;
+      });
+      if (foreign || tab.entry.tracing) throw new BrowserError("busy", "A trace covers every page of its browser, and some are not this work's or are in a sign-in. Use a private tab (private: true) or record a video.");
+      const entry = tab.entry;
       // Without DOM snapshots a trace of the shared profile holds no page source or network data.
-      await tab.entry.context.tracing.start({ screenshots: true, snapshots: tab.entry.profile === null, sources: false, title: `Tab ${tab.id}` });
-      tab.entry.tracing = { operation, tab: tab.id, held: holdReason(scan.hits) };
+      const snapshots = entry.profile === null;
+      await entry.context.tracing.start({ screenshots: true, snapshots, sources: false, title: `Tab ${tab.id}` });
+      const tracing = {
+        operation,
+        tab: tab.id,
+        held: holdReason(scan.hits) ?? (scan.site === "preview" ? PREVIEW_REASON : null),
+        timer: setInterval(() => void this.watchTrace(entry, snapshots).catch(() => undefined), 1_000),
+      };
+      tracing.timer.unref();
+      entry.tracing = tracing;
       tab.recording = { kind: "trace" };
       return { tab: tab.id, recording: "trace" };
     }
@@ -867,14 +878,39 @@ export class BrowserBroker {
     const dir = this.evidenceDir(operation);
     const path = await reserveFile(dir, slugName(input.name, `trace-${tab.id}`), "zip");
     const tracing = tab.entry.tracing;
+    await this.watchTrace(tab.entry, tab.entry.profile === null).catch(() => undefined);
+    clearInterval(tracing.timer);
     tab.entry.tracing = null;
     tab.recording = null;
     await tab.entry.context.tracing.stop({ path });
-    const rules = await this.rules();
-    const scan = tab.page.isClosed() ? null : await scanPage(tab.page, rules).catch(() => null);
-    const held = tracing.held ?? (scan ? holdReason(scan.hits) : null);
+    const held = tracing.held;
     const size = (await stat(path)).size;
     return { tab: tab.id, recording: null, file: { path, kind: "trace", mime: "application/zip", size, held: Boolean(held), ...(held ? { reason: held } : {}) } };
+  }
+
+  /** Holds a trace when any page it records shows a secret (or, with page snapshots, a filled password or code field). */
+  private async watchTrace(entry: ContextEntry, snapshots: boolean): Promise<void> {
+    const tracing = entry.tracing;
+    if (!tracing || tracing.held) return;
+    const rules = await this.rules();
+    for (const page of entry.context.pages()) {
+      const scan = await scanPage(page, rules).catch(() => null);
+      if (!scan || tracing.held) continue;
+      if (scan.site) tracing.held = scan.site === "never" ? "The trace reached a site the owner never wants captured." : PREVIEW_REASON;
+      else if (hasSecrets(scan.hits)) tracing.held = holdReason(scan.hits);
+      else if (snapshots && (scan.filledPasswords || scan.exposedFields)) tracing.held = "The trace's page snapshots include a password, one-time code or card field.";
+    }
+  }
+
+  private async discardTrace(entry: ContextEntry, why: string): Promise<void> {
+    const tracing = entry.tracing;
+    if (!tracing) return;
+    clearInterval(tracing.timer);
+    entry.tracing = null;
+    const traced = this.tabs.get(tracing.tab);
+    if (traced?.recording?.kind === "trace") traced.recording = null;
+    await entry.context.tracing.stop().catch(() => undefined);
+    this.log(`trace of ${tracing.tab} discarded: ${why}`);
   }
 
   // ── sensitive state and live view ────────────────────────────────────────
@@ -888,12 +924,8 @@ export class BrowserBroker {
     const tab = this.tabs.get(id);
     if (!tab) throw new BrowserError("not_found", `There is no tab ${id}.`);
     tab.sensitive = on;
-    if (on && tab.entry.tracing?.tab === id) {
-      tab.entry.tracing = null;
-      tab.recording = null;
-      await tab.entry.context.tracing.stop().catch(() => undefined);
-      this.log(`trace of ${id} discarded for a sensitive step`);
-    }
+    // A trace records every page of its context, the sensitive one included: it is stopped and deleted.
+    if (on && tab.entry.tracing) await this.discardTrace(tab.entry, `tab ${id} entered a sensitive step`);
     const op = this.operations.get(tab.operation);
     if (op) this.updateLive(op);
     return this.info(tab);
@@ -988,7 +1020,8 @@ export class BrowserBroker {
         await this.closeContext(entry);
       }
     }
-    if (this.privateBrowser && ![...this.contexts.values()].some((entry) => entry.profile === null)) {
+    const startingPrivate = [...this.launching.keys()].some((key) => key.startsWith("private:"));
+    if (this.privateBrowser && !startingPrivate && ![...this.contexts.values()].some((entry) => entry.profile === null)) {
       const browser = this.privateBrowser;
       this.privateBrowser = null;
       await (await browser.catch(() => null))?.close().catch(() => undefined);

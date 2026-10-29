@@ -4,14 +4,24 @@
  * each lease says how long it may live. The janitor stops a lease when it expires, when its process
  * ends (taking dependent leases with it) and, at start-up, whatever a runtime that crashed left
  * behind, from a small state file in the data folder. A recorded process is only signalled while
- * its start time still matches, so a reused process id is never hit.
+ * its start time still matches, so a reused process id is never hit. When its leader is gone, its
+ * group is signalled only if a member still carries the lease's marker in its environment
+ * (`ENSEMBLE_CAPTURE_LEASE`, readable on Linux).
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 
 export type LeaseKind = "display" | "window-manager" | "app" | "recording";
+
+/** Set in the environment of every process capture starts, to the id of its lease. */
+export const LEASE_ENV = "ENSEMBLE_CAPTURE_LEASE";
+
+/** A lease id, made before its process starts so the process can carry it. */
+export function newLeaseId(kind: LeaseKind): string {
+  return `${kind}-${randomBytes(6).toString("hex")}`;
+}
 
 export type LeaseRecord = {
   id: string;
@@ -37,6 +47,10 @@ export type ProcessOps = {
   alive(pid: number): boolean;
   groupAlive(pid: number): boolean;
   identity(pid: number): string | null;
+  /** Processes in the group (Linux; empty where it cannot be read). */
+  groupMembers(pgid: number): number[];
+  /** Whether the process's environment has this `NAME=value` entry (Linux; false where it cannot be read). */
+  environHas(pid: number, entry: string): boolean;
   signalGroup(pid: number, signal: NodeJS.Signals): void;
   removeFile(path: string): void;
   now(): number;
@@ -70,15 +84,50 @@ function signalOk(target: number, signal: NodeJS.Signals | 0): boolean {
   }
 }
 
+/** Linux: the processes whose process group is `pgid` (field 5 of /proc/<pid>/stat). */
+export function linuxGroupMembers(pgid: number): number[] {
+  if (process.platform !== "linux") return [];
+  const members: number[] = [];
+  for (const name of readdirSafe("/proc")) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const stat = readFileSync(`/proc/${name}/stat`, "utf8");
+      if (Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]) === pgid) members.push(Number(name));
+    } catch {
+      // It ended while we looked.
+    }
+  }
+  return members;
+}
+
+function readdirSafe(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+function linuxEnvironHas(pid: number, entry: string): boolean {
+  if (process.platform !== "linux") return false;
+  try {
+    return readFileSync(`/proc/${pid}/environ`, "latin1").split("\0").includes(entry);
+  } catch {
+    return false;
+  }
+}
+
 export const realProcessOps = (): ProcessOps => ({
   selfPid: process.pid,
   alive: (pid) => signalOk(pid, 0),
   groupAlive: (pid) => (process.platform === "win32" ? signalOk(pid, 0) : signalOk(-pid, 0)),
   identity: (pid) => processIdentity(pid),
+  groupMembers: (pgid) => linuxGroupMembers(pgid),
+  environHas: (pid, entry) => linuxEnvironHas(pid, entry),
   signalGroup: (pid, signal) => {
     signalOk(process.platform === "win32" ? pid : -pid, signal);
   },
-  removeFile: (path) => rmSync(path, { force: true }),
+  removeFile: (path) => rmSync(path, { force: true, recursive: true }),
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
@@ -130,7 +179,7 @@ export class LeaseTable {
   add(input: Omit<LeaseRecord, "owner" | "createdAt" | "identity" | "id"> & { id?: string }): LeaseRecord {
     const record: LeaseRecord = {
       ...input,
-      id: input.id ?? `${input.kind}-${randomBytes(4).toString("hex")}`,
+      id: input.id ?? newLeaseId(input.kind),
       identity: this.ops.identity(input.pid),
       owner: { pid: this.ops.selfPid, identity: this.selfIdentity },
       createdAt: this.ops.now(),
@@ -162,10 +211,18 @@ export class LeaseTable {
     return record.identity === null || this.ops.identity(record.pid) === record.identity;
   }
 
+  /**
+   * Whether signalling the record's process group hits only what we started: its leader is the
+   * process we recorded, or the leader is gone and a member still carries this lease's marker.
+   */
+  private ours(record: LeaseRecord): boolean {
+    if (this.same(record)) return true;
+    if (this.ops.alive(record.pid) || !this.ops.groupAlive(record.pid)) return false;
+    return this.ops.groupMembers(record.pid).some((member) => this.ops.environHas(member, `${LEASE_ENV}=${record.id}`));
+  }
+
   private async stopGroup(record: LeaseRecord, graceMs: number): Promise<void> {
-    const leaderSame = this.same(record);
-    // A dead leader with live members is still our group: its id cannot be reused while they live.
-    if (!leaderSame && (this.ops.alive(record.pid) || !this.ops.groupAlive(record.pid))) return;
+    if (!this.ours(record)) return;
     this.ops.signalGroup(record.pid, "SIGTERM");
     const deadline = this.ops.now() + graceMs;
     while (this.ops.groupAlive(record.pid) && this.ops.now() < deadline) await this.ops.sleep(50);
@@ -246,7 +303,7 @@ export class LeaseTable {
   /** On process exit: kills every group this runtime holds, at once, and records that. */
   endAllSync(): void {
     for (const record of this.leases.values()) {
-      if (this.same(record) || (!this.ops.alive(record.pid) && this.ops.groupAlive(record.pid))) this.ops.signalGroup(record.pid, "SIGKILL");
+      if (this.ours(record)) this.ops.signalGroup(record.pid, "SIGKILL");
       this.cleanFiles(record);
     }
     this.leases.clear();

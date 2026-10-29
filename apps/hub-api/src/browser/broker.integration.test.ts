@@ -20,6 +20,7 @@ import { chooseVideoEncoder, findFfmpegs } from "../capture/ffmpeg.js";
 const chromium = findChromium({ headless: true });
 const skip = chromium ? false : "no Chromium on this computer (run `ensemble capture setup`)";
 const SECRET = "correct-horse-battery-staple";
+const QUOTED_SECRET = 'S3cr"et\\w0rd!';
 
 const PAGES: Record<string, string> = {
   "/": `<!doctype html><title>Home</title>
@@ -35,12 +36,18 @@ const PAGES: Record<string, string> = {
   "/plain": `<!doctype html><title>Plain</title><p style="font-size:40px">Nothing secret here</p>`,
   "/moving": `<!doctype html><title>Moving</title><style>#b{width:80px;height:80px;background:#06c;animation:m 1s linear infinite alternate}@keyframes m{to{transform:translateX(400px)}}</style><div id="b"></div>`,
   "/next": `<!doctype html><title>Next</title><p>Signed in</p>`,
+  "/fields": `<!doctype html><title>Fields</title>
+    <label>Password <input id="hint" type="password" placeholder="Enter your password" value="pl4ceholder-pass"></label>
+    <label>Code <input autocomplete="one-time-code" placeholder="6 digits" value="913377"></label>
+    <p>Shown: ${QUOTED_SECRET.replace(/</g, "&lt;")}</p>
+    <iframe srcdoc="<input autocomplete='cc-number' value='4242 4242 4242 4242' style='width:300px;height:40px;font-size:24px'>" style="position:absolute;left:0;top:200px;width:400px;height:100px;border:0"></iframe>`,
+  "/opener": `<!doctype html><title>Opener</title><button onclick="window.open('/next')">Sign in with a popup</button>`,
 };
 
 let server: Server;
 let base = "";
 let root = "";
-const rules: PrivacyRules = { secretValues: [SECRET] };
+const rules: PrivacyRules = { secretValues: [SECRET, QUOTED_SECRET] };
 
 test.before(async () => {
   root = mkdtempSync(join(tmpdir(), "ensemble-broker-"));
@@ -160,6 +167,47 @@ test("a screenshot masks password and code fields and is held when the page show
     const snap = await op.snapshot(opened.tab);
     assert.ok(!snap.snapshot.includes(SECRET));
     assert.match(snap.snapshot, /\[hidden\]/);
+  } finally {
+    await broker.shutdown();
+  }
+});
+
+test("values split by a placeholder, secrets with quotes, and code fields inside frames stay hidden", { skip, timeout: 60_000 }, async () => {
+  const broker = newBroker();
+  try {
+    const op = broker.operation("job-fields", { evidenceDir: evidence("fields") });
+    const opened = await op.open(`${base}/fields`);
+    const snap = await op.snapshot(opened.tab);
+    for (const value of ["pl4ceholder-pass", "913377", 'S3cr\\"et', "w0rd!"]) assert.ok(!snap.snapshot.includes(value), `${value} is not in:\n${snap.snapshot}`);
+    assert.match(snap.snapshot, /placeholder: Enter your password/, "the placeholder stays");
+    const shot = await op.screenshot(opened.tab, { name: "fields" });
+    assert.ok((shot.masked ?? 0) >= 3, "fields in frames are counted");
+    const image = await decodePng(readFileSync(shot.path));
+    const at = (220 * image.width + 150) * 4;
+    assert.deepEqual([...image.data.subarray(at, at + 3)], [255, 0, 255], "the card field inside the frame is masked");
+    assert.equal(shot.held, true, "the quoted secret on the page holds the screenshot");
+  } finally {
+    await broker.shutdown();
+  }
+});
+
+test("a trace covers its whole context: it is refused next to a sensitive page and dropped when a popup signs in", { skip, timeout: 60_000 }, async () => {
+  const broker = newBroker();
+  try {
+    const op = broker.operation("job-trace", { evidenceDir: evidence("trace") });
+    const opener = await op.open(`${base}/opener`, { private: true });
+    await op.record(opener.tab, { kind: "trace", action: "start" });
+    const snap = await op.snapshot(opener.tab);
+    await op.click(opener.tab, refOf(snap.snapshot, /button "Sign in with a popup" \[ref=(\w+)\]/));
+    await waitFor(() => broker.status().tabs === 2, 5_000);
+    const popup = (await op.tabs()).find((tab) => tab.tab !== opener.tab)!;
+    await broker.markSensitive(popup.tab, true);
+    await rejects(op.record(opener.tab, { kind: "trace", action: "stop" }), "not_found");
+    await rejects(op.record(opener.tab, { kind: "trace", action: "start" }), "busy");
+    await broker.markSensitive(popup.tab, false);
+    await op.record(opener.tab, { kind: "trace", action: "start" });
+    const stopped = await op.record(opener.tab, { kind: "trace", action: "stop" });
+    assert.ok(stopped.file && existsSync(stopped.file.path));
   } finally {
     await broker.shutdown();
   }

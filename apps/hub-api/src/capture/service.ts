@@ -15,16 +15,16 @@ import { basename, dirname, extname, join } from "node:path";
 import type { Page } from "playwright-core";
 import type { Check } from "../node/report.js";
 import { BrowserBroker, BrowserError, elementSelector } from "../browser/broker.js";
-import { scanPage, sensitiveMasks } from "../browser/page-scan.js";
+import { readableSnapshot, scanPage, sensitiveMasks } from "../browser/page-scan.js";
 import { captureStateDir, ensembleDataHome } from "../browser/paths.js";
-import { hasSecrets, holdReason, SECRET_MIN_LENGTH, type PrivacyRules } from "../browser/privacy.js";
+import { hasSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "../browser/privacy.js";
 import { startCommand, startElectron, virtualDisplayEnv, type CommandWrapper, type StartedElectron, type StartedProcess } from "./apps.js";
 import { captureCapabilities, type CaptureCapabilities } from "./capabilities.js";
 import { checkImage, checkTextIn, crashLine } from "./checks.js";
-import { findDisplayTools, findWindow, processTree, VirtualDisplay, type DisplayTools, type FoundWindow } from "./display.js";
+import { cookieFolder, findDisplayTools, findWindow, processTree, VirtualDisplay, type DisplayTools, type FoundWindow } from "./display.js";
 import { chooseVideoEncoder, findFfmpegs, x11RecordArgs, x11ScreenshotArgs, type FfmpegInfo } from "./ffmpeg.js";
 import { MAX_FPS, RealtimeRecording, recordStepped } from "./frames.js";
-import { LeaseTable } from "./leases.js";
+import { LEASE_ENV, LeaseTable, newLeaseId } from "./leases.js";
 import { CaptureError, DEFAULT_MAX_DURATION_MS, reserveFile, slugName, stillFile, VideoEncoder, type MediaFile } from "./media.js";
 import { probeVideo } from "./probe.js";
 import { runCommand } from "./system.js";
@@ -38,6 +38,11 @@ export type CaptureRequest = {
   evidenceDir: string;
   /** The longest video (default two minutes); the owner's setting. */
   maxVideoMs?: number;
+  /**
+   * Start apps without the OS sandbox: only when the owner allowed it for this work (for example
+   * on a computer whose sandbox is weak). Otherwise starting an app needs `wrapCommand`.
+   */
+  unsandboxedApps?: boolean;
 };
 
 export type WebTarget = {
@@ -108,7 +113,7 @@ export type CaptureServiceOptions = {
   dataHome?: string;
   leases?: LeaseTable;
   log?: (message: string) => void;
-  /** Wraps a GUI app's command, for the OS sandbox. */
+  /** Puts an app started for capture (a GUI command or Electron) inside the OS sandbox. */
   wrapCommand?: CommandWrapper;
   appLeaseMs?: number;
   displayTools?: () => DisplayTools;
@@ -434,15 +439,25 @@ export class CaptureService {
     const output = await reserveFile(request.evidenceDir, input.name, input.choice.extension);
     const encoder = new VideoEncoder({ choice: input.choice, output, fps: input.fps, width: size.width, height: size.height, maxDurationMs: input.maxMs, poster: { frame: "last" } });
     const rules = await this.broker.privacyRules();
-    const watch: { held: string | null } = { held: null };
+    const watch: { held: string | null; never: boolean } = { held: null, never: false };
+    // Screencast frames cannot be masked: anything sensitive seen while recording holds the video, and a
+    // site the owner never wants captured is not recorded at all.
     const check = async () => {
-      if (watch.held || page.isClosed()) return;
+      if (page.isClosed()) return;
       const scan = await scanPage(page, rules).catch(() => null);
       if (!scan) return;
-      watch.held = scan.site ? PREVIEW_REASON : hasSecrets(scan.hits) ? holdReason(scan.hits) : scan.exposedFields ? "A one-time code or card field was on screen." : null;
+      watch.never = scan.site === "never";
+      watch.held ??= scan.site === "never" ? "The recording reached a site the owner never wants captured." : scan.site ? PREVIEW_REASON : hasSecrets(scan.hits) ? holdReason(scan.hits) : scan.exposedFields ? "A one-time code or card field was on screen." : null;
     };
     await check();
-    const recording = await RealtimeRecording.start(page, encoder, { fps: input.fps, maxDurationMs: input.maxMs, size, check });
+    const paused = () => watch.never || (!page.isClosed() && siteRule(page.url(), rules) === "never");
+    let recording: RealtimeRecording;
+    try {
+      recording = await RealtimeRecording.start(page, encoder, { fps: input.fps, maxDurationMs: input.maxMs, size, check, paused });
+    } catch (error) {
+      await encoder.abort();
+      throw new CaptureError("failed", `Could not start recording: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+    }
     const started = Date.now();
     try {
       await this.runSteps(page, input.steps);
@@ -494,12 +509,13 @@ export class CaptureService {
     const output = await reserveFile(request.evidenceDir, slugName(input.name, `app-${entry.id}-video`), choice.extension);
     const region = { display: entry.display!.display, ...window };
     const env = virtualDisplayEnv(process.env, entry.display!.env);
-    const recorder = spawn(grabber.path, x11RecordArgs({ region, fps, seconds: durationMs / 1000, choice, output }), { env, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"] });
+    const recordingId = newLeaseId("recording");
+    const recorder = spawn(grabber.path, x11RecordArgs({ region, fps, seconds: durationMs / 1000, choice, output }), { env: { ...env, [LEASE_ENV]: recordingId }, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     recorder.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < 4_000) stderr += chunk.toString("utf8");
     });
-    const lease = this.leases.add({ kind: "recording", pid: recorder.pid!, label: `recording of ${entry.id}`, operation: request.operation, expiresAt: Date.now() + durationMs + 60_000, parent: entry.leaseId });
+    const lease = this.leases.add({ id: recordingId, kind: "recording", pid: recorder.pid!, label: `recording of ${entry.id}`, operation: request.operation, expiresAt: Date.now() + durationMs + 60_000, parent: entry.leaseId });
     const code = await new Promise<number | null>((resolve) => {
       recorder.once("error", () => resolve(null));
       recorder.once("close", (exit) => resolve(exit));
@@ -596,17 +612,25 @@ export class CaptureService {
     if (kind === "gui" && !input.command?.trim()) throw new CaptureError("bad_input", "Give the command that starts the app.");
     const leaseMs = Math.min(Math.max(10_000, input.leaseMs ?? this.options.appLeaseMs ?? DEFAULT_APP_LEASE), 24 * 60 * 60_000);
     const linux = this.platform === "linux";
-    const display = linux ? await VirtualDisplay.start({ tools: this.tools(), leases: this.leases, stateDir: captureStateDir(this.dataHome()), size: input.size, operation: request.operation, leaseMs }) : null;
+    const tools = linux ? this.tools() : null;
+    if (tools && !tools.xvfb) throw new CaptureError("unavailable", "Desktop apps are captured on a private virtual display, which needs Xvfb. Run `ensemble capture setup` to see the command that installs it.");
+    // An app the agent built runs its own code: in the OS sandbox it cannot read sign-ins, keys or the browser's cookies.
+    const wrap = this.options.wrapCommand;
+    if (!wrap && !request.unsandboxedApps) {
+      throw new CaptureError("refused", "Apps started for capture run in this computer's OS sandbox, and none is set up for capture here. The owner can allow running this app without the sandbox for this work.");
+    }
+    const display = tools ? await VirtualDisplay.start({ tools, leases: this.leases, size: input.size, operation: request.operation, leaseMs }) : null;
     const env = { ...(display ? virtualDisplayEnv(process.env, display.env) : process.env), ...(input.env ?? {}) };
     this.counter += 1;
     const id = `app${this.counter}`;
     try {
       let entry: AppEntry;
       if (kind === "electron") {
-        const electron = await startElectron({ appDir: input.cwd, entry: input.entry, args: input.args, env, leases: this.leases, operation: request.operation, leaseMs, parent: display?.lease.id, linux });
+        const scratchDir = wrap ? (display ? dirname(display.env.XAUTHORITY) : cookieFolder()) : undefined;
+        const electron = await startElectron({ appDir: input.cwd, entry: input.entry, args: input.args, env, leases: this.leases, operation: request.operation, leaseMs, parent: display?.lease.id, linux, wrap, scratchDir, removeScratch: Boolean(wrap && !display) });
         entry = { id, kind, operation: request.operation, cwd: input.cwd, display, electron, leaseId: electron.lease.id, startedAt: Date.now(), title: input.title, ended: null };
       } else {
-        const started = await startCommand({ command: input.command!, cwd: input.cwd, env, leases: this.leases, operation: request.operation, leaseMs, parent: display?.lease.id, label: `app ${input.command!.slice(0, 80)}`, wrap: this.options.wrapCommand });
+        const started = await startCommand({ command: input.command!, cwd: input.cwd, env, leases: this.leases, operation: request.operation, leaseMs, parent: display?.lease.id, label: `app ${input.command!.slice(0, 80)}`, wrap });
         entry = { id, kind, operation: request.operation, cwd: input.cwd, display, process: started, leaseId: started.lease.id, startedAt: Date.now(), title: input.title, ended: null };
         const self = entry;
         started.child.once("exit", () => {
@@ -704,8 +728,9 @@ export class CaptureService {
       const rules: PrivacyRules = await this.broker.privacyRules();
       const scan = await scanPage(page, rules);
       if (scan.site === "never") throw new CaptureError("refused", "The owner marked this site as never captured.");
+      // Field values reach the check only through the redacted snapshot, never raw.
       const visible = await page.locator("body").innerText({ timeout: 10_000 }).catch(() => "");
-      const aria = await page.ariaSnapshot({ timeout: 10_000 }).catch(() => "");
+      const aria = await readableSnapshot(page, rules, 10_000).catch(() => "");
       return `${await page.title().catch(() => "")}\n${visible}\n${aria}`;
     };
     if (target.app) return checkTextIn(await read(await this.electronWindow(this.running(this.app(request, target.app, "electron")), target.window)), expected, options);

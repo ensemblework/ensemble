@@ -35,6 +35,7 @@ test("secrets: saved values (six characters or more) and key shapes are found an
   assert.deepEqual(findSecrets("-----BEGIN OPENSSH PRIVATE KEY-----\nabc", {}), { savedSecrets: 0, keyLike: 1 });
   assert.deepEqual(findSecrets("an ordinary sentence about passwords", {}), { savedSecrets: 0, keyLike: 0 });
   assert.equal(hideSecrets("a s3cr3t-value and sk-abcdefghijklmnop1234", rules), "a [hidden] and [redacted]");
+  assert.equal(hideSecrets('- paragraph: "is S3cr\\"et\\\\w0rd!"', { secretValues: ['S3cr"et\\w0rd!'] }), '- paragraph: "is [hidden]"', "the escaped form inside a quoted snapshot value");
 });
 
 test("snapshots: password, code and marked field values are hidden, with multi-line values", () => {
@@ -49,6 +50,9 @@ test("snapshots: password, code and marked field values are hidden, with multi-l
     '  - searchbox "Search" [ref=e6]',
   ].join("\n");
   assert.deepEqual(valueFieldRefs(snapshot), ["e2", "e3", "e4"]);
+  const withPlaceholder = ['- textbox "Password" [ref=e7]:', "  - /placeholder: Enter your password", "  - text: owner-typed-Pa55word", '- button "Go" [ref=e8]'].join("\n");
+  assert.deepEqual(valueFieldRefs(withPlaceholder), ["e7"], "a value under the field's line makes it a candidate");
+  assert.equal(redactSnapshot(withPlaceholder, new Set(["e7"]), {}), ['- textbox "Password" [ref=e7]: [hidden]', "  - /placeholder: Enter your password", '- button "Go" [ref=e8]'].join("\n"));
   const redacted = redactSnapshot(snapshot, new Set(["e3", "e4"]), { secretValues: ["fieldnote.example"] });
   assert.equal(
     redacted,

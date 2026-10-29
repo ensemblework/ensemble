@@ -155,7 +155,8 @@ export class RealtimeRecording {
       size: options.size,
       quality: 85,
       onFrame: (frame) => {
-        if (recording.result || options.paused?.()) return;
+        if (recording.result || recording.feeder.failed || options.paused?.()) return;
+        // The feeder never rejects: an encoder failure is kept and reported by stop().
         return recording.feeder.push(frame.data, frame.timestamp);
       },
     });
@@ -164,7 +165,10 @@ export class RealtimeRecording {
       recording.checkTimer = setInterval(() => {
         if (recording.checking) return;
         recording.checking = true;
-        void options.check!().finally(() => (recording.checking = false));
+        void options
+          .check!()
+          .catch(() => undefined)
+          .finally(() => (recording.checking = false));
       }, 1_000);
     }
     return recording;
@@ -180,7 +184,12 @@ export class RealtimeRecording {
       if (this.checkTimer) clearInterval(this.checkTimer);
       await this.page.screencast.stop().catch(() => undefined);
       const end = Math.min(Date.now(), this.startedAt + this.options.maxDurationMs);
-      await this.feeder.end(end);
+      try {
+        await this.feeder.end(end);
+      } catch (error) {
+        await this.encoder.abort();
+        throw error instanceof CaptureError ? error : new CaptureError("failed", `The recording failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       const file = await this.encoder.finish();
       if (Date.now() - this.startedAt >= this.options.maxDurationMs) file.truncated = true;
       return file;

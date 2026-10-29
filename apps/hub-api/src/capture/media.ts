@@ -261,6 +261,8 @@ export class ConstantRateFeeder {
   private emitted = 0;
   private chain: Promise<unknown> = Promise.resolve();
   private stopped = false;
+  /** The encoder's failure, kept for `end`: a frame callback never gets a rejected promise. */
+  private failure: unknown = null;
 
   constructor(
     private readonly encoder: Pick<VideoEncoder, "write" | "full">,
@@ -274,11 +276,16 @@ export class ConstantRateFeeder {
   }
 
   private emit(frame: Buffer, count: number): Promise<unknown> {
-    this.chain = this.chain.then(async () => {
-      for (let i = 0; i < count && !this.stopped; i += 1) {
-        if (!(await this.encoder.write(frame))) this.stopped = true;
-      }
-    });
+    this.chain = this.chain
+      .then(async () => {
+        for (let i = 0; i < count && !this.stopped; i += 1) {
+          if (!(await this.encoder.write(frame))) this.stopped = true;
+        }
+      })
+      .catch((error: unknown) => {
+        this.failure ??= error;
+        this.stopped = true;
+      });
     return this.chain;
   }
 
@@ -293,7 +300,7 @@ export class ConstantRateFeeder {
     return previous && count ? this.emit(previous, count) : this.chain;
   }
 
-  /** Fills the video up to `endMs` with the newest frame and waits for every write. */
+  /** Fills the video up to `endMs` with the newest frame and waits for every write; throws the encoder's failure. */
   async end(endMs: number): Promise<void> {
     if (this.last && !this.stopped) {
       const count = Math.max(this.emitted ? 0 : 1, this.due(endMs));
@@ -301,9 +308,14 @@ export class ConstantRateFeeder {
       await this.emit(this.last, count);
     }
     await this.chain;
+    if (this.failure) throw this.failure;
   }
 
   get limitReached(): boolean {
     return this.stopped || this.encoder.full;
+  }
+
+  get failed(): boolean {
+    return this.failure !== null;
   }
 }

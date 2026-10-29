@@ -7,10 +7,11 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaptureError } from "./media.js";
-import type { LeaseRecord, LeaseTable } from "./leases.js";
+import { LEASE_ENV, newLeaseId, type LeaseRecord, type LeaseTable } from "./leases.js";
 import { findOnPath, isExecutable, runCommand, type ExecutableCheck, type RunResult } from "./system.js";
 
 export const DEFAULT_SIZE = { width: 1920, height: 1080 };
@@ -181,6 +182,17 @@ export async function findWindow(input: { env: NodeJS.ProcessEnv; size: { width:
   return { id: "root", title: "", x: 0, y: 0, ...input.size, how: "display" };
 }
 
+/**
+ * A private folder for one display's cookie: in the user's runtime folder (`XDG_RUNTIME_DIR`) when
+ * there is one, else the temporary folder. It is outside Ensemble's data folder on purpose: an app
+ * started in the OS sandbox, which denies that folder, must still read its display's cookie.
+ */
+export function cookieFolder(env: NodeJS.ProcessEnv = process.env): string {
+  const runtime = env.XDG_RUNTIME_DIR?.trim();
+  const base = runtime || tmpdir();
+  return mkdtempSync(join(base, "ensemble-display-"));
+}
+
 /** A running virtual display: its X server, window manager and cookie, under a lease. */
 export class VirtualDisplay {
   private constructor(
@@ -193,14 +205,15 @@ export class VirtualDisplay {
     private readonly server: ChildProcess,
   ) {}
 
-  static async start(input: { tools: DisplayTools; leases: LeaseTable; stateDir: string; size?: { width: number; height: number }; operation?: string; leaseMs: number; now?: () => number }): Promise<VirtualDisplay> {
+  static async start(input: { tools: DisplayTools; leases: LeaseTable; size?: { width: number; height: number }; operation?: string; leaseMs: number; now?: () => number; cookieDir?: string }): Promise<VirtualDisplay> {
     if (!input.tools.xvfb) throw new CaptureError("unavailable", "Desktop apps are captured on a private virtual display, which needs Xvfb. Run `ensemble capture setup` to see the command that installs it.");
     const size = input.size ?? DEFAULT_SIZE;
-    const authDir = join(input.stateDir, "displays");
+    const authDir = input.cookieDir ?? cookieFolder();
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
-    const authFile = join(authDir, `xauth-${randomBytes(6).toString("hex")}`);
+    const authFile = join(authDir, "xauthority");
     writeFileSync(authFile, xauthorityEntry(randomBytes(16)), { mode: 0o600 });
-    const server = spawn(input.tools.xvfb, xvfbArgs({ ...size, authFile }), { detached: true, stdio: ["ignore", "ignore", "pipe", "pipe"] });
+    const leaseId = newLeaseId("display");
+    const server = spawn(input.tools.xvfb, xvfbArgs({ ...size, authFile }), { detached: true, stdio: ["ignore", "ignore", "pipe", "pipe"], env: { ...process.env, [LEASE_ENV]: leaseId } });
     let stderr = "";
     server.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < 4_000) stderr += chunk.toString("utf8");
@@ -235,22 +248,24 @@ export class VirtualDisplay {
     // Only the cookie is ours to delete: an X server clears a stale lock file and socket itself, and
     // by the time a crash is cleaned up another server may own that display number.
     const lease = input.leases.add({
+      id: leaseId,
       kind: "display",
       pid: server.pid!,
       label: `virtual display ${display}`,
       operation: input.operation,
       expiresAt: now + input.leaseMs,
-      files: [authFile],
+      files: [authDir],
     });
     const env = { DISPLAY: display, XAUTHORITY: authFile };
     let windowManager: string | null = null;
     const wm = input.tools.windowManager;
     if (wm) {
-      const manager = spawn(wm.path, wm.args, { detached: true, stdio: "ignore", env: { ...process.env, ...env } });
+      const managerId = newLeaseId("window-manager");
+      const manager = spawn(wm.path, wm.args, { detached: true, stdio: "ignore", env: { ...process.env, ...env, [LEASE_ENV]: managerId } });
       manager.on("error", () => undefined);
       if (manager.pid) {
         manager.unref();
-        input.leases.add({ kind: "window-manager", pid: manager.pid, label: `${wm.name} on ${display}`, operation: input.operation, expiresAt: lease.expiresAt, parent: lease.id });
+        input.leases.add({ id: managerId, kind: "window-manager", pid: manager.pid, label: `${wm.name} on ${display}`, operation: input.operation, expiresAt: lease.expiresAt, parent: lease.id });
         windowManager = wm.name;
       }
     }

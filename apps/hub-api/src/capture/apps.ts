@@ -6,10 +6,11 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 import { redactKeys } from "../lib/redact.js";
-import type { LeaseRecord, LeaseTable } from "./leases.js";
+import { LEASE_ENV, newLeaseId, type LeaseRecord, type LeaseTable } from "./leases.js";
 import { CaptureError } from "./media.js";
 
 /** The environment for a program on a virtual display: X11 only, and nothing that reaches the owner's desktop session. */
@@ -86,7 +87,21 @@ export class OutputTail {
   }
 }
 
+/**
+ * Puts a program inside the OS sandbox: given the program, its arguments, folder and environment
+ * (with DISPLAY and XAUTHORITY for its virtual display), returns the command that runs it confined,
+ * as `prepareSpawn` in workspace/sandbox/spawn.ts does. Arguments added after the returned ones
+ * must reach the program (an Electron launch appends its own).
+ */
 export type CommandWrapper = (input: { program: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ program: string; args: string[]; env?: NodeJS.ProcessEnv }>;
+
+const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
+/** A launcher script that runs the wrapped program with the arguments it is given. */
+export async function wrappedLauncher(path: string, wrapped: { program: string; args: string[] }): Promise<string> {
+  await writeFile(path, `#!/bin/sh\nexec ${[wrapped.program, ...wrapped.args].map(shellQuote).join(" ")} "$@"\n`, { mode: 0o700 });
+  return path;
+}
 
 export type StartedProcess = { child: ChildProcess; lease: LeaseRecord; output: OutputTail };
 
@@ -105,16 +120,18 @@ export async function startCommand(input: {
 }): Promise<StartedProcess> {
   if (!existsSync(input.cwd)) throw new CaptureError("bad_input", `The folder ${input.cwd} does not exist.`);
   const shell = process.platform === "win32" ? { program: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", input.command] } : { program: "/bin/sh", args: ["-c", input.command] };
-  const wrapped: { program: string; args: string[]; env?: NodeJS.ProcessEnv } = input.wrap ? await input.wrap({ ...shell, cwd: input.cwd, env: input.env }) : shell;
+  const leaseId = newLeaseId("app");
+  const env = { ...input.env, [LEASE_ENV]: leaseId };
+  const wrapped: { program: string; args: string[]; env?: NodeJS.ProcessEnv } = input.wrap ? await input.wrap({ ...shell, cwd: input.cwd, env }) : shell;
   const output = new OutputTail();
-  const child = spawn(wrapped.program, wrapped.args, { cwd: input.cwd, env: wrapped.env ?? input.env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = spawn(wrapped.program, wrapped.args, { cwd: input.cwd, env: wrapped.env ?? env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
   child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
   await new Promise<void>((resolveStart, reject) => {
     child.once("spawn", () => resolveStart());
     child.once("error", (error) => reject(new CaptureError("failed", `Could not start the app: ${error.message}`)));
   });
-  const lease = input.leases.add({ kind: "app", pid: child.pid!, label: input.label, operation: input.operation, expiresAt: (input.now?.() ?? Date.now()) + input.leaseMs, parent: input.parent });
+  const lease = input.leases.add({ id: leaseId, kind: "app", pid: child.pid!, label: input.label, operation: input.operation, expiresAt: (input.now?.() ?? Date.now()) + input.leaseMs, parent: input.parent });
   return { child, lease, output };
 }
 
@@ -133,15 +150,28 @@ export async function startElectron(input: {
   linux: boolean;
   now?: () => number;
   timeoutMs?: number;
+  wrap?: CommandWrapper;
+  /** A private folder for the sandbox launcher script; `removeScratch` deletes it with the app's lease. */
+  scratchDir?: string;
+  removeScratch?: boolean;
 }): Promise<StartedElectron> {
   const electron = findElectron(input.appDir);
   if (!electron) throw new CaptureError("unavailable", `No Electron in ${input.appDir}: install the app's dependencies first (npm install), so node_modules/electron is there.`);
   const args = [input.entry ?? ".", ...(input.args ?? [])];
   if (input.linux) args.unshift("--ozone-platform=x11");
-  const env = Object.fromEntries(Object.entries(input.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const leaseId = newLeaseId("app");
+  let executablePath = electron.executablePath;
+  let launchEnv: NodeJS.ProcessEnv = { ...input.env, [LEASE_ENV]: leaseId };
+  if (input.wrap) {
+    if (!input.scratchDir) throw new CaptureError("failed", "No folder for the sandbox launcher.");
+    const wrapped = await input.wrap({ program: electron.executablePath, args: [], cwd: input.appDir, env: launchEnv });
+    executablePath = await wrappedLauncher(join(input.scratchDir, "electron"), wrapped);
+    launchEnv = wrapped.env ?? launchEnv;
+  }
+  const env = Object.fromEntries(Object.entries(launchEnv).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   let app: ElectronApplication;
   try {
-    app = await _electron.launch({ executablePath: electron.executablePath, args, cwd: input.appDir, env, timeout: input.timeoutMs ?? 30_000 });
+    app = await _electron.launch({ executablePath, args, cwd: input.appDir, env, timeout: input.timeoutMs ?? 30_000 });
   } catch (error) {
     throw new CaptureError("failed", `The Electron app did not start: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
   }
@@ -149,7 +179,16 @@ export async function startElectron(input: {
   const output = new OutputTail();
   child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
   child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
-  const lease = input.leases.add({ kind: "app", pid: child.pid!, label: `Electron app in ${input.appDir}`, operation: input.operation, expiresAt: (input.now?.() ?? Date.now()) + input.leaseMs, parent: input.parent });
+  const lease = input.leases.add({
+    id: leaseId,
+    kind: "app",
+    pid: child.pid!,
+    label: `Electron app in ${input.appDir}`,
+    operation: input.operation,
+    expiresAt: (input.now?.() ?? Date.now()) + input.leaseMs,
+    parent: input.parent,
+    ...(input.removeScratch && input.scratchDir ? { files: [input.scratchDir] } : {}),
+  });
   let window: Page;
   try {
     window = await app.firstWindow({ timeout: input.timeoutMs ?? 30_000 });

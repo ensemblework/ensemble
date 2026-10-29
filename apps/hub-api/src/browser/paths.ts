@@ -38,14 +38,14 @@ export function playwrightBrowsersDir(dataHome: string = ensembleDataHome()): st
   return join(dataHome, "playwright");
 }
 
-/** Capture's own state: the lease file the janitor reads after a crash, and X authority cookies. */
+/** Capture's own state: the lease file the janitor reads after a crash. */
 export function captureStateDir(dataHome: string = ensembleDataHome()): string {
   return join(dataHome, "capture");
 }
 
 /**
  * Folders an agent run must never read or write: the browser profiles (cookies, saved sign-ins)
- * and capture's state (virtual display cookies). Add these to the sandbox's deny list.
+ * and capture's state. Add these to the sandbox's deny list.
  */
 export function browserDeniedPaths(dataHome: string = ensembleDataHome()): string[] {
   return [browserRoot(dataHome), captureStateDir(dataHome)];

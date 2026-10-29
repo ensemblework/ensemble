@@ -250,10 +250,22 @@ test("checks before sending: the page's text, the image, and unsupported targets
 
 test("without Xvfb, desktop apps are refused with the reason and the fix", { timeout: 30_000, skip: process.platform !== "linux" && "Linux only" }, async () => {
   const bare = new CaptureService({ broker, dataHome: join(root, "data-bare"), displayTools: () => ({ xvfb: null, windowManager: null, xdotool: null, xwininfo: null, xprop: null, wmctrl: null }) });
-  const result = await runCaptureTool(bare, "capture_app_start", { kind: "gui", command: "true", cwd: root }, request("bare"));
+  const result = await runCaptureTool(bare, "capture_app_start", { kind: "gui", command: "true", cwd: root }, request("bare", { unsandboxedApps: true }));
   assert.equal(result.ok, false);
   assert.equal(!result.ok && result.error.code, "unavailable");
   assert.match(!result.ok ? result.error.message : "", /Xvfb.*ensemble capture setup/);
+});
+
+test("apps run in the OS sandbox: without a sandbox wrapper, starting one is refused unless the owner allowed it", { timeout: 30_000 }, async () => {
+  const fakeXvfb = { xvfb: "/nonexistent/Xvfb", windowManager: null, xdotool: null, xwininfo: null, xprop: null, wmctrl: null };
+  const strict = new CaptureService({ broker, dataHome: join(root, "data-strict"), displayTools: () => fakeXvfb, platform: "linux" });
+  for (const input of [{ kind: "gui", command: "xeyes", cwd: root }, { kind: "electron", cwd: root }]) {
+    const result = await runCaptureTool(strict, "capture_app_start", input, request("strict"));
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.error.code, "refused");
+    assert.match(!result.ok ? result.error.message : "", /OS sandbox/);
+  }
+  assert.deepEqual(strict.leases.list(), [], "nothing was started");
 });
 
 const xvfb = findDisplayTools().xvfb;
@@ -261,7 +273,7 @@ const xprogram = ["xmessage", "xeyes", "xclock", "xlogo"].map((name) => findOnPa
 const guiSkip = process.platform !== "linux" ? "Linux only" : !xvfb ? "no Xvfb on this computer (sudo apt install xvfb)" : !xprogram ? "no small X program (xmessage, xeyes, xclock, xlogo) to start" : false;
 
 test("a desktop app on a private virtual display: started, found, captured, checked and stopped", { skip: guiSkip, timeout: 120_000 }, async (t) => {
-  const req = request("gui");
+  const req = request("gui", { unsandboxedApps: true });
   const app = await service.appStart(req, { kind: "gui", command: xprogram!.endsWith("xmessage") ? `${xprogram} -center "Hello from the display"` : xprogram!, cwd: root });
   assert.match(app.display ?? "", /^:\d+$/);
   assert.notEqual(app.display, process.env.DISPLAY, "never the owner's display");

@@ -8,29 +8,31 @@
  */
 import type { Locator, Page } from "playwright-core";
 import type { PageElement, PageWindow } from "./page-world.js";
-import { findSecrets, SENSITIVE_SELECTOR, siteRule, valueFieldRefs, type PrivacyRules, type SecretHits } from "./privacy.js";
+import { findSecrets, redactSnapshot, SENSITIVE_SELECTOR, siteRule, valueFieldRefs, type PrivacyRules, type SecretHits } from "./privacy.js";
 
 const MAX_TEXT = 2_000_000;
 const MAX_FRAMES = 20;
 
-type FrameText = { text: string; exposed: number };
+type FrameText = { text: string; exposed: number; passwords: number };
 
 /** Runs in the page: visible text, field values (never password values), and visible code fields with a value. */
 function readFrame([selector, max]: [string, number]): FrameText {
   const w = globalThis as unknown as PageWindow;
   const parts: string[] = [w.document.title, w.document.body ? w.document.body.innerText : ""];
   let exposed = 0;
+  let passwords = 0;
   const fields = w.document.querySelectorAll("input, textarea");
   for (let index = 0; index < fields.length; index += 1) {
     const field = fields[index]!;
     if (!field.value) continue;
     const type = (field.getAttribute("type") ?? "").toLowerCase();
+    if (type === "password") passwords += 1;
     if (type === "password" || type === "hidden") continue;
     parts.push(field.value);
     const visible = field.getClientRects().length > 0 && w.getComputedStyle(field).visibility !== "hidden";
     if (visible && field.matches(selector)) exposed += 1;
   }
-  return { text: parts.join("\n").slice(0, max), exposed };
+  return { text: parts.join("\n").slice(0, max), exposed, passwords };
 }
 
 export type PageScan = {
@@ -39,6 +41,8 @@ export type PageScan = {
   hits: SecretHits;
   /** Visible code or card fields that show their value (masked in screenshots, not in screencast frames). */
   exposedFields: number;
+  /** Password fields with a value: drawn as dots, but kept in a trace's page snapshots. */
+  filledPasswords: number;
 };
 
 export async function scanPage(page: Page, rules: PrivacyRules): Promise<PageScan> {
@@ -46,6 +50,7 @@ export async function scanPage(page: Page, rules: PrivacyRules): Promise<PageSca
   let site: PageScan["site"] = main;
   const texts: string[] = [];
   let exposedFields = 0;
+  let filledPasswords = 0;
   for (const frame of page.frames().slice(0, MAX_FRAMES)) {
     if (frame !== page.mainFrame()) {
       const rule = siteRule(frame.url(), rules);
@@ -55,8 +60,9 @@ export async function scanPage(page: Page, rules: PrivacyRules): Promise<PageSca
     if (!read) continue;
     texts.push(read.text);
     exposedFields += read.exposed;
+    filledPasswords += read.passwords;
   }
-  return { site, hits: findSecrets(texts.join("\n"), rules), exposedFields };
+  return { site, hits: findSecrets(texts.join("\n"), rules), exposedFields, filledPasswords };
 }
 
 /** Runs in the page: is this field one whose value a snapshot must not show? */
@@ -83,7 +89,18 @@ export async function sensitiveSnapshotRefs(page: Page, snapshot: string, limit 
   return { refs, unchecked };
 }
 
-/** Locators masked in every screenshot of this page. */
+/** The page's aria snapshot (with refs) as a model may read it: sensitive field values and secrets hidden. */
+export async function readableSnapshot(page: Page, rules: PrivacyRules, timeout = 15_000): Promise<string> {
+  const raw = await page.ariaSnapshot({ mode: "ai", timeout });
+  const { refs, unchecked } = await sensitiveSnapshotRefs(page, raw);
+  for (const ref of unchecked) refs.add(ref);
+  return redactSnapshot(raw, refs, rules);
+}
+
+/** Locators masked in every screenshot of this page: the sensitive fields of every frame. */
 export function sensitiveMasks(page: Page): Locator[] {
-  return [page.locator(SENSITIVE_SELECTOR)];
+  return page
+    .frames()
+    .slice(0, MAX_FRAMES)
+    .map((frame) => frame.locator(SENSITIVE_SELECTOR));
 }

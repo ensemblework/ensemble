@@ -11,7 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { crc32, deflateSync } from "node:zlib";
 import { playwrightRevisions } from "../browser/chromium.js";
-import { virtualDisplayEnv, findElectron, OutputTail } from "./apps.js";
+import { virtualDisplayEnv, findElectron, OutputTail, wrappedLauncher } from "./apps.js";
 import { computeCapabilities, systemInstallCommand, type CapabilityProbe } from "./capabilities.js";
 import { blankVerdict, checkImage, checkTextIn, crashLine } from "./checks.js";
 import { findWindow, parseWmctrl, parseXdotoolGeometry, parseXpropPid, parseXwininfoTree, processTree, xauthorityEntry, xvfbArgs, type DisplayTools } from "./display.js";
@@ -411,6 +411,33 @@ test("real-time frames are resampled to a constant rate: each slot shows the new
   await limited.end(2_000);
   assert.equal(count, 3, "writing stops at the encoder's limit");
   assert.equal(limited.limitReached, true);
+});
+
+test("an encoder failure during real-time recording never reaches the frame callback; it comes back from end()", async () => {
+  let writes = 0;
+  const failing = { full: false, write: async () => {
+    writes += 1;
+    if (writes === 2) throw new Error("ffmpeg stopped (exit 1)");
+    return true;
+  } };
+  const feeder = new ConstantRateFeeder(failing, 10);
+  const pushes = [feeder.push(Buffer.from("a"), 0), feeder.push(Buffer.from("b"), 300), feeder.push(Buffer.from("c"), 600)];
+  for (const pushed of pushes) await assert.doesNotReject(pushed);
+  assert.equal(feeder.failed, true);
+  assert.equal(writes, 2, "writing stops at the failure");
+  await assert.rejects(feeder.end(900), /ffmpeg stopped/);
+});
+
+test("a sandbox launcher passes Electron's own arguments through to the wrapped program", { skip: process.platform === "win32" && "a shell script" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ensemble-launcher-"));
+  try {
+    const script = await wrappedLauncher(join(dir, "electron"), { program: "/bin/echo", args: ["--sandboxed", "it's quoted", "$HOME"] });
+    const run = spawnSync(script, ["--remote-debugging-port=0", "main.js"], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout.trim(), "--sandboxed it's quoted $HOME --remote-debugging-port=0 main.js");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("file names: slugs, and reserving never overwrites", async () => {
