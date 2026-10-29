@@ -355,7 +355,16 @@ export type NodeApprovalCard = {
   roomId: string;
   body: string;
   createdAt: string;
-  data: { type?: "tools" | "post" | "session" | "secret"; status?: string; error?: string | null; name?: string; computer?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
+  data: {
+    type?: "tools" | "post" | "session" | "secret" | "node_proposal" | "disclosure" | "peer_request";
+    /** Session cards: start, send, or hand_over (hand a session to another node). */
+    action?: string;
+    status?: string;
+    error?: string | null;
+    name?: string;
+    computer?: string | null;
+    calls?: Array<{ callId: string; name: string; summary: string }>;
+  };
   node: { id: string; slug: string; name: string; role: string } | null;
   room: { id: string; title: string; kind: string } | null;
 };

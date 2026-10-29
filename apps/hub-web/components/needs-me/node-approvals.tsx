@@ -94,7 +94,7 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
           <span className="min-w-0">
             <span className="block text-[12px] uppercase tracking-[0.04em] text-muted">Ensemble Node</span>
             <span className="block text-[15px] font-medium">
-              @{card.node?.slug ?? "node"} {WANTS[card.data.type ?? "tools"] ?? WANTS.tools}
+              @{card.node?.slug ?? "node"} {card.data.type === "session" && card.data.action === "hand_over" ? "wants to hand a session to another node" : (WANTS[card.data.type ?? "tools"] ?? WANTS.tools)}
             </span>
             <span className="mt-0.5 block text-[12px] text-muted">
               {relative(card.createdAt)}
