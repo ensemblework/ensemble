@@ -84,10 +84,10 @@ test("Chat with Claude Code: the next message resumes the same session, with Ens
     const calls = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { resume: string | null; first: string; last: string });
     assert.equal(calls.length, 2);
     assert.equal(calls[0]!.resume, null);
-    assert.match(calls[0]!.first, /^You are chatting with/);
+    assert.match(calls[0]!.first, /^You're chatting with the person in Ensemble's terminal chat/);
     assert.equal(calls[0]!.last, "hello there");
     assert.equal(calls[1]!.resume, "chat-session-1", "the second message resumes the first one's session");
-    assert.match(calls[1]!.first, /^\(Ensemble's rules for this message/);
+    assert.equal(calls[1]!.first, "and again", "the session has the rules: the next message is just the message");
     assert.equal(calls[1]!.last, "and again");
 
     const after = await side.api<{ task: { status: string; notes?: string } }>(`/api/tasks/${task.body.task.id}`);

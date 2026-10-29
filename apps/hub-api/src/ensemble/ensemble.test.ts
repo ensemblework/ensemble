@@ -18,19 +18,16 @@ test("Settings.parse fills actAs when the assistant block is omitted or partial"
   assert.equal(Settings.parse({ assistant: { actAs: "lawyer" } }).assistant.actAs, "lawyer");
 });
 
-test("presets change the prompt and the suggestions, and describe the person instead of assigning a role", () => {
+test("presets state what the person does as one plain fact, and change the suggestions", () => {
   for (const actAs of ["general", "student", "engineer", "teacher", "lawyer"] as const) {
     const block = personaBlock(actAs, "Mira Chen");
-    assert.doesNotMatch(block, /Act as|You are/);
+    assert.doesNotMatch(block, /Act as|You are|usually want/);
     assert.doesNotMatch(block, /permission|allowedWriteAreas|tool registry/i);
-    assert.match(block, /Web research must show sources\./);
     assert.ok(quickActions(actAs, "board").length > 0);
   }
-  assert.match(personaBlock("lawyer", "Mira Chen"), /^Mira works as a lawyer; they usually want /);
-  assert.match(personaBlock("student"), /quizzes from their notes/);
-  assert.match(personaBlock("engineer"), /who knows this code/i);
-  assert.match(personaBlock("teacher"), /falling behind/);
-  assert.match(personaBlock("lawyer"), /obligations/);
+  assert.equal(personaBlock("lawyer", "Mira Chen"), "Mira works as a lawyer.");
+  assert.equal(personaBlock("student"), "The person is a student.");
+  assert.equal(personaBlock("general", "Mira"), "", "general says nothing: the request shows the work");
   assert.ok(quickActions("student", "page").some((line) => /quiz/i.test(line)));
   assert.ok(quickActions("engineer", "graph").some((line) => /who knows this code/i.test(line)));
   assert.ok(quickActions("lawyer", "code").some((line) => /clause/i.test(line)));

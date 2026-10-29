@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BadPathError, FULL_MODULE_SET, MODULE_DENIED, hasModule, kindAllowed, moduleDenied, moduleForPath, normalizePath, parseModules, serializeModules } from "@ensemble/shared-types";
 import { toolAllowedFor, toolsFor } from "./assistant/registry.js";
-import { buildSystemPrompt } from "./assistant/state.js";
+import { assistantInstructions } from "./assistant/state.js";
+import { playbooksFor } from "./assistant/skills/index.js";
 
 const GATED: Array<[string, string]> = [
   ["/code", "code"],
@@ -108,7 +109,7 @@ const AREAS = ["tasks", "projects", "context", "skills", "reminders", "runs"] as
 const DIAGRAM_TOOLS = ["hub_list_diagrams", "hub_create_diagram", "hub_edit_diagram", "hub_validate_diagram", "hub_diagram_context"];
 const REPO_TOOLS = ["hub_repo_overview", "hub_repo_read_file"];
 const toolNames = (modules?: string | null) => new Set(toolsFor(AREAS, modules).map((tool) => tool.name));
-const EMPTY_STATE = { proposed: [], todo: [], inProgress: [], needsMe: [], projects: [], people: [], repos: [], skills: [] } as unknown as Parameters<typeof buildSystemPrompt>[0];
+const EMPTY_STATE = { skills: [] };
 
 test("diagram tools follow the diagrams module and repo reads follow code", () => {
   for (const name of [...DIAGRAM_TOOLS, ...REPO_TOOLS]) {
@@ -134,8 +135,8 @@ test("diagrams off: no diagram paths, tools, reads, or prompt, while code and re
   const byName = new Map(toolsFor(AREAS).map((tool) => [tool.name, tool]));
   assert.equal(toolAllowedFor(byName.get("hub_create_diagram")!, modules), false);
   assert.equal(toolAllowedFor(byName.get("hub_repo_overview")!, modules), true);
-  const prompt = buildSystemPrompt(EMPTY_STATE, undefined, undefined, { diagrams: false, repos: true });
-  assert.doesNotMatch(prompt, /hub_create_diagram|hub_diagram_context/);
+  const prompt = assistantInstructions(EMPTY_STATE, { timezone: "UTC", playbooks: playbooksFor(modules) });
+  assert.doesNotMatch(prompt, /diagrams|hub_create_diagram|hub_diagram_context/);
 });
 
 test("code off with diagrams on: diagrams work, repo reads and themes do not", () => {
@@ -156,7 +157,7 @@ test("code off with diagrams on: diagrams work, repo reads and themes do not", (
   const byName = new Map(toolsFor(AREAS).map((tool) => [tool.name, tool]));
   assert.equal(toolAllowedFor(byName.get("hub_repo_read_file")!, modules), false);
   assert.equal(toolAllowedFor(byName.get("hub_edit_diagram")!, modules), true);
-  const prompt = buildSystemPrompt(EMPTY_STATE, undefined, undefined, { diagrams: true, repos: false });
-  assert.match(prompt, /hub_diagram_context/);
+  const prompt = assistantInstructions(EMPTY_STATE, { timezone: "UTC", playbooks: playbooksFor(modules) });
+  assert.match(prompt, /hub_how_to with its name \(.*diagrams/);
   assert.doesNotMatch(prompt, /hub_repo_overview/);
 });

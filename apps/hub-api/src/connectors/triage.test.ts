@@ -450,6 +450,5 @@ test("the triage prompt asks for a time, absolute dates, and a proposal before A
   assert.match(TRIAGE_PROMPT, /HH:MM/);
   assert.match(TRIAGE_PROMPT, /before the Oct 6 release/);
   assert.match(TRIAGE_PROMPT, /not "before the release tomorrow"/);
-  assert.match(TRIAGE_PROMPT, /press Apply to create it/);
-  assert.match(TRIAGE_PROMPT, /created or drafted/);
+  assert.match(TRIAGE_PROMPT, /only a proposal the person reviews: never write that anything was created or drafted/);
 });

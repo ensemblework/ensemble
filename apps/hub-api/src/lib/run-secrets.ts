@@ -81,4 +81,4 @@ export function secretRules(names: readonly string[]): string[] {
 
 /** When a run needs a secret it does not have: ask for it by name, never for the value in a reply. */
 export const MISSING_SECRET_RULE =
-  "- If the work needs a secret (an API key, a token, a password) that is not in your environment, never ask for its value in a reply or a question: stop and say which environment variable you need and what for. Ensemble asks your person for it in a safe box and gives it to your next run here.";
+  "- A secret (API key, token, password) you need but don't have in your environment: never ask for its value. Stop and name the environment variable and what it's for; Ensemble asks the person for it privately and gives it to your next run.";

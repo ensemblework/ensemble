@@ -1,34 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSystemPrompt } from "./state.js";
+import { writeModeNote } from "./agent.js";
+import { assistantInstructions, turnContext } from "./state.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 
-const EMPTY = { proposed: 0, todo: [], inProgress: 0, needsMe: 0, projects: [], people: [], repos: [], skills: [] };
-
-test("the assistant prompt includes today's date and timezone with no page open", () => {
-  const prompt = buildSystemPrompt(EMPTY, undefined, undefined, {
-    today: "2026-10-04",
-    weekday: "Sunday",
-    timezone: "America/Los_Angeles",
-  });
-  assert.match(prompt, /Today is Sunday, 2026-10-04/);
-  assert.match(prompt, /America\/Los_Angeles/);
-  assert.match(prompt, /Resolve relative dates from today's date/);
-  assert.match(prompt, /YYYY-MM-DD/);
-  assert.match(prompt, /HH:MM in the given zone/);
-  assert.match(prompt, /A held write is a proposal until Apply/);
-  assert.match(prompt, /Do not claim completion before it runs/);
+test("every message's context carries today, its week and the time zone, with or without a page open", () => {
+  const bare = turnContext(undefined, { today: "2026-10-04", weekday: "Sunday", timezone: "America/Los_Angeles" });
+  assert.match(bare, /Today is Sunday, 2026-10-04/);
+  assert.match(bare, /Monday 2026-09-28/);
+  assert.match(bare, /Time zone America\/Los_Angeles/);
+  const open = turnContext({ path: "/today", timezone: "Asia/Kolkata", today: "2026-10-04", weekday: "Sunday" }, { today: "2026-10-04", weekday: "Sunday", timezone: "Asia/Kolkata" });
+  assert.match(open, /Today is Sunday, 2026-10-04/);
+  assert.match(open, /Asia\/Kolkata/);
 });
 
-test("an open page still carries the date and timezone", () => {
-  const prompt = buildSystemPrompt(EMPTY, {
-    path: "/today",
-    timezone: "Asia/Kolkata",
-    today: "2026-10-04",
-    weekday: "Sunday",
-  });
-  assert.match(prompt, /Today is Sunday, 2026-10-04/);
-  assert.match(prompt, /Asia\/Kolkata/);
+test("the instructions say how dates, times and held writes read, with nothing that changes per message", () => {
+  const prompt = assistantInstructions({ skills: [] }, { timezone: "America/Los_Angeles", writeMode: writeModeNote("preview") });
+  assert.match(prompt, /Dates are YYYY-MM-DD and times HH:MM, in America\/Los_Angeles/);
+  assert.match(prompt, /waits until the person presses Apply: describe it as ready to apply, never as done/);
+  assert.doesNotMatch(prompt, /Today is|2026-/, "the date is the message's, so the instructions stay the same all day");
 });
 
 const zone = "America/Los_Angeles";

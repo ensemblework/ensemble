@@ -93,8 +93,9 @@ export async function startStubRuntime(): Promise<StubRuntime> {
         return void res.end("{}");
       }
       const body = JSON.parse(raw) as { messages: ChatMessage[] };
-      const brief = body.messages.find((message) => message.role === "user" && String(message.content).includes("# Task:"));
-      const title = /# Task: (.+)/.exec(String(brief?.content ?? ""))?.[1]?.trim() ?? "";
+      // The brief is the first user message; it opens with the task's title as a heading.
+      const brief = body.messages.find((message) => message.role === "user");
+      const title = /^# (.+)/.exec(String(brief?.content ?? ""))?.[1]?.trim() ?? "";
       calls.set(title, (calls.get(title) ?? 0) + 1);
       const turn = body.messages.filter((message) => message.role === "assistant").length;
       const step = script(title, turn, body.messages, fast.has(title));

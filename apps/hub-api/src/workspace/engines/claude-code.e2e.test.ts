@@ -49,7 +49,9 @@ const reply = require("node:child_process").execFileSync(mcp.command, mcp.args, 
 const answer = reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2);
 seen.push("question:" + allowed.permissionDecision + ":" + answer.result.content[0].text);
 seen.push("sandbox:" + settings.sandbox.enabled, "effort:" + (args.includes("--effort") ? args[args.indexOf("--effort") + 1] : "none"), "sources:" + args[args.indexOf("--setting-sources") + 1]);
-seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "none"), "insession:" + args[args.indexOf("-p") + 1].startsWith("(Ensemble: a new task, continuing in this session."));
+const prompt = args[args.indexOf("-p") + 1];
+seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "none"), "insession:" + prompt.startsWith("(Ensemble: a new task, continuing in this session."));
+seen.push("brief:" + (/^# Engine run\\n/.test(prompt) ? "title-first" : "other") + ":" + (prompt.includes("Weekly digest") ? "unpicked-skill" : "no-unpicked-skill") + ":" + (/You are working for|Internet: on/.test(prompt) ? "noise" : "lean"));
 say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
 `;
 
@@ -64,6 +66,9 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
   try {
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Engine run" } });
     assert.equal(task.status, 201, JSON.stringify(task.body));
+    // An enabled skill the task did not pick is for other work.
+    const skill = await side.api("/api/skills", { json: { name: "Weekly digest", description: "How I like my weekly digest", body: "Weekly digest: three bullets." } });
+    assert.ok(skill.status < 300, JSON.stringify(skill.body));
     const assigned = await side.api<{ jobId?: string; error?: string }>("/api/agent/assign", {
       json: { taskId: task.body.task.id, kind: "code", engine: "claude-code", reasoningEffort: "high", mode: "unattended", sandbox: false, delivery: "local" },
     });
@@ -86,6 +91,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.ok(job.folder && existsSync(join(job.folder, "hello.txt")));
     assert.equal(readFileSync(join(job.folder!, "hello.txt"), "utf8"), "hi");
     assert.match(summary, /resume:none insession:false/, "a new task starts a new session");
+    assert.match(summary, /brief:title-first:no-unpicked-skill:lean/, "the brief opens with the task, carries only picked skills, and no noise");
 
     // Continuing it: the same folder, and Claude Code resumes its own session with the new task.
     const next = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Follow-up" } });

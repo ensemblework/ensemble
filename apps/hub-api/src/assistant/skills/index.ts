@@ -3,9 +3,9 @@
  * small, cheap model can do the work without exploring. People call them the assistant's
  * skills; they are not the person's own Skills (hub_list_skills), which stay as they were.
  *
- * Every turn's system prompt carries the map of Ensemble (map.md) and one line per playbook.
- * A turn preloads the playbooks its words, mentions or open page point at (routePlaybooks),
- * and the model can load any other with hub_how_to. Each playbook names the tools it uses, so
+ * The assistant's instructions name the playbooks; hub_how_to's description says what each covers
+ * and loads one (or the map of Ensemble, map.md). A message whose words or mentions point at a
+ * playbook gets it as a guide in its context (routePlaybooks); the open page only breaks ties. Each playbook names the tools it uses, so
  * a turn advertises the core tools plus those of the playbooks in play, not all hundred-odd.
  * What a turn may *run* is unchanged: every tool the person's settings allow.
  */
@@ -94,7 +94,7 @@ export function allPlaybooks(): Playbook[] {
   return load().playbooks;
 }
 
-/** The map of Ensemble every turn carries. */
+/** The map of Ensemble (hub_how_to "map"). */
 export function appMap(): string {
   return load().map;
 }
@@ -106,15 +106,6 @@ export function playbooksFor(modules?: string | null): Playbook[] {
 
 export function findPlaybook(name: string, modules?: string | null): Playbook | undefined {
   return playbooksFor(modules).find((playbook) => playbook.name === name.trim().toLowerCase());
-}
-
-/** One line per playbook, for the system prompt. */
-export function playbookIndex(playbooks: readonly Playbook[], loaded: readonly Playbook[] = []): string {
-  const open = new Set(loaded.map((playbook) => playbook.name));
-  return [
-    "Playbooks: step-by-step know-how for each part of Ensemble. Before multi-step work in an area whose playbook is not loaded below, call hub_how_to with its name; it also gives you that area's tools.",
-    ...playbooks.map((playbook) => `- ${playbook.name}: ${playbook.when.length > 115 ? playbook.when.slice(0, 112) + "…" : playbook.when}${open.has(playbook.name) ? " (loaded below)" : ""}`),
-  ].join("\n");
 }
 
 const MAX_ROUTED = 2;
@@ -151,9 +142,9 @@ function wordScore(playbook: Playbook, message: string): number {
 }
 
 /**
- * The playbooks a turn starts with: what the open page is, what the person mentioned, and the
- * words of the message (a longer, more specific phrase wins: "meeting notes" over "meeting"),
- * strongest first, at most two. A message that names one of the person's connected apps, or
+ * The playbooks a turn starts with: those the person's mentions or the words of the message point
+ * at (a longer, more specific phrase wins: "meeting notes" over "meeting"), strongest first, at most
+ * two; the open page only breaks ties, and never loads one on its own. A message that names one of the person's connected apps, or
  * asks about meetings while a meeting-notes app is connected, also gets the apps playbook, on
  * top of those two: without it that app's tools are not shown.
  */
@@ -171,10 +162,9 @@ export function routePlaybooks(
       score += intent;
       return { playbook, score, order, intent };
     })
-    .filter((row) => row.score > 0)
+    .filter((row) => row.score >= 2)
     .sort((a, b) => b.score - a.score || a.order - b.order);
-  const candidates = scored.some(row => row.intent > 0) ? scored.filter(row => row.intent > 0) : scored;
-  const routed = candidates.slice(0, MAX_ROUTED).map((row) => row.playbook);
+  const routed = scored.slice(0, MAX_ROUTED).map((row) => row.playbook);
   const apps = playbooks.find((playbook) => playbook.name === "apps");
   if (!apps || routed.includes(apps) || !turn.apps?.length) return routed;
   const named = turn.apps.some((app) => namesApp(turn.message, app.names));
@@ -192,6 +182,8 @@ export const CORE_TOOLS: readonly string[] = [
   "hub_update_task",
   "hub_find_setting",
   "hub_web_search",
+  // The instructions list the person's enabled skills by id, to read when one applies.
+  "hub_read_skill",
 ];
 
 export function simpleTodoRequest(message: string): boolean {
