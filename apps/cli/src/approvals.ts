@@ -189,6 +189,15 @@ export async function webAccess(discovery: Discovery, change?: Partial<WebAccess
   return { browseFiles: body.browseFiles !== false, webEdit: body.webEdit !== false, webTerminal: body.webTerminal !== false };
 }
 
+/** Whether a node asks before it opens a public web site it has not opened before (`askBeforeBrowsing`, off by default). */
+export async function askBeforeBrowsing(discovery: Discovery, ask?: boolean): Promise<boolean> {
+  const body =
+    ask === undefined
+      ? await localJson<{ askBeforeBrowsing?: boolean }>(discovery, "/api/remote")
+      : await localJson<{ askBeforeBrowsing?: boolean }>(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ askBeforeBrowsing: ask }) });
+  return body.askBeforeBrowsing === true;
+}
+
 export async function webApprovals(discovery: Discovery, on?: boolean): Promise<boolean> {
   const body =
     on === undefined

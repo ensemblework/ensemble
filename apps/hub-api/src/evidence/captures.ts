@@ -29,6 +29,8 @@ export type CapturedFile = {
   reason?: string;
   details?: Record<string, number | string>;
   variants?: Array<{ path: string; variant: "poster" | "preview" }>;
+  /** One line for the owner, what the file is (a file a node shares). */
+  caption?: string;
 };
 
 function details(file: MediaFile | StillFile): Record<string, number | string> {
@@ -119,7 +121,8 @@ export async function recordCaptures(prisma: Pick<PrismaClient, "jobEvidence">, 
   };
   for (const file of files) {
     const hold = file.held ? { held: true, holdReason: (file.reason ?? "The computer could not check it.").slice(0, 300) } : {};
-    const row = await one(file.path, file.kind, { ...hold, ...(file.details && Object.keys(file.details).length ? { details: file.details } : {}) });
+    const caption = file.caption?.trim().slice(0, 300);
+    const row = await one(file.path, file.kind, { ...hold, ...(file.details && Object.keys(file.details).length ? { details: file.details } : {}), ...(caption ? { caption } : {}) });
     if (!row) {
       for (const variant of file.variants ?? []) await rm(variant.path, { force: true }).catch(() => undefined);
       continue;

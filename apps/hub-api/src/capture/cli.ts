@@ -10,7 +10,7 @@ function lines(caps: CaptureCapabilities): string[] {
   const out = [`browser: ${caps.browser.available ? `${caps.browser.kind} r${caps.browser.revision ?? "?"} (${caps.browser.source})` : "none"}`];
   out.push(`video: ${caps.video ? `${caps.video.container.toUpperCase()} (${caps.video.codec})` : "none"}`);
   if (caps.platform === "linux") out.push(`virtual display: ${caps.virtualDisplay.xvfb ? `Xvfb${caps.virtualDisplay.windowManager ? ` + ${caps.virtualDisplay.windowManager}` : ""}` : "none"}`);
-  for (const [target, value] of Object.entries(caps.targets)) out.push(`${target.padEnd(9)} screenshots ${value.screenshot ? "yes" : "no "}  video ${value.video ? "yes" : "no "}${value.reason ? `  ${value.reason}` : ""}`);
+  for (const [target, value] of Object.entries(caps.targets)) out.push(`${target.padEnd(9)} screenshots ${value.screenshot ? "yes" : "no "}  video ${value.video ? "yes" : "no "}${value.tui !== undefined ? `  full-screen programs ${value.tui ? "yes" : "no"}` : ""}${value.reason ? `  ${value.reason}` : ""}`);
   for (const note of caps.setup.notes) out.push(`note: ${note}`);
   if (caps.setup.ensembleInstalls.length) out.push(`ensemble capture setup installs: ${caps.setup.ensembleInstalls.join(", ")}`);
   if (caps.setup.systemCommand) out.push(`system packages: ${caps.setup.systemCommand}`);

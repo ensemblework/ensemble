@@ -9,9 +9,10 @@ import { findChromium, playwrightRevisions, type ChromiumChoice } from "../brows
 import { ensembleDataHome, playwrightBrowsersDir } from "../browser/paths.js";
 import { findDisplayTools, type DisplayTools } from "./display.js";
 import { chooseVideoEncoder, findFfmpegs, type FfmpegInfo, type VideoCodec } from "./ffmpeg.js";
-import { linuxDistro, runCommand, type Distro } from "./system.js";
+import { findOnPath, linuxDistro, runCommand, type Distro } from "./system.js";
 
-export type Availability = { screenshot: boolean; video: boolean; reason?: string };
+/** `tui` (terminal only): full-screen programs such as htop are captured as their screen, in a pseudo-terminal. */
+export type Availability = { screenshot: boolean; video: boolean; reason?: string; tui?: boolean };
 export type TargetName = "web" | "electron" | "gui" | "terminal" | "desktop";
 
 export type CaptureCapabilities = {
@@ -55,6 +56,8 @@ export type CapabilityProbe = {
   displayTools: () => DisplayTools;
   distro: () => Distro | null;
   screenRecording: () => Promise<"granted" | "denied" | "unknown">;
+  /** A pseudo-terminal program (`script`) for a node's terminal screens. */
+  pty: () => boolean;
   now: () => Date;
 };
 
@@ -76,6 +79,7 @@ export function realProbe(dataHome: string = ensembleDataHome()): CapabilityProb
     displayTools: () => findDisplayTools(),
     distro: () => linuxDistro(),
     screenRecording: macScreenRecording,
+    pty: () => process.platform !== "win32" && Boolean(findOnPath("script")),
     now: () => new Date(),
   };
 }
@@ -162,7 +166,12 @@ export async function computeCapabilities(probe: CapabilityProbe): Promise<Captu
     electron = { screenshot: false, video: false, reason: "Not supported on this system yet." };
     gui = { screenshot: false, video: false, reason: "Not supported on this system yet." };
   }
-  const terminal: Availability = browser ? { screenshot: true, video: false, reason: "A terminal is captured as its transcript (HTML or an image), not as video." } : { screenshot: false, video: false, reason: "Images of a transcript need Chromium; HTML works without it." };
+  const tui = Boolean(browser) && probe.platform !== "win32" && probe.pty();
+  const terminal: Availability = !browser
+    ? { screenshot: false, video: false, tui: false, reason: "Images of a terminal need Chromium; an HTML transcript works without it." }
+    : tui
+      ? { screenshot: true, video: false, tui: true, reason: "A terminal is captured as its screen (full-screen programs such as htop too) or its transcript, not as video." }
+      : { screenshot: true, video: false, tui: false, reason: probe.platform === "win32" ? "A terminal is captured as its transcript (HTML or an image): full-screen programs need a pseudo-terminal, which Windows does not give Ensemble yet." : "A terminal is captured as its transcript (HTML or an image): full-screen programs need `script` (util-linux), which is not installed." };
   const desktop: Availability = { screenshot: false, video: false, reason: "Capturing your real screen is not supported yet. It will ask for your consent each time." };
 
   return {

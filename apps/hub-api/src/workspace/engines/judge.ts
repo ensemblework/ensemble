@@ -5,6 +5,9 @@
  * internet setting. The same rules Ensemble's own agent follows
  * (`tools.ts`, `trust.ts`); this only translates the other agent's tool names.
  *
+ * The hard floor comes first: a command on its list of dangerous commands
+ * (device-tools/dangerous.ts) is refused whatever the mode.
+ *
  * A refusal goes back to that agent as the tool's answer, with a reason, so
  * it carries on (no run is ended because one call was refused). Anything that
  * needs the person becomes a Needs me card, answerable from the app, the web,
@@ -16,6 +19,7 @@ import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
 import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
 import type { ShellSegment } from "../shell-parse.js";
+import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
 
 /** `signal` aborts when the agent stops waiting for this answer (its call timed out or was cancelled): a question it asked is withdrawn. */
 export type EngineCall = { tool: string; input: Record<string, unknown>; signal?: AbortSignal };
@@ -96,6 +100,9 @@ export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): voi
  * sandbox stopped a command).
  */
 async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, posix = true, unsandboxed = false): Promise<EngineAnswer> {
+  // The hard floor's dangerous commands (wiping disks, locking the owner out, …): refused whatever the mode or anyone's answer.
+  const hit = dangerousCommand(command);
+  if (hit) return { decision: "deny", message: dangerousMessage(hit) };
   const parsed = parseShell(command, ctx.root);
   const segments = parsed.map((segment) => segment.argv).filter((argv) => argv.length > 0);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a

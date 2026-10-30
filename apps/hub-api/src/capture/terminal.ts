@@ -17,6 +17,9 @@ export function stripAnsi(text: string): string {
 
 const BASE = ["#1e1e1e", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5"];
 const BRIGHT = ["#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff"];
+/** The terminal's own text and background colours, where a program sets none. */
+export const TERMINAL_FOREGROUND = "#e5e5e5";
+export const TERMINAL_BACKGROUND = "#1e1e1e";
 
 /** One of the 256 xterm colours. */
 export function xtermColour(index: number): string {
@@ -66,11 +69,11 @@ function applySgr(style: Style, codes: number[]): Style {
   return next;
 }
 
-const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+export const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 function css(style: Style): string {
-  const fg = style.inverse ? (style.bg ?? "#1e1e1e") : style.fg;
-  const bg = style.inverse ? (style.fg ?? "#e5e5e5") : style.bg;
+  const fg = style.inverse ? (style.bg ?? TERMINAL_BACKGROUND) : style.fg;
+  const bg = style.inverse ? (style.fg ?? TERMINAL_FOREGROUND) : style.bg;
   return [fg && `color:${fg}`, bg && `background:${bg}`, style.bold && "font-weight:bold", style.dim && "opacity:.7", style.italic && "font-style:italic", style.underline && "text-decoration:underline"].filter(Boolean).join(";");
 }
 

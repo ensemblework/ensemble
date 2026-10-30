@@ -73,6 +73,7 @@ function probe(over: Partial<CapabilityProbe>): CapabilityProbe {
     displayTools: () => noTools,
     distro: () => ({ id: "ubuntu", like: ["debian"] }),
     screenRecording: async () => "unknown",
+    pty: () => true,
     now: () => new Date("2026-10-30T10:00:00Z"),
     ...over,
   };
@@ -129,6 +130,16 @@ test("capabilities: missing pieces name the right package for each distribution"
   assert.ok(unknown.setup.notes.some((note) => /package manager: Xvfb/.test(note)));
 });
 
+test("capabilities: full-screen terminal programs need a pseudo-terminal, which Windows and a computer without `script` lack", async () => {
+  assert.equal((await computeCapabilities(probe({}))).targets.terminal.tui, true);
+  const windows = await computeCapabilities(probe({ platform: "win32" }));
+  assert.deepEqual([windows.targets.terminal.screenshot, windows.targets.terminal.tui], [true, false]);
+  assert.match(windows.targets.terminal.reason ?? "", /transcript/);
+  const noScript = await computeCapabilities(probe({ pty: () => false }));
+  assert.equal(noScript.targets.terminal.tui, false);
+  assert.match(noScript.targets.terminal.reason ?? "", /script/);
+});
+
 test("capabilities: macOS reports Screen Recording and brew; Windows says not yet; no browser or encoder says run setup", async () => {
   const mac = await computeCapabilities(probe({ platform: "darwin", ffmpegs: async () => [ffmpeg({ path: "/pw/ffmpeg-mac", source: "playwright", vp8: true })], screenRecording: async () => "denied" }));
   assert.equal(mac.platform, "macos");
@@ -142,6 +153,7 @@ test("capabilities: macOS reports Screen Recording and brew; Windows says not ye
   assert.equal(windows.setup.systemCommand, null);
   const bare = await computeCapabilities(probe({ chromium: () => null, ffmpegs: async () => [] }));
   assert.equal(bare.targets.web.screenshot, false);
+  assert.equal(bare.targets.terminal.tui, false, "a terminal's screen is drawn by Chromium");
   assert.match(bare.targets.web.reason ?? "", /ensemble capture setup/);
   assert.equal(bare.setup.ensembleInstalls.length, 2);
   assert.equal(bare.browser.available, false);
