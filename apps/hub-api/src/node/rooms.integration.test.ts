@@ -1983,3 +1983,44 @@ test("review C6–C7 #8: two confirmations at once make one decisions log", asyn
   const log = JSON.stringify((await h.prisma.taskPage.findUniqueOrThrow({ where: { id: decisions[0]!.pageId } })).content);
   assert.ok(log.includes("We ship on Friday.") && log.includes("The docs go out with it."));
 });
+
+test("follow-up #3: moving a requested task out of Proposed answers its request, for the person asked only", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const ask = async (text: string) => json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text } })).request as { id: string; taskId: string };
+  const move = (user: HttpUser, taskId: string, status: string) => inSpace(user, spaceId, { method: "POST", url: `/api/tasks/${taskId}/move`, payload: { status } });
+  const first = await ask("Add a rate limiter");
+  assert.ok(first.taskId);
+  // Ben, who asked, cannot answer it for Akash; nobody skips straight to Done.
+  let moved = await move(ben, first.taskId, "in_progress");
+  assert.equal(moved.statusCode, 403);
+  assert.match(json(moved).error, /only Akash accepts or declines it/);
+  moved = await move(akash, first.taskId, "done");
+  assert.equal(moved.statusCode, 409);
+  assert.match(json(moved).error, /accept it \(move it to To do or In progress\) or decline it first/);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: first.taskId } })).status, "proposed");
+  assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: first.id } })).status, "awaiting_owner");
+
+  // Akash drags it to To do: accepted, as private work (the Today tile's default).
+  moved = await move(akash, first.taskId, "todo");
+  assert.equal(moved.statusCode, 200, moved.body);
+  assert.match(json(moved).answered, /^Accepted Ben's request/);
+  const accepted = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: first.id } });
+  assert.deepEqual([accepted.status, accepted.mode], ["approved", "private"]);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: first.taskId } })).status, "in_progress");
+  await settleTurns();
+
+  // Dropped from its page's status menu: declined.
+  const second = await ask("Add a PDF export");
+  const patched = await inSpace(akash, spaceId, { method: "PATCH", url: `/api/tasks/${second.taskId}`, payload: { status: "dropped" } });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: second.id } })).status, "declined");
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: second.taskId } })).status, "dropped");
+
+  // Any other way out of Proposed (an assistant's tool) is refused while the request waits.
+  const third = await ask("Add an XML export");
+  const { updateTask } = await import("../services/tasks.js");
+  await assert.rejects(h.prisma.$transaction((tx) => updateTask(tx, spaceId, third.taskId, { status: "todo" }, "me")), /the person asked accepts or declines it/);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: third.taskId } })).status, "proposed");
+});

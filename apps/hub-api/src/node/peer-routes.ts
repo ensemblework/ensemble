@@ -11,7 +11,8 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { truncateText } from "../lib/text.js";
 import { wireMessage } from "./store.js";
 import { nodeAccount } from "./routes.js";
-import { acceptRequest, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
+import { acceptRequest, answerFromBoard, cancelRequest, createPeerRequest, declineRequest, NewRequest, shareMessage, watchPeerMissions, wireRequest } from "./peer-requests.js";
+import { onRequestedTaskMove } from "../services/tasks.js";
 import { answerSpaceOffer, bindSpace, expireOffersFor, linkedSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
 import { onMemberRevoked } from "../sharing/revoke.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
@@ -44,6 +45,8 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
   onMemberRevoked(expireOffersFor);
   // Contracts tell the people whose work uses them when they change (node/room-pages.ts).
   watchRoomPages();
+  // A requested task moved out of Proposed on a board answers its request (services/tasks.ts).
+  onRequestedTaskMove((input) => answerFromBoard(app, input));
 
   const spaceCall = async <T>(work: () => Promise<T>): Promise<T> => {
     try {

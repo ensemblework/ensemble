@@ -1300,8 +1300,9 @@ export const api = bindClient({
   createTask: (data: Partial<TaskRecord> & { title: string }) =>
     post<{ task: TaskRecord; undoEntryId?: string | null }>("/api/tasks", { sourceKind: "manual", ...data }),
   patchTask: (id: string, data: Record<string, unknown>) => patch<{ task: TaskRecord; undoEntryId?: string | null }>(`/api/tasks/${id}`, data),
+  /** `answered`: moving a task someone asked for in an Ensemble Node room out of Proposed answered that request. */
   moveTask: (id: string, data: { status: TaskStatus; beforeId?: string | null; afterId?: string | null }) =>
-    post<{ task: { id: string }; undoEntryId?: string | null }>(`/api/tasks/${id}/move`, data),
+    post<{ task: { id: string }; undoEntryId?: string | null; answered?: string }>(`/api/tasks/${id}/move`, data),
   deleteTask: (id: string) => del<{ undoEntryId?: string | null }>(`/api/tasks/${id}`),
   taskRuns: (id: string) =>
     get<{ runs: Array<{ id: string; outcome: string | null; result: string | null; requestedModel: string | null; startedAt: string }> }>(

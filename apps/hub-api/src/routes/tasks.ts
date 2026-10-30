@@ -7,7 +7,8 @@ import { sseHub } from "../lib/sse.js";
 import { lastUndoId } from "../lib/undo.js";
 import { isGuestIn } from "../sharing/context.js";
 import { hidesSignupStarters } from "../marketplace/starters.js";
-import { createTask, updateTask } from "../services/tasks.js";
+import { answerRequestedMove, createTask, updateTask } from "../services/tasks.js";
+import { accountIdOf } from "../lib/auth.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
 import { NODE_TASK } from "../lib/node-tasks.js";
 
@@ -79,6 +80,13 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     let task;
     try {
+      // Out of `proposed`, a task someone asked for in a room answers its request (services/tasks.ts).
+      const existing = body.status ? await prisma.task.findFirst({ where: { id, userId, deletedAt: null } }) : null;
+      const answered = existing ? await answerRequestedMove({ accountId: accountIdOf(request), task: existing, status: body.status! }) : null;
+      if (answered) {
+        sseHub.publish(userId, { event: "task", data: { id, action: "update" } });
+        return { task: serializeTask(answered.task), undoEntryId: null, answered: answered.message };
+      }
       task = await prisma.$transaction(async (tx) => {
         const updated = await updateTask(tx, userId, id, body, "me");
         return { updated, undoEntryId: lastUndoId(tx) ?? null };

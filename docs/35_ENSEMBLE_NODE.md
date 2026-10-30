@@ -791,7 +791,7 @@ The room is the conversation; a space holds its work (build block C4; `node/room
 | `private` (default): private work, shared result | The assignee's own space (`node_missions.space_id` null) | The result and evidence delivered to the task, never the run's transcript or code |
 | `shared`: shared run | The proposed task's own space (`node_missions.space_id`), wherever the room links now, while the person asked can still edit there (else it runs as private work); the lead's note says where | The run, as for any member's run there |
 
-`POST /api/node/requests/:id/accept {text?, always?, mode?}` records the mode on the request. The task follows the request: accepted → In progress (with the edited text as its title), declined or cancelled → Dropped. The Hub's proposals tile answers it too. The mission's `deliverTo` carries `taskId`.
+`POST /api/node/requests/:id/accept {text?, always?, mode?}` records the mode on the request. The task follows the request: accepted → In progress (keeping what was asked; the owner's edit is their lead's `brief`), declined or cancelled → Dropped. The Hub's proposals tile answers it too, and so does moving the task out of Proposed (`answerRequestedMove` in `services/tasks.ts`, answered by `answerFromBoard`): the person asked moving it to To do or In progress accepts it as private work, Dropped declines it; anyone else, or another column, is refused with why, and nothing else moves it out of Proposed while the request waits. The mission's `deliverTo` carries `taskId`.
 
 ### 12.12 Room events and catch-up
 

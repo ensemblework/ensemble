@@ -21,7 +21,7 @@
  * Also here: what leaving a room takes away, and Share to room.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeAgent, NodeMessage, NodePeerRequest, NodeRoom, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
+import type { NodeAgent, NodeMessage, NodePeerRequest, NodeRoom, NodeTurn, Prisma, PrismaClient, Task } from "@prisma/client";
 import { z } from "zod";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
 import { sseHub } from "../lib/sse.js";
@@ -468,6 +468,31 @@ export async function declineRequest(app: FastifyInstance, accountId: string, re
     });
   }
   return (await app.prisma.nodePeerRequest.findUnique({ where: { id: request.id } }))!;
+}
+
+/**
+ * A requested task moved on a board (services/tasks.ts `answerRequestedMove`): the person asked moving it
+ * to To do or In progress accepts it, as Accept · private work does; dropping it declines it. Anyone else,
+ * or any other column, is refused with why. Null when its request is no longer waiting (an ordinary move).
+ */
+export async function answerFromBoard(app: FastifyInstance, input: { accountId: string; task: Task; status: string }): Promise<{ task: Task; message: string } | null> {
+  const prisma = app.prisma;
+  const request = input.task.peerRequestId ? await prisma.nodePeerRequest.findUnique({ where: { id: input.task.peerRequestId } }) : null;
+  if (!request || !UNDECIDED.includes(request.status) || request.taskId !== input.task.id) return null;
+  const who = await names(prisma, [request.fromAccountId, request.toAccountId]);
+  const [from, to] = [who.get(request.fromAccountId) ?? "Someone", who.get(request.toAccountId) ?? "the person asked"];
+  if (input.accountId !== request.toAccountId) throw fail(`${from} asked ${to} for this: only ${to} accepts or declines it.`, 403);
+  let message: string;
+  if (input.status === "todo" || input.status === "in_progress") {
+    await acceptRequest(app, input.accountId, request.id, {});
+    message = `Accepted ${from}'s request: your lead plans it in Ensemble Node, as private work whose result comes back to this task.`;
+  } else if (input.status === "dropped") {
+    await declineRequest(app, input.accountId, request.id, {});
+    message = `Declined ${from}'s request.`;
+  } else {
+    throw fail(`${from} asked you for this: accept it (move it to To do or In progress) or decline it first.`, 409);
+  }
+  return { task: await prisma.task.findUniqueOrThrow({ where: { id: input.task.id } }), message };
 }
 
 /** The requester takes back a request nobody has decided on yet. */

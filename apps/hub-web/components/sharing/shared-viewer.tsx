@@ -145,7 +145,10 @@ function SharedBoard({ role }: { role: "view" | "edit" }) {
   const tasks = useQuery({ queryKey: ["shared-board"], queryFn: api.tasks });
   const move = useMutation({
     mutationFn: ({ id, status }: { id: string; status: TaskStatus }) => api.moveTask(id, { status }),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["shared-board"] }),
+    onSuccess: (result) => {
+      if (result.answered) toast(result.answered);
+      void client.invalidateQueries({ queryKey: ["shared-board"] });
+    },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const columns: TaskStatus[] = ["todo", "in_progress", "waiting_approval", "done"];
