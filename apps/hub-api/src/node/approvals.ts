@@ -13,6 +13,7 @@ import { refsNote, savedRefs } from "../assistant/refs.js";
 import { sessionOfJob } from "../workspace/sessions.js";
 import { HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
+import { answerLoginCard, LOGIN_CARD } from "./logins.js";
 import { finishStep, planLinkOf } from "./plans.js";
 import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
 import { noteTold } from "./dispatch.js";
@@ -158,6 +159,11 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);
     throw new ApprovalError("Type the secret into its box: it goes straight to your computer.", 400);
+  }
+  // A sign-in card (node/logins.ts): Not now ends it; signing in takes the card's own buttons.
+  if (type === LOGIN_CARD) {
+    if (input.decision === "discard") return (await answerLoginCard(app, accountId, messageId, { action: "decline" })).message;
+    throw new ApprovalError("Sign in with the card's buttons: your saved login, on the computer, or typed for the computer.", 400);
   }
 
   const parsed = ToolsCard.parse(card.data);

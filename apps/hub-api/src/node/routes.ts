@@ -52,6 +52,9 @@ import { registerOutbox } from "./outbox.js";
 import { registerRoutineRoutes } from "./routine-routes.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
+import { registerLoginRoutes } from "./login-routes.js";
+import { registerTakeoverRoutes } from "./takeover-routes.js";
+import { LoginCardError } from "./logins.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 import { boundSpaceId, offerSpace } from "./room-space.js";
 import { freshSharedThreads } from "./audience.js";
@@ -229,13 +232,17 @@ async function pendingApprovals(prisma: PrismaClient, accountId: string) {
       kind: "approval",
       userId: accountId,
       visibleTo: { equals: [accountId] },
-      // A secret card a restart left saving can be answered again (node-secrets.ts).
-      OR: [{ data: { path: ["status"], equals: "pending" } }, { AND: [{ data: { path: ["type"], equals: "secret" } }, { data: { path: ["status"], equals: "saving" } }] }],
+      // A secret card a restart left saving can be answered again (node-secrets.ts); a sign-in card stays while its computer works on it.
+      OR: [
+        { data: { path: ["status"], equals: "pending" } },
+        { AND: [{ data: { path: ["type"], equals: "secret" } }, { data: { path: ["status"], equals: "saving" } }] },
+        { AND: [{ data: { path: ["type"], equals: "login" } }, { data: { path: ["status"], equals: "working" } }] },
+      ],
     },
     orderBy: { createdAt: "desc" },
     take: 50,
   });
-  return rows.filter((row) => (row.data as { status?: unknown }).status === "pending" || secretStuck(row.data)).map(wireMessage);
+  return rows.filter((row) => { const data = row.data as { status?: unknown; type?: unknown }; return data.status === "pending" || secretStuck(row.data) || (data.type === "login" && data.status === "working"); }).map(wireMessage);
 }
 
 /** Pending approval cards with the node that asks and the conversation they are in: Needs me on Node, the Hub and the CLI. */
@@ -326,6 +333,10 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   const prisma = app.prisma;
   // Rooms with other people: trust, status cards, peer requests, Share to room (node/peer-routes.ts).
   await registerPeerRoutes(app);
+  // Sign-in cards: the computer's pinned key for typed answers, and the answers (node/logins.ts, B11).
+  await registerLoginRoutes(app, nodeAccount);
+  // Taking over a tab of the owner's computer from the web, end to end (node/takeovers.ts, B21).
+  await registerTakeoverRoutes(app, nodeAccount);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};
@@ -1148,7 +1159,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const message = await settleApproval(app, accountId, (request.params as { messageId: string }).messageId, body);
       return { message: wireMessage(message) };
     } catch (error) {
-      if (error instanceof ApprovalError || error instanceof SecretError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof ApprovalError || error instanceof SecretError || error instanceof LoginCardError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
   });

@@ -19,6 +19,8 @@ import { liveFrameFor } from "../remote/live.js";
 import type { JobContext } from "../workspace/tools.js";
 import { within } from "../workspace/guard.js";
 import { capturedFiles, finishedFiles, recordCaptures, recordedNote } from "./captures.js";
+import { awaitRunLogin } from "../logins/run.js";
+import type { LoginInfo } from "../logins/requests.js";
 import { prepareEvidenceDir } from "./files.js";
 
 /** Every browser and capture tool name. */
@@ -74,7 +76,10 @@ export async function runRunCaptureTool(ctx: JobContext, name: string, input: un
   for (const row of recorded.rows) await ctx.event("evidence", { id: row.id, name: row.name, kind: row.kind, size: row.size, via: name, ...(row.held ? { held: true } : {}) });
   const note = recordedNote(recorded);
   if (!result.ok) return { ok: false, text: [result.error.message, note].filter(Boolean).join("\n") };
-  return { ok: true, text: [result.summary, note].filter(Boolean).join("\n") };
+  // The tab waits for the owner to sign in (B11): the call waits too, and says how it ended.
+  const login = (result.result as { login?: LoginInfo } | undefined)?.login;
+  const signedIn = login ? await awaitRunLogin(ctx, login) : "";
+  return { ok: true, text: [result.summary, note, signedIn].filter(Boolean).join("\n") };
 }
 
 /**

@@ -82,7 +82,7 @@ export function corsPluginOptions(policy: CorsPolicy): FastifyCorsOptions {
     // Cookies ride on these requests, so only the Hub's own origin may read responses.
     origin: (origin, done) => done(null, !origin || policy.origins.has(origin)),
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-ensemble-user", "x-ensemble-internal", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-ensemble-user", "x-ensemble-internal", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor", "x-ensemble-takeover"],
     // A run's live view describes its picture in these (node live view, devices/live.ts); Node reads them cross-origin.
     exposedHeaders: [...LIVE_VIEW_HEADERS],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

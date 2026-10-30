@@ -39,6 +39,7 @@ import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
 import { captureSites, formatCapture, formatSites, parseSitesArgs, runCaptureScript } from "./capture.js";
+import { forgetLogin, formatLogins, listLogins, parseBrowserArgs, readLoginInput, saveLogin } from "./logins.js";
 import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
@@ -88,6 +89,7 @@ Usage:
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
   ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>
+  ensemble browser logins [list] | save-login <site> [--totp] | forget-login <site>
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
@@ -117,6 +119,8 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
     "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
+  browser:
+    "Usage: ensemble browser logins [list] | save-login <site> [--totp] | forget-login <site>\nLogins saved on this computer for Ensemble's browser. When a page your agents or nodes open asks you to sign in, its card offers \"Use saved login\": the browser fills the saved user name and password (and a one-time code from a saved seed) itself. No model, agent or run sees them, and nothing is sent to Ensemble on the web. They are kept in Ensemble's data folder, encrypted with this computer's local key.\n  save-login    asks for the user name, then the password without showing it (or reads them from stdin, one per line). --totp also asks for the one-time-code seed. Sites are https, or this computer's own http://localhost.\n  forget-login  deletes the site's saved login.",
   capture:
     "Usage: ensemble capture [status] [--json] | setup [--dry-run] [--json] | sites [list] | sites add|remove never|preview <site>\nWhat Ensemble Node can capture on this computer: screenshots and video of web pages, Electron apps, other desktop apps (on a private virtual display) and terminals. `setup` installs Playwright's Chromium and ffmpeg into Ensemble's data folder, and prints the one command for system packages; it never runs sudo.\n`sites` lists the sites you never want captured (no screenshot, video, page reading or live view) and those whose captures you preview before anything is sent; `add` and `remove` change them. A site is a host (example.com, which covers its subdomains) or an address (https://mail.example.com). They are kept on this computer only.",
   doctor: "Usage: ensemble doctor",
@@ -748,6 +752,27 @@ async function commandCapture(args: string[]): Promise<void> {
   if (!setup.steps.every((step) => step.ok)) process.exitCode = 1;
 }
 
+async function commandBrowser(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.browser);
+  const parsedArgs = parseBrowserArgs(args, COMMAND);
+  if ("error" in parsedArgs) throw new Error(parsedArgs.error);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (parsedArgs.subcommand === "logins") {
+    console.log(formatLogins(await withAdminApi({ sidecarDir, run: listLogins }), COMMAND));
+    return;
+  }
+  if (parsedArgs.subcommand === "forget-login") {
+    const result = await withAdminApi({ sidecarDir, run: (discovery) => forgetLogin(discovery, parsedArgs.origin) });
+    console.log(result.forgotten ? `Forgot the login for ${result.origin}.` : `No login was saved for ${result.origin}.`);
+    return;
+  }
+  const typed = await readLoginInput(parsedArgs.origin, parsedArgs.totp);
+  if (!typed.username || !typed.password) throw new Error("Give a user name and a password.");
+  const saved = await withAdminApi({ sidecarDir, run: (discovery) => saveLogin(discovery, { origin: parsedArgs.origin, ...typed }) });
+  console.log(`Saved the login for ${saved.origin} (${saved.username}${saved.totp ? ", with one-time codes" : ""}). Ensemble's browser fills it when you pick "Use saved login" on a sign-in card; nothing is sent to the web.`);
+}
+
 /** At login on Windows, turn the sandbox on while someone is there to approve the prompt. */
 async function offerSandboxSetup(sidecarDir: string, paths: CliPaths): Promise<void> {
   if (process.platform !== "win32") return;
@@ -968,6 +993,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandSandbox(rest);
     case "capture":
       return commandCapture(rest);
+    case "browser":
+      return commandBrowser(rest);
     case "doctor":
       return commandDoctor(rest);
     case "update":

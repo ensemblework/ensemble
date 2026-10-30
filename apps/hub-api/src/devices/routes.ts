@@ -59,6 +59,8 @@ import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
 import { pinReportedSealKey, sealKeyOnPairing, sealKeyView } from "../credentials/device-key.js";
 import { liveRoutes } from "./live.js";
+import { loginDeviceRoutes } from "./logins.js";
+import { takeoverDeviceRoutes } from "./takeovers.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -278,6 +280,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   await app.register(evidenceRoutes, { ownDevice, holdLease });
   await app.register(nodeToolRoutes, { ownDevice });
   await app.register(liveRoutes, { ownDevice, holdLease });
+  await app.register(loginDeviceRoutes, { ownDevice, holdLease });
+  await app.register(takeoverDeviceRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);

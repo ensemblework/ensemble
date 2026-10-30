@@ -28,6 +28,7 @@ import { operationEvidenceDir } from "../evidence/files.js";
 import { evidencePayload } from "../evidence/upload.js";
 import type { PolicyInput } from "./policy.js";
 import { resolveToolFolder, type ToolFolder } from "./folders.js";
+import type { LoginInfo } from "../logins/requests.js";
 
 export type CaptureRequest = Extract<NodeToolRequest, { tool: "browser" | "capture" }>;
 
@@ -81,5 +82,7 @@ export async function runNodeCapture(app: Pick<FastifyInstance, "prisma">, clien
   }
   await appendLedger({ userId, actor: "agent", action: `node.tool.${request.tool}`, payload: { nodeId: request.nodeId, name: request.name, operation, files: evidence.length, ...(request.operationId ? { operationId: request.operationId } : {}) } }).catch(() => undefined);
   if (!result.ok) return { ok: false, error: { code: result.error.code.slice(0, 40), message: result.error.message.slice(0, 2000) }, evidence, refused: recorded.refused };
-  return { ok: true, summary: result.summary, result: result.result, evidence, refused: recorded.refused };
+  // The tab waits for the owner to sign in (B11): the server raises the card and wakes the node when it ends.
+  const login = (result.result as { login?: LoginInfo } | undefined)?.login;
+  return { ok: true, summary: result.summary, result: result.result, evidence, refused: recorded.refused, ...(login ? { login } : {}) };
 }

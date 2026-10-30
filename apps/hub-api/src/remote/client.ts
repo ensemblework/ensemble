@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type LiveFramePost, type ObservedSettings, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveFramePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 
@@ -68,6 +68,12 @@ export interface HostedClient {
   uploadEvidenceFile?(uploadId: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "gone"; error?: string; evidence?: unknown }>;
   /** The latest small picture of a run's browser tab (protocol 7). False: the web no longer takes it. */
   liveFrame?(jobId: string, frame: LiveFramePost): Promise<boolean>;
+  /** A run's agent waits for its owner to sign in (protocol 8): the card's id, or null when the web raises none for this run. */
+  runLogin?(jobId: string, body: RunLoginPost): Promise<{ decisionId: string | null }>;
+  /** One encrypted frame of a takeover (protocol 8, B21). False: the takeover is over on the web. */
+  takeoverFrame?(takeoverId: string, message: ChannelMessage): Promise<boolean>;
+  /** This computer ended a takeover itself. */
+  takeoverState?(takeoverId: string, body: { state: "ended"; reason: string }): Promise<void>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
@@ -319,6 +325,22 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (res.status === 404 || res.status === 409 || res.status === 410) return false;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The live view was refused."));
       return true;
+    },
+    async takeoverFrame(takeoverId, message) {
+      const res = await call("POST", ROUTES.takeoverFrame(takeoverId), message);
+      if (res.status === 404 || res.status === 409 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The frame was refused."));
+      return true;
+    },
+    async takeoverState(takeoverId, body) {
+      await call("POST", ROUTES.takeoverState(takeoverId), body);
+    },
+    async runLogin(jobId, body) {
+      const res = await call("POST", ROUTES.runLogin(jobId), body);
+      if (res.status === 404 || res.status === 405) return { decisionId: null };
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The sign-in was not raised on the web."));
+      const id = (res.body as { decisionId?: unknown } | null)?.decisionId;
+      return { decisionId: typeof id === "string" && id ? id : null };
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);

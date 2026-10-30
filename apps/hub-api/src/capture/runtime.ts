@@ -51,6 +51,8 @@ export function startCaptureRuntime(app: Pick<FastifyInstance, "prisma" | "log">
 
 /** Ends one operation's tabs, recordings, apps and displays, if this runtime has any; starts nothing. */
 export async function releaseOperation(operation: string): Promise<void> {
+  // A sign-in still waiting for the owner ends with its work (logins/requests.ts).
+  await (await import("../logins/requests.js")).endLoginsFor(operation).catch(() => undefined);
   await runningCapture()?.release(operation).catch(() => undefined);
   await runningBroker()?.release(operation).catch(() => undefined);
 }
