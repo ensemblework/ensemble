@@ -140,7 +140,8 @@ The assistant works in one space per conversation. A node acts for its owner in 
 
 | Tool | What it does |
 | --- | --- |
-| `node_delegate {to, brief, after?, agent?, model?, effort?, context?}` | Adds a step for one of the owner's other nodes to this turn's plan (§6.2); `after` names nodes already in the plan whose steps must be done first. Nothing is posted. To the node's own helper it posts the brief in the helper's room instead (§6.1). It refuses other people's nodes (mention them in the reply, which the owner sees first). |
+| `node_delegate {to, brief, after?, agent?, model?, effort?, context?}` | Adds a step for a node of the crew to this turn's plan (§6.2); `after` names nodes already in the plan whose steps must be done first. Nothing is posted. To the node's own helper it posts the brief in the helper's room instead (§6.1). A node outside the crew is refused with how to proceed: a member, a helper, or `node_crew_add`; other people's nodes are refused (mention them in the reply, which the owner sees first). |
+| `node_crew_add {node, reason}` | Only the crew's lead, in a turn its owner started: asks the owner on a card in the crew to add one of their other nodes (`data.type: "crew_add"`, §6.1). Approving adds it (its handle is its slug) and wakes the lead. |
 | `node_post {room, body}` | Posts in another room the node is in, under the same draft rule (for example, reporting back to the group once the crew is done). Refused for the room the turn replies in. |
 | `node_plan {goal, requirements, constraints, steps, deferred}` | The lead proposes a whole plan in one call; code validates it before anything starts (§6.3). Problems come back to fix. Refused in a plan's report turn (the plan is still open). |
 | `node_plan_revise {plan, add?, cancel?, constraints?, requirements?, defer?}` | Changes a running plan the node leads (§6.3). |
@@ -156,14 +157,17 @@ The assistant works in one space per conversation. A node acts for its owner in 
 | `node_session_stop {session, queued: drop\|keep}` | Stops the run going on in the session, and what is queued in it unless `keep`. |
 | `node_secret_request {name, why, computer?, allow?}` | Asks the owner for a secret by environment variable name, in a secure box encrypted for the computer (§8.7); `allow` suggests where it may be sent. |
 | `secret_http {ref, url, method?, headers?, body?, computer?}` | A request made on the owner's computer with a saved secret put in where `{{NAME}}` appears, only to that secret's allowed destinations; the answer has the value hidden (§8.7.5). Only where the owner reads alone and started the turn. |
-| `computer_run {folder, command, computer?, cwd?, timeoutSec ≤ 900, background?, secrets?}` | Runs one command on the owner's computer itself, in the computer's sandbox (§8.13). A command still going after a minute runs on, and its end wakes the node. |
+| `computer_run {folder?, command, computer?, cwd?, timeoutSec ≤ 900, background?, secrets?}` | Runs one command on the owner's computer itself, in the computer's sandbox (§8.13); without `folder`, in the node's own folder there. A command still going after a minute runs on, and its end wakes the node. |
+| `computer_terminal_screenshot {command, folder?, seconds?, columns?, rows?, keys?, title?, computer?}` | Runs a command in a terminal on the computer and captures its screen as a picture (`htop`, `top`, any output), with its text (§8.13). |
+| `computer_sudo {command, reason, folder?, timeoutSec?, computer?}` | One command as the administrator, after the owner approves its exact text on a card in the chat and types their password there, sealed for the computer (§8.13). |
+| `node_share_file {path, folder?, caption?, computer?}` | Brings a file from the computer into the chat (a report, a log, a picture, a PDF): it shows with the node's reply (§8.14). |
 | `computer_run_output {run, from?}` | Reads the output of a command that ran on or printed more than its answer held (kept 6 hours). |
-| `computer_git {folder, op: status\|diff\|log\|show\|branch, args?, computer?}` | Reads git in a folder (§8.13). |
+| `computer_git {folder?, op: status\|diff\|log\|show\|branch, args?, computer?}` | Reads git in a folder (§8.13). |
 | `computer_http {url, method?, body?, contentType?, computer?}` | Calls a development server on the computer itself (loopback only, every redirect checked; §8.13). |
-| `computer_files_write {folder, path, content}`, `computer_files_move {folder, path, to}`, `computer_files_delete {folder, path}` | Writes (at most 1 MB), moves (never over a file) or deletes a file in a folder (§8.13). |
+| `computer_files_write {folder?, path, content}`, `computer_files_move {folder?, path, to}`, `computer_files_delete {folder?, path}` | Writes (at most 1 MB), moves (never over a file) or deletes a file in a folder, by default the node's own (§8.13). |
 | `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, … `capture_screenshot`, `capture_video`, `capture_app_start`, `capture_check`, `capture_status` (each with `computer?`) | Browses and captures on the owner's computer with the same tools its coding agents have (§8.16); what they capture is the node's own evidence. |
 | `node_helper {task, name?, role?, can?, folders?}` | Brings in a temporary helper for one side task, as a step of this turn's plan (§6.1); `can` is `read` (default), `sessions` or `computer` (only in `folders`, when named). |
-| `node_show {evidence, caption?}` | Shows the owner screenshots, videos or files their runs attached or the node captured (evidence ids), with the node's reply (§8.14). Never a capture held for the owner's preview. Only in turns the owner started. |
+| `node_show {evidence, caption?}` | Chooses which screenshots, videos or files show with the node's reply (evidence ids): among several, older ones, or a run's (§8.14). What the turn captured shows by itself without it. Never a capture held for the owner's preview. Only in turns the owner started. |
 | `node_routines {action: list\|create\|pause\|resume\|delete\|run_now, …}` | The owner's routines for this node (§6.5), when they ask. Only where the owner reads alone. |
 | `node_create {name, role, charter, templateId?}` | Makes the owner a lasting node, with its own DM, when they ask (§6.1). Only where the owner reads alone. |
 | `node_create_group {title, members, lead?}` | Makes a crew of the owner's nodes (`createCrew`, the same as `POST /api/node/crews`), when they ask. Only where the owner reads alone. |
@@ -173,11 +177,28 @@ The assistant works in one space per conversation. A node acts for its owner in 
 
 Node turns also have every assistant tool for the owner's modules (§5.3): workspace search across tasks, pages and files, page and board edits, settings, connected-app reads (`apps_search`, `apps_read`, MCP tools for what the owner connected) and `hub_web_search`. Each Hub tool takes an optional `space` (§5.4). Writes follow the owner's write policy (§7).
 
+**Web search.** `hub_web_search {query, market?}` searches the live web. On Ensemble's included models it uses Azure Foundry's hosted `web_search` tool on the Responses API (`includedWebSearch` in `runtime/search.ts`): the answer comes back with its sources (`url_citation`), on the owner's included credits, with each search charged at `WEB_SEARCH_CALL_USD` (0.01 US dollars) on top of its tokens. `market` (`en-US`) asks for one country's stores, prices and language. When that path is off, its credits are used up or it finds nothing, the search falls back to Bing (`format=rss`, with `mkt` and `setlang` from `market`), then DuckDuckGo, 15 seconds each.
+
 **Files on messages.** A person can attach up to 8 of their own Files to a message. The node reads the files on its owner's messages since its last turn: their text and, when its model reads images, the pictures (`node/brain.ts` passes them to the turn as file mentions; [38](38_AGENT_READABLE_FILES.md)). A node opens only its owner's own Files, so files on someone else's message are named in the transcript with a note that it cannot open them.
 
 ### 6.1 Who does the work
 
-The node is the one its owner talks to. Its rules (`persona` in `node/brain.ts`) say who does what: quick work (look-ups, searches, reading, summaries, short reports) it does itself in the turn; code, files, commands and long work go to an agent session (§8); a side task that should be independent of it (an audit, a second opinion, a parallel investigation) goes to a helper; nodes and crews it makes only when the owner asks.
+The node is the one its owner talks to, and it does simple work with its own hands. Its rules (`persona` in `node/brain.ts`) are a short routing table, written so that a small model at low thinking follows it:
+
+| The owner asks for | The node uses |
+| --- | --- |
+| Facts, prices, news, "look up", "compare" | `hub_web_search` first; it opens pages only to check a detail or take a screenshot |
+| A screenshot of a site or page | `browser_open`, then `browser_screenshot`: the viewport; "the table" or "the chart" as that element; the full page only when asked |
+| A screenshot of the terminal, `htop` or a command's output | `computer_terminal_screenshot` |
+| A command, a check, a download, a file to read or write, a report (`.md`) | `computer_run` or `computer_files_write`, in its own folder unless one is named; `node_share_file` brings a file into the chat |
+| Installing software, or anything that needs the administrator | `computer_sudo`, after downloading with `computer_run` |
+| Writing or changing code in a repository (a feature, a fix, a refactor, a test-and-fix loop), or an agent the owner names | An agent session (§8), with the run profile's agent, model, thinking level and context unless the owner names others |
+| Long research or a long check | `node_work_start`, in the background |
+| An independent second opinion or audit | A helper |
+
+The computer rows are in its rules only where it has those tools (§8.13). The rules also say: what the node captures shows with its reply by itself, and it never says something is attached unless a tool said so, nor sends a link instead of a picture; a table asked for is a Markdown table; a tool waiting for the owner's answer on a card means the node stops and says nothing about it (§8.6); a human check or a blocked site goes to the owner with `browser_login_needed`, or the node uses another source. The line about agent sessions names what they run with (`agentDefaults` in `node/sessions.ts`: "GitHub Copilot · gpt-6.1-sol · medium thinking · 1M context (the run profile “Copilot”)"), so the node can answer which agent and model a session will use. Nodes and crews it makes only when the owner asks.
+
+**Crews stay crews.** A plan's steps and `node_delegate` reach only the crew's members and the node's own helpers (`node/crew.ts`, checked again in `node/plans.ts`); a delegation from a DM goes to the crew the node is in. Another of the owner's nodes joins only when the owner approves the lead's `node_crew_add` card (`data {type: "crew_add", status, nodeId, nodeSlug, nodeName, roomId, crewTitle, reason, answeredAt, handle}`, settled through `POST /api/node/approvals/:messageId`): approving adds it, discarding leaves it out, and the lead is woken either way.
 
 **Helpers** (`node/helpers.ts`). `node_helper` makes a node with `parent_node_id` set, `effort` low and the parent's model, whose charter is the task, and a `task` room (`settings {parentNodeId, helperNodeId, originRoomId, originPrivateTo}`) with the owner (to read), the parent and the helper: the helper's **thread**, which the website shows inline where the parent was asked (the room view's `helper`: `parentNodeId`, `helperNodeId`, `originRoomId`, `originPrivate`, `originMessageId` (the message that asked) and `planId` (the plan card its step is in)). The brief opens the thread without waking anyone, and the task becomes a step of the parent's plan for that turn (`executor: helper`, §6.2): helpers brought in together are steps of one plan, so the parent hears once, with every result, when they have all reported, and tells its owner in one message. A helper:
 
@@ -248,11 +269,11 @@ A **routine** is work a node does by itself on a schedule, when something change
 
 ## 8. Work on a computer
 
-Long work on a computer goes to the owner's own coding agents on their paired computer, on their own subscriptions, through **agent sessions** ([30](30_ENGINES.md), Agent sessions): a session is one conversation with one agent, carried across the runs that continue each other. Every run is a `WorkspaceJob` made by `createJob`, so Ensemble's queue, device protocol, sandbox, Needs me and publishing rules apply as for any task ([06](06_MODULE_WORKSPACE_AND_SURFACES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). For quick work a node uses its own tools on the computer: commands (a test run, `git status`), a development server, a small file change (§8.13), and the browser and capture (§8.16).
+Coding work on a computer goes to the owner's own coding agents on their paired computer, on their own subscriptions, through **agent sessions** ([30](30_ENGINES.md), Agent sessions): a session is one conversation with one agent, carried across the runs that continue each other. Every run is a `WorkspaceJob` made by `createJob`, so Ensemble's queue, device protocol, sandbox, decisions and publishing rules apply as for any task ([06](06_MODULE_WORKSPACE_AND_SURFACES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). Everything else a node does on the computer itself (§8.13): commands, downloads, files and reports, terminal screenshots, installs as the administrator, and the browser and capture (§8.16).
 
 ### 8.1 Starting a session
 
-`node_session_start` plans the run as `hub_assign_to_agent` does (`plan` in `assistant/tools/agent-assign.ts`): the owner's default run profile (or the one named) decides the agent, computer, mode and git rules unless the node names others. With no coding agent in the profile, it takes one signed in on the chosen computer. The agent works in a folder the computer shares, a fresh clone, or a new empty folder.
+`node_session_start` plans the run as `hub_assign_to_agent` does (`plan` in `assistant/tools/agent-assign.ts`): the node's run profile (`runProfileId`, else the owner's default; or the one named) decides the agent, model, thinking level, context, computer, mode and git rules unless the node names others. The run card's data names them (`engine`, `model`, `effort`, `context`). With no coding agent in the profile, it takes one signed in on the chosen computer. The agent works in a folder the computer shares, a fresh clone, or a new empty folder.
 
 A run the node starts on its own keeps its record on an internal task (`sourceRef` `node:<nodeId>`, `lib/node-tasks.ts`) that stays off the board: the board, Today, the assistant's task lists and the CLI's task list leave it out (`ON_BOARD`). The run still shows in Runs and Needs me. When the owner wants the work on their board, the node makes a task (`hub_create_tasks`) and passes `taskId`; the run then belongs to that task.
 
@@ -288,20 +309,28 @@ The order is the session's queue (§8.9), not when runs were made. A new message
 
 Where only the owner reads and the owner started the turn (a DM, a crew, their private thread; one of their own nodes by delegation), these run at once, and the node also gets `node_session_queue` and `node_answer_question` (§8.11). With the node's **Work on your computer: Ask me first** (`autonomy.computerWork: "ask"`), `node_session_start` and `node_session_send` post an owner-only approval card (`data.type: "session"`) instead, run exactly as shown when approved. In a room with other people, the shared thread's turns are room-bound and get no session tools at all, even for the owner's own request (§12.3): work on the computer is asked for in My crew, or arrives as an accepted peer request (§12.6). Ensemble's Stop everything refuses new work.
 
-When a run ends (succeeded, failed, cancelled, interrupted), the watcher (`node/runs.ts`) wakes the node in the same thread with the summary and what is still queued in the session, so it reports to whoever asked. Questions a run asks are answered in Needs me (§8.6).
+When a run ends (succeeded, failed, cancelled, interrupted), the watcher (`node/runs.ts`) wakes the node in the same thread with the summary and what is still queued in the session, so it reports to whoever asked. Questions and permissions a run asks are answered on its card in the chat (§8.6).
 
 ### 8.5 Pausing a node
 
 `PATCH /api/node/nodes/:id {status: "paused"}` stops everything the node is doing: its reply, its queued turns and every run it started that has not ended (`stopNodeRuns`). It then posts in its DM, without a model call, what it stopped: the runs that were working and the ones it took out of the queue, or only that it paused when nothing was running (`pausedNotice`). It resumes with `{status: "active"}` or with its owner's next message to it (§4).
 
-### 8.6 Needs me
+### 8.6 Cards in the chat
 
-Needs me is one list in every product: Ensemble's run approvals and agents' questions, the nodes' approval cards, and board tasks blocked or waiting for an approval.
+What a node or its runs need from the owner is a card in the conversation where the node works, only the owner sees it, and the node waits for it. Node has no separate Needs me page.
 
-- Node's Needs me page reads `GET /api/approvals`, `GET /api/decisions?status=pending` and `GET /api/node/activity` (its `approvals` are the node cards, `waitingTasks` the tasks), and answers each in place.
-- The Hub's Needs me lists the node cards under *From your nodes* (`GET /api/node/approvals`, with each card's node and conversation and the Node site's address) and settles them with `POST /api/node/approvals/:messageId`; `GET /api/shell` counts them in `nodeApprovals` for the sidebar badge.
-- A card created or settled sends `approval` on the owner's Ensemble stream (`needsMeChanged` in `node/store.ts`), which the Hub re-reads and Node gets as `node.needs`.
-- The CLI lists the cards after the computer's own questions in `ensemble needs` and on its Node tab, read through `GET /api/bridge/node` ([26](26_CLI.md)); they are answered on Node or in the Hub.
+| Card (`data.type`) | Asks for | Section |
+| --- | --- | --- |
+| `computer` | A folder (or, with *Ask before a node opens a new website* on, an address) on the computer, the first time | §8.13 |
+| `sudo` | One command as the administrator, with the owner's password | §8.13 |
+| `secret`, `login`, `media_preview` | A secret, a sign-in or a human check, a held capture | §8.7, §8.16 |
+| `tools`, `session`, `node_proposal`, `crew_add`, `post`, `peer_request` | Held writes, work on the computer to approve, a new node or crew, a node for the crew, a draft, a request | §7, §8.4, §6.1, §12 |
+
+- **The computer card** keeps its decision in `agent_decisions` (tool name `Computer tools`), so the Hub's Needs me, the phone and `ensemble needs` answer it too; the card (`data {status: pending|allowed|denied|expired, decisionId, capability, label, scope, deviceName, call, options, answer, answeredAt, private, plan?}`) follows whichever answer comes first and is answered with `POST /api/decisions/:id/decide`. A run's own questions and permissions show on its run card and are answered there.
+- **The node waits.** A tool call that needs an answer waits in its turn, at most `ENSEMBLE_NODE_PERMISSION_WAIT_MS` (3 minutes), and gives its slot back meanwhile (`waitingForOwner` in `node/queue.ts`); the website shows the node waiting (`node.status` `waiting`, with the card). Allowed: the same call runs again at once, at most three asks for one call, and the turn goes on; denied: the node hears it and goes on without.
+- **Parking.** No answer in time, or a new message from the owner in that conversation: the turn parks. It ends after the tool calls it is making, posts nothing (`requestPark`, outcome `parked`), keeps a note of what it waits for in its conversation, and a plan step stays working. The answer, whenever it comes, wakes the node with the exact call to make again (`announce` in `node/device-tool-decisions.ts`). One question waits for each conversation or step that parked on it, and each is woken.
+- **Checkpoints.** Once answered, the website shows a card as a small checkpoint in the conversation ("Allowed @web to run commands in live-test · Once"), which opens again on a click.
+- **Ensemble's other surfaces.** The Hub's Needs me lists node cards under *From your nodes* (`GET /api/node/approvals`; `/api/shell` counts them in `nodeApprovals`) and the CLI on its Node tab (`GET /api/bridge/node`), except computer cards (their decision is listed already) and administrator cards (only the card in the chat, with its password box, answers one). `GET /api/node/activity` lists every pending card, for the website's "needs you" marks. A card created or settled sends `approval` on the owner's Ensemble stream (`needsMeChanged` in `node/store.ts`), which the Hub re-reads and Node gets as `node.needs`. A computer card's notification opens it in the Node chat (`ENSEMBLE_NODE_WEB_ORIGIN`).
 - A run's questions and permissions close when the run ends, and the first answer from anywhere wins; a late answer is refused with "This request ended with its work." ([05 §5](05_MODULE_TASK_ORCHESTRATOR.md#5-decisions-and-publishing)).
 
 ### 8.7 Secrets
