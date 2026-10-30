@@ -14,7 +14,7 @@ export type Media = { evidenceId: string; kind: string; name: string; mime: stri
 
 /** At most this many files on one message. */
 export const MAX_MEDIA = 8;
-/** At most this many captures come with a reply by themselves (the newest first). */
+/** At most this many captures come with a reply by themselves (the latest ones, in the order taken). */
 export const AUTO_MEDIA = 6;
 const SHOWN_KINDS = new Set(["screenshot", "image", "video"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -39,12 +39,12 @@ export function rememberCaptured(turnId: string, items: readonly Media[]): void 
   captured.set(turnId, list.slice(-MAX_MEDIA * 4));
 }
 
-/** What a reply shows: what the turn chose with node_show, else what it captured (the newest first, at most `AUTO_MEDIA`). */
+/** What a reply shows: what the turn chose with node_show, else the latest `AUTO_MEDIA` it captured, in the order taken (as the reply tells of them). */
 export function takeTurnMedia(turnId: string): Media[] {
   const picked = chosen.get(turnId);
   const own = captured.get(turnId) ?? [];
   forgetTurnMedia(turnId);
-  return picked ?? own.slice(-AUTO_MEDIA).reverse();
+  return picked ?? own.slice(-AUTO_MEDIA);
 }
 
 /** The turn ended: what it chose or captured is not shown any more. */

@@ -270,7 +270,7 @@ async function findings(prisma: PrismaClient, run: NodeRun, job: JobView, answer
         hits.push({
           condition: `question:${question.id}`,
           note: [
-            `The agent doing ${where} asks: “${truncateText(question.title, 300)}”${options.length ? ` (options: ${options.map((option) => `“${option}”`).join(", ")})` : ""}. It waits in your owner's Needs me (question ${question.id}).`,
+            `The agent doing ${where} asks: “${truncateText(question.title, 300)}”${options.length ? ` (options: ${options.map((option) => `“${option}”`).join(", ")})` : ""}. It waits for your owner on the run's card in the chat (question ${question.id}).`,
             "If the mission, your step's brief, the mission's constraints or your owner's own message that started this work states the answer, answer it with node_answer_question, quoting those words exactly and naming the source.",
             "Never answer permissions, widening the scope, security, cost or anything destructive, and never from memory or a guess: leave those to your owner.",
           ].join(" "),

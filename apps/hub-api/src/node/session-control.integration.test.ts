@@ -707,7 +707,7 @@ test("an agent's question of fact is answered by its node from the owner's own w
   assert.equal((await sessionEvents(h.prisma, node.id)).filter((row) => row.action === "attention").length - before, 1, "only the question the node may answer reaches it");
   await settleTurns();
   const note = seen.find((row) => row.transcript.includes("Which branch should I work on?"))!;
-  assert.match(note.transcript, /asks: “Which branch should I work on\?” \(options: “main”, “testing”\)\. It waits in your owner's Needs me/);
+  assert.match(note.transcript, /asks: “Which branch should I work on\?” \(options: “main”, “testing”\)\. It waits for your owner on the run's card in the chat/);
   assert.ok(note.tools.includes("node_answer_question"));
   const answered = await h.prisma.agentDecision.findUniqueOrThrow({ where: { id: branch } });
   assert.deepEqual([answered.status, answered.decision, answered.reason], ["decided", "allow", "testing"]);

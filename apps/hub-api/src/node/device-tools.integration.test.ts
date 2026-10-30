@@ -463,7 +463,7 @@ test("what the node captures comes with its reply by itself; its own choice with
     script = (turn) => (turn.transcript.includes("screenshot of example") ? { calls: [shoot, shoot], then: "Here is example.com." } : { text: "ok" });
     await say(mira, room.id, "send me a screenshot of example.com");
     const reply = (await replies(mira, room.id, node.id)).at(-1)!;
-    assert.deepEqual(reply.data.media.map((item: { evidenceId: string }) => item.evidenceId), [shots[1], shots[0]], "the newest first, without node_show");
+    assert.deepEqual(reply.data.media.map((item: { evidenceId: string }) => item.evidenceId), [shots[0], shots[1]], "in the order taken, without node_show");
     assert.match(reply.data.tools[0].summary, /This screenshot will appear with your reply\./);
 
     const older = await uploaded(mira.id, node.id, laptop.id, "screenshot", "older.png");
