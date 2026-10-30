@@ -10,12 +10,24 @@ import { isHosted } from "../lib/hosted-access.js";
 import { copySettings, listSpaces, MAX_SPACES } from "../spaces/store.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
+import { SharingSettings } from "@ensemble/shared-types";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
+/** The defaults: an account raises or lowers its own limits in Settings, Sharing (`settings.sharing`). */
 export const MAX_CONTACTS = 5;
 export const MAX_MEMBERS = 2;
 export const MAX_TRANSFERS = 1;
+
+/**
+ * The account's own sharing limits: contacts, and people per space it owns (its choice, up to
+ * SHARING_CAPS; Settings, Sharing). Read from the account's own settings row, whoever is asking.
+ */
+export async function sharingLimits(db: Db, accountId: string): Promise<{ contacts: number; members: number }> {
+  const row = await db.preference.findFirst({ where: { userId: accountId, key: "hub.settings", deletedAt: null }, select: { value: true } });
+  const parsed = SharingSettings.safeParse((row?.value as { sharing?: unknown } | null)?.sharing ?? {});
+  return parsed.success ? parsed.data : { contacts: MAX_CONTACTS, members: MAX_MEMBERS };
+}
 const SPACE_EMAIL = "@spaces.ensemble.invalid";
 const ACTIVE_JOBS = ["running", "claimed", "stopping", "waiting_approval"] as const;
 
@@ -167,8 +179,9 @@ export async function ensureContact(db: Db, accountId: string, personId: string)
   const existing = await db.contact.findUnique({ where: { ownerId_contactId: { ownerId: accountId, contactId: personId } } });
   if (existing) return;
   const count = await db.contact.count({ where: { ownerId: accountId } });
-  if (count >= MAX_CONTACTS) {
-    throw new SharingError(`You can share with up to ${MAX_CONTACTS} people. Remove someone from your contacts in Settings, Sharing, to add another.`, 409, "CONTACT_LIMIT");
+  const { contacts } = await sharingLimits(db, accountId);
+  if (count >= contacts) {
+    throw new SharingError(`You can share with up to ${contacts} people. Remove someone from your contacts, or raise the limit, in Settings, Sharing.`, 409, "CONTACT_LIMIT");
   }
   await db.contact.create({ data: { ownerId: accountId, contactId: personId } });
 }
@@ -222,8 +235,9 @@ export async function addMember(db: PrismaClient, accountId: string, spaceId: st
       await tx.spaceMember.update({ where: { id: already.id }, data: { role } });
       return;
     }
-    if ((await tx.spaceMember.count({ where: { spaceId } })) >= MAX_MEMBERS) {
-      throw new SharingError(`A space can be shared with ${MAX_MEMBERS} people. Remove someone to add another.`, 409, "MEMBER_LIMIT");
+    const { members } = await sharingLimits(tx, accountId);
+    if ((await tx.spaceMember.count({ where: { spaceId } })) >= members) {
+      throw new SharingError(`A space can be shared with ${members} people. Remove someone, or raise the limit in Settings, Sharing.`, 409, "MEMBER_LIMIT");
     }
     await ensureContact(tx, accountId, personId);
     await tx.spaceMember.create({ data: { spaceId, accountId: personId, role, addedBy: accountId } });
@@ -422,7 +436,7 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     }
     // They keep the old owner as an editor. That needs a free contact slot on their side.
     const theirs = await tx.contact.findUnique({ where: { ownerId_contactId: { ownerId: toId, contactId: accountId } } });
-    if (!theirs && (await tx.contact.count({ where: { ownerId: toId } })) >= MAX_CONTACTS) {
+    if (!theirs && (await tx.contact.count({ where: { ownerId: toId } })) >= (await sharingLimits(tx, toId)).contacts) {
       throw new SharingError("Their contact list is full, so they could not keep you on the space. Ask them to make room first.", 409);
     }
 

@@ -84,6 +84,15 @@ export function nodeActingIn(spaceId: string): string | null {
 }
 
 /**
+ * Who made something in a space, for "@node for person": the person (null for the space's owner acting
+ * themselves, as `actorFor`) and the node acting for them, if one did.
+ */
+export function madeBy(spaceId: string): { accountId: string | null; nodeId: string | null } {
+  const node = nodeActingIn(spaceId);
+  return { accountId: node ? store.getStore()!.accountId : actorFor(spaceId), nodeId: node };
+}
+
+/**
  * Communications synced from the owner's connected apps: their inbox, chats and calendar.
  * Never shown to anyone a space is shared with. Work artifacts (files, pull requests, issues,
  * commits, transcripts, meeting notes) are the space's context and stay visible.

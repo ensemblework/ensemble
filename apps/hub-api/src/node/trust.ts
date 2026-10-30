@@ -13,6 +13,7 @@
 import { z } from "zod";
 import type { NodeRoomMember, Prisma, PrismaClient } from "@prisma/client";
 import { openedSpace } from "../lib/auth.js";
+import { nodeSpace } from "./spaces.js";
 import { fileText } from "../files/attached.js";
 import { truncateText } from "../lib/text.js";
 
@@ -63,6 +64,8 @@ export type RoomPrefs = {
   budget?: number | null;
   away?: Away | null;
   shareable?: Shareable[];
+  /** A finished result moves my task to Done (`auto`, the default), or I close it myself (`me`) (node/room-results.ts). */
+  closeTasks?: "auto" | "me";
 };
 
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
@@ -87,6 +90,7 @@ export function prefsOf(member: Pick<NodeRoomMember, "prefs"> | null | undefined
     budget: typeof raw.budget === "number" && Number.isFinite(raw.budget) && raw.budget >= 0 ? raw.budget : null,
     away: typeof away.since === "string" ? { since: away.since, until: typeof away.until === "string" ? away.until : null, note: typeof away.note === "string" ? away.note : null } : null,
     shareable: Array.isArray(raw.shareable) ? (raw.shareable as Shareable[]).filter((row) => row && typeof row.id === "string" && (SHAREABLE_KINDS as readonly string[]).includes(row.kind)) : [],
+    closeTasks: raw.closeTasks === "me" ? "me" : "auto",
   };
 }
 
@@ -204,6 +208,45 @@ export async function shareableItem(db: Db, ownerId: string, item: { kind: Share
   }
   const file = await db.document.findFirst({ where: { id: item.id, userId: spaceId, deletedAt: null }, select: { filename: true } });
   return file ? { kind: "file", id: item.id, spaceId, title: file.filename } : null;
+}
+
+export type ShareableCandidate = { kind: Shareable["kind"]; id: string; title: string; spaceId: string; spaceName: string; updatedAt: string; shared: boolean };
+
+/**
+ * What a person could mark shareable in a room: their pages, tasks and files in each of `spaceIds` they can open
+ * now (their own space, and the room's linked space when they are its owner or a member). `q` matches titles and
+ * file names. At most `perKind` of each kind per space, newest first; `shared` says it is already marked here.
+ */
+export async function shareableCandidates(
+  db: PrismaClient,
+  accountId: string,
+  spaceIds: string[],
+  input: { q?: string; marked: Shareable[]; perKind?: number },
+): Promise<{ spaces: Array<{ id: string; name: string; role: string }>; items: ShareableCandidate[] }> {
+  const take = input.perKind ?? 10;
+  const q = input.q?.trim();
+  const named = q ? { contains: q, mode: "insensitive" as const } : undefined;
+  const marked = new Set(input.marked.map((row) => `${row.kind}:${row.id}`));
+  const spaces: Array<{ id: string; name: string; role: string }> = [];
+  const items: ShareableCandidate[] = [];
+  for (const spaceId of [...new Set(spaceIds)]) {
+    const space = await nodeSpace(db, accountId, spaceId);
+    if (!space) continue;
+    spaces.push({ id: space.id, name: space.name, role: space.role });
+    const [pages, tasks, files] = await Promise.all([
+      // A task's page is offered as its task.
+      db.taskPage.findMany({ where: { userId: space.id, taskId: null, deletedAt: null, ...(named ? { title: named } : {}) }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, updatedAt: true } }),
+      db.task.findMany({ where: { userId: space.id, deletedAt: null, status: { not: "dropped" }, ...(named ? { title: named } : {}) }, orderBy: { updatedAt: "desc" }, take, select: { id: true, title: true, updatedAt: true } }),
+      db.document.findMany({ where: { userId: space.id, deletedAt: null, ...(named ? { filename: named } : {}) }, orderBy: { updatedAt: "desc" }, take, select: { id: true, filename: true, updatedAt: true } }),
+    ]);
+    const add = (kind: Shareable["kind"], id: string, title: string, updatedAt: Date) =>
+      items.push({ kind, id, title, spaceId: space.id, spaceName: space.name, updatedAt: updatedAt.toISOString(), shared: marked.has(`${kind}:${id}`) });
+    for (const row of pages) add("page", row.id, row.title || "Untitled", row.updatedAt);
+    for (const row of tasks) add("task", row.id, row.title, row.updatedAt);
+    for (const row of files) add("file", row.id, row.filename, row.updatedAt);
+  }
+  items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return { spaces, items };
 }
 
 /** What a shareable item says, read now with the owner's current access (null: it is gone). */

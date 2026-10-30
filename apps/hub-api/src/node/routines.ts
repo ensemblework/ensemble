@@ -142,7 +142,8 @@ async function reportRoom(prisma: PrismaClient, node: NodeAgent, roomId: string 
   }
   const room = await prisma.nodeRoom.findFirst({ where: { id: roomId, archivedAt: null, members: { some: { nodeId: node.id } } } });
   if (!room) throw new RoutineError("That node is not in that room.");
-  if ((await roomPeople(prisma, room.id)).some((id) => id !== node.userId)) throw new RoutineError("A routine reports where only you read: the node's chat or one of your crews.");
+  // A room for other people is never a routine's place, even while its owner is alone there.
+  if (!["dm", "crew"].includes(room.kind) || (await roomPeople(prisma, room.id)).some((id) => id !== node.userId)) throw new RoutineError("A routine reports where only you read: the node's chat or one of your crews.");
   return room;
 }
 

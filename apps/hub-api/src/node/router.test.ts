@@ -91,6 +91,16 @@ test("rooms v2: unaddressed messages wake nobody; a mentioned lead answers in pu
   assert.deepEqual(whoSpeaks(fromNode, room, nodes, 1), { reason: "none", nodeIds: [] }, "nodes never wake nodes here");
 });
 
+test("a room's steward answers whoever names it, in public; without a steward the node's person's lead answers", () => {
+  const nodes = [node("mira-lead", "mira", { representative: true, handle: "lead" }), node("mira-scribe", "mira", { handle: "scribe" }), node("ben-lead", "ben", { representative: true, handle: "ben-lead" })];
+  const named = (authorId: string) => message({ authorId, mentions: [{ kind: "node", id: "mira-scribe" }] });
+  const stewarded = { kind: "room" as const, leadNodeIds: ["mira-scribe"] };
+  assert.deepEqual(targetsOf(whoSpeaks(named("ben"), stewarded, nodes, 0)), [{ nodeId: "mira-scribe", private: false, audience: "room" }], "for Ben, in public");
+  assert.deepEqual(targetsOf(whoSpeaks(named("mira"), stewarded, nodes, 0)), [{ nodeId: "mira-scribe", private: false, audience: "room" }], "for its sponsor too");
+  assert.deepEqual(targetsOf(whoSpeaks(named("ben"), { kind: "room", leadNodeIds: [] }, nodes, 0))?.map((row) => row.nodeId), ["mira-lead"], "no steward: Mira's lead answers for her node");
+  assert.deepEqual(targetsOf(whoSpeaks(message({ authorId: "mira", mentions: [{ kind: "node", id: "mira-scribe" }], visibleTo: ["mira"] }), stewarded, nodes, 0)), [{ nodeId: "mira-scribe", private: true, audience: "owner" }], "in My crew it is its sponsor's own node");
+});
+
 test("`@leads status` (and only that) is answered by code", () => {
   for (const text of ["@leads status", "@leads, status?", "@Leads: status!", "  @leads — status ", "@leads status??"]) assert.equal(leadsStatus(text), true, text);
   for (const text of ["@leads status of billing?", "status @leads", "@leads what's up", "@lead status", "leads status"]) assert.equal(leadsStatus(text), false, text);

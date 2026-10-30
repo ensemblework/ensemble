@@ -53,6 +53,11 @@ import { registerRoutineRoutes } from "./routine-routes.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
+import { boundSpaceId, offerSpace } from "./room-space.js";
+import { freshSharedThreads } from "./audience.js";
+import { noteMentions, roomOpened } from "./room-events.js";
+import { confirmDecision } from "./room-pages.js";
+import { followPresence } from "./status-cards.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -149,6 +154,8 @@ async function roomView(prisma: PrismaClient, accountId: string, room: NodeRoom)
     pinned: settings.pinned,
     // A helper's task room: whose helper it is and where its parent was asked, so the site shows it there.
     ...(room.kind === "task" ? { helper: helperOf(room) } : {}),
+    // A room with people: the space that holds its work, if linked (GET /api/node/rooms/:id/space for details).
+    ...(room.kind === "room" ? { spaceId: boundSpaceId(room) } : {}),
     // Only the person who made a room sees its requests: whether each was accepted, declined or is open.
     invites: invites.map((row) => ({
       id: row.id,
@@ -172,13 +179,23 @@ async function roomList(prisma: PrismaClient, accountId: string) {
   const rooms = memberships.filter((row) => !row.room.archivedAt);
   const list = await Promise.all(
     rooms.map(async (row) => {
-      const [last, unread, view] = await Promise.all([
+      // A room with other people has two tabs, each with its own read mark: the Room (shared) and My crew (private).
+      const tabs = row.room.kind === "room";
+      const notMine = { NOT: { authorKind: "human", userId: accountId } };
+      const [last, unread, crew, view] = await Promise.all([
         // Cards inside a plan card are not separate messages: no preview, no unread.
         prisma.nodeMessage.findFirst({ where: { roomId: row.roomId, planId: null, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt) }, orderBy: { seq: "desc" } }),
-        prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeq }, ...visibleWhere(accountId), ...joinedFilter(row.room.kind, row.joinedAt), NOT: { authorKind: "human", userId: accountId } } }),
+        prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeq }, ...(tabs ? { visibleTo: { isEmpty: true } } : visibleWhere(accountId)), ...joinedFilter(row.room.kind, row.joinedAt), ...notMine } }),
+        tabs ? prisma.nodeMessage.count({ where: { roomId: row.roomId, planId: null, seq: { gt: row.readSeqCrew }, visibleTo: { has: accountId }, ...joinedFilter(row.room.kind, row.joinedAt), ...notMine } }) : Promise.resolve(0),
         roomView(prisma, accountId, row.room),
       ]);
-      return { ...view, unread, readSeq: row.readSeq, last: last ? { ...wireMessage(last), body: truncateText(last.body, 200) } : null };
+      return {
+        ...view,
+        unread: unread + crew,
+        readSeq: row.readSeq,
+        ...(tabs ? { unreadRoom: unread, unreadCrew: crew, readSeqCrew: row.readSeqCrew } : {}),
+        last: last ? { ...wireMessage(last), body: truncateText(last.body, 200) } : null,
+      };
     }),
   );
   return list.sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? ""));
@@ -346,7 +363,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   });
 
   mirrorNeedsMe();
-  app.get("/api/node/events", async (request, reply) => nodeEventStream(request, reply, nodeAccount(request)));
+  app.get("/api/node/events", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    await nodeEventStream(request, reply, accountId);
+    // Their first stream opening, or last closing, is a presence change for their rooms (node/status-cards.ts).
+    followPresence(app, reply, accountId);
+  });
   registerSessionRoutes(app);
 
   // ── nodes ────────────────────────────────────────────────────────────────────────────────
@@ -604,6 +626,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       responsibility: z.string().max(300).nullable().optional(),
     }).strict().parse(request.body ?? {});
     if ((body.title !== undefined || body.leadNodeIds !== undefined) && room.userId !== accountId) throw fail(403, "Only the person who made this room can rename it or pick its lead.");
+    // In a room with other people each person's lead is their own, and the steward is chosen by its sponsor (node/steward.ts).
+    if (body.leadNodeIds !== undefined && room.kind === "room") throw fail(400, "Each person picks their own lead here; the room's steward is set with PUT /api/node/rooms/:id/steward.");
     const title = body.title?.trim();
     if (title !== undefined) {
       if (!title) throw fail(400, "Give it a name.");
@@ -726,12 +750,16 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const taken = await tx.nodeRoomInvite.updateMany({ where: { id: invite.id, status: "pending" }, data: { status: "accepted", respondedAt: new Date() } });
       if (!taken.count) throw fail(409, "That request was already answered or withdrawn.");
       await addPerson(tx, room.id, accountId);
+      // Nodes here forget the shared thread from before this person (node/audience.ts).
+      await freshSharedThreads(tx, room.id);
       const added: string[] = [];
       for (const id of ids) added.push((await addNode(tx, room.id, nodes.find((node) => node.id === id)!, id === lead.id)).handle);
       return added;
     });
     const who = await names(prisma, [accountId]);
     await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: `${who.get(accountId)?.name ?? "Someone"} joined with ${handles.map((handle) => `@${handle}`).join(", ")}.` });
+    // Joining a room is not joining its space: that is offered separately (node/room-space.ts).
+    await offerSpace(app, room.id, accountId);
     publishTo(await roomPeople(prisma, room.id), "node.room", { roomId: room.id });
     return reply.code(201).send({ room: await roomView(prisma, accountId, room) });
   });
@@ -913,14 +941,34 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const stopped = await stopWork(app, room, accountId, command);
       await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
     } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
+    // A person named in public hears of it privately, from their lead (node/room-events.ts).
+    if (!duplicate) inBackground(app, () => noteMentions(app, room, message));
+    // A reply “log this” confirms the message it replies to as a decision (node/room-pages.ts).
+    if (!duplicate && body.replyToId && /^\s*log this\b/i.test(text)) {
+      const target = body.replyToId;
+      inBackground(app, async () => {
+        const replied = await prisma.nodeMessage.findUnique({ where: { id: target } });
+        if (replied) await confirmDecision(app, replied, accountId);
+      });
+    }
     return reply.code(duplicate ? 200 : 201).send({ message: wireMessage(message), duplicate });
   });
 
   app.post("/api/node/rooms/:id/read", async (request, reply) => {
     const accountId = nodeAccount(request);
     const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
-    const body = z.object({ seq: z.number().int().min(0) }).strict().parse(request.body);
-    await prisma.nodeRoomMember.updateMany({ where: { roomId: room.id, userId: accountId, nodeId: null, readSeq: { lt: body.seq } }, data: { readSeq: Math.min(body.seq, room.lastSeq) } });
+    // `{seq}` marks both tabs (and the one thread of a chat or crew); `{tab, upTo}` marks one tab of a room with other people.
+    const body = z
+      .union([z.object({ seq: z.number().int().min(0) }).strict(), z.object({ tab: z.enum(["room", "crew"]).optional(), upTo: z.number().int().min(0) }).strict()])
+      .parse(request.body);
+    const upTo = "seq" in body ? body.seq : body.upTo;
+    const tab = "seq" in body ? undefined : body.tab;
+    const value = Math.min(upTo, room.lastSeq);
+    const me = { roomId: room.id, userId: accountId, nodeId: null };
+    if (tab !== "crew") await prisma.nodeRoomMember.updateMany({ where: { ...me, readSeq: { lt: value } }, data: { readSeq: value } });
+    if (tab !== "room") await prisma.nodeRoomMember.updateMany({ where: { ...me, readSeqCrew: { lt: value } }, data: { readSeqCrew: value } });
+    // Back after being away, or a long gap: a catch-up digest (node/room-events.ts).
+    inBackground(app, () => roomOpened(app, room, accountId));
     return reply.code(204).send();
   });
 
@@ -994,6 +1042,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       return tx.nodeMessage.update({ where: { id }, data: { data: data as Prisma.InputJsonValue } });
     });
     await announce(prisma, updated, "node.message.updated");
+    // ✅ from a person confirms a room message as a decision (node/room-pages.ts).
+    if (body.emoji === "✅" && ((updated.data as { reactions?: Record<string, string[]> } | null)?.reactions?.["✅"] ?? []).includes(accountId)) inBackground(app, () => confirmDecision(app, updated, accountId));
     return { message: wireMessage(updated) };
   });
 

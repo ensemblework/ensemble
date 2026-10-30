@@ -28,6 +28,11 @@ import { loadPlan } from "./plans.js";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { announce, personIn, postMessage, roomPeople, updateMessageData, type MessageKind } from "./store.js";
 import { PEER_KINDS, awayNow, personRow, prefsOf, revokeTrustTo, trustFor, updatePrefs, type PeerKind } from "./trust.js";
+import { modeLine, proposeTask, requesterTask, roleIn, syncRequestTask } from "./room-space.js";
+import { forgetPerson } from "./room-events.js";
+import { dropStewardOf } from "./steward.js";
+import { followMission, roomTaskOrigin, syncMissionResults } from "./room-results.js";
+import { nodeSpace } from "./spaces.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -133,6 +138,8 @@ async function cardView(db: Db, request: NodePeerRequest) {
     answer: request.answer,
     outcome,
     requirements,
+    taskId: request.taskId,
+    mode: request.mode,
     updatedAt: request.updatedAt.toISOString(),
   };
   const state = (statusLine[request.status] ?? request.status).replace("{to}", to.name);
@@ -159,6 +166,8 @@ export async function wireRequest(db: Db, request: NodePeerRequest, viewerId: st
     outcome: data.outcome,
     requirements: data.requirements,
     cardId: request.cardId,
+    taskId: request.taskId,
+    mode: request.mode,
     ...(target ? { ownerCardId: request.ownerCardId, missionId: request.missionId } : {}),
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
@@ -173,6 +182,8 @@ export async function refreshCards(app: FastifyInstance, requestId: string, extr
   const prisma = app.prisma;
   const request = await prisma.nodePeerRequest.findUnique({ where: { id: requestId } });
   if (!request) return;
+  // Its proposed task in the room's space follows it (node/room-space.ts).
+  await syncRequestTask(app, request);
   const card = request.cardId ? await prisma.nodeMessage.findUnique({ where: { id: request.cardId } }) : null;
   if (card) {
     const { data, body } = await cardView(prisma, request);
@@ -210,7 +221,13 @@ export async function requestReplied(app: FastifyInstance, requestId: string, me
 
 // ── making a request ──────────────────────────────────────────────────────────────────────────
 
-export type NewRequestInput = z.infer<typeof NewRequest> & { room: NodeRoom; fromAccountId: string; fromNodeId?: string | null };
+export type NewRequestInput = z.infer<typeof NewRequest> & {
+  room: NodeRoom;
+  fromAccountId: string;
+  fromNodeId?: string | null;
+  /** False when who asked rests on a lead's reading of several people's messages: it then never starts at once. */
+  mayAutoAccept?: boolean;
+};
 
 /** Records a request, posts its public card, and either asks the target owner (work, review) or wakes their lead (question, share). */
 export async function createPeerRequest(app: FastifyInstance, input: NewRequestInput): Promise<NodePeerRequest> {
@@ -241,13 +258,16 @@ export async function createPeerRequest(app: FastifyInstance, input: NewRequestI
   const { data, body } = await cardView(prisma, request);
   // "request" is a card kind of its own (not in store.ts's MessageKind): it never wakes a node, like every card.
   const { message: card } = await postMessage(prisma, { roomId: room.id, userId: input.fromAccountId, authorKind: "system", kind: "request" as unknown as MessageKind, body, data });
-  await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { cardId: card.id } });
+  // Between two editors of the room's space, work becomes a proposed task there; a review's result goes on the requester's own task (node/room-space.ts).
+  const taskId = input.kind === "work" ? await proposeTask(app, request, room) : input.kind === "review" ? await requesterTask(app, request, room) : null;
+  await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { cardId: card.id, ...(taskId ? { taskId } : {}) } });
+  if (taskId) request.taskId = taskId;
   if (WORK.has(input.kind)) {
     const target = await personRow(prisma, room.id, to);
     const prefs = prefsOf(target);
     const trust = trustFor(prefs, input.fromAccountId);
     // Work its owner chose to accept from this person starts at once, unless they are away (or their lead is paused): then it waits for them.
-    if (trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs) && lead.node?.status === "active") {
+    if (input.mayAutoAccept !== false && trust.workRequests === "accept" && trust.acceptKinds.includes(input.kind) && !awayNow(prefs) && lead.node?.status === "active") {
       await prisma.nodePeerRequest.update({ where: { id: request.id }, data: { status: "approved", decidedAt: new Date() } });
       const fresh = (await prisma.nodePeerRequest.findUnique({ where: { id: request.id } }))!;
       await postMessage(prisma, {
@@ -282,7 +302,8 @@ async function ownerCard(app: FastifyInstance, request: NodePeerRequest, lead: N
     authorKind: "node",
     authorNodeId: lead.id,
     kind: "approval",
-    body: `${fromName} asks for ${request.kind === "review" ? "a review" : "work"}: “${truncateText(request.text, 600)}”${pinned ? ` (candidate: ${pinned})` : ""}. Accept, edit or decline.`,
+    // The whole request: the owner accepts exactly what their lead's planning turn reads.
+    body: `${fromName} asks for ${request.kind === "review" ? "a review" : "work"}: “${request.text}”${refsLine(request)}${pinned ? ` (candidate: ${pinned})` : ""}. Accept, edit or decline.`,
     data: {
       type: "peer_request",
       status: "pending",
@@ -294,6 +315,10 @@ async function ownerCard(app: FastifyInstance, request: NodePeerRequest, lead: N
       from: { accountId: request.fromAccountId, name: fromName },
       nodes: nodes.filter((row) => row.node).map((row) => ({ handle: row.handle, name: row.node!.name, role: row.node!.role, lead: row.representative })),
       cost: "If you accept, your lead plans it with your nodes, on your computer and your subscriptions and credits.",
+      // A proposed task in the room's space: accepting asks one question, private work with a shared result (default) or a shared run.
+      ...(request.taskId && request.kind === "work" ? { taskId: request.taskId, modes: ["private", "shared"], defaultMode: "private" } : {}),
+      // A review of work on the requester's own task: its result goes on that task (node/room-results.ts).
+      ...(request.taskId && request.kind === "review" ? { taskId: request.taskId, resultTo: "requester_task" } : {}),
     },
     visibleTo: [request.toAccountId],
   });
@@ -337,14 +362,17 @@ async function startAccepted(app: FastifyInstance, request: NodePeerRequest, lea
   const prisma = app.prisma;
   const who = await names(prisma, [request.fromAccountId]);
   const from = who.get(request.fromAccountId) ?? "Someone";
-  const room = await prisma.nodeRoom.findUnique({ where: { id: request.roomId }, select: { title: true } });
+  const room = await prisma.nodeRoom.findUnique({ where: { id: request.roomId } });
   const candidate = request.candidate as Candidate | null;
+  // Where it runs: the proposed task's own space (wherever the room links now), shared only while they can edit there.
+  const space = request.kind === "work" ? await requestSpace(prisma, request) : null;
+  const where = space ? modeLine({ ...request, mode: space.shared ? "shared" : "private" }, (await nodeSpace(prisma, request.toAccountId, space.spaceId))?.name ?? null) : "";
   const note =
     request.kind === "review"
       ? `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for a review: “${request.text}”${refsLine(request)}. The candidate: ${candidateLine(candidate)}. ` +
-        "Plan it now with node_plan for your owner, on their computer: a verify step that checks out exactly that candidate in a fresh clone, with no secrets in its environment, sandboxed, with network only for what the checks need, and reports pass or fail with each check. Fix nothing: the repair stays with the person who asked. The mission's constraints carry this. " +
+        "Plan it now with node_plan for your owner, on their computer: one checking step (kind other, since nothing in this plan builds the candidate) for the node that tests, which checks out exactly that candidate in a fresh clone, with no secrets in its environment, sandboxed, with network only for what the checks need, and reports each check with its verdict (pass or fail). Fix nothing: the repair stays with the person who asked. The mission's constraints carry this. " +
         "When it ends, the request's card in the room shows how it ended; your detailed report stays here with your owner."
-      : `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for work: “${request.text}”${refsLine(request)}. ` +
+      : `Your owner accepted ${from}'s request in “${room?.title ?? "the room"}” for work: “${request.text}”${refsLine(request)}.${where} ` +
         "Plan it now with node_plan for your owner (their nodes, their computer, their credits). When it ends, the request's card in the room shows how it ended; your detailed report stays here with your owner, who can share it to the room.";
   const operationId = `request:${request.id}:accepted`;
   const queued = await enqueueTurn(app, { nodeId: lead.id, roomId: request.roomId, reason: "request", private: true, audience: "owner", operationId, note });
@@ -364,7 +392,7 @@ async function liveRequest(app: FastifyInstance, accountId: string, requestId: s
 }
 
 /** The target owner accepts work or a review (optionally edited first, optionally always from this person). */
-export async function acceptRequest(app: FastifyInstance, accountId: string, requestId: string, input: { text?: string; always?: boolean }): Promise<NodePeerRequest> {
+export async function acceptRequest(app: FastifyInstance, accountId: string, requestId: string, input: { text?: string; always?: boolean; mode?: "private" | "shared" }): Promise<NodePeerRequest> {
   const prisma = app.prisma;
   const request = await liveRequest(app, accountId, requestId);
   if (request.toAccountId !== accountId) throw fail("Only the person it is for can accept it.", 404);
@@ -382,7 +410,7 @@ export async function acceptRequest(app: FastifyInstance, accountId: string, req
   const text = input.text?.trim();
   const claimed = await prisma.nodePeerRequest.updateMany({
     where: { id: request.id, status: { in: UNDECIDED } },
-    data: { status: "approved", decidedAt: new Date(), toNodeId: lead.node.id, ...(text ? { text: truncateText(text, 4000) } : {}) },
+    data: { status: "approved", decidedAt: new Date(), toNodeId: lead.node.id, ...(text ? { text: truncateText(text, 4000) } : {}), ...(request.taskId && request.kind === "work" ? { mode: input.mode ?? "private" } : {}) },
   });
   if (!claimed.count) throw fail("That request was already settled.", 409);
   if (input.always) {
@@ -435,44 +463,65 @@ export async function settlePeerCard(app: FastifyInstance, card: NodeMessage, no
 }
 
 /** The node tool: record a request. In a room-bound turn, for someone asking this node's owner; in My crew, the owner's own, to someone else. */
-export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerId: string }): AnyHubTool {
+/**
+ * `node_peer_request`. In My crew (and when the owner asked in public) it asks another person for the
+ * owner, attributed to them and relayed by their lead. In a room-bound turn it records a request someone
+ * here made of the owner: `from` names their message, which must be one this turn read from a person
+ * other than the owner (`batch`); its author is who asked. The person who asked is never the turn's.
+ */
+export function peerRequestTool(input: { node: NodeAgent; room: NodeRoom; askerId: string; batch?: ReadonlyArray<{ seq: number; userId: string }> }): AnyHubTool {
   const { node, room, askerId } = input;
-  const forOwner = askerId !== node.userId;
+  const batch = input.batch ?? null;
+  const ownerAsks = askerId === node.userId;
   return defineTool({
     name: "node_peer_request",
     area: "context",
-    description: forOwner
-      ? "Record a request for work or a review from the person who asked, for your owner to decide. Nothing runs until your owner accepts. Then tell them in a line that it waits for your owner."
+    description: batch
+      ? "Record a request for work or a review that someone here made of your owner, for your owner to decide: from is the #number of their message. Nothing runs until your owner accepts. Then tell them in a line that it waits for your owner." +
+        (ownerAsks ? " Your owner asked here too: to ask someone else something for your owner, give to (their handle or their lead's) instead of from." : "")
       : "Ask another person in this room something, through their lead, for your owner: a question, a share (an artefact), a review of your owner's candidate (a commit or URL), or work. It is attributed to your owner and shows as a card in the room.",
     input: z.object({
       kind: z.enum(PEER_KINDS),
       text: z.string().trim().min(1).max(4000).describe("The request, standing alone."),
-      to: z.string().trim().max(80).optional().describe(forOwner ? "Leave out: it is for your owner." : "The person: their handle or their lead's handle."),
+      ...(batch ? { from: z.number().int().min(1).optional().describe("The #number of the message the request comes from.") } : {}),
+      to: z.string().trim().max(80).optional().describe(batch && !ownerAsks ? "Leave out: it is for your owner." : "The person: their handle or their lead's handle."),
       refs: z.array(Ref).max(10).optional(),
       candidate: Candidate.optional().describe("For a review: the repository and exact commit, or a URL."),
     }).strict(),
     isWrite: false,
     risk: "low",
-    async run(ctx, value) {
-      if (forOwner && !WORK.has(value.kind)) throw new ToolBlockedError("Answer questions yourself, within what this room may see; ask your owner (node_ask_owner) for anything private.");
-      if (forOwner && value.to && (await resolvePerson(ctx.prisma, room.id, value.to)) !== node.userId) throw new ToolBlockedError("You record requests for your owner only. Other people's leads answer for them.");
-      if (!forOwner && !value.to) throw new ToolBlockedError("Name who it is for (their handle, or their lead's).");
+    async run(ctx, raw) {
+      const value = raw as { kind: PeerKind; text: string; from?: number; to?: string; refs?: z.infer<typeof Ref>[]; candidate?: z.infer<typeof Candidate> };
+      const recording = Boolean(batch) && (value.from !== undefined || !ownerAsks);
+      let fromAccountId = node.userId;
+      if (recording) {
+        if (!WORK.has(value.kind)) throw new ToolBlockedError("Answer questions yourself, within what this room may see; ask your owner (node_ask_owner) for anything private.");
+        const source = batch!.find((row) => row.seq === value.from);
+        if (!source) throw new ToolBlockedError(value.from === undefined ? "Give from: the #number of the message the request comes from." : `#${value.from} is not a message someone here wrote to your owner in this conversation.`);
+        if (value.to && (await resolvePerson(ctx.prisma, room.id, value.to)) !== node.userId) throw new ToolBlockedError("You record requests for your owner only. Other people's leads answer for them.");
+        if (!(await personIn(ctx.prisma, room.id, source.userId))) throw new ToolBlockedError("They are no longer in this room.");
+        fromAccountId = source.userId;
+      } else if (!value.to) {
+        throw new ToolBlockedError("Name who it is for (their handle, or their lead's).");
+      }
       try {
         const request = await createPeerRequest(ctx.app, {
           room,
-          fromAccountId: askerId,
-          fromNodeId: forOwner ? null : node.id,
-          to: forOwner ? node.userId : value.to!,
+          fromAccountId,
+          fromNodeId: recording ? null : node.id,
+          to: recording ? node.userId : value.to!,
           kind: value.kind,
           text: value.text,
           ...(value.refs ? { refs: value.refs } : {}),
           ...(value.candidate ? { candidate: value.candidate } : {}),
+          // Several people wrote in this conversation: who asked is the lead's reading, so the owner decides.
+          ...(recording ? { mayAutoAccept: new Set(batch!.map((row) => row.userId)).size === 1 } : {}),
         });
         return toolOk(
           request.status === "approved"
             ? "Recorded and accepted at once (your owner's setting); it is planned in their My crew."
             : WORK.has(request.kind)
-              ? `Recorded: it waits for ${forOwner ? "your owner" : "them"} to accept or decline. Say so in a line; promise nothing.`
+              ? `Recorded: it waits for ${recording ? "your owner" : "them"} to accept or decline. Say so in a line; promise nothing.`
               : "Recorded: their lead answers it in the room.",
           { request: request.id, status: request.status },
         );
@@ -507,7 +556,17 @@ export async function turnOrigin(db: Db, turn: TurnLink): Promise<{ operationId:
   return { operationId: first?.operationId ?? null, peerRequestId: first?.peerRequestId ?? null };
 }
 
+/** A work request's proposed task's space, and whether its run is shared there (chosen, and the person asked can still edit there). */
+async function requestSpace(db: Db, request: Pick<NodePeerRequest, "taskId" | "mode" | "toAccountId">): Promise<{ spaceId: string; shared: boolean } | null> {
+  if (!request.taskId) return null;
+  const task = await db.task.findFirst({ where: { id: request.taskId, deletedAt: null }, select: { userId: true } });
+  if (!task) return null;
+  const role = request.mode === "shared" ? await roleIn(request.toAccountId, task.userId) : null;
+  return { spaceId: task.userId, shared: role === "owner" || role === "editor" };
+}
+
 export type MissionOrigin = {
+  spaceId?: string;
   requestedBy?: Prisma.InputJsonValue;
   deliverTo?: Prisma.InputJsonValue;
   principals?: Prisma.InputJsonValue;
@@ -538,20 +597,25 @@ function reviewConstraints(base: Constraints, candidate: Candidate | null): Cons
  */
 export async function missionOriginFor(db: Db, turnId: string, constraints?: Constraints): Promise<MissionOrigin> {
   const turn = await db.nodeTurn
-    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, originTurnId: true, userId: true } })
+    .findUnique({ where: { id: turnId.split(":")[0]! }, select: { id: true, nodeId: true, roomId: true, reason: true, note: true, attempt: true, operationId: true, peerRequestId: true, originTurnId: true, userId: true, private: true, triggerMessageId: true } })
     .catch(() => null);
   if (!turn) return {};
   const link = await turnOrigin(db, turn);
   const requestId = link.peerRequestId ?? /^request:([0-9a-f-]{36}):accepted$/.exec(link.operationId ?? "")?.[1];
-  if (!requestId) return {};
+  // Not a request: perhaps the owner's own task on the room's board (node/room-results.ts).
+  if (!requestId) return roomTaskOrigin(db, turn, link.operationId);
   const request = await db.nodePeerRequest.findUnique({ where: { id: requestId } });
   if (!request || request.status !== "approved" || request.toAccountId !== turn.userId || !WORK.has(request.kind)) return {};
   const owner = request.toAccountId;
   const candidate = request.candidate as Candidate | null;
+  // A shared run works in its task's own space, while the person asked can still edit there; private work keeps the mission in the owner's own (null).
+  const space = request.kind === "work" ? await requestSpace(db, request) : null;
+  const sharedSpace = space?.shared ? space.spaceId : null;
   return {
     requestedBy: { accountId: request.fromAccountId, nodeId: request.fromNodeId, roomId: request.roomId, requestId: request.id, kind: request.kind, ...(candidate ? { candidate } : {}) },
-    deliverTo: { roomId: request.roomId, audience: "room" },
+    deliverTo: { roomId: request.roomId, audience: "room", ...(request.taskId ? { taskId: request.taskId } : {}) },
     principals: { data: owner, billing: owner, executionDevice: owner, approver: owner },
+    ...(sharedSpace ? { spaceId: sharedSpace } : {}),
     ...(request.kind === "review" ? { constraints: reviewConstraints(constraints ?? {}, candidate) as Prisma.InputJsonValue } : {}),
   };
 }
@@ -602,9 +666,20 @@ export function watchPeerMissions(app: FastifyInstance): void {
     if (frame.event !== "node.message.updated" && frame.event !== "node.message") return;
     const message = frame.data as { id?: unknown; kind?: unknown } | null;
     if (message?.kind !== "plan" || typeof message.id !== "string") return;
-    inBackground(app, () => missionDelivered(app, message.id as string));
+    inBackground(app, async () => {
+      await missionDelivered(app, message.id as string);
+      // Its result onto the room's board and into the room (node/room-results.ts).
+      await followMission(app, message.id as string);
+    });
   });
-  const sweep = setInterval(() => inBackground(app, () => syncPeerMissions(app)), 60_000);
+  const sweep = setInterval(
+    () =>
+      inBackground(app, async () => {
+        await syncPeerMissions(app);
+        await syncMissionResults(app);
+      }),
+    60_000,
+  );
   sweep.unref?.();
   app.addHook("onClose", async () => clearInterval(sweep));
 }
@@ -621,6 +696,8 @@ export type Revoked = { requests: string[]; cards: string[] };
  */
 export async function revokeOnLeave(tx: Prisma.TransactionClient, roomId: string, accountId: string): Promise<Revoked> {
   await revokeTrustTo(tx, roomId, accountId);
+  await forgetPerson(tx, roomId, accountId);
+  await dropStewardOf(tx, roomId, accountId);
   const open = await tx.nodePeerRequest.findMany({ where: { roomId, status: { in: UNDECIDED }, OR: [{ fromAccountId: accountId }, { toAccountId: accountId }] }, select: { id: true } });
   const ids = open.map((row) => row.id);
   if (ids.length) await tx.nodePeerRequest.updateMany({ where: { id: { in: ids } }, data: { status: "cancelled", answer: "Cancelled: they left the room.", decidedAt: new Date() } });
@@ -659,7 +736,7 @@ export async function shareMessage(app: FastifyInstance, accountId: string, mess
   if (!mine || original.kind !== "text" || (original.data as { deleted?: unknown } | null)?.deleted) throw fail("You can share only your own private messages and your own nodes' private replies.", 403);
   const lead = as === "lead" ? await leadOf(prisma, room.id, accountId) : null;
   if (as === "lead" && !lead?.nodeId) throw fail("You have no lead in this room.", 409);
-  const source = (original.data ?? {}) as { refs?: unknown; files?: unknown };
+  const source = (original.data ?? {}) as { refs?: unknown; files?: unknown; media?: unknown };
   const { message } = await postMessage(prisma, {
     roomId: room.id,
     userId: accountId,
@@ -671,6 +748,8 @@ export async function shareMessage(app: FastifyInstance, accountId: string, mess
       ...(as === "lead" ? { sharedBy: accountId } : {}),
       ...(Array.isArray(source.refs) ? { refs: source.refs } : {}),
       ...(Array.isArray(source.files) ? { files: source.files } : {}),
+      // The media this message showed its owner: sharing the message is their choice to show it here too (node/media.ts mediaReadable).
+      ...(Array.isArray(source.media) && source.media.length ? { media: source.media } : {}),
     },
     clientId: `share:${original.id}:${as}`,
   });

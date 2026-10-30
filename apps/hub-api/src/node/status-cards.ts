@@ -4,15 +4,16 @@
  * at the detail they choose (nothing, titles or details). A lead answers status questions from its
  * owner's card; `@leads status` posts every person's card at once, without a model turn.
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import type { NodeMessage, NodeRoom, Prisma, PrismaClient } from "@prisma/client";
 import { openedSpace } from "../lib/auth.js";
 import { sseHub } from "../lib/sse.js";
 import { truncateText } from "../lib/text.js";
-import { nodeChannel } from "./events.js";
+import { nodeChannel, publishTo } from "./events.js";
+import { inBackground } from "./queue.js";
 import { missionEnded } from "./missions-core.js";
 import { ledger } from "./plans.js";
-import { postMessage } from "./store.js";
+import { postMessage, roomPeople } from "./store.js";
 import { awayNow, prefsOf, publicTrust, trustFor, type Detail } from "./trust.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -39,6 +40,24 @@ export type StatusCard = {
   missions: Array<{ title: string; status: string; requirements?: Array<{ text: string; status: string }>; steps?: { done: number; total: number } }>;
   tasks: Array<{ title: string; status: string; due?: string | null }>;
 };
+
+/** Someone's presence or away changed: the people of their rooms with other people re-read it (`node.presence`, no content). */
+export async function presenceChanged(db: Db, accountId: string, roomId?: string): Promise<void> {
+  const rooms = roomId ? [roomId] : (await db.nodeRoomMember.findMany({ where: { userId: accountId, nodeId: null, room: { kind: "room", archivedAt: null } }, select: { roomId: true } })).map((row) => row.roomId);
+  for (const id of rooms) publishTo(await roomPeople(db as PrismaClient, id), "node.presence", { roomId: id });
+}
+
+/** A person's Node stream opened (their first) or closed (their last): they came online, or went offline. */
+export function followPresence(app: FastifyInstance, reply: FastifyReply, accountId: string): void {
+  const channel = nodeChannel(accountId);
+  if (sseHub.listeners(channel) === 1) inBackground(app, () => presenceChanged(app.prisma, accountId));
+  // After the hub has dropped this stream (its own close handler runs first).
+  reply.raw.on("close", () =>
+    setImmediate(() => {
+      if (sseHub.listeners(channel) === 0) inBackground(app, () => presenceChanged(app.prisma, accountId));
+    }),
+  );
+}
 
 /** Online: an open Node stream on this server, or a message they wrote in this room in the last few minutes. */
 export async function online(db: Db, accountId: string, roomId: string): Promise<boolean> {
@@ -111,8 +130,11 @@ export async function statusCard(db: Db, room: NodeRoom, accountId: string, view
   });
   const spaceId = await boundSpace(db, room, "viewerId" in view ? [view.viewerId] : people);
   if (spaceId) {
+    // The space's owner holds their own tasks as "me" with no assignee account.
+    const space = await db.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });
+    const mine = (space?.ownerId ?? space?.id) === accountId ? { owner: "me" as const, assigneeAccountId: null } : { assigneeAccountId: accountId };
     const tasks = await db.task.findMany({
-      where: { userId: spaceId, assigneeAccountId: accountId, deletedAt: null, status: { in: [...OPEN_TASK] } },
+      where: { userId: spaceId, ...mine, deletedAt: null, status: { in: [...OPEN_TASK] } },
       orderBy: { updatedAt: "desc" },
       take: 10,
       select: { title: true, status: true, due: true },

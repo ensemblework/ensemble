@@ -8,12 +8,19 @@ Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.
 
 | | Whole space (members) | One item (shares) |
 |---|---|---|
-| Who | Up to **2** people per space, so 3 with the owner | Any of your contacts |
+| Who | Up to **2** people per space by default, so 3 with the owner (your choice, §1 Limits) | Any of your contacts |
 | Kinds | Everything except the private list below | `page`, `task`, `board`, `diagram`, `plot_space`, `plot`, `meeting`, `skill`, `workspace` (the agent workspace tab), `code` |
 | Roles | `viewer` (reads) or `editor` (reads and writes) | `view` or `edit`; `meeting`, `workspace` and `code` are always view-only (`VIEW_ONLY_KINDS` in `policy.ts`) |
 | Opens at | The space switcher, under **Shared with you** | `/shared/<shareId>`, only for its recipient |
 
-Limits: `MAX_CONTACTS` 5, `MAX_MEMBERS` 2, `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+Limits: contacts and people per space are each account's own choice (`settings.sharing`, `sharingLimits` in `sharing/store.ts`), set in Settings › Sharing › Limits or with `PUT /api/sharing/limits {contacts?, members?}`:
+
+| Setting | Default | Most an account may choose (`SHARING_CAPS`) |
+|---|---|---|
+| `contacts` | 5 (`MAX_CONTACTS`) | 500 |
+| `members` (people per space you own) | 2 (`MAX_MEMBERS`) | 50 |
+
+A lower limit takes nobody away; it only stops new additions until fewer are in use. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
 
 **Never shared**, even with a member: Today, metrics, settings, model keys, connected apps (connectors, MCP connections, imports), reminders, the terminal, editor tokens, paired computers, the kill switch, Trash, data deletion, page history and templates. Runs, Needs me, metrics and settings cannot be shared on their own.
 
@@ -21,7 +28,7 @@ Limits: `MAX_CONTACTS` 5, `MAX_MEMBERS` 2, `MAX_TRANSFERS` 1 (`sharing/store.ts`
 
 **Trash.** Items in Trash are unavailable to members, recipients and link visitors (`resourceTitle` in `sharing/store.ts` and `pages/store.ts` check `deletedAt`). Restore brings the item back with its shares and links.
 
-**Contacts.** Everyone you share with becomes a contact: 5 per account, counted as unique people across all your spaces and items. A sixth gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`). The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
+**Contacts.** Everyone you share with becomes a contact: 5 per account unless you choose otherwise, counted as unique people across all your spaces and items. One past the limit gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`). The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
 
 **Ownership transfer** (`transferSpace`). The owner of a space they created (not their first space, which is their account) can hand it to one of its members, **once** per space (`space_transfers.space_id` is unique). The content moves. The old owner's connected apps, model keys, devices, API tokens, settings, sync state and synced communications are removed, and the new owner's settings are copied in. Chats, comments and runs keep their author. Undo history and the space's item shares are deleted. The old owner stays as an editor; other members stay only if they are the new owner's contacts. Refused while an agent run is queued or active, when the new owner has the most spaces allowed, or has no contact slot for the old owner. Both accounts are locked while it runs.
 
@@ -52,6 +59,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 - `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.
 - `actorFor(spaceId)`: the acting person when not the owner, stamped on undo entries, comments, assistant conversations, ledger entries (`payload.byAccountId`) and jobs (`runner_account_id`).
 - `nodeActingIn(spaceId)`: the node acting for the person, if any, stamped on ledger entries (`payload.byNodeId`) and undo entries (`source` `node:<id>`).
+- `madeBy(spaceId)`: "@node for person". Tasks keep `created_by_account_id` and `created_by_node_id`, pages `editor_node_id` next to `editor_account_id` (the last editor), and comments `author_node_id` next to `author_account_id`. The account is null when the space's owner acted themselves, as with `actorFor`. A run a node started is `node_runs` (node, its owner, the job).
 
 ### The route policy
 
@@ -210,7 +218,7 @@ Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space conte
 - **`/shared`**: everything shared with you, with a "New" mark until opened, live page and task titles, first-line previews and share dates (`sharing/previews.ts`, batched). The sidebar link appears when there is something.
 - **`/shared-by-me`**: searchable items and spaces grouped by person with Remove / Remove access, then public links with Turn off; each asks for confirmation. Settings and the limit dialogs link here.
 - **`/shared/[id]`** (outside the Hub shell): the item alone in its usual editor with a `shared` role, a header of who is on it and "Shared by ‹full name› · can edit". Every request carries the share header (`setOpenShare` in `lib/api.ts`), with its own share-scoped event stream; after a reconnect it reloads everything. Page and task editors keep the share they opened under (`withShare`) so the last save on leaving goes to the right place. An address that opens nothing says "Nothing is shared at this link" (or "This was shared with someone else" for another account's share).
-- **Settings › Sharing**: contacts (5 slots), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
+- **Settings › Sharing**: contacts (5 slots unless you choose otherwise), **Limits** (contacts and people per space, up to the caps), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
 
 ## 8. Data
 

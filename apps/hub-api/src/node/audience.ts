@@ -18,7 +18,7 @@
  * `settleRoomCard` and tells `roomDraftPosted` when a draft linked to one was posted.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, Prisma } from "@prisma/client";
+import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { parseModules, serializeModules, type AssistantRef } from "@ensemble/shared-types";
 import { runAssistantTurn, type AssistantTurnArgs, type AssistantTurnResult } from "../assistant/agent.js";
@@ -34,7 +34,10 @@ import { NO_REPLY } from "./reply.js";
 import { nodeSpace, nodeSpaceGateway } from "./spaces.js";
 import { cardText, statusCard } from "./status-cards.js";
 import { personIn, postMessage, roomPeople, roomSettings, updateMessageData } from "./store.js";
-import { awayNow, budgetSpent, prefsOf, publicTrust, shareableText, type TrustSettings } from "./trust.js";
+import { awayNow, budgetSpent, prefsOf, publicTrust, shareableText, trustFor, type TrustSettings } from "./trust.js";
+import { resultPosted } from "./room-results.js";
+import { linkedSpace } from "./room-space.js";
+import { stewardOf, stewardPersona, stewardTools } from "./steward.js";
 
 /** Hub tools a room-bound turn never gets, even in the room's shared space: the owner's own settings, models, runs and agents. */
 const OWNER_ONLY = new Set([
@@ -102,15 +105,33 @@ export type RoomBound = {
   /** Added to the reply (or its draft): the peer request it answers. */
   replyData: Record<string, unknown>;
   afterReply(posted: { message: NodeMessage; drafted: boolean } | null): Promise<void>;
+  /** The new messages this turn may read: none from before the room's newest person joined. */
+  rows: NodeMessage[];
 };
 
 const nameOf = (row: { name: string | null; email: string } | null | undefined): string => row?.name?.trim() || row?.email.split("@")[0] || "Someone";
+
+/**
+ * What everyone in the room may read starts when its newest person joined: nobody reads what was said
+ * before they were there (as `joinedFilter` in routes.ts), so a room-bound turn reads nothing older either.
+ */
+export async function sharedSince(db: Pick<PrismaClient, "nodeRoomMember">, roomId: string): Promise<Date> {
+  const newest = await db.nodeRoomMember.findFirst({ where: { roomId, nodeId: null }, orderBy: { joinedAt: "desc" }, select: { joinedAt: true } });
+  return newest?.joinedAt ?? new Date();
+}
+
+/** Someone joined: every node's shared thread here starts afresh, so no room-bound turn remembers what was said before them. */
+export async function freshSharedThreads(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
+  await tx.nodeRoomMember.updateMany({ where: { roomId, nodeId: { not: null } }, data: { conversationId: null } });
+}
+
 const held = (): RoomBound => ({
   held: true,
   persona: async () => ({ text: "", rooms: [] }),
   run: () => Promise.reject(new Error("This turn is held.")),
   replyData: {},
   afterReply: async () => undefined,
+  rows: [],
 });
 
 type BoundCtx = {
@@ -126,6 +147,8 @@ type BoundCtx = {
   trigger: NodeMessage | null;
   requestId: string | null;
   lineage: { rootMessageId: string | null; botDepth: number };
+  /** The messages this turn read from people other than the owner that it may act on (node_peer_request `from`). */
+  batch: Array<{ seq: number; userId: string }>;
 };
 
 /**
@@ -156,6 +179,11 @@ export async function roomBoundTurn(
     return held();
   }
   const owner = node.userId;
+  // Nothing from before the newest person joined: not the messages, not the one that woke it.
+  const since = await sharedSince(prisma, room.id);
+  const rows = input.rows.filter((row) => row.createdAt >= since);
+  if (trigger && trigger.authorKind !== "system" && trigger.createdAt < since) return held();
+  if (!rows.length && !turn.note) return held();
   const ownerRow = members.find((row) => !row.nodeId && row.userId === owner);
   const prefs = prefsOf(ownerRow);
   const cardRequest = trigger?.kind === "request" ? (trigger.data as { requestId?: unknown } | null)?.requestId : null;
@@ -164,32 +192,59 @@ export async function roomBoundTurn(
   // A request settled meanwhile (cancelled when its asker left, or already answered) needs no answer.
   if (request && turn.reason === "request" && !["open", "awaiting_owner"].includes(request.status)) return held();
   // Messages that came together are answered together: when the owner asked this node too, it is the owner's turn.
-  const ownerAsked = input.rows.some((row) => row.authorKind === "human" && row.userId === owner && Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id));
-  const askerId = ownerAsked ? owner : (request?.fromAccountId ?? (trigger && trigger.authorKind !== "system" ? trigger.userId : owner));
+  const ownerAsked = rows.some((row) => row.authorKind === "human" && row.userId === owner && Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id));
+  // Who asks in this batch: every other person whose public message names one of the owner's nodes, or woke this turn.
+  const mine = new Set(members.filter((row) => row.nodeId && row.userId === owner).map((row) => row.nodeId!));
+  const addresses = (row: NodeMessage) => row.id === trigger?.id || (Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && typeof mention.id === "string" && mine.has(mention.id)));
+  const fromOthers = (row: NodeMessage) => row.authorKind === "human" && row.userId !== owner && row.visibleTo.length === 0;
+  const asking = [...rows.filter((row) => fromOthers(row) && addresses(row)), ...(trigger && fromOthers(trigger) && !rows.some((row) => row.id === trigger.id) ? [trigger] : [])];
+  const askers = new Map<string, NodeMessage | null>(asking.map((row) => [row.userId, row]));
+  if (request && request.fromAccountId !== owner && !askers.has(request.fromAccountId)) askers.set(request.fromAccountId, null);
   const people = await roomPeople(prisma, room.id);
-  const users = await prisma.user.findMany({ where: { id: { in: [askerId, owner] } }, select: { id: true, name: true, email: true } });
-  const askerName = nameOf(users.find((row) => row.id === askerId));
-  const trust = publicTrust(prefs, people.filter((id) => id !== owner), askerId === owner ? null : askerId);
-  const ctx: BoundCtx = { app, node, room, members, owner, ownerName: input.ownerName, askerId, askerName, trust, trigger, requestId: request?.id ?? null, lineage: input.lineage };
+  const users = await prisma.user.findMany({ where: { id: { in: [...askers.keys(), owner] } }, select: { id: true, name: true, email: true } });
+  const nameFor = (id: string) => nameOf(users.find((row) => row.id === id));
+  const readers = people.filter((id) => id !== owner);
 
-  // Someone else's question answered in the node's own words uses the owner's model and credits: only as the owner allows.
-  if (askerId !== owner && turn.reason !== "answer" && (trust.freeFormAnswers === "ask" || (await budgetSpent(prisma, room.id, owner, prefs)))) {
-    const question = request?.text ?? trigger?.body ?? turn.note ?? "";
-    const { card, existing } = await raiseDisclosure(ctx, { mode: "answer", question: truncateText(question, 1000), need: "" });
+  // Someone else's question answered in the node's own words uses the owner's model and credits: only as the owner
+  // allows each person asking here. Whoever must wait gets a card for the owner, and their messages leave this turn.
+  const spent = askers.size ? await budgetSpent(prisma, room.id, owner, prefs) : false;
+  const gated = new Set<string>();
+  for (const [author, row] of askers) {
+    // An approved answer card's own turn: the owner already said yes to this person's question.
+    if (turn.reason === "answer" && trigger?.userId === author) continue;
+    if (trustFor(prefs, author).freeFormAnswers !== "ask" && !spent) continue;
+    const theirs = request && request.fromAccountId === author ? request : null;
+    const askCtx: BoundCtx = {
+      app, node, room, members, owner, ownerName: input.ownerName, askerId: author, askerName: nameFor(author),
+      trust: publicTrust(prefs, readers, author), trigger: row ?? trigger, requestId: theirs?.id ?? null, lineage: input.lineage, batch: [],
+    };
+    const question = theirs?.text ?? row?.body ?? turn.note ?? "";
+    const { card, existing } = await raiseDisclosure(askCtx, { mode: "answer", question: truncateText(question, 1000), need: "" });
     // Already allowed (its turn joined this one): answer now.
-    const allowed = existing && ["approved", "applying"].includes(String((card.data as { status?: unknown }).status));
-    if (!allowed) {
-      if (request) await requestAwaiting(app, request.id);
-      return held();
-    }
+    if (existing && ["approved", "applying"].includes(String((card.data as { status?: unknown }).status))) continue;
+    gated.add(author);
+    if (theirs) await requestAwaiting(app, theirs.id);
   }
+  const open = [...askers.keys()].filter((id) => !gated.has(id));
+  if (!ownerAsked && askers.size && !open.length) return held();
+  const kept = rows.filter((row) => !gated.has(row.userId));
+  const askerId = ownerAsked ? owner : (open.find((id) => id === request?.fromAccountId) ?? open.find((id) => id === trigger?.userId) ?? open[0] ?? owner);
+  const askerName = nameFor(askerId);
+  const trust = publicTrust(prefs, readers, askerId === owner ? null : askerId);
+  const batch = asking.filter((row) => !gated.has(row.userId)).map((row) => ({ seq: row.seq, userId: row.userId }));
+  const ctx: BoundCtx = {
+    app, node, room, members, owner, ownerName: input.ownerName, askerId, askerName, trust, trigger,
+    requestId: request && !gated.has(request.fromAccountId) ? request.id : null, lineage: input.lineage, batch,
+  };
   await prisma.nodeTurn.update({
     where: { id: turn.id },
     data: { audience: "room", principals: { data: owner, billing: owner, executionDevice: null, approver: owner, askedBy: askerId } as Prisma.InputJsonValue },
   });
 
+  // The room's steward (node/steward.ts) acts for whoever asks it: no space of its sponsor's, only its own tools.
+  const steward = stewardOf(room)?.nodeId === node.id;
   // The room's shared space (bound in C4), only while the owner can open it and their settings share from it. No fallback to the owner's own spaces.
-  const bound = (room.settings as { spaceId?: unknown } | null)?.spaceId;
+  const bound = steward ? null : await linkedSpace(app, room);
   let spaceName: string | null = null;
   let gateway: ReturnType<typeof nodeSpaceGateway> | null = null;
   let modules = "";
@@ -211,10 +266,15 @@ export async function roomBoundTurn(
   const spaces = new RoomSpaces(gateway, allowed);
   // The owner acts as a guest of their own account: their connected apps, reminders and syncs stay out of the turn.
   const scope: RequestScope = { spaceId: owner, accountId: owner, access: { kind: "member", role: "editor", ownerId: owner, node: node.id } };
-  const tools = roomTools(ctx);
+  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName })] : roomTools(ctx);
   return {
     held: false,
-    persona: () => roomPersona(ctx, { spaceName, sharedSpaceAsks: Boolean(opened) && trust.shareSpaceArtefacts === "ask", away: awayNow(prefs) }),
+    persona: steward
+      ? async () => ({
+          text: `${stewardPersona({ name: node.name, handle: members.find((row) => row.nodeId === node.id)?.handle ?? node.slug, roomTitle: room.title, sponsorName: input.ownerName, askerName, roster: await rosterOf(ctx, " (your sponsor)") })}\n- If nothing needs saying, reply exactly ${NO_REPLY}`,
+          rooms: [],
+        })
+      : () => roomPersona(ctx, { spaceName, sharedSpaceAsks: Boolean(opened) && trust.shareSpaceArtefacts === "ask", away: awayNow(prefs) }),
     run: (args) =>
       runInScope(scope, () =>
         runAssistantTurn({
@@ -229,15 +289,17 @@ export async function roomBoundTurn(
           mentions: undefined,
         }),
       ),
-    replyData: request ? { peerRequest: request.id } : {},
+    replyData: ctx.requestId ? { peerRequest: ctx.requestId } : {},
     async afterReply(posted) {
-      if (request && posted) await requestReplied(app, request.id, posted.message, posted.drafted);
+      if (ctx.requestId && posted) await requestReplied(app, ctx.requestId, posted.message, posted.drafted);
     },
+    rows: kept,
   };
 }
 
-async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sharedSpaceAsks: boolean; away: ReturnType<typeof awayNow> }): Promise<{ text: string; rooms: AssistantRef[] }> {
-  const { app, node, room, members, ownerName, askerName, trust } = ctx;
+/** The room's members by their public fields, as a room-bound turn sees them. */
+async function rosterOf(ctx: BoundCtx, ownerLabel: string): Promise<string[]> {
+  const { app, node, room, members } = ctx;
   const prisma = app.prisma;
   const [nodes, people] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: members.filter((row) => row.nodeId).map((row) => row.nodeId!) } }, select: { id: true, name: true, role: true } }),
@@ -246,12 +308,17 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
   const nodeById = new Map(nodes.map((row) => [row.id, row]));
   const personName = new Map(people.map((row) => [row.id, nameOf(row)]));
   const duties = roomSettings(room).responsibilities;
-  const roster = members.map((member) => {
-    if (!member.nodeId) return `- @${member.handle}: ${personName.get(member.userId) ?? "a person"}${member.userId === ctx.owner ? " (your owner)" : ""}${duties[member.userId] ? `, handles ${duties[member.userId]}` : ""}`;
+  return members.map((member) => {
+    if (!member.nodeId) return `- @${member.handle}: ${personName.get(member.userId) ?? "a person"}${member.userId === ctx.owner ? ownerLabel : ""}${duties[member.userId] ? `, handles ${duties[member.userId]}` : ""}`;
     if (member.nodeId === node.id) return `- @${member.handle}: you`;
     const other = nodeById.get(member.nodeId);
     return `- @${member.handle}: ${member.userId === ctx.owner ? "your owner's" : `${personName.get(member.userId) ?? "someone"}'s`} node “${other?.name ?? member.handle}” (${other?.role ?? "node"})${member.representative ? ", their lead" : ""}`;
   });
+}
+
+async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sharedSpaceAsks: boolean; away: ReturnType<typeof awayNow> }): Promise<{ text: string; rooms: AssistantRef[] }> {
+  const { node, room, ownerName, askerName, trust } = ctx;
+  const roster = await rosterOf(ctx, " (your owner)");
   const away = extra.away
     ? `${ownerName} is away${extra.away.until ? ` until ${extra.away.until.slice(0, 16).replace("T", " ")} UTC` : ""}${extra.away.note ? ` (${extra.away.note})` : ""}. Say so when it matters, answer status from the status card, and leave requests for work for ${ownerName}: record them with node_peer_request and say they wait for ${ownerName}.`
     : "";
@@ -292,10 +359,11 @@ async function roomPersona(ctx: BoundCtx, extra: { spaceName: string | null; sha
 
 // ── the tools of a room-bound turn ──────────────────────────────────────────────────────────
 
-function roomTools(ctx: BoundCtx): AnyHubTool[] {
-  const { app, node, room, owner, ownerName } = ctx;
+/** This room's public history, from when its newest person joined. */
+function historyTool(ctx: BoundCtx): AnyHubTool {
+  const { app, room } = ctx;
   const prisma = app.prisma;
-  const history = defineTool({
+  return defineTool({
     name: "node_room_history",
     area: "context",
     description: "Read this room's public messages (what everyone here can read), newest first: before a message number, or those containing words.",
@@ -307,7 +375,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
-      const since = (await personIn(prisma, room.id, owner))?.joinedAt ?? new Date();
+      const since = await sharedSince(prisma, room.id);
       const words = (input.query ?? "").split(/\s+/).filter(Boolean).slice(0, 6);
       const rows = await prisma.nodeMessage.findMany({
         where: {
@@ -329,6 +397,12 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
       return toolOk(lines.length ? `${lines.length} message(s).` : "No messages like that.", { messages: truncateText(lines.join("\n"), 8000) });
     },
   });
+}
+
+function roomTools(ctx: BoundCtx): AnyHubTool[] {
+  const { app, node, room, owner, ownerName } = ctx;
+  const prisma = app.prisma;
+  const history = historyTool(ctx);
   const status = defineTool({
     name: "node_owner_status",
     area: "context",
@@ -383,7 +457,7 @@ function roomTools(ctx: BoundCtx): AnyHubTool[] {
       return toolOk(`You already asked ${ownerName}; they have not answered yet. Say so in a line if needed.`);
     },
   });
-  return [history, status, shared, ask, peerRequestTool({ node, room, askerId: ctx.askerId })];
+  return [history, status, shared, ask, peerRequestTool({ node, room, askerId: ctx.askerId, batch: ctx.batch })];
 }
 
 // ── disclosure cards ────────────────────────────────────────────────────────────────────────
@@ -426,7 +500,8 @@ async function raiseDisclosure(ctx: BoundCtx, input: { mode: "share" | "answer";
     requestId: ctx.requestId,
   };
   const who = ctx.askerId === ctx.owner ? "You asked in public" : `${ctx.askerName} asked`;
-  const body = input.mode === "share" ? `${who}: “${truncateText(input.question, 400)}”. May I share: ${truncateText(input.need, 400)}?` : `${ctx.askerName} asked me: “${truncateText(input.question, 400)}”. Answer it? It uses your credits.`;
+  // The card shows the question and the need in full: the owner approves exactly what the drafting turn reads.
+  const body = input.mode === "share" ? `${who}: “${input.question}”. May I share: ${input.need}?` : `${ctx.askerName} asked me: “${input.question}”. Answer it? It uses your credits.`;
   const { message } = await postMessage(prisma, {
     roomId: ctx.room.id,
     userId: ctx.owner,
@@ -518,6 +593,12 @@ async function settleDisclosure(app: FastifyInstance, card: NodeMessage, node: N
   return updateMessageData(prisma, current, { status: "approved", error: null });
 }
 
+/** What a turn drafting an approved disclosure may use of its node's own tools: reads only, never work, posts or memories. */
+const DRAFTING_TOOLS = new Set(["node_overview"]);
+export function draftingTools(turn: Pick<NodeTurn, "reason">, tools: AnyHubTool[]): AnyHubTool[] {
+  return turn.reason === "disclose" ? tools.filter((tool) => DRAFTING_TOOLS.has(tool.name)) : tools;
+}
+
 /**
  * The owner-wide turn drafting an approved disclosure: its answer becomes a draft for the room
  * ("Post this for you?"), never a post. False for every other turn.
@@ -553,6 +634,8 @@ export async function roomDraftPosted(app: FastifyInstance, draft: NodeMessage, 
     if (card) await updateMessageData(app.prisma, card, { shared: posted.id });
   }
   if (typeof data.peerRequest === "string") await requestReplied(app, data.peerRequest, posted, false);
+  // A result draft (node/room-results.ts): the post says it is one.
+  await resultPosted(app, draft, posted);
 }
 
 /** Settles the room cards this module and node/peer-requests.ts make; null for other cards. */

@@ -432,11 +432,13 @@ test("where other people read, a node reaches none of its owner's spaces, only t
   await share(ben, fieldnote, akash, "editor");
   const { node } = await createNode(akash);
   const { node: bensNode } = await createNode(ben);
-  const made = await akash.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch room", nodeIds: [node.id], invite: [ben.email] } });
+  // Ben's room: a room links only a space its creator owns (node/room-space.ts).
+  const made = await ben.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch room", nodeIds: [bensNode.id], invite: [akash.email] } });
   assert.equal(made.statusCode, 201, made.body);
   const group = json(made).room as { id: string };
-  const invite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
-  assert.equal((await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } })).statusCode, 201);
+  const invite = json(await akash.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [node.id] } })).statusCode, 201);
+  const handle = (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: group.id, nodeId: node.id } })).handle;
 
   script = (turn, step) =>
     turn.slug !== node.slug
@@ -445,7 +447,7 @@ test("where other people read, a node reaches none of its owner's spaces, only t
         ? { calls: [{ name: "hub_list_tasks", arguments: { space: "Fieldnote" } }, { name: "hub_list_tasks", arguments: {} }, { name: "node_overview", arguments: {} }] }
         : { text: "I can only see what this room may see." };
   // Rooms v2: the answer goes to the room, so the turn is room-bound: no space of Akash's, not even his own (docs/35 §12).
-  await say(ben, group.id, `@${node.slug} what is Akash working on in Fieldnote?`);
+  await say(ben, group.id, `@${handle} what is Akash working on in Fieldnote?`);
   const turn = seen.find((row) => row.slug === node.slug)!;
   assert.ok(!turn.tools.includes("hub_list_tasks") && !turn.tools.includes("node_overview") && turn.tools.includes("hub_web_search"));
   assert.match(turn.system, /Spaces: none of your owner's Ensemble spaces is reachable in this conversation/);
@@ -458,7 +460,7 @@ test("where other people read, a node reaches none of its owner's spaces, only t
   // A shared space bound to the room (C4 binds it; set directly here): that space and nothing else.
   await h.prisma.nodeRoom.update({ where: { id: group.id }, data: { settings: { version: 2, spaceId: fieldnote } } });
   seen.length = 0;
-  await say(ben, group.id, `@${node.slug} and now?`);
+  await say(ben, group.id, `@${handle} and now?`);
   const bound = seen.find((row) => row.slug === node.slug)!;
   assert.match(bound.system, /Spaces: only “Fieldnote” is reachable in this conversation/);
   assert.ok(bound.tools.includes("hub_list_tasks") && !bound.tools.includes("node_overview"));

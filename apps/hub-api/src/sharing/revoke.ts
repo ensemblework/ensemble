@@ -32,8 +32,17 @@ export async function cancelRunnerJobs(db: PrismaClient, spaceIds: string[], acc
   return jobs.length;
 }
 
+type RevokedHook = (db: PrismaClient, spaceIds: string[], accountId: string) => Promise<void>;
+const revokedHooks: RevokedHook[] = [];
+
+/** Something else holding a way back into a space for someone (an Ensemble Node room's offer) is told when they lose it. */
+export function onMemberRevoked(hook: RevokedHook): void {
+  if (!revokedHooks.includes(hook)) revokedHooks.push(hook);
+}
+
 /** A member left or was removed (or the contact was): everything live of theirs in these spaces stops. */
 export async function revokeMember(db: PrismaClient, spaceIds: string[], accountId: string): Promise<void> {
+  for (const hook of revokedHooks) await hook(db, spaceIds, accountId);
   await cancelRunnerJobs(db, spaceIds, accountId);
   for (const spaceId of spaceIds) {
     sseHub.close(spaceId, (listener) => listener.accountId === accountId && !listener.owner);

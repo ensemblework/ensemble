@@ -14,7 +14,7 @@ export function ContactLimitDialog({ open, onClose }: { open: boolean; onClose: 
   return <Dialog open={open} onClose={onClose} title="Make room for someone new" width={480}>
     <div className="mb-4 grid size-12 place-items-center rounded-xl bg-accent-soft text-accent"><Users size={24} /></div>
     <a href="/shared-by-me" target={native ? undefined : "_blank"} rel="noopener noreferrer" className="btn mb-3">Manage all sharing</a>
-    <p className="text-[14px] leading-6 text-muted">You can share with five people across all your Ensemble spaces and items. Remove a contact to add someone new.</p>
+    <p className="text-[14px] leading-6 text-muted">You can share with {contacts.data?.limit ?? "a few"} people across all your Ensemble spaces and items. Remove a contact to add someone new, or raise the limit in Settings, Sharing.</p>
     <p className="mt-2 text-[12px] text-muted">Removing someone revokes everything you shared with them. Their own work stays theirs.</p>
     {contacts.isPending ? <p role="status">Loading contacts…</p> : null}
     {contacts.error ? <button className="btn mt-3" onClick={() => void contacts.refetch()}>Retry loading contacts</button> : null}

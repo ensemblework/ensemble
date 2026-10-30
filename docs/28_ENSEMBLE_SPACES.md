@@ -43,6 +43,8 @@ All are browser-only (`requireBrowserSession`; tokens get 403) and limited to th
 
 Ledger actions, written on the account: `space.create`, `space.delete`, `space.settings.copy`, `space.settings.sync`.
 
+An Ensemble Node room can make a space for its work: `PUT /api/node/rooms/:id/space {create: true, name?}` makes one for the room's creator, named after the room unless named, with the account's settings copied and no template, under the same name rule and space count ([35 §12.11](35_ENSEMBLE_NODE.md)). It is an ordinary space of theirs; the room only links it.
+
 ## 4. Settings: separate, copied, or synced
 
 By default each space keeps its own settings. `copySettings` copies:

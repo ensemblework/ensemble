@@ -30,7 +30,7 @@ import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWa
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
-import { draftDisclosure, roomBoundTurn } from "./audience.js";
+import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -297,7 +297,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   }
 
   const tainted = (row: NodeMessage | null) => Boolean(row && (row.userId !== owner || (row.data as { fromNonOwner?: unknown } | null)?.fromNonOwner === true));
-  const fromNonOwner = ["run", "approval", "plan", "tool", "attention", "work"].includes(turn.reason) ? false : tainted(trigger);
+  // An approved disclosure drafts an answer to someone else's words: it reads with its owner's access and does nothing else (node/audience.ts).
+  const drafting = turn.reason === "disclose";
+  const fromNonOwner = drafting || (["run", "approval", "plan", "tool", "attention", "work"].includes(turn.reason) ? false : tainted(trigger));
   const step = turn.planId && turn.planStep ? { planId: turn.planId, stepId: turn.planStep } : null;
   // A step whose plan was stopped, or that already ended, does nothing more.
   if (step && !(await stepLive(prisma, step.planId, step.stepId))) {
@@ -332,7 +334,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     ? (turn.note ?? "Continue your step, then report it with node_step_report.")
     : [
         `Room “${room.title}”. New messages since your last turn:`,
-        ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
+        ...(bound?.rows ?? transcriptRows).map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
         turn.note ? `\nUpdate for you: ${turn.note}` : "",
         board ? `\nYour work board (live, for answering questions about work in progress):\n${board}` : "",
       ].filter(Boolean).join("\n");
@@ -379,11 +381,13 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const audience = privateTo ?? people;
   // Someone in the room asked for ids: the reply shows them as written.
   const showIds = transcriptRows.some((row) => row.authorKind === "human" && asksForIds(row.body));
-  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
+  // Which thread the live reply belongs to: My crew (only its owner reads it) or the shared one, and its root message.
+  const where = { private: Boolean(privateTo), threadRootId: lineage.rootMessageId };
+  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking", ...where });
   let result: AssistantTurnResult;
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
-  const ownerOnly = !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner));
+  const ownerOnly = (drafting || !fromNonOwner) && (Boolean(privateTo) || people.every((id) => id === owner));
   const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
     (bound ? bound.run : runAssistantTurn)({
@@ -403,18 +407,21 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" }),
-      extraTools: nodeTools({
-        prisma,
-        node,
-        room,
-        lineage,
-        privateTo,
-        ownerOnly,
-        redis: app.redis as never,
-        dispatch: deps.dispatch,
-        turnId: turn.id,
-        plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
-      }),
+      extraTools: draftingTools(
+        turn,
+        nodeTools({
+          prisma,
+          node,
+          room,
+          lineage,
+          privateTo,
+          ownerOnly,
+          redis: app.redis as never,
+          dispatch: deps.dispatch,
+          turnId: turn.id,
+          plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
+        }),
+      ),
       purpose: "Ensemble Node",
       signal: deps.signal,
       async onToolStart(call) {
@@ -429,7 +436,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         // A step's words are its report, not a message: nothing is written out live.
         if (step && frame.type === "delta") return;
         if (frame.type === "delta" || frame.type === "tool" || frame.type === "pending" || frame.type === "refs") {
-          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, frame, ...(showIds ? { showIds } : {}) });
+          publishTo([owner], "node.frame", { roomId: room.id, nodeId: node.id, turnId: turn.id, ...where, frame, ...(showIds ? { showIds } : {}) });
         }
       },
     });
@@ -450,7 +457,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       app.log.warn({ nodeId: node.id, model: pick.model }, "Node turn rate-limited; answering with the fallback model");
     }
   }
-  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle" });
+  publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
   if (deps.signal?.aborted && deps.signal.reason === "coalesce") {
     // A newer message from the owner came before this turn acted: the next turn answers both, so this one leaves no trace.
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
@@ -576,7 +583,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
     const named = result.refs?.length ? { refs: result.refs } : {};
-    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData } });
+    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData }, ...(bound ? { roomBound: room.id } : {}) });
     await bound?.afterReply(posted);
   } else if (mediaData.media && !drafted) {
     // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
