@@ -183,7 +183,7 @@ The Hub's Connect your apps page (`apps/hub-web/lib/connect/configs.ts`) generat
 
 Push a tag `cli-v<version>` matching root `release.json`, or run the `cli-release` workflow by hand (dry run by default). Jobs:
 
-1. **build** on `macos-14`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine).
+1. **build** on `macos-15`, `macos-15-intel`, `ubuntu-22.04`, `ubuntu-22.04-arm`, `windows-2022`: `scripts/package-cli.mjs --target …`, then `scripts/smoke-cli-package.mjs` (version, an MCP handshake, an admin-only sidecar reaching `/health`; on Linux on the package's OpenSSL 3 query engine).
 2. **release**: `.deb`/`.rpm` with nfpm, the npm tarball, `SHA256SUMS.txt`, metadata from `packaging/render.mjs` (Homebrew formula, Scoop manifest, winget manifests, nfpm configs, AUR `PKGBUILD` and `.SRCINFO`), and a GitHub release created with `--latest=false` so the desktop updater's `releases/latest` is never a CLI release. Installers find the newest `cli-v*` release through the GitHub API.
 3. **homebrew**, **scoop**: push the formula to `ensemblework/homebrew-tap` and the manifest to `ensemblework/scoop-bucket` with the deploy keys `HOMEBREW_TAP_DEPLOY_KEY` and `SCOOP_BUCKET_DEPLOY_KEY`. The formula sets `version` explicitly (Homebrew would otherwise read "64" from `darwin-arm64`) and `version_scheme 1`; `packaging/render.test.mjs` checks both and runs with the CLI tests.
 4. **winget** (only with `WINGET_TOKEN`) and **npm** (only with `NPM_TOKEN`, with provenance).
