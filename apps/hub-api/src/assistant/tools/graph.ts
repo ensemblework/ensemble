@@ -297,17 +297,16 @@ export const graphTools = [
       if (GROUNDING.has(tier.provider)) {
         const grounded = await groundedSearch(ctx, input.query);
         if (grounded.length) return toolOk(`Found ${grounded.length} source(s).`, { results: grounded, provider: "grounding" });
-      } else {
-        // Included models (and AI plans with no search of their own): Azure Foundry's web search, on included credits.
-        try {
-          const found = await includedWebSearch(ctx.userId, input.query, { tier, market });
-          if (found && (found.hits.length || found.answer)) {
-            return toolOk(found.hits.length ? `Found ${found.hits.length} source(s).` : "Answered from a web search, with no source cited.", { results: found.hits, answer: found.answer, provider: "web_search" });
-          }
-        } catch (error) {
-          if (error instanceof IncludedLimitError) note = `${error.message} These results come from a free web search instead.`;
-          else ctx.app.log.warn({ err: error }, "included web search unavailable");
+      }
+      // Included models, and a provider that found nothing here (no key of the person's, say): Azure Foundry's web search, on included credits.
+      try {
+        const found = await includedWebSearch(ctx.userId, input.query, { tier, market });
+        if (found && (found.hits.length || found.answer)) {
+          return toolOk(found.hits.length ? `Found ${found.hits.length} source(s).` : "Answered from a web search, with no source cited.", { results: found.hits, answer: found.answer, provider: "web_search" });
         }
+      } catch (error) {
+        if (error instanceof IncludedLimitError) note = `${error.message} These results come from a free web search instead.`;
+        else ctx.app.log.warn({ err: error }, "included web search unavailable");
       }
       try {
         const { hits, engine } = await webSearchFrom(input.query, { market });

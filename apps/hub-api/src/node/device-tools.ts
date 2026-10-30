@@ -460,7 +460,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "all");
+        const kept = await keepCaptures(ctx, scope, done, operation, "all", "picture of the terminal");
         const result = (kept.answer.result ?? {}) as { screen?: unknown; exitCode?: unknown; ended?: unknown };
         const screen = typeof result.screen === "string" ? truncateText(result.screen, SCREEN_CHARS) : "";
         return toolOk(kept.lines.join("\n"), { computer: done.device.name, screen, exitCode: typeof result.exitCode === "number" ? result.exitCode : null, ended: result.ended === true, evidence: kept.evidence });
@@ -491,7 +491,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "all");
+        const kept = await keepCaptures(ctx, scope, done, operation, "all", "file");
         return toolOk(kept.lines.join("\n"), { computer: done.device.name, evidence: kept.evidence });
       },
     }),
@@ -556,13 +556,16 @@ function smallResult(result: unknown): Record<string, unknown> {
 }
 
 const NOUNS: Record<string, string> = { screenshot: "screenshot", image: "picture", video: "video" };
+/** What a capture tool is meant to bring back. */
+const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", capture_screenshot: "screenshot", capture_video: "video" };
 
 /**
  * What a capture-like call kept: its evidence is the node's own; a capture the computer holds waits for
  * the owner's preview card; what it kept and may show (pictures and videos, or every file it was asked
  * to share) comes with the node's reply by itself.
  */
-async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all") {
+/** `expects`: what the call was meant to bring back (a screenshot, a file), so the node hears plainly when nothing will show. */
+async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all", expects?: string) {
   const { prisma, node } = scope;
   const parsed = NodeCaptureAnswer.safeParse(done.body);
   if (!parsed.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
@@ -592,6 +595,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
     kept.length ? `Kept as your evidence: ${kept.map((item) => `${item.kind} “${item.name}” [${item.id}]${item.local ? " (kept on the computer: evidence upload is off there)" : ""}`).join("; ")}.` : "",
     media.length === 1 ? `This ${NOUNS[media[0]!.kind] ?? "file"} will appear with your reply.` : media.length > 1 ? `These ${media.length} files will appear with your reply (node_show to choose fewer).` : "",
     held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they release it, and you are told when they do. The card asks them; do not ask in your reply.` : "",
+    expects && answer.ok && !media.length && !held.length ? `No ${expects} came back, so nothing will show with your reply: never say one is attached or shown. Try again, or tell your owner it did not work.` : "",
     answer.refused.length ? `Not kept: ${answer.refused.map((item) => `“${item.name}”: ${item.reason}`).join("; ")}.` : "",
   ].filter(Boolean);
   if (!answer.ok) throw new ToolBlockedError(lines.join("\n"));
@@ -635,7 +639,7 @@ function captureTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "pictures");
+        const kept = await keepCaptures(ctx, scope, done, operation, "pictures", EXPECTS[spec.name]);
         const { login } = kept.answer;
         // The tab waits for the owner to sign in (B11): one owner-only card; the turn parks and the node is woken when it ends.
         if (login) {

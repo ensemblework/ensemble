@@ -201,12 +201,12 @@ test("the fallbacks go in order: Foundry fails, Bing fails, DuckDuckGo answers; 
   assert.deepEqual([data.provider, data.engine], ["fallback", "duckduckgo"]);
   assert.deepEqual(data.results.map((hit) => [hit.title, hit.url]), [["RTX 5090 - Micro Center", "https://www.microcenter.com/rtx-5090"]]);
 
-  // A provider with its own grounding is not sent to Foundry; nothing answering means unavailable.
+  // A provider whose own grounding finds nothing here (no key of the person's) still gets Foundry's search; nothing answering means unavailable.
   seen = engines({});
   const none = await search.run(ctx("anthropic", "claude-sonnet-5"), { query: "rtx 5090 price" });
   assert.equal((none.data as { provider: string }).provider, "unavailable");
   assert.match(none.summary, /Web search is unavailable/);
-  assert.ok(!seen.some((row) => row.url.includes("azure.com")));
+  assert.ok(seen.some((row) => row.url.includes("azure.com")), "Foundry was asked after the provider found nothing");
 });
 
 test("a search Azure refused costs nothing; one stopped mid-way is charged its reservation", async () => {
