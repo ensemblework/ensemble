@@ -2070,3 +2070,75 @@ test("follow-up #4: people per room and spaces are each person's own limits, up 
   assert.equal(handed.statusCode, 409, handed.body);
   assert.match(json(handed).error, /as many spaces as their limit allows/);
 });
+
+test("website round: decline a task from the steward's notes, the mode on the owner's card, Start's turn and the board's plan, requesters with their node's handle", async () => {
+  const { akash, ben, builder, bensLead, room, handle } = await twoPeople({ builder: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const fromNotes = (title: string) =>
+    h.prisma.task.create({ data: { userId: spaceId, title, owner: "me", assigneeAccountId: ben.id, status: "proposed", createdBy: "agent", requestedByAccountId: akash.id, requestedByNodeId: builder!.id, sourceRef: "room-notes:kick-off" } });
+  const board = async (user: HttpUser) => json(await user.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` })).tasks as Array<Record<string, any>>;
+
+  // 1. A proposed task from the steward's notes: Ben, whose it is, declines it; Akash, who asked, hears so once.
+  const docs = await fromNotes("Write the docs");
+  await flushEvents();
+  const decline = (user: HttpUser, taskId: string, payload: Record<string, unknown> = {}) => user.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${taskId}/decline`, payload });
+  assert.equal((await decline(akash, docs.id)).statusCode, 403, "only the person it is with");
+  const declined = await decline(ben, docs.id, { note: "Not this sprint" });
+  assert.equal(declined.statusCode, 200, declined.body);
+  assert.deepEqual(json(declined).task, { id: docs.id, status: "dropped" });
+  const told = (await read(akash, room.id)).filter((row) => row.private && row.data?.taskId === docs.id && row.data?.declined);
+  assert.deepEqual(told.map((row) => row.body), ["Ben declined “Write the docs”: Not this sprint"]);
+  assert.ok(!(await read(ben, room.id)).some((row) => row.data?.taskId === docs.id && row.data?.declined), "Akash's alone");
+  await flushEvents();
+  assert.ok(!(await notes(akash, room.id)).some((row) => row.data.items.some((item: { subjectId: string }) => item.subjectId === docs.id)), "told once, not again by his lead");
+  assert.equal((await decline(ben, docs.id)).statusCode, 409);
+
+  // 2. Accepting writes the chosen mode on the owner's card.
+  const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Add a rate limiter" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${made.id}/accept`, payload: { mode: "shared" } })).statusCode, 200);
+  const ownerCard = (await cards(akash, room.id, "peer_request")).find((row) => row.data.requestId === made.id)!;
+  assert.deepEqual([ownerCard.data.status, ownerCard.data.mode], ["accepted", "shared"]);
+  await settleTurns();
+
+  // 3. Start answers with its turn; the plan it makes shows on the task's board row, to Ben alone.
+  const hBen = handle(bensLead.id);
+  script = (turn) =>
+    turn.slug === hBen && turn.transcript.includes("start the room's task “CSV export”")
+      ? { calls: [{ name: "node_work_start", arguments: { title: "CSV export", brief: "Build the CSV export.", kind: "other" } }], then: "(no reply)" }
+      : { text: "(no reply)" };
+  const csv = json(await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "CSV export", assignee: ben.id, status: "todo" } })).task as { id: string };
+  const started = await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${csv.id}/start`, payload: {} });
+  assert.equal(started.statusCode, 202, started.body);
+  assert.equal(json(started).taskId, csv.id);
+  assert.match((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: json(started).turnId } })).operationId ?? "", new RegExp(`^room-task:${csv.id}:private:`));
+  await settleTurns();
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: ben.id, goal: { contains: "CSV export" } } });
+  assert.deepEqual((await board(ben)).find((row) => row.id === csv.id)!.plan, { id: mission.id, status: mission.status });
+  assert.equal((await board(akash)).find((row) => row.id === csv.id)!.plan, null, "how Ben's work goes is his");
+  // Started, a task from the steward's notes leaves Proposed as its work starts.
+  const copy = await fromNotes("Review the copy");
+  script = (turn) =>
+    turn.slug === hBen && turn.transcript.includes("start the room's task “Review the copy”")
+      ? { calls: [{ name: "node_work_start", arguments: { title: "Review the copy", brief: "Review it.", kind: "other" } }], then: "(no reply)" }
+      : { text: "(no reply)" };
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${copy.id}/start`, payload: {} })).statusCode, 202);
+  await settleTurns();
+  assert.notEqual((await h.prisma.task.findUniqueOrThrow({ where: { id: copy.id } })).status, "proposed");
+
+  // 4. Who asked, with the node's handle here, the same on the board and in the digest.
+  const waiting = await fromNotes("Fix the export");
+  const builderName = (await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: builder!.id } })).name;
+  const asker = { accountId: akash.id, name: "Akash", node: { id: builder!.id, name: builderName, handle: handle(builder!.id) } };
+  assert.deepEqual((await board(ben)).find((row) => row.id === waiting.id)!.requestedBy, asker);
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true } })).statusCode, 200);
+  setDigestWriterForTests(async () => "Welcome back.");
+  try {
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: false } })).statusCode, 200);
+    await settleTurns();
+  } finally {
+    setDigestWriterForTests(null);
+  }
+  const digest = (await read(ben, room.id)).filter((row) => row.data?.type === "digest").at(-1)!;
+  assert.deepEqual(digest.data.items.proposed.find((row: { taskId: string }) => row.taskId === waiting.id).requestedBy, asker);
+});

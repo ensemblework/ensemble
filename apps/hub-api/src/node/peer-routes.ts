@@ -16,7 +16,7 @@ import { onRequestedTaskMove } from "../services/tasks.js";
 import { answerSpaceOffer, bindSpace, expireOffersFor, linkedSpace, roomBoard, roomPages, RoomSpaceError, spaceView, unbindSpace, watchPage } from "./room-space.js";
 import { onMemberRevoked } from "../sharing/revoke.js";
 import { cameBack, watchRoomEvents } from "./room-events.js";
-import { RoomResultError, startRoomTask } from "./room-results.js";
+import { declineRoomTask, RoomResultError, startRoomTask } from "./room-results.js";
 import { PAGE_ROLES, roomDecisions, setPageRole, watchRoomPages } from "./room-pages.js";
 import { clearSteward, setSteward, stewardOf } from "./steward.js";
 import { publishTo } from "./events.js";
@@ -156,13 +156,30 @@ export async function registerPeerRoutes(app: FastifyInstance): Promise<void> {
     const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
     const { mode } = z.object({ mode: z.enum(["private", "shared"]).default("private") }).strict().parse(request.body ?? {});
     await requireVerifiedUser(accountId);
+    const taskId = z.string().uuid().parse((request.params as { taskId: string }).taskId);
+    let started: { turnId: string | null };
     try {
-      await startRoomTask(app, room, accountId, z.string().uuid().parse((request.params as { taskId: string }).taskId), mode);
+      started = await startRoomTask(app, room, accountId, taskId, mode);
     } catch (error) {
       if (error instanceof RoomResultError) throw fail(error.statusCode, error.message);
       throw error;
     }
-    return reply.code(202).send({ started: true });
+    // The plan comes from the lead's turn, after this answer: the task's board row names it (`plan`, mine only).
+    return reply.code(202).send({ started: true, taskId, turnId: started.turnId });
+  });
+
+  /** I decline a proposed task on the room's board that is with me: a request's, or one from the steward's notes. */
+  app.post("/api/node/rooms/:id/tasks/:taskId/decline", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await peopleRoom(prisma, accountId, (request.params as { id: string }).id);
+    const { note } = z.object({ note: z.string().trim().max(1000).optional() }).strict().parse(request.body ?? {});
+    try {
+      const task = await declineRoomTask(app, room, accountId, z.string().uuid().parse((request.params as { taskId: string }).taskId), note || null);
+      return { task: { id: task.id, status: task.status } };
+    } catch (error) {
+      if (error instanceof RoomResultError) throw fail(error.statusCode, error.message);
+      throw error;
+    }
   });
 
   // ── pages of the room's space I watch (docs/35 §12.12) ────────────────────────────────────

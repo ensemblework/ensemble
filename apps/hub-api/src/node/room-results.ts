@@ -28,7 +28,8 @@ import { missionMedia, type Media } from "./media.js";
 import { loadPlan } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 import { boundSpaceId, linkedSpace, roleIn } from "./room-space.js";
-import { personIn, postMessage } from "./store.js";
+import { publishTo } from "./events.js";
+import { personIn, postMessage, roomPeople } from "./store.js";
 import { personRow, prefsOf } from "./trust.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -67,7 +68,7 @@ async function moveTask(app: FastifyInstance, task: Task, status: "in_progress" 
  * The person a room-space task is with starts it from My crew (the Start button on their lead's
  * message): one private turn of their lead plans it; its mission delivers to the task and the room.
  */
-export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, mode: "private" | "shared"): Promise<void> {
+export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, mode: "private" | "shared"): Promise<{ turnId: string | null }> {
   const prisma = app.prisma;
   const spaceId = await linkedSpace(app, room);
   if (!spaceId) throw new RoomResultError("This room has no shared space.", 404);
@@ -91,7 +92,58 @@ export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accoun
       ? `Work in that space (name it as the space in Ensemble calls), where its members see the run. `
       : "Work in your owner's own space as usual; the result is delivered to the task. ") +
     "Plan it now with node_plan for your owner (their nodes, their computer, their credits). When it ends, its result goes to the task and the room; your detailed report stays here with your owner.";
-  await enqueueTurn(app, { nodeId: lead.nodeId, roomId: room.id, reason: "request", private: true, audience: "owner", operationId: `room-task:${task.id}:${mode}:${Date.now()}`, note });
+  const operationId = `room-task:${task.id}:${mode}:${Date.now()}`;
+  if (!(await enqueueTurn(app, { nodeId: lead.nodeId, roomId: room.id, reason: "request", private: true, audience: "owner", operationId, note }))) throw new RoomResultError("Your lead here is paused: resume it first.", 409);
+  return { turnId: (await prisma.nodeTurn.findFirst({ where: { operationId }, select: { id: true } }))?.id ?? null };
+}
+
+/**
+ * The person a proposed task on the room's board is with declines it. A request behind it is declined as a
+ * request (node/peer-requests.ts). One from the steward's notes is dropped, and whoever asked for it hears so
+ * privately in their My crew, as a declined request's note reaches its requester (not twice: the room's
+ * events take the move as known).
+ */
+export async function declineRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, note: string | null): Promise<Task> {
+  const prisma = app.prisma;
+  const spaceId = await linkedSpace(app, room);
+  if (!spaceId) throw new RoomResultError("This room has no shared space.", 404);
+  const task = await prisma.task.findFirst({ where: { id: taskId, userId: spaceId, deletedAt: null } });
+  const owner = await spaceOwnerOf(prisma, spaceId);
+  if (!task || !owner) throw new RoomResultError("That task is not on the room's board.", 404);
+  if (holderOf(task, owner) !== accountId) throw new RoomResultError("Only the person the task is with declines it.", 403);
+  if (task.status !== "proposed") throw new RoomResultError("Only a proposed task can be declined.", 409);
+  if (task.peerRequestId) {
+    const { declineRequest, RequestError } = await import("./peer-requests.js");
+    try {
+      await declineRequest(app, accountId, task.peerRequestId, note ? { note } : {});
+    } catch (error) {
+      if (error instanceof RequestError) throw new RoomResultError(error.message, error.statusCode);
+      throw error;
+    }
+    return prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+  }
+  const dropped = await prisma.task.updateMany({ where: { id: task.id, status: "proposed" }, data: { status: "dropped", completedAt: new Date() } });
+  if (!dropped.count) throw new RoomResultError("That task changed meanwhile.", 409);
+  const fresh = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+  await prisma.taskTransition.create({ data: { userId: task.userId, taskId: task.id, fromStatus: "proposed", toStatus: "dropped", actor: "me", reason: "declined in a room" } });
+  await prisma.nodeRoomTask.updateMany({ where: { taskId: task.id }, data: { status: "dropped", taskUpdatedAt: fresh.updatedAt } });
+  sseHub.publish(task.userId, { event: "task", data: { id: task.id, action: "update" } });
+  const asker = task.requestedByAccountId;
+  if (asker && asker !== accountId && (await personIn(prisma, room.id, asker))) {
+    const who = await prisma.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } });
+    const name = who?.name?.trim() || who?.email.split("@")[0] || "They";
+    await postMessage(prisma, {
+      roomId: room.id,
+      userId: asker,
+      authorKind: "system",
+      kind: "status",
+      body: `${name} declined “${truncateText(task.title, 200)}”${note ? `: ${note}` : "."}`,
+      data: { taskId: task.id, declined: true, ...(note ? { declineNote: true } : {}) },
+      visibleTo: [asker],
+    });
+  }
+  publishTo(await roomPeople(prisma, room.id), "node.cards", { roomId: room.id });
+  return fresh;
 }
 
 /** An explicit yes, the whole message (“yes”, “yes, start it”, “ok, go ahead”): nothing else counts as one. */
@@ -171,7 +223,8 @@ export async function followMission(app: FastifyInstance, missionId: string): Pr
     if (typeof to.taskId !== "string" || mission.status === "draft") return;
     const task = await prisma.task.findFirst({ where: { id: to.taskId, deletedAt: null } });
     const kind = (mission.requestedBy as { kind?: unknown } | null)?.kind;
-    if (task && kind !== "review" && task.status === "todo") await moveTask(app, task, "in_progress", "room task started");
+    // To do, or proposed by the steward's notes (no request): starting it is the person's yes.
+    if (task && kind !== "review" && (task.status === "todo" || (task.status === "proposed" && !task.peerRequestId))) await moveTask(app, task, "in_progress", "room task started");
     return;
   }
   if (to.deliveredAt) return;

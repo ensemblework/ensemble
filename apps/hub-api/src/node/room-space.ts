@@ -265,9 +265,31 @@ export async function spaceView(app: FastifyInstance, room: NodeRoom, viewerId: 
   };
 }
 
+/** Who asked for a task: the person, and the node that relayed it by its name and its handle in this room (null once it left). */
+export type Requester = { accountId: string; name: string; node: { id: string; name: string | null; handle: string | null } | null };
+
+/** Names of people and nodes on a room's board, the way the board and the digest show them. */
+export async function boardNames(db: Db, roomId: string, accountIds: Iterable<string>, nodeIds: Iterable<string>) {
+  const nodes = [...new Set(nodeIds)];
+  const [people, agents, members] = await Promise.all([
+    db.user.findMany({ where: { id: { in: [...new Set(accountIds)] } }, select: { id: true, name: true, email: true } }),
+    nodes.length ? db.nodeAgent.findMany({ where: { id: { in: nodes } }, select: { id: true, name: true } }) : Promise.resolve([]),
+    nodes.length ? db.nodeRoomMember.findMany({ where: { roomId, nodeId: { in: nodes } }, select: { nodeId: true, handle: true } }) : Promise.resolve([]),
+  ]);
+  const names = new Map(people.map((row) => [row.id, nameOf(row)]));
+  const nodeNames = new Map(agents.map((row) => [row.id, row.name]));
+  const handles = new Map(members.map((row) => [row.nodeId!, row.handle]));
+  const person = (accountId: string | null) => (accountId ? { accountId, name: names.get(accountId) ?? "Someone" } : null);
+  const node = (nodeId: string | null) => (nodeId ? { id: nodeId, name: nodeNames.get(nodeId) ?? null, handle: handles.get(nodeId) ?? null } : null);
+  const requester = (row: { requestedByAccountId: string | null; requestedByNodeId: string | null }): Requester | null =>
+    row.requestedByAccountId ? { ...person(row.requestedByAccountId)!, node: node(row.requestedByNodeId) } : null;
+  return { person, node, requester };
+}
+
 /**
  * The room's board as one person sees it: the space's tasks, for its owner and members only (read
- * every time). Who each task is with, who asked for it, and which node made it for whom.
+ * every time). Who each task is with, who asked for it, which node made it for whom, and the viewer's
+ * own plan for it (`plan`: theirs only, so how someone's work goes stays theirs).
  */
 export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: string) {
   const prisma = app.prisma;
@@ -289,9 +311,14 @@ export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: 
     for (const id of [row.assigneeAccountId, row.requestedByAccountId, row.createdByAccountId]) if (id) accounts.add(id);
     for (const id of [row.requestedByNodeId, row.createdByNodeId]) if (id) nodes.add(id);
   }
-  const people = new Map((await prisma.user.findMany({ where: { id: { in: [...accounts] } }, select: { id: true, name: true, email: true } })).map((row) => [row.id, nameOf(row)]));
-  const nodeNames = new Map((await prisma.nodeAgent.findMany({ where: { id: { in: [...nodes] } }, select: { id: true, name: true } })).map((row) => [row.id, row.name]));
-  const who = (accountId: string | null) => (accountId ? { accountId, name: people.get(accountId) ?? "Someone" } : null);
+  const { person: who, node, requester } = await boardNames(prisma, room.id, accounts, nodes);
+  // The viewer's own missions delivering to tasks here (a plan's card id is its mission's id), newest first.
+  const missions = await prisma.nodeMission.findMany({ where: { userId: viewerId, deliverTo: { path: ["roomId"], equals: room.id } }, orderBy: { createdAt: "desc" }, take: 200, select: { id: true, status: true, deliverTo: true } });
+  const plans = new Map<string, { id: string; status: string }>();
+  for (const mission of missions) {
+    const taskId = (mission.deliverTo as { taskId?: unknown } | null)?.taskId;
+    if (typeof taskId === "string" && !plans.has(taskId)) plans.set(taskId, { id: mission.id, status: mission.status });
+  }
   return {
     space: { id: spaceId, name: space?.name ?? null, role },
     tasks: rows.map((row) => ({
@@ -302,10 +329,11 @@ export async function roomBoard(app: FastifyInstance, room: NodeRoom, viewerId: 
       due: row.due?.toISOString() ?? null,
       // A "me" task with no assignee account is the space owner's.
       assignee: row.owner === "me" ? who(row.assigneeAccountId ?? owner) : null,
-      requestedBy: row.requestedByAccountId ? { ...who(row.requestedByAccountId)!, node: row.requestedByNodeId ? { id: row.requestedByNodeId, name: nodeNames.get(row.requestedByNodeId) ?? null } : null } : null,
+      requestedBy: requester(row),
       peerRequestId: row.peerRequestId,
       // "@node for person".
-      madeBy: row.createdByNodeId ? { node: { id: row.createdByNodeId, name: nodeNames.get(row.createdByNodeId) ?? null }, for: who(row.createdByAccountId ?? owner) } : null,
+      madeBy: row.createdByNodeId ? { node: node(row.createdByNodeId)!, for: who(row.createdByAccountId ?? owner) } : null,
+      plan: plans.get(row.id) ?? null,
       updatedAt: row.updatedAt.toISOString(),
     })),
   };

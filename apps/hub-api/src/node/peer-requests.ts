@@ -204,7 +204,14 @@ export async function refreshCards(app: FastifyInstance, requestId: string, extr
   const next = OWNER_CARD_STATUS[request.status];
   const now = (ownerCard?.data as { status?: unknown } | null)?.status;
   if (ownerCard && next && now !== next && now !== "expired") {
-    await updateMessageData(prisma, ownerCard, { status: next, text: request.text, ...(request.brief ? { brief: request.brief } : {}), ...(request.status === "declined" ? { note: request.answer } : {}) });
+    await updateMessageData(prisma, ownerCard, {
+      status: next,
+      text: request.text,
+      ...(request.brief ? { brief: request.brief } : {}),
+      // How accepted work runs, as the owner chose it (a proposed task's private work or shared run).
+      ...(request.mode ? { mode: request.mode } : {}),
+      ...(request.status === "declined" ? { note: request.answer } : {}),
+    });
   }
   publishTo(await roomPeople(prisma, request.roomId), "node.request", { roomId: request.roomId, requestId: request.id });
 }
