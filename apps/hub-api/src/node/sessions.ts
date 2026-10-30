@@ -20,7 +20,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ENGINE_LABELS, isCodeEngine, type CodeEngine } from "@ensemble/shared-types";
+import { CODE_ENGINES, ENGINE_LABELS, isCodeEngine, pickRunProfile, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
 import { AssignInput, chooseComputer, chooseProfile, plan, type Plan } from "../assistant/tools/agent-assign.js";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { isPaused } from "../lib/activity.js";
@@ -228,6 +228,27 @@ function sessionView(row: NodeSession, work: WorkItem[], runs: SessionRun[]) {
 
 const agentLabel = (engine: string | null | undefined) => (engine && isCodeEngine(engine) ? ENGINE_LABELS[engine] : "Ensemble's agent");
 
+/** The run profile a node's sessions use unless a call names one: its own (Settings → run profiles), else its owner's default. */
+export function nodeRunProfile(settings: Pick<Settings, "runProfiles" | "defaultRunProfileId" | "orchestration">, node: Pick<NodeAgent, "runProfileId">): RunProfile {
+  return pickRunProfile(settings, node.runProfileId);
+}
+
+/**
+ * What a node's sessions run with unless its owner names others, in one line for its persona: “GitHub
+ * Copilot · gpt-6.1-sol · medium thinking · 1M context (the run profile “Copilot”)”. A profile with no
+ * coding agent takes one signed in on the computer (`agentOn`).
+ */
+export function agentDefaults(profile: RunProfile): string {
+  if (!isCodeEngine(profile.engine)) return `a coding agent signed in on the computer, on its default model (the run profile “${profile.name}”)`;
+  const parts = [
+    ENGINE_LABELS[profile.engine as CodeEngine],
+    profile.model.trim() || "its default model",
+    profile.effort && profile.effort !== "default" ? `${profile.effort} thinking` : "",
+    profile.context === "long_context" ? "1M context" : "",
+  ].filter(Boolean);
+  return `${parts.join(" · ")} (the run profile “${profile.name}”)`;
+}
+
 /** A coding agent signed in on the computer, for a run whose profile names none. */
 async function agentOn(prisma: PrismaClient, deviceId: string | undefined, engines: string[]): Promise<CodeEngine> {
   const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId } }) : null;
@@ -411,6 +432,11 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
       sessionId: info.sessionId,
       delivery: info.delivery,
       agent: agentLabel(job.provider),
+      // What the run goes with, for the card: the engine's id, its model, thinking level and context window ("default" for the agent's own).
+      engine: job.provider ?? null,
+      model: settings.resolved.model ?? "default",
+      effort: settings.resolved.effort ?? "default",
+      context: settings.resolved.context ?? "default",
       status: job.status,
       computer: job.device?.name ?? null,
       progress: job.progress,
@@ -443,11 +469,28 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
   return message;
 }
 
+/** Who took a run over: the plan step whose turn acted (if any), and the node when it acted itself (not its owner). */
+type TakenBy = { plan: PlanLink | null; nodeId?: string };
+
+/** The node itself acting in a call, unless its owner did on the session's card. */
+const takenBy = (env: SessionEnv): TakenBy => ({ plan: env.plan ?? null, ...(env.via === "card" ? {} : { nodeId: env.node.id }) });
+
+/**
+ * The plan step this node's newest run in a session does, while that step goes on: steering or replacing
+ * that run from the node's conversation (an attention turn, its owner's word) goes on with the step, as
+ * the session's card does (node/session-routes.ts).
+ */
+async function ownStep(prisma: PrismaClient, node: Pick<NodeAgent, "id" | "userId">, sessionId: string): Promise<PlanLink | null> {
+  const latest = await prisma.nodeRun.findFirst({ where: { userId: node.userId, nodeId: node.id, OR: [{ sessionId }, { sessionId: null, jobId: sessionId }] }, orderBy: { createdAt: "desc" } });
+  return latest?.planId && latest.planStep && (await stepLive(prisma, latest.planId, latest.planStep)) ? { planId: latest.planId, planStep: latest.planStep } : null;
+}
+
 /**
  * Runs this node started that a newer call took over (steered, replaced, stopped, paused): their
  * cards say so, and node/runs.ts does not wake the node when they end.
  */
-async function quiet(app: FastifyInstance, jobIds: string[], why: "steered" | "replaced" | "stopped" | "paused" | "cancelled", current: PlanLink | null = null): Promise<void> {
+async function quiet(app: FastifyInstance, jobIds: string[], why: "steered" | "replaced" | "stopped" | "paused" | "cancelled", by: TakenBy = { plan: null }): Promise<void> {
+  const current = by.plan;
   if (!jobIds.length) return;
   const prisma = app.prisma;
   const runs = await prisma.nodeRun.findMany({ where: { jobId: { in: jobIds }, reportedAt: null } });
@@ -465,11 +508,15 @@ async function quiet(app: FastifyInstance, jobIds: string[], why: "steered" | "r
   for (const step of steps.values()) {
     if (!(await stepLive(prisma, step.planId, step.planStep))) continue;
     if ((await stepRuns(prisma, step.planId, step.planStep)).pending || (await stepCardsWaiting(prisma, step.planId, step.planStep))) continue;
+    // The step's own node did it from its conversation: that is the step going on, not a stop from outside.
+    const own = by.nodeId === step.nodeId;
     const queued = await enqueueTurn(app, {
       nodeId: step.nodeId,
       roomId: step.roomId,
       reason: "run",
-      note: `The agent run for your plan step was ${why} from outside the step. Reply with what the step got done, or call node_step_blocked with why it cannot be finished.`,
+      note: own
+        ? `You ${why} the agent run for your plan step from your conversation with your owner. Go on with the step, or report what it got done with node_step_report.`
+        : `The agent run for your plan step was ${why} from outside the step. Reply with what the step got done, or call node_step_blocked with why it cannot be finished.`,
       planId: step.planId,
       planStep: step.planStep,
     });
@@ -496,7 +543,7 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   }
   // What was asked, as asked (the step's settings count as asked); the profile fills in the rest.
   const requested = requestedSettings(input);
-  const profile = chooseProfile(env.ctx, input.profile);
+  const profile = input.profile ? chooseProfile(env.ctx, input.profile) : nodeRunProfile(env.ctx.settings, env.node);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
   if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? []);
@@ -570,7 +617,7 @@ async function dropQueuedRuns(env: SessionEnv, sessionId: string, jobIds: string
     await appendLedger({ userId: node.userId, actor: env.via === "card" ? "me" : "agent", action: "workspace.job.stop", taskId: job.taskId, payload: { jobId: job.id, was: "queued", via: env.via ?? "chat" } });
     sseHub.publish(node.userId, { event: "workspace", data: { id: job.id } });
   }
-  await quiet(env.app, dropped, why, env.plan ?? null);
+  await quiet(env.app, dropped, why, takenBy(env));
   return dropped;
 }
 
@@ -604,6 +651,10 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
   const active = chain[0];
   let delivery: Delivery = input.delivery;
   if (delivery === "steer" && !active) delivery = "queue";
+  if ((delivery === "steer" || delivery === "replace") && chain.length && !env.plan?.planStep && env.via !== "card") {
+    const step = await ownStep(prisma, node, session.id);
+    if (step) env = { ...env, plan: step };
+  }
   const where = `${session.agentName}${session.computer ? ` on ${session.computer}` : ""}, ${session.folder}`;
 
   if (delivery === "steer") {
@@ -686,13 +737,13 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
     await placeInQueue(prisma, scopeOf(node), session.id, jobId, "first");
     const now = await prisma.workspaceJob.findUnique({ where: { id: active!.id }, select: { status: true, cancelRequestedAt: true } });
     if (now && now.status !== "stopping" && !now.cancelRequestedAt) await stopJob(env.app, node.userId, active!.id);
-    await quiet(env.app, [active!.id], "steered", env.plan ?? null);
+    await quiet(env.app, [active!.id], "steered", takenBy(env));
   } else if (delivery === "replace" && chain.length) {
     const ids = chain.map((row) => row.id);
     // What is queued never starts; then what is on the computer (or reached it meanwhile) stops.
     const dropped = await dropQueuedRuns(env, session.id, ids, "replaced", "Replaced by a newer message.");
     await stopOnComputer(env, ids.filter((id) => !dropped.includes(id)));
-    await quiet(env.app, ids.filter((id) => !dropped.includes(id)), "replaced", env.plan ?? null);
+    await quiet(env.app, ids.filter((id) => !dropped.includes(id)), "replaced", takenBy(env));
     if (!fresh) await placeInQueue(prisma, scopeOf(node), session.id, jobId, "last");
   } else if (delivery === "queue") {
     await placeInQueue(prisma, scopeOf(node), session.id, jobId, "last");
@@ -728,7 +779,7 @@ export async function stopSession(env: SessionEnv, input: z.infer<typeof StopInp
   // A queued run claimed meanwhile is on its computer now: it stops too unless the queue is kept.
   const stopped = await stopOnComputer(env, input.queued === "drop" ? [...busy, ...queued.filter((id) => !dropped.includes(id))] : busy);
   const targets = [...stopped, ...dropped];
-  await quiet(env.app, stopped, "stopped", env.plan ?? null);
+  await quiet(env.app, stopped, "stopped", takenBy(env));
   await noteAction(env, session.id, "stop", stopped[0] ?? null, { queued: input.queued, stopped: stopped.length, dropped: dropped.length });
   const titles = chain.filter((row) => targets.includes(row.id)).map((row) => `“${row.title}”`);
   const kept = input.queued === "keep" ? queued.length : 0;
@@ -896,8 +947,8 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
     name: "node_session_start",
     area: "tasks",
     description:
-      "Do work on your owner's computer now (no Ensemble task needed): start a new session with one of their own coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity) on their paired computer and their own subscription: the agent does the work in a folder that computer shares (folder), a fresh clone (repoUrl) or a new empty folder, and you hear when it ends. " +
-      "Their default run profile decides the agent, computer, mode and git rules unless you name others (profile, agent, computer, model, effort, mode, branch, pullRequest). " +
+      "Real coding work on your owner's computer (changing code in a repository, building a feature, fixing a bug, a test-and-fix loop; no Ensemble task needed): start a new session with one of their own coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity) on their paired computer and their own subscription: the agent does the work in a folder that computer shares (folder), a fresh clone (repoUrl) or a new empty folder, and you hear when it ends. " +
+      "Your run profile decides the agent, model, thinking level, context, computer, mode and git rules unless your owner names others (profile, agent, computer, model, effort, context, mode, branch, pullRequest). " +
       "For work that builds on what one of your sessions already did, use node_session_send instead. Off the board unless you pass taskId.",
     input: StartInput,
     isWrite: false,

@@ -18,6 +18,7 @@ import { secretTools } from "./node-secrets.js";
 import { helperGrant, helperRoomOf, helperTools } from "./helpers.js";
 import { deviceTools } from "./device-tools.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
+import { crewMember, findCrew, notInCrew } from "./crew.js";
 import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 import { planTools } from "./plan-tools.js";
@@ -117,17 +118,9 @@ export async function postAsNode(
   return { message, drafted: false };
 }
 
-/** The crew room this node leads for its owner, made on first use. */
+/** The crew room this node leads for its owner (else the first crew it is in), made on first use. */
 export async function crewRoomFor(prisma: PrismaClient, node: NodeAgent): Promise<NodeRoom> {
-  const rooms = await prisma.nodeRoom.findMany({
-    where: { userId: node.userId, kind: "crew", archivedAt: null, members: { some: { nodeId: node.id } } },
-    orderBy: { createdAt: "asc" },
-  });
-  const led = rooms.find((room) => {
-    const leads = (room.settings as { leadNodeIds?: unknown } | null)?.leadNodeIds;
-    return Array.isArray(leads) && leads.includes(node.id);
-  });
-  const found = led ?? rooms[0];
+  const found = await findCrew(prisma, node);
   if (found) return found;
   const title = await freeRoomTitle(prisma, node.userId, `${node.name}'s crew`);
   return prisma.$transaction(async (tx) => {
@@ -331,7 +324,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       name: "node_delegate",
       area: "tasks",
       description:
-        "Add a step for one of your owner's other nodes (for example @builder) to your plan. Call it once per piece of work, in order; pass after for what must finish first (testing after building, docs last). " +
+        "Add a step for a member of your crew (for example @builder) to your plan, or brief your own helper. Call it once per piece of work, in order; pass after for what must finish first (testing after building, docs last). A node outside the crew joins only when your owner agrees (node_crew_add). " +
         "Nothing is posted: when your turn ends your reply opens the plan as one card, its steps run in order as quiet work of those nodes, and you hear back once, with every result, when the plan ends. " +
         "The brief must stand alone: the task or page, where to work, what done looks like, and any model, agent or folder your owner named.",
       input: z.object({
@@ -375,14 +368,16 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
           return toolOk(`Asked @${here!.handle} in “${room.title}”.`, { roomId: room.id, messageId: message.id });
         }
         // A step in this turn's plan, run in a crew: this one, the plan's when continuing it, else the crew you lead.
+        // Only its members get steps: another node joins only when your owner agrees (node_crew_add).
         const continuing = scope.plan && !scope.plan.planStep ? scope.plan.planId : null;
         const planCard = continuing ? await prisma.nodeMessage.findUnique({ where: { id: continuing }, select: { roomId: true } }) : null;
         const room = planCard
           ? await prisma.nodeRoom.findUniqueOrThrow({ where: { id: planCard.roomId } })
           : scope.room.kind === "crew"
             ? scope.room
-            : await crewRoomFor(prisma, node);
-        const member = (await prisma.nodeRoomMember.findFirst({ where: { roomId: room.id, nodeId: target.id } })) ?? (await addNode(prisma, room.id, target));
+            : await findCrew(prisma, node);
+        if (!room) throw new ToolBlockedError(notInCrew(target.slug, null, []));
+        const member = await crewMember(prisma, room, node, target);
         const visibleTo = await planVisibility(prisma, node.userId, room, room.id === scope.room.id ? scope.privateTo : null);
         try {
           const added = await addStep(prisma, {

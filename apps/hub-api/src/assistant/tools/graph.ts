@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { hasModule } from "@ensemble/shared-types";
-import { webSearch } from "../../workspace/research.js";
+import { searchMarket, webSearchFrom } from "../../workspace/research.js";
+import { includedWebSearch } from "../../runtime/search.js";
+import { IncludedLimitError } from "../../included/errors.js";
 import {
   createDeliverable,
   createPerson,
@@ -279,23 +281,47 @@ export const graphTools = [
   defineTool({
     name: "hub_web_search",
     area: "context",
-    description: "Search the public web. Cite the returned links. If this returns nothing, say you could not verify it. Never invent a citation.",
-    input: z.object({ query: z.string().min(2).max(300) }),
+    description:
+      "Search the live web: facts, prices, news, comparisons. Returns sources (title, link, snippet) and, when it can, a short answer written from them. Cite the returned links. " +
+      "If this returns nothing, say you could not verify it. Never invent a citation.",
+    input: z.object({
+      query: z.string().min(2).max(300),
+      market: z.string().max(10).optional().describe("A market such as en-US (US stores and prices in dollars) or en-IN, when the results depend on the country."),
+    }),
     isWrite: false,
     risk: "low",
     async run(ctx, input) {
-      const grounded = await groundedSearch(ctx, input.query);
-      if (grounded.length) return toolOk(`Found ${grounded.length} source(s).`, { results: grounded, provider: "grounding" });
+      const market = searchMarket(input.market);
+      const tier = ctx.settings.models[ctx.settings.assistant.defaultTier] ?? ctx.settings.models.medium;
+      let note: string | undefined;
+      if (GROUNDING.has(tier.provider)) {
+        const grounded = await groundedSearch(ctx, input.query);
+        if (grounded.length) return toolOk(`Found ${grounded.length} source(s).`, { results: grounded, provider: "grounding" });
+      } else {
+        // Included models (and AI plans with no search of their own): Azure Foundry's web search, on included credits.
+        try {
+          const found = await includedWebSearch(ctx.userId, input.query, { tier, market });
+          if (found && (found.hits.length || found.answer)) {
+            return toolOk(found.hits.length ? `Found ${found.hits.length} source(s).` : "Answered from a web search, with no source cited.", { results: found.hits, answer: found.answer, provider: "web_search" });
+          }
+        } catch (error) {
+          if (error instanceof IncludedLimitError) note = `${error.message} These results come from a free web search instead.`;
+          else ctx.app.log.warn({ err: error }, "included web search unavailable");
+        }
+      }
       try {
-        const hits = await webSearch(input.query);
-        return toolOk(hits.length ? `Found ${hits.length} source(s).` : "The search returned nothing.", { results: hits, provider: "fallback" });
+        const { hits, engine } = await webSearchFrom(input.query, { market });
+        return toolOk(hits.length ? `Found ${hits.length} source(s).${note ? ` ${note}` : ""}` : `The search returned nothing.${note ? ` ${note}` : ""}`, { results: hits, provider: "fallback", engine, ...(note ? { note } : {}) });
       } catch (error) {
         ctx.app.log.warn({ err: error }, "web search unavailable");
-        return toolOk("Web search is unavailable.", { results: [], provider: "unavailable", error: "search unavailable" });
+        return toolOk(`Web search is unavailable.${note ? ` ${note}` : ""}`, { results: [], provider: "unavailable", error: "search unavailable", ...(note ? { note } : {}) });
       }
     },
   }),
 ];
+
+/** Providers whose own models search the web on the person's key (runtime/search.ts). */
+const GROUNDING = new Set(["google", "openai", "anthropic"]);
 
 async function groundedSearch(
   ctx: { app: { log: { warn: (obj: unknown, msg?: string) => void } }; userId: string; settings: { models: { easy: { provider: string; model: string }; medium: { provider: string; model: string }; high: { provider: string; model: string }; max: { provider: string; model: string } }; assistant: { defaultTier: "easy" | "medium" | "high" | "max" } } },

@@ -81,14 +81,70 @@ export interface SearchHit {
   snippet: string;
 }
 
+/** A desktop Chrome, as search pages expect: Bing answers a bare or bot-like client with fewer or no results. */
+const SEARCH_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const SEARCH_TIMEOUT_MS = 15_000;
+
+let searchFetch: typeof fetch = (input, init) => fetch(input, init);
+
+/** Tests answer the search requests themselves. */
+export function setWebSearchFetchForTests(fn: typeof fetch | null): void {
+  searchFetch = fn ?? ((input, init) => fetch(input, init));
+}
+
+const within = (signal: AbortSignal | undefined) => (signal ? AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)]) : AbortSignal.timeout(SEARCH_TIMEOUT_MS));
+
+/** A market such as en-US, as Bing takes it; anything else is left out. */
+export function searchMarket(value: string | null | undefined): string | null {
+  const found = /^([a-z]{2,3})[-_]([a-z]{2})$/i.exec(value?.trim() ?? "");
+  return found ? `${found[1]!.toLowerCase()}-${found[2]!.toUpperCase()}` : null;
+}
+
+/** Bing's RSS results (no key): titles, links and descriptions, without Bing's own links. */
+async function bingSearch(query: string, market: string | null, signal?: AbortSignal): Promise<SearchHit[]> {
+  const url = new URL("https://www.bing.com/search");
+  url.searchParams.set("format", "rss");
+  url.searchParams.set("q", query);
+  if (market) {
+    url.searchParams.set("mkt", market);
+    url.searchParams.set("setlang", market);
+  }
+  const response = await searchFetch(url, {
+    headers: { "User-Agent": SEARCH_UA, Accept: "application/rss+xml,application/xml;q=0.9,*/*;q=0.5", "Accept-Language": market ? `${market},${market.split("-")[0]};q=0.9` : "en-US,en;q=0.9" },
+    signal: within(signal),
+  });
+  if (!response.ok) throw new ResearchError(`Bing answered ${response.status}.`);
+  const xml = await response.text();
+  const hits: SearchHit[] = [];
+  for (const item of xml.split(/<item>/i).slice(1)) {
+    // Markup may come escaped (&lt;b&gt;) or in CDATA: what is left after decoding is markup too.
+    const field = (name: string) =>
+      strip((new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "i").exec(item)?.[1] ?? "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"))
+        .replace(/<\/?[a-z][^>]*>/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const link = field("link");
+    let host = "";
+    try {
+      host = new URL(link).hostname.toLowerCase();
+    } catch {
+      continue;
+    }
+    if (!/^https?:\/\//i.test(link) || host === "bing.com" || host.endsWith(".bing.com")) continue;
+    if (hits.some((hit) => hit.url === link)) continue;
+    hits.push({ title: field("title") || link, url: link, snippet: field("description") });
+    if (hits.length >= 8) break;
+  }
+  return hits;
+}
+
 async function webSearchOnce(query: string, endpoint: string, signal?: AbortSignal): Promise<SearchHit[]> {
   const body = new URLSearchParams({ q: query, kl: "wt-wt" });
-  const timeout = AbortSignal.timeout(12_000);
-  const response = await fetch(endpoint, {
+  const response = await searchFetch(endpoint, {
     method: "POST",
     headers: { "User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded" },
     body,
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    signal: within(signal),
   });
   if (!response.ok) throw new ResearchError(`Web search is unavailable (${response.status}).`);
   const html = await response.text();
@@ -110,19 +166,35 @@ async function webSearchOnce(query: string, endpoint: string, signal?: AbortSign
   return hits;
 }
 
-export async function webSearch(query: string, signal?: AbortSignal): Promise<SearchHit[]> {
-  const endpoints = ["https://html.duckduckgo.com/html/", "https://duckduckgo.com/html/"];
-  let last: unknown;
-  for (const endpoint of endpoints) {
+/**
+ * A web search with no key, in order: Bing's RSS results (for a market such as en-US when given), then
+ * DuckDuckGo's HTML page. Empty when both answered with nothing; ResearchError when neither answered.
+ */
+export async function webSearchFrom(query: string, options: { signal?: AbortSignal; market?: string | null } = {}): Promise<{ hits: SearchHit[]; engine: "bing" | "duckduckgo" }> {
+  const { signal } = options;
+  let answered = false;
+  try {
+    const hits = await bingSearch(query, searchMarket(options.market), signal);
+    if (hits.length) return { hits, engine: "bing" };
+    answered = true;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+  }
+  for (const endpoint of ["https://html.duckduckgo.com/html/", "https://duckduckgo.com/html/"]) {
     try {
-      return await webSearchOnce(query, endpoint, signal);
+      const hits = await webSearchOnce(query, endpoint, signal);
+      if (hits.length) return { hits, engine: "duckduckgo" };
+      answered = true;
     } catch (error) {
-      last = error;
       if (signal?.aborted) throw error;
     }
   }
-  const detail = last instanceof Error ? last.message : "fetch failed";
-  throw new ResearchError(detail.toLowerCase().includes("unavailable") ? "Web search is unavailable." : "Web search is unavailable.");
+  if (answered) return { hits: [], engine: "bing" };
+  throw new ResearchError("Web search is unavailable.");
+}
+
+export async function webSearch(query: string, signal?: AbortSignal, options: { market?: string | null } = {}): Promise<SearchHit[]> {
+  return (await webSearchFrom(query, { signal, market: options.market })).hits;
 }
 
 export interface Paper {

@@ -15,7 +15,7 @@ const { cleanObserved, mergeObserved, observedFromEvents, observedUpdate, window
 const { claudeWindow } = await import("../workspace/engines/claude-code.js");
 const { liveOrder, queuedOrder } = await import("../workspace/sessions.js");
 const { normalizeQuote, questionRefusal, quoteFound } = await import("./session-questions.js");
-const { errorSignature, outsidePath } = await import("./watchdog.js");
+const { errorSignature, explorationMiss, failures, failureText, outsidePath, repeatedFailure } = await import("./watchdog.js");
 const { closedRefusal, ENDED_WITH_WORK, WORK_ENDED } = await import("../lib/decisions.js");
 const { sessionState } = await import("./session-queue.js");
 
@@ -165,6 +165,64 @@ test("the watchdog reads an error as its kind, and a path outside the run's fold
   assert.notEqual(errorSignature("npm test failed"), errorSignature("npm run lint failed"));
   for (const path of ["/etc/hosts", "~/notes.md", "../other/file.ts", "C:\\Users\\x\\a.txt"]) assert.ok(outsidePath(path), path);
   for (const path of ["src/app.ts", "README.md", ".github/ci.yml"]) assert.ok(!outsidePath(path), path);
+});
+
+test("the watchdog reads a failure by its own words: a JSON output's error or message, else its first line with text", () => {
+  assert.equal(failureText('{\n  "error": "Path does not exist: src/missing.ts"\n}'), "Path does not exist: src/missing.ts");
+  assert.equal(failureText('{"ok": false, "message": "view_range out of bounds"}'), "view_range out of bounds");
+  assert.equal(failureText('{"error": {"message": "rate limited"}}'), "rate limited");
+  assert.match(failureText('{\n  "error": "cut off mid-way because outputs are prev'), /^"error": "cut off mid-way/, "never a lone brace");
+  assert.equal(failureText('{\n  "error": "Path does not exist: a.ts", "trace": "…'), "Path does not exist: a.ts", "a cut-off object still gives its error");
+  assert.equal(failureText("\n{\n\nnpm ERR! missing script: test\nmore"), "npm ERR! missing script: test");
+  assert.notEqual(errorSignature(`view: ${failureText('{"error": "Path does not exist: a.ts"}')}`), errorSignature(`view: ${failureText('{"error": "view_range out of bounds"}')}`), "different read errors are not one error");
+});
+
+test("the watchdog ignores an agent looking around: reads that miss and searches that find nothing", () => {
+  for (const miss of [
+    { tool: "view", text: "Path does not exist: src/old.ts" },
+    { tool: "Read", text: "File does not exist." },
+    { tool: "read_file", text: "ENOENT: no such file or directory" },
+    { tool: "glob", text: "No files found" },
+    { tool: "str_replace_based_edit_tool", args: '{"command":"view","path":"x.ts","view_range":[900,950]}', text: "Invalid view_range: out of bounds" },
+    { tool: "list_dir", text: "is a directory" },
+    { tool: "bash", command: "grep -rn needle src", exitCode: 1, text: "" },
+    { tool: "bash", command: "cd src && rg -l needle | head -5", exitCode: 1, text: "" },
+    { command: "test -f .env.local", exitCode: 1, text: "`test -f .env.local` failed (exit 1)" },
+    { command: "find . -name '*.orig'", exitCode: 1, text: "" },
+  ]) assert.ok(explorationMiss(miss), JSON.stringify(miss));
+  for (const failure of [
+    { tool: "bash", command: "npm test", exitCode: 1, text: "3 failing" },
+    { tool: "bash", command: "grep -q x a && npm run build", exitCode: 1, text: "build failed" },
+    { tool: "edit", text: "old_string not found in file" },
+    { tool: "write_file", text: "Path does not exist: /etc" },
+    { command: "npx prisma migrate deploy", exitCode: 1, text: "`npx prisma migrate deploy` failed (exit 1)" },
+    { tool: "view", text: "Permission denied" },
+  ]) assert.ok(!explorationMiss(failure), JSON.stringify(failure));
+});
+
+test("a repeated error is one failure at least five times, and the run's last four failures in a row", () => {
+  const at = (minute: number) => new Date(Date.UTC(2026, 9, 30, 4, minute));
+  const read = (path: string) => ({ name: "view", ok: false, output: JSON.stringify({ error: `Path does not exist: ${path}` }), args: JSON.stringify({ path }) });
+  const failing = { name: "bash", ok: false, args: JSON.stringify({ command: "npm test" }), output: "{\n  \"error\": \"Cannot find module 'vitest'\"\n}" };
+  // The production false alarm: four unrelated read misses in a 109-step run, all JSON (“{” on their first line).
+  const misses = [read("a.ts"), read("b.ts"), read("c.ts"), { name: "view", ok: false, output: '{"error": "view_range out of bounds"}', args: "{}" }];
+  assert.deepEqual(failures([], [{ toolCalls: misses, startedAt: at(1), endedAt: at(2) }]), [], "read misses are not failures");
+  assert.equal(repeatedFailure(failures([], [{ toolCalls: misses, startedAt: at(1), endedAt: at(2) }])), null);
+
+  // Five of one failure, the last four in a row: raised, with its own words.
+  const five = [{ toolCalls: [failing], startedAt: at(3), endedAt: at(3) }, { toolCalls: [{ name: "bash", ok: false, output: "lint: 2 problems" }], startedAt: at(4), endedAt: at(4) }, ...[5, 6, 7, 8].map((minute) => ({ toolCalls: [failing], startedAt: at(minute), endedAt: at(minute) }))];
+  const hit = repeatedFailure(failures([], five));
+  assert.deepEqual(hit, { text: "bash: Cannot find module 'vitest'", count: 5, streak: 4 });
+
+  // Four in a row are not enough without a fifth; five that the agent moved past are not a repeat.
+  assert.equal(repeatedFailure(failures([], five.slice(1))), null, "four times");
+  const movedOn = [...five, { toolCalls: [{ name: "bash", ok: false, output: "tsc: 1 error" }], startedAt: at(9), endedAt: at(9) }];
+  assert.equal(repeatedFailure(failures([], movedOn)), null, "the latest failure is another one");
+
+  // Failed commands and retries are read in time order with the tool calls; a grep that found nothing is not one.
+  const events = [9, 10, 11, 12, 13].map((minute) => ({ kind: "command", data: { command: "npx prisma migrate deploy", exitCode: 1 }, createdAt: at(minute) }));
+  const quiet = { kind: "command", data: { command: "grep -rn TODO src", exitCode: 1 }, createdAt: at(14) };
+  assert.equal(repeatedFailure(failures([...events, quiet], five))?.text, "`npx prisma migrate deploy` failed (exit 1)");
 });
 
 test("a request closed with its work refuses a late answer with that reason", () => {
