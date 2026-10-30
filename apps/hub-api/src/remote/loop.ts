@@ -35,11 +35,13 @@ import { stopNodeCommands } from "../device-tools/run.js";
 import { sendEvidence } from "../evidence/upload.js";
 import { answerEvidenceRequest } from "../evidence/requests.js";
 import { setLiveSink } from "./live.js";
+import { setRunLoginSink } from "../logins/run.js";
+import { answerLoginResolve } from "../logins/answer.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { BROWSER_API, CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -139,6 +141,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     ...credentialCapabilities(settings),
     // A node's browser and capture tools run here (protocol 7), and what this computer can capture.
     browser: BROWSER_API,
+    // Sign-ins handed to the owner: the card's answers (`login.resolve`), saved logins here (B11, protocol 8).
+    logins: LOGINS_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
 }
@@ -158,6 +162,7 @@ async function agentsNow(): Promise<SubscriptionAgent[]> {
 export async function stopRemoteWork(app: FastifyInstance, message: string, report: "cancelled" | "none"): Promise<void> {
   stopWebTerminal();
   stopNodeCommands();
+  await (await import("../logins/requests.js")).endAllLogins(message).catch(() => undefined);
   stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();
@@ -259,6 +264,12 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     void client.liveFrame(job.hostedId, { leaseToken: job.leaseToken, tab: frame.tab, url: frame.url, title: frame.title, at: frame.at, ...picture, ...(frame.paused ? { paused: frame.paused } : {}) }).catch(() => undefined);
     return true;
   });
+  // A run's agent waits for its owner to sign in: the web raises the card where the run is followed (protocol 8).
+  setRunLoginSink(async (localJobId, login) => {
+    const job = Object.values(held()).find((row) => row.localJobId === localJobId && row.phase === "active");
+    if (!job || (job.protocol ?? 1) < 8 || !client.runLogin) return null;
+    return client.runLogin(job.hostedId, { leaseToken: job.leaseToken, ...login });
+  });
   await reconcile(app, client);
   let claiming = false;
   // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
@@ -327,6 +338,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         if (event === "node.tool.request") void answerNodeToolRequest(app, client, data).catch(() => undefined);
         // A secret typed on the web for this computer's runs: kept here only.
         if (event === "secret.save") void answerSecretSave(client, data).catch(() => undefined);
+        // The owner's answer to a sign-in card (B11, protocol 8).
+        if (event === "login.resolve") void answerLoginResolve(client, data).catch(() => undefined);
         // The owner previews, releases or discards a file kept here (protocol 7).
         if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
@@ -363,6 +376,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     if (currentSession === abort) {
       currentSession = null;
       setLiveSink(null);
+      setRunLoginSink(null);
     }
   }
 }

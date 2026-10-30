@@ -22,6 +22,7 @@ import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
+import { postLoginCard } from "./logins.js";
 import { askOwner, markGrantsUsed, pendingGrants, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
 import { helperFolders, helperGrant } from "./helpers.js";
@@ -42,13 +43,16 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
   const device = wanted && wanted !== "any" ? devices.find((row) => row.name.toLowerCase() === wanted || row.id === name) : devices.find((row) => deviceOnline(row.lastSeenAt));
   if (!device) throw new ToolBlockedError(wanted && wanted !== "any" ? `There is no computer called “${name}”.` : "None of your owner's computers is online.", `Their computers: ${devices.map((row) => row.name).join(", ")}.`);
   if (!deviceOnline(device.lastSeenAt)) throw new ToolBlockedError(`${device.name} is offline.`, "Ensemble must be running there (`ensemble runner start`).");
-  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; browser?: unknown; capture?: { browser?: unknown } | null };
+  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; browser?: unknown; logins?: unknown; capture?: { browser?: unknown } | null };
   if (typeof caps.nodeTools !== "number" || caps.nodeTools < 1) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to let a node use it directly.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then, have a coding agent do it (node_session_start).");
   }
   if (need) {
     if (typeof caps.browser !== "number" || caps.browser < BROWSER_API) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to browse or capture for a node.`, "Your owner updates it there (`ensemble update`, or the desktop app's update).");
+    }
+    if (need.browser === "browser_login_needed" && (typeof caps.logins !== "number" || caps.logins < 1)) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to hand a sign-in to your owner.`, "Your owner updates it there (`ensemble update`, or the desktop app's update), or signs in by hand in the browser there.");
     }
     if (caps.capture?.browser === false && need.browser !== "capture_status") {
       throw new ToolBlockedError(`${device.name} has no browser for Ensemble yet.`, "Your owner runs `ensemble capture setup` there once; it installs one. capture_status says what else that computer can capture.");
@@ -391,7 +395,7 @@ function captureTools(scope: NodeScope): AnyHubTool[] {
         if (isResult(done)) return done;
         const answer = NodeCaptureAnswer.safeParse(done.body);
         if (!answer.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
-        const { ok, summary, result, error, evidence, refused } = answer.data;
+        const { ok, summary, result, error, evidence, refused, login } = answer.data;
         const main = evidence.filter((item) => !item.variantOf);
         const held = main.filter((item) => item.held);
         if (held.length) {
@@ -415,6 +419,23 @@ function captureTools(scope: NodeScope): AnyHubTool[] {
           refused.length ? `Not kept: ${refused.map((item) => `“${item.name}”: ${item.reason}`).join("; ")}.` : "",
         ].filter(Boolean);
         if (!ok) throw new ToolBlockedError(lines.join("\n"));
+        // The tab waits for the owner to sign in (B11): one owner-only card; the node is woken when it ends.
+        if (login) {
+          const card = await postLoginCard(ctx.app, {
+            ownerId: node.userId,
+            node,
+            roomId: scope.room.id,
+            device: done.device,
+            login,
+            operation,
+            planId: scope.plan?.planId ?? null,
+            planStep: scope.plan?.planStep ?? null,
+            rootMessageId: scope.lineage.rootMessageId,
+            private: Boolean(scope.privateTo),
+          });
+          lines.push(`Your owner is asked on a card in this chat to sign in to ${login.origin} on ${done.device.name}. You are woken when they have (or chose not to). Do not ask in the chat, and reply now, briefly.`);
+          return toolOk(lines.join("\n"), { computer: done.device.name, waitingForOwner: true, decisionId: card.id, signIn: { origin: login.origin, tab: login.tab } });
+        }
         return toolOk(lines.join("\n"), { computer: done.device.name, evidence: main.map((item) => ({ id: item.id, name: item.name, kind: item.kind, held: item.held })), ...smallResult(result) });
       },
     }),

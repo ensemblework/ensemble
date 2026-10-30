@@ -1,4 +1,5 @@
 import type { SecretAnswer, SecretTarget } from "./node-secret";
+import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
 import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
@@ -357,7 +358,7 @@ export type NodeApprovalCard = {
   body: string;
   createdAt: string;
   data: {
-    type?: "tools" | "post" | "session" | "secret" | "node_proposal" | "disclosure" | "peer_request";
+    type?: "tools" | "post" | "session" | "secret" | "login" | "node_proposal" | "disclosure" | "peer_request";
     /** Session cards: start, send, or hand_over (hand a session to another node). */
     action?: string;
     status?: string;
@@ -366,6 +367,12 @@ export type NodeApprovalCard = {
     computer?: string | null;
     /** Secret cards: the destinations the secret may be sent to (secret_http). */
     allow?: string[];
+    /** Sign-in cards (B11): the site, and what the computer offers (a saved login, a screen to sign in on). */
+    origin?: string;
+    saved?: boolean;
+    display?: boolean;
+    takeover?: boolean;
+    note?: string | null;
     calls?: Array<{ callId: string; name: string; summary: string }>;
   };
   node: { id: string; slug: string; name: string; role: string } | null;
@@ -1413,6 +1420,10 @@ export const api = bindClient({
   nodeSecretTarget: (id: string) => get<SecretTarget>(`/api/node/secrets/${id}`),
   /** The answer to a node's secret request: sealed for the computer (or, for an older one, the value over HTTPS); never stored by Ensemble on the web. */
   saveNodeSecret: (id: string, answer: SecretAnswer) => post(`/api/node/secrets/${id}`, answer),
+  /** A sign-in card's computer, its key for a login typed here, and what it offers (B11). */
+  nodeLoginTarget: (id: string) => get<LoginTarget>(`/api/node/logins/${id}`),
+  /** The answer to a sign-in card: a button, or a login sealed in this browser for the computer. */
+  answerNodeLogin: (id: string, answer: LoginAnswer) => post<{ message: { data: NodeApprovalCard["data"] }; result: { status: string; message?: string } }>(`/api/node/logins/${id}`, answer),
 
   // context
   entities: () => get<{ entities: Entity[] }>("/api/entities"),

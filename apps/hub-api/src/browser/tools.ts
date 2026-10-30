@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { CaptureError } from "../capture/media.js";
 import { BrowserError, type BrowserBroker, type LiveFrame } from "./broker.js";
+import { askForLogin, checkForLogin, waitingNote } from "../logins/requests.js";
 import { BROWSER_TOOLS, inputSchema, type ToolSpec } from "./tool-specs.js";
 
 export { BROWSER_TOOLS, inputSchema, type ToolSpec };
@@ -56,11 +57,19 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       ...(context.maxVideoMs ? { maxVideoMs: context.maxVideoMs } : {}),
       ...(context.loopbackOnly ? { loopbackOnly: true } : {}),
     });
+    // A page that wants the owner to sign in pauses its tab and asks them (logins/requests.ts); the result says so.
+    const withLogin = async (done: { ok: true; summary: string; result: unknown }, tabId: string, input: { requested?: string; status?: number | null } = {}): Promise<ToolCallResult> => {
+      const found = await checkForLogin(broker, context.operation, tabId, input);
+      if (!found) return done;
+      if (found.login) return { ok: true, summary: `${done.summary}\n${waitingNote(found.login)}`, result: { ...(done.result as Record<string, unknown>), login: found.login } };
+      return { ok: true, summary: `${done.summary}\n${found.note}`, result: done.result };
+    };
     switch (spec.name) {
       case "browser_open": {
         const opened = await op.open(a.url as string, { tab: a.tab as string | undefined, profile: a.profile as string | undefined, private: a.private as boolean | undefined, headed: a.headed as boolean | undefined, device: a.device as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined });
         const summary = opened.error ? `Tab ${opened.tab} could not load the page: ${opened.error}` : `Opened ${opened.tab}: ${opened.title || opened.url}${opened.status ? ` (${opened.status})` : ""}.`;
-        return { ok: true, summary: opened.note ? `${summary} ${opened.note}` : summary, result: opened };
+        const done = { ok: true as const, summary: opened.note ? `${summary} ${opened.note}` : summary, result: opened };
+        return opened.error ? done : withLogin(done, opened.tab, { requested: a.url as string, status: opened.status });
       }
       case "browser_tabs": {
         const tabs = await op.tabs();
@@ -76,15 +85,16 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       }
       case "browser_click": {
         const info = await op.click(a.tab as string, a.ref as string, { button: a.button as "left" | undefined, double: a.double as boolean | undefined });
-        return { ok: true, summary: `Clicked ${a.ref as string}; the tab shows ${info.title || info.url}.`, result: info };
+        return withLogin({ ok: true, summary: `Clicked ${a.ref as string}; the tab shows ${info.title || info.url}.`, result: info }, info.tab);
       }
       case "browser_type": {
         const info = await op.type(a.tab as string, a.ref as string, a.text as string, { submit: a.submit as boolean | undefined, slowly: a.slowly as boolean | undefined });
-        return { ok: true, summary: `Typed into ${a.ref as string}.`, result: info };
+        const typed = { ok: true as const, summary: `Typed into ${a.ref as string}.`, result: info };
+        return a.submit ? withLogin(typed, info.tab) : typed;
       }
       case "browser_press": {
         const info = await op.press(a.tab as string, a.key as string);
-        return { ok: true, summary: `Pressed ${a.key as string}.`, result: info };
+        return withLogin({ ok: true, summary: `Pressed ${a.key as string}.`, result: info }, info.tab);
       }
       case "browser_wait": {
         const waited = await op.wait(a.tab as string, { selector: a.selector as string | undefined, text: a.text as string | undefined, url: a.url as string | undefined, state: a.state as "visible" | undefined, timeoutMs: a.timeoutMs as number | undefined });
@@ -110,6 +120,10 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       case "browser_upload": {
         const sent = await op.upload(a.tab as string, a.ref as string, a.file as string);
         return { ok: true, summary: `Sent ${sent.file} (${sent.size} bytes).`, result: sent };
+      }
+      case "browser_login_needed": {
+        const login = await askForLogin(broker, context.operation, a.tab as string, { origin: a.origin as string | undefined, signedIn: a.signedIn as { urlPattern?: string; selector?: string } | undefined, reason: a.reason as string | undefined });
+        return { ok: true, summary: waitingNote(login), result: { login } };
       }
       case "browser_download": {
         const saved = await op.download(a.tab as string, { ref: a.ref as string | undefined, timeoutMs: a.timeoutMs as number | undefined });

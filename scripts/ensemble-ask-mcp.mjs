@@ -337,7 +337,9 @@ async function handle(message) {
   } else if (message.method === "tools/call") {
     const name = message.params?.name;
     if (name !== TOOL.name && (toolsFor().some((tool) => tool.name === name) || (await runCaptureTools()).some((tool) => tool.name === name))) {
-      const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error }));
+      // A browser call can wait for the person to sign in (B11): progress keeps the agent's client waiting too.
+      const stop = String(name).startsWith("browser_") ? heartbeat(message) : () => undefined;
+      const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error })).finally(stop);
       const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
       send({ id: message.id, result: { content: [{ type: "text", text }], ...(typeof answer?.text === "string" ? {} : { isError: true }) } });
       return;

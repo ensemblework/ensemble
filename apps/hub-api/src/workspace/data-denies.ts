@@ -2,8 +2,9 @@
  * Ensemble's own data on this computer, which no run reads or writes whatever its mode (docs/24 §3):
  * the desktop app's data folder and the folder this runtime really uses, which is another one for the
  * testing CLI and wherever `ENSEMBLE_DATA_HOME` (`ENSEMBLE_REMOTE_STATE_DIR`, `ENSEMBLE_DATA_DIR`) puts
- * it; in them the database, the key that encrypts saved secrets (`secret.key`), the pairing, the run
- * evidence, the browser profiles and capture's state (`browserDeniedPaths`). The guard refuses these
+ * it; in them the database, the key that encrypts saved secrets (`secret.key`), the pairing and its
+ * sealing key (`seal-key.json`), saved logins (`logins.json`), the run evidence, the browser profiles
+ * and capture's state (`browserDeniedPaths`). The guard refuses these
  * paths (`outsideRefusal`), no folder holding one is handed to a run (`holdsProtected`), and every
  * confined spawn denies them in the OS sandbox (`prepareSpawn`), as do the engines' own sandboxes.
  *
@@ -22,7 +23,7 @@ import { browserDeniedPaths, ensembleDataHome } from "../browser/paths.js";
 const SOURCE = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 /** What a data folder holds, named even before it exists: a sandbox that denies by name keeps it shut once it does. */
-const DATA_ENTRIES = ["pglite", "secret.key", "remote.json", "remote-jobs.json", "api.json", "evidence", "backups"];
+const DATA_ENTRIES = ["pglite", "secret.key", "remote.json", "remote-jobs.json", "api.json", "evidence", "backups", "seal-key.json", "seal-seen.json", "logins.json"];
 
 function inside(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);

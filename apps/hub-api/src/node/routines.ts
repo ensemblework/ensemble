@@ -20,6 +20,7 @@ import { CronError, describeCron, nextRun, parseCron, validTimeZone } from "./cr
 import { nodeSpaces } from "./spaces.js";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { updateMessageDataIf } from "./store.js";
+import { loginCardClosed } from "./logins.js";
 import { publishTo } from "./events.js";
 
 /** The owner's site reads its routines again (no content in the event). */
@@ -59,6 +60,8 @@ export async function expireBackgroundCards(app: FastifyInstance, now = Date.now
       const updated = await updateMessageDataIf(prisma, card, { data: { path: ["status"], equals: "pending" } }, { status: "expired", expiredReason: `Background work waits ${minutes} minutes for an answer.` });
       if (!updated) continue;
       expired += 1;
+      // A sign-in card's computer frees its tab (node/logins.ts).
+      if ((card.data as { type?: unknown }).type === "login") void loginCardClosed(app, updated).catch(() => undefined);
       const step = (card.data as { plan?: { step?: unknown } }).plan?.step;
       if (typeof step === "string" && card.authorNodeId) {
         await enqueueTurn(app, {

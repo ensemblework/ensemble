@@ -350,6 +350,38 @@ test("a sensitive tab refuses capture and actions, pauses the live view, and com
   }
 });
 
+test("Ensemble's own sign-in code reads a sensitive tab, keeps it open, shows it only on a screen, and keeps it through a browser restart", { skip, timeout: 90_000 }, async () => {
+  // No display here, whatever this machine has: the tab cannot be shown in a window.
+  const broker = newBroker({ env: { PATH: process.env.PATH } });
+  try {
+    const op = broker.operation("job-signin");
+    const opened = await op.open(`${base}/next`);
+    await broker.markSensitive(opened.tab, true);
+    const owner = broker.ownerTab(opened.tab);
+    assert.deepEqual([owner.operation, owner.profile, owner.sensitive], ["job-signin", "default", true]);
+    assert.equal(await owner.page.title(), "Next", "the broker's own code reads the page no agent can");
+    await rejects(op.snapshot(opened.tab), "sensitive");
+    const before = Date.parse((await op.tabs())[0]!.expiresAt);
+    broker.keepTab(opened.tab, 3_600_000);
+    assert.ok(Date.parse((await op.tabs())[0]!.expiresAt) > before + 60_000, "a waiting sign-in keeps its tab");
+    assert.equal(broker.hasWindow(), false);
+    const shown = await broker.showTab(opened.tab);
+    assert.equal(shown.shown, false);
+    assert.equal(!shown.shown && shown.reason, "no_display");
+    const restarted = await broker.restartProfile("default", { headless: true });
+    assert.equal(restarted.tabs, 1);
+    const again = broker.ownerTab(opened.tab);
+    assert.notEqual(again.page, owner.page, "a new page under the same tab id");
+    assert.equal(again.sensitive, true, "still sensitive");
+    assert.match(again.page.url(), /\/next$/, "at the address it showed");
+    assert.equal((await op.tabs()).length, 1, "the old page closing did not close the tab");
+    await broker.markSensitive(opened.tab, false);
+    assert.match((await op.snapshot(opened.tab)).snapshot, /Signed in/);
+  } finally {
+    await broker.shutdown();
+  }
+});
+
 test("records a tab's video and a private tab's trace into the evidence folder", { skip, timeout: 120_000 }, async (t) => {
   const broker = newBroker();
   try {

@@ -11,6 +11,7 @@ import type { NodeOutbox } from "@prisma/client";
 import { enqueueTurn, inBackground } from "./queue.js";
 import { endPlan, finishStep, loadPlan, onMissionEffects, reportNote, stepNote, type PlanData } from "./plans.js";
 import { updateMessageData } from "./store.js";
+import { loginCardClosed } from "./logins.js";
 import type { AttemptReason } from "./missions-core.js";
 import { dispatchStep } from "./dispatch.js";
 import { helperRoomOf } from "./helpers.js";
@@ -136,7 +137,9 @@ export async function expireCards(app: FastifyInstance, planId: string, steps: s
       const row = await app.prisma.nodeStep.findUnique({ where: { missionId_id: { missionId: planId, id: step } }, select: { status: true, startedAt: true } });
       if (row && (row.status === "working" || row.status === "waiting") && !(row.startedAt && card.createdAt < row.startedAt)) continue;
     }
-    await updateMessageData(app.prisma, card, { status: "expired", expiredReason: why });
+    const closed = await updateMessageData(app.prisma, card, { status: "expired", expiredReason: why });
+    // A sign-in card's computer frees its tab (node/logins.ts).
+    if ((card.data as { type?: unknown }).type === "login") void loginCardClosed(app, closed).catch(() => undefined);
     expired += 1;
   }
   return expired;

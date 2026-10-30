@@ -11,6 +11,7 @@
  * scope is treated as once. There is no device unpair route.
  */
 import { z } from "zod";
+import { SealedShape } from "../credentials/seal.js";
 
 export const ROUTES = {
   register: "/api/devices/register",
@@ -47,6 +48,8 @@ export const ROUTES = {
   evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
   /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
   liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
+  /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
+  runLogin: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/logins`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -98,8 +101,12 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * (`capabilities.browser`), whose files go to `ROUTES.evidenceUpload`; the server may send
  * `evidence.request` (preview, release or discard a file kept here); a run's live view goes to
  * `ROUTES.liveFrame`.
+ * 8 (17 Nov 2026): a browser tool's answer may say its tab waits for the owner to sign in (`login`,
+ * B11, `capabilities.logins`); the server sends the owner's answer as `login.resolve`; a run's agent
+ * that needs a sign-in tells the server at `ROUTES.runLogin`, which raises the card where the run is
+ * followed.
  */
-export const PROTOCOL = 7;
+export const PROTOCOL = 8;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
 export const MAX_AUTO_RESUMES = 2;
 /** A run interrupted longer ago than this is not carried on by itself. */
@@ -656,6 +663,8 @@ export const NodeCaptureAnswer = z.object({
     .default([]),
   /** Files the computer did not keep (a saved secret's value in it, too large), with why. */
   refused: z.array(z.object({ name: text(200), reason: text(300) })).max(40).default([]),
+  /** The tab now waits for the owner to sign in (protocol 8, B11): the server raises the card. */
+  login: z.lazy(() => LoginRequired).optional(),
 });
 export type NodeCaptureAnswer = z.infer<typeof NodeCaptureAnswer>;
 
@@ -686,6 +695,58 @@ export const LiveFramePost = z.object({
   paused: z.enum(["sensitive", "private_site", "secret_on_screen"]).optional(),
 });
 export type LiveFramePost = z.infer<typeof LiveFramePost>;
+
+/** `capabilities.logins`: this computer hands sign-ins to its owner (B11, protocol 8): `login.resolve`, `ROUTES.runLogin`, saved logins. */
+export const LOGINS_API = 1;
+
+const LoginId = z.string().regex(/^lg_[0-9a-f]{32}$/);
+
+/**
+ * A tab waiting for its owner to sign in (B11), as a browser tool's answer carries it (`login`) and a
+ * run reports it (`ROUTES.runLogin`): which site and tab, why, and how the owner can answer. Never a
+ * value; `saved` says only whether a login is saved here for this one site.
+ */
+export const LoginRequired = z.object({
+  loginId: LoginId,
+  origin: text(300).min(1),
+  tab: text(20),
+  profile: text(60).nullable(),
+  reasons: z.array(text(200)).max(6).default([]),
+  saved: z.boolean(),
+  display: z.boolean(),
+  takeover: z.boolean().default(false),
+  expiresAt: text(40),
+});
+export type LoginRequired = z.infer<typeof LoginRequired>;
+
+/** What a run's computer posts when its agent waits for a sign-in (`ROUTES.runLogin`). The answer: `{decisionId}` of the card, or null when the web raises none. */
+export const RunLoginPost = LoginRequired.extend({ leaseToken: text(200).min(1) });
+export type RunLoginPost = z.infer<typeof RunLoginPost>;
+
+/**
+ * `login.resolve` on the event stream (protocol 8): the owner's answer to a sign-in card. `saved`: fill
+ * the login saved here; `local`: show the tab on this computer's screen; `done`: check they signed in;
+ * `typed`: fill what they typed, sealed in their browser for this computer (purpose `login`, the card as
+ * `decisionId`, the sign-in's id as `name`); `decline` (not now) and `expire` end it. The answer is a
+ * `CodeAnswer` whose body is a `LoginResolution`.
+ */
+export const LoginResolve = z.object({
+  id: text(100).min(1),
+  loginId: LoginId,
+  decisionId: text(100).min(1),
+  action: z.enum(["saved", "local", "typed", "done", "decline", "expire"]),
+  sealed: SealedShape.optional(),
+});
+export type LoginResolve = z.infer<typeof LoginResolve>;
+
+export const LoginResolution = z.object({
+  status: z.enum(["signed_in", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy"]),
+  message: text(500).optional(),
+  /** The typed login was saved on this computer, as the owner asked. */
+  savedNow: z.boolean().optional(),
+  code: text(40).optional(),
+});
+export type LoginResolution = z.infer<typeof LoginResolution>;
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({

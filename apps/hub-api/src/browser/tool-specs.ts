@@ -94,6 +94,23 @@ export const BROWSER_TOOLS = [
     input: z.object({ tab, ref, file: z.string().min(1).max(4000).describe("The file's full path.") }).strict(),
   },
   {
+    name: "browser_login_needed",
+    description:
+      "Ask the owner to sign in to a site in one of this work's tabs, when a page needs their account (a sign-in form, a session that ended). The tab pauses (no reading, screenshots or actions) until they sign in on the computer, pick the login saved there, or type it on the web for this computer only; you never see or type a password. `signedIn` says how to tell it worked: a URL glob the tab reaches, or a CSS selector the signed-in page shows (default: no sign-in form left on the site). Ensemble asks by itself when a page of another site clearly wants a sign-in in the shared profile; a private tab or this computer's own addresses only get a hint.",
+    input: z
+      .object({
+        tab,
+        origin: z.string().min(1).max(300).optional().describe("The site to sign in to, such as https://app.example.com; default: the tab's."),
+        signedIn: z
+          .object({ urlPattern: z.string().min(1).max(500).optional(), selector: z.string().min(1).max(500).optional() })
+          .strict()
+          .refine((value) => Boolean(value.urlPattern) !== Boolean(value.selector), "give a urlPattern or a selector")
+          .optional(),
+        reason: z.string().min(1).max(200).optional().describe("Why, in a few words for the owner's card."),
+      })
+      .strict(),
+  },
+  {
     name: "browser_download",
     description: "Save a download into the evidence folder: the one clicking `ref` starts, or else the latest one the tab started (waiting for one if needed).",
     input: z.object({ tab, ref: ref.optional(), timeoutMs: z.number().int().min(1000).max(300_000).optional() }).strict(),

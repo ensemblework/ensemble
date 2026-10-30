@@ -98,6 +98,8 @@ export type BrokerOptions = {
   dataHome?: string;
   /** A Chromium to use instead of the one `findChromium` picks. */
   executablePath?: string;
+  /** More Chromium command-line flags for every browser it starts (a proxy, host rules). */
+  args?: string[];
   leaseMs?: number;
   idleBrowserMs?: number;
   janitorMs?: number;
@@ -135,6 +137,8 @@ type Tab = {
   network: NetworkEntry[];
   downloads: Download[];
   recording: Recording | null;
+  /** Its browser is restarting (shown in a window): the old page closing does not close the tab. */
+  moving?: boolean;
 };
 
 type Operation = {
@@ -410,7 +414,7 @@ export class BrowserBroker {
 
   private async launchProfile(key: string, profile: string, headless: boolean): Promise<ContextEntry> {
     const platform = this.options.platform ?? process.platform;
-    const args = !headless && platform === "linux" ? ["--ozone-platform-hint=auto"] : [];
+    const args = [...(!headless && platform === "linux" ? ["--ozone-platform-hint=auto"] : []), ...(this.options.args ?? [])];
     let context: BrowserContext;
     try {
       context = await chromium.launchPersistentContext(browserProfileDir(profile, this.dataHome()), {
@@ -442,7 +446,7 @@ export class BrowserBroker {
       const { defaultBrowserType: _ignored, ...rest } = descriptor;
       emulation = rest;
     }
-    this.privateBrowser ??= chromium.launch({ executablePath: this.executable(true), headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+    this.privateBrowser ??= chromium.launch({ executablePath: this.executable(true), headless: true, args: this.options.args ?? [], handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
     let browser: Browser;
     try {
       browser = await this.privateBrowser;
@@ -461,7 +465,7 @@ export class BrowserBroker {
     this.contexts.set(entry.key, entry);
     entry.context.on("close", () => {
       if (this.contexts.get(entry.key) === entry) this.contexts.delete(entry.key);
-      for (const tab of [...this.tabs.values()]) if (tab.entry === entry) this.forgetTab(tab);
+      for (const tab of [...this.tabs.values()]) if (tab.entry === entry && !tab.moving) this.forgetTab(tab);
     });
     this.startJanitor();
   }
@@ -497,6 +501,14 @@ export class BrowserBroker {
     this.tabs.set(tab.id, tab);
     this.pageTabs.set(page, tab);
     entry.idleSince = null;
+    this.watchPage(tab, page);
+    this.updateLive(op);
+    return tab;
+  }
+
+  /** The page's console, network and download logs for its tab; a popup becomes a tab of the same work. */
+  private watchPage(tab: Tab, page: Page): void {
+    const operation = tab.operation;
     const push = <T>(list: T[], item: T) => {
       if (tab.sensitive) return;
       list.push(item);
@@ -521,12 +533,12 @@ export class BrowserBroker {
       if (tab.downloads.length > 10) tab.downloads.shift();
     });
     page.on("popup", (popup) => {
-      if (this.tabsOf(operation).length < this.options.maxTabsPerOperation) this.register(popup, operation, entry);
+      if (this.tabsOf(operation).length < this.options.maxTabsPerOperation) this.register(popup, operation, tab.entry);
       else void popup.close().catch(() => undefined);
     });
-    page.on("close", () => this.forgetTab(tab));
-    this.updateLive(op);
-    return tab;
+    page.on("close", () => {
+      if (tab.page === page && !tab.moving) this.forgetTab(tab);
+    });
   }
 
   private forgetTab(tab: Tab): void {
@@ -969,6 +981,105 @@ export class BrowserBroker {
     const op = this.operations.get(tab.operation);
     if (op) this.updateLive(op);
     return this.info(tab);
+  }
+
+  // ── Ensemble's own sign-in and takeover code (logins/, takeover/), never agents ──
+
+  /**
+   * A tab's page and facts for Ensemble's own sign-in and takeover code (logins/, takeover/), which
+   * works on a tab while it is sensitive and every agent-facing call refuses it. Never for agents.
+   */
+  ownerTab(id: string): { page: Page; context: BrowserContext; operation: string; profile: string | null; headless: boolean; sensitive: boolean } {
+    const tab = this.tabs.get(id);
+    if (!tab || tab.page.isClosed()) throw new BrowserError("not_found", `There is no tab ${id}.`);
+    return { page: tab.page, context: tab.entry.context, operation: tab.operation, profile: tab.entry.profile, headless: tab.entry.headless, sensitive: tab.sensitive };
+  }
+
+  /** Keeps a tab open while its owner signs in or controls it: its lease starts again. */
+  keepTab(id: string, ms?: number): void {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    const op = this.operations.get(tab.operation);
+    tab.expiresAt = Math.max(tab.expiresAt, this.now() + (ms ?? op?.options.leaseMs ?? this.options.leaseMs));
+    if (op) op.lastUsed = this.now();
+  }
+
+  /** Whether this computer has a screen the browser can show a window on. */
+  hasWindow(): boolean {
+    return hasDisplay(this.options.env ?? process.env, this.options.platform ?? process.platform);
+  }
+
+  /**
+   * Shows a tab on this computer's screen for its owner to sign in: brought to the front of its window,
+   * after restarting its profile's browser with a window when it ran without one. Refused while other
+   * work uses that browser or it records, and for a private tab (always without a window).
+   */
+  async showTab(id: string): Promise<{ shown: true } | { shown: false; reason: "no_display" | "private" | "busy"; message: string }> {
+    const tab = this.tabs.get(id);
+    if (!tab || tab.page.isClosed()) throw new BrowserError("not_found", `There is no tab ${id}.`);
+    if (!this.hasWindow()) return { shown: false, reason: "no_display", message: "This computer has no screen to show the browser on." };
+    if (tab.entry.profile === null) return { shown: false, reason: "private", message: "This tab is in a private browser, which never has a window." };
+    if (tab.entry.headless) {
+      const sharing = [...this.tabs.values()].filter((other) => other.entry === tab.entry);
+      if (sharing.some((other) => other.operation !== tab.operation)) return { shown: false, reason: "busy", message: "Other work is using the browser without a window right now." };
+      if (sharing.some((other) => other.recording) || tab.entry.tracing) return { shown: false, reason: "busy", message: "The browser is recording, so it cannot restart with a window now." };
+      await this.relaunch(tab.entry, false);
+    }
+    await tab.page.bringToFront().catch(() => undefined);
+    return { shown: true };
+  }
+
+  /** Restarts a profile's browser with or without a window, keeping its tabs (`relaunch`). */
+  async restartProfile(profile: string, input: { headless: boolean }): Promise<{ tabs: number }> {
+    const entry = this.contexts.get(`profile:${profile}`);
+    if (!entry) throw new BrowserError("not_found", `The browser profile "${profile}" is not open.`);
+    if ([...this.tabs.values()].some((tab) => tab.entry === entry && tab.recording) || entry.tracing) throw new BrowserError("busy", "The browser is recording; try again when it stops.");
+    await this.relaunch(entry, input.headless);
+    return { tabs: [...this.tabs.values()].filter((tab) => tab.entry.key === entry.key).length };
+  }
+
+  /**
+   * Closes a profile's browser and starts it again, with or without a window. Each of its tabs gets a
+   * new page at the address it showed, under the same id, sensitive if it was: the profile folder keeps
+   * the session, but nothing typed into a page survives.
+   */
+  private async relaunch(entry: ContextEntry, headless: boolean): Promise<void> {
+    if (entry.profile === null) throw new BrowserError("bad_input", "A private browser cannot be restarted.");
+    const profile = entry.profile;
+    const moving = [...this.tabs.values()].filter((tab) => tab.entry === entry);
+    const urls = new Map(moving.map((tab) => [tab.id, tab.page.isClosed() ? "about:blank" : tab.page.url()]));
+    for (const tab of moving) tab.moving = true;
+    const pending = (async () => {
+      this.contexts.delete(entry.key);
+      await entry.context.close().catch(() => undefined);
+      return this.launchProfile(entry.key, profile, headless);
+    })();
+    this.launching.set(entry.key, pending);
+    let fresh: ContextEntry;
+    try {
+      fresh = await pending;
+    } catch (error) {
+      for (const tab of moving) {
+        tab.moving = false;
+        this.forgetTab(tab);
+      }
+      throw error;
+    } finally {
+      this.launching.delete(entry.key);
+    }
+    for (const tab of moving) {
+      const page = fresh.context.pages().find((candidate) => !this.pageTabs.has(candidate) && candidate.url() === "about:blank") ?? (await fresh.context.newPage());
+      tab.page = page;
+      tab.entry = fresh;
+      tab.moving = false;
+      this.pageTabs.set(page, tab);
+      this.watchPage(tab, page);
+      if (this.operations.get(tab.operation)?.options.loopbackOnly) await page.route("**/*", (route) => (isLoopbackUrl(route.request().url()) ? route.continue() : route.abort("blockedbyclient")));
+      const url = urls.get(tab.id);
+      if (url && url !== "about:blank") await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+    }
+    fresh.idleSince = moving.length ? null : this.now();
+    this.log(`restarted profile ${profile} ${headless ? "without" : "with"} a window; ${moving.length} tab(s) reopened`);
   }
 
   private updateLive(op: Operation): void {
