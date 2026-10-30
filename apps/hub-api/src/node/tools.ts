@@ -326,7 +326,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
     ...planTools(scope),
     ...routineTools(scope),
     // My crew in a room with other people: ask someone there, through their lead (node/peer-requests.ts).
-    ...(scope.room.kind === "room" && scope.privateTo && !scope.lineage.fromNonOwner ? [peerRequestTool({ node, room: scope.room, askerId: node.userId })] : []),
+    ...(scope.room.kind === "room" && scope.privateTo && !scope.lineage.fromNonOwner ? [peerRequestTool({ node, room: scope.room, askerId: node.userId, draft: scope.lineage })] : []),
     defineTool({
       name: "node_delegate",
       area: "tasks",

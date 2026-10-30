@@ -417,9 +417,9 @@ export async function syncRequestTask(app: FastifyInstance, request: NodePeerReq
   const task = await prisma.task.findFirst({ where: { id: request.taskId, deletedAt: null } });
   if (!task) return;
   let data: Prisma.TaskUpdateInput | null = null;
+  // Accepted, it keeps what was asked: the person's own words for their lead (`brief`) are theirs alone.
   if (request.status === "approved" && task.status === "proposed") {
-    const title = truncateText(request.text.split("\n")[0]!.trim(), 200) || task.title;
-    data = { status: "in_progress", title };
+    data = { status: "in_progress" };
   } else if ((request.status === "declined" || request.status === "cancelled") && task.status === "proposed") {
     data = { status: "dropped", completedAt: new Date() };
   }

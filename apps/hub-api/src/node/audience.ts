@@ -28,7 +28,7 @@ import { openedSpace } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { runInScope, type RequestScope } from "../sharing/context.js";
 import type { Decision } from "./approvals.js";
-import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, settlePeerCard, turnOrigin } from "./peer-requests.js";
+import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, sendRequestDraft, settlePeerCard, turnOrigin } from "./peer-requests.js";
 import { enqueueTurn } from "./queue.js";
 import { NO_REPLY } from "./reply.js";
 import { nodeSpace, nodeSpaceGateway } from "./spaces.js";
@@ -640,8 +640,20 @@ export async function roomDraftPosted(app: FastifyInstance, draft: NodeMessage, 
 
 /** Settles the room cards this module and node/peer-requests.ts make; null for other cards. */
 export async function settleRoomCard(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage | null> {
-  const data = (card.data ?? {}) as { type?: unknown; disclosure?: unknown; peerRequest?: unknown };
+  const data = (card.data ?? {}) as { type?: unknown; disclosure?: unknown; peerRequest?: unknown; request?: unknown };
   if (data.type === "disclosure") return settleDisclosure(app, card, node, input);
+  // A request drafted in My crew (node/peer-requests.ts): it reaches the room only as the owner sends it.
+  if (data.type === "post" && data.request) {
+    const current = await claim(app, card);
+    if (input.decision === "discard") return updateMessageData(app.prisma, current, { status: "discarded" });
+    try {
+      const { request, text } = await sendRequestDraft(app, current, node, input.body);
+      return updateMessageData(app.prisma, current, { status: "posted", requestId: request.id, error: null }, text);
+    } catch (error) {
+      await updateMessageData(app.prisma, current, { status: "pending", error: error instanceof Error ? error.message : "Could not send it." });
+      throw error;
+    }
+  }
   if (data.type === "peer_request") return settlePeerCard(app, card, node, input);
   // A draft answering someone that the owner throws away: nothing is shared, and the request is declined.
   if (data.type === "post" && input.decision === "discard" && (typeof data.disclosure === "string" || typeof data.peerRequest === "string")) {

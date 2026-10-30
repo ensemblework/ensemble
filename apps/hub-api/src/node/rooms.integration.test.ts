@@ -483,10 +483,11 @@ test("a question to another person is answered within scope by their lead, and i
   assert.equal(row.peerRequestId, json(made).request.id);
   const requests = json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests;
   assert.equal(requests[0].status, "answered");
-  assert.equal(requests[0].answer, "Yes: the billing API has been stable since Monday.");
+  const answer = (await read(ben, room.id)).find((message) => message.authorNodeId === lead.id && message.body.startsWith("Yes: the billing API"))!;
+  assert.deepEqual([requests[0].answerMessageId, requests[0].answer], [answer.id, null], "the answer is linked, not copied");
   assert.equal(requests[0].ownerCardId, undefined, "the requester sees status and public answers");
   const card = (await read(ben, room.id)).find((message) => message.kind === "request")!;
-  assert.equal(card.data.status, "answered");
+  assert.deepEqual([card.data.status, card.data.answerMessageId], ["answered", answer.id]);
   assert.deepEqual([card.data.from.accountId, card.data.to.accountId, card.data.kind], [ben.id, akash.id, "question"]);
   assert.ok((await read(ben, room.id)).some((message) => message.authorNodeId === lead.id && message.body.startsWith("Yes: the billing API")));
 
@@ -545,15 +546,15 @@ test("a work request never runs before acceptance; accepted, its mission records
   assert.equal(done.status, "done");
   assert.equal(done.missionId, mission.id);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request")!;
-  assert.deepEqual([card.data.status, card.data.outcome], ["done", "succeeded"]);
-  assert.match(card.body, /Done \(succeeded\)/);
+  assert.deepEqual([card.data.status, card.data.text, card.data.outcome], ["done", "Add CSV export to invoices", undefined], "the requester's words, and nothing from the work");
+  assert.match(card.body, /\nDone$/);
   const report = (await read(akash, room.id)).find((row) => row.body.startsWith("CSV export is done"))!;
   assert.ok(report.private, "the detailed report stays with Akash, who can share it");
   assert.ok(!(await read(ben, room.id)).some((row) => row.body.startsWith("CSV export is done")));
   assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: ownerCard.id } })).data as any).status, "accepted");
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${request.id}/accept`, payload: {} })).statusCode, 409, "settled once");
   const result = (await cards(akash, room.id, "post")).find((row) => row.data.result?.missionId === mission.id)!;
-  assert.deepEqual([result.data.status, result.body.split("\n")[0]], ["pending", "Add CSV export (invoices only) is ready."]);
+  assert.deepEqual([result.data.status, result.body.split("\n")[0]], ["pending", "Add CSV export to invoices is ready."]);
   assert.ok(!(await read(ben, room.id)).some((row) => row.data?.type === "room_result"), "the room sees it only when Akash posts it");
 });
 
@@ -566,7 +567,9 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   const declined = await akash.inject({ method: "POST", url: `/api/node/requests/${first.id}/decline`, payload: { note: "Not this week." } });
   assert.equal(declined.statusCode, 200, declined.body);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === first.id)!;
-  assert.deepEqual([card.data.status, card.data.answer], ["declined", "Not this week."]);
+  assert.deepEqual([card.data.status, card.data.answer], ["declined", undefined], "the note is not on the public card");
+  assert.ok((await read(ben, room.id)).some((row) => row.private && row.kind === "status" && row.body.endsWith(": Not this week.")), "it is Ben's, in his My crew");
+  assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests.find((row: { id: string }) => row.id === first.id).answer, "Not this week.");
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${first.id}/accept`, payload: {} })).statusCode, 409);
 
   script = (turn) => {
@@ -593,8 +596,10 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   const ended = await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } });
   assert.ok(["succeeded", "partially_completed", "failed", "stopped"].includes(ended.status), ended.status);
   const reviewed = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === second.id)!;
-  assert.deepEqual([reviewed.data.status, reviewed.data.outcome], ["done", ended.status]);
-  assert.deepEqual(reviewed.data.requirements, [{ text: "Review the candidate", status: "failed" }]);
+  assert.deepEqual([reviewed.data.status, reviewed.data.outcome, reviewed.data.requirements], ["done", undefined, undefined]);
+  // How it went is Akash's: on his view of the request, not the room's.
+  const his = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests.find((row: { id: string }) => row.id === second.id);
+  assert.deepEqual([his.outcome, his.requirements], [ended.status, [{ text: "Review the candidate", status: "failed" }]]);
 
   // The next review from Ben starts at once: Akash said so.
   seen.length = 0;
@@ -616,6 +621,11 @@ test("a person's own lead relays a request for them from My crew, attributed to 
     return { text: "(no reply)" };
   };
   await say(akash, room.id, "@manager ask Ben's lead whether the API is ready", { private: true });
+  // Drafted in My crew: it reaches the room when Akash sends it.
+  assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 0);
+  const draft = (await cards(akash, room.id, "post")).find((row) => row.data.request)!;
+  assert.equal((await approve(akash, draft.id, "approve")).statusCode, 200);
+  await settleTurns();
   const request = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id } });
   assert.deepEqual([request.fromAccountId, request.fromNodeId, request.toAccountId, request.toNodeId, request.status], [akash.id, lead.id, ben.id, bensLead.id, "answered"]);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request")!;
@@ -673,7 +683,7 @@ test("a request whose mission ended unseen (a restart in between) is settled by 
   const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: made.id } });
   assert.deepEqual([done.status, done.missionId], ["done", mission.id]);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === made.id)!;
-  assert.deepEqual([card.data.status, card.data.outcome], ["done", "failed"]);
+  assert.deepEqual([card.data.status, card.data.outcome], ["done", undefined]);
 });
 
 test("account export and deletion include the peer requests a person made or received", async () => {
@@ -950,7 +960,7 @@ test("C4: work asked between two editors of the room's space becomes a proposed 
   assert.equal(accepted.statusCode, 200, accepted.body);
   assert.equal(json(accepted).request.mode, "shared");
   const moved = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
-  assert.deepEqual([moved.status, moved.title], ["in_progress", "Add a rate limiter (per key)"]);
+  assert.deepEqual([moved.status, moved.title], ["in_progress", "Add a rate limiter"], "it keeps what was asked: Akash's words are his lead's brief");
   await settleTurns();
   const planning = seen.find((entry) => entry.transcript.includes("Your owner accepted Ben's request"))!;
   assert.match(planning.transcript, /Your owner chose a shared run: work in the room's space “Launch space”/);
@@ -1677,4 +1687,76 @@ test("web #5: the shareable picker lists what a person can read in their own spa
   assert.deepEqual(seen.items.map((row) => [row.id, row.shared]), [[task.id, true]]);
   assert.ok((await candidates(akash, "pricing")).items.some((row) => row.id === secret.id), "Akash's own items are his to offer");
   assert.equal((await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/shareable/candidates?q=${"x".repeat(101)}` })).statusCode, 400);
+});
+
+// ── follow-up round ─────────────────────────────────────────────────────────────────────────
+
+test("follow-up #1: a request's public card shows only what the requester wrote and how it stands, never the other side's words or work", async () => {
+  const { akash, ben, lead, bensLead, room, handle } = await twoPeople();
+  // Cara is there too: she reads what everyone reads.
+  const cara = await person("Cara");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } })).statusCode, 201);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const invite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  script = (turn) => {
+    if (turn.slug === "assistant" && turn.transcript.includes("ask Akash for the export")) {
+      return { calls: [{ name: "node_peer_request", arguments: { to: handle(lead.id), kind: "work", text: "Please add a CSV export to the invoices page. CANARY-BEN-7210", refs: [{ kind: "page", id: "p1", title: "CANARY-BEN-TITLE pricing" }] } }], then: "Drafted it for you." };
+    }
+    if (turn.slug === "assistant" && turn.transcript.includes("ask Akash to review")) {
+      return { calls: [{ name: "node_peer_request", arguments: { to: handle(lead.id), kind: "review", text: "Please review my export.", candidate: { repo: "github.com/ben/app", commit: "abc1234" } } }], then: "Drafted." };
+    }
+    if (turn.slug === "manager" && turn.transcript.includes("Your owner accepted Ben's request")) {
+      return { calls: [{ name: "node_plan", arguments: { goal: "CSV export", requirements: [{ id: "r1", text: "CANARY-AKASH-REQ use the Initech price table" }], constraints: {}, steps: [{ id: "s1", to: "manager", kind: "other", requirementIds: ["r1"], brief: "Add the export." }], deferred: [] } }], then: "Planned." };
+    }
+    return { text: "(no reply)" };
+  };
+
+  // Ben's lead drafts in his My crew, where it reads private things: the room sees nothing until Ben sends it.
+  await say(ben, room.id, `@${handle(bensLead.id)} ask Akash for the export`, { private: true });
+  assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 0);
+  assert.ok(!JSON.stringify(await read(cara, room.id)).includes("CANARY-BEN"));
+  const draft = (await cards(ben, room.id, "post")).find((row) => row.data.request)!;
+  assert.match(draft.body, /CANARY-BEN-7210\nAbout: CANARY-BEN-TITLE pricing/, "Ben sees all the room would read");
+  assert.equal((await approve(ben, draft.id, "approve", "Please add a CSV export to the invoices page.")).statusCode, 200);
+  await settleTurns();
+  const request = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id } });
+  assert.deepEqual([request.fromAccountId, request.fromNodeId, request.text, request.refs], [ben.id, bensLead.id, "Please add a CSV export to the invoices page.", []], "his words as sent");
+  assert.ok(!JSON.stringify(await read(cara, room.id)).includes("CANARY-BEN"));
+
+  // Akash accepts in his own words; his work ends with requirements of his own.
+  const accepted = await akash.inject({ method: "POST", url: `/api/node/requests/${request.id}/accept`, payload: { text: "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter" } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  await settleTurns();
+  await settleTurns();
+  const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: request.id } });
+  assert.deepEqual([done.status, done.text, done.brief], ["done", "Please add a CSV export to the invoices page.", "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter"]);
+  assert.match(seen.find((row) => row.transcript.includes("Your owner accepted Ben's request"))!.transcript, /CANARY-AKASH-BRIEF[\s\S]*Ben asked: “Please add a CSV export/, "Akash's lead plans from his words");
+  for (const [who, user] of [["Ben", ben], ["Cara", cara]] as const) {
+    const everything = JSON.stringify([await read(user, room.id), json(await user.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` }))]);
+    assert.ok(!everything.includes("CANARY-AKASH"), `${who} reads nothing of Akash's words or work`);
+  }
+  const card = (await read(cara, room.id)).find((row) => row.kind === "request")!;
+  assert.deepEqual([card.data.text, card.data.status, card.data.outcome, card.data.requirements, card.data.answer], ["Please add a CSV export to the invoices page.", "done", undefined, undefined, undefined]);
+  assert.ok(!JSON.stringify(json(await ben.inject({ method: "GET", url: "/api/auth/export" }))).includes("CANARY-AKASH"), "nor Ben's account export");
+  const his = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests[0];
+  assert.equal(his.brief, "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter");
+  assert.match(JSON.stringify(his.requirements), /CANARY-AKASH-REQ/, "how it went is on Akash's own view");
+
+  // A decline note goes to Ben alone.
+  const second = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Also a PDF export?" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${second.id}/decline`, payload: { note: "CANARY-NOTE not this month" } })).statusCode, 200);
+  assert.ok(!JSON.stringify([await read(cara, room.id), json(await cara.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` }))]).includes("CANARY-NOTE"));
+  assert.ok((await read(ben, room.id)).some((row) => row.private && row.body.endsWith("CANARY-NOTE not this month")));
+
+  // A drafted review keeps its candidate only while Ben's words still name it.
+  await say(ben, room.id, `@${handle(bensLead.id)} ask Akash to review it`, { private: true });
+  const review = (await cards(ben, room.id, "post")).find((row) => row.data.request?.kind === "review")!;
+  assert.match(review.body, /Candidate: repository github\.com\/ben\/app, at commit abc1234/);
+  const stripped = await approve(ben, review.id, "approve", "Please review my export.");
+  assert.equal(stripped.statusCode, 400, "a review needs the exact candidate");
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: review.id } })).data as { status: string }).status, "pending");
+  assert.equal((await approve(ben, review.id, "approve")).statusCode, 200);
+  const reviewRequest = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id, kind: "review" } });
+  assert.deepEqual(reviewRequest.candidate, { repo: "github.com/ben/app", commit: "abc1234" });
 });

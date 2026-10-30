@@ -2814,8 +2814,13 @@ model NodePeerRequest {
   candidate     Json?
   /// open | answered | awaiting_owner | approved | declined | done | cancelled
   status        String    @default("open")
-  /// The public answer, a decline note, or the result line when the work ended.
+  /// For the two people only: the target owner's decline note, or a line from code (someone left).
   answer        String?
+  /// The public message that answered a question or share: the card links to it and copies nothing.
+  answerMessageId String? @map("answer_message_id")
+  /// The target owner's own words for their lead when accepting (an edit of the ask): theirs alone. The
+  /// public card always shows the requester's `text`.
+  brief         String?
   missionId     String?   @map("mission_id")
   /// The public card in the room, and the target owner's private card.
   cardId        String?   @map("card_id")
