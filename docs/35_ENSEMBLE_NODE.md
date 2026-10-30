@@ -579,7 +579,7 @@ Sites the owner marks never captured, and tabs in a sign-in, are not captured at
 | `PUT /api/node/rooms/:id/space {spaceId} \| {create: true, name?}`, `DELETE …/space` | The room's creator links a space they own, makes one, or unlinks it (§12.11) |
 | `POST /api/node/rooms/:id/space/join {join}` | I take, or leave, the offer to join the linked space as an editor (§12.11) |
 | `GET/PUT /api/node/rooms/:id/prefs` | My preferences for this room: `{closeTasks: auto\|me}` (§12.13) |
-| `PUT /api/node/rooms/:id/pages/:pageId {role: contract\|decisions\|watched}` | A page of the room's space becomes a contract, the decisions log, or only watched again; returns `{pages}` (§12.14) |
+| `PUT /api/node/rooms/:id/pages/:pageId {role: contract\|decisions\|watched}` | A page of the room's space becomes a contract, the decisions log, or only watched again, by someone who can edit the space (anyone who can read it watches it with `…/watch`); returns `{pages}` (§12.14) |
 | `GET /api/node/rooms/:id/decisions` | The room's logged decisions, newest first: `{decisions: [{id, text, messageId, pageId, saidBy, loggedBy, supersedesId, replaced, at}]}` (§12.14) |
 | `GET/PUT/DELETE /api/node/rooms/:id/steward` | The room's steward: `{steward: {nodeId, sponsorId, since} \| null}`; `PUT {nodeId}` makes one of my nodes (not my lead) the steward (§12.14) |
 | `POST /api/node/rooms/:id/tasks/:taskId/start {mode?: private\|shared}` | I start one of my tasks on the room's board: my lead plans it in My crew; 202 (§12.13) |
@@ -763,7 +763,7 @@ Migration `20261110120000_node_rooms_v2` switches every room with other people t
 | Room events (`kind: "text"`, the person's lead, private) | `{type: "room_events", items: [{kind: assigned\|status\|mention\|page_edited, subjectKind: task\|comment\|message\|page, subjectId, title, spaceId, actor {accountId, name, nodeId} \| null, at, …}], start? {taskIds}, suggest? {nodeId, handle}}`; `status` items add `from`, `to`; mentions `excerpt` (and `pageKind`, `pageId` or `seq`); page edits `revision`, `role` |
 | Contract change (an item in `room_events`) | `{kind: "contract_changed", subjectKind: "page", subjectId, title, actor, revision, diff {added [line], removed [line]}, tasks [{taskId, title}]}` |
 | Decision logged (`kind: "status"`, system) | `{type: "decision_logged", decisionId, messageId, pageId, spaceId, text, supersedes? {decisionId, messageId}}` |
-| Page role set (`kind: "status"`, system) | `{pageRole: {pageId, spaceId, role}}` |
+| Page role set (`kind: "status"`, system) | `{pageRole: {pageId, spaceId, role, was?}}`: `was` when a contract or the decisions log became only watched |
 | Steward set or ended (`kind: "status"`, system) | `{steward: {nodeId, sponsorId?, action: set\|ended}}` |
 | Result draft (`kind: "approval"`, the lead, private to its owner) | `{type: "post", status, result {missionId, requestId?, taskId?, spaceId?, outcome, verdict?, requirements [{text, status}], checks? [{name, verdict}], files}, media?, refs? [{kind: "task", id, spaceId, title}]}` |
 | Result in the room (`kind: "text"`, the lead, public, after the owner posts it) | `{type: "room_result", approvedBy, missionId, requestId?, taskId?, spaceId?, outcome, verdict?, requirements, checks?, files, media?, refs?}` |
@@ -830,7 +830,7 @@ A mission whose result goes to a room (`deliverTo {roomId, audience: "room", tas
 
 Build block C7 (`node/room-pages.ts`, `node/steward.ts`; extension §17.2–§17.4). Each needs the room's linked space.
 
-**Page roles.** `PUT /api/node/rooms/:id/pages/:pageId {role: contract|decisions|watched}`, by someone who can edit the space. One status line says so.
+**Page roles.** `PUT /api/node/rooms/:id/pages/:pageId {role: contract|decisions|watched}`, by someone who can edit the space, for every change of role, back to `watched` too. One status line says so, also when a contract or the decisions log becomes an ordinary page again (`was`).
 
 | Role | What it does |
 | --- | --- |

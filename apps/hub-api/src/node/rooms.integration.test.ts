@@ -1923,3 +1923,20 @@ test("review C6–C7 #4: the steward ends with its node or its sponsor, and no o
   assert.equal(await stewardNow(), null);
   assert.deepEqual((await settings()).leadNodeIds, []);
 });
+
+test("review C6–C7 #6: only people who can edit the room's space change a page's role, and the room hears of it", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  await h.prisma.spaceMember.update({ where: { spaceId_accountId: { spaceId, accountId: ben.id } }, data: { role: "viewer" } });
+  const page = await h.prisma.taskPage.create({ data: { userId: spaceId, title: "API contract" } });
+  const role = (user: HttpUser, value: string) => user.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/pages/${page.id}`, payload: { role: value } });
+  assert.equal((await role(akash, "contract")).statusCode, 200);
+  assert.equal((await role(ben, "watched")).statusCode, 403, "a viewer cannot turn a contract off");
+  assert.equal((await h.prisma.nodeRoomPage.findFirstOrThrow({ where: { roomId: room.id, pageId: page.id } })).role, "contract");
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/pages/${page.id}/watch`, payload: { watching: true } })).statusCode, 200, "watching is for anyone who can read it");
+  assert.equal((await role(akash, "watched")).statusCode, 200);
+  const line = (await read(ben, room.id)).filter((row) => row.data?.pageRole?.pageId === page.id).at(-1)!;
+  assert.deepEqual([line.data.pageRole.role, line.data.pageRole.was], ["watched", "contract"]);
+  assert.match(line.body, /“API contract” an ordinary page again: it is no longer a contract\./);
+});

@@ -53,13 +53,15 @@ async function textOfPage(db: Db, spaceId: string, pageId: string): Promise<{ te
 /**
  * A person who can edit the room's space gives one of its pages a role: `contract` (its changes reach the
  * people whose work uses it), `decisions` (the room's decisions log; one per room), or back to `watched`.
+ * Every change of role needs edit rights and says so in the room; following a page is `watchPage`.
  */
 export async function setPageRole(app: FastifyInstance, room: NodeRoom, accountId: string, pageId: string, role: PageRole): Promise<void> {
   const prisma = app.prisma;
   const page = await followedPage(app, room, accountId, pageId);
-  if (role !== "watched" && !canEdit(await roleIn(accountId, page.spaceId))) throw new RoomSpaceError("Only people who can edit the room's space give its pages a role.", 403);
+  if (!canEdit(await roleIn(accountId, page.spaceId))) throw new RoomSpaceError("Only people who can edit the room's space change its pages' roles. To follow a page, watch it.", 403);
   const current = await textOfPage(prisma, page.spaceId, page.pageId);
   if (!current) throw new RoomSpaceError("That page is not in the room's space.", 404);
+  const before = (await prisma.nodeRoomPage.findUnique({ where: { roomId_pageId: { roomId: room.id, pageId: page.pageId } }, select: { role: true } }))?.role ?? "watched";
   await prisma.$transaction(async (tx) => {
     if (role === "decisions") {
       // One decisions log per room: the old one is only watched now.
@@ -71,15 +73,21 @@ export async function setPageRole(app: FastifyInstance, room: NodeRoom, accountI
       update: { role, seenRevision: current.revision, seenText: current.text },
     });
   });
-  if (role !== "watched") {
+  if (role !== before) {
     const who = nameOf(await prisma.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } }));
+    const was = before === "contract" ? "a contract" : "this room's decisions log";
     await postMessage(prisma, {
       roomId: room.id,
       userId: accountId,
       authorKind: "system",
       kind: "status",
-      body: role === "contract" ? `${who} marked “${current.title}” as a contract: when it changes, the people whose work uses it hear from their leads.` : `${who} made “${current.title}” this room's decisions log: decisions enter it when someone confirms them (✅, or a reply “log this”).`,
-      data: { pageRole: { pageId: page.pageId, spaceId: page.spaceId, role } },
+      body:
+        role === "contract"
+          ? `${who} marked “${current.title}” as a contract: when it changes, the people whose work uses it hear from their leads.`
+          : role === "decisions"
+            ? `${who} made “${current.title}” this room's decisions log: decisions enter it when someone confirms them (✅, or a reply “log this”).`
+            : `${who} made “${current.title}” an ordinary page again: it is no longer ${was}.`,
+      data: { pageRole: { pageId: page.pageId, spaceId: page.spaceId, role, ...(role === "watched" ? { was: before } : {}) } },
     });
   }
   publishTo(await roomPeople(prisma, room.id), "node.room", { roomId: room.id });
