@@ -69,7 +69,7 @@ async function tick(app: FastifyInstance): Promise<void> {
   }
   void sweepStoredBlobs(app.prisma)
     .then((swept) => {
-      if (swept && (swept.moved || swept.originals || swept.datasets)) app.log.info(swept, "blob sweep");
+      if (swept && (swept.moved || swept.originals || swept.datasets || swept.evidence)) app.log.info(swept, "blob sweep");
     })
     .catch((error: unknown) => app.log.error({ err: error }, "blob sweep failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));

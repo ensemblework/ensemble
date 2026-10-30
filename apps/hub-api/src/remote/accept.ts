@@ -11,10 +11,13 @@ import { appendLedger } from "../lib/ledger.js";
 import { saveFile } from "../files/store.js";
 import { createTask } from "../services/tasks.js";
 import { createJob } from "../workspace/assign.js";
+import { workspaceRoot } from "../workspace/guard.js";
+import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
+import { prepareWorktree, type MadeWorktree } from "../workspace/worktrees.js";
 import { webContext } from "./origin.js";
-import { isRefusal, planLocalJob, type Refusal } from "./policy.js";
+import { isRefusal, planLocalJob, sharedFolder, type LocalPlan, type Refusal } from "./policy.js";
 import { authRejected, type HostedClient } from "./client.js";
-import type { JobSpec, ResultLink } from "./contract.js";
+import { parseMission, type JobSpec, type MissionSpec, type ResultLink } from "./contract.js";
 import { loadHeld, loadSettings, type HeldJob } from "./store.js";
 
 
@@ -80,17 +83,58 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
     if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
     // A run carrying on one this computer lost when it restarted runs in that run's folder and agent session (agent.ts).
-    const context = { ...webContext(spec.id), ...(spec.resume ? { resumeOf: spec.resume } : {}), ...(spec.steer ? { steer: spec.steer } : {}) } as Prisma.InputJsonValue;
+    // A secret scope from the web (an Ensemble Node run) limits the saved secrets the run gets (lib/run-secrets.ts).
+    const mission = parseMission(spec.mission);
+    // An Ensemble Node build that works apart gets its own git worktree of the shared folder (B13).
+    const tree = mission ? await intoWorktree(app, spec, resolved, mission) : null;
+    const context = {
+      ...webContext(spec.id),
+      ...(spec.resume ? { resumeOf: spec.resume } : {}),
+      ...(spec.steer ? { steer: spec.steer } : {}),
+      ...(Array.isArray(spec.secrets) ? { secrets: spec.secrets } : {}),
+      // The shared folder's path stays on this computer: for the folder claims (one mission's runs wait for each other) and removing worktrees.
+      ...(mission ? { mission: { ...mission, ...(tree?.folder ? { root: tree.folder } : {}) } } : {}),
+    } as Prisma.InputJsonValue;
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context, actor: "system" });
     if (!created) throw new Error("The task could not be queued.");
     held.localJobId = created.jobId;
-    await appendLedger({ userId, actor: "system", action: "remote.claim", payload: { hostedJobId: spec.id, jobId: created.jobId } });
+    // Commits in a worktree land in the repository's own git folder, which every worktree shares.
+    if (tree?.made) await app.prisma.decisionRule.create({ data: { userId, source: RUN_RULE_SOURCE, toolName: OUTSIDE_TOOL, pattern: tree.made.gitDir, decision: "allow", sessionId: created.jobId } });
+    await appendLedger({ userId, actor: "system", action: "remote.claim", payload: { hostedJobId: spec.id, jobId: created.jobId, ...(tree?.made ? { worktree: tree.made.path, branch: tree.made.branch } : {}), ...(tree?.error ? { worktreeError: tree.error } : {}) } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const code = (error as { code?: string }).code ?? "REFUSED";
     await refuse(app, client, userId, spec, held, { code, message });
   }
   return held;
+}
+
+/**
+ * An Ensemble Node build that works apart (the claim's `mission.worktree`, B13) works in its own git
+ * worktree of the shared folder, and a check of it in the same worktree: the local job works in place
+ * there, on the worktree's branch as it is. A continued run stays where its run was. When no worktree can
+ * be made, the run works in the folder itself, and this computer's queue makes such runs take turns.
+ */
+async function intoWorktree(app: FastifyInstance, spec: JobSpec, plan: LocalPlan, mission: MissionSpec): Promise<{ folder: string; made: MadeWorktree | null; error: string | null } | null> {
+  const label = (spec.folderLabel ?? spec.folder ?? "").trim();
+  const shared = label ? sharedFolder(loadSettings(), label) : null;
+  if (!shared || spec.kind !== "code") return null;
+  if (!mission.worktree || plan.assign.continueFromJobId) return { folder: shared.path, made: null, error: null };
+  try {
+    const made = await prepareWorktree({ userId: env.ENSEMBLE_DEV_USER_ID, folder: shared.path, workspace: await workspaceRoot(), spec: mission.worktree });
+    plan.assign.folder = made.path;
+    delete plan.assign.repoUrl;
+    plan.assign.accessMode = shared.access === "review" || spec.accessMode === "review" ? "review" : "read-write";
+    // The worktree is on its branch already; the mission's integration step publishes, never this run.
+    plan.assign.branchMode = "as-is";
+    delete plan.assign.branch;
+    delete plan.assign.pullRequest;
+    plan.assign.delivery = spec.delivery;
+    return { folder: shared.path, made, error: null };
+  } catch (error) {
+    app.log.warn({ err: error, hostedJobId: spec.id }, "could not make a worktree; the run works in the folder itself");
+    return { folder: shared.path, made: null, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function withContinue(app: FastifyInstance, spec: JobSpec, plan: Exclude<ReturnType<typeof planLocalJob>, Refusal>) {

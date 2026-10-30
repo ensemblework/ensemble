@@ -451,16 +451,25 @@ export async function runAcp(
       }
     }
     result.model = model ?? currentModel;
+    let legacyModel = legacy.currentModelId ?? null;
+    if (model && model !== currentModel && !choices.model && (legacy.availableModels ?? []).some((row) => row.modelId === model)) legacyModel = model;
     const effort = str(options.effort) && options.effort !== "default" ? options.effort!.trim() : null;
     if (effort) {
       const thought = configChoices(config).thought;
       if (thought && optionValues(thought).includes(effort)) {
-        if (thought.currentValue !== effort) await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: effort });
+        if (thought.currentValue !== effort) {
+          const answer = (await rpc.request("session/set_config_option", { sessionId, configId: thought.id, value: effort })) as { configOptions?: ConfigOption[] };
+          if (Array.isArray(answer?.configOptions) && answer.configOptions.length) config = answer.configOptions;
+        }
       } else {
         await ctx.event("engine_note", { note: `${result.model ?? label} has no ${effort} thinking level in ${label}; it runs at its default.` });
       }
     }
-    await ctx.event("engine", { engine: agent.trace, model: result.model, effort, session: sessionId });
+    // What the agent's own session options say it runs (node/settings.ts observed).
+    const now = configChoices(config);
+    const observedModel = now.model ? (now.model.currentValue ?? null) : legacyModel;
+    const observed = { ...(observedModel ? { model: observedModel } : {}), ...(now.thought?.currentValue ? { effort: now.thought.currentValue } : {}) };
+    await ctx.event("engine", { engine: agent.trace, model: result.model, effort, session: sessionId, observed });
     await ctx.progress(`${label} started`);
     let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.prompt }];
     for (let round = 0; ; round += 1) {

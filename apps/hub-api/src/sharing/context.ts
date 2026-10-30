@@ -23,9 +23,13 @@ export const PUBLIC_VIEW_ONLY: ReadonlySet<PublicKind> = new Set(["meeting"]);
 /** Who is on a public link: a signed-in person, or an anonymous visitor named by `sharing/visitors.ts`. */
 export type LinkVisitor = { id: string; name: string; emoji: string | null; color: string; signedIn: boolean };
 
+/**
+ * `node` is set when an Ensemble Node acts for the account (lib/auth.ts, node/spaces.ts): the same
+ * access the account has, attributed to that node.
+ */
 export type Access =
-  | { kind: "owner" }
-  | { kind: "member"; role: "viewer" | "editor"; ownerId: string }
+  | { kind: "owner"; node?: string }
+  | { kind: "member"; role: "viewer" | "editor"; ownerId: string; node?: string }
   | { kind: "share"; shareId: string; resource: ShareKind; resourceId: string; role: "view" | "edit"; ownerId: string }
   /** Anyone with a public link, signed in or not. */
   | { kind: "link"; linkId: string; resource: PublicKind; resourceId: string; role: "view" | "edit"; ownerId: string; visitor: LinkVisitor }
@@ -69,6 +73,23 @@ export function keysFor(userId: string): string {
 /** Stamped on undo entries, comments and conversations made by a guest. Null for the owner. */
 export function actorFor(spaceId: string): string | null {
   return isGuestIn(spaceId) ? store.getStore()!.accountId : null;
+}
+
+/** The Ensemble Node acting for the account in this space, if a node made this request. */
+export function nodeActingIn(spaceId: string): string | null {
+  const scope = store.getStore();
+  if (!scope || scope.spaceId !== spaceId) return null;
+  const access = scope.access;
+  return (access.kind === "owner" || access.kind === "member") && access.node ? access.node : null;
+}
+
+/**
+ * Who made something in a space, for "@node for person": the person (null for the space's owner acting
+ * themselves, as `actorFor`) and the node acting for them, if one did.
+ */
+export function madeBy(spaceId: string): { accountId: string | null; nodeId: string | null } {
+  const node = nodeActingIn(spaceId);
+  return { accountId: node ? store.getStore()!.accountId : actorFor(spaceId), nodeId: node };
 }
 
 /**

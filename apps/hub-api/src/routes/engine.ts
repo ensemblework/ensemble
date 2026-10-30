@@ -8,6 +8,10 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { bridgeFor, callThroughBridge } from "../subscriptions/bridge.js";
 import { CHAT_TOOLS, runChatTool } from "../workspace/engines/chat-tools.js";
+import { RUN_TOOLS, RunToolError, runRunTool } from "../evidence/run-tools.js";
+import { CREDENTIAL_TOOLS, runCredentialTool } from "../credentials/run-tools.js";
+import { SecretUseError } from "../credentials/secret-http.js";
+import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { isChatTurn } from "../workspace/trust.js";
 
@@ -58,21 +62,79 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // The person's board for their own agent in Chat: the same run secret, chat turns only.
+  // The browser and capture tools a task run's MCP server offers (evidence/capture-tools.ts): listed by this computer.
+  app.get("/api/engine/tools", async (request, reply) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
+    const header = request.headers["x-ensemble-run"];
+    const run = engineRunFor(Array.isArray(header) ? header[0] : header);
+    if (!run) return reply.code(401).send({ error: "This run has ended." });
+    if (isChatTurn(run.ctx.job.context)) return { tools: [] };
+    const { runCaptureToolList } = await import("../evidence/capture-tools.js");
+    return { tools: runCaptureToolList() };
+  });
+
+  // The person's board for their own agent in Chat, a task run's report and evidence (evidence/run-tools.ts), and its browser and capture tools: the same run secret.
   app.post("/api/engine/tool", async (request, reply) => {
     const host = request.ip.replace(/^::ffff:/, "");
     if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).send({ error: "Engine runs are local." });
     const header = request.headers["x-ensemble-run"];
     const run = engineRunFor(Array.isArray(header) ? header[0] : header);
     if (!run) return reply.code(401).send({ error: "This run has ended." });
-    if (!isChatTurn(run.ctx.job.context)) return reply.code(403).send({ error: "Ensemble's board tools are for Chat." });
-    const body = z.object({ name: z.enum(CHAT_TOOLS), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    // Loaded on the computer only: the hosted server never runs a browser.
+    const { CAPTURE_RUN_TOOLS, isRunCaptureTool, runRunCaptureTool } = await import("../evidence/capture-tools.js");
+    const known = new Set<string>([...CHAT_TOOLS, ...RUN_TOOLS, ...CREDENTIAL_TOOLS, ...CAPTURE_RUN_TOOLS]);
+    const body = z.object({ name: z.string().refine((name) => known.has(name), "Unknown tool."), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    const chat = isChatTurn(run.ctx.job.context);
+    // A saved secret used by reference (credentials/secret-http.ts), in task runs and Chat alike.
+    if ((CREDENTIAL_TOOLS as readonly string[]).includes(body.name)) {
+      try {
+        return { text: await runCredentialTool(run.ctx, body.name as (typeof CREDENTIAL_TOOLS)[number], body.input) };
+      } catch (error) {
+        if (error instanceof SecretUseError) return reply.code(error.statusCode).send({ error: error.message });
+        request.log.error({ err: error }, "credential tool failed");
+        return reply.code(500).send({ error: "The tool failed." });
+      }
+    }
+    if (isRunCaptureTool(body.name)) {
+      if (chat) return reply.code(403).send({ error: "The browser and capture tools are for task runs, not Chat." });
+      try {
+        const done = await runRunCaptureTool(run.ctx, body.name, body.input);
+        return done.ok ? { text: done.text } : reply.code(400).send({ error: done.text });
+      } catch (error) {
+        request.log.error({ err: error }, "browser or capture tool failed");
+        return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
+      }
+    }
+    if ((RUN_TOOLS as readonly string[]).includes(body.name)) {
+      if (chat) return reply.code(403).send({ error: "report_result and attach_evidence are for task runs, not Chat." });
+      try {
+        return { text: await runRunTool(run.ctx, body.name as (typeof RUN_TOOLS)[number], body.input) };
+      } catch (error) {
+        if (error instanceof RunToolError) return reply.code(400).send({ error: error.message });
+        request.log.error({ err: error }, "run tool failed");
+        return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
+      }
+    }
+    if (!chat) return reply.code(403).send({ error: "Ensemble's board tools are for Chat." });
     try {
-      return { text: await runChatTool(run.ctx, body.name, body.input) };
+      return { text: await runChatTool(run.ctx, body.name as (typeof CHAT_TOOLS)[number], body.input) };
     } catch (error) {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ") });
       request.log.error({ err: error }, "chat tool failed");
       return reply.code(500).send({ error: error instanceof Error ? error.message : "The tool failed." });
     }
+  });
+
+  // git's credential helper in a run that may use a secret by reference (credentials/git-credential.ts):
+  // the run's own token, on loopback, on the computer only. The answer is git's format, or empty.
+  app.post("/api/engine/git-credential", async (request, reply) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return reply.code(403).type("text/plain").send("");
+    const header = request.headers["x-ensemble-git"];
+    const token = Array.isArray(header) ? header[0] : header;
+    const body = typeof request.body === "string" ? request.body.slice(0, 4096) : "";
+    const answer = await gitCredentialAnswer(app.prisma, token, body, async (jobId) => (await app.prisma.workspaceJob.findUnique({ where: { id: jobId }, select: { status: true } }))?.status ?? null);
+    return reply.header("cache-control", "no-store").type("text/plain").send(answer);
   });
 }

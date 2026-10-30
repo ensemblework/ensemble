@@ -71,6 +71,8 @@ export const AssistantToolCall = z.object({
   error: z.string().optional(),
   /** Records the result names, so a reply can show their titles and link to them instead of printing ids. */
   refs: z.array(AssistantRef).optional(),
+  /** The space the call acted in, when a turn reaches more than one (an Ensemble Node acting for its owner). */
+  space: z.object({ id: z.string(), name: z.string() }).optional(),
 });
 export type AssistantToolCall = z.infer<typeof AssistantToolCall>;
 
@@ -318,6 +320,11 @@ export const RunProfile = z.object({
   instructions: z.string().max(2000).default(""),
   /** End each run in a pull request Ensemble opens into this base (empty: the default branch), and whether to merge it. */
   pullRequest: PullRequestPlan.nullable().default(null),
+  /**
+   * The saved secrets a run with this profile may have on the computer, by name. Empty: the computer's
+   * mode decides (every environment secret in compatibility mode, none in named mode; docs/35 §8.7).
+   */
+  secrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/)).max(20).optional(),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
@@ -437,6 +444,21 @@ export const CodeSettingsShape = z.object({
 });
 export type CodeSettingsShape = z.infer<typeof CodeSettingsShape>;
 
+/** Highest values an account may choose for its own limits: a system bound, not a product limit. */
+export const SHARING_CAPS = { contacts: 500, members: 50, roomPeople: 50, spaces: 100 } as const;
+
+/**
+ * An account's own limits (Settings › Sharing › Limits): contacts, people per space it owns, people in an
+ * Ensemble Node room it makes (itself included), and spaces it owns (its account's own included). The
+ * owner's choice; the defaults keep today's sizes (5 contacts, 2 people per space, 10 per room, 12 spaces).
+ */
+export const SharingSettings = z.object({
+  contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).default(5),
+  members: z.number().int().min(1).max(SHARING_CAPS.members).default(2),
+  roomPeople: z.number().int().min(2).max(SHARING_CAPS.roomPeople).default(10),
+  spaces: z.number().int().min(1).max(SHARING_CAPS.spaces).default(12),
+});
+
 export const Settings = z.object({
   assistant: AssistantSettings.default({}),
   autonomy: AutonomyLevel.default("assist"),
@@ -478,6 +500,7 @@ export const Settings = z.object({
   timezone: z.string().default("Asia/Kolkata"),
   timezoneMode: z.enum(["auto", "manual"]).default("auto"),
   email: z.string().default("you@ensemble.local"),
+  sharing: SharingSettings.default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 

@@ -29,11 +29,14 @@ import { runCommand } from "./runner.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { commandGate, type AccessMode, type GateAction, type OutsideZone, type SandboxStrength } from "./trust.js";
 import { busyWith, copyFor, holdFolder, releaseFolder } from "./folder-claims.js";
+import { evidenceDir } from "../evidence/files.js";
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
   /** The person's run secrets saved on this computer (lib/run-secrets.ts), given to coding agents as environment variables. */
   secretEnv?: Record<string, string>;
+  /** Saved secrets this run may use by reference only (secret_http, git): names and allowed destinations, never values (credentials/run-env.ts). */
+  secretRefs?: Array<{ name: string; allow: string[] }>;
   userId: string;
   taskId: string;
   taskTitle: string;
@@ -423,6 +426,14 @@ export type Held = { ok: false; result: unknown; summary: string };
  * covers is refused. A change also takes the folder for the run, or waits, copies or goes alongside
  * when another run is changing it (`holdFolder`). `command`: the command that names it, shown in the question.
  */
+function ownEvidence(ctx: Pick<JobContext, "job">, real: string): boolean {
+  try {
+    return within(evidenceDir(ctx.job.id), real, false);
+  } catch {
+    return false;
+  }
+}
+
 export async function outsidePath(
   ctx: JobContext,
   real: string,
@@ -430,6 +441,8 @@ export async function outsidePath(
   options: { command?: string; withdrawn?: AbortSignal } = {},
 ): Promise<{ held: Held | null; asked: boolean }> {
   if (harmlessPath(real)) return { held: null, asked: false };
+  // The run's own evidence folder, in Ensemble's data: its screenshots and recordings, to look at, never to change.
+  if (!write && ownEvidence(ctx, real)) return { held: null, asked: false };
   const floor = outsideRefusal(real, write);
   if (floor) return { held: refusal(`${real}: ${floor}`, "Refused: off limits"), asked: false };
   const hold = (asked = false) => (write ? holdFolder(ctx, real, options).then((verdict) => ({ held: verdict.held, asked: asked || verdict.asked })) : Promise.resolve({ held: null, asked }));

@@ -175,7 +175,7 @@ export async function addPerson(prisma: Db, roomId: string, accountId: string, r
   if (existing) return existing;
   const handle = await personHandle(prisma, accountId, await takenHandles(prisma, roomId));
   const room = await prisma.nodeRoom.findUnique({ where: { id: roomId }, select: { lastSeq: true } });
-  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role, readSeq: room?.lastSeq ?? 0 } });
+  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role, readSeq: room?.lastSeq ?? 0, readSeqCrew: room?.lastSeq ?? 0 } });
 }
 
 /**
@@ -266,13 +266,15 @@ export function publicNode(node: NodeAgent) {
   return { id: node.id, ownerId: node.userId, slug: node.slug, name: node.name, role: node.role, avatar: node.avatar, status: node.status, parentNodeId: node.parentNodeId };
 }
 
-export type RoomSettings = { leadNodeIds: string[]; responsibilities: Record<string, string>; pinned: string[] };
+/** A room's settings: the keys read here, and every other key kept as it is (`version`, a bound `spaceId`, …), so writing them back loses nothing. */
+export type RoomSettings = { leadNodeIds: string[]; responsibilities: Record<string, string>; pinned: string[] } & Record<string, unknown>;
 
 export function roomSettings(room: Pick<NodeRoom, "settings">): RoomSettings {
-  const raw = (room.settings && typeof room.settings === "object" ? room.settings : {}) as Record<string, unknown>;
+  const raw = (room.settings && typeof room.settings === "object" && !Array.isArray(room.settings) ? room.settings : {}) as Record<string, unknown>;
   const ids = (value: unknown) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
   const duties = raw.responsibilities && typeof raw.responsibilities === "object" ? (raw.responsibilities as Record<string, unknown>) : {};
   return {
+    ...raw,
     leadNodeIds: ids(raw.leadNodeIds),
     responsibilities: Object.fromEntries(Object.entries(duties).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
     pinned: ids(raw.pinned),

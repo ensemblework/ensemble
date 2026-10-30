@@ -294,6 +294,10 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       }
       return { previous };
     },
+    // A requested task moved out of Proposed answered its room request: say so.
+    onSuccess: (result) => {
+      if (result.answered) toast(result.answered);
+    },
     onError: (error, _input, context) => {
       if (context?.previous) client.setQueryData(["tasks", "board"], context.previous);
       toast((error as Error).message, { tone: "error" });

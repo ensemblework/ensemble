@@ -7,6 +7,7 @@
  * again replaces that block in place; the engineer's edits elsewhere stay.
  */
 import { checkpointPage, pageEditor } from "./history.js";
+import { nodeActingIn } from "../sharing/context.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { imageMarkdown, markdownToNodes, PageDocument, type PageNode } from "@ensemble/shared-types";
 import { sseHub } from "../lib/sse.js";
@@ -196,7 +197,7 @@ export async function writeAgentBlock(prisma: PrismaClient, userId: string, task
           const searchText = pageSearchText(page?.title || task.title, parsed, task.notes);
           if (page) {
             await checkpointPage(db, page, page.title || task.title);
-            await db.taskPage.update({ where: { id: page.id }, data: { content: doc, revision: page.revision + 1, searchText, editorAccountId: await pageEditor(db, userId) } });
+            await db.taskPage.update({ where: { id: page.id }, data: { content: doc, revision: page.revision + 1, searchText, editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId) } });
           } else {
             await db.taskPage.create({
               data: { userId, taskId, content: doc, revision: 1, annotations: [], notesSnapshot: task.notes, searchText },

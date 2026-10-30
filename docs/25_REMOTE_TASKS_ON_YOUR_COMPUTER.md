@@ -16,7 +16,7 @@ The host's spec carries task context and execution choices (and `steer`, the cha
 
 The desktop app's This computer settings or `ensemble login` pairs through a browser approval code. Editor context access and permission to run tasks are separate. A web logout does not unpair a computer; CLI logout, unpair and revocation do.
 
-The device token is an encrypted `model_credentials` row in the local database (`remote/store.ts`). `remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases. Pairing is not hosted/local workspace replication.
+The device token is an encrypted `model_credentials` row in the local database (`remote/store.ts`). Each pairing also makes the computer's sealing key pair, which the web encrypts secrets for: the private key in `seal-key.json` (0600, encrypted with the runtime's local key), the public key reported as `capabilities.sealKey` and pinned on the device row (§4.9, [35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). Unpairing deletes it. `remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases. Pairing is not hosted/local workspace replication.
 
 ## 3. Lease, heartbeat and interruption
 
@@ -50,10 +50,14 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | DELETE | `/api/devices/self` | Device-initiated removal |
 | POST | `/api/devices/self/heartbeat`, `/api/devices/self/claim` | Refresh state and leases; claim eligible work |
 | GET | `/api/devices/self/jobs/:id/attachments/:fileId` | Download an attached original (§4.5) |
-| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/complete` | Report, ask a saved question, send changed-file text (§4.6), settle |
+| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/evidence`, `/complete` | Report, ask a saved question, send changed-file text (§4.6) and the files the worker attached (§4.11), settle with the worker's report. Progress may carry `observed` (what the agent says it runs with: `model`, `effort`, `context`, `contextTokens`, `fast`) when it changes, and complete `totals.observed` ([30 §3.4](30_ENGINES.md#34-what-the-agent-says-it-runs-with)) |
 | POST | `/api/devices/self/jobs/:id/reattach`, `/resume` | After an outage: take back a run that kept going, or carry on one lost to a restart (§3) |
 | GET / POST | `/api/devices/self/decisions/:id`, `/api/devices/self/decisions/:id/close` | Read an answer / close a decision answered locally, or withdraw it (`expired`) when the agent stopped waiting |
-| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output` | The computer's answers to relayed requests |
+| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output`, `/tool-runs/:runId/output` | The computer's answers to relayed requests, and the longer output of a node's command (§4.10) |
+| POST | `/api/devices/self/evidence-uploads/:uploadId` | A file the web asked for by an upload id: a node's capture, or a held file released or previewed (§4.11) |
+| POST | `/api/devices/self/jobs/:id/live` | The latest small picture of a run's browser tab, under its lease (§10.1) |
+| POST | `/api/devices/self/takeovers/:id/frames`, `/api/devices/self/takeovers/:id/state` | A takeover's encrypted frames (the server keeps only the latest, for 30 s; 410: nobody controls it any more), and that this computer ended it itself (protocol 8, §10.1) |
+| POST | `/api/devices/self/jobs/:id/logins` | A run's agent waits for its owner to sign in, under its lease: the server raises the card where the run is followed and answers its id, or `null` (protocol 8, §10.1) |
 | GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
 | GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
 | GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9) |
@@ -63,7 +67,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 
 ### 4.2 Stored model and job data
 
-The host stores device identity and capabilities, the task and job spec, lease state, decisions, progress, logs, evidence and result. Ensemble on the web stores no file contents from a computer: the files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
+The host stores device identity and capabilities, the task and job spec, lease state, decisions, progress, logs, evidence, the settings the agent reported (`observed_settings`) and result, including the worker's own report (`workspace_jobs.report`, §4.11). Ensemble on the web stores no file contents from a computer, with one exception: the files a run's worker attaches for its owner (§4.11), unless that computer turned it off. The files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
 
 Local secrets stay local. The exception runs the other way: with *Settings → Models* `keysOnComputers` on (the default), `GET /api/devices/self/model-keys` gives the computer the account's model keys for its own model calls, except keys with a custom base URL; the ledger records once a day which providers' keys a computer read.
 
@@ -99,13 +103,26 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.8 Protocol and compatibility
 
-`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4). The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
+`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4, secret scopes, the worker's report, evidence and node tools protocol 6, held captures, a video's poster and preview, a node's browser and capture tools, `evidence.request` and the live view protocol 7, sign-ins (`login` in a browser answer, `login.resolve`, `ROUTES.runLogin`) and takeovers (`takeover.*`, `ROUTES.takeoverFrame`, `ROUTES.takeoverState`) protocol 8). An optional field an older server does not know is left out by it, so it needs no new protocol: `observed` on progress and complete is one (2 November 2026), and a claim's `mission` another (§4.12). Until a computer runs a release that sends it, its runs show their observed settings as "not reported", except the agent's model from its `engine` event. The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
 
 ### 4.9 Subscriptions and included models
 
 Agent sessions: a computer with `capabilities.sessions` 1 runs a job that continues another in the agent's own session (Claude `--resume`, Codex thread resume, ACP `session/load`) and takes the claim's `steer`. Ensemble Node continues sessions only on such a computer, or one reporting 0.4.18 or later ([35 §8.2](35_ENSEMBLE_NODE.md#82-which-session)).
 
-Secrets for runs: a computer with `capabilities.secrets` 1 or more (`SECRETS_API`) takes a `secret.save` frame `{id, name, value}` on its event stream, keeps the value encrypted in its own `run_secrets`, and answers on `/api/devices/self/code-requests/:id` with only whether it saved it. Every code run there gets the saved secrets as environment variables and their names in its brief; whatever the computer sends back has the values hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)); `ensemble secrets` manages them on the computer.
+Secrets for runs ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)): a computer takes `secret.save` frames on its event stream, keeps the value encrypted in its own `run_secrets` with where it may be sent (`allow`), and answers on `/api/devices/self/code-requests/:id` with only whether it saved it (`{saved, name, sealed, allow}`). Whatever the computer sends back has every saved value hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them; `ensemble secrets` manages them on the computer.
+
+| Capability | Frame | Meaning |
+| --- | --- | --- |
+| `secrets: 1` | `secret.save {id, name, value}` | The value over TLS through the server (compatibility) |
+| `secrets: 2` and `sealKey {kid, alg, spki, fingerprint}` | `secret.save {id, name, decisionId, sealed: {v, kid, epk, iv, ct, aad}}` | A box sealed in the browser for this computer's key: opened, checked (its device id and key, the card, the name, a site it trusts, the expiry) and taken once here (`remote/secrets.ts`, `credentials/`). A plain `value` still works. |
+| `secretsMode: all \| named` | — | How runs that name no secrets get them here (`ensemble secrets mode`) |
+| `secretHttp: 1` | `node.tool.request {tool: "secret_http", …}` | A node's request by reference (§4.10) |
+| `takeover: 1` | `takeover.start {id, takeoverId, tab, loginId? \| jobId?, sealed, endsAt}`, `takeover.input {takeoverId, seq, iv, ct}`, `takeover.end {id?, takeoverId, done, reason?}` | The owner controls a tab from the web, end to end (§10.1): the channel's secret sealed for this computer (purpose `takeover`), encrypted input in order, I'm done or Stop |
+| `logins: 1` | `login.resolve {id, loginId, decisionId, action, sealed?}` | The owner's answer to a sign-in card (§10.1): a saved login, the tab shown on the screen, a check, a login sealed for this computer (purpose `login`), or not now. The answer is a status and a sentence, never a value |
+
+The web pins the first `sealKey` a computer reports (at pairing, or on its first report after updating) on its `devices` row and encrypts only for that key; a later different key changes nothing until the computer is paired again (`credentials/device-key.ts`). `GET /api/devices` returns each computer's pinned `sealKey` and `sealKeyMismatch`.
+
+**Which secrets a run gets.** A claim may carry `secrets` (protocol 6): the names the run may have, possibly none. The computer keeps the list on the local job (`context.secrets`) and gives the run only those (`secretScopeOf` and `runSecretEnv` in `lib/run-secrets.ts`). Ensemble Node's runs always carry it, and so does a run whose run profile names secrets ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). Without the list, the computer's mode decides (`credentials/mode.ts`): every environment secret in `all`, the compatibility mode and the default; none in `named`. A secret with allowed destinations is never put in an environment: a run uses it by reference, with `secret_http` or git (`credentials/run-env.ts`). A computer that reports `capabilities.secretScope` 1 applies the list; an older one ignores it and has neither evidence upload nor node tools.
 
 The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there (`capabilities.assistantTurns` 1 or more, `ASSISTANT_TURNS_MIN`). Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
 
@@ -114,6 +131,83 @@ A computer that reports `assistantTurns: 2` (`ASSISTANT_TURN_FILES`) takes the f
 A computer that reports `assistantTurns: 3` (`ASSISTANT_TURN_SESSIONS`) keeps one agent session per chat: the spec carries `session: { key, history }` (the conversation id and the chat so far), and the computer resumes that chat's session or starts one with the history ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)). An older computer gets the history in front of the message instead.
 
 A paired desktop app or CLI calls included models through `/api/devices/self/included` and `/api/devices/self/included/turn`. The device token identifies the account; Azure credentials stay on the host, and usage counts against that account's credits and the global ceiling ([33](33_INCLUDED_AI.md)).
+
+### 4.10 A node's own tools on the computer
+
+A node can run a command, read git, call a development server on the computer, change a file, and browse and capture (§10) without starting an agent session ([35 §8.13](35_ENSEMBLE_NODE.md#813-the-nodes-own-tools-on-the-computer)). Each call goes to the computer as a `node.tool.request` frame on its event stream, like `code.request` (`askDeviceFor` in `devices/file-relay.ts`). The computer judges it and answers once on `/api/devices/self/code-requests/:id` (`device-tools/answer.ts`). Only a computer that reports `capabilities.nodeTools` 1 (`NODE_TOOLS_API`) gets these frames; for an older one the node is told "Update Ensemble on <computer>".
+
+| Tool (`NodeToolRequest`) | What the computer does |
+| --- | --- |
+| `run {folder, command, cwd?, timeoutSec ≤ 900, background?, secrets?}` | Checks the command like an agent's (`workspace/guard.ts`: allowed programs, arguments, folders; git against the run profile's git ceiling; no `git push` or `fetch`) and runs it under the OS sandbox with the folder writable and the profile's network choice. Named saved secrets go into that command's environment only |
+| `git {folder, op, args?}` | `status`, `diff`, `log`, `show` or `branch` (list only), read-only and sandboxed; options that write, run programs or leave the folder are refused (`device-tools/git.ts`) |
+| `http {url, method?, body?}` | `http` or `https` only, no user name or password, and every address the name resolves to must be loopback; the connection uses the checked address, and each of at most 5 redirects is checked again. Ensemble's own local port is refused (`device-tools/http.ts`) |
+| `files {action: write\|move\|delete, folder, path, to?, content?}` | Inside the folder only: no link, no hard link, no key, credential or `.env` file, no `.git`; a write is at most 1 MB, a move never overwrites, delete removes files only (`device-tools/files.ts`) |
+| `secret_http {ref, url, method?, headers?, body?}` | A request with a saved secret put in where `{{NAME}}` appears in a header or the body, only to the secret's allowed origins, never in the address, no redirects followed; the answer has the value hidden (`credentials/secret-http.ts`, `capabilities.secretHttp`). The allowed destinations are the owner's answer, so no Needs me card is asked for |
+| `browser {name, input, operation, uploadId, network}`, `capture {…}` (protocol 7, `capabilities.browser` 1) | One browser or capture tool of §10 (`device-tools/capture.ts`) for the node's tool operation (`node:<nodeId>:<mission>`), writing into its evidence folder `<data>/evidence/node/<digest>`. Opening or capturing a page is judged per address (capability `browse`), starting an app per folder (`run`, `resolveToolFolder`); calls on the operation's own tabs, apps and files are not asked about. With `network` false, only this computer's own addresses. Each file it writes is recorded as the node's evidence and sent under `uploadId` (§4.11); the answer (`NodeCaptureAnswer`) carries the tool's summary and result, each file's id and whether it is held or kept here, and what was not kept |
+
+**Folders.** A folder is one this computer shares (by its label) or a full path Ensemble may hand to an agent (`resolveWorkFolder`). A link, the home folder itself, a system folder, Ensemble's data folder and folders that hold keys, sign-ins, Ensemble's git helper or its code are refused (`device-tools/folders.ts`). The sandbox also denies the secret folders and files in the home folder (`SECRET_PATHS` in `workspace/guard.ts`, which includes `SECRET_HOME_PATHS`), Ensemble's data folder (with the run secrets, the key that encrypts them and the browser profile folder) and its git helper, inside any folder (`nodeToolDenies`).
+
+**Who decides** (`device-tools/policy.ts`, on the computer). In order:
+
+1. The hard floor above: 403, and no answer opens it.
+2. The owner's answers for this computer: rules in `decision_rules` with `source` `node-tools`, one per folder or web address (`toolName` `folder` or `origin`), for the mission (`sessionId`) or always.
+3. Unattended (the node's run profile runs unattended, and the node does not ask first): allowed inside the sandbox.
+4. Attended: 428 with `body.ask` (`NodeToolAsk`). The server opens one Needs me card with *Once*, *This mission* and *Always for this folder* (or *for this address*). The answer goes back with the node's next call (`grants`), and the computer keeps *This mission* and *Always* as its own rules.
+
+The answers count only while the computer accepts approvals from the web (`acceptWebApprovals`); with it off, a call without a rule here is refused (409). Where the sandbox is weak (no OS sandbox, or `capabilities.sandbox` `advisory` or `ask`), the floor is best effort: *Always* does not cover commands, which ask once per mission instead.
+
+**Answers.** 200 with the result; 202 for a command still going; 403 for the hard floor; 404 for a missing path; 409 when switched off or not possible here. What a command prints is redacted for saved secret values and key shapes. An answer carries at most 64 KB (`NODE_TOOL_INLINE_BYTES`, the start and the end). Longer output goes in order, in chunks at line ends, to `/api/devices/self/tool-runs/:runId/output`, at most 1 MB per command. The server keeps it in Redis for 6 hours under the run's id, never in the database (`devices/tool-runs.ts`). A command still going after 60 seconds (`NODE_TOOL_FOREGROUND_MS`), or started with `background`, runs on. Its last chunk says how it ended, and the server wakes the node once (`enqueueTurn`, reason `tool`). Stopping remote work stops these commands too.
+
+**Ledger.** Each call writes one entry on the computer (`node.tool.run`, `node.tool.git`, `node.tool.http`, `node.tool.files.*`, `node.tool.browser`, `node.tool.capture`, and `node.tool.ask`) and one on the server (`node.device_tool.<tool>`). They keep the program or operation and the folder or origin, never the output.
+
+### 4.11 The worker's report and evidence
+
+**Report.** A run's worker reports its own result with `report_result`, or `.ensemble/result.json` when its agent has no MCP ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)). The computer validates it as a `StepReport` (`node/report.ts`) and keeps it on its local job. `complete` sends it as `report` (protocol 6). The server checks the shape again, redacts it and keeps it on the job (`workspace_jobs.report`); an invalid report is dropped with a warning.
+
+**Evidence.** Each file the worker attaches is uploaded before `complete`, while the run holds its lease (`evidence/upload.ts`, also during the run):
+
+- `POST /api/devices/self/jobs/:id/evidence`, authenticated like progress: the device token and the job's lease in `x-ensemble-job-lease`. The body is the file's bytes (`application/octet-stream`). `x-ensemble-evidence` carries `EvidenceMeta` as base64url JSON: `{id, kind, name, size, sha256, mime?, caption?, requirementId?, local}`.
+- The computer reads the file again from the run's evidence folder, under the same checks as when it was attached, and sends it only if it is unchanged. Text is redacted before it goes.
+- The server checks it again: the size for its kind, the digest, credential names, and the type sniffed from the bytes (it never trusts the name or the computer). Text is redacted again. Then it stores the bytes where Files keeps uploads ([32 §7](32_FILES.md#evidence-from-agent-runs)), lists the file on the run's card in Ensemble Node and writes `evidence.upload` to the ledger. The same `id` again answers with the stored file.
+- Answers: 201 (stored), 200 (already stored), 400 (bad description, size or digest), 413 (too large for its kind), 415 (type does not match the kind), 422 (credential file), 409 (lease, another run's id, or 100 files already), 404 (no such job).
+
+| Kind | Largest file |
+| --- | --- |
+| `screenshot`, `image`, `report`, `log`, `file` | 20 MB |
+| `video`, `trace` | 100 MB |
+
+**Off on this computer.** `ensemble evidence off` (`evidenceUpload` in `remote.json`, reported as `capabilities.evidenceUpload`) keeps the files here. Only their description goes up, with `local: true` and no bytes. The card shows them as "on this computer, not uploaded", and reading one answers 409. A server without the route (404) gets nothing more for that run.
+
+**Captures** (protocol 7). What a run's browser and capture tools write is recorded as its evidence where it lies, with no attach step (`evidence/captures.ts`), and goes the same way. `EvidenceMeta` may also say:
+
+| Field | Meaning |
+| --- | --- |
+| `held`, `holdReason` | Held for the owner's preview: like `local`, no bytes come with it; the server lists it held and shows its preview card ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)) |
+| `variantOf`, `variant` | A video's `poster` or small `preview` image, sent after the video |
+| `details` | What capture measured: `width`, `height`, `durationMs`, `fps`, `frames`, `codec` |
+
+A server before protocol 7 gets no held file and none of these fields.
+
+**Upload ids.** A file the web asks for outside a run's lease goes to `POST /api/devices/self/evidence-uploads/:uploadId`, with the same headers and checks but no lease: the web makes the id (`evidence/grants.ts`, in Redis) for one device and account, and for one purpose: `new` (a node's tool call: files of that node operation, rows with no job, at most 100 per operation), `release` or `preview` (one file this computer keeps). 410 when nobody waits for it any more.
+
+**Files kept here** (held, or upload off) are asked for with `evidence.request {id, evidenceId, action, uploadId?}` on the event stream, answered like a Code answer (`evidence/requests.ts`): `preview` sends the file under the upload id for its owner's eyes (the server keeps it five minutes in Redis, at most 32 MB); `release` sends it the same way and marks it released here (409 with evidence upload off); `discard` deletes it, its poster and preview, here. The file is read again by the same rules as any upload: unchanged since it was recorded, no saved secret value in it, text redacted.
+
+### 4.12 Worktrees for parallel work
+
+An Ensemble Node mission may build in parallel in one repository ([35 §8.15](35_ENSEMBLE_NODE.md#815-parallel-work-in-one-repository)). Its runs' claims carry `mission` (optional; older servers leave it out):
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `step` | The mission and its step. Kept on the local job (`context.mission`) with the shared folder's path, which never leaves the computer. |
+| `worktree` | `{name, branch?, detached?, reuse?}`: work in the git worktree `<workspace>/worktrees/<name>` of the shared folder, on `branch` (made from the folder's last commit, or taken as it is when it exists), or detached for a snapshot. `reuse`: a check of a build, in that build's worktree. |
+| `port` | The development-server port the step holds; its packet names it. |
+| `integrates` | An integration step's worktrees, removed after its run succeeds. |
+
+- **Making one** (`prepareWorktree` in `workspace/worktrees.ts`, from `remote/accept.ts`). With Ensemble's own git (hooks off), like a run's separate copy ([24 §3](24_DESKTOP_SANDBOXING.md)). Only of a shared folder that is a git repository's own top folder, with a commit and a config that starts nothing. A folder shared as a repository gets a worktree instead of a fresh clone. The local job then works in place in the worktree, on its branch as it is (the web's branch, pull request and Git choice for this run do not move it), and may write the repository's own git folder, which every worktree shares, so its commits land. A check reuses the build's worktree as it is; a snapshot that is gone cannot be checked again. A continued run (a repair, a retest) stays in its run's folder.
+- **When it cannot be made** (not a repository, no commit, a folder in the way), the run works in the folder itself. The ledger's `remote.claim` entry says why, and this computer's queue makes runs in one folder take turns.
+- **Removing.** After an integration run succeeds, each worktree it brought in goes, only when clean and when nothing would be lost: a branch keeps its commits; a detached one must already be in the folder's history. Never forced. The rest stay for the person (`git worktree list` shows them).
+- **Capability.** A computer that does this reports `capabilities.worktrees` 1. The web gives a parallel build on an older computer the folder itself, one step at a time, and its packet says to update Ensemble there. The new field and capability need no new protocol: an older computer ignores `mission`.
+- **Folder claims.** Runs of one mission that meet in a folder outside their own take turns there without asking (`context.mission.id`; [24 §3](24_DESKTOP_SANDBOXING.md)).
 
 ## 5. Local execution and permissions
 
@@ -137,7 +231,7 @@ A run can belong to a shared space while running on a member's own computer. Mem
 
 ## 7. What synchronizes
 
-Assignments, bounded context and attachments, progress, decisions, results, usage and review metadata cross the protocol, plus model keys as described in §4.2. The local database, arbitrary folder contents, the local ledger and other credentials do not.
+Assignments, bounded context and attachments, progress, decisions, results, usage and review metadata cross the protocol, plus model keys as described in §4.2. So do the worker's report and the files it attaches, unless the computer keeps them (§4.11), and the bounded answers of a node's tool calls (§4.10). The local database, arbitrary folder contents, the local ledger and other credentials do not.
 
 ## 8. Device lifetime and removal
 
@@ -151,4 +245,106 @@ Packaged launchers set `ENSEMBLE_INSTALL_PATH`; on each heartbeat the runtime ch
 
 API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation. Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
 
+Captures: `src/evidence/captures.test.ts` (tool results as evidence: kept, held, variants, a file with a saved secret deleted, one outside the work's folder refused), `src/evidence/capture-run.integration.test.ts` (a run's browser and capture tools through its MCP server) and `src/node/capture.integration.test.ts` (a node's, through `node.tool.request` against a simulated computer running the real tool layer; upload ids; held captures previewed, released and discarded through `evidence.request`; the live view).
+
+Evidence and node tools: `src/evidence/files.test.ts` (a link to a key, a hard link, `.env`, a file swapped after the check, a file outside the evidence folder, a saved secret value, sizes and kinds), `src/evidence/evidence.integration.test.ts` (the upload route's lease, sizes, sniffed types, active formats, redaction, the run card, owner-only reads, a computer that keeps its files, the blob store and its sweep), `src/evidence/report.integration.test.ts` (the MCP tools into `job.report` and the evidence folder; the `.ensemble/result.json` fallback), `src/device-tools/device-tools.test.ts` (the policy, the hard floor, loopback-only HTTP with redirects, read-only git, file changes, long output and background commands, and the OS sandbox denying keys, Ensemble's data and the browser profile) and `src/node/device-tools.integration.test.ts` (the relay round trip with a fake computer, one Needs me card per folder, an older computer, owner-only tools, a long command waking its node once, and a node run getting only the secrets it names). macOS and Windows sandboxes are not exercised there.
+
+Worktrees for parallel work: `src/workspace/worktrees.test.ts` (a build's worktree on its branch, its check in the same one, a snapshot, what is refused, and removing only what loses nothing, in a real repository) and `src/node/parallel.integration.test.ts` (the claim's `mission`, and two builds claimed at once).
+
 There is no automatic move to another computer, full database sync, mid-command replay or inbound remote shell or tunnel. A compromised browser session can use whatever the computer's switches allow; local switches and OS rules are the boundary. Redaction is bounded and does not prove content has no sensitive data.
+
+## 10. Browser and capture on the computer
+
+The local runtime has a browser broker (`apps/hub-api/src/browser/`) and a capture service (`apps/hub-api/src/capture/`). Ensemble Node's device tools and a coding agent's run MCP server both call them ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)), through one tool layer: `runBrowserTool` and `runCaptureTool` validate a call and run it for one **operation** (a job attempt, or a node's tool operation), and `browserToolDefinitions()` and `captureToolDefinitions()` give each tool's JSON Schema. The server never runs a browser.
+
+The desktop app's sidecar and the CLI's runner configure both when the hub starts (`startCaptureRuntime` in `capture/runtime.ts`, from `index.ts` on the computer only): the owner's privacy rules (the values of their saved secrets, read again at most every 5 seconds, and this computer's site lists, below), the OS sandbox for apps (§10.2) and logging. A runner (not a short-lived admin runtime for a CLI command) also cleans up after a crashed runtime and starts the janitors. When the runtime stops, every tab, app, display and recording ends.
+
+### 10.1 Browser broker
+
+| Setting | Value |
+| --- | --- |
+| Browser | Playwright's Chromium (`playwright-core`, pinned in hub-api). `ENSEMBLE_CHROMIUM` names one; else the revision Playwright expects in `<data>/playwright` or Playwright's own cache, else the newest other revision, else an installed Chrome (`browser/chromium.ts`) |
+| Profiles | One persistent profile per name in `<data>/browser/<profile>` (default `default`): sign-ins stay between tasks. `private: true` opens a separate context for one operation, which can emulate a Playwright device |
+| Window | Headless, unless a tab asks for one (`headed`) and the computer has a display (`DISPLAY` or `WAYLAND_DISPLAY` on Linux; always on macOS and Windows) |
+| Leases | A tab belongs to the operation that opened it; any other gets `not_yours`. Each use renews its lease (10 minutes). The janitor (every 15 s) closes expired tabs, a profile's browser 5 minutes after its last tab, and a private context 30 s after |
+
+Tools: `browser_open` (http and https only), `browser_tabs`, `browser_close`, `browser_login_needed` (hand the tab to the owner to sign in, below), `browser_snapshot` (the accessibility tree with `[ref=…]` references, cut at 24,000 characters by default), `browser_click`, `browser_type`, `browser_press`, `browser_wait` (a selector, a text, a URL glob or a time), `browser_screenshot` (viewport, full page, one element, another viewport size), `browser_console`, `browser_network_errors`, `browser_record` (a video, or a Playwright trace), `browser_upload` and `browser_download`. There is no script evaluation and no raw CDP, so no tool reads cookies or storage. An operation of work with the internet off (`loopbackOnly`) opens and loads only this computer's own addresses (localhost, 127.0.0.0/8, ::1); every other request of its tabs, and of capture's private tabs for it, is aborted. Recordings a closing tab finishes (a close, the work's end, an expired lease) are kept, held as they were watched, for the work to take (`takeFinished`).
+
+What a capture never shows:
+
+- Password, one-time-code and card fields, and elements marked `data-ensemble-sensitive`, are masked in screenshots, in every frame of the page (`SENSITIVE_SELECTOR`), and their values are hidden in snapshots, also when a placeholder puts the value on a line of its own.
+- The owner's saved secret values (as written, and as escaped inside a quoted snapshot value) and key-shaped strings are hidden in snapshots, titles and console text. A screenshot, video or trace of a page that shows one comes back `held: true` with the reason: the owner previews it before it is sent.
+- Page addresses and titles in tool results and the live view have secret query values (`?token=`, `code=` and the like), saved secrets and key shapes hidden.
+- Sites the owner marks never captured are refused for screenshots, snapshots and the live view; a video that reaches one records none of its frames and is held. Sites marked preview-first are held. The two lists are this computer's own (`captureSites` in `remote.json`: `ensemble capture sites`, [26](26_CLI.md)); a site is a host, covering its subdomains, or an exact origin.
+- `browser_type` refuses a saved secret value. Uploads take only regular files with one name from the operation's evidence folder or folders the caller allows, never credential files (`.env*`, keys, certificates) or files containing a saved secret, up to 50 MB; the file is read by descriptor and checked again after opening. Downloads go into the evidence folder, up to 100 MB.
+- A trace records every page of its browser, so it starts only when every page there is this work's and none is in a sign-in. A trace of the shared profile has screenshots only, no page source or network data; a private tab's trace has both, and is held when a page shows a filled password, code or card field.
+
+**Sensitive tabs.** `markSensitive(tab, on)` is for a sign-in or a takeover, not for agents. While on, the tab refuses snapshots, screenshots, recordings, console and network reads and every action; `browser_wait` for a URL still works. A video drops its frames, a trace of its browser (whichever tab started it) is stopped and deleted, and console and network entries are not kept.
+
+**Live view.** An operation's `onLiveFrame` receives a small JPEG of its most recently used tab about every 3 s (masked, quality lowered to keep it near 60 KB). It pauses, saying why, for a sensitive tab, a site the owner marked and a page that shows a secret. The broker keeps no frame. For a run from the web, the remote loop sends each frame to `ROUTES.liveFrame` under the hosted job and its lease (`remote/live.ts`; protocol 7, at most about 220 KB); a run started here, and a node's own browsing, have no live view ([35 §8.16](35_ENSEMBLE_NODE.md#816-browsing-and-capture)).
+
+**Sign-ins** (design B11, [35 §8.16.1](35_ENSEMBLE_NODE.md#8161-signing-in); `logins/`). After `browser_open`, a click, a key press or a submitted `browser_type`, the tool layer asks `checkForLogin` whether the page wants the owner's account (`logins/detect.ts`: one password field that is not a new-password form, a sign-in address with a user name or code field, a 401, or a known identity provider). On another site in the shared profile it raises a sign-in at once; on this computer's own addresses, in a private tab, or for a site already answered for this work it only adds a hint. `browser_login_needed` raises one on purpose. A raised sign-in (`logins/requests.ts`) marks the tab sensitive, keeps its lease (two hours at most), brings a window already on the screen to the front, and puts `login` in the tool's result: a node's answer carries it (`NodeCaptureAnswer.login`) and the server raises the card; a run's call waits in `awaitRunLogin` (`logins/run.ts`) after telling the server (`ROUTES.runLogin`, protocol 8), or asking on Needs me when no card is raised. The owner's answer comes as `login.resolve` (`logins/answer.ts`):
+
+| Action | On this computer |
+| --- | --- |
+| `saved` | Fills the login saved for the site (`logins/store.ts`): user name, password, then a code from a saved seed (RFC 6238), one step at a time, pressing Enter (`logins/fill.ts`) |
+| `local` | `showTab`: brings the tab to the front; a profile running without a window restarts with one (`restartProfile` reopens its tabs at their addresses under the same ids, still sensitive), only when no other work uses it. Without a screen, `no_window` |
+| `done` | Checks the signed-in condition |
+| `typed` | Opens the box sealed for this computer (purpose `login`, the card as decision, the sign-in's id as name, a trusted site, unexpired, taken once), checks the site inside is the sign-in's, fills it; with `save`, keeps it as a saved login once signed in |
+| `decline`, `expire` | Ends it |
+
+The signed-in check is the work's condition (`urlPattern`, a glob matched without the query, or `selector`), else: on the site, with no password or code field, and no user name field on a sign-in address. Signed in, the tab is unmarked and given back; ended any other way, it is first navigated to `about:blank`. The answer (`LoginResolution`) is only a status and a sentence. The work's end (`releaseOperation`) and a stopped remote connection end its sign-ins.
+
+**Taking over** (design B21, [35 §8.16.2](35_ENSEMBLE_NODE.md#8162-taking-over-the-browser); `takeover/`). `takeover.start` brings the channel's secret sealed for this computer: opened and checked like a secret box (this computer and key, the takeover as decision, the tab as name, a trusted site, unexpired) and taken once. The tab must be the waiting sign-in's, or the run's (its hosted job mapped to the local job that owns the tab). The computer derives one AES-256-GCM key per direction (HKDF-SHA-256; `takeover/channel.ts`, the same messages and fixed vectors as the browser's `@ensemble/shared-types` takeover.ts), marks the tab sensitive, and starts Chromium's screencast (`Page.startScreencast` on a CDP session of the tab, JPEG at up to 1280 pixels). Each frame goes, encrypted with the next number, to `ROUTES.takeoverFrame`, one at a time, a newer one replacing any that waits. `takeover.input` is applied in order through Playwright's mouse and keyboard (clicks at a fraction of the page, the wheel, keys; a printable character, or text from the page's box or Paste, typed as text); a message numbered at or below the last, or one that does not open, is refused and counted. It ends on `takeover.end` (I'm done runs the sign-in's check), its time (`endsAt`, at most `ENSEMBLE_TAKEOVER_SECONDS`, 15 minutes), a minute without input or ping, the tab closing, or `stopRemoteWork`; ending it itself, the computer says so at `ROUTES.takeoverState`. A tab it marked sensitive is given back; a sign-in's stays paused for its card. The computer reports `capabilities.takeover: 1`.
+
+**Saved logins.** `<data>/logins.json`, mode 0600: per site (an https origin, or this computer's own http address) the user name, password and an optional one-time-code seed, each encrypted with the runtime's local key (`lib/secrets.ts`), with when it was saved and last used. Kept apart from run secrets and never sent anywhere: the server hears only whether one is saved for the site of a card. `ensemble browser logins`, `save-login`, `forget-login` ([26](26_CLI.md)) use the local `GET`, `PUT` and `DELETE /api/browser/logins` (refused on the web). The computer reports `capabilities.logins: 1`.
+
+**Denied to runs.** `browserDeniedPaths()` returns `<data>/browser` and `<data>/capture`: the profiles' cookies and capture's lease file. They are in Ensemble's own data, which the guard refuses and every OS sandbox backend denies wherever this runtime keeps it, the testing CLI's folder and `ENSEMBLE_DATA_HOME`'s included (`ensembleDataDenies`, [24 §3](24_DESKTOP_SANDBOXING.md#3-work-folder-and-outside-access)).
+
+### 10.2 Capture service
+
+| Target | Screenshot | Video |
+| --- | --- | --- |
+| `web` | A URL opened in a private tab (viewport, device, full page, element), or one of the operation's tabs | Real time or frame-stepped |
+| `electron` | The app's window, from Playwright's Electron launch with the app's own `node_modules/electron` | Real time or frame-stepped |
+| `gui` | Any program started by `capture_app_start` on a private virtual display, grabbed with `ffmpeg -f x11grab` | Real time |
+| `terminal` | A transcript (with its colours) as HTML, or rendered to PNG by Chromium | — |
+| `desktop` | The real screen is refused: not supported | — |
+
+**Virtual displays** (Linux). Each app gets an Xvfb server that picks a free display (`-displayfd`), takes no TCP connections and accepts only its own cookie, kept in a private folder in `$XDG_RUNTIME_DIR` (else the temporary folder) so that an app in the OS sandbox can still read it; plus the first window manager installed (openbox, matchbox, fluxbox, icewm, jwm, xfwm4, metacity, twm). The app's environment has that display and no Wayland socket or session bus, so it never opens on the owner's screen.
+
+**Apps run in the OS sandbox.** An app started for capture runs its own code, so it starts through the runtime's `wrapCommand` (`configureCapture`; `captureAppWrapper` in `capture/sandbox.ts`), which confines it as `prepareSpawn` does for agent commands ([24](24_DESKTOP_SANDBOXING.md)): its folder and the cache writable, the agent environment (no credential variables, the cache's home) plus the variables the call gave it, Ensemble's data, keys and the browser profiles denied. On Linux the sandbox gives the app back what its private display needs and nothing more: that display's X socket, bound read-only at `/tmp/.X11-unix/X<n>` under the sandbox's own `/tmp` (`sockets` in `SandboxPolicy`, bubblewrap; Landlock shares `/tmp`), and its cookie's folder; another display, the owner's included, is out of reach. The app's internet follows the work's setting; an Electron app keeps the computer's network, because Playwright drives it over a local debugging port, and runs without Chromium's own sandbox, which cannot nest inside the OS sandbox. Electron goes through a small launcher script that does the same. The folder may not be the home folder, a system folder, or one that holds keys or Ensemble's data. Without a wrapper, `capture_app_start` is refused unless the call says the owner allowed this work to run apps unsandboxed (`unsandboxedApps`). Its window is found by process id (its own or a child's) through xdotool, wmctrl or xwininfo with xprop; else by title; else as the only window; else the whole display is used.
+
+**Frame-stepped video** freezes the page's time and moves it one frame at a time: Playwright's clock for timers, animation frames, `Date` and `performance.now()`; the Web Animations API for CSS animations and transitions (those running when recording starts are seeked from their beginning); and `window.__ensembleSeek(ms)` for code with its own clock. Each frame is a masked screenshot, so frame n is at exactly n/fps seconds however busy the computer is. Real-time video takes the page's screencast and resamples it to a constant rate.
+
+**Media.** MP4 (H.264) when a system ffmpeg has `libx264` or `libopenh264`; otherwise WebM (VP9 or VP8) with Playwright's own ffmpeg. `ENSEMBLE_FFMPEG` names an ffmpeg to try first; each one found is asked what it can encode (`capture/ffmpeg.ts`). Each video has a poster (`<name>.poster.jpg`, or `.png` for a desktop app) and a preview no wider than 320 pixels (`<name>.preview.jpg` or `.png`). Videos stop at two minutes unless the caller raises the limit (`maxVideoMs`, the owner's setting). Size, length, frames and dimensions are read from the written file (`capture/probe.ts`). Files never overwrite each other.
+
+**Privacy.** Web and Electron captures are masked and scanned as in §10.1; a real-time video of an Electron window records no frames of a site the owner never wants captured. A desktop app's window cannot be checked for secrets here, so its captures are always held. Transcripts are redacted before they are written, so they are not held.
+
+**Leases.** Displays, window managers, apps and recordings are process groups under leases (`capture/leases.ts`, recorded in `<data>/capture/leases.json`), and each process carries its lease's id in `ENSEMBLE_CAPTURE_LEASE`. An app's lease runs 30 minutes from its last use. The janitor (every 10 s) ends leases that expired and leases whose process ended; an app's display goes with it. When the runtime exits it kills them all. At start-up (`startCapture`, or the first capture) it stops what a runtime that is no longer running left behind. A group is signalled only while its leader is the process recorded (by start time), or, once the leader is gone, while a member still carries the lease's id (read from `/proc` on Linux), so a reused process id is never hit.
+
+**Checks before sending** (`capture_check`, in the `Check` shape of `node/report.ts`):
+
+| Kind | Passes when |
+| --- | --- |
+| `app` | The app still runs after `aliveSec` (3 s by default); a window is open, with the expected title; its output shows no crash |
+| `image` | The image is not blank: no colour covers 99.5% of it, and its contrast is above 1.5 |
+| `text` | The page or window shows every expected string, in its text or accessible names |
+
+### 10.3 What a computer can capture
+
+`captureCapabilities()` reports the browser and its revision, each ffmpeg and its encoders, the video format, the virtual display pieces, and for each target whether screenshots and video work, with the reason when not. On macOS it also reports the Screen Recording permission, which web pages and Electron apps do not need.
+
+| | Web | Electron | Other apps | Real desktop |
+| --- | --- | --- | --- | --- |
+| Linux (X11, Wayland or no screen) | Yes | With Xvfb | With Xvfb and the system's ffmpeg | No |
+| macOS | Yes | Yes; the window shows on the screen | No | No |
+| Windows | Yes | No | No | No |
+
+`ensemble capture status` prints this. A paired computer reports a summary on every heartbeat (`capabilities.capture`: `browser` (a Chromium for Ensemble is installed), `video` (`mp4`, `webm` or null), `targets` (each with `screenshot`, `video` and `reason`) and `setup` (whether `ensemble capture setup` or one system command would add something)), with `capabilities.browser` 1: the web offers a node's browser and capture calls only to such a computer, and says to update Ensemble, or to run `ensemble capture setup`, otherwise. `ensemble capture setup` installs Playwright's Chromium and ffmpeg into `<data>/playwright` with Playwright's own installer and prints the one command for system packages, for example `sudo apt install xvfb ffmpeg openbox xdotool`; it never runs sudo ([26](26_CLI.md)).
+
+### 10.4 Tests and limits
+
+`src/logins/logins.test.ts` and `src/node/logins.integration.test.ts` cover sign-ins and saved logins, `src/takeover/takeover.test.ts` and `src/node/takeover.integration.test.ts` taking over ([35 §11](35_ENSEMBLE_NODE.md#11-verification)). `src/browser/broker.integration.test.ts` and `src/capture/capture.integration.test.ts` drive a headless Chromium against a local server, including a one-second CSS animation recorded at 30 fps and checked frame by frame in the encoded video; `src/browser/browser.test.ts`, `src/capture/capture.test.ts` and `src/capture/leases.test.ts` cover the rest without a browser; `src/capture/runtime.test.ts` the owner's privacy rules as the runtime gives them, and `src/capture/sandbox.test.ts` an app in bubblewrap reaching its own display's socket and cookie and not another display, Ensemble's data or a credential variable. Parts that need Xvfb, Electron or an H.264 encoder skip, saying so, where those are missing.
+
+There is no text recognition in images, so a desktop app's captures are always held. Other desktop apps on macOS, anything on Windows beyond web pages, and the real screen are not captured.

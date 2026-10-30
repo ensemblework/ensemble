@@ -8,6 +8,8 @@ import { lastUndoId, recordUndoInTransaction } from "../lib/undo.js";
 import { loadSettings } from "../lib/settings.js";
 import { assertOwned, createReminder, softDelete } from "../services/records.js";
 import { collabHub } from "../pages/live.js";
+import { accountIdOf } from "../lib/auth.js";
+import { answerRequestedMove } from "../services/tasks.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -31,6 +33,20 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.userId;
     const existing = await prisma.task.findFirst({ where: { id, userId, deletedAt: null } });
     if (!existing) return reply.code(404).send({ error: "Task not found." });
+    // Out of `proposed`, a task someone asked for in a room answers its request, or the move is refused (services/tasks.ts).
+    if (existing.status !== body.status) {
+      try {
+        const answered = await answerRequestedMove({ accountId: accountIdOf(request), task: existing, status: body.status });
+        if (answered) {
+          sseHub.publish(userId, { event: "task", data: { id, action: "move" } });
+          return { task: { id, status: answered.task.status, boardOrder: answered.task.boardOrder }, undoEntryId: null, answered: answered.message };
+        }
+      } catch (error) {
+        const status = (error as { statusCode?: number }).statusCode;
+        if (!status) throw error;
+        return reply.code(status).send({ error: (error as Error).message });
+      }
+    }
 
     const [before, after] = await Promise.all([
       body.beforeId ? prisma.task.findFirst({ where: { id: body.beforeId, userId, deletedAt: null }, select: { boardOrder: true } }) : null,

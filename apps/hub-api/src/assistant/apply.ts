@@ -12,7 +12,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { withUndoGroup } from "../lib/undo.js";
 import { safePublicError } from "../lib/text.js";
 import { ensureAppAccess } from "./apps.js";
-import type { AnyHubTool, ToolContext, ToolResult } from "./types.js";
+import type { AnyHubTool, CallSpace, ToolContext, ToolResult } from "./types.js";
 
 export interface PlannedCall {
   call?: { callId?: string };
@@ -59,13 +59,15 @@ export async function runOutsideWrite(ctx: Omit<ToolContext, "tx">, tool: AnyHub
 }
 
 export type CallOutcome =
-  | { ok: true; result: ToolResult }
+  /** `undoEntryId`: the Undo entry of the call's space's batch (Hub writes only). `space`: where a call that names one acted. */
+  | { ok: true; result: ToolResult; undoEntryId?: string | null; space?: CallSpace }
   /** `attempted` is false when the call never ran because an earlier one in the batch failed. */
   | { ok: false; error: string; attempted: boolean };
 
 export interface AppliedBatch {
   /** One per planned call, in the same order. */
   outcomes: CallOutcome[];
+  /** The first Undo entry the batch made (one per space when its calls act in several). */
   undoEntryId: string | null;
   /** Some calls landed and some did not. */
   partial: boolean;
@@ -81,6 +83,11 @@ const failure = (error: unknown): string => safePublicError(error, "That change 
  * fails. Throws only when nothing ran, so a retry is safe. Once something has
  * landed it returns an outcome per call instead, so the caller can record what
  * happened and never run the landed calls again.
+ *
+ * Calls that name a space (an Ensemble Node acting for its owner, node/spaces.ts)
+ * are checked there again first, with the access the person has now. Hub writes
+ * then run in one transaction and Undo entry per space, in that space's scope, so
+ * each entry lands in the space it changed.
  */
 export async function applyHeldCalls(
   app: FastifyInstance,
@@ -88,34 +95,59 @@ export async function applyHeldCalls(
   planned: readonly PlannedCall[],
 ): Promise<AppliedBatch> {
   const outcomes: CallOutcome[] = new Array(planned.length);
-  const hub = planned.map((item, index) => ({ ...item, index })).filter((item) => !isOutsideWrite(item.tool));
-  let undoEntryId: string | null = null;
-  if (hub.length) {
-    // A batch can be dozens of writes (a cleared board); Prisma's 5 s default would roll it all back.
-    const grouped = await app.prisma.$transaction(
-      (tx) =>
-        withUndoGroup(tx, { userId: base.userId, actor: "agent", subject: hub[0]!.tool.name }, async () => {
-          const rows: ToolResult[] = [];
-          for (const item of hub) rows.push(await item.tool.run({ ...base, tx }, item.input as never));
-          return rows;
-        }),
-      { timeout: 30_000, maxWait: 10_000 },
-    );
-    grouped.result.forEach((result, position) => {
-      outcomes[hub[position]!.index] = { ok: true, result };
-    });
-    undoEntryId = grouped.undoEntryId;
+  const spaces = await Promise.all(planned.map((item) => item.tool.spaceFor?.(base, item.input)));
+  const contextOf = (index: number): Omit<ToolContext, "tx"> => spaces[index]?.context(base) ?? base;
+  const within = <T>(space: CallSpace | undefined, work: () => Promise<T>): Promise<T> => (space ? space.run(work) : work());
+  const groups = new Map<string, Array<PlannedCall & { index: number }>>();
+  for (const [index, item] of planned.entries()) {
+    if (isOutsideWrite(item.tool)) continue;
+    const key = spaces[index]?.id ?? base.userId;
+    groups.set(key, [...(groups.get(key) ?? []), { ...item, index }]);
   }
-  let landed = hub.length > 0;
+  let undoEntryId: string | null = null;
+  let landed = false;
   let stopped = false;
+  for (const [spaceId, hub] of groups) {
+    if (stopped) {
+      for (const item of hub) outcomes[item.index] = { ok: false, error: NOT_ATTEMPTED, attempted: false };
+      continue;
+    }
+    const space = spaces[hub[0]!.index];
+    const ctx = contextOf(hub[0]!.index);
+    try {
+      // A batch can be dozens of writes (a cleared board); Prisma's 5 s default would roll it all back.
+      const grouped = await within(space, () =>
+        app.prisma.$transaction(
+          (tx) =>
+            withUndoGroup(tx, { userId: spaceId, actor: "agent", subject: hub[0]!.tool.name }, async () => {
+              const rows: ToolResult[] = [];
+              for (const item of hub) rows.push(await item.tool.run({ ...ctx, tx }, item.input as never));
+              return rows;
+            }),
+          { timeout: 30_000, maxWait: 10_000 },
+        ),
+      );
+      grouped.result.forEach((result, position) => {
+        outcomes[hub[position]!.index] = { ok: true, result, undoEntryId: grouped.undoEntryId, ...(space ? { space } : {}) };
+      });
+      undoEntryId ??= grouped.undoEntryId;
+      landed = true;
+    } catch (error) {
+      if (!landed) throw error;
+      for (const item of hub) outcomes[item.index] = { ok: false, error: failure(error), attempted: true };
+      stopped = true;
+    }
+  }
   for (const [index, item] of planned.entries()) {
     if (!isOutsideWrite(item.tool)) continue;
     if (stopped) {
       outcomes[index] = { ok: false, error: NOT_ATTEMPTED, attempted: false };
       continue;
     }
+    const space = spaces[index];
     try {
-      outcomes[index] = { ok: true, result: await runOutsideWrite({ ...base, toolCallId: item.call?.callId ?? base.toolCallId }, item.tool, item.input) };
+      const result = await within(space, () => runOutsideWrite({ ...contextOf(index), toolCallId: item.call?.callId ?? base.toolCallId }, item.tool, item.input));
+      outcomes[index] = { ok: true, result, ...(space ? { space } : {}) };
       landed = true;
     } catch (error) {
       if ((error as { partial?: boolean })?.partial) landed = true;

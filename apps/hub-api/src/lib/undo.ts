@@ -15,7 +15,7 @@ import { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
-import { actorFor, currentScope, isVisitor, type RequestScope } from "../sharing/context.js";
+import { actorFor, currentScope, isVisitor, nodeActingIn, type RequestScope } from "../sharing/context.js";
 import { syncFileText } from "../files/visibility.js";
 import { tidyUndoLabel } from "./undo-label.js";
 
@@ -294,6 +294,8 @@ async function writeEntry(
   const seq = (last?.seq ?? 0n) + 1n;
   const id = randomUUID();
   const ops = encodeSnapshot(input.patches) as Prisma.InputJsonValue;
+  // An Ensemble Node acting for the person (node/spaces.ts) is named on the entry: `node:<id>`.
+  const node = nodeActingIn(input.userId);
   await db.undoEntry.create({
     data: {
       id,
@@ -308,7 +310,7 @@ async function writeEntry(
       inverse: ops,
       forward: ops,
       ops,
-      source: input.source ?? (input.actor === "agent" ? "assistant" : "ui"),
+      source: input.source ?? (node ? `node:${node}` : input.actor === "agent" ? "assistant" : "ui"),
       groupId: id,
     },
   });

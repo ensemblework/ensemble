@@ -11,6 +11,7 @@
  * scope is treated as once. There is no device unpair route.
  */
 import { z } from "zod";
+import { SealedShape } from "../credentials/seal.js";
 
 export const ROUTES = {
   register: "/api/devices/register",
@@ -39,6 +40,20 @@ export const ROUTES = {
   codeAnswer: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}`,
   /** Output of a terminal command the web started here, in order (protocol 4). */
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
+  /** A file the run's worker attached, as raw bytes with `EVIDENCE_HEADERS` (protocol 6). */
+  evidence: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/evidence`,
+  /** Output of a node tool command, in order, past what its answer carried (protocol 6, `node.tool.request`). */
+  toolOutput: (runId: string) => `/api/devices/self/tool-runs/${encodeURIComponent(runId)}/output`,
+  /** A file the web asked for by an upload id (protocol 7): a node's capture, or a held file released or previewed. */
+  evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
+  /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
+  liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
+  /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
+  runLogin: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/logins`,
+  /** One encrypted frame of a tab the owner controls from the web (protocol 8, B21): the server keeps only the latest, for seconds. */
+  takeoverFrame: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/frames`,
+  /** The computer ended a takeover itself (its time ran out, the tab closed, nobody watched). */
+  takeoverState: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/state`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -80,8 +95,24 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * going (`ROUTES.reattach`), and asks to carry on a run it lost by restarting (`ROUTES.resume`); a
  * claim may carry `resume`, which the computer runs in the earlier run's folder and agent session.
  * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
+ * 6 (3 Nov 2026): a claim may carry `secrets` (the saved secrets the run may have; absent: all of them);
+ * complete may carry the worker's `report` (node/report.ts StepReport); the files a worker attached go to
+ * `ROUTES.evidence` before complete; the server may send `node.tool.request` (a node's own tool call on
+ * this computer, `capabilities.nodeTools`), whose long output goes to `ROUTES.toolOutput`.
+ * 7 (16 Nov 2026): an evidence file's description may say it is held for the owner's preview (`held`,
+ * `holdReason`; its bytes stay here), that it is a video's poster or preview (`variantOf`, `variant`)
+ * and what capture measured (`details`); `node.tool.request` may carry a browser or capture tool
+ * (`capabilities.browser`), whose files go to `ROUTES.evidenceUpload`; the server may send
+ * `evidence.request` (preview, release or discard a file kept here); a run's live view goes to
+ * `ROUTES.liveFrame`.
+ * 8 (17 Nov 2026): a browser tool's answer may say its tab waits for the owner to sign in (`login`,
+ * B11, `capabilities.logins`); the server sends the owner's answer as `login.resolve`; a run's agent
+ * that needs a sign-in tells the server at `ROUTES.runLogin`, which raises the card where the run is
+ * followed. The owner may control a tab from the web (B21, `capabilities.takeover`): the server sends
+ * `takeover.start`, `takeover.input` and `takeover.end`; the computer sends encrypted frames to
+ * `ROUTES.takeoverFrame` and says when it ended a takeover itself at `ROUTES.takeoverState`.
  */
-export const PROTOCOL = 5;
+export const PROTOCOL = 8;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
 export const MAX_AUTO_RESUMES = 2;
 /** A run interrupted longer ago than this is not carried on by itself. */
@@ -106,6 +137,20 @@ export const LOG_JOB_BYTES = 2 * 1024 * 1024;
 export const ONLINE_WINDOW_MS = 90_000;
 
 const text = (max: number) => z.string().max(max);
+
+/** Worktree and branch names Ensemble makes: letters, digits and . _ - / only, never starting with - or . */
+const RefName = z.string().max(200).regex(/^(?![-.])[A-Za-z0-9._/-]+$/).refine((value) => !value.includes("..") && !value.endsWith(".lock") && !value.endsWith("/"));
+
+export const MissionSpec = z.object({
+  id: text(100).min(1),
+  step: text(100).min(1),
+  /** Work in this git worktree of the shared folder: on `branch` (made from the folder's last commit when new), or detached; `reuse`: a check of a build, in that build's worktree. */
+  worktree: z.object({ name: z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), branch: RefName.nullish(), detached: z.boolean().optional(), reuse: z.boolean().optional() }).nullish(),
+  port: z.number().int().min(1024).max(65535).nullish(),
+  /** An integration step's worktrees (names): removed after it succeeds, when clean and nothing would be lost. */
+  integrates: z.array(z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)).max(20).nullish(),
+});
+export type MissionSpec = z.infer<typeof MissionSpec>;
 
 /** The job spec claim returns: instructions, repo URL, folder label, delivery, model id. No argv. */
 export const JobSpec = z
@@ -167,9 +212,32 @@ export const JobSpec = z
     resume: z.object({ reason: text(300), attempt: z.number().int().min(1).max(10) }).nullish(),
     /** This run changes the one it continues, which was interrupted for it (Ensemble Node's steer). Older servers omit it. */
     steer: z.object({ update: text(8000) }).nullish(),
+    /**
+     * The saved secrets this run may have in its environment, by name (protocol 6): an Ensemble Node run
+     * lists the ones its step or mission names, possibly none. Absent: every saved secret, as before.
+     */
+    secrets: z.array(text(64)).max(100).nullish(),
+    /**
+     * An Ensemble Node plan step's run (B13): its mission and step, the git worktree of the shared folder it
+     * works in, its development-server port, and the worktrees an integration step brings in. Older servers
+     * omit it; an older computer ignores it and works in the folder itself. Read with `parseMission`, so a
+     * value this computer does not understand never refuses the whole job.
+     */
+    mission: z.unknown().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
+
+/** A claim's (or a job context's) `mission`, when it is a valid one. */
+export function parseMission(value: unknown): MissionSpec | null {
+  const parsed = MissionSpec.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** A job's `context.mission`, when it is a valid one. */
+export function missionOf(context: unknown): MissionSpec | null {
+  return parseMission(typeof context === "object" && context !== null ? (context as { mission?: unknown }).mission : undefined);
+}
 
 /** Claim answers 204 when there is nothing, or the spec, bare or under `job`. */
 export function parseClaim(body: unknown): JobSpec {
@@ -263,6 +331,21 @@ export const MAX_UPLOADED_STEPS = 800;
 /** About how much step text one progress post carries; the rest goes on the next post. */
 export const STEP_POST_BYTES = 1_000_000;
 
+/**
+ * What the engine reported the run went with (workspace/engines/observed.ts): the model it started on,
+ * the thinking level and context window it said it used (the window in tokens too), and fast mode. A
+ * field the engine did not report is left out; the server shows it as "not reported". Sent on progress
+ * when it changes and on complete (`RunTotals.observed`); servers before 2 November 2026 ignore it.
+ */
+export const ObservedSettings = z.object({
+  model: text(200).nullish(),
+  effort: text(40).nullish(),
+  context: z.enum(["default", "long_context"]).nullish(),
+  contextTokens: z.number().int().positive().max(100_000_000).nullish(),
+  fast: z.boolean().nullish(),
+});
+export type ObservedSettings = z.infer<typeof ObservedSettings>;
+
 /** What a computer reports when a run ends: the model that answered, counts, its cost estimate, files changed (names and line counts only). */
 export const RunTotals = z.object({
   model: text(200).nullish(),
@@ -277,6 +360,8 @@ export const RunTotals = z.object({
     .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional() }))
     .max(200)
     .default([]),
+  /** What the engine reported it ran with. */
+  observed: ObservedSettings.optional(),
 });
 export type RunTotals = z.infer<typeof RunTotals>;
 
@@ -409,3 +494,315 @@ export const TerminalChunk = z.object({
   exitCode: z.number().int().min(-1).max(1_000_000).nullish(),
 });
 export type TerminalChunk = z.infer<typeof TerminalChunk>;
+
+// ── evidence (protocol 6) ───────────────────────────────────────────────────
+
+/** What a worker may attach (evidence/limits.ts holds the size limits and the content checks). */
+export const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log", "file"] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+/** What capture measured about a file: its size in pixels, a video's length, rate, frames and codec. */
+export const EvidenceDetails = z
+  .object({
+    width: z.number().int().min(0).max(100_000).optional(),
+    height: z.number().int().min(0).max(100_000).optional(),
+    durationMs: z.number().int().min(0).max(86_400_000).optional(),
+    fps: z.number().int().min(0).max(1000).optional(),
+    frames: z.number().int().min(0).max(10_000_000).optional(),
+    codec: text(40).optional(),
+  })
+  .strict();
+export type EvidenceDetails = z.infer<typeof EvidenceDetails>;
+
+/** Headers of an evidence upload: the job's lease, and `EvidenceMeta` as base64url JSON. The body is the file's bytes. */
+export const EVIDENCE_HEADERS = { lease: "x-ensemble-job-lease", meta: "x-ensemble-evidence" } as const;
+
+/**
+ * One attached file, as the computer describes it. `local`: evidence upload is off on that computer
+ * (`ensemble evidence off`), so only this goes up and the body is empty; the web shows the file as on
+ * the computer, not uploaded.
+ */
+export const EvidenceMeta = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum(EVIDENCE_KINDS),
+    name: text(200).min(1),
+    size: z.number().int().min(0).max(200 * 1024 * 1024),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    /** The type the computer sniffed; the server sniffs uploaded bytes itself and uses this only for `local`. */
+    mime: text(100).nullish(),
+    caption: text(300).nullish(),
+    requirementId: text(80).nullish(),
+    local: z.boolean().default(false),
+    /** Protocol 7: kept here for the owner to preview first; like `local`, no bytes come with it. */
+    held: z.boolean().optional(),
+    holdReason: text(300).nullish(),
+    /** Protocol 7: a video's poster or small preview image, and the video's id. */
+    variantOf: z.string().uuid().nullish(),
+    variant: z.enum(["poster", "preview"]).nullish(),
+    /** Protocol 7: what capture measured. */
+    details: EvidenceDetails.nullish(),
+  })
+  .strict();
+export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
+
+// ── node tools (protocol 6) ─────────────────────────────────────────────────
+
+/** `capabilities.nodeTools`: this computer answers `node.tool.request` (a node's own tool calls). */
+export const NODE_TOOLS_API = 1;
+/** What one node tool answer carries inline; a command's longer output goes to `ROUTES.toolOutput`. */
+export const NODE_TOOL_INLINE_BYTES = 64 * 1024;
+/** A command still going after this becomes a background tool run that wakes the node when it ends. */
+export const NODE_TOOL_FOREGROUND_MS = 60_000;
+/** The longest a node's command may run; longer work is an agent session. */
+export const NODE_TOOL_MAX_SECONDS = 900;
+/** What one tool run may print in all; past this the computer stops sending and says so. */
+export const NODE_TOOL_OUTPUT_BYTES = 1024 * 1024;
+/** A file a node may write in one call. */
+export const NODE_TOOL_WRITE_BYTES = 1024 * 1024;
+
+/** An answer the owner gave in Needs me for a node's tools: once, for this mission, or always for the folder or address. */
+export const NodeToolGrant = z.object({ id: text(100).min(1), scope: z.enum(["once", "mission", "always"]), target: text(4096).min(1) }).strict();
+export type NodeToolGrant = z.infer<typeof NodeToolGrant>;
+
+const NodeToolBase = z.object({
+  id: text(100).min(1),
+  nodeId: text(100).min(1),
+  /** The mission (plan) or conversation the call is for: an answer for "This mission" covers it. */
+  mission: text(200).min(1),
+  /** Attended: the first use per folder or address asks the owner once. Unattended: allowed inside the sandbox. */
+  attended: z.boolean(),
+  /** Answers from Needs me this computer has not used yet; it applies the one for the call's folder or address. */
+  grants: z.array(NodeToolGrant).max(20).default([]),
+  /** The call's operation id: the ledger entry names it. */
+  operationId: text(200).optional(),
+});
+
+const Folder = text(4096).min(1);
+
+/** A node's browser or capture tool call (protocol 7). */
+const CaptureCall = {
+  /** The tool's name (`browser_open`, `capture_screenshot`, …) and its input, validated on the computer by the tool layer. */
+  name: text(60).regex(/^(browser|capture)_[a-z_]+$/),
+  input: z.record(z.string().max(100), z.unknown()).default({}),
+  /** The node's tool operation on this computer (`node:<nodeId>:<mission>`): its tabs, apps and files. */
+  operation: text(300).regex(/^node:[A-Za-z0-9-]{1,64}:[A-Za-z0-9:_-]{1,200}$/),
+  /** Where the files it writes go (`ROUTES.evidenceUpload`). */
+  uploadId: text(100).min(1),
+  /** Whether it may use the internet (the node's run profile): without, only this computer's own addresses. */
+  network: z.boolean().default(true),
+};
+
+/**
+ * `node.tool.request` on the event stream: one tool call of a node, run and judged here (docs/25 §4.10).
+ * The answer is a `CodeAnswer`: 200 with the result, 202 for a command still running (its output follows
+ * on `ROUTES.toolOutput` and its end wakes the node), 428 when the owner must answer once in Needs me
+ * (`body.ask`), 403 for the hard floor, 409 when it is switched off or cannot run here.
+ */
+export const NodeToolRequest = z.discriminatedUnion("tool", [
+  NodeToolBase.extend({
+    tool: z.literal("run"),
+    folder: Folder,
+    /** A subfolder to run in, inside the folder. */
+    cwd: text(1000).optional(),
+    command: text(4000).min(1),
+    timeoutSec: z.number().int().min(1).max(NODE_TOOL_MAX_SECONDS).default(120),
+    /** Answer at once and run in the background; its end wakes the node. */
+    background: z.boolean().default(false),
+    /** Saved secrets for this command's environment only, by name. */
+    secrets: z.array(text(64)).max(20).default([]),
+    /** Where its output goes when it does not fit the answer, or runs on. */
+    runId: text(100).min(1),
+    /** The git ceiling of the node's run profile, for git commands. */
+    delivery: z.enum(["local", "commit", "push"]).default("local"),
+    network: z.boolean().default(true),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("git"),
+    folder: Folder,
+    op: z.enum(["status", "diff", "log", "show", "branch"]),
+    args: z.array(text(500)).max(20).default([]),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("http"),
+    url: text(2000).min(1),
+    method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).default("GET"),
+    body: z.string().max(NODE_TOOL_INLINE_BYTES).optional(),
+    contentType: text(200).optional(),
+  }),
+  NodeToolBase.extend({
+    tool: z.literal("files"),
+    action: z.enum(["write", "move", "delete"]),
+    folder: Folder,
+    path: text(1000).min(1),
+    /** move: the new path, inside the same folder. */
+    to: text(1000).optional(),
+    /** write: the file's whole new text. */
+    content: z.string().max(NODE_TOOL_WRITE_BYTES).optional(),
+  }),
+  /** A request with a saved secret put in where {{ref}} appears (B12, `capabilities.secretHttp`; credentials/secret-http.ts). */
+  NodeToolBase.extend({
+    tool: z.literal("secret_http"),
+    ref: text(80).min(2),
+    url: text(2000).min(1),
+    method: z.enum(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]).default("GET"),
+    headers: z.record(text(100), text(8000)).optional(),
+    body: z.string().max(NODE_TOOL_INLINE_BYTES).optional(),
+  }),
+  NodeToolBase.extend({ tool: z.literal("browser"), ...CaptureCall }),
+  NodeToolBase.extend({ tool: z.literal("capture"), ...CaptureCall }),
+]);
+export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
+
+/** `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`, protocol 7). */
+export const BROWSER_API = 1;
+
+/** What a node's browser or capture tool call answers: the tool's summary and result, and the files it kept as evidence. */
+export const NodeCaptureAnswer = z.object({
+  ok: z.boolean(),
+  summary: z.string().max(200_000).optional(),
+  result: z.unknown().optional(),
+  error: z.object({ code: text(40), message: text(2000) }).optional(),
+  evidence: z
+    .array(z.object({ id: z.string().uuid(), name: text(200), kind: text(20), held: z.boolean(), holdReason: text(300).nullish(), local: z.boolean(), variantOf: z.string().uuid().nullish() }))
+    .max(40)
+    .default([]),
+  /** Files the computer did not keep (a saved secret's value in it, too large), with why. */
+  refused: z.array(z.object({ name: text(200), reason: text(300) })).max(40).default([]),
+  /** The tab now waits for the owner to sign in (protocol 8, B11): the server raises the card. */
+  login: z.lazy(() => LoginRequired).optional(),
+});
+export type NodeCaptureAnswer = z.infer<typeof NodeCaptureAnswer>;
+
+/**
+ * `evidence.request` on the event stream (protocol 7): the owner previews, releases or discards a file
+ * this computer keeps (held, or upload off). Preview and release send the file to `ROUTES.evidenceUpload`
+ * under `uploadId`; discard deletes it here. The answer is a `CodeAnswer`.
+ */
+export const EvidenceRequest = z.object({
+  id: text(100).min(1),
+  evidenceId: z.string().uuid(),
+  action: z.enum(["preview", "release", "discard"]),
+  uploadId: text(100).optional(),
+});
+export type EvidenceRequest = z.infer<typeof EvidenceRequest>;
+
+/** One live view frame of a run's browser tab (`ROUTES.liveFrame`): a small JPEG, or why it paused. */
+export const LiveFramePost = z.object({
+  leaseToken: text(200).min(1),
+  tab: text(20),
+  url: text(4000).default(""),
+  title: text(500).default(""),
+  at: text(40),
+  /** base64 JPEG, at most about 200 KB; absent while paused. */
+  jpeg: z.string().max(300_000).optional(),
+  width: z.number().int().min(0).max(10_000).optional(),
+  height: z.number().int().min(0).max(10_000).optional(),
+  paused: z.enum(["sensitive", "private_site", "secret_on_screen"]).optional(),
+});
+export type LiveFramePost = z.infer<typeof LiveFramePost>;
+
+/** `capabilities.logins`: this computer hands sign-ins to its owner (B11, protocol 8): `login.resolve`, `ROUTES.runLogin`, saved logins. */
+export const LOGINS_API = 1;
+
+const LoginId = z.string().regex(/^lg_[0-9a-f]{32}$/);
+
+/**
+ * A tab waiting for its owner to sign in (B11), as a browser tool's answer carries it (`login`) and a
+ * run reports it (`ROUTES.runLogin`): which site and tab, why, and how the owner can answer. Never a
+ * value; `saved` says only whether a login is saved here for this one site.
+ */
+export const LoginRequired = z.object({
+  loginId: LoginId,
+  origin: text(300).min(1),
+  tab: text(20),
+  profile: text(60).nullable(),
+  reasons: z.array(text(200)).max(6).default([]),
+  saved: z.boolean(),
+  display: z.boolean(),
+  takeover: z.boolean().default(false),
+  expiresAt: text(40),
+});
+export type LoginRequired = z.infer<typeof LoginRequired>;
+
+/** What a run's computer posts when its agent waits for a sign-in (`ROUTES.runLogin`). The answer: `{decisionId}` of the card, or null when the web raises none. */
+export const RunLoginPost = LoginRequired.extend({ leaseToken: text(200).min(1) });
+export type RunLoginPost = z.infer<typeof RunLoginPost>;
+
+/**
+ * `login.resolve` on the event stream (protocol 8): the owner's answer to a sign-in card. `saved`: fill
+ * the login saved here; `local`: show the tab on this computer's screen; `done`: check they signed in;
+ * `typed`: fill what they typed, sealed in their browser for this computer (purpose `login`, the card as
+ * `decisionId`, the sign-in's id as `name`); `decline` (not now) and `expire` end it. The answer is a
+ * `CodeAnswer` whose body is a `LoginResolution`.
+ */
+export const LoginResolve = z.object({
+  id: text(100).min(1),
+  loginId: LoginId,
+  decisionId: text(100).min(1),
+  action: z.enum(["saved", "local", "typed", "done", "decline", "expire"]),
+  sealed: SealedShape.optional(),
+});
+export type LoginResolve = z.infer<typeof LoginResolve>;
+
+export const LoginResolution = z.object({
+  status: z.enum(["signed_in", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy"]),
+  message: text(500).optional(),
+  /** The typed login was saved on this computer, as the owner asked. */
+  savedNow: z.boolean().optional(),
+  code: text(40).optional(),
+});
+export type LoginResolution = z.infer<typeof LoginResolution>;
+
+/** `capabilities.takeover`: the owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8). */
+export const TAKEOVER_API = 1;
+
+/** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
+export const ChannelMessage = z.object({
+  seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  iv: z.string().regex(/^[A-Za-z0-9_-]{16}$/),
+  ct: z.string().regex(/^[A-Za-z0-9_-]+$/).min(22).max(700_000),
+});
+export type ChannelMessage = z.infer<typeof ChannelMessage>;
+
+/**
+ * `takeover.start` on the event stream: the owner opens a tab of this computer from the web. `sealed`
+ * holds the channel's secret, sealed in their browser for this computer (purpose `takeover`, the
+ * takeover's id as `decisionId`, the tab as `name`). The tab is a sign-in's (`loginId`) or a run's
+ * (`jobId`, the hosted job). The answer is a `CodeAnswer`.
+ */
+export const TakeoverStart = z.object({
+  id: text(100).min(1),
+  takeoverId: z.string().uuid(),
+  tab: text(20).regex(/^t\d{1,9}$/),
+  loginId: z.string().regex(/^lg_[0-9a-f]{32}$/).optional(),
+  jobId: z.string().uuid().optional(),
+  sealed: SealedShape,
+  endsAt: text(40),
+});
+export type TakeoverStart = z.infer<typeof TakeoverStart>;
+
+/** `takeover.input`: input from the owner's browser, encrypted for this computer; relayed as it came, without an answer. */
+export const TakeoverInput = ChannelMessage.extend({ takeoverId: z.string().uuid() });
+export type TakeoverInput = z.infer<typeof TakeoverInput>;
+
+/** `takeover.end`: the owner pressed I'm done (`done`: check the sign-in and give the tab back) or Stop, or the server ended it. */
+export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });
+export type TakeoverEnd = z.infer<typeof TakeoverEnd>;
+
+/** What a computer posts when it ends a takeover itself. */
+export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: text(200) });
+
+/** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
+export const NodeToolAsk = z.object({
+  /** `browse`: a page opened in the browser, or captured (protocol 7). */
+  capability: z.enum(["run", "git", "http", "files", "browse"]),
+  /** What the answer covers: the folder's real path, or the address's origin. */
+  target: text(4096).min(1),
+  /** How the card names it: the folder's label or path, or the origin. */
+  label: text(300).min(1),
+  scope: z.enum(["folder", "origin"]),
+  /** The sandbox here is weak: "Always" is not offered for commands, and asks once per mission instead. */
+  weak: z.boolean().default(false),
+});
+export type NodeToolAsk = z.infer<typeof NodeToolAsk>;

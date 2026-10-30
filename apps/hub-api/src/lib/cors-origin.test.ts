@@ -351,3 +351,17 @@ test("Ensemble Node's site joins the hosted allowlist, never the desktop one", a
   const desktop = corsPolicy("http://localhost:3000", true, ["https://node.example.com"]);
   assert.equal(desktop.origins.has("https://node.example.com"), false);
 });
+
+test("a run's live view headers can be read by Node on another origin", async () => {
+  const policy = corsPolicy("https://app.example.com", false);
+  const app = Fastify();
+  await app.register(cors, corsPluginOptions({ ...policy, origins: new Set([...policy.origins, "https://node.example.com"]) }));
+  app.get("/live", async (_request, reply) => reply.header("X-Ensemble-Live-Title", "Docs").send("ok"));
+  try {
+    const response = await app.inject({ method: "GET", url: "/live", headers: { origin: "https://node.example.com" } });
+    const exposed = String(response.headers["access-control-expose-headers"] ?? "");
+    for (const name of ["X-Ensemble-Live-Title", "X-Ensemble-Live-Paused", "X-Ensemble-Live-Width"]) assert.ok(exposed.includes(name), name);
+  } finally {
+    await app.close();
+  }
+});

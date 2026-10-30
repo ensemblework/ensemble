@@ -10,7 +10,8 @@
  * folder (a project or repository) that is inside or around one, is a conflict, settled before the
  * change goes ahead: wait until that run finishes (the call is held), work in a separate copy (a git
  * worktree on its own branch), or work alongside it. Ask and Review only ask on Needs me, and the card
- * closes by itself when the other run lets go first; Run unattended takes the recommended choice.
+ * closes by itself when the other run lets go first; Run unattended takes the recommended choice, and so
+ * do two runs of one Ensemble Node mission (`context.mission`), which take turns as their plan says.
  */
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -22,6 +23,7 @@ import { runTrustedGit } from "./git-gate.js";
 import { OCCUPIED } from "./queue-policy.js";
 import { parseShell } from "./shell-parse.js";
 import { askPerson, DANGEROUS_GIT_CONFIG, grantFolder, grantFolderToRun, outsideArgs, readsOnly, realOutside, type Held, type JobContext } from "./tools.js";
+import { addWorktree } from "./worktrees.js";
 
 /** How often a waiting run looks again. */
 let pollMs = 2_000;
@@ -32,7 +34,13 @@ export function setFolderPollForTests(ms: number | null): void {
 /** Agents that never see why a call was refused (Codex and Cursor get a bare decline): a copy could not be pointed out to them. */
 const DEAF = new Set(["codex", "cursor-agent"]);
 
-export type FolderHolder = { id: string; own: boolean; title: string; agent: string; since: Date; progress: string | null; folder: string };
+export type FolderHolder = { id: string; own: boolean; title: string; agent: string; since: Date; progress: string | null; folder: string; mission: string | null };
+
+/** The Ensemble Node mission a run works for (`context.mission.id`, B13): runs of one mission wait for each other without asking. */
+function missionOfRun(context: unknown): string | null {
+  const id = (context as { mission?: { id?: unknown } } | null | undefined)?.mission?.id;
+  return typeof id === "string" && id ? id : null;
+}
 
 /** `asked`: the person approved this very call (the card showed its command). `answered`: they answered a card about the folder. */
 type Verdict = { held: Held | null; asked: boolean; answered?: boolean };
@@ -48,13 +56,13 @@ function holdings(row: { repoPath: string; externalRoot: string | null; resource
   return [...new Set([row.repoPath, row.externalRoot ?? "", ...row.resourceKeys.filter((key) => key.startsWith("dir:")).map((key) => key.slice(4))].filter(Boolean))];
 }
 
-type LiveRow = { id: string; userId: string; provider: string | null; progress: string | null; startedAt: Date | null; createdAt: Date; repoPath: string; externalRoot: string | null; resourceKeys: string[]; task: { title: string } };
+type LiveRow = { id: string; userId: string; provider: string | null; progress: string | null; startedAt: Date | null; createdAt: Date; repoPath: string; externalRoot: string | null; resourceKeys: string[]; context: unknown; task: { title: string } };
 
 /** The other runs this server or computer is running that may change files. */
 async function liveRuns(prisma: PrismaClient, selfId: string): Promise<LiveRow[]> {
   return (await prisma.workspaceJob.findMany({
     where: { status: { in: [...OCCUPIED] }, deviceId: null, kind: "code", accessMode: { not: "review" }, id: { not: selfId } },
-    select: { id: true, userId: true, provider: true, progress: true, startedAt: true, createdAt: true, repoPath: true, externalRoot: true, resourceKeys: true, task: { select: { title: true } } },
+    select: { id: true, userId: true, provider: true, progress: true, startedAt: true, createdAt: true, repoPath: true, externalRoot: true, resourceKeys: true, context: true, task: { select: { title: true } } },
   })) as LiveRow[];
 }
 
@@ -81,6 +89,7 @@ export async function folderHolder(prisma: PrismaClient, self: { id: string; use
       since: row.startedAt ?? row.createdAt,
       progress: own ? row.progress : null,
       folder: held,
+      mission: own ? missionOfRun(row.context) : null,
     }, wide };
   }
   return { holder: null, wide };
@@ -226,8 +235,7 @@ async function makeCopy(ctx: JobContext, folder: string, holder: FolderHolder): 
   const stem = `ensemble/${slug(ctx.taskTitle) || slug(basename(folder)) || "task"}-${tag}`;
   let branch = stem;
   for (let n = 2; (await runTrustedGit({ userId: ctx.userId, cwd: folder, args: ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], timeoutMs: 15_000 })).exitCode === 0; n += 1) branch = `${stem}-${n}`;
-  const made = await runTrustedGit({ userId: ctx.userId, cwd: folder, args: ["worktree", "add", "-b", branch, target, "HEAD"], timeoutMs: 120_000 });
-  if (made.exitCode !== 0) throw new Error(made.output.trim().split("\n").pop() || "git worktree add failed");
+  await addWorktree({ userId: ctx.userId, folder, path: target, branch, create: true });
   await grantFolderToRun(ctx, target, true);
   await take(ctx, target);
   const copy = { from: folder, folder: target, branch, holder: holder.title };
@@ -307,11 +315,13 @@ async function settle(ctx: JobContext, want: Want, holder: FolderHolder, options
   const now = holder.progress?.trim() ? `, now: ${holder.progress.trim().slice(0, 60)}` : "";
   const wants = options.command ? `this task wants to run ${options.command.slice(0, 120)} there` : "this task needs to change it too";
   const title = `${other} (${holder.agent}, ${minutes} min in${now}) is changing ${name} right now, and ${wants}.${stuck ? " Waiting is not offered: that task is waiting for a folder this one holds." : ""}`;
+  // Two runs of one Ensemble Node mission take turns, as its plan says: nobody is asked.
+  const sameMission = Boolean(holder.mission && holder.mission === missionOfRun(ctx.job.context));
   let choice: string;
-  if (ctx.job.unattended) {
+  if (ctx.job.unattended || sameMission) {
     choice = options_[0]!;
     ctx.decisions?.push({ question: title, options: options_, recommended: choice });
-    await ctx.event("decision", { question: title, options: options_, recommended: choice, by: "unattended" });
+    await ctx.event("decision", { question: title, options: options_, recommended: choice, by: sameMission ? "mission" : "unattended" });
   } else {
     // The card closes by itself if the other run lets go of the folder first.
     const freed = new AbortController();
@@ -344,7 +354,7 @@ async function settle(ctx: JobContext, want: Want, holder: FolderHolder, options
     }
     choice = answer.answer;
   }
-  const answered = !ctx.job.unattended;
+  const answered = !ctx.job.unattended && !sameMission;
   const said = { asked: answered && Boolean(options.command), answered };
   if (choice === choices.copy) {
     try {

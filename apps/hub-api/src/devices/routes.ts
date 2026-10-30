@@ -4,6 +4,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  * client codes against. A device token reaches only `/api/devices/self/*`,
  * and only the device that token belongs to.
  */
+import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -18,6 +19,7 @@ import { loadSettings } from "../lib/settings.js";
 import { decrypt } from "../lib/secrets.js";
 import { PROVIDERS as MODEL_PROVIDERS } from "../runtime/credentials.js";
 import { redactText } from "../lib/redact.js";
+import { secretScopeOf } from "../lib/run-secrets.js";
 import { sliceBytes } from "../lib/text.js";
 import { sseHandler, sseHub } from "../lib/sse.js";
 import {
@@ -45,11 +47,20 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { observedUpdate } from "../workspace/engines/observed.js";
+import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
 import { PageDocument } from "@ensemble/shared-types";
+import { parseReport } from "../node/report.js";
+import { evidenceRoutes } from "../evidence/routes.js";
+import { nodeToolRoutes } from "./tool-runs.js";
+import { pinReportedSealKey, sealKeyOnPairing, sealKeyView } from "../credentials/device-key.js";
+import { liveRoutes } from "./live.js";
+import { loginDeviceRoutes } from "./logins.js";
+import { takeoverDeviceRoutes } from "./takeovers.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -82,6 +93,8 @@ const Progress = z.object({
     .optional(),
   /** The run's steps that changed since the last post: tool calls, thinking, messages (previews). */
   steps: z.array(UploadedStep).max(60).default([]),
+  /** What the engine reported the run goes with, when it changed (workspace/engines/observed.ts). */
+  observed: ObservedSettings.optional(),
 });
 
 const Ask = z.object({
@@ -122,6 +135,8 @@ const Complete = z.object({
   summary: z.string().max(20_000).default(""),
   results: z.array(Result).max(20).default([]),
   totals: RunTotals.optional(),
+  /** The worker's own result (protocol 6), kept on the job when it is a valid StepReport (node/report.ts). */
+  report: z.unknown().optional(),
 });
 
 function deviceJson(device: Device, now = Date.now()) {
@@ -136,6 +151,8 @@ function deviceJson(device: Device, now = Date.now()) {
     createdAt: device.createdAt.toISOString(),
     online: device.revokedAt ? false : deviceOnline(device.lastSeenAt, now),
     revokedAt: device.revokedAt?.toISOString() ?? null,
+    // The key the web encrypts secrets for (pinned at pairing) and its fingerprint, to compare on the computer (B12).
+    ...sealKeyView(device),
   };
 }
 
@@ -187,7 +204,7 @@ async function stillMember(app: FastifyInstance, job: { userId: string; runnerAc
   return Boolean(await app.prisma.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId: job.userId, accountId: job.runnerAccountId } }, select: { id: true } }));
 }
 
-async function holdLease(app: FastifyInstance, device: Device, jobId: string, leaseToken: string): Promise<HeldLease> {
+export async function holdLease(app: FastifyInstance, device: Device, jobId: string, leaseToken: string): Promise<HeldLease> {
   const now = new Date();
   const job = await loadHeldJob(app, device, jobId);
   if (!job || !(await stillMember(app, job))) return { ok: false, status: 404, message: "Job not found." };
@@ -259,6 +276,12 @@ function taskPageMarkdown(content: unknown, notes: string): string {
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+  // A run's evidence (evidence/routes.ts) and a node's tool runs on a computer (devices/tool-runs.ts), with these routes' device checks.
+  await app.register(evidenceRoutes, { ownDevice, holdLease });
+  await app.register(nodeToolRoutes, { ownDevice });
+  await app.register(liveRoutes, { ownDevice, holdLease });
+  await app.register(loginDeviceRoutes, { ownDevice, holdLease });
+  await app.register(takeoverDeviceRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);
@@ -292,6 +315,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         appVersion: body.appVersion,
         tokenId: token.id,
         capabilities,
+        ...sealKeyOnPairing(body.capabilities),
       },
     });
     await prisma.devicePairing.update({ where: { id: pairing.id }, data: { deviceId: device.id } });
@@ -363,6 +387,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const pathError = body.capabilities ? rejectPathLabels(body.capabilities) : null;
     if (pathError) return reply.code(400).send({ error: pathError });
     const now = new Date();
+    if (body.capabilities) await pinReportedSealKey(prisma, device, body.capabilities);
     await prisma.device.update({
       where: { id: device.id },
       data: {
@@ -423,6 +448,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           progress: "Claimed",
       });
       if (!won) continue;
+      // The run it continues was set as it was claimed: the one that actually ran before it (workspace/sessions.ts).
+      Object.assign(next, await claimedLinks(prisma, next.id));
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
       sseHub.publish(next.userId, { event: "task", data: { id: next.taskId, action: "agent" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
@@ -489,6 +516,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         attempt: next.attempt + 1,
         ...(resumeOf(next.context) ? { resume: resumeOf(next.context) } : {}),
         ...(steerOf(next.context) ? { steer: steerOf(next.context) } : {}),
+        // The saved secrets the run may have (an Ensemble Node run's scope); absent: all of them.
+        ...(secretScopeOf(next.context) !== "all" ? { secrets: secretScopeOf(next.context) } : {}),
+        // An Ensemble Node plan step's place: its worktree of the folder, its port (B13). Older computers ignore it.
+        ...(missionOf(next.context) ? { mission: missionOf(next.context) } : {}),
       };
     }
     return reply.code(204).send();
@@ -540,6 +571,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         lastProgressAt: held.now,
         leaseUntil: extended,
         ...(nextStatus === "running" && !held.job.startedAt ? { startedAt: held.now } : {}),
+        ...observedUpdate(body.observed),
       },
     });
     if (won.count !== 1) return reply.code(409).send({ error: LEASE_REJECTED });
@@ -614,7 +646,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           tier: body.tier,
         },
         sessionId: held.job.id,
-        expiresAt: new Date(Date.now() + 24 * 3600_000),
+        // A routine's work (nobody started it in a chat) waits briefly; work its owner started waits a day.
+        expiresAt: new Date(Date.now() + ((await backgroundJob(prisma, held.job.id)) ? backgroundWaitMs() : 24 * 3600_000)),
       },
     });
     await prisma.notification.create({
@@ -686,7 +719,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const held = await holdLease(app, device, id, body.leaseToken);
     if (!held.ok) return reply.code(held.status).send({ error: held.message });
     const results: DeviceResult[] = body.results.map((result) => ({ kind: result.kind, url: result.url, ...(result.sha ? { sha: result.sha } : {}) }));
-    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals });
+    const report = body.report === undefined ? null : parseReport(body.report);
+    if (body.report !== undefined && !report) request.log.warn({ jobId: id }, "a computer sent a report that is not a valid StepReport; it was not kept");
+    const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     return { status: body.outcome };
   });

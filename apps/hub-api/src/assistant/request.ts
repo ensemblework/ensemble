@@ -1,9 +1,11 @@
 import type { FastifyRequest } from "fastify";
+import { NODE_ACCOUNT_HEADER, NODE_HEADER, NODE_SPACE_HEADER } from "../lib/auth.js";
 import type { ToolContext } from "./types.js";
 
+/** The credentials a route-backed tool forwards: the person's own, an internal call's, or a node's delegated identity. */
 export function assistantHeaders(request: Pick<FastifyRequest, "headers">): Record<string, string> {
   const headers: Record<string, string> = {};
-  for (const key of ["authorization", "cookie", "origin", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor", "x-ensemble-user", "x-ensemble-internal"]) {
+  for (const key of ["authorization", "cookie", "origin", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor", "x-ensemble-user", "x-ensemble-internal", NODE_ACCOUNT_HEADER, NODE_SPACE_HEADER, NODE_HEADER]) {
     const value = request.headers[key];
     if (typeof value === "string") headers[key] = value;
   }

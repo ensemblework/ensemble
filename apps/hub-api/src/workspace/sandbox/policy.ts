@@ -47,6 +47,12 @@ export interface SandboxPolicy {
   advisoryOk?: boolean;
   /** Merged into the Seatbelt process-exec deny. Ignored where there is no OS sandbox. */
   extraExecDeny?: string[];
+  /**
+   * Unix sockets the command may connect to, bound read-only at `at` (an app started for capture
+   * reaches its private X display's socket under the sandbox's own /tmp). bubblewrap only: Landlock
+   * shares /tmp, so a socket there is reachable at its own path; Seatbelt keeps every Unix socket shut.
+   */
+  sockets?: Array<{ path: string; at: string }>;
 }
 
 export interface SpawnCommand {

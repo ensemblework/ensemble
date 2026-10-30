@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/shared-types",
-  "version": "0.4.24",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -20,12 +20,14 @@
     "./page-schema": "./src/page-schema.ts",
     "./page-images-testing": "./src/page-images-testing.ts",
     "./version": "./src/version.ts",
+    "./seal": "./src/seal.ts",
+    "./takeover": "./src/takeover.ts",
     "./desk-layout": "./src/desk-layout.ts",
     "./workspace-tiles": "./src/workspace-tiles.generated.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/shortcuts.test.ts src/plots.test.ts src/plots-pack.test.ts src/plots-pool.test.ts src/plots-sample.test.ts src/cookie-site.test.ts src/desktop-discovery.test.ts src/ensemble-hook.test.ts src/release-versions.test.ts src/settings-map.test.ts src/model-efforts.test.ts src/claude-models.test.ts src/included.test.ts src/avatars.test.ts src/account.test.ts src/page-markdown.test.ts src/page-images.test.ts src/page-merge.test.ts src/files.test.ts src/connector-guides.test.ts src/assistant-text.test.ts"
+    "test": "node --import tsx --test src/shortcuts.test.ts src/plots.test.ts src/plots-pack.test.ts src/plots-pool.test.ts src/plots-sample.test.ts src/cookie-site.test.ts src/desktop-discovery.test.ts src/ensemble-hook.test.ts src/release-versions.test.ts src/settings-map.test.ts src/model-efforts.test.ts src/claude-models.test.ts src/included.test.ts src/avatars.test.ts src/account.test.ts src/page-markdown.test.ts src/page-images.test.ts src/page-merge.test.ts src/files.test.ts src/connector-guides.test.ts src/assistant-text.test.ts src/seal.test.ts src/takeover.test.ts"
   },
   "dependencies": {
     "zod": "^3.24.2"

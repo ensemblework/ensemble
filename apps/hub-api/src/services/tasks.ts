@@ -10,9 +10,35 @@ import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
 import { CreateTask, TaskLabels } from "@ensemble/shared-types";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, madeBy } from "../sharing/context.js";
 
 type Tx = Prisma.TransactionClient;
+
+/**
+ * A task someone asked for in an Ensemble Node room (`peerRequestId`, docs/35 §12.11) leaves `proposed` only
+ * as its request is answered. The routes that move a task (drag, status) ask `answerRequestedMove` first:
+ * the person asked moving it to To do or In progress accepts (private work, the default), dropping it
+ * declines, anyone else is refused. `updateTask` refuses every other way out of `proposed`.
+ */
+export type RequestedMove = (input: { accountId: string; task: Task; status: TaskStatus }) => Promise<{ task: Task; message: string } | null>;
+let requestedMove: RequestedMove | null = null;
+
+/** Set by Ensemble Node (node/peer-routes.ts). */
+export function onRequestedTaskMove(handler: RequestedMove): void {
+  requestedMove = handler;
+}
+
+/** A move of a task out of `proposed` that answers its room request: null when it is no such move. Throws with a statusCode when refused. */
+export async function answerRequestedMove(input: { accountId: string; task: Task; status: TaskStatus }): Promise<{ task: Task; message: string } | null> {
+  if (input.task.status !== "proposed" || !input.task.peerRequestId || input.status === "proposed" || !requestedMove) return null;
+  return requestedMove(input);
+}
+
+/** Its room request is still waiting for an answer. */
+async function awaitingRequest(tx: Tx, task: Task): Promise<boolean> {
+  if (task.status !== "proposed" || !task.peerRequestId) return false;
+  return Boolean(await tx.nodePeerRequest.findFirst({ where: { id: task.peerRequestId, status: { in: ["open", "awaiting_owner"] } }, select: { id: true } }));
+}
 type Db = PrismaClient | Tx;
 
 export interface TaskDraft {
@@ -181,6 +207,10 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       repoId: draft.repoId ?? null,
       deliverableId: draft.deliverableId ?? null,
       createdBy: actor,
+      ...(() => {
+        const made = madeBy(userId);
+        return { createdByAccountId: made.accountId, createdByNodeId: made.nodeId };
+      })(),
       boardOrder: draft.boardOrder ?? (await nextBoardOrder(tx, userId)),
       taskType: draft.taskType ?? null,
       measure: draft.measure ?? null,
@@ -233,6 +263,9 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
     );
   }
   if (patch.status && patch.status !== existing.status) assertTransition(existing.status, patch.status);
+  if (patch.status && patch.status !== existing.status && (await awaitingRequest(tx, existing))) {
+    throw Object.assign(new Error("Someone asked for this in an Ensemble Node room: the person asked accepts or declines it (Today › Proposals, or Ensemble Node)."), { statusCode: 409 });
+  }
   await assertLinked(tx, userId, patch);
   const projectId =
     patch.projectId !== undefined || patch.projectName

@@ -19,18 +19,31 @@ import { capabilities } from "../workspace/sandbox/spawn.js";
 import { liveLogSince } from "../workspace/live-log.js";
 import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
+import { workspaceRoot } from "../workspace/guard.js";
+import { removeWorktrees } from "../workspace/worktrees.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
+import { credentialCapabilities } from "../credentials/capabilities.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
+import { answerNodeToolRequest } from "../device-tools/answer.js";
+import { stopNodeCommands } from "../device-tools/run.js";
+import { sendEvidence } from "../evidence/upload.js";
+import { answerEvidenceRequest } from "../evidence/requests.js";
+import { setLiveSink } from "./live.js";
+import { setRunLoginSink } from "../logins/run.js";
+import { answerLoginResolve } from "../logins/answer.js";
+import { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } from "../takeover/session.js";
+import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 import { launcherRemoved } from "./installed.js";
@@ -117,6 +130,23 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
+    // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
+    nodeTools: NODE_TOOLS_API,
+    // Files a run's worker attaches go to the web, unless the person turned it off here (`ensemble evidence off`).
+    evidenceUpload: settings.evidenceUpload,
+    // A run from Ensemble Node gets only the saved secrets it names (the claim's `secrets`).
+    secretScope: 1,
+    // An Ensemble Node build can work in its own git worktree of a shared folder (the claim's `mission.worktree`, B13).
+    worktrees: 1,
+    // The key the web encrypts secrets for, how runs get secrets, and secrets used by reference (B12).
+    ...credentialCapabilities(settings),
+    // A node's browser and capture tools run here (protocol 7), and what this computer can capture.
+    browser: BROWSER_API,
+    // Sign-ins handed to the owner: the card's answers (`login.resolve`), saved logins here (B11, protocol 8).
+    logins: LOGINS_API,
+    // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8).
+    takeover: TAKEOVER_API,
+    capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
 }
 
@@ -134,6 +164,9 @@ async function agentsNow(): Promise<SubscriptionAgent[]> {
  */
 export async function stopRemoteWork(app: FastifyInstance, message: string, report: "cancelled" | "none"): Promise<void> {
   stopWebTerminal();
+  stopNodeCommands();
+  await endAllTakeovers("stopped").catch(() => undefined);
+  await (await import("../logins/requests.js")).endAllLogins(message).catch(() => undefined);
   stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();
@@ -227,6 +260,20 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     app.log.warn({ err: error }, "remote task sync failed");
   };
   onFatal = fail;
+  // A run's live view goes to the web under its hosted job and lease, one small frame at a time (protocol 7).
+  setLiveSink((localJobId, frame) => {
+    const job = Object.values(held()).find((row) => row.localJobId === localJobId && row.phase === "active");
+    if (!job || (job.protocol ?? 1) < 7 || !client.liveFrame || (frame.jpeg && frame.jpeg.length > 220_000)) return false;
+    const picture = frame.jpeg ? { jpeg: frame.jpeg.toString("base64"), ...(frame.width ? { width: frame.width } : {}), ...(frame.height ? { height: frame.height } : {}) } : {};
+    void client.liveFrame(job.hostedId, { leaseToken: job.leaseToken, tab: frame.tab, url: frame.url, title: frame.title, at: frame.at, ...picture, ...(frame.paused ? { paused: frame.paused } : {}) }).catch(() => undefined);
+    return true;
+  });
+  // A run's agent waits for its owner to sign in: the web raises the card where the run is followed (protocol 8).
+  setRunLoginSink(async (localJobId, login) => {
+    const job = Object.values(held()).find((row) => row.localJobId === localJobId && row.phase === "active");
+    if (!job || (job.protocol ?? 1) < 8 || !client.runLogin) return null;
+    return client.runLogin(job.hostedId, { leaseToken: job.leaseToken, ...login });
+  });
   await reconcile(app, client);
   let claiming = false;
   // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
@@ -291,8 +338,18 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
         if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
         if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
+        // A node's own tool call (protocol 6): judged and run here; a lost answer times out on the web.
+        if (event === "node.tool.request") void answerNodeToolRequest(app, client, data).catch(() => undefined);
         // A secret typed on the web for this computer's runs: kept here only.
         if (event === "secret.save") void answerSecretSave(client, data).catch(() => undefined);
+        // The owner's answer to a sign-in card (B11, protocol 8).
+        if (event === "login.resolve") void answerLoginResolve(client, data).catch(() => undefined);
+        // The owner controls a tab from the web, end to end (B21, protocol 8): a run's tab is its local job's.
+        if (event === "takeover.start") void answerTakeoverStart(client, data, (hostedJobId) => Object.values(held()).find((row) => row.hostedId === hostedJobId && row.phase === "active")?.localJobId ?? null).catch(() => undefined);
+        if (event === "takeover.input") takeoverInput(data);
+        if (event === "takeover.end") void answerTakeoverEnd(client, data).catch(() => undefined);
+        // The owner previews, releases or discards a file kept here (protocol 7).
+        if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
         if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
         if (event === "assistant.stop") stopAssistantTurn(data);
@@ -324,7 +381,11 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     clearInterval(sync);
     clearInterval(poll);
     parent.removeEventListener("abort", stopParent);
-    if (currentSession === abort) currentSession = null;
+    if (currentSession === abort) {
+      currentSession = null;
+      setLiveSink(null);
+      setRunLoginSink(null);
+    }
   }
 }
 
@@ -437,6 +498,8 @@ async function mirror(app: FastifyInstance, client: HostedClient, signal: AbortS
         continue;
       }
       await relayDecisions(app, client, job, local, signal);
+      // Files the worker attached go as soon as they are attached, while the run holds its lease.
+      await sendEvidence(app, client, job, local);
       await sendProgress(app, client, job, local);
     } catch (error) {
       // The lease ran out while this computer was cut off and the run kept going: take it back; the next sync sends.
@@ -552,7 +615,10 @@ async function sendProgress(app: FastifyInstance, client: HostedClient, job: Hel
   const events = await unreadEvents(app, job, local.id);
   const logs = takeLog(job, local.id);
   const steps = await changedSteps(app, job, local.runId);
-  const changed = statusChanged || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs) || steps.rows.length > 0;
+  // What the engine reported it runs with goes when it changes (servers before it ignore the field).
+  const observed = await observedHere(app.prisma, local.id);
+  const observedChanged = anyObserved(observed) && !sameObserved(observed, job.sentObserved);
+  const changed = statusChanged || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs) || steps.rows.length > 0 || observedChanged;
   if (!changed && (last || Date.now() - job.sentAt < timing().heartbeatMs)) return false;
   await client.progress(job.hostedId, job.leaseToken, {
     ...(status ? { status } : {}),
@@ -560,9 +626,11 @@ async function sendProgress(app: FastifyInstance, client: HostedClient, job: Hel
     events: events.rows,
     ...(logs ? { logs: { seqFrom: logs.seqFrom, seqTo: logs.seqTo, text: logs.text } } : {}),
     ...(steps.rows.length ? { steps: steps.rows } : {}),
+    ...(observedChanged ? { observed } : {}),
   });
   job.eventSeq = events.last;
   job.stepsSent = { ...(job.stepsSent ?? {}), ...steps.sent };
+  if (observedChanged) job.sentObserved = observed;
   if (!last || status) job.sentStatus = status;
   job.sentProgress = progress;
   job.sentAt = Date.now();
@@ -643,6 +711,17 @@ async function changedSteps(app: FastifyInstance, job: HeldJob, runId: string | 
   return { rows, sent };
 }
 
+/** What the engine reported this run went with (workspace/engines/observed.ts), scrubbed like everything sent. */
+async function observedHere(db: Pick<typeof prisma, "workspaceEvent">, localId: string): Promise<ObservedSettings> {
+  const rows = await db.workspaceEvent.findMany({ where: { jobId: localId, kind: { in: ["engine", "engine_context"] } }, orderBy: { sequence: "desc" }, take: 20, select: { kind: true, data: true } });
+  const found = observedFromEvents(rows.reverse());
+  return {
+    ...found,
+    ...(found.model ? { model: scrubOutgoing(found.model).slice(0, 200) } : {}),
+    ...(found.effort ? { effort: scrubOutgoing(found.effort).slice(0, 40) } : {}),
+  };
+}
+
 /** Event data is a record. Anything else is wrapped so the route accepts it. */
 function hostedEvent(kind: string, data: unknown): { kind: string; data?: Record<string, unknown> } {
   const name = kind.slice(0, 40);
@@ -683,12 +762,17 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
   const outcome = local.status === "succeeded" ? "succeeded" : local.status === "cancelled" ? "cancelled" : local.status === "blocked" ? "blocked" : "failed";
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
+  const report = (job.protocol ?? 1) >= 6 ? parseReport(local.report) : null;
   const send = async () => {
-    // The changed files' text first: the lease ends with complete.
+    // The changed files' text and the attached files first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
       if (authRejected(error)) throw error;
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}) });
+    await sendEvidence(app, client, job, local).catch((error: unknown) => {
+      if (authRejected(error) || (error instanceof RemoteError && error.status === 409)) throw error;
+      app.log.warn({ err: error }, "could not send the run's evidence");
+    });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}), ...(report ? { report } : {}) });
   };
   try {
     await send();
@@ -702,7 +786,16 @@ async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, 
       });
     }
   }
+  // An integration step that succeeded: the worktrees it brought in go, when nothing would be lost (B13).
+  if (local.status === "succeeded") await removeIntegrated(local).catch((error: unknown) => app.log.warn({ err: error }, "could not remove integrated worktrees"));
   job.phase = "done";
+}
+
+async function removeIntegrated(local: WorkspaceJob): Promise<void> {
+  const mission = missionOf(local.context);
+  const root = (local.context as { mission?: { root?: unknown } } | null)?.mission?.root;
+  if (!mission?.integrates?.length || typeof root !== "string") return;
+  await removeWorktrees({ userId: userId(), folder: root, workspace: await workspaceRoot(), names: mission.integrates });
 }
 
 /** What the run reports when it ends: counts, the model that answered, its cost estimate, the files changed (names and line counts). */
@@ -731,6 +824,7 @@ async function runTotals(local: WorkspaceJob): Promise<RunTotals> {
     costUsd: typeof evidence.costUsd === "number" && evidence.costUsd >= 0 ? evidence.costUsd : null,
     reviewId: (await prisma.codeReview.findUnique({ where: { jobId: local.id }, select: { id: true } }).catch(() => null))?.id ?? null,
     files,
+    observed: await observedHere(prisma, local.id).catch(() => ({})),
   };
 }
 

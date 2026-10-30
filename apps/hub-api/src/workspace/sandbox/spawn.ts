@@ -15,6 +15,7 @@ import type { PlatformCaps, PreparedSpawn, SandboxPolicy, SpawnCommand } from ".
 import { scrubAgentEnv } from "./scrub.js";
 import { compileSeatbeltProfile, nodeToolchainRead } from "./seatbelt.js";
 import { cmdLine, probeWindows, releaseWindowsGrants, setupWindowsSandbox, windowsNetwork, windowsSpawn, type WindowsState } from "./windows.js";
+import { ensembleDataDenies } from "../data-denies.js";
 
 let linux: LinuxBackend | null = null;
 // windows.ts loads sandbox-runtime itself, on Windows only.
@@ -118,9 +119,11 @@ export async function prepareNetwork(): Promise<void> {
   windowsProxy = await windowsNetwork();
 }
 
-export function prepareSpawn(policy: SandboxPolicy, cmd: SpawnCommand, platform = process.platform): PreparedSpawn {
+export function prepareSpawn(given: SandboxPolicy, cmd: SpawnCommand, platform = process.platform): PreparedSpawn {
   const caps = capabilities(platform);
-  const env = scrubAgentEnv(policy.env, policy.who);
+  const env = scrubAgentEnv(given.env, given.who);
+  // Ensemble's own data, wherever this runtime keeps it (the testing CLI's folder, ENSEMBLE_DATA_HOME), and the browser profiles: denied by every backend.
+  const policy: SandboxPolicy = { ...given, deny: [...new Set([...given.deny, ...ensembleDataDenies({ home: given.home })])] };
   if (policy.confined && caps.osSandbox) {
     if (platform === "darwin") {
       const toolchain = nodeToolchainRead(policy.home);

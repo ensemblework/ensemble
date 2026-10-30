@@ -17,7 +17,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { ensembleDataDenies } from "../data-denies.js";
 import { askpassPath, ENSEMBLE_SOURCE, SECRET_PATHS, workspaceRoot } from "../guard.js";
 import { bundledCodex } from "../handoff.js";
 import { appendLive, touchLive } from "../live-log.js";
@@ -184,6 +184,7 @@ export async function runCodex(
   let stderr = "";
   let threadId: string | null = null;
   let turnId: string | null = null;
+  let reportedWindow: number | null = null;
   let finished: (status: { status: string; error?: string }) => void = () => {};
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
 
@@ -244,9 +245,15 @@ export async function runCodex(
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));
         }
       } else if (method === "thread/tokenUsage/updated") {
-        const total = ((params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number } }).total ?? {};
+        const usage = (params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number }; modelContextWindow?: number | null };
+        const total = usage.total ?? {};
         result.tokensIn = total.inputTokens ?? result.tokensIn;
         result.tokensOut = total.outputTokens ?? result.tokensOut;
+        // The window Codex reports for the model (node/settings.ts observed), once: Codex models have one window.
+        if (typeof usage.modelContextWindow === "number" && usage.modelContextWindow > 0 && usage.modelContextWindow !== reportedWindow) {
+          reportedWindow = usage.modelContextWindow;
+          await ctx.event("engine_context", { size: usage.modelContextWindow, context: "default" });
+        }
       } else if (method === "turn/completed") {
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null };
         // Bounded: a handler stuck writing an event must not hold the turn open.
@@ -299,7 +306,7 @@ export async function runCodex(
     const home = homedir();
     // Folders other runs are changing stay out of reach too, so changing one comes through an approval and waits its turn (folder-claims.ts).
     held.push(...(await heldElsewhere(ctx)));
-    const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files"), ...held];
+    const closed = [...SECRET_PATHS.map((name) => join(home, name)), ...ensembleDataDenies({ home }), ENSEMBLE_SOURCE, dirname(await askpassPath()), join(await workspaceRoot(), "files"), ...held];
     const paths = await engineSandboxPaths(ctx);
     // Codex's sandbox has no deny list: no writable root may hold a closed path (a home folder holding Ensemble's code, the workspace holding its git helper).
     const writable = await openRoots(claudeFilesystem({ access: paths.access, home, writable: paths.writable, closed, homeEntries: paths.access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite, closed);
@@ -333,11 +340,14 @@ export async function runCodex(
             throw new SessionGoneError(`Codex could not reopen the chat's thread: ${error.message}`);
           })
         : await server.request("thread/start", { ...settings, serviceName: "ensemble" })
-    ) as { thread?: { id?: string }; model?: string };
+    ) as { thread?: { id?: string }; model?: string; reasoningEffort?: string | null };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw new Error("Codex did not start a thread.");
     result.model = thread.model ?? null;
-    await ctx.event("engine", { engine: "codex", model: result.model, session: threadId, version: String((init as { userAgent?: string }).userAgent ?? "") });
+    // What Codex says the thread runs: its model, and its thinking level unless the turn sets one (which Codex does not echo).
+    const observedEffort = !options.effort && typeof thread.reasoningEffort === "string" && thread.reasoningEffort ? thread.reasoningEffort : null;
+    const observed = { ...(result.model ? { model: result.model } : {}), ...(observedEffort ? { effort: observedEffort } : {}) };
+    await ctx.event("engine", { engine: "codex", model: result.model, session: threadId, version: String((init as { userAgent?: string }).userAgent ?? ""), observed });
     await ctx.progress(`Codex started${result.model ? ` (${result.model})` : ""}`);
     const turn = (await server.request("turn/start", {
       threadId,

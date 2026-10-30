@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { ROUTES, type CodeAnswer, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveFramePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 
@@ -48,12 +48,32 @@ export interface HostedClient {
   unpairSelf(): Promise<void>;
   heartbeat(body: { runningJobIds: string[]; appVersion: string; capabilities: unknown }): Promise<{ cancel: string[] }>;
   claim(): Promise<{ status: number; body: unknown }>;
-  progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string }; steps?: UploadedStep[] }): Promise<void>;
+  progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string }; steps?: UploadedStep[]; observed?: ObservedSettings }): Promise<void>;
   ask(jobId: string, leaseToken: string, body: Record<string, unknown>): Promise<{ decisionId: string }>;
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny" | "expired"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals; report?: unknown }): Promise<void>;
+  /**
+   * One file the run's worker attached (protocol 6), its bytes as the body, before complete. "stored" or
+   * "refused" (the server said no to this file: not sent again); "unsupported" for a server without the route.
+   */
+  uploadEvidence?(jobId: string, leaseToken: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "unsupported"; error?: string }>;
+  /** Output of a node tool command, in order (protocol 6). False: nobody reads it any more. */
+  toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean }): Promise<boolean>;
+  /**
+   * A file the web asked for by its upload id (protocol 7): a node's capture, or a held file the owner
+   * released or previews. "gone": nobody waits for it any more.
+   */
+  uploadEvidenceFile?(uploadId: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "gone"; error?: string; evidence?: unknown }>;
+  /** The latest small picture of a run's browser tab (protocol 7). False: the web no longer takes it. */
+  liveFrame?(jobId: string, frame: LiveFramePost): Promise<boolean>;
+  /** A run's agent waits for its owner to sign in (protocol 8): the card's id, or null when the web raises none for this run. */
+  runLogin?(jobId: string, body: RunLoginPost): Promise<{ decisionId: string | null }>;
+  /** One encrypted frame of a takeover (protocol 8, B21). False: the takeover is over on the web. */
+  takeoverFrame?(takeoverId: string, message: ChannelMessage): Promise<boolean>;
+  /** This computer ended a takeover itself. */
+  takeoverState?(takeoverId: string, body: { state: "ended"; reason: string }): Promise<void>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
@@ -238,6 +258,89 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (res.status === 404 || res.status === 410) return false;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
       return true;
+    },
+    async toolOutput(runId, chunk) {
+      const res = await call("POST", ROUTES.toolOutput(runId), chunk);
+      if (res.status === 404 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
+      return true;
+    },
+    async uploadEvidence(jobId, leaseToken, meta, bytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        // Raw bytes, never through the JSON path: a file holding a saved secret value was refused before this.
+        response = await fetch(`${base}${ROUTES.evidence(jobId)}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/octet-stream",
+            [EVIDENCE_HEADERS.lease]: leaseToken,
+            [EVIDENCE_HEADERS.meta]: Buffer.from(JSON.stringify(hideSecretsDeep(meta))).toString("base64url"),
+          },
+          body: bytes.byteLength ? Buffer.from(bytes) : undefined,
+          signal: AbortSignal.timeout(10 * 60_000),
+          redirect: "error",
+        });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      const text = await response.text();
+      const body = text ? safeJson(text) : null;
+      if (response.status === 401 || response.status === 403) throw authError(response.status, body);
+      if (response.status === 404 && !(body as { error?: unknown } | null)?.error?.toString().startsWith("Job")) return { result: "unsupported" };
+      if (response.status === 409 && messageOf(body, "") === "Lease rejected.") throw new RemoteError(409, "Lease rejected.");
+      if (response.status >= 500) throw new RemoteError(response.status, messageOf(body, "The file could not be stored."));
+      if (response.status >= 400) return { result: "refused", error: messageOf(body, `Refused (${response.status}).`) };
+      return { result: "stored" };
+    },
+    async uploadEvidenceFile(uploadId, meta, bytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        response = await fetch(`${base}${ROUTES.evidenceUpload(uploadId)}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/octet-stream",
+            [EVIDENCE_HEADERS.meta]: Buffer.from(JSON.stringify(hideSecretsDeep(meta))).toString("base64url"),
+          },
+          body: bytes.byteLength ? Buffer.from(bytes) : undefined,
+          signal: AbortSignal.timeout(10 * 60_000),
+          redirect: "error",
+        });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      const text = await response.text();
+      const body = text ? safeJson(text) : null;
+      if (response.status === 401 || response.status === 403) throw authError(response.status, body);
+      if (response.status === 404 || response.status === 410) return { result: "gone", error: messageOf(body, "Nobody waits for this file any more.") };
+      if (response.status >= 500) throw new RemoteError(response.status, messageOf(body, "The file could not be stored."));
+      if (response.status >= 400) return { result: "refused", error: messageOf(body, `Refused (${response.status}).`) };
+      return { result: "stored", evidence: (body as { evidence?: unknown } | null)?.evidence };
+    },
+    async liveFrame(jobId, frame) {
+      const res = await call("POST", ROUTES.liveFrame(jobId), frame);
+      if (res.status === 404 || res.status === 409 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The live view was refused."));
+      return true;
+    },
+    async takeoverFrame(takeoverId, message) {
+      const res = await call("POST", ROUTES.takeoverFrame(takeoverId), message);
+      if (res.status === 404 || res.status === 409 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The frame was refused."));
+      return true;
+    },
+    async takeoverState(takeoverId, body) {
+      await call("POST", ROUTES.takeoverState(takeoverId), body);
+    },
+    async runLogin(jobId, body) {
+      const res = await call("POST", ROUTES.runLogin(jobId), body);
+      if (res.status === 404 || res.status === 405) return { decisionId: null };
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The sign-in was not raised on the web."));
+      const id = (res.body as { decisionId?: unknown } | null)?.decisionId;
+      return { decisionId: typeof id === "string" && id ? id : null };
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);
