@@ -13,7 +13,7 @@ import { isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { stripLoneSurrogates, truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
 import { includedUsage } from "../included/budget.js";
-import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
+import { INCLUDED_PROVIDER, SHARING_CAPS } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { abortAssistantTurn } from "../assistant/agent.js";
 import { ApprovalError, settleApproval } from "./approvals.js";
@@ -60,6 +60,9 @@ import { boundSpaceId, offerSpace } from "./room-space.js";
 import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 import { confirmDecision } from "./room-pages.js";
+import { startOnYes } from "./room-results.js";
+import { accountLimits } from "../lib/limits.js";
+import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -81,8 +84,6 @@ const Slug = z.string().min(1).max(24).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowerc
 const ModelPick = z.string().max(120).nullable();
 const ProviderPick = z.string().max(40).regex(/^[a-z0-9][a-z0-9-]*$/).nullable();
 
-/** At most this many people in a room, counting open requests to join. */
-export const MAX_ROOM_PEOPLE = 10;
 /** Each person brings 1–3 of their nodes to a room; one is their lead. */
 export const MAX_NODES_PER_PERSON = 3;
 export const MAX_CREW_NODES = 24;
@@ -367,7 +368,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         return { default: options.find((row) => row.default)?.model ?? NODE_DEFAULT_MODEL, options };
       })(),
       invites,
-      limits: { roomPeople: MAX_ROOM_PEOPLE, nodesPerPerson: MAX_NODES_PER_PERSON, crewNodes: MAX_CREW_NODES, pins: MAX_PINS, reactions: REACTIONS, declineBlockDays: DECLINE_BLOCK_MS / 86_400_000 },
+      // People in a room I make, counting open requests: my own limit (Settings › Sharing › Limits, lib/limits.ts).
+      limits: { roomPeople: (await accountLimits(prisma, accountId)).roomPeople, nodesPerPerson: MAX_NODES_PER_PERSON, crewNodes: MAX_CREW_NODES, pins: MAX_PINS, reactions: REACTIONS, declineBlockDays: DECLINE_BLOCK_MS / 86_400_000 },
       // Suggestions for a new crew: the person picks, renames, adds or drops nodes before it is made.
       templates: { nodes: NODE_TEMPLATES, crews: CREW_TEMPLATES },
     };
@@ -594,7 +596,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       title: z.string().min(1).max(80),
       nodeIds: z.array(z.string().uuid()).min(1).max(MAX_NODES_PER_PERSON),
       leadNodeId: z.string().uuid().optional(),
-      invite: z.array(z.string().email().max(320)).max(MAX_ROOM_PEOPLE - 1).default([]),
+      invite: z.array(z.string().email().max(320)).max(SHARING_CAPS.roomPeople - 1).default([]),
     }).strict().parse(request.body);
     const title = body.title.trim();
     if (!title) throw fail(400, "Give the room a name.");
@@ -703,7 +705,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } }),
       prisma.nodeRoomInvite.count({ where: { roomId: room.id, status: "pending" } }),
     ]);
-    if (people + pending >= MAX_ROOM_PEOPLE) throw fail(409, `A room holds at most ${MAX_ROOM_PEOPLE} people, counting open requests.`);
+    // The room's maker chooses how many people their rooms hold (Settings › Sharing › Limits).
+    const most = (await accountLimits(prisma, room.userId)).roomPeople;
+    if (people + pending >= most) throw fail(409, `Your rooms hold at most ${most} people, counting open requests. You can raise that in Ensemble's Settings › Sharing › Limits.`);
     let invite;
     try {
       invite = await prisma.nodeRoomInvite.create({ data: { roomId: room.id, inviterId, inviteeId: person.id } });
@@ -756,7 +760,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const nodes = await prisma.nodeAgent.findMany({ where: { id: { in: ids }, userId: accountId } });
     if (nodes.length !== ids.length) throw fail(404, "That node is not available.");
     const lead = nodes.find((node) => node.id === body.leadNodeId) ?? nodes.find((node) => node.id === ids[0])!;
-    if ((await prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } })) >= MAX_ROOM_PEOPLE) throw fail(409, `This room already has ${MAX_ROOM_PEOPLE} people.`);
+    const most = (await accountLimits(prisma, room.userId)).roomPeople;
+    if ((await prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } })) >= most) throw fail(409, `This room already has ${most} people, the most the person who made it allows.`);
     const handles = await prisma.$transaction(async (tx) => {
       const taken = await tx.nodeRoomInvite.updateMany({ where: { id: invite.id, status: "pending" }, data: { status: "accepted", respondedAt: new Date() } });
       if (!taken.count) throw fail(409, "That request was already answered or withdrawn.");
@@ -863,14 +868,19 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const lost = !member.nodeId && room.kind === "room" ? await revokeOnLeave(tx, room.id, member.userId) : null;
       const next = theirs.find((row) => row.id !== member.id);
       if (member.representative && next) await tx.nodeRoomMember.update({ where: { id: next.id }, data: { representative: true } });
-      // A crew whose lead left is led by its manager, else its first remaining node.
-      const settings = roomSettings(room);
       const gone = new Set(member.nodeId ? [member.nodeId] : theirs.map((row) => row.nodeId!));
-      if (settings.leadNodeIds.some((id) => gone.has(id))) {
-        const remaining = await tx.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true }, orderBy: { joinedAt: "asc" } });
-        const kept = settings.leadNodeIds.filter((id) => !gone.has(id));
-        const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
-        await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
+      if (room.kind === "room") {
+        // A room with people lists only its steward in leadNodeIds: it ends with its node (and with its sponsor, above).
+        await dropStewardNodes(tx, room.id, [...gone]);
+      } else {
+        // A crew whose lead left is led by its manager, else its first remaining node. Settings are read here, not before.
+        const settings = roomSettings(await tx.nodeRoom.findUniqueOrThrow({ where: { id: room.id } }));
+        if (settings.leadNodeIds.some((id) => gone.has(id))) {
+          const remaining = await tx.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true }, orderBy: { joinedAt: "asc" } });
+          const kept = settings.leadNodeIds.filter((id) => !gone.has(id));
+          const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
+          await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
+        }
       }
       return lost;
     });
@@ -951,7 +961,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (command && members.some((row) => row.nodeId && row.userId === accountId)) {
       const stopped = await stopWork(app, room, accountId, command);
       await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
-    } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
+    } else if (!duplicate) {
+      // An explicit yes to the lead's offer of one room task starts it, as the Start button does (node/room-results.ts).
+      inBackground(app, async () => {
+        if (!(await startOnYes(app, room, message))) await dispatchMessage(app, message);
+      });
+    }
     // A person named in public hears of it privately, from their lead (node/room-events.ts).
     if (!duplicate) inBackground(app, () => noteMentions(app, room, message));
     // A reply “log this” confirms the message it replies to as a decision (node/room-pages.ts).
@@ -1015,11 +1030,16 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const message = await prisma.nodeMessage.findUnique({ where: { id: (request.params as { id: string }).id } });
     if (!message || !canSee(message, accountId) || !(await personIn(prisma, message.roomId, accountId))) throw fail(404, "That message is not available.");
-    if (message.authorKind !== "human" || message.userId !== accountId || message.kind !== "text") throw fail(403, "You can delete only your own messages.");
+    // My own messages, and what I shared to the room as my lead (Share to room, node/peer-requests.ts).
+    const sharedAsLead = message.authorKind === "node" && (message.data as { sharedBy?: unknown } | null)?.sharedBy === accountId;
+    if ((message.authorKind !== "human" && !sharedAsLead) || message.userId !== accountId || message.kind !== "text") throw fail(403, "You can delete only your own messages.");
     if (messageDeleted(message)) return reply.code(204).send();
     const data: Record<string, unknown> = { ...((message.data ?? {}) as Record<string, unknown>), deleted: true, deletedAt: new Date().toISOString() };
+    // What it showed goes with it: its files, media (no longer readable through it, node/media.ts) and links.
     delete data.reactions;
     delete data.files;
+    delete data.media;
+    delete data.refs;
     const updated = await prisma.nodeMessage.update({ where: { id: message.id }, data: { body: "", mentions: [], data: data as Prisma.InputJsonValue } });
     const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
     if (room && roomSettings(room).pinned.includes(message.id)) {
@@ -1038,7 +1058,10 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ emoji: z.enum(REACTIONS) }).strict().parse(request.body);
     const id = (request.params as { id: string }).id;
     const found = await prisma.nodeMessage.findUnique({ where: { id } });
-    if (!found || !canSee(found, accountId) || !(await personIn(prisma, found.roomId, accountId)) || messageDeleted(found)) throw fail(404, "That message is not available.");
+    const me = found ? await personIn(prisma, found.roomId, accountId) : null;
+    // In a room with other people, only messages from since they joined, as everywhere else.
+    const kind = me ? (await prisma.nodeRoom.findUnique({ where: { id: found!.roomId }, select: { kind: true } }))?.kind : null;
+    if (!found || !canSee(found, accountId) || !me || messageDeleted(found) || (kind === "room" && found.createdAt < me.joinedAt)) throw fail(404, "That message is not available.");
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM node_messages WHERE id = ${id} FOR UPDATE`;
       const row = (await tx.nodeMessage.findUnique({ where: { id } }))!;
@@ -1073,7 +1096,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ messageId: z.string().uuid(), pinned: z.boolean() }).strict().parse(request.body);
     const settings = roomSettings(room);
     if (body.pinned) {
-      const message = await prisma.nodeMessage.findFirst({ where: { id: body.messageId, roomId: room.id } });
+      const message = await prisma.nodeMessage.findFirst({ where: { id: body.messageId, roomId: room.id, ...(await sinceJoined(room, accountId)) } });
       if (!message || message.visibleTo.length > 0 || messageDeleted(message) || (message.kind !== "text" && message.kind !== "run")) throw fail(400, "Only messages everyone here can read can be pinned.");
       if (!settings.pinned.includes(message.id)) {
         if (settings.pinned.length >= MAX_PINS) throw fail(409, `A room keeps at most ${MAX_PINS} pins. Unpin one first.`);

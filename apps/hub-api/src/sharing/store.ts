@@ -7,10 +7,10 @@ import { sharePreviews } from "./previews.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { personInitials } from "@ensemble/shared-types";
 import { isHosted } from "../lib/hosted-access.js";
-import { copySettings, listSpaces, MAX_SPACES } from "../spaces/store.js";
+import { copySettings, listSpaces } from "../spaces/store.js";
+import { accountLimits } from "../lib/limits.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
-import { SharingSettings } from "@ensemble/shared-types";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -20,14 +20,10 @@ export const MAX_MEMBERS = 2;
 export const MAX_TRANSFERS = 1;
 
 /**
- * The account's own sharing limits: contacts, and people per space it owns (its choice, up to
- * SHARING_CAPS; Settings, Sharing). Read from the account's own settings row, whoever is asking.
+ * The account's own limits: contacts, people per space it owns, people per Node room it makes and spaces
+ * it owns (its choice, up to SHARING_CAPS; Settings, Sharing; lib/limits.ts).
  */
-export async function sharingLimits(db: Db, accountId: string): Promise<{ contacts: number; members: number }> {
-  const row = await db.preference.findFirst({ where: { userId: accountId, key: "hub.settings", deletedAt: null }, select: { value: true } });
-  const parsed = SharingSettings.safeParse((row?.value as { sharing?: unknown } | null)?.sharing ?? {});
-  return parsed.success ? parsed.data : { contacts: MAX_CONTACTS, members: MAX_MEMBERS };
-}
+export const sharingLimits = accountLimits;
 const SPACE_EMAIL = "@spaces.ensemble.invalid";
 const ACTIVE_JOBS = ["running", "claimed", "stopping", "waiting_approval"] as const;
 
@@ -431,8 +427,9 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     if (await tx.workspaceJob.count({ where: { userId: spaceId, status: { in: [...ACTIVE_JOBS, "queued"] } } })) {
       throw new SharingError("Stop or cancel the agent runs in this space before handing it over.", 409);
     }
-    if ((await tx.user.count({ where: { ownerId: toId } })) + 1 >= MAX_SPACES) {
-      throw new SharingError("They already have the most spaces an account can have.", 409);
+    // Their own limit on spaces (Settings › Sharing › Limits), their account's own space included.
+    if ((await tx.user.count({ where: { ownerId: toId } })) + 1 >= (await accountLimits(tx, toId)).spaces) {
+      throw new SharingError("They already have as many spaces as their limit allows (they can raise it in Settings, Sharing).", 409);
     }
     // They keep the old owner as an editor. That needs a free contact slot on their side.
     const theirs = await tx.contact.findUnique({ where: { ownerId_contactId: { ownerId: toId, contactId: accountId } } });

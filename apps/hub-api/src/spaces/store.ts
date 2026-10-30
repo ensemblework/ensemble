@@ -16,11 +16,11 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { ONBOARDING_TOUR_KEY, Settings } from "@ensemble/shared-types";
 import { ensembleCookieName, normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
 import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
+import { accountLimits } from "../lib/limits.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
 export const SPACE_COOKIE = ensembleCookieName("space", process.env.ENSEMBLE_COOKIE_NAMESPACE);
-export const MAX_SPACES = 12;
 const COOKIE_DAYS = 400;
 
 /** Not deliverable and not a login: `.invalid` is reserved (RFC 2606). */
@@ -141,7 +141,9 @@ export async function createSpaceUser(db: Db, accountId: string, input: { name: 
   const account = await db.user.findUniqueOrThrow({ where: { id: accountId }, select: { ...MIRRORED, ownerId: true, spaceName: true } });
   if (account.ownerId) throw Object.assign(new Error("Spaces belong to an account, not to another space."), { statusCode: 400 });
   const count = await db.user.count({ where: { ownerId: accountId } });
-  if (count + 1 >= MAX_SPACES) throw Object.assign(new Error(`You can have up to ${MAX_SPACES} spaces. Delete one to make room.`), { statusCode: 409 });
+  // The account's own limit (Settings › Sharing › Limits), its own space included.
+  const { spaces } = await accountLimits(db, accountId);
+  if (count + 1 >= spaces) throw Object.assign(new Error(`You can have up to ${spaces} spaces. Delete one to make room, or raise your limit in Settings › Sharing.`), { statusCode: 409 });
   if (!account.spaceName) await db.user.update({ where: { id: accountId }, data: { spaceName: defaultSpaceName(account.name) } });
   const { ownerId: _owner, spaceName: _spaceName, ...fields } = account;
   const row = await db.user.create({

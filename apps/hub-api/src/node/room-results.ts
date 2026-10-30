@@ -14,11 +14,13 @@
  * task; the room post is a second, separate yes. Both people must still be in the room, and the owner must
  * still be able to edit the space.
  *
- * Also here: starting a room task from My crew (the Start button, or the owner's yes to their lead's offer),
- * whose mission is linked to the task by `roomTaskOrigin` (called from `missionOriginFor`).
+ * Also here: starting a room task from My crew: the Start button, or an explicit yes (the whole message)
+ * to the lead's offer of one task, which code takes as the Start button (`startOnYes`). Only such a start
+ * links a mission to the task (`roomTaskOrigin`, called from `missionOriginFor`): any other message is
+ * ordinary work for the owner, and stays private.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeMission, NodeRoom, Prisma, PrismaClient, Task } from "@prisma/client";
+import type { NodeMessage, NodeMission, NodeRoom, Prisma, PrismaClient, Task } from "@prisma/client";
 import { sseHub } from "../lib/sse.js";
 import { truncateText } from "../lib/text.js";
 import { missionEnded } from "./missions-core.js";
@@ -26,7 +28,8 @@ import { missionMedia, type Media } from "./media.js";
 import { loadPlan } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 import { boundSpaceId, linkedSpace, roleIn } from "./room-space.js";
-import { personIn, postMessage } from "./store.js";
+import { publishTo } from "./events.js";
+import { personIn, postMessage, roomPeople } from "./store.js";
 import { personRow, prefsOf } from "./trust.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -65,7 +68,7 @@ async function moveTask(app: FastifyInstance, task: Task, status: "in_progress" 
  * The person a room-space task is with starts it from My crew (the Start button on their lead's
  * message): one private turn of their lead plans it; its mission delivers to the task and the room.
  */
-export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, mode: "private" | "shared"): Promise<void> {
+export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, mode: "private" | "shared"): Promise<{ turnId: string | null }> {
   const prisma = app.prisma;
   const spaceId = await linkedSpace(app, room);
   if (!spaceId) throw new RoomResultError("This room has no shared space.", 404);
@@ -89,13 +92,97 @@ export async function startRoomTask(app: FastifyInstance, room: NodeRoom, accoun
       ? `Work in that space (name it as the space in Ensemble calls), where its members see the run. `
       : "Work in your owner's own space as usual; the result is delivered to the task. ") +
     "Plan it now with node_plan for your owner (their nodes, their computer, their credits). When it ends, its result goes to the task and the room; your detailed report stays here with your owner.";
-  await enqueueTurn(app, { nodeId: lead.nodeId, roomId: room.id, reason: "request", private: true, audience: "owner", operationId: `room-task:${task.id}:${mode}:${Date.now()}`, note });
+  const operationId = `room-task:${task.id}:${mode}:${Date.now()}`;
+  if (!(await enqueueTurn(app, { nodeId: lead.nodeId, roomId: room.id, reason: "request", private: true, audience: "owner", operationId, note }))) throw new RoomResultError("Your lead here is paused: resume it first.", 409);
+  return { turnId: (await prisma.nodeTurn.findFirst({ where: { operationId }, select: { id: true } }))?.id ?? null };
+}
+
+/**
+ * The person a proposed task on the room's board is with declines it. A request behind it is declined as a
+ * request (node/peer-requests.ts). One from the steward's notes is dropped, and whoever asked for it hears so
+ * privately in their My crew, as a declined request's note reaches its requester (not twice: the room's
+ * events take the move as known).
+ */
+export async function declineRoomTask(app: FastifyInstance, room: NodeRoom, accountId: string, taskId: string, note: string | null): Promise<Task> {
+  const prisma = app.prisma;
+  const spaceId = await linkedSpace(app, room);
+  if (!spaceId) throw new RoomResultError("This room has no shared space.", 404);
+  const task = await prisma.task.findFirst({ where: { id: taskId, userId: spaceId, deletedAt: null } });
+  const owner = await spaceOwnerOf(prisma, spaceId);
+  if (!task || !owner) throw new RoomResultError("That task is not on the room's board.", 404);
+  if (holderOf(task, owner) !== accountId) throw new RoomResultError("Only the person the task is with declines it.", 403);
+  if (task.status !== "proposed") throw new RoomResultError("Only a proposed task can be declined.", 409);
+  if (task.peerRequestId) {
+    const { declineRequest, RequestError } = await import("./peer-requests.js");
+    try {
+      await declineRequest(app, accountId, task.peerRequestId, note ? { note } : {});
+    } catch (error) {
+      if (error instanceof RequestError) throw new RoomResultError(error.message, error.statusCode);
+      throw error;
+    }
+    return prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+  }
+  const dropped = await prisma.task.updateMany({ where: { id: task.id, status: "proposed" }, data: { status: "dropped", completedAt: new Date() } });
+  if (!dropped.count) throw new RoomResultError("That task changed meanwhile.", 409);
+  const fresh = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+  await prisma.taskTransition.create({ data: { userId: task.userId, taskId: task.id, fromStatus: "proposed", toStatus: "dropped", actor: "me", reason: "declined in a room" } });
+  await prisma.nodeRoomTask.updateMany({ where: { taskId: task.id }, data: { status: "dropped", taskUpdatedAt: fresh.updatedAt } });
+  sseHub.publish(task.userId, { event: "task", data: { id: task.id, action: "update" } });
+  const asker = task.requestedByAccountId;
+  if (asker && asker !== accountId && (await personIn(prisma, room.id, asker))) {
+    const who = await prisma.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } });
+    const name = who?.name?.trim() || who?.email.split("@")[0] || "They";
+    await postMessage(prisma, {
+      roomId: room.id,
+      userId: asker,
+      authorKind: "system",
+      kind: "status",
+      body: `${name} declined “${truncateText(task.title, 200)}”${note ? `: ${note}` : "."}`,
+      data: { taskId: task.id, declined: true, ...(note ? { declineNote: true } : {}) },
+      visibleTo: [asker],
+    });
+  }
+  publishTo(await roomPeople(prisma, room.id), "node.cards", { roomId: room.id });
+  return fresh;
+}
+
+/** An explicit yes, the whole message (“yes”, “yes, start it”, “ok, go ahead”): nothing else counts as one. */
+const EXPLICIT_YES = /^(?:yes|yep|yeah|sure|ok|okay|go ahead|please do|do it|start it)(?: (?:and )?(?:yes|please|go ahead|do it|start it|thanks|thank you))*$/;
+
+/**
+ * The owner's private message is an explicit yes to their lead's offer to start one task (the `room_events`
+ * message it replies to, or the newest private message before it): code starts it as the Start button
+ * does, and the message wakes nothing else. False when it is anything else, or the task cannot start.
+ */
+export async function startOnYes(app: FastifyInstance, room: NodeRoom, message: NodeMessage): Promise<boolean> {
+  const owner = message.userId;
+  if (room.kind !== "room" || message.authorKind !== "human" || message.visibleTo.length !== 1 || message.visibleTo[0] !== owner) return false;
+  const data = (message.data ?? {}) as { files?: unknown; replyTo?: { id?: unknown } };
+  if (Array.isArray(data.files) && data.files.length) return false;
+  if (!EXPLICIT_YES.test(message.body.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim())) return false;
+  const prisma = app.prisma;
+  const offer =
+    typeof data.replyTo?.id === "string"
+      ? await prisma.nodeMessage.findFirst({ where: { id: data.replyTo.id, roomId: room.id } })
+      : await prisma.nodeMessage.findFirst({ where: { roomId: room.id, seq: { lt: message.seq }, visibleTo: { equals: [owner] } }, orderBy: { seq: "desc" } });
+  const offered = offer?.data as { type?: unknown; start?: { taskIds?: unknown } } | null;
+  const ids = Array.isArray(offered?.start?.taskIds) ? (offered!.start!.taskIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
+  if (!offer || offered?.type !== "room_events" || ids.length !== 1 || offer.visibleTo.length !== 1 || offer.visibleTo[0] !== owner) return false;
+  const lead = await prisma.nodeRoomMember.findFirst({ where: { roomId: room.id, userId: owner, nodeId: { not: null }, representative: true } });
+  if (!lead?.nodeId || offer.authorNodeId !== lead.nodeId) return false;
+  try {
+    await startRoomTask(app, room, owner, ids[0]!, "private");
+    return true;
+  } catch (error) {
+    if (error instanceof RoomResultError) return false;
+    throw error;
+  }
 }
 
 /**
  * Where a mission made by a lead's private turn in a room delivers, when it is for a task of the room's
- * space held by the lead's owner: the Start button (operation `room-task:<id>:<mode>:…`), or the owner's
- * yes in My crew to their lead's offer to start one assigned task. `{}` otherwise.
+ * space held by the lead's owner: only an explicit start (operation `room-task:<id>:<mode>:…`, from the
+ * Start button or `startOnYes`). `{}` otherwise: never inferred from whatever the owner said next.
  */
 export async function roomTaskOrigin(
   db: Db,
@@ -108,21 +195,7 @@ export async function roomTaskOrigin(
   // Only while the room's creator still owns its space (node/room-space.ts linkedSpace).
   if (!spaceId || (await spaceOwnerOf(db, spaceId)) !== room!.userId) return {};
   const started = /^room-task:([0-9a-f-]{36}):(private|shared):/.exec(operationId ?? "");
-  let taskId = started?.[1] ?? null;
-  if (!taskId && turn.triggerMessageId) {
-    // The owner's yes, just after (or replying to) their lead's offer to start one task.
-    const trigger = await db.nodeMessage.findUnique({ where: { id: turn.triggerMessageId } });
-    if (trigger && trigger.authorKind === "human" && trigger.userId === turn.userId && trigger.visibleTo.length === 1 && trigger.visibleTo[0] === turn.userId) {
-      const replyTo = (trigger.data as { replyTo?: { id?: unknown } } | null)?.replyTo?.id;
-      const offer =
-        typeof replyTo === "string"
-          ? await db.nodeMessage.findUnique({ where: { id: replyTo } })
-          : await db.nodeMessage.findFirst({ where: { roomId: turn.roomId, seq: { lt: trigger.seq }, visibleTo: { equals: [turn.userId] } }, orderBy: { seq: "desc" } });
-      const data = offer?.data as { type?: unknown; start?: { taskIds?: unknown } } | null;
-      const ids = Array.isArray(data?.start?.taskIds) ? (data!.start!.taskIds as unknown[]).filter((id): id is string => typeof id === "string") : [];
-      if (offer && offer.authorNodeId === turn.nodeId && data?.type === "room_events" && ids.length === 1) taskId = ids[0]!;
-    }
-  }
+  const taskId = started?.[1] ?? null;
   if (!taskId) return {};
   const task = await db.task.findFirst({ where: { id: taskId, userId: spaceId, deletedAt: null, status: { notIn: ["done", "dropped"] } } });
   const owner = await spaceOwnerOf(db, spaceId);
@@ -150,7 +223,8 @@ export async function followMission(app: FastifyInstance, missionId: string): Pr
     if (typeof to.taskId !== "string" || mission.status === "draft") return;
     const task = await prisma.task.findFirst({ where: { id: to.taskId, deletedAt: null } });
     const kind = (mission.requestedBy as { kind?: unknown } | null)?.kind;
-    if (task && kind !== "review" && task.status === "todo") await moveTask(app, task, "in_progress", "room task started");
+    // To do, or proposed by the steward's notes (no request): starting it is the person's yes.
+    if (task && kind !== "review" && (task.status === "todo" || (task.status === "proposed" && !task.peerRequestId))) await moveTask(app, task, "in_progress", "room task started");
     return;
   }
   if (to.deliveredAt) return;

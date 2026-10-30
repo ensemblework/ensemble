@@ -78,7 +78,21 @@ export async function dropStewardOf(tx: Prisma.TransactionClient, roomId: string
     WHERE id = ${roomId} AND settings->'steward'->>'sponsorId' = ${accountId}`;
 }
 
-type StewardCtx = { app: FastifyInstance; room: NodeRoom; members: NodeRoomMember[]; nodeId: string; askerId: string; askerName: string };
+/** Its node left the room: the room has no steward, and nobody else's node takes its place (in the caller's transaction). */
+export async function dropStewardNodes(tx: Prisma.TransactionClient, roomId: string, nodeIds: readonly string[]): Promise<void> {
+  for (const nodeId of nodeIds) {
+    await tx.$executeRaw`
+      UPDATE node_rooms SET settings = (settings - 'steward') || jsonb_build_object('leadNodeIds', '[]'::jsonb)
+      WHERE id = ${roomId} AND settings->'steward'->>'nodeId' = ${nodeId}`;
+  }
+}
+
+/**
+ * One steward turn: who it acts for (`askerId`), and everyone who asked it in this turn (`askers`). Messages
+ * from several people can arrive in one turn: it then acts with the least of their rights, reading only
+ * what all of them may read and writing for nobody, so no one's request runs in another person's role.
+ */
+type StewardCtx = { app: FastifyInstance; room: NodeRoom; members: NodeRoomMember[]; nodeId: string; askerId: string; askerName: string; askers: string[] };
 
 /** Who a handle (a person's, or one of their nodes') is in the room: their account. */
 function personByHandle(members: NodeRoomMember[], handle: string): string | null {
@@ -93,8 +107,9 @@ function askerScope(spaceId: string, ownerId: string, askerId: string, role: "ow
 }
 
 export function stewardTools(ctx: StewardCtx): AnyHubTool[] {
-  const { app, room, members, nodeId, askerId, askerName } = ctx;
+  const { app, room, members, nodeId, askerId, askerName, askers } = ctx;
   const prisma = app.prisma;
+  const several = askers.length > 1;
   const board = defineTool({
     name: "node_room_board",
     area: "context",
@@ -106,6 +121,10 @@ export function stewardTools(ctx: StewardCtx): AnyHubTool[] {
       const view = await roomBoard(app, room, askerId);
       if (!view.space) throw new ToolBlockedError("This room has no shared space.");
       if (!view.space.role) throw new ToolBlockedError(`${askerName} cannot open the room's space.`);
+      // Several people asked at once: only what every one of them may read.
+      if (several && (await Promise.all(askers.map((id) => roleIn(id, view.space!.id)))).some((role) => !role)) {
+        throw new ToolBlockedError("Not everyone who asked you just now can open the room's space.", "Say so: each can ask you again on their own.");
+      }
       const lines = view.tasks.map((task) => `- ${task.title} (${task.status.replace(/_/g, " ")}${task.assignee ? `, with ${task.assignee.name}` : ", nobody's"}${task.requestedBy ? `, asked by ${task.requestedBy.name}` : ""}${task.due ? `, due ${task.due.slice(0, 10)}` : ""}, updated ${task.updatedAt.slice(0, 10)})`);
       return toolOk(`${view.tasks.length} task(s) on “${view.space.name ?? "the room's space"}”.`, { tasks: truncateText(lines.join("\n"), 8000) });
     },
@@ -124,6 +143,7 @@ export function stewardTools(ctx: StewardCtx): AnyHubTool[] {
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
+      if (several) throw new ToolBlockedError("Several people asked you at once: you write for one person at a time, in their own role.", "Say so, and ask them to ask you again one at a time.");
       const spaceId = await linkedSpace(app, room);
       if (!spaceId) throw new ToolBlockedError("This room has no shared space for notes.", "Say so: its creator can link one.");
       const role = await roleIn(askerId, spaceId);

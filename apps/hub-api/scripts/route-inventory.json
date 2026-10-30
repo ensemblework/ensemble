@@ -1310,6 +1310,7 @@
   {"method":"HEAD","path":"/api/node/rooms/:id/steward","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"PUT","path":"/api/node/rooms/:id/steward","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"POST","path":"/api/node/rooms/:id/stop","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
+  {"method":"POST","path":"/api/node/rooms/:id/tasks/:taskId/decline","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"POST","path":"/api/node/rooms/:id/tasks/:taskId/start","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"GET","path":"/api/node/rooms/:id/trust","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/rooms/:id/trust","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},

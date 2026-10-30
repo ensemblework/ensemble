@@ -28,7 +28,7 @@ import { openedSpace } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { runInScope, type RequestScope } from "../sharing/context.js";
 import type { Decision } from "./approvals.js";
-import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, settlePeerCard, turnOrigin } from "./peer-requests.js";
+import { peerRequestTool, RequestError, requestAwaiting, requestDeclined, requestReplied, sendRequestDraft, settlePeerCard, turnOrigin } from "./peer-requests.js";
 import { enqueueTurn } from "./queue.js";
 import { NO_REPLY } from "./reply.js";
 import { nodeSpace, nodeSpaceGateway } from "./spaces.js";
@@ -266,7 +266,12 @@ export async function roomBoundTurn(
   const spaces = new RoomSpaces(gateway, allowed);
   // The owner acts as a guest of their own account: their connected apps, reminders and syncs stay out of the turn.
   const scope: RequestScope = { spaceId: owner, accountId: owner, access: { kind: "member", role: "editor", ownerId: owner, node: node.id } };
-  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName })] : roomTools(ctx);
+  // Everyone who asked the steward in this turn (its sponsor too): with more than one, it writes for nobody (node/steward.ts).
+  const namesSteward = (row: NodeMessage) => Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id);
+  const stewardAskers = steward
+    ? [...new Set([...kept, ...(trigger && !gated.has(trigger.userId) ? [trigger] : [])].filter((row) => row.authorKind === "human" && row.visibleTo.length === 0 && (row.id === trigger?.id || namesSteward(row))).map((row) => row.userId))]
+    : [];
+  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName, askers: stewardAskers.length ? stewardAskers : [askerId] })] : roomTools(ctx);
   return {
     held: false,
     persona: steward
@@ -287,6 +292,10 @@ export async function roomBoundTurn(
           extraRefs: [],
           // Files on the owner's messages stay in the owner's Files: a room-bound turn does not open them.
           mentions: undefined,
+          // Other people read this: the instructions name no space of the owner's, only the room's.
+          where: spaceName
+            ? `You're working in an Ensemble room with other people; the room's shared space “${spaceName}” is the only space you can reach.`
+            : "You're working in an Ensemble room with other people; no Ensemble space is reachable from here.",
         }),
       ),
     replyData: ctx.requestId ? { peerRequest: ctx.requestId } : {},
@@ -640,8 +649,20 @@ export async function roomDraftPosted(app: FastifyInstance, draft: NodeMessage, 
 
 /** Settles the room cards this module and node/peer-requests.ts make; null for other cards. */
 export async function settleRoomCard(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage | null> {
-  const data = (card.data ?? {}) as { type?: unknown; disclosure?: unknown; peerRequest?: unknown };
+  const data = (card.data ?? {}) as { type?: unknown; disclosure?: unknown; peerRequest?: unknown; request?: unknown };
   if (data.type === "disclosure") return settleDisclosure(app, card, node, input);
+  // A request drafted in My crew (node/peer-requests.ts): it reaches the room only as the owner sends it.
+  if (data.type === "post" && data.request) {
+    const current = await claim(app, card);
+    if (input.decision === "discard") return updateMessageData(app.prisma, current, { status: "discarded" });
+    try {
+      const { request, text } = await sendRequestDraft(app, current, node, input.body);
+      return updateMessageData(app.prisma, current, { status: "posted", requestId: request.id, error: null }, text);
+    } catch (error) {
+      await updateMessageData(app.prisma, current, { status: "pending", error: error instanceof Error ? error.message : "Could not send it." });
+      throw error;
+    }
+  }
   if (data.type === "peer_request") return settlePeerCard(app, card, node, input);
   // A draft answering someone that the owner throws away: nothing is shared, and the request is declined.
   if (data.type === "post" && input.decision === "discard" && (typeof data.disclosure === "string" || typeof data.peerRequest === "string")) {

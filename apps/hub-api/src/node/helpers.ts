@@ -81,6 +81,8 @@ async function removeNodeRows(prisma: PrismaClient, node: Pick<NodeAgent, "id" |
     // Its own captures (no run): their stored bytes go with the evidence sweep.
     prisma.jobEvidence.deleteMany({ where: { nodeId: node.id, jobId: null } }),
     prisma.assistantConversation.deleteMany({ where: { id: { in: conversations }, userId: node.userId, startedOn: "node" } }),
+    // A room whose steward it was has none now (node/steward.ts).
+    prisma.$executeRaw`UPDATE node_rooms SET settings = (settings - 'steward') || jsonb_build_object('leadNodeIds', '[]'::jsonb) WHERE settings->'steward'->>'nodeId' = ${node.id}`,
   ]);
   publishTo([node.userId], "node.room", { deleted: own });
   return own;

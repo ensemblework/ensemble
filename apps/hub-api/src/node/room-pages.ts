@@ -53,16 +53,19 @@ async function textOfPage(db: Db, spaceId: string, pageId: string): Promise<{ te
 /**
  * A person who can edit the room's space gives one of its pages a role: `contract` (its changes reach the
  * people whose work uses it), `decisions` (the room's decisions log; one per room), or back to `watched`.
+ * Every change of role needs edit rights and says so in the room; following a page is `watchPage`.
  */
 export async function setPageRole(app: FastifyInstance, room: NodeRoom, accountId: string, pageId: string, role: PageRole): Promise<void> {
   const prisma = app.prisma;
   const page = await followedPage(app, room, accountId, pageId);
-  if (role !== "watched" && !canEdit(await roleIn(accountId, page.spaceId))) throw new RoomSpaceError("Only people who can edit the room's space give its pages a role.", 403);
+  if (!canEdit(await roleIn(accountId, page.spaceId))) throw new RoomSpaceError("Only people who can edit the room's space change its pages' roles. To follow a page, watch it.", 403);
   const current = await textOfPage(prisma, page.spaceId, page.pageId);
   if (!current) throw new RoomSpaceError("That page is not in the room's space.", 404);
+  const before = (await prisma.nodeRoomPage.findUnique({ where: { roomId_pageId: { roomId: room.id, pageId: page.pageId } }, select: { role: true } }))?.role ?? "watched";
   await prisma.$transaction(async (tx) => {
     if (role === "decisions") {
       // One decisions log per room: the old one is only watched now.
+      await lockRoom(tx, room.id);
       await tx.nodeRoomPage.updateMany({ where: { roomId: room.id, role: "decisions", pageId: { not: page.pageId } }, data: { role: "watched" } });
     }
     await tx.nodeRoomPage.upsert({
@@ -71,15 +74,21 @@ export async function setPageRole(app: FastifyInstance, room: NodeRoom, accountI
       update: { role, seenRevision: current.revision, seenText: current.text },
     });
   });
-  if (role !== "watched") {
+  if (role !== before) {
     const who = nameOf(await prisma.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } }));
+    const was = before === "contract" ? "a contract" : "this room's decisions log";
     await postMessage(prisma, {
       roomId: room.id,
       userId: accountId,
       authorKind: "system",
       kind: "status",
-      body: role === "contract" ? `${who} marked “${current.title}” as a contract: when it changes, the people whose work uses it hear from their leads.` : `${who} made “${current.title}” this room's decisions log: decisions enter it when someone confirms them (✅, or a reply “log this”).`,
-      data: { pageRole: { pageId: page.pageId, spaceId: page.spaceId, role } },
+      body:
+        role === "contract"
+          ? `${who} marked “${current.title}” as a contract: when it changes, the people whose work uses it hear from their leads.`
+          : role === "decisions"
+            ? `${who} made “${current.title}” this room's decisions log: decisions enter it when someone confirms them (✅, or a reply “log this”).`
+            : `${who} made “${current.title}” an ordinary page again: it is no longer ${was}.`,
+      data: { pageRole: { pageId: page.pageId, spaceId: page.spaceId, role, ...(role === "watched" ? { was: before } : {}) } },
     });
   }
   publishTo(await roomPeople(prisma, room.id), "node.room", { roomId: room.id });
@@ -179,20 +188,31 @@ const decisionText = (message: Pick<NodeMessage, "body">): string =>
 /** The room's decisions log page, made on first use by the person confirming (in their own role). */
 async function decisionsPage(app: FastifyInstance, room: NodeRoom, spaceId: string, scope: RequestScope): Promise<string> {
   const prisma = app.prisma;
-  const marked = await prisma.nodeRoomPage.findFirst({ where: { roomId: room.id, spaceId, role: "decisions" } });
-  if (marked && (await prisma.taskPage.findFirst({ where: { id: marked.pageId, userId: spaceId, deletedAt: null }, select: { id: true } }))) return marked.pageId;
   const { createStandalonePage } = await import("../pages/store.js");
   const { markdownPage } = await import("../assistant/tools/pages.js");
-  const page = await runInScope(scope, () =>
-    prisma.$transaction((tx) => createStandalonePage(tx, spaceId, { title: `Decisions — ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null })),
+  // One log per room: confirmations at once wait on the room's row, and the second finds the first's page.
+  const made = await runInScope(scope, () =>
+    prisma.$transaction(async (tx) => {
+      await lockRoom(tx, room.id);
+      const marked = await tx.nodeRoomPage.findFirst({ where: { roomId: room.id, spaceId, role: "decisions" } });
+      if (marked && (await tx.taskPage.findFirst({ where: { id: marked.pageId, userId: spaceId, deletedAt: null }, select: { id: true } }))) return { id: marked.pageId, created: false };
+      const page = await createStandalonePage(tx, spaceId, { title: `Decisions — ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null });
+      await tx.nodeRoomPage.updateMany({ where: { roomId: room.id, role: "decisions" }, data: { role: "watched" } });
+      await tx.nodeRoomPage.upsert({
+        where: { roomId_pageId: { roomId: room.id, pageId: page.id } },
+        create: { roomId: room.id, spaceId, pageId: page.id, role: "decisions", createdBy: scope.accountId },
+        update: { role: "decisions" },
+      });
+      return { id: page.id, created: true };
+    }),
   );
-  sseHub.publish(spaceId, { event: "page", data: { id: page.id, action: "create" } });
-  await prisma.nodeRoomPage.upsert({
-    where: { roomId_pageId: { roomId: room.id, pageId: page.id } },
-    create: { roomId: room.id, spaceId, pageId: page.id, role: "decisions", createdBy: scope.accountId },
-    update: { role: "decisions" },
-  });
-  return page.id;
+  if (made.created) sseHub.publish(spaceId, { event: "page", data: { id: made.id, action: "create" } });
+  return made.id;
+}
+
+/** Holds the room's row for the rest of the transaction: its decisions log is chosen or made by one at a time. */
+async function lockRoom(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM node_rooms WHERE id = ${roomId} FOR UPDATE`;
 }
 
 async function privateLine(app: FastifyInstance, roomId: string, accountId: string, body: string): Promise<void> {
@@ -209,7 +229,9 @@ export async function confirmDecision(app: FastifyInstance, message: NodeMessage
   const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
   if (!room || room.archivedAt || room.kind !== "room") return;
   if (message.visibleTo.length || message.kind !== "text" || (message.data as { deleted?: unknown } | null)?.deleted) return;
-  if (!(await personIn(prisma, room.id, accountId))) return;
+  // Only a message they could read: one from before they joined is not theirs to log (and so publish).
+  const member = await personIn(prisma, room.id, accountId);
+  if (!member || member.joinedAt > message.createdAt) return;
   if (await prisma.nodeRoomDecision.findUnique({ where: { roomId_messageId: { roomId: room.id, messageId: message.id } } })) return;
   const spaceId = await linkedSpace(app, room);
   if (!spaceId) return privateLine(app, room.id, accountId, "This room has no shared space to keep its decisions log in. Link one first.");
@@ -221,7 +243,7 @@ export async function confirmDecision(app: FastifyInstance, message: NodeMessage
   // What it replaces: the logged decision it replies to, or one it names (“replaces #12”).
   const replyTo = (message.data as { replyTo?: { id?: unknown } } | null)?.replyTo?.id;
   const named = /(?:replaces|supersedes)\s+#(\d+)/i.exec(message.body)?.[1];
-  const target = typeof replyTo === "string" ? replyTo : named ? (await prisma.nodeMessage.findFirst({ where: { roomId: room.id, seq: Number(named) }, select: { id: true } }))?.id : null;
+  const target = typeof replyTo === "string" ? replyTo : named ? (await prisma.nodeMessage.findFirst({ where: { roomId: room.id, seq: Number(named), createdAt: { gte: member.joinedAt } }, select: { id: true } }))?.id : null;
   const old = target ? await prisma.nodeRoomDecision.findUnique({ where: { roomId_messageId: { roomId: room.id, messageId: target } } }) : null;
   const users = await prisma.user.findMany({ where: { id: { in: [message.userId, accountId, ...(old ? [old.saidBy] : [])] } }, select: { id: true, name: true, email: true } });
   const name = (id: string) => nameOf(users.find((row) => row.id === id));

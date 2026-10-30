@@ -483,10 +483,11 @@ test("a question to another person is answered within scope by their lead, and i
   assert.equal(row.peerRequestId, json(made).request.id);
   const requests = json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests;
   assert.equal(requests[0].status, "answered");
-  assert.equal(requests[0].answer, "Yes: the billing API has been stable since Monday.");
+  const answer = (await read(ben, room.id)).find((message) => message.authorNodeId === lead.id && message.body.startsWith("Yes: the billing API"))!;
+  assert.deepEqual([requests[0].answerMessageId, requests[0].answer], [answer.id, null], "the answer is linked, not copied");
   assert.equal(requests[0].ownerCardId, undefined, "the requester sees status and public answers");
   const card = (await read(ben, room.id)).find((message) => message.kind === "request")!;
-  assert.equal(card.data.status, "answered");
+  assert.deepEqual([card.data.status, card.data.answerMessageId], ["answered", answer.id]);
   assert.deepEqual([card.data.from.accountId, card.data.to.accountId, card.data.kind], [ben.id, akash.id, "question"]);
   assert.ok((await read(ben, room.id)).some((message) => message.authorNodeId === lead.id && message.body.startsWith("Yes: the billing API")));
 
@@ -545,15 +546,15 @@ test("a work request never runs before acceptance; accepted, its mission records
   assert.equal(done.status, "done");
   assert.equal(done.missionId, mission.id);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request")!;
-  assert.deepEqual([card.data.status, card.data.outcome], ["done", "succeeded"]);
-  assert.match(card.body, /Done \(succeeded\)/);
+  assert.deepEqual([card.data.status, card.data.text, card.data.outcome], ["done", "Add CSV export to invoices", undefined], "the requester's words, and nothing from the work");
+  assert.match(card.body, /\nDone$/);
   const report = (await read(akash, room.id)).find((row) => row.body.startsWith("CSV export is done"))!;
   assert.ok(report.private, "the detailed report stays with Akash, who can share it");
   assert.ok(!(await read(ben, room.id)).some((row) => row.body.startsWith("CSV export is done")));
   assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: ownerCard.id } })).data as any).status, "accepted");
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${request.id}/accept`, payload: {} })).statusCode, 409, "settled once");
   const result = (await cards(akash, room.id, "post")).find((row) => row.data.result?.missionId === mission.id)!;
-  assert.deepEqual([result.data.status, result.body.split("\n")[0]], ["pending", "Add CSV export (invoices only) is ready."]);
+  assert.deepEqual([result.data.status, result.body.split("\n")[0]], ["pending", "Add CSV export to invoices is ready."]);
   assert.ok(!(await read(ben, room.id)).some((row) => row.data?.type === "room_result"), "the room sees it only when Akash posts it");
 });
 
@@ -566,7 +567,9 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   const declined = await akash.inject({ method: "POST", url: `/api/node/requests/${first.id}/decline`, payload: { note: "Not this week." } });
   assert.equal(declined.statusCode, 200, declined.body);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === first.id)!;
-  assert.deepEqual([card.data.status, card.data.answer], ["declined", "Not this week."]);
+  assert.deepEqual([card.data.status, card.data.answer], ["declined", undefined], "the note is not on the public card");
+  assert.ok((await read(ben, room.id)).some((row) => row.private && row.kind === "status" && row.body.endsWith(": Not this week.")), "it is Ben's, in his My crew");
+  assert.equal(json(await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests.find((row: { id: string }) => row.id === first.id).answer, "Not this week.");
   assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${first.id}/accept`, payload: {} })).statusCode, 409);
 
   script = (turn) => {
@@ -593,8 +596,10 @@ test("a review pins its candidate; a decline keeps its note; always accepting st
   const ended = await h.prisma.nodeMission.findUniqueOrThrow({ where: { id: mission.id } });
   assert.ok(["succeeded", "partially_completed", "failed", "stopped"].includes(ended.status), ended.status);
   const reviewed = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === second.id)!;
-  assert.deepEqual([reviewed.data.status, reviewed.data.outcome], ["done", ended.status]);
-  assert.deepEqual(reviewed.data.requirements, [{ text: "Review the candidate", status: "failed" }]);
+  assert.deepEqual([reviewed.data.status, reviewed.data.outcome, reviewed.data.requirements], ["done", undefined, undefined]);
+  // How it went is Akash's: on his view of the request, not the room's.
+  const his = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests.find((row: { id: string }) => row.id === second.id);
+  assert.deepEqual([his.outcome, his.requirements], [ended.status, [{ text: "Review the candidate", status: "failed" }]]);
 
   // The next review from Ben starts at once: Akash said so.
   seen.length = 0;
@@ -616,6 +621,11 @@ test("a person's own lead relays a request for them from My crew, attributed to 
     return { text: "(no reply)" };
   };
   await say(akash, room.id, "@manager ask Ben's lead whether the API is ready", { private: true });
+  // Drafted in My crew: it reaches the room when Akash sends it.
+  assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 0);
+  const draft = (await cards(akash, room.id, "post")).find((row) => row.data.request)!;
+  assert.equal((await approve(akash, draft.id, "approve")).statusCode, 200);
+  await settleTurns();
   const request = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id } });
   assert.deepEqual([request.fromAccountId, request.fromNodeId, request.toAccountId, request.toNodeId, request.status], [akash.id, lead.id, ben.id, bensLead.id, "answered"]);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request")!;
@@ -673,7 +683,7 @@ test("a request whose mission ended unseen (a restart in between) is settled by 
   const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: made.id } });
   assert.deepEqual([done.status, done.missionId], ["done", mission.id]);
   const card = (await read(ben, room.id)).find((row) => row.kind === "request" && row.data.requestId === made.id)!;
-  assert.deepEqual([card.data.status, card.data.outcome], ["done", "failed"]);
+  assert.deepEqual([card.data.status, card.data.outcome], ["done", undefined]);
 });
 
 test("account export and deletion include the peer requests a person made or received", async () => {
@@ -950,7 +960,7 @@ test("C4: work asked between two editors of the room's space becomes a proposed 
   assert.equal(accepted.statusCode, 200, accepted.body);
   assert.equal(json(accepted).request.mode, "shared");
   const moved = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
-  assert.deepEqual([moved.status, moved.title], ["in_progress", "Add a rate limiter (per key)"]);
+  assert.deepEqual([moved.status, moved.title], ["in_progress", "Add a rate limiter"], "it keeps what was asked: Akash's words are his lead's brief");
   await settleTurns();
   const planning = seen.find((entry) => entry.transcript.includes("Your owner accepted Ben's request"))!;
   assert.match(planning.transcript, /Your owner chose a shared run: work in the room's space “Launch space”/);
@@ -1677,4 +1687,458 @@ test("web #5: the shareable picker lists what a person can read in their own spa
   assert.deepEqual(seen.items.map((row) => [row.id, row.shared]), [[task.id, true]]);
   assert.ok((await candidates(akash, "pricing")).items.some((row) => row.id === secret.id), "Akash's own items are his to offer");
   assert.equal((await ben.inject({ method: "GET", url: `/api/node/rooms/${room.id}/shareable/candidates?q=${"x".repeat(101)}` })).statusCode, 400);
+});
+
+// ── follow-up round ─────────────────────────────────────────────────────────────────────────
+
+test("follow-up #1: a request's public card shows only what the requester wrote and how it stands, never the other side's words or work", async () => {
+  const { akash, ben, lead, bensLead, room, handle } = await twoPeople();
+  // Cara is there too: she reads what everyone reads.
+  const cara = await person("Cara");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } })).statusCode, 201);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const invite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  script = (turn) => {
+    if (turn.slug === "assistant" && turn.transcript.includes("ask Akash for the export")) {
+      return { calls: [{ name: "node_peer_request", arguments: { to: handle(lead.id), kind: "work", text: "Please add a CSV export to the invoices page. CANARY-BEN-7210", refs: [{ kind: "page", id: "p1", title: "CANARY-BEN-TITLE pricing" }] } }], then: "Drafted it for you." };
+    }
+    if (turn.slug === "assistant" && turn.transcript.includes("ask Akash to review")) {
+      return { calls: [{ name: "node_peer_request", arguments: { to: handle(lead.id), kind: "review", text: "Please review my export.", candidate: { repo: "github.com/ben/app", commit: "abc1234" } } }], then: "Drafted." };
+    }
+    if (turn.slug === "manager" && turn.transcript.includes("Your owner accepted Ben's request")) {
+      return { calls: [{ name: "node_plan", arguments: { goal: "CSV export", requirements: [{ id: "r1", text: "CANARY-AKASH-REQ use the Initech price table" }], constraints: {}, steps: [{ id: "s1", to: "manager", kind: "other", requirementIds: ["r1"], brief: "Add the export." }], deferred: [] } }], then: "Planned." };
+    }
+    return { text: "(no reply)" };
+  };
+
+  // Ben's lead drafts in his My crew, where it reads private things: the room sees nothing until Ben sends it.
+  await say(ben, room.id, `@${handle(bensLead.id)} ask Akash for the export`, { private: true });
+  assert.equal(await h.prisma.nodePeerRequest.count({ where: { roomId: room.id } }), 0);
+  assert.ok(!JSON.stringify(await read(cara, room.id)).includes("CANARY-BEN"));
+  const draft = (await cards(ben, room.id, "post")).find((row) => row.data.request)!;
+  assert.match(draft.body, /CANARY-BEN-7210\nAbout: CANARY-BEN-TITLE pricing/, "Ben sees all the room would read");
+  assert.equal((await approve(ben, draft.id, "approve", "Please add a CSV export to the invoices page.")).statusCode, 200);
+  await settleTurns();
+  const request = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id } });
+  assert.deepEqual([request.fromAccountId, request.fromNodeId, request.text, request.refs], [ben.id, bensLead.id, "Please add a CSV export to the invoices page.", []], "his words as sent");
+  assert.ok(!JSON.stringify(await read(cara, room.id)).includes("CANARY-BEN"));
+
+  // Akash accepts in his own words; his work ends with requirements of his own.
+  const accepted = await akash.inject({ method: "POST", url: `/api/node/requests/${request.id}/accept`, payload: { text: "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter" } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  await settleTurns();
+  await settleTurns();
+  const done = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: request.id } });
+  assert.deepEqual([done.status, done.text, done.brief], ["done", "Please add a CSV export to the invoices page.", "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter"]);
+  assert.match(seen.find((row) => row.transcript.includes("Your owner accepted Ben's request"))!.transcript, /CANARY-AKASH-BRIEF[\s\S]*Ben asked: “Please add a CSV export/, "Akash's lead plans from his words");
+  for (const [who, user] of [["Ben", ben], ["Cara", cara]] as const) {
+    const everything = JSON.stringify([await read(user, room.id), json(await user.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` }))]);
+    assert.ok(!everything.includes("CANARY-AKASH"), `${who} reads nothing of Akash's words or work`);
+  }
+  const card = (await read(cara, room.id)).find((row) => row.kind === "request")!;
+  assert.deepEqual([card.data.text, card.data.status, card.data.outcome, card.data.requirements, card.data.answer], ["Please add a CSV export to the invoices page.", "done", undefined, undefined, undefined]);
+  assert.ok(!JSON.stringify(json(await ben.inject({ method: "GET", url: "/api/auth/export" }))).includes("CANARY-AKASH"), "nor Ben's account export");
+  const his = json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` })).requests[0];
+  assert.equal(his.brief, "CSV export, but CANARY-AKASH-BRIEF reuse the Initech exporter");
+  assert.match(JSON.stringify(his.requirements), /CANARY-AKASH-REQ/, "how it went is on Akash's own view");
+
+  // A decline note goes to Ben alone.
+  const second = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Also a PDF export?" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${second.id}/decline`, payload: { note: "CANARY-NOTE not this month" } })).statusCode, 200);
+  assert.ok(!JSON.stringify([await read(cara, room.id), json(await cara.inject({ method: "GET", url: `/api/node/rooms/${room.id}/requests` }))]).includes("CANARY-NOTE"));
+  assert.ok((await read(ben, room.id)).some((row) => row.private && row.body.endsWith("CANARY-NOTE not this month")));
+
+  // A drafted review keeps its candidate only while Ben's words still name it.
+  await say(ben, room.id, `@${handle(bensLead.id)} ask Akash to review it`, { private: true });
+  const review = (await cards(ben, room.id, "post")).find((row) => row.data.request?.kind === "review")!;
+  assert.match(review.body, /Candidate: repository github\.com\/ben\/app, at commit abc1234/);
+  const stripped = await approve(ben, review.id, "approve", "Please review my export.");
+  assert.equal(stripped.statusCode, 400, "a review needs the exact candidate");
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: review.id } })).data as { status: string }).status, "pending");
+  assert.equal((await approve(ben, review.id, "approve")).statusCode, 200);
+  const reviewRequest = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id, kind: "review" } });
+  assert.deepEqual(reviewRequest.candidate, { repo: "github.com/ben/app", commit: "abc1234" });
+});
+
+test("follow-up #2: a room-bound turn's instructions name no space of its owner's, only the room's", async () => {
+  const { akash, ben, room, dm } = await twoPeople();
+  // His own space has a name of his own; his email the room never shows.
+  await h.prisma.user.update({ where: { id: akash.id }, data: { spaceName: "CANARY-SPACE Initech deal" } });
+  script = (turn) => (turn.slug === "manager" ? { text: "On track." } : { text: "(no reply)" });
+  seen.length = 0;
+  inputs.length = 0;
+  await say(ben, room.id, "@manager how is the launch going?");
+  let turn = seen.find((row) => row.slug === "manager")!;
+  assert.match(turn.system, /^You're working in an Ensemble room with other people; no Ensemble space is reachable from here\./);
+  for (const hidden of ["CANARY-SPACE", "Akash's space", akash.email, "Only this space is reachable"]) {
+    assert.ok(inputs.every((text) => !text.includes(hidden)), `${hidden} is not in what the model was sent`);
+  }
+
+  // With the room's space linked, that one is named, and still none of his.
+  await linkSpace(akash, room.id, "Launch space");
+  seen.length = 0;
+  inputs.length = 0;
+  await say(ben, room.id, "@manager and the board?");
+  turn = seen.find((row) => row.slug === "manager")!;
+  assert.match(turn.system, /^You're working in an Ensemble room with other people; the room's shared space “Launch space” is the only space you can reach\./);
+  assert.ok(inputs.every((text) => !text.includes("CANARY-SPACE") && !text.includes(akash.email)));
+
+  // His own chats keep naming his space.
+  seen.length = 0;
+  await say(akash, dm.id, "@manager anything new?");
+  assert.match(seen.find((row) => row.slug === "manager")!.system, /in their space “CANARY-SPACE Initech deal”/);
+});
+
+// ── review of C6–C7 ─────────────────────────────────────────────────────────────────────────
+
+test("review C6–C7 #1: only Start, or an explicit yes to the offer, links work to the room's task; anything else stays private", async () => {
+  const { akash, lead, room } = await twoPeople({ builder: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  const billing = json(await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "Billing page", assignee: akash.id, status: "todo" } })).task as { id: string };
+  await flushEvents();
+  const [offer] = await notes(akash, room.id);
+  assert.deepEqual(offer!.data.start, { taskIds: [billing.id] });
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (turn.transcript.includes("Your step in")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Done." } }], then: "(no reply)" };
+    if (turn.transcript.includes("start the room's task “Billing page”")) return { calls: [{ name: "node_work_start", arguments: { title: "Billing page", brief: "Build the billing page.", kind: "other" } }], then: "(no reply)" };
+    if (turn.transcript.includes("summarize my October bank statements")) return { calls: [{ name: "node_work_start", arguments: { title: "October statements", brief: "Summarize my October bank statements.", kind: "other" } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const linked = () => h.prisma.nodeMission.count({ where: { deliverTo: { path: ["taskId"], equals: billing.id } } });
+
+  await say(akash, room.id, "Not now — summarize my October bank statements instead", { private: true });
+  const other = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id, goal: { contains: "October" } } });
+  assert.equal(other.status, "succeeded");
+  assert.equal(other.deliverTo, null, "his own work, delivered nowhere");
+  assert.equal(await linked(), 0);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: billing.id } })).status, "todo");
+  assert.equal(await h.prisma.document.count({ where: { userId: spaceId } }), 0, "nothing of it reaches the shared space");
+  // A yes that answers no offer (other messages came since) is an ordinary message too.
+  await say(akash, room.id, "yes", { private: true });
+  assert.equal(await linked(), 0);
+
+  // A yes replying to the offer is the Start button.
+  await say(akash, room.id, "Yes, start it.", { private: true, replyToId: offer!.id });
+  const work = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id, goal: { contains: "Billing page" } } });
+  assert.equal((work.deliverTo as { taskId?: string }).taskId, billing.id);
+  assert.ok((await turnsOf([lead.id], room.id)).some((row) => row.operationId?.startsWith(`room-task:${billing.id}:private:`)), "started as Start starts it");
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: billing.id } })).status, "done");
+});
+
+test("review C6–C7 #2: deleting a shared copy takes its media with it, whether shared as me or as my lead", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  const { postMessage } = await import("./store.js");
+  for (const as of ["me", "lead"] as const) {
+    const shot = await screenshot(akash, `board-${as}.png`);
+    const media = [{ evidenceId: shot.id, kind: "screenshot", name: `board-${as}.png`, mime: "image/png", caption: null, size: 4 }];
+    const { message: original } = await postMessage(h.prisma, {
+      roomId: room.id, userId: akash.id, authorKind: as === "me" ? "human" : "node", authorNodeId: as === "me" ? null : lead.id, body: "Here is the board.", data: { media }, visibleTo: [akash.id],
+    });
+    const shared = await akash.inject({ method: "POST", url: `/api/node/messages/${original.id}/share`, payload: { as } });
+    assert.equal(shared.statusCode, 201, shared.body);
+    const copy = json(shared).message;
+    const open = () => ben.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${copy.id}` });
+    assert.equal((await open()).statusCode, 200);
+    assert.equal((await ben.inject({ method: "DELETE", url: `/api/node/messages/${copy.id}` })).statusCode, 403, "only the person who shared it");
+    assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/messages/${copy.id}` })).statusCode, 204, `a copy shared as ${as} is theirs to delete`);
+    assert.equal((await open()).statusCode, 404, "its media no longer opens");
+    const gone = (await read(ben, room.id)).find((row) => row.id === copy.id)!;
+    assert.deepEqual([gone.body, gone.data.media, gone.data.refs, gone.data.deleted], ["", undefined, undefined, true]);
+    assert.equal((await akash.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${original.id}` })).statusCode, 200, "Akash keeps his own");
+  }
+  // A message deleted before this fix kept its media: it shows nothing either.
+  const shot = await screenshot(akash, "old.png");
+  const { message: old } = await postMessage(h.prisma, { roomId: room.id, userId: akash.id, authorKind: "human", body: "", data: { deleted: true, media: [{ evidenceId: shot.id, kind: "screenshot", name: "old.png", mime: "image/png", caption: null, size: 4 }] } });
+  assert.equal((await ben.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${old.id}` })).statusCode, 404);
+});
+
+test("review C6–C7 #3: when several people ask the steward in one turn, it writes for nobody and reads only what all may read", async () => {
+  const { akash, ben, builder, room, handle } = await twoPeople({ builder: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  // Dana is in the room, not in its space.
+  const dana = await person("Dana");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: dana.email } })).statusCode, 201);
+  const { node: danasLead } = await createNode(dana, "assistant");
+  const invite = json(await dana.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await dana.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [danasLead.id] } })).statusCode, 201);
+  await settleTurns();
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: builder!.id } })).statusCode, 200);
+  assert.equal((await autoPost(akash, builder!.id)).statusCode, 200);
+  const steward = handle(builder!.id);
+  script = (turn) => {
+    if (turn.slug !== steward || !turn.transcript.includes("budget")) return { text: "(no reply)" };
+    return {
+      calls: [
+        { name: "node_room_board", arguments: {} },
+        { name: "node_steward_notes", arguments: { title: "Vendor notes", notes: "Vendor and budget.", actions: [{ to: "ben", task: "Cancel the vendor contract" }, { to: "akash", task: "Add the budget" }] } },
+      ],
+      then: "Done.",
+    };
+  };
+  // Dana's message and Akash's arrive in the same steward turn.
+  const { postMessage, mentionsFor } = await import("./store.js");
+  const members = await h.prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
+  const danas = `@${steward} write notes: give Ben “Cancel the vendor contract”`;
+  await postMessage(h.prisma, { roomId: room.id, userId: dana.id, authorKind: "human", body: danas, mentions: mentionsFor(danas, members, []) });
+  await say(akash, room.id, `@${steward} also add the budget`);
+  const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: builder!.id } });
+  const calls = (await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: member.conversationId!, role: "assistant" }, orderBy: { createdAt: "desc" } })).toolCalls as Array<{ name: string; error?: string }>;
+  assert.match(calls.find((call) => call.name === "node_steward_notes")!.error ?? "", /Several people asked you at once/);
+  assert.match(calls.find((call) => call.name === "node_room_board")!.error ?? "", /Not everyone who asked you just now can open the room's space/);
+  assert.equal(await h.prisma.taskPage.count({ where: { userId: spaceId, title: "Vendor notes" } }), 0, "nothing written in Akash's role for Dana");
+  assert.equal(await h.prisma.task.count({ where: { userId: spaceId, sourceRef: { startsWith: "room-notes:" } } }), 0);
+
+  // Asked by Akash alone, it writes for him.
+  await say(akash, room.id, `@${steward} notes on the budget please`);
+  const page = await h.prisma.taskPage.findFirstOrThrow({ where: { userId: spaceId, title: "Vendor notes" } });
+  assert.deepEqual([page.editorAccountId, page.editorNodeId], [akash.id, builder!.id]);
+});
+
+test("review C6–C7 #4: the steward ends with its node or its sponsor, and no one else's node takes its place", async () => {
+  const { akash, ben, builder, tester, room } = await twoPeople({ builder: true, tester: true });
+  const settings = async () => (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).settings as { steward?: unknown; leadNodeIds?: string[] };
+  const stewardNow = async () => json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/steward` })).steward;
+  const memberOf = async (nodeId: string | null, userId: string) => (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId, userId } })).id;
+
+  // Its node leaves: no steward, and leadNodeIds does not pass to another node.
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: builder!.id } })).statusCode, 200);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${await memberOf(builder!.id, akash.id)}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual([(await settings()).steward, (await settings()).leadNodeIds], [undefined, []]);
+
+  // Its sponsor leaves: it ends, and is not written back.
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: tester!.id } })).statusCode, 200);
+  assert.equal((await ben.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${await memberOf(null, ben.id)}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual([(await settings()).steward, (await settings()).leadNodeIds], [undefined, []]);
+
+  // So someone else can have one; deleting its node ends it too.
+  const { node: helper } = await createNode(akash, "feature-engineer");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/nodes`, payload: { nodeId: helper.id } })).statusCode, 201);
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: helper.id } })).statusCode, 200);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/nodes/${helper.id}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual((await settings()).leadNodeIds, []);
+});
+
+test("review C6–C7 #6: only people who can edit the room's space change a page's role, and the room hears of it", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  await h.prisma.spaceMember.update({ where: { spaceId_accountId: { spaceId, accountId: ben.id } }, data: { role: "viewer" } });
+  const page = await h.prisma.taskPage.create({ data: { userId: spaceId, title: "API contract" } });
+  const role = (user: HttpUser, value: string) => user.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/pages/${page.id}`, payload: { role: value } });
+  assert.equal((await role(akash, "contract")).statusCode, 200);
+  assert.equal((await role(ben, "watched")).statusCode, 403, "a viewer cannot turn a contract off");
+  assert.equal((await h.prisma.nodeRoomPage.findFirstOrThrow({ where: { roomId: room.id, pageId: page.id } })).role, "contract");
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/pages/${page.id}/watch`, payload: { watching: true } })).statusCode, 200, "watching is for anyone who can read it");
+  assert.equal((await role(akash, "watched")).statusCode, 200);
+  const line = (await read(ben, room.id)).filter((row) => row.data?.pageRole?.pageId === page.id).at(-1)!;
+  assert.deepEqual([line.data.pageRole.role, line.data.pageRole.was], ["watched", "contract"]);
+  assert.match(line.body, /“API contract” an ordinary page again: it is no longer a contract\./);
+});
+
+test("review C6–C7 #7: a person cannot react to, pin or log a message from before they joined", async () => {
+  const { akash, room } = await twoPeople();
+  await linkSpace(akash, room.id, "Launch space");
+  const old = await say(akash, room.id, "We price the API at 9 euros a month.");
+  // Cara joins the room, and its space, later.
+  const cara = await person("Cara");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } })).statusCode, 201);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const invite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  assert.equal((await joinSpace(cara, room.id)).statusCode, 200);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/messages/${old.id}/reactions`, payload: { emoji: "✅" } })).statusCode, 404);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/rooms/${room.id}/pins`, payload: { messageId: old.id, pinned: true } })).statusCode, 400);
+  const { confirmDecision } = await import("./room-pages.js");
+  await confirmDecision(h.app, await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: old.id } }), cara.id);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomDecision.count({ where: { roomId: room.id } }), 0, "nothing from before she joined is logged, or published");
+  // One from since she joined, she can.
+  const fresh = await say(akash, room.id, "And the free tier stays.");
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/messages/${fresh.id}/reactions`, payload: { emoji: "✅" } })).statusCode, 200);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomDecision.count({ where: { roomId: room.id, messageId: fresh.id, loggedBy: cara.id } }), 1);
+});
+
+test("review C6–C7 #8: two confirmations at once make one decisions log", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const first = await say(akash, room.id, "We ship on Friday.");
+  const second = await say(ben, room.id, "The docs go out with it.");
+  const { confirmDecision } = await import("./room-pages.js");
+  const message = (id: string) => h.prisma.nodeMessage.findUniqueOrThrow({ where: { id } });
+  await Promise.all([confirmDecision(h.app, await message(first.id), ben.id), confirmDecision(h.app, await message(second.id), akash.id)]);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomPage.count({ where: { roomId: room.id, role: "decisions" } }), 1);
+  assert.equal(await h.prisma.taskPage.count({ where: { userId: spaceId, title: { startsWith: "Decisions — " }, deletedAt: null } }), 1);
+  const decisions = await h.prisma.nodeRoomDecision.findMany({ where: { roomId: room.id } });
+  assert.equal(decisions.length, 2);
+  assert.equal(new Set(decisions.map((row) => row.pageId)).size, 1, "both in the one log");
+  const log = JSON.stringify((await h.prisma.taskPage.findUniqueOrThrow({ where: { id: decisions[0]!.pageId } })).content);
+  assert.ok(log.includes("We ship on Friday.") && log.includes("The docs go out with it."));
+});
+
+test("follow-up #3: moving a requested task out of Proposed answers its request, for the person asked only", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const ask = async (text: string) => json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text } })).request as { id: string; taskId: string };
+  const move = (user: HttpUser, taskId: string, status: string) => inSpace(user, spaceId, { method: "POST", url: `/api/tasks/${taskId}/move`, payload: { status } });
+  const first = await ask("Add a rate limiter");
+  assert.ok(first.taskId);
+  // Ben, who asked, cannot answer it for Akash; nobody skips straight to Done.
+  let moved = await move(ben, first.taskId, "in_progress");
+  assert.equal(moved.statusCode, 403);
+  assert.match(json(moved).error, /only Akash accepts or declines it/);
+  moved = await move(akash, first.taskId, "done");
+  assert.equal(moved.statusCode, 409);
+  assert.match(json(moved).error, /accept it \(move it to To do or In progress\) or decline it first/);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: first.taskId } })).status, "proposed");
+  assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: first.id } })).status, "awaiting_owner");
+
+  // Akash drags it to To do: accepted, as private work (the Today tile's default).
+  moved = await move(akash, first.taskId, "todo");
+  assert.equal(moved.statusCode, 200, moved.body);
+  assert.match(json(moved).answered, /^Accepted Ben's request/);
+  const accepted = await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: first.id } });
+  assert.deepEqual([accepted.status, accepted.mode], ["approved", "private"]);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: first.taskId } })).status, "in_progress");
+  await settleTurns();
+
+  // Dropped from its page's status menu: declined.
+  const second = await ask("Add a PDF export");
+  const patched = await inSpace(akash, spaceId, { method: "PATCH", url: `/api/tasks/${second.taskId}`, payload: { status: "dropped" } });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.equal((await h.prisma.nodePeerRequest.findUniqueOrThrow({ where: { id: second.id } })).status, "declined");
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: second.taskId } })).status, "dropped");
+
+  // Any other way out of Proposed (an assistant's tool) is refused while the request waits.
+  const third = await ask("Add an XML export");
+  const { updateTask } = await import("../services/tasks.js");
+  await assert.rejects(h.prisma.$transaction((tx) => updateTask(tx, spaceId, third.taskId, { status: "todo" }, "me")), /the person asked accepts or declines it/);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: third.taskId } })).status, "proposed");
+});
+
+test("follow-up #4: people per room and spaces are each person's own limits, up to the system's ceilings", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const overview = json(await akash.inject({ method: "GET", url: "/api/sharing/overview" }));
+  assert.deepEqual([overview.limits.roomPeople, overview.limits.spaces, overview.caps.roomPeople, overview.caps.spaces], [10, 12, 50, 100], "today's sizes by default");
+  assert.equal(json(await akash.inject({ method: "GET", url: "/api/node/bootstrap" })).limits.roomPeople, 10);
+  const limit = (user: HttpUser, payload: Record<string, number>) => user.inject({ method: "PUT", url: "/api/sharing/limits", payload });
+
+  // People per room: the maker's own choice, counting open requests.
+  assert.equal((await limit(akash, { roomPeople: 51 })).statusCode, 400, "the system's own ceiling");
+  assert.equal((await limit(akash, { roomPeople: 3 })).statusCode, 200);
+  assert.equal(json(await akash.inject({ method: "GET", url: "/api/node/bootstrap" })).limits.roomPeople, 3);
+  const [cara, dana] = [await person("Cara"), await person("Dana")];
+  const invite = (email: string) => akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email } });
+  assert.equal((await invite(cara.email)).statusCode, 201);
+  const full = await invite(dana.email);
+  assert.equal(full.statusCode, 409);
+  assert.match(json(full).error, /Your rooms hold at most 3 people, counting open requests/);
+  // Lowered after inviting: Cara cannot join past it.
+  assert.equal((await limit(akash, { roomPeople: 2 })).statusCode, 200);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const pending = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  const refused = await cara.inject({ method: "POST", url: `/api/node/invites/${pending.id}/accept`, payload: { nodeIds: [carasLead.id] } });
+  assert.equal(refused.statusCode, 409);
+  assert.match(json(refused).error, /already has 2 people, the most the person who made it allows/);
+  assert.equal((await limit(akash, { roomPeople: 50 })).statusCode, 200);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${pending.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+
+  // Spaces: his own space counts; a lower limit stops new ones, a higher one allows them.
+  assert.equal((await limit(akash, { spaces: 101 })).statusCode, 400);
+  assert.equal((await limit(akash, { spaces: 2 })).statusCode, 200);
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  const another = await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/space`, payload: { create: true, name: "Second space" } });
+  assert.equal(another.statusCode, 409);
+  assert.match(json(another).error ?? "", /up to 2 spaces/);
+  assert.equal((await limit(akash, { spaces: 100 })).statusCode, 200);
+  const second = await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/space`, payload: { create: true, name: "Second space" } });
+  assert.equal(second.statusCode, 200, second.body);
+  assert.notEqual(json(second).space.id, spaceId);
+  // A space handed over counts against the receiver's own limit.
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  assert.equal((await limit(ben, { spaces: 1 })).statusCode, 200);
+  const handed = await akash.inject({ method: "POST", url: `/api/sharing/spaces/${json(second).space.id}/transfer`, payload: { toId: ben.id, confirmation: "Second space" } });
+  assert.equal(handed.statusCode, 409, handed.body);
+  assert.match(json(handed).error, /as many spaces as their limit allows/);
+});
+
+test("website round: decline a task from the steward's notes, the mode on the owner's card, Start's turn and the board's plan, requesters with their node's handle", async () => {
+  const { akash, ben, builder, bensLead, room, handle } = await twoPeople({ builder: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const fromNotes = (title: string) =>
+    h.prisma.task.create({ data: { userId: spaceId, title, owner: "me", assigneeAccountId: ben.id, status: "proposed", createdBy: "agent", requestedByAccountId: akash.id, requestedByNodeId: builder!.id, sourceRef: "room-notes:kick-off" } });
+  const board = async (user: HttpUser) => json(await user.inject({ method: "GET", url: `/api/node/rooms/${room.id}/board` })).tasks as Array<Record<string, any>>;
+
+  // 1. A proposed task from the steward's notes: Ben, whose it is, declines it; Akash, who asked, hears so once.
+  const docs = await fromNotes("Write the docs");
+  await flushEvents();
+  const decline = (user: HttpUser, taskId: string, payload: Record<string, unknown> = {}) => user.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${taskId}/decline`, payload });
+  assert.equal((await decline(akash, docs.id)).statusCode, 403, "only the person it is with");
+  const declined = await decline(ben, docs.id, { note: "Not this sprint" });
+  assert.equal(declined.statusCode, 200, declined.body);
+  assert.deepEqual(json(declined).task, { id: docs.id, status: "dropped" });
+  const told = (await read(akash, room.id)).filter((row) => row.private && row.data?.taskId === docs.id && row.data?.declined);
+  assert.deepEqual(told.map((row) => row.body), ["Ben declined “Write the docs”: Not this sprint"]);
+  assert.ok(!(await read(ben, room.id)).some((row) => row.data?.taskId === docs.id && row.data?.declined), "Akash's alone");
+  await flushEvents();
+  assert.ok(!(await notes(akash, room.id)).some((row) => row.data.items.some((item: { subjectId: string }) => item.subjectId === docs.id)), "told once, not again by his lead");
+  assert.equal((await decline(ben, docs.id)).statusCode, 409);
+
+  // 2. Accepting writes the chosen mode on the owner's card.
+  const made = json(await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/requests`, payload: { to: akash.id, kind: "work", text: "Add a rate limiter" } })).request;
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/requests/${made.id}/accept`, payload: { mode: "shared" } })).statusCode, 200);
+  const ownerCard = (await cards(akash, room.id, "peer_request")).find((row) => row.data.requestId === made.id)!;
+  assert.deepEqual([ownerCard.data.status, ownerCard.data.mode], ["accepted", "shared"]);
+  await settleTurns();
+
+  // 3. Start answers with its turn; the plan it makes shows on the task's board row, to Ben alone.
+  const hBen = handle(bensLead.id);
+  script = (turn) =>
+    turn.slug === hBen && turn.transcript.includes("start the room's task “CSV export”")
+      ? { calls: [{ name: "node_work_start", arguments: { title: "CSV export", brief: "Build the CSV export.", kind: "other" } }], then: "(no reply)" }
+      : { text: "(no reply)" };
+  const csv = json(await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "CSV export", assignee: ben.id, status: "todo" } })).task as { id: string };
+  const started = await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${csv.id}/start`, payload: {} });
+  assert.equal(started.statusCode, 202, started.body);
+  assert.equal(json(started).taskId, csv.id);
+  assert.match((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: json(started).turnId } })).operationId ?? "", new RegExp(`^room-task:${csv.id}:private:`));
+  await settleTurns();
+  const mission = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: ben.id, goal: { contains: "CSV export" } } });
+  assert.deepEqual((await board(ben)).find((row) => row.id === csv.id)!.plan, { id: mission.id, status: mission.status });
+  assert.equal((await board(akash)).find((row) => row.id === csv.id)!.plan, null, "how Ben's work goes is his");
+  // Started, a task from the steward's notes leaves Proposed as its work starts.
+  const copy = await fromNotes("Review the copy");
+  script = (turn) =>
+    turn.slug === hBen && turn.transcript.includes("start the room's task “Review the copy”")
+      ? { calls: [{ name: "node_work_start", arguments: { title: "Review the copy", brief: "Review it.", kind: "other" } }], then: "(no reply)" }
+      : { text: "(no reply)" };
+  assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${room.id}/tasks/${copy.id}/start`, payload: {} })).statusCode, 202);
+  await settleTurns();
+  assert.notEqual((await h.prisma.task.findUniqueOrThrow({ where: { id: copy.id } })).status, "proposed");
+
+  // 4. Who asked, with the node's handle here, the same on the board and in the digest.
+  const waiting = await fromNotes("Fix the export");
+  const builderName = (await h.prisma.nodeAgent.findUniqueOrThrow({ where: { id: builder!.id } })).name;
+  const asker = { accountId: akash.id, name: "Akash", node: { id: builder!.id, name: builderName, handle: handle(builder!.id) } };
+  assert.deepEqual((await board(ben)).find((row) => row.id === waiting.id)!.requestedBy, asker);
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: true } })).statusCode, 200);
+  setDigestWriterForTests(async () => "Welcome back.");
+  try {
+    assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/status`, payload: { away: false } })).statusCode, 200);
+    await settleTurns();
+  } finally {
+    setDigestWriterForTests(null);
+  }
+  const digest = (await read(ben, room.id)).filter((row) => row.data?.type === "digest").at(-1)!;
+  assert.deepEqual(digest.data.items.proposed.find((row: { taskId: string }) => row.taskId === waiting.id).requestedBy, asker);
 });

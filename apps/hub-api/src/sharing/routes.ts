@@ -125,17 +125,25 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  /** The account's own limits: how many contacts, and how many people per space it owns. Its choice, up to SHARING_CAPS. */
+  /**
+   * The account's own limits: contacts, people per space it owns, people per Ensemble Node room it makes,
+   * and spaces it owns. Its choice, up to SHARING_CAPS.
+   */
   app.put("/api/sharing/limits", async (request) => {
     browserOnly(request);
     const body = z
-      .object({ contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).optional(), members: z.number().int().min(1).max(SHARING_CAPS.members).optional() })
+      .object({
+        contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).optional(),
+        members: z.number().int().min(1).max(SHARING_CAPS.members).optional(),
+        roomPeople: z.number().int().min(2).max(SHARING_CAPS.roomPeople).optional(),
+        spaces: z.number().int().min(1).max(SHARING_CAPS.spaces).optional(),
+      })
       .strict()
       .parse(request.body ?? {});
     const accountId = accountIdOf(request);
     const current = await sharingLimits(prisma, accountId);
-    // A lower limit takes nobody away: it only stops new additions until fewer are in use.
-    await saveSettings(prisma, accountId, { sharing: { contacts: body.contacts ?? current.contacts, members: body.members ?? current.members } });
+    // A lower limit takes nobody and nothing away: it only stops new additions until fewer are in use.
+    await saveSettings(prisma, accountId, { sharing: { ...current, ...body } });
     await appendLedger({ userId: accountId, actor: "me", action: "sharing.limits", payload: body });
     nudge([accountId]);
     return { limits: await sharingLimits(prisma, accountId), caps: SHARING_CAPS };

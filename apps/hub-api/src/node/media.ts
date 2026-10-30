@@ -156,7 +156,8 @@ export async function mediaReadable(prisma: PrismaClient, accountId: string, evi
     messages = rooms.length ? await prisma.nodeMessage.findMany({ where: { roomId: { in: rooms.map((room) => room.roomId) }, ...shows }, orderBy: { createdAt: "desc" }, take: 50 }) : [];
   }
   for (const message of messages) {
-    if (!canSee(message, accountId)) continue;
+    // A deleted message shows nothing any more.
+    if (!canSee(message, accountId) || (message.data as { deleted?: unknown } | null)?.deleted) continue;
     // A person of the room, and in a room with other people, one who had joined when it was posted.
     const member = await prisma.nodeRoomMember.findFirst({ where: { roomId: message.roomId, userId: accountId, nodeId: null }, include: { room: { select: { kind: true } } } });
     if (member && (member.room.kind !== "room" || member.joinedAt <= message.createdAt)) return true;

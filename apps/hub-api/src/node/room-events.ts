@@ -20,7 +20,7 @@ import { truncateText } from "../lib/text.js";
 import { publishTo } from "./events.js";
 import { resolveMentions } from "./mentions.js";
 import { inBackground } from "./queue.js";
-import { boundSpaceId, linkedSpace, onSpaceBound, roleIn } from "./room-space.js";
+import { boardNames, boundSpaceId, linkedSpace, onSpaceBound, roleIn } from "./room-space.js";
 import { directoryOf, postMessage } from "./store.js";
 import { awayNow, personRow, prefsOf, updatePrefs } from "./trust.js";
 import { presenceChanged } from "./status-cards.js";
@@ -603,8 +603,10 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   const requests = await prisma.nodePeerRequest.findMany({ where: { roomId: room.id, toAccountId: personId, createdAt: { gte: from } }, orderBy: { createdAt: "asc" } });
   const asked = await Promise.all(requests.map(async (row) => ({ requestId: row.id, kind: row.kind, from: { accountId: row.fromAccountId, name: await nameFor(row.fromAccountId) }, text: truncateText(row.text, 200), status: row.status, taskId: row.taskId })));
   const mine = spaceId && owner ? (owner === personId ? { owner: "me" as const, assigneeAccountId: null } : { owner: "me" as const, assigneeAccountId: personId }) : null;
-  const waiting = spaceId && mine ? await prisma.task.findMany({ where: { userId: spaceId, deletedAt: null, status: "proposed", ...mine }, orderBy: { createdAt: "asc" }, take: 20, select: { id: true, title: true, requestedByAccountId: true } }) : [];
-  const proposed = await Promise.all(waiting.map(async (row) => ({ taskId: row.id, title: row.title, requestedBy: row.requestedByAccountId ? await nameFor(row.requestedByAccountId) : null })));
+  const waiting = spaceId && mine ? await prisma.task.findMany({ where: { userId: spaceId, deletedAt: null, status: "proposed", ...mine }, orderBy: { createdAt: "asc" }, take: 20, select: { id: true, title: true, requestedByAccountId: true, requestedByNodeId: true } }) : [];
+  // Who asked, as the board shows it (node/room-space.ts).
+  const { requester } = await boardNames(prisma, room.id, waiting.flatMap((row) => (row.requestedByAccountId ? [row.requestedByAccountId] : [])), waiting.flatMap((row) => (row.requestedByNodeId ? [row.requestedByNodeId] : [])));
+  const proposed = waiting.map((row) => ({ taskId: row.id, title: row.title, requestedBy: requester(row) }));
   // Every event still waiting for them, however old, and those already told since `from`, all of them.
   const held: NodeRoomEvent[] = [];
   for (let cursor: string | null = null; ; ) {
@@ -651,7 +653,7 @@ export async function catchUp(app: FastifyInstance, room: NodeRoom, personId: st
   }
   const facts: string[] = [
     ...asked.map((row) => `Asked of them: ${row.from.name} asked for ${row.kind === "question" ? "an answer" : row.kind}: “${row.text}” (${row.status.replace(/_/g, " ")}).`),
-    ...proposed.map((row) => `Waiting for them on the board: proposed task “${row.title}”${row.requestedBy ? `, asked by ${row.requestedBy}` : ""}.`),
+    ...proposed.map((row) => `Waiting for them on the board: proposed task “${row.title}”${row.requestedBy ? `, asked by ${row.requestedBy.name}` : ""}.`),
     ...eventLines,
     ...board.map((row) => `On the board: “${row.title}” is ${STATUS_WORDS[row.status] ?? row.status}.`),
     ...results.map((row) => `Delivered in the room: ${row.text}`),

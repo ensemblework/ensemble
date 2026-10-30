@@ -1309,8 +1309,9 @@ export const api = bindClient({
   createTask: (data: Partial<TaskRecord> & { title: string }) =>
     post<{ task: TaskRecord; undoEntryId?: string | null }>("/api/tasks", { sourceKind: "manual", ...data }),
   patchTask: (id: string, data: Record<string, unknown>) => patch<{ task: TaskRecord; undoEntryId?: string | null }>(`/api/tasks/${id}`, data),
+  /** `answered`: moving a task someone asked for in an Ensemble Node room out of Proposed answered that request. */
   moveTask: (id: string, data: { status: TaskStatus; beforeId?: string | null; afterId?: string | null }) =>
-    post<{ task: { id: string }; undoEntryId?: string | null }>(`/api/tasks/${id}/move`, data),
+    post<{ task: { id: string }; undoEntryId?: string | null; answered?: string }>(`/api/tasks/${id}/move`, data),
   deleteTask: (id: string) => del<{ undoEntryId?: string | null }>(`/api/tasks/${id}`),
   taskRuns: (id: string) =>
     get<{ runs: Array<{ id: string; outcome: string | null; result: string | null; requestedModel: string | null; startedAt: string }> }>(
@@ -1910,7 +1911,7 @@ export const api = bindClient({
   // sharing
   searchPeople: (q: string) => get<{ people: SharingPerson[] }>(`/api/sharing/people${qs({ q })}`),
   sharingOverview: () => get<SharingOverview>("/api/sharing/overview"),
-  saveSharingLimits: (limits: { contacts?: number; members?: number }) => put<{ limits: { contacts: number; members: number }; caps: { contacts: number; members: number } }>("/api/sharing/limits", limits),
+  saveSharingLimits: (limits: Partial<SharingLimits>) => put<{ limits: SharingLimits; caps: SharingLimits }>("/api/sharing/limits", limits),
   /** A room request's proposed task (Ensemble Node): the person asked accepts (private work, or a shared run) or declines. */
   acceptRoomRequest: (requestId: string, mode: "private" | "shared") => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/accept`, { mode }),
   declineRoomRequest: (requestId: string, note?: string) => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/decline`, note ? { note } : {}),
@@ -2007,10 +2008,12 @@ export type ItemShare = { id: string; person: SharingPerson & { email: string };
 export type SharedSpace = { id: string; name: string; icon: string | null; owner: SharingPerson; role: MemberRole; since: string };
 export type SharedItem = { id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; owner: SharingPerson; spaceName: string; since: string; openedAt: string | null };
 export type SharedWithMe = { spaces: SharedSpace[]; items: SharedItem[] };
+/** Your own limits: contacts, people per space you own, people per Ensemble Node room you make, spaces you own. */
+export type SharingLimits = { contacts: number; members: number; roomPeople: number; spaces: number };
 export type SharingOverview = {
-  limits: { contacts: number; members: number };
+  limits: SharingLimits;
   /** The most an account may choose. */
-  caps?: { contacts: number; members: number };
+  caps?: SharingLimits;
   contacts: SharingContact[];
   spaces: Array<{ id: string; name: string; icon: string | null; primary: boolean; members: SpaceMember[]; transferredAt: string | null }>;
   items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;
