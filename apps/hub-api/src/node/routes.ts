@@ -1010,11 +1010,16 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const accountId = nodeAccount(request);
     const message = await prisma.nodeMessage.findUnique({ where: { id: (request.params as { id: string }).id } });
     if (!message || !canSee(message, accountId) || !(await personIn(prisma, message.roomId, accountId))) throw fail(404, "That message is not available.");
-    if (message.authorKind !== "human" || message.userId !== accountId || message.kind !== "text") throw fail(403, "You can delete only your own messages.");
+    // My own messages, and what I shared to the room as my lead (Share to room, node/peer-requests.ts).
+    const sharedAsLead = message.authorKind === "node" && (message.data as { sharedBy?: unknown } | null)?.sharedBy === accountId;
+    if ((message.authorKind !== "human" && !sharedAsLead) || message.userId !== accountId || message.kind !== "text") throw fail(403, "You can delete only your own messages.");
     if (messageDeleted(message)) return reply.code(204).send();
     const data: Record<string, unknown> = { ...((message.data ?? {}) as Record<string, unknown>), deleted: true, deletedAt: new Date().toISOString() };
+    // What it showed goes with it: its files, media (no longer readable through it, node/media.ts) and links.
     delete data.reactions;
     delete data.files;
+    delete data.media;
+    delete data.refs;
     const updated = await prisma.nodeMessage.update({ where: { id: message.id }, data: { body: "", mentions: [], data: data as Prisma.InputJsonValue } });
     const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
     if (room && roomSettings(room).pinned.includes(message.id)) {

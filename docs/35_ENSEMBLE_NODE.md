@@ -734,7 +734,7 @@ Statuses: `open`, `answered`, `awaiting_owner`, `approved`, `declined`, `done`, 
 
 ### 12.7 Share to room
 
-`POST /api/node/messages/:id/share {as: me|lead}` publishes one of the owner's own private messages, or their own node's private reply, in the room. As `me` it is the person's message; as `lead`, their lead's, with `data.sharedBy`. Both keep `data.sharedFrom {id, seq, authorKind, authorNodeId}`, refs, files and media (the copy is the message that shows the media to the room: `GET /api/node/evidence/:id?message=<copy id>` opens it for the room's people; the private original still shows it to nobody else). A shared message wakes nobody, and sharing the same message twice returns the first copy.
+`POST /api/node/messages/:id/share {as: me|lead}` publishes one of the owner's own private messages, or their own node's private reply, in the room. As `me` it is the person's message; as `lead`, their lead's, with `data.sharedBy`. Both keep `data.sharedFrom {id, seq, authorKind, authorNodeId}`, refs, files and media (the copy is the message that shows the media to the room: `GET /api/node/evidence/:id?message=<copy id>` opens it for the room's people; the private original still shows it to nobody else). A shared message wakes nobody, and sharing the same message twice returns the first copy. The copy is the sharer's to delete (`DELETE /api/node/messages/:id`), whether shared as them or as their lead; deleting any message drops its files, media and refs, and a deleted message opens no media.
 
 ### 12.8 Leaving
 

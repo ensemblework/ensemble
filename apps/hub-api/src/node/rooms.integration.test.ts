@@ -1826,3 +1826,30 @@ test("review C6–C7 #1: only Start, or an explicit yes to the offer, links work
   assert.ok((await turnsOf([lead.id], room.id)).some((row) => row.operationId?.startsWith(`room-task:${billing.id}:private:`)), "started as Start starts it");
   assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: billing.id } })).status, "done");
 });
+
+test("review C6–C7 #2: deleting a shared copy takes its media with it, whether shared as me or as my lead", async () => {
+  const { akash, ben, lead, room } = await twoPeople();
+  const { postMessage } = await import("./store.js");
+  for (const as of ["me", "lead"] as const) {
+    const shot = await screenshot(akash, `board-${as}.png`);
+    const media = [{ evidenceId: shot.id, kind: "screenshot", name: `board-${as}.png`, mime: "image/png", caption: null, size: 4 }];
+    const { message: original } = await postMessage(h.prisma, {
+      roomId: room.id, userId: akash.id, authorKind: as === "me" ? "human" : "node", authorNodeId: as === "me" ? null : lead.id, body: "Here is the board.", data: { media }, visibleTo: [akash.id],
+    });
+    const shared = await akash.inject({ method: "POST", url: `/api/node/messages/${original.id}/share`, payload: { as } });
+    assert.equal(shared.statusCode, 201, shared.body);
+    const copy = json(shared).message;
+    const open = () => ben.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${copy.id}` });
+    assert.equal((await open()).statusCode, 200);
+    assert.equal((await ben.inject({ method: "DELETE", url: `/api/node/messages/${copy.id}` })).statusCode, 403, "only the person who shared it");
+    assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/messages/${copy.id}` })).statusCode, 204, `a copy shared as ${as} is theirs to delete`);
+    assert.equal((await open()).statusCode, 404, "its media no longer opens");
+    const gone = (await read(ben, room.id)).find((row) => row.id === copy.id)!;
+    assert.deepEqual([gone.body, gone.data.media, gone.data.refs, gone.data.deleted], ["", undefined, undefined, true]);
+    assert.equal((await akash.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${original.id}` })).statusCode, 200, "Akash keeps his own");
+  }
+  // A message deleted before this fix kept its media: it shows nothing either.
+  const shot = await screenshot(akash, "old.png");
+  const { message: old } = await postMessage(h.prisma, { roomId: room.id, userId: akash.id, authorKind: "human", body: "", data: { deleted: true, media: [{ evidenceId: shot.id, kind: "screenshot", name: "old.png", mime: "image/png", caption: null, size: 4 }] } });
+  assert.equal((await ben.inject({ method: "GET", url: `/api/node/evidence/${shot.id}?message=${old.id}` })).statusCode, 404);
+});
