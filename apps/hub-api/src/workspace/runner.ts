@@ -18,6 +18,7 @@ import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { askpassPath, cacheDir, childEnv, sandboxAvailable, sandboxRefusal, ENSEMBLE_SOURCE, GuardError, within } from "./guard.js";
 import { hostExecutable } from "./policy.js";
 import { startSandboxed } from "./sandbox/spawn.js";
+import type { PreparedSpawn } from "./sandbox/policy.js";
 import { requireHostAccess, requireHostTerminal } from "../lib/hosted-access.js";
 
 export const OUTPUT_LIMIT = 60_000;
@@ -44,6 +45,16 @@ export interface RunOptions {
   group?: string;
   onChunk?: (text: string) => void;
   extraEnv?: Record<string, string>;
+  /** Variables of the agent environment the command does not get (a terminal shows colours: no `NO_COLOR`). */
+  unsetEnv?: string[];
+  /** The command's raw output bytes, as they arrive (a terminal decodes them itself). */
+  onData?: (chunk: Buffer) => void;
+  /** Give the command a stdin pipe (reached through `onSpawn`); otherwise it reads nothing. */
+  stdin?: boolean;
+  /** The process as started, and how the sandbox started it. */
+  onSpawn?: (child: ChildProcess, prepared: PreparedSpawn) => void;
+  /** Let the command list this computer's processes where that is safe (`SandboxPolicy.hostPids`). */
+  hostPids?: boolean;
 }
 
 export interface RunResult {
@@ -175,6 +186,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
   const started = Date.now();
   const baseEnv = await childEnv(options.root, { useCredentials: options.useCredentials, who: options.who });
   const env = { ...baseEnv, ...options.extraEnv };
+  for (const key of options.unsetEnv ?? []) delete env[key];
   if (options.who === "agent" && baseEnv.HOME) env.HOME = baseEnv.HOME;
   const program = await findProgram(options.argv[0]!, env.PATH ?? "", options.root);
   await mkdir(env.TMPDIR ?? env.TEMP!, { recursive: true });
@@ -186,7 +198,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
   const askpass = await askpassPath();
 
   return new Promise<RunResult>((resolvePromise, reject) => {
-    const { child } = startSandboxed(
+    const { child, prepared } = startSandboxed(
       {
         runId: options.group ?? "command",
         cwd: options.cwd,
@@ -201,9 +213,12 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
         appDataDir: desktopDataDir({ platform: process.platform, home }),
         askpassPath: askpass,
         confined: options.sandboxed,
+        ...(options.hostPids ? { hostPids: true } : {}),
       },
       { program, args: options.argv.slice(1) },
+      options.stdin ? { stdin: "pipe" } : {},
     );
+    options.onSpawn?.(child, prepared);
     const group = options.group;
     if (group) {
       const set = live.get(group) ?? new Set();
@@ -220,6 +235,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
     let timedOut = false;
     let killed = false;
     const take = (chunk: Buffer) => {
+      options.onData?.(chunk);
       const text = chunk.toString("utf8");
       options.onChunk?.(text);
       if (output.length < OUTPUT_LIMIT) {
@@ -249,6 +265,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
       settled = true;
       clearTimeout(timer);
       if (drain) clearTimeout(drain);
+      child.stdin?.destroy();
       options.signal?.removeEventListener("abort", onAbort);
       if (group) live.get(group)?.delete(child);
       const sandboxDenied = options.sandboxed && /Operation not permitted|deny\(1\)|Read-only file system|Access is denied/.test(output);

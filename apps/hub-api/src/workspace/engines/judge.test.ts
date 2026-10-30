@@ -55,6 +55,22 @@ test("keys and Never programs are always refused", async () => {
   assert.equal((await judgeEngineCall(ctx({ network: true }), { tool: "Bash", input: { command: "ssh host uptime" } })).decision, "allow");
 });
 
+test("the hard floor's dangerous commands are refused with why, in every mode, before anyone is asked; everyday commands are not", async () => {
+  let asked = 0;
+  const asking = ctx({ job: { unattended: false }, accessMode: "auto", prisma: { decisionRule: { findFirst: async () => null } }, ask: async () => ((asked += 1), { decision: "allow" }) } as never);
+  for (const [tool, command] of [["Bash", "rm -rf ~"], ["Bash", "cd /tmp && dd if=/dev/zero of=/dev/sda bs=1M"], ["Bash", "git status; shutdown -h now"], ["PowerShell", "shutdown -h now"], ["Bash", ":(){ :|:& };:"]] as const) {
+    for (const run of [ctx(), asking]) {
+      const answer = await judgeEngineCall(run, { tool, input: { command } });
+      assert.equal(answer.decision, "deny", command);
+      assert.match(answer.message ?? "", /hard floor.*No setting or approval runs it/, command);
+    }
+  }
+  assert.equal(asked, 0, "nobody is asked about a command the floor refuses");
+  for (const command of ["rm -rf node_modules dist", "npm test", "docker system prune -af"]) {
+    assert.equal((await judgeEngineCall(ctx({ network: true }), { tool: "Bash", input: { command } })).decision, "allow", command);
+  }
+});
+
 test("with No limits the engine pushes any branch and opens or merges pull requests itself; only the internet setting and the person's git choice stop it", async () => {
   const online = ctx({ network: true, sandboxed: false, strength: "advisory", job: { delivery: "push" } });
   for (const command of ["git push origin HEAD", "git push --force origin main", "git push origin --delete old", "gh pr create --base main --fill", "gh pr merge 12 --merge", "gh api -X PUT repos/o/r/pulls/1/merge", "gh release create v1", "git checkout -b feature && git push -u origin feature && gh pr create --base testing --fill"]) {

@@ -10,7 +10,7 @@
  * unsandboxed and is told that this is not safe. Nothing falls back silently.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { bubblewrapArgs, landrunArgs, probeLinux, type LinuxBackend } from "./linux.js";
+import { bubblewrapArgs, landrunArgs, probeHostProcesses, probeLinux, processScopeCommand, type HostProcessView, type LinuxBackend } from "./linux.js";
 import type { PlatformCaps, PreparedSpawn, SandboxPolicy, SpawnCommand } from "./policy.js";
 import { scrubAgentEnv } from "./scrub.js";
 import { compileSeatbeltProfile, nodeToolchainRead } from "./seatbelt.js";
@@ -18,6 +18,8 @@ import { cmdLine, probeWindows, releaseWindowsGrants, setupWindowsSandbox, windo
 import { ensembleDataDenies } from "../data-denies.js";
 
 let linux: LinuxBackend | null = null;
+/** How a bubblewrap command may list this computer's processes; probed on first use (undefined until then). */
+let hostView: HostProcessView | null | undefined;
 // windows.ts loads sandbox-runtime itself, on Windows only.
 let windows: WindowsState | null = null;
 let windowsProxy: { http?: number; socks?: number; token?: string } | null = null;
@@ -96,6 +98,7 @@ export function prepareSandbox(options: { refresh?: boolean } = {}): Promise<Pla
   if (preparing && !options.refresh) return preparing;
   preparing = (async () => {
     if (process.platform === "linux") linux = probeLinux();
+    hostView = undefined;
     if (process.platform === "win32") windows = await probeWindows();
     return capabilities();
   })();
@@ -139,16 +142,21 @@ export function prepareSpawn(given: SandboxPolicy, cmd: SpawnCommand, platform =
         toolchainReads: [...(policy.toolchainReads ?? []), ...(toolchain ? [toolchain] : [])],
         extraExecDeny: policy.extraExecDeny,
       });
-      return { command: "/usr/bin/sandbox-exec", args: ["-p", profile, cmd.program, ...cmd.args], env, sandboxed: true, caps };
+      return { command: "/usr/bin/sandbox-exec", args: ["-p", profile, cmd.program, ...cmd.args], env, sandboxed: true, caps, hostPids: true };
     }
     if (platform === "linux" && linux?.backend === "bubblewrap") {
-      return { command: linux.bwrap, args: bubblewrapArgs(policy, cmd), env, sandboxed: true, caps };
+      if (policy.hostPids) {
+        hostView ??= probeHostProcesses(linux.bwrap);
+        if (hostView) return { command: linux.bwrap, args: bubblewrapArgs(policy, processScopeCommand(hostView, policy, cmd, env)), env, sandboxed: true, caps, hostPids: true };
+      }
+      return { command: linux.bwrap, args: bubblewrapArgs({ ...policy, hostPids: false }, cmd), env, sandboxed: true, caps, hostPids: false };
     }
     if (platform === "linux" && linux?.backend === "landlock") {
       if (policy.network !== "outbound" && !linux.networkOff && !policy.advisoryOk) {
         throw new Error("This run has the internet off, and this Linux kernel cannot enforce that inside the sandbox (needs Linux 6.7 or later). Turn the internet on for the run, or turn the sandbox off.");
       }
-      return { command: linux.landrun, args: landrunArgs(policy, cmd, env), env, sandboxed: true, caps };
+      // Landlock has no PID namespace: the command lists every process, and its domain keeps it out of them.
+      return { command: linux.landrun, args: landrunArgs(policy, cmd, env), env, sandboxed: true, caps, hostPids: true };
     }
     if (platform === "win32" && windows?.ready) {
       if (policy.network === "outbound" && !windowsProxy) throw new Error("The Windows sandbox's internet proxy is not running yet. Start the run again.");
@@ -164,7 +172,7 @@ export function prepareSpawn(given: SandboxPolicy, cmd: SpawnCommand, platform =
     const comspec = process.env.ComSpec || `${process.env.SystemRoot || "C:\\Windows"}\\System32\\cmd.exe`;
     return { command: comspec, args: ["/d", "/s", "/c", `"${cmdLine(cmd.program, cmd.args)}"`], env, sandboxed: false, caps, windowsVerbatimArguments: true };
   }
-  return { command: cmd.program, args: cmd.args, env, sandboxed: false, caps };
+  return { command: cmd.program, args: cmd.args, env, sandboxed: false, caps, hostPids: true };
 }
 
 /** Apply the policy and start the process. This is the choke point. */

@@ -24,9 +24,10 @@ import { SEAL_MAX_TTL_MS, SEAL_TTL_MS, type SealKeyInfo, type Sealed } from "@en
 import { CodeAnswer } from "../remote/contract.js";
 import { SECRET_HTTP_DESCRIPTION, SECRET_HTTP_METHODS } from "../credentials/secret-http.js";
 import { pickRunProfile } from "@ensemble/shared-types";
-import { enqueueTurn } from "./queue.js";
+import { enqueueTurn, requestPark } from "./queue.js";
 import { postMessage, updateMessageDataIf } from "./store.js";
 import { planLinkOf } from "./plans.js";
+import { ownerName } from "./device-tool-decisions.js";
 import type { SessionToolScope } from "./sessions.js";
 
 const SAVE_MS = 20_000;
@@ -64,16 +65,20 @@ async function chooseComputer(scope: Pick<SessionToolScope, "prisma" | "node">, 
   return pick;
 }
 
-export function secretTools(scope: SessionToolScope): AnyHubTool[] {
+export function secretTools(scope: SessionToolScope & { turnId?: string }): AnyHubTool[] {
   if (scope.lineage.fromNonOwner) return [];
+  /** The card waits for the owner: the turn ends without a reply after this call (queue.ts), and their answer wakes the node. */
+  const park = async (name: string) => {
+    if (scope.turnId) requestPark(scope.turnId, `Waiting for ${await ownerName(scope.prisma, scope.node.userId)} to type ${name} into the card in this chat.`);
+  };
   return [
     defineTool({
       name: "node_secret_request",
       area: "tasks",
       description:
-        "Ask your owner for a secret the work on their computer needs (an API key, a token, a password), by environment variable name. They type it into a box on a card; it is encrypted in their browser for their computer and only that computer can read it. Neither you nor any model ever sees the value. " +
+        "Ask your owner for a secret the work on their computer needs (an API key, a token, a password), by environment variable name. They type it into a box on a card in this chat; it is encrypted in their browser for their computer and only that computer can read it. Neither you nor any model ever sees the value. " +
         "When it is for one service, suggest where it may be sent (allow: its API's origin, such as https://api.stripe.com): your owner can then keep it out of every run's environment, and runs use it by reference with secret_http. " +
-        "Never ask for a secret in a message. Once it is saved you hear about it and how runs can use it; then continue the work (node_session_send).",
+        "Never ask for a secret in a message. Then end your turn without a reply: once it is saved you hear about it and how runs can use it, and you continue the work (node_session_send).",
       input: z
         .object({
           name: z.string().min(2).max(64).describe("An environment variable name in capitals, for example STRIPE_API_KEY or GITHUB_PAT."),
@@ -99,7 +104,10 @@ export function secretTools(scope: SessionToolScope): AnyHubTool[] {
           where: { roomId: scope.room.id, kind: "approval", authorNodeId: scope.node.id, data: { path: ["type"], equals: "secret" }, AND: [{ data: { path: ["name"], equals: name } }, { data: { path: ["status"], equals: "pending" } }] },
           select: { id: true },
         });
-        if (open) return toolOk(`You already asked for ${name}; the card is waiting for your owner.`);
+        if (open) {
+          await park(name);
+          return toolOk(`You already asked for ${name}: the card in this chat is waiting for your owner. End your turn now without a reply: you continue when they answer.`);
+        }
         await postMessage(scope.prisma, {
           roomId: scope.room.id,
           userId: scope.node.userId,
@@ -121,7 +129,8 @@ export function secretTools(scope: SessionToolScope): AnyHubTool[] {
           rootMessageId: scope.lineage.rootMessageId,
           botDepth: scope.lineage.botDepth,
         });
-        return toolOk(`Asked your owner for ${name} in a secure box. It goes to ${computer.name}; you will not see it. Tell them in one line, and wait to hear it was saved.`, { name, computer: computer.name });
+        await park(name);
+        return toolOk(`Asked your owner for ${name} in a secure box on a card in this chat. It goes to ${computer.name}; you never see it. End your turn now without a reply: you continue when they save it (or say no).`, { name, computer: computer.name });
       },
     }),
     // Only where only the owner reads and started the turn, like the node's other tools on the computer.

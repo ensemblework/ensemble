@@ -7,7 +7,9 @@
  *    the grants and toolchain folders mounted back, `/tmp` is private, and
  *    the command gets its own PID namespace. With the network off it also
  *    gets an empty network namespace. Agent sockets under `/run/user` and the
- *    Docker socket are hidden.
+ *    Docker socket are hidden. A process monitor (`hostPids`) gets the
+ *    system's /proc read-only in that namespace, inside a Landlock domain that
+ *    keeps it out of the processes it lists (`probeHostProcesses`).
  * 2. Landlock, through `landrun` (MIT, github.com/zouuup/landrun), which
  *    Ensemble ships as a static binary. Landlock is in the default kernel of
  *    every major distribution and needs no privileges, so it is the fallback
@@ -167,7 +169,8 @@ export function bubblewrapArgs(
   const home = policy.home;
   const args = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"];
   if (policy.network !== "outbound") args.push("--unshare-net");
-  args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp");
+  // hostPids: the system's /proc, read-only, in the command's own PID namespace (it lists every process but signals none).
+  args.push("--ro-bind", "/", "/", "--dev", "/dev", ...(policy.hostPids ? ["--ro-bind", "/proc", "/proc"] : ["--proc", "/proc"]), "--tmpfs", "/tmp");
   // The home folder is empty except for what is mounted back below.
   args.push("--tmpfs", home);
   if (exists("/run/user")) args.push("--tmpfs", realOr("/run/user"));
@@ -233,6 +236,71 @@ export function landrunArgs(
 function run(program: string, args: string[], env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin" }): number {
   const result = spawnSync(program, args, { env, stdio: "ignore", timeout: 8_000 });
   return result.status ?? 1;
+}
+
+/**
+ * How a command in bubblewrap may list this computer's processes (`SandboxPolicy.hostPids`): through
+ * a Landlock domain made by `setpriv` (util-linux 2.40 and later) or the bundled `landrun`, or, where
+ * the system's own confinement already does it (Ubuntu's AppArmor profile for bubblewrap), with none.
+ */
+export type HostProcessView = { helper: "setpriv" | "landrun" | null; path: string | null };
+
+/**
+ * The command inside its own Landlock domain. A process in a Landlock domain cannot read, through
+ * /proc, the environment, open files, working folder, root or memory of a process outside it (the
+ * ptrace read check), while ps and htop still list that process. Landlock restricts nothing else
+ * here: bubblewrap already confines the files and the network.
+ */
+export function processScopeCommand(view: HostProcessView, policy: SandboxPolicy, cmd: SpawnCommand, env: NodeJS.ProcessEnv): SpawnCommand {
+  if (!view.helper || !view.path) return cmd;
+  // Creating block devices is the one right handled (no command here may anyway): the domain is what counts.
+  if (view.helper === "setpriv") return { program: view.path, args: ["--no-new-privs", "--landlock-access", "fs:make-block", "--", cmd.program, ...cmd.args] };
+  // landrun only grants: everything bubblewrap shows may be read and run, and written where bubblewrap lets it.
+  const args = ["--best-effort", "--ignore-missing", "--log-level", "error", "--rox", "/", "--rw", "/dev", "--rwx", "/tmp"];
+  for (const path of policy.readWrite) args.push("--rwx", noComma(path));
+  args.push("--unrestricted-network");
+  for (const key of Object.keys(env)) if (env[key] !== undefined) args.push("--env", key);
+  return { program: view.path, args: [...args, "--", cmd.program, ...cmd.args] };
+}
+
+/**
+ * Whether a command in bubblewrap here can list this computer's processes and still not reach into
+ * them, proved by running it: with the `hostPids` arguments, a check must see this runtime's process
+ * and must not read its environment or its root folder. Tries setpriv, then landrun, then none; null
+ * when no way passes (such a command then sees only its own processes).
+ */
+export function probeHostProcesses(bwrap: string, env: NodeJS.ProcessEnv = process.env, target = process.pid): HostProcessView | null {
+  const shell = existsSync("/bin/sh") ? "/bin/sh" : "/usr/bin/sh";
+  const scratch = mkdtempSync(join(env.TMPDIR || tmpdir(), "ensemble-procs-"));
+  try {
+    const policy: SandboxPolicy = {
+      runId: "probe",
+      cwd: scratch,
+      readWrite: [scratch],
+      readOnly: [],
+      deny: [],
+      network: "none",
+      env: {},
+      who: "agent",
+      home: env.HOME || homedir(),
+      ensembleSource: join(scratch, "no-source"),
+      appDataDir: join(scratch, "no-data"),
+      confined: true,
+      hostPids: true,
+    };
+    const check = `[ -r /proc/${target}/stat ] || exit 20; cat /proc/${target}/environ >/dev/null 2>&1 && exit 21; ls /proc/${target}/root/ >/dev/null 2>&1 && exit 22; exit 0`;
+    const setpriv = ["/usr/bin/setpriv", "/bin/setpriv"].find((path) => existsSync(path)) ?? onPath("setpriv", env);
+    const landrun = findLandrun(env);
+    const candidates: HostProcessView[] = [...(setpriv ? [{ helper: "setpriv" as const, path: setpriv }] : []), ...(landrun ? [{ helper: "landrun" as const, path: landrun }] : []), { helper: null, path: null }];
+    const childEnv = { PATH: "/usr/bin:/bin" };
+    for (const view of candidates) {
+      const cmd = processScopeCommand(view, policy, { program: shell, args: ["-c", check] }, childEnv);
+      if (run(bwrap, bubblewrapArgs(policy, cmd), childEnv) === 0) return view;
+    }
+    return null;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /**

@@ -54,6 +54,7 @@ import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { registerLoginRoutes } from "./login-routes.js";
 import { registerTakeoverRoutes } from "./takeover-routes.js";
+import { registerSudoRoutes } from "./sudo.js";
 import { LoginCardError } from "./logins.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 import { boundSpaceId, offerSpace } from "./room-space.js";
@@ -246,9 +247,31 @@ async function pendingApprovals(prisma: PrismaClient, accountId: string) {
   return rows.filter((row) => { const data = row.data as { status?: unknown; type?: unknown }; return data.status === "pending" || secretStuck(row.data) || (data.type === "login" && data.status === "working"); }).map(wireMessage);
 }
 
-/** Pending approval cards with the node that asks and the conversation they are in: Needs me on Node, the Hub and the CLI. */
+/**
+ * Cards the Hub's Needs me and the CLI do not list: a computer card (its Ensemble decision is listed
+ * there already, answerable) and a sudo card (its password box is only in the Node chat). Node's own
+ * activity keeps them.
+ */
+const NODE_CHAT_ONLY = new Set(["computer", "sudo"]);
+
+/** Whether a node's card is listed in the Hub's Needs me and by the CLI. */
+export function listedOutsideNode(row: { data: unknown }): boolean {
+  return !NODE_CHAT_ONLY.has(String((row.data as { type?: unknown } | null)?.type ?? ""));
+}
+
+/** How many of a person's node cards wait for them in the Hub's Needs me (`/api/shell`). */
+export async function hubApprovalCount(prisma: PrismaClient, accountId: string): Promise<number> {
+  const rows = await prisma.nodeMessage.findMany({
+    where: { kind: "approval", userId: accountId, visibleTo: { equals: [accountId] }, data: { path: ["status"], equals: "pending" } },
+    select: { data: true },
+    take: 1000,
+  });
+  return rows.filter(listedOutsideNode).length;
+}
+
+/** Pending approval cards with the node that asks and the conversation they are in: Needs me in the Hub and the CLI. */
 export async function approvalCards(prisma: PrismaClient, accountId: string) {
-  const rows = await pendingApprovals(prisma, accountId);
+  const rows = (await pendingApprovals(prisma, accountId)).filter(listedOutsideNode);
   const [nodes, rooms] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: rows.map((row) => row.authorNodeId).filter((id): id is string => Boolean(id)) } } }),
     prisma.nodeRoom.findMany({ where: { id: { in: rows.map((row) => row.roomId) } }, select: { id: true, title: true, kind: true } }),
@@ -336,6 +359,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   await registerPeerRoutes(app);
   // Sign-in cards: the computer's pinned key for typed answers, and the answers (node/logins.ts, B11).
   await registerLoginRoutes(app, nodeAccount);
+  // Commands run as the administrator: the card's command and the computer's key, and the answer (node/sudo.ts).
+  await registerSudoRoutes(app, nodeAccount);
   // Taking over a tab of the owner's computer from the web, end to end (node/takeovers.ts, B21).
   await registerTakeoverRoutes(app, nodeAccount);
 
@@ -1216,7 +1241,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** My nodes' pending approval cards, with the node and conversation: Needs me on Node and in the Hub. */
+  /** My nodes' pending approval cards, with the node and conversation: the Hub's Needs me ("From your nodes"). */
   app.get("/api/node/approvals", async (request) => ({ approvals: await approvalCards(prisma, nodeAccount(request)), nodeUrl: nodeWebOrigin() }));
 
   app.get("/api/node/activity", async (request) => {

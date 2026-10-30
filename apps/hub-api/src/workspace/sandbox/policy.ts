@@ -53,6 +53,15 @@ export interface SandboxPolicy {
    * shares /tmp, so a socket there is reachable at its own path; Seatbelt keeps every Unix socket shut.
    */
   sockets?: Array<{ path: string; at: string }>;
+  /**
+   * Let the command list this computer's processes (a process monitor such as htop), without reaching
+   * into them. bubblewrap keeps the command's own PID namespace, so it cannot signal them, and mounts
+   * the system's /proc read-only; that view is used only where a Landlock domain (or the system's own
+   * confinement) closes their environment, files and memory to the command (`probeHostProcesses`).
+   * Elsewhere the command sees its own processes only. Landlock, Seatbelt and an unsandboxed command
+   * see them anyway.
+   */
+  hostPids?: boolean;
 }
 
 export interface SpawnCommand {
@@ -92,6 +101,8 @@ export interface PreparedSpawn {
   caps: PlatformCaps;
   /** Windows: the args are an already-escaped cmd.exe line; Node must not quote them again. */
   windowsVerbatimArguments?: boolean;
+  /** The command can list this computer's processes (`SandboxPolicy.hostPids` was honoured, or nothing hides them). */
+  hostPids?: boolean;
 }
 
 export interface SandboxBackend {

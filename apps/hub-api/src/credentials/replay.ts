@@ -73,3 +73,31 @@ export function takeOnce<T>(box: { decisionId: string; nonce: string; expiresAt:
     return result;
   });
 }
+
+/**
+ * Takes a box for work that runs long (a command as the administrator), refused like `takeOnce`, but
+ * without holding up other boxes while it runs: its nonce and its request are remembered at once.
+ * `release` forgets the request again (never the nonce) when the work could not use the box (a
+ * password that was not accepted), so the owner can answer the same request with a new box.
+ */
+export function claimOnce(box: { decisionId: string; nonce: string; expiresAt: string }, now = Date.now()): Promise<{ release: () => Promise<void> }> {
+  return serial(async () => {
+    const until = (Number.isFinite(Date.parse(box.expiresAt)) ? Date.parse(box.expiresAt) : now) + KEEP_AFTER_EXPIRY_MS;
+    const seen = load();
+    seen.decisions = prune(seen.decisions, now);
+    seen.nonces = prune(seen.nonces, now);
+    if (seen.decisions[box.decisionId]) throw new SealError("replay", "This request was already answered on this computer.");
+    if (seen.nonces[box.nonce]) throw new SealError("replay", "That encrypted value was already used. Type it again.");
+    seen.nonces[box.nonce] = until;
+    seen.decisions[box.decisionId] = until;
+    persist(seen);
+    return {
+      release: () =>
+        serial(async () => {
+          const after = load();
+          delete after.decisions[box.decisionId];
+          persist(after);
+        }),
+    };
+  });
+}

@@ -62,7 +62,7 @@ export type CaptureSummary = {
   /** A Chromium for Ensemble is installed (`ensemble capture setup` installs one). */
   browser: boolean;
   video: "mp4" | "webm" | null;
-  targets: Record<string, { screenshot: boolean; video: boolean; reason?: string }>;
+  targets: Record<string, { screenshot: boolean; video: boolean; reason?: string; tui?: boolean }>;
   /** `ensemble capture setup`, or one system command, would add something. */
   setup: boolean;
 };
@@ -76,7 +76,7 @@ export async function captureSummary(timeoutMs = 5_000): Promise<CaptureSummary 
       lastSummary = {
         browser: caps.browser.available,
         video: caps.video?.container ?? null,
-        targets: Object.fromEntries(Object.entries(caps.targets).map(([name, value]) => [name, { screenshot: value.screenshot, video: value.video, ...(value.reason ? { reason: value.reason.slice(0, 200) } : {}) }])),
+        targets: Object.fromEntries(Object.entries(caps.targets).map(([name, value]) => [name, { screenshot: value.screenshot, video: value.video, ...(value.tui !== undefined ? { tui: value.tui } : {}), ...(value.reason ? { reason: value.reason.slice(0, 200) } : {}) }])),
         setup: caps.setup.ensembleInstalls.length > 0 || Boolean(caps.setup.systemCommand),
       };
       return lastSummary;

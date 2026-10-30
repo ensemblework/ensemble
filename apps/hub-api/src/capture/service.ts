@@ -1,8 +1,9 @@
 /**
  * The capture service (ensemble-node design B19): screenshots and video of web pages, Electron
- * apps, other desktop apps on a private virtual display, and terminal transcripts, written into the
- * caller's evidence folder with the checks that come before sending them. Its two callers, the
- * node's device tools and a coding agent's run MCP server, reach it through `capture/tools.ts`.
+ * apps, other desktop apps on a private virtual display, and terminal transcripts and screens,
+ * written into the caller's evidence folder with the checks that come before sending them. Its
+ * callers, the node's device tools and a coding agent's run MCP server, reach it through
+ * `capture/tools.ts`; a node's terminal screens come through `htmlScreenshot`.
  *
  * Web capture goes through the browser broker (its masking, privacy rules and leases). Apps and
  * recordings started here are leased (capture/leases.ts): they end when their lease runs out, when
@@ -319,16 +320,26 @@ export class CaptureService {
       await writeFile(path, html, { mode: 0o600 });
       return { path, kind: "html", mime: "text/html", size: Buffer.byteLength(html), held: false };
     }
+    // A short viewport, so the full-page screenshot is as tall as the transcript.
+    const width = Math.round(Math.min(Math.max(target.columns ?? 100, 40), 300) * 7.9) + 40;
+    return this.htmlScreenshot(request, { html, name: base, viewport: { width, height: 100 }, title: target.title });
+  }
+
+  /**
+   * A self-contained page (a terminal's transcript or screen, its secrets already hidden) as a PNG in
+   * the evidence folder, rendered in a private tab: the whole page, or one element of it.
+   */
+  async htmlScreenshot(request: CaptureRequest, input: { html: string; name: string; viewport: Viewport; element?: string; title?: string }): Promise<MediaFile> {
+    await this.dir(request);
     const op = this.internal(request);
     try {
-      // A short viewport, so the full-page screenshot is as tall as the transcript.
-      const width = Math.round(Math.min(Math.max(target.columns ?? 100, 40), 300) * 7.9) + 40;
-      const opened = await wrapBrowser(() => this.broker.open(op, "about:blank", { private: true, viewport: { width, height: 100 } }));
+      const opened = await wrapBrowser(() => this.broker.open(op, "about:blank", { private: true, viewport: input.viewport }));
       const page = this.broker.pageFor(op, opened.tab);
-      await page.setContent(html, { waitUntil: "load" });
-      const path = await reserveFile(request.evidenceDir, base, "png");
-      await page.screenshot({ path, fullPage: true, caret: "hide" });
-      return { ...(await stillFile(path)), kind: "image", held: false, title: target.title };
+      await page.setContent(input.html, { waitUntil: "load" });
+      const path = await reserveFile(request.evidenceDir, input.name, "png");
+      if (input.element) await page.locator(input.element).screenshot({ path, caret: "hide", timeout: 20_000 });
+      else await page.screenshot({ path, fullPage: true, caret: "hide" });
+      return { ...(await stillFile(path)), kind: "image", held: false, title: input.title };
     } finally {
       await this.broker.release(op);
     }

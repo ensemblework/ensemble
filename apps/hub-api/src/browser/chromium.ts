@@ -153,9 +153,10 @@ export type ChromiumChoice = {
 };
 
 /**
- * The Chromium to launch. Headless prefers the small headless shell; headed needs full Chromium.
- * The matching revision wins over any other, Ensemble's download over Playwright's shared cache,
- * then the newest other revision, then an installed Chrome. `ENSEMBLE_CHROMIUM` names one exactly.
+ * The Chromium to launch: full Chromium, which headless runs as the real browser (web sites block the
+ * small headless shell far more often), else the headless shell, which runs headless only. The
+ * matching revision wins over any other, Ensemble's download over Playwright's shared cache, then the
+ * newest other revision, then an installed Chrome. `ENSEMBLE_CHROMIUM` names one exactly.
  */
 export function findChromium(options: { headless: boolean; host?: Host; dataHome?: string; files?: FileProbe }): ChromiumChoice | null {
   const host = options.host ?? thisHost();
@@ -166,7 +167,7 @@ export function findChromium(options: { headless: boolean; host?: Host; dataHome
   const ensembleRoot = roots[0];
   const builds = listBrowserBuilds(roots, host, files);
   const wanted = playwrightRevisions();
-  const order: Array<BrowserBuild["kind"]> = options.headless ? ["headless-shell", "chromium"] : ["chromium"];
+  const order: Array<BrowserBuild["kind"]> = options.headless ? ["chromium", "headless-shell"] : ["chromium"];
   const pick = (build: BrowserBuild): ChromiumChoice => ({
     executablePath: build.executablePath,
     kind: build.kind,

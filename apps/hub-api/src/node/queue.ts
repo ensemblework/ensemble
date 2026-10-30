@@ -9,6 +9,11 @@
  * the owner aborts a conversation turn that has not yet acted, and it starts again with both
  * messages. Turns are rows, so a restart finds what was waiting, and a turn cut off before it acted
  * runs again.
+ *
+ * A turn can wait in a tool call for its owner's answer on a card in the chat (`waitingForOwner`):
+ * meanwhile it gives its slot back, and a new message from its owner in its lane ends the wait. A
+ * turn whose owner has not answered yet parks (`requestPark`): it ends after its current tool calls
+ * without posting a reply, and the answer wakes it again.
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
@@ -20,6 +25,7 @@ import { publishTo } from "./events.js";
 import { postMessage, roomSettings } from "./store.js";
 import { missionEnded, planTurnEnded } from "./plans.js";
 import { postStatusCards } from "./status-cards.js";
+import { forgetTurnMedia } from "./media.js";
 
 const PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_PARALLEL ?? 4) || 4);
 /** Conversation turns in parallel on this server (kept apart from work, so talking never waits behind work). */
@@ -53,8 +59,47 @@ const talkPool = new Pool(TALK_PARALLEL);
 const workPool = new Pool(WORK_PARALLEL);
 const nodeWork = new Map<string, Pool>();
 const chains = new Map<string, Promise<void>>();
-/** `mergeable`: a person's message turn with nothing bound to it, which a newer message may stop and take over (`coalesce`). */
-type LiveTurn = { controller: AbortController; turnId: string; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null; lane: string; acted: boolean; mergeable: boolean };
+
+/** The capacity a running turn holds: given back while it waits for its owner, taken again after. */
+class Slot {
+  private held = true;
+  constructor(
+    private readonly pool: Pool,
+    private readonly own: Pool | null,
+  ) {}
+  give(): void {
+    if (!this.held) return;
+    this.held = false;
+    this.pool.release();
+    this.own?.release();
+  }
+  async take(): Promise<void> {
+    if (this.held) return;
+    if (this.own) await this.own.acquire();
+    await this.pool.acquire();
+    this.held = true;
+  }
+}
+
+/**
+ * `mergeable`: a person's message turn with nothing bound to it, which a newer message may stop and take over (`coalesce`).
+ * `waiting`: set while a tool call waits for the owner's answer on a card; aborting it ends the wait.
+ * `park`: what the turn waits for, once a tool asked to park it; it ends after its current tool calls.
+ */
+type LiveTurn = {
+  controller: AbortController;
+  turnId: string;
+  nodeId: string;
+  roomId: string | null;
+  planId: string | null;
+  planStep: string | null;
+  lane: string;
+  acted: boolean;
+  mergeable: boolean;
+  slot: Slot;
+  waiting: AbortController | null;
+  park: string[];
+};
 const live = new Map<string, LiveTurn>();
 
 /** The lane a turn runs in: a plan step's own work lane, else the room thread's conversation lane. */
@@ -158,7 +203,7 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
         ...(request.originTurnId && !queued.originTurnId && !queued.operationId ? { originTurnId: request.originTurnId } : {}),
       },
     });
-    coalesce(request, lane, node.userId);
+    coalesce(request, lane, await ownerWrote(app.prisma, request, lane, node.userId));
     return true;
   }
   const turn = await prisma.nodeTurn.create({
@@ -181,7 +226,7 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       originTurnId: request.originTurnId ?? null,
     },
   });
-  coalesce(request, lane, node.userId);
+  coalesce(request, lane, await ownerWrote(app.prisma, request, lane, node.userId));
   schedule(app, turn);
   return true;
 }
@@ -209,13 +254,75 @@ async function carryNote(prisma: PrismaClient, turn: NodeTurn): Promise<void> {
 
 /**
  * A person's new message while the lane's conversation turn has not acted yet: that turn stops and
- * the queued one answers both messages. A turn that has acted finishes; the new message is next.
+ * the queued one answers both messages. A turn that has acted finishes; the new message is next. A
+ * turn waiting for its owner's answer on a card stops waiting when its owner writes in its lane
+ * (`fromOwner`), acted or not: it parks, and the new message is answered next.
  */
-function coalesce(request: TurnRequest, lane: string, _ownerId: string): void {
+function coalesce(request: TurnRequest, lane: string, fromOwner: boolean): void {
   if (isWorkLane(lane) || !request.triggerMessageId || !PERSON_REASONS.has(request.reason)) return;
   for (const entry of live.values()) {
-    if (entry.nodeId === request.nodeId && entry.lane === lane && !entry.acted && !entry.planId && entry.mergeable) entry.controller.abort("coalesce");
+    if (entry.nodeId !== request.nodeId || entry.lane !== lane) continue;
+    if (!entry.acted && !entry.planId && entry.mergeable) entry.controller.abort("coalesce");
+    else if (fromOwner && entry.waiting) entry.waiting.abort("owner");
   }
+}
+
+/** Whether the message that queues this turn is the owner's own, when a turn in its lane waits for them (else not read). */
+async function ownerWrote(prisma: PrismaClient, request: TurnRequest, lane: string, owner: string): Promise<boolean> {
+  if (!request.triggerMessageId || ![...live.values()].some((entry) => entry.nodeId === request.nodeId && entry.lane === lane && entry.waiting)) return false;
+  const message = await prisma.nodeMessage.findUnique({ where: { id: request.triggerMessageId }, select: { userId: true, authorKind: true, data: true } });
+  return Boolean(message && message.authorKind === "human" && !tainted(message, owner));
+}
+
+/**
+ * A tool call waits for the owner's answer on a card: the turn gives its slot back meanwhile (other
+ * turns run), and gets it again after. `wait` gets a signal that ends the wait: a new message from
+ * the owner in the turn's lane (reason "owner"), a Stop or a merge (the turn's own reason), or the
+ * turn already parking. Outside a queued turn (a tool called on its own) the signal never fires.
+ */
+export async function waitingForOwner<T>(turnId: string, wait: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const entry = live.get(turnId);
+  const stop = new AbortController();
+  if (!entry) return wait(stop.signal);
+  // Already ending (parking after another call of this step, or stopped): nothing to wait for.
+  if (entry.park.length || entry.controller.signal.aborted) {
+    stop.abort(entry.park.length ? "park" : (entry.controller.signal.reason ?? "stop"));
+    return wait(stop.signal);
+  }
+  const turnEnded = () => stop.abort(entry.controller.signal.reason ?? "stop");
+  entry.controller.signal.addEventListener("abort", turnEnded, { once: true });
+  entry.waiting = stop;
+  entry.slot.give();
+  try {
+    return await wait(stop.signal);
+  } finally {
+    if (entry.waiting === stop) entry.waiting = null;
+    entry.controller.signal.removeEventListener("abort", turnEnded);
+    await entry.slot.take();
+  }
+}
+
+/**
+ * Parks the turn: it waits for its owner (`note` says for what) and ends after the tool calls it is
+ * making now, quietly: no reply is posted, the note is kept in its conversation, and the owner's
+ * answer wakes the node again. False outside a queued turn.
+ */
+export function requestPark(turnId: string, note: string): boolean {
+  const entry = live.get(turnId);
+  if (!entry) return false;
+  if (!entry.park.includes(note)) entry.park.push(note);
+  return true;
+}
+
+/** Called after each of the turn's tool calls: a turn asked to park stops here (its calls of this step have all run). */
+export function parkIfAsked(turnId: string): void {
+  const entry = live.get(turnId);
+  if (entry?.park.length && !entry.controller.signal.aborted) entry.controller.abort("park");
+}
+
+/** What a parked turn waits for. */
+export function parkedFor(turnId: string): string[] {
+  return [...(live.get(turnId)?.park ?? [])];
 }
 
 /** The turn just dispatched a tool that changes something: it is no longer aborted to coalesce, and a restart reconciles it. */
@@ -256,13 +363,14 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
   const own = work ? nodePool(head.nodeId) : null;
   if (own) await own.acquire();
   await pool.acquire();
+  const slot = new Slot(pool, own);
   try {
     const claimed = await prisma.nodeTurn.updateMany({ where: { id: turnId, status: "queued" }, data: { status: "running" } });
     if (claimed.count !== 1) return;
     const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
     const controller = new AbortController();
     const lane = turn.lane ?? laneFor(turn);
-    live.set(turnId, { controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn) });
+    live.set(turnId, { controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn), slot, waiting: null, park: [] });
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
@@ -286,9 +394,11 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
           finishedAt: new Date(),
         },
       });
-      if (outcome.status !== "done") await planTurnEnded(app, turn, outcome.error ? `Its node could not take its turn: ${truncateText(outcome.error, 300)}` : "Its node could not take its turn.");
+      // A parked turn's step goes on working: its owner's answer wakes it.
+      if (outcome.status !== "done" && outcome.status !== "parked") await planTurnEnded(app, turn, outcome.error ? `Its node could not take its turn: ${truncateText(outcome.error, 300)}` : "Its node could not take its turn.");
     } finally {
       live.delete(turnId);
+      forgetTurnMedia(turnId);
     }
   } catch (error) {
     app.log.error({ err: error, turnId }, "Node turn failed");
@@ -297,8 +407,7 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
       .catch(() => null);
     if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
-    pool.release();
-    own?.release();
+    slot.give();
   }
 }
 

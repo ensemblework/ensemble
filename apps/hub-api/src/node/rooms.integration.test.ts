@@ -1286,8 +1286,9 @@ test("C6, extension §19: two people, two features: told once, started in My cre
   const { node: builder } = await createNode(akash, "feature-engineer");
   const { node: tester } = await createNode(akash, "tester");
   const { node: bensLead } = await createNode(ben, "assistant");
-  // 1. Akash makes a room with his lead, builder and tester; Ben joins with his lead.
+  // 1. Akash makes a room with his lead, builder and tester; Ben joins with his lead. His lead's own crew (where it plans) has the same nodes.
   const room = await roomWith(akash, [lead.id, builder.id, tester.id], [{ user: ben, nodeIds: [bensLead.id] }]);
+  assert.equal((await akash.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Akash's crew", nodeIds: [lead.id, builder.id, tester.id], leadNodeId: lead.id } })).statusCode, 201);
   const members = await h.prisma.nodeRoomMember.findMany({ where: { roomId: room.id } });
   const handle = (nodeId: string) => members.find((row) => row.nodeId === nodeId)!.handle;
   const [hLead, hBuilder, hTester, hBen] = [handle(lead.id), handle(builder.id), handle(tester.id), handle(bensLead.id)];

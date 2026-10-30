@@ -552,7 +552,7 @@ test("the watchdog raises a stalled run, a repeated error, tokens without change
   const job = await newestJob(lin);
   const spec = (await claim(key))!;
   const original = { ...WATCHDOG };
-  setWatchdogForTests({ stallMs: 10 * 60_000, repeats: 3, tokens: 5_000 });
+  setWatchdogForTests({ stallMs: 10 * 60_000, tokens: 5_000 });
   const attentions = async () => (await sessionEvents(h.prisma, node.id)).filter((row) => row.action === "attention").length;
   /** One watchdog pass; how many attention turns it gave this node. */
   const pass = async () => {
@@ -577,12 +577,19 @@ test("the watchdog raises a stalled run, a repeated error, tokens without change
     assert.equal((await read(lin, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text").length, spoken, "nothing is said in the chat");
     assert.equal(await pass(), 0, "once per run");
 
-    // The same failing command three times.
-    for (let index = 0; index < 3; index += 1) await h.prisma.workspaceEvent.create({ data: { jobId: job.id, kind: "command", data: { command: "npx prisma migrate deploy", exitCode: 1 } } });
+    // Searches that found nothing are the agent looking around, however many; four failures in a row are not yet a repeat.
+    const failed = (command: string) => h.prisma.workspaceEvent.create({ data: { jobId: job.id, kind: "command", data: { command, exitCode: 1 } } });
+    for (let index = 0; index < 6; index += 1) await failed("grep -rn migrate prisma");
+    for (let index = 0; index < 4; index += 1) await failed("npx prisma migrate deploy");
+    assert.equal(await pass(), 0);
+    // The same failing command a fifth time, still the latest failures: raised, with the advice to leave it.
+    await failed("npx prisma migrate deploy");
     await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { lastProgressAt: new Date() } });
     assert.equal(await pass(), 1);
     await settleTurns();
-    assert.ok(seen.some((row) => /has hit the same error 3 times: “`npx prisma migrate deploy` failed \(exit 1\)”/.test(row.transcript)));
+    const repeated = seen.find((row) => /has hit the same error 5 times, the last 5 in a row: “`npx prisma migrate deploy` failed \(exit 1\)”/.test(row.transcript));
+    assert.ok(repeated, "the repeated error reaches the node once");
+    assert.match(repeated!.transcript, /Usually leave it: agents recover from errors by themselves\. Steer only if the same failure keeps happening and you know the fix; never stop a run your owner asked for\./);
 
     // Tokens spent without a file changed.
     await h.prisma.workspaceJob.update({ where: { id: job.id }, data: { tokensIn: 6_000, tokensOut: 500 } });
@@ -605,6 +612,70 @@ test("the watchdog raises a stalled run, a repeated error, tokens without change
   } finally {
     setWatchdogForTests(original);
   }
+});
+
+test("a watchdog note on a plan step's run reaches the step's own lane; its node steering or stopping that run goes on with the step, never “from outside”", async () => {
+  const kofi = await person("Kofi");
+  const { key } = await laptopFor(kofi, "Kofi's laptop");
+  const lead = await createNode(kofi, "manager");
+  const builder = await createNode(kofi, "feature-engineer");
+  const made = await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Build crew", nodeIds: [lead.node.id, builder.node.id], leadNodeId: lead.node.id } });
+  assert.equal(made.statusCode, 201, made.body);
+  const crew = json(made).room as { id: string };
+  let session = "";
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("build it")) return call("node_delegate", { to: "builder", brief: "Build it in the ensemble folder." }, "Planned.");
+    if (turn.slug === "builder" && turn.transcript.includes("Attention:")) return call("node_session_send", { session, prompt: "Use the smaller migration instead.", delivery: "steer" });
+    if (turn.slug === "builder" && turn.transcript.includes("Your step in")) return startCall("Build it", "Build it.");
+    if (turn.slug === "builder" && turn.transcript.includes("stop the build")) return call("node_session_stop", { session });
+    if (turn.slug === "builder" && turn.transcript.includes("bigger migration")) return call("node_session_send", { session, prompt: "Use the bigger migration after all.", delivery: "steer" });
+    if (turn.slug === "builder" && turn.transcript.includes("You stopped the agent run")) return call("node_step_report", { outcome: "blocked", summary: "Stopped, as my owner asked.", blockedBy: "needs_owner" });
+    return { text: "(no reply)" };
+  };
+  await say(kofi, crew.id, "build it");
+  const first = await newestJob(kofi);
+  session = first.id;
+  const run = await h.prisma.nodeRun.findUniqueOrThrow({ where: { jobId: first.id } });
+  assert.ok(run.planId && run.planStep, "the run does a plan step");
+  await claim(key);
+  const original = { ...WATCHDOG };
+  setWatchdogForTests({ stallMs: 10 * 60_000 });
+  try {
+    const old = new Date(Date.now() - 20 * 60_000);
+    await h.prisma.workspaceJob.update({ where: { id: first.id }, data: { status: "running", startedAt: old, claimedAt: old } });
+    await checkSessions(h.app);
+    await settleTurns();
+  } finally {
+    setWatchdogForTests(original);
+  }
+  const attention = await h.prisma.nodeTurn.findFirstOrThrow({ where: { nodeId: builder.node.id, reason: "attention" } });
+  assert.deepEqual([attention.planId, attention.planStep], [run.planId, run.planStep], "the note runs in the step's lane");
+  const steered = await newestJob(kofi);
+  assert.equal(steered.continueFromJobId, first.id, "the step's node steered its run");
+  const next = await h.prisma.nodeRun.findUniqueOrThrow({ where: { jobId: steered.id } });
+  assert.deepEqual([next.planId, next.planStep], [run.planId, run.planStep], "the steered run goes on with the step");
+  const outside = async () => (await h.prisma.nodeTurn.findMany({ where: { nodeId: builder.node.id } })).filter((row) => /from outside the step/.test(row.note ?? ""));
+  assert.deepEqual(await outside(), []);
+  let step = await h.prisma.nodeStep.findUniqueOrThrow({ where: { missionId_id: { missionId: run.planId!, id: run.planStep! } } });
+  assert.equal(step.status, "working", "and the step waits for it");
+
+  // From its own chat too: steering the step's run there goes on with the step.
+  await h.prisma.workspaceJob.update({ where: { id: first.id }, data: { status: "cancelled", finishedAt: new Date() } });
+  assert.equal((await claim(key))?.id, steered.id);
+  await say(kofi, builder.room.id, "tell it to use the bigger migration");
+  const again = await newestJob(kofi);
+  assert.equal(again.continueFromJobId, steered.id);
+  const inherited = await h.prisma.nodeRun.findUniqueOrThrow({ where: { jobId: again.id } });
+  assert.deepEqual([inherited.planId, inherited.planStep], [run.planId, run.planStep], "a steer from the node's chat continues the step");
+  assert.deepEqual(await outside(), []);
+
+  // Its owner tells the builder in its own chat to stop: the step hears it from its node, and reports.
+  await say(kofi, builder.room.id, "stop the build");
+  const stopped = (await h.prisma.nodeTurn.findMany({ where: { nodeId: builder.node.id, planStep: run.planStep } })).find((row) => /You stopped the agent run for your plan step from your conversation with your owner/.test(row.note ?? ""));
+  assert.ok(stopped, "the step's lane hears its own node stopped the run");
+  assert.deepEqual(await outside(), []);
+  step = await h.prisma.nodeStep.findUniqueOrThrow({ where: { missionId_id: { missionId: run.planId!, id: run.planStep! } } });
+  assert.deepEqual([step.status, step.result], ["blocked", "Stopped, as my owner asked."]);
 });
 
 async function ask(key: Device, spec: Spec, title: string, extra: Record<string, unknown> = {}) {
@@ -636,7 +707,7 @@ test("an agent's question of fact is answered by its node from the owner's own w
   assert.equal((await sessionEvents(h.prisma, node.id)).filter((row) => row.action === "attention").length - before, 1, "only the question the node may answer reaches it");
   await settleTurns();
   const note = seen.find((row) => row.transcript.includes("Which branch should I work on?"))!;
-  assert.match(note.transcript, /asks: “Which branch should I work on\?” \(options: “main”, “testing”\)\. It waits in your owner's Needs me/);
+  assert.match(note.transcript, /asks: “Which branch should I work on\?” \(options: “main”, “testing”\)\. It waits for your owner on the run's card in the chat/);
   assert.ok(note.tools.includes("node_answer_question"));
   const answered = await h.prisma.agentDecision.findUniqueOrThrow({ where: { id: branch } });
   assert.deepEqual([answered.status, answered.decision, answered.reason], ["decided", "allow", "testing"]);

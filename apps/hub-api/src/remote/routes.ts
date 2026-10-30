@@ -38,6 +38,7 @@ async function status(app: FastifyInstance) {
     webTerminal: settings.webTerminal,
     evidenceUpload: settings.evidenceUpload,
     captureSites: settings.captureSites,
+    askBeforeBrowsing: settings.askBeforeBrowsing,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -66,6 +67,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         webTerminal: z.boolean().optional(),
         evidenceUpload: z.boolean().optional(),
         captureSites: z.object({ never: z.array(z.string().max(300)).max(MAX_SITES), preview: z.array(z.string().max(300)).max(MAX_SITES) }).strict().optional(),
+        askBeforeBrowsing: z.boolean().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -95,6 +97,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
       ...(body.evidenceUpload === undefined ? {} : { evidenceUpload: body.evidenceUpload }),
       ...(captureSites ? { captureSites } : {}),
+      ...(body.askBeforeBrowsing === undefined ? {} : { askBeforeBrowsing: body.askBeforeBrowsing }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
@@ -117,6 +120,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
                     : "remote.evidence_upload";
       await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal, evidenceUpload: next.evidenceUpload } });
     }
+    if (body.askBeforeBrowsing !== undefined) await appendLedger({ userId, actor: "me", action: "remote.ask_before_browsing", payload: { askBeforeBrowsing: next.askBeforeBrowsing } });
     // The sites themselves stay on this computer: the ledger keeps how many.
     if (captureSites) await appendLedger({ userId, actor: "me", action: "remote.capture_sites", payload: { never: captureSites.never.length, preview: captureSites.preview.length } });
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");

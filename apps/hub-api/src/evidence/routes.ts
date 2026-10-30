@@ -16,7 +16,7 @@ import { redactText } from "../lib/redact.js";
 import { sseHub } from "../lib/sse.js";
 import { isVisitor } from "../sharing/context.js";
 import { EVIDENCE_HEADERS, EvidenceMeta } from "../remote/contract.js";
-import { credentialPathReason, EVIDENCE_MAX_BYTES, evidenceLimit, evidenceName, isActiveMime, isTextMime, kindMismatch, MAX_EVIDENCE_PER_JOB, sha256Hex, sniffMime } from "./limits.js";
+import { credentialPathReason, EVIDENCE_MAX_BYTES, evidenceLimit, evidenceName, isActiveMime, isTextMime, kindMismatch, MAX_EVIDENCE_PER_JOB, NODE_EVIDENCE_WINDOW_MS, sha256Hex, sniffMime } from "./limits.js";
 import { cardEvidence, discardEvidence, evidenceContent, evidenceKey, evidenceOf, putEvidence, refreshRunCard } from "./store.js";
 import { dropGrant, dropPreview, grantOf, keepPreview, PREVIEW_MAX_BYTES } from "./grants.js";
 import { HeldError, previewCardForRun, previewHeld, settleHeld } from "./held.js";
@@ -225,7 +225,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (known.operation !== grant.operation || known.userId !== owner) return reply.code(409).send({ error: "That evidence belongs to other work." });
       return reply.code(200).send({ evidence: cardEvidence(known) });
     }
-    if (await tooMany({ operation: grant.operation, jobId: null }, meta)) return reply.code(409).send({ error: `This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.` });
+    if (await tooMany({ operation: grant.operation, jobId: null, createdAt: { gte: new Date(Date.now() - NODE_EVIDENCE_WINDOW_MS) } }, meta)) return reply.code(409).send({ error: `A node keeps at most ${MAX_EVIDENCE_PER_JOB} new files a day.` });
     const checked = checkUpload(meta, raw, name);
     if (!checked.ok) return reply.code(checked.status).send({ error: checked.error });
     const key = evidenceKey(owner, `node-${grant.nodeId}`, meta.id);

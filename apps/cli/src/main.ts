@@ -1,4 +1,4 @@
-import { answerFor, answerPending, browseFiles, connectedHooks, evidenceUpload, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, askBeforeBrowsing, browseFiles, connectedHooks, evidenceUpload, webAccess, connectHook, formatNodeCards, formatPending, HOOK_TOOLS, listPending, nodeCards, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import { formatSessions, listSessions } from "./sessions.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
@@ -82,7 +82,7 @@ Usage:
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble sessions [list] [--json]
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
-  ensemble approvals [status] | on | off
+  ensemble approvals [status] | on | off | websites [ask|allow]
   ensemble browse [status] | on | off
   ensemble evidence [status] | on | off
   ensemble web [status] | files|edit|terminal on|off
@@ -110,7 +110,8 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer: in Ask, agents run commands there without asking, and coding agents load the folder's own settings. No mode needs one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
   hooks:
     "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
-  approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
+  approvals:
+    "Usage: ensemble approvals [status] | on | off | websites [ask|allow]\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.\n`websites`: allow (default) lets your nodes open and capture public web sites without asking; ask makes them ask you once per site first. This computer's own addresses and its network's (a router, a NAS) always ask.",
   browse:
     "Usage: ensemble browse [status] | on | off\nOn (default): Ensemble on the web shows the files of tasks run here: the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets.",
   evidence:
@@ -628,9 +629,19 @@ function sharingLine(sharing: TrustSharing): string {
 async function commandApprovals(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.approvals);
   const subcommand = args[0] ?? "status";
-  if (!["status", "on", "off"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.approvals);
+  if (!["status", "on", "off", "websites"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.approvals);
+  if (subcommand === "websites" && args[1] !== undefined && !["ask", "allow", "status"].includes(args[1])) throw new Error(HELP_BY_COMMAND.approvals);
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "websites") {
+    const ask = await withAdminApi({ sidecarDir, run: (discovery) => askBeforeBrowsing(discovery, args[1] === "ask" ? true : args[1] === "allow" ? false : undefined) });
+    console.log(
+      ask
+        ? "Websites: ask. Your nodes ask you once per site before they open or capture a web page there."
+        : "Websites: allow. Your nodes open and capture public web sites without asking; this computer's own and its network's addresses still ask. Sign-ins and human checks always come to you.",
+    );
+    return;
+  }
   const on = await withAdminApi({ sidecarDir, run: (discovery) => webApprovals(discovery, subcommand === "status" ? undefined : subcommand === "on") });
   console.log(
     on

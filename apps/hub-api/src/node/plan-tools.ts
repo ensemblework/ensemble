@@ -4,12 +4,12 @@
  * errors come back to the lead to fix in the same turn.
  */
 import { z } from "zod";
-import type { NodeAgent, PrismaClient } from "@prisma/client";
+import type { NodeAgent, NodeRoom, PrismaClient } from "@prisma/client";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
-import { addNode } from "./store.js";
 import { createPlan, loadPlan, missionEnded, PlanError, planVisibility, revisePlan, type PlanNode } from "./plans.js";
 import { BRIEF_MAX, Constraints, Deferral, mergeConstraints, PlanInput, RequirementInput, StepInput, validatePlan } from "./plan-contract.js";
 import { crewRoomFor, type NodeScope } from "./tools.js";
+import { crewAddTool, findCrew, memberHandles, notInCrew } from "./crew.js";
 
 /** The owner's node for a handle: their own active, lasting nodes (and the lead itself, for its own steps). */
 async function nodeFor(prisma: PrismaClient, lead: NodeAgent, handle: string): Promise<NodeAgent> {
@@ -22,10 +22,27 @@ async function nodeFor(prisma: PrismaClient, lead: NodeAgent, handle: string): P
   return node;
 }
 
+/**
+ * Sets each plan node's handle in `room` and names every node that is not a member of it (node/crew.ts),
+ * so the lead fixes them all in one go. Without a crew yet, the lead's own steps are fine: one is made.
+ */
+async function membersOf(prisma: PrismaClient, room: NodeRoom | null, lead: NodeAgent, targets: Iterable<PlanNode & { row: NodeAgent }>): Promise<string[]> {
+  const members = room ? await prisma.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, select: { nodeId: true, handle: true } }) : [];
+  const others = room ? await memberHandles(prisma, room.id, lead.id) : [];
+  const problems: string[] = [];
+  for (const target of targets) {
+    const member = members.find((row) => row.nodeId === target.node.id);
+    if (member) target.handle = member.handle;
+    else if (target.node.id !== lead.id || room) problems.push(notInCrew(target.row.slug, room, others));
+  }
+  return problems;
+}
+
 export function planTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   if (scope.plan?.planStep) return [];
   return [
+    ...(scope.lineage.fromNonOwner || node.parentNodeId ? [] : [crewAddTool(scope, () => crewRoomFor(prisma, node))]),
     defineTool({
       name: "node_plan",
       area: "tasks",
@@ -49,13 +66,15 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
           const target = await nodeFor(prisma, node, handle);
           nodes.set(handle, { node: target, handle: target.slug, row: target });
         }
-        const problems = validatePlan({ requirements: input.requirements, deferred: input.deferred, constraints: input.constraints, steps: input.steps }, { briefMax: BRIEF_MAX });
+        const found = scope.room.kind === "crew" ? scope.room : await findCrew(prisma, node);
+        const problems = [
+          ...validatePlan({ requirements: input.requirements, deferred: input.deferred, constraints: input.constraints, steps: input.steps }, { briefMax: BRIEF_MAX }),
+          // Only the crew's members get steps; the lead's own steps need no crew yet (one is made for them).
+          ...(found || [...nodes.values()].some((target) => target.node.id !== node.id) ? await membersOf(prisma, found, node, nodes.values()) : []),
+        ];
         if (problems.length) throw new ToolBlockedError(`The plan needs changes:\n- ${problems.join("\n- ")}`, "Fix these and call node_plan again with the whole plan.");
-        const room = scope.room.kind === "crew" ? scope.room : await crewRoomFor(prisma, node);
-        for (const target of nodes.values()) {
-          const member = await prisma.nodeRoomMember.findFirst({ where: { roomId: room.id, nodeId: target.node.id } });
-          target.handle = (member ?? (await addNode(prisma, room.id, target.row))).handle;
-        }
+        const room = found ?? (await crewRoomFor(prisma, node));
+        if (!found) for (const target of nodes.values()) target.handle = (await prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId: target.node.id } })).handle;
         const visibleTo = await planVisibility(prisma, node.userId, room, room.id === scope.room.id ? scope.privateTo : null);
         try {
           const made = await createPlan(prisma, { lead: node, turnId: scope.turnId, room, originRoomId: scope.room.id, originPrivate: Boolean(scope.privateTo), visibleTo, plan: input, nodes });
@@ -96,9 +115,10 @@ export function planTools(scope: NodeScope): AnyHubTool[] {
         const nodes = new Map<string, PlanNode & { row: NodeAgent }>();
         for (const handle of [...new Set((input.add ?? []).map((step) => step.to))]) {
           const target = await nodeFor(prisma, node, handle);
-          const member = await prisma.nodeRoomMember.findFirst({ where: { roomId: plan.message.roomId, nodeId: target.id } });
-          nodes.set(handle, { node: target, handle: (member ?? (await addNode(prisma, plan.message.roomId, target))).handle, row: target });
+          nodes.set(handle, { node: target, handle: target.slug, row: target });
         }
+        const outsiders = await membersOf(prisma, await prisma.nodeRoom.findUnique({ where: { id: plan.message.roomId } }), node, nodes.values());
+        if (outsiders.length) throw new ToolBlockedError(`The revision needs changes:\n- ${outsiders.join("\n- ")}`, "Fix these and call node_plan_revise again.");
         // Validate the plan as it would be: existing steps plus the new ones.
         const latest = (ref: string) => [...plan.data.steps].reverse().find((row) => `@${row.handle}` === ref || row.handle === ref.replace(/^@/, ""))?.id;
         const existing = new Set(plan.data.steps.map((row) => row.id));

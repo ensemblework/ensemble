@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -36,12 +36,13 @@ process.env.ENSEMBLE_WORKSPACE_ROOT = join(home, "ensemble-workspace");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
 const { decide } = await import("./policy.js");
-const { checkTarget, fetchLoopback, loopbackAddress, setResolverForTests } = await import("./http.js");
+const { checkTarget, fetchLoopback, loopbackAddress, publicAddress, publicWebAddress, setResolverForTests } = await import("./http.js");
 const { gitArgv } = await import("./git.js");
 const { runNodeFiles } = await import("./files.js");
 const { runNodeCommand, setForegroundMsForTests } = await import("./run.js");
 const { nodeToolAnswerFor } = await import("./answer.js");
-const { nodeToolDenies, resolveToolFolder } = await import("./folders.js");
+const { nodeToolDenies, ownToolFolder, resolveToolFolder } = await import("./folders.js");
+const { shareKind } = await import("./share.js");
 const { updateSettings } = await import("../remote/store.js");
 const { encrypt } = await import("../lib/secrets.js");
 const { setLocalPort } = await import("../workspace/engines/registry.js");
@@ -54,6 +55,7 @@ after(() => rmSync(base, { recursive: true, force: true }));
 /** The rules table and secrets in memory, as the policy and the command runner use them. */
 function memoryDb(secrets: Record<string, string> = {}) {
   const rules: Array<{ userId: string; source: string; toolName: string; pattern: string; decision: string; sessionId: string | null }> = [];
+  const evidence: Array<Record<string, unknown>> = [];
   const matches = (rule: (typeof rules)[number], where: Record<string, unknown>) => Object.entries(where).every(([key, value]) => (rule as Record<string, unknown>)[key] === value);
   return {
     rules,
@@ -75,6 +77,18 @@ function memoryDb(secrets: Record<string, string> = {}) {
       },
     },
     auditLedger: {},
+    evidence,
+    jobEvidence: {
+      count: async ({ where }: { where: Record<string, unknown> }) => evidence.filter((row) => Object.entries(where).every(([key, value]) => row[key] === value)).length,
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => evidence.find((row) => Object.entries(where).every(([key, value]) => row[key] === value)) ?? null,
+      create: async ({ data: row }: { data: Record<string, unknown> }) => {
+        const full = { jobId: null, nodeId: null, operation: null, held: false, holdReason: null, variantOf: null, variant: null, details: null, caption: null, requirementId: null, createdAt: new Date(), ...row };
+        evidence.push(full);
+        return full;
+      },
+      findMany: async () => [],
+      deleteMany: async () => ({ count: 0 }),
+    },
   };
 }
 
@@ -82,11 +96,17 @@ function memoryDb(secrets: Record<string, string> = {}) {
 function fakeClient() {
   const answers: Array<{ status: number; body: Record<string, unknown> }> = [];
   const chunks: Array<{ seq: number; text: string; done: boolean; exitCode: number | null; wake?: boolean }> = [];
+  const uploads: Array<{ uploadId: string; meta: Record<string, unknown>; bytes: Uint8Array }> = [];
   return {
     answers,
     chunks,
+    uploads,
     output: () => chunks.map((chunk) => chunk.text).join(""),
     client: {
+      async uploadEvidenceFile(uploadId: string, meta: Record<string, unknown>, bytes: Uint8Array) {
+        uploads.push({ uploadId, meta, bytes });
+        return { result: "stored" as const };
+      },
       async toolOutput(_runId: string, chunk: (typeof chunks)[number]) {
         chunks.push(chunk);
         return true;
@@ -318,4 +338,113 @@ test("under the OS sandbox a node's command cannot read keys, Ensemble's data or
   const closed = await runCommand({ argv: ["cat", join(work, "closed", "secret.txt")], cwd: work, root: work, sandboxed: true, network: false, useCredentials: false, who: "agent", readWrite: [work], deny: [...(await nodeToolDenies()), join(work, "closed")], timeoutMs: 30_000 });
   assert.notEqual(closed.exitCode, 0);
   assert.doesNotMatch(closed.output, /FAKE-CLOSED-FOR-THE-TEST/);
+});
+
+const NODE = "0d0e0f10-1112-4314-8516-171819202122";
+/** One call as the server sends it, answered by this computer. */
+async function ask(db: ReturnType<typeof memoryDb>, request: Record<string, unknown>) {
+  const fake = fakeClient();
+  await nodeToolAnswerFor({ prisma: db } as never, fake.client as never, { id: randomUUID(), nodeId: NODE, mission: "m1", attended: true, grants: [], ...request } as never, (reply) => fake.client.answerCode("x", reply));
+  return { ...fake.answers[0]!, uploads: fake.uploads };
+}
+
+test("a call that names no folder works in the node's own folder: made on first use, for this account only, never asked about", async () => {
+  updateSettings({ acceptWebApprovals: true });
+  const own = await ownToolFolder({ nodeId: NODE, nodeSlug: "helper" });
+  assert.deepEqual(own, { path: join(home, "ensemble-workspace", "nodes", "helper"), label: "@helper's folder", own: true });
+  assert.equal(statSync(own.path).mode & 0o777, 0o700);
+  assert.equal((await ownToolFolder({ nodeId: NODE })).path, join(home, "ensemble-workspace", "nodes", "0d0e0f10"), "without a handle: the start of its id");
+  const db = memoryDb();
+  const wrote = await ask(db, { tool: "files", action: "write", path: "notes/plan.md", content: "# Plan\n", nodeSlug: "helper" });
+  assert.equal(wrote.status, 200, JSON.stringify(wrote.body));
+  assert.equal(readFileSync(join(own.path, "notes", "plan.md"), "utf8"), "# Plan\n");
+  assert.equal(db.rules.length, 0, "nothing asked, nothing kept");
+  // A link planted where the folder goes is never followed.
+  symlinkSync(join(home, ".ssh"), join(home, "ensemble-workspace", "nodes", "intruder"));
+  await assert.rejects(ownToolFolder({ nodeId: NODE, nodeSlug: "intruder" }), /link or a file/);
+  const named = await ask(db, { tool: "files", action: "write", folder: work, path: "x.txt", content: "x" });
+  assert.equal(named.status, 428, "another folder still asks once");
+});
+
+test("the policy: the node's own folder needs no answer (commands ask per mission where the sandbox is weak); public pages open without asking", async () => {
+  const own = { capability: "run" as const, target: "/w/nodes/helper", label: "@helper's folder", scope: "folder" as const, own: true, mission: "m1", attended: true, grants: [] };
+  assert.equal((await decide(memoryDb() as never, "local", own, { weak: false, acceptWeb: true })).kind, "allow");
+  assert.equal((await decide(memoryDb() as never, "local", own, { weak: false, acceptWeb: false })).kind, "allow", "nothing to approve, so approvals from the web do not matter");
+  assert.equal((await decide(memoryDb() as never, "local", { ...own, capability: "files" }, { weak: true, acceptWeb: true })).kind, "allow");
+  assert.equal((await decide(memoryDb() as never, "local", own, { weak: true, acceptWeb: true })).kind, "ask", "commands outside an OS sandbox still ask once per mission");
+  const page = { capability: "browse" as const, target: "https://www.walmart.com", label: "https://www.walmart.com", scope: "origin" as const, mission: "m1", attended: true, grants: [{ id: "old", scope: "once" as const, target: "https://www.walmart.com" }] };
+  assert.deepEqual(await decide(memoryDb() as never, "local", { ...page, publicWeb: true }, { weak: false, acceptWeb: true }), { kind: "allow", grantsUsed: ["old"] }, "an answer from before is used up");
+  assert.equal((await decide(memoryDb() as never, "local", { ...page, publicWeb: true, grants: [] }, { weak: false, acceptWeb: true, askBeforeBrowsing: true })).kind, "ask", "the owner asked to be asked");
+  assert.equal((await decide(memoryDb() as never, "local", { ...page, target: "http://192.168.1.1", publicWeb: false, grants: [] }, { weak: false, acceptWeb: true })).kind, "ask", "this computer's network asks");
+});
+
+test("a public web page: a public name and address; never this computer, its network, a local name or a name that resolves there", async () => {
+  setResolverForTests(async (host) => ({ "example.com": ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"], "rebind.example.org": ["93.184.216.34", "10.0.0.5"] })[host] ?? []);
+  try {
+    assert.equal(await publicWebAddress("https://example.com/shop"), true);
+    assert.equal(await publicWebAddress("https://93.184.216.34/"), true);
+    assert.equal(await publicWebAddress("https://[2606:4700:4700::1111]/"), true);
+    for (const url of ["http://localhost:3000", "http://127.0.0.1/", "http://192.168.1.1/", "http://10.0.0.1/", "http://172.20.0.2/", "http://100.100.1.1/", "http://169.254.169.254/", "http://[::1]/", "http://[fd00::1]/", "http://[fe80::1]/", "http://nas.local/", "http://router.lan/", "http://intranet/", "http://app.internal/", "https://rebind.example.org/", "https://unknown.example.net/", "ftp://example.com/", "not a url"]) {
+      assert.equal(await publicWebAddress(url), false, url);
+    }
+    assert.equal(publicAddress("::ffff:10.0.0.1"), false);
+    assert.equal(publicAddress("8.8.8.8"), true);
+  } finally {
+    setResolverForTests(null);
+  }
+});
+
+test("a public page opens without asking, unless the owner asked to be asked here or on the web", async () => {
+  updateSettings({ acceptWebApprovals: true, askBeforeBrowsing: false });
+  setResolverForTests(async (host) => ({ "example.com": ["93.184.216.34"] })[host] ?? []);
+  try {
+    const open = { tool: "browser", name: "browser_open", input: { url: "https://example.com/" }, operation: `node:${NODE}:own`, uploadId: "u1" };
+    assert.equal((await ask(memoryDb(), { ...open, askBeforeBrowsing: true })).status, 428, "the owner's choice on the web");
+    updateSettings({ askBeforeBrowsing: true });
+    assert.equal((await ask(memoryDb(), open)).status, 428, "this computer's own choice");
+  } finally {
+    updateSettings({ askBeforeBrowsing: false });
+    setResolverForTests(null);
+  }
+});
+
+test("the hard floor's dangerous commands are refused on this computer for every tool that starts one, whatever was answered", async () => {
+  const db = memoryDb();
+  const refused = async (request: Record<string, unknown>) => {
+    const answer = await ask(db, { attended: false, grants: [{ id: "g", scope: "always", target: work }], ...request });
+    assert.equal(answer.status, 403, JSON.stringify(request));
+    assert.match(String(answer.body.error), /hard floor/);
+  };
+  await refused({ tool: "run", folder: "app", command: "rm -rf ~", runId: randomUUID() });
+  await refused({ tool: "terminal", command: "shutdown -h now", operation: `node:${NODE}:m1`, uploadId: "u" });
+  await refused({ tool: "sudo", command: "passwd root", commandHash: "0".repeat(64), cardId: "card", runId: randomUUID() });
+  await refused({ tool: "capture", name: "capture_app_start", input: { cwd: work, command: "mkfs.ext4 /dev/sda1" }, operation: `node:${NODE}:m1`, uploadId: "u" });
+});
+
+test("a file shared from a folder becomes the node's evidence: kept by kind, with its caption and type; keys and secrets never", async () => {
+  updateSettings({ acceptWebApprovals: true, folders: [{ label: "app", path: work, kind: "folder", access: "read-write" }] });
+  const db = memoryDb({ STRIPE_KEY: "sk_live_sharedsecretvalue1" });
+  const own = await ownToolFolder({ nodeId: NODE, nodeSlug: "helper" });
+  writeFileSync(join(own.path, "report.md"), "# Prices\n\n| Shop | Price |\n");
+  const share = { tool: "files", action: "share", operation: `node:${NODE}:conversation:share`, uploadId: "upload-9", nodeSlug: "helper" };
+  const shared = await ask(db, { ...share, path: "report.md", caption: "The price table" });
+  assert.equal(shared.status, 200, JSON.stringify(shared.body));
+  assert.equal(shared.body.ok, true);
+  assert.deepEqual((shared.body.evidence as Array<Record<string, unknown>>).map((row) => [row.name, row.kind]), [["report.md", "report"]]);
+  assert.deepEqual([shared.uploads[0]!.uploadId, shared.uploads[0]!.meta.mime, shared.uploads[0]!.meta.caption], ["upload-9", "text/markdown", "The price table"]);
+  assert.equal(Buffer.from(shared.uploads[0]!.bytes).toString("utf8"), "# Prices\n\n| Shop | Price |\n");
+  assert.equal(db.evidence[0]!.operation, share.operation);
+  writeFileSync(join(own.path, ".env"), "X=1\n");
+  assert.equal((await ask(db, { ...share, path: ".env" })).status, 403);
+  writeFileSync(join(own.path, "leak.txt"), "key sk_live_sharedsecretvalue1\n");
+  assert.match(String((await ask(db, { ...share, path: "leak.txt" })).body.error), /saved secret/);
+  writeFileSync(join(own.path, "fake.png"), "not an image\n");
+  assert.match(String((await ask(db, { ...share, path: "fake.png" })).body.error), /must be an image/);
+  assert.equal((await ask(db, { ...share, path: "../../../.ssh/id_ed25519" })).status, 403);
+  // Another folder: reading it to share asks once, like any folder.
+  writeFileSync(join(work, "out.log"), "done\n");
+  const other = await ask(db, { ...share, folder: "app", path: "out.log" });
+  assert.equal(other.status, 428);
+  assert.equal((other.body.ask as Record<string, unknown>).capability, "read");
+  assert.deepEqual(["notes.md", "a.CSV", "x.pdf", "shot.png", "clip.mov", "data.bin", "photo.jpeg"].map(shareKind), ["report", "report", "report", "image", "video", "file", "image"]);
 });

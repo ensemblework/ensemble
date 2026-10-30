@@ -10,6 +10,8 @@ import { BrowserBroker, hasDisplay } from "./broker.js";
 import { browserSearchRoots, findChromium, listBrowserBuilds, playwrightCacheDir, playwrightRevisions, type FileProbe, type Host } from "./chromium.js";
 import { browserDeniedPaths, browserProfileDir, browserRoot, ensembleDataHome, isProfileName, playwrightBrowsersDir } from "./paths.js";
 import { findSecrets, hideSecrets, matchesSite, normalizeSite, redactSnapshot, siteLists, siteRule, valueFieldRefs } from "./privacy.js";
+import { humanCheck } from "./human-check.js";
+import { browserLook, chromiumVersion, computerLocale, HIDE_WEBDRIVER, IGNORED_DEFAULT_ARGS, LAUNCH_ARGS, userAgentFor } from "./launch.js";
 import { BROWSER_TOOLS, browserToolDefinitions, runBrowserTool } from "./tools.js";
 import { CAPTURE_TOOLS, captureToolDefinitions } from "../capture/tools.js";
 
@@ -88,7 +90,7 @@ const ours = `${data}/playwright`;
 const cache = "/home/mira/.cache/ms-playwright";
 const build = (root: string, dir: string, exe: string) => [`${root}/${dir}/INSTALLATION_COMPLETE`, `${root}/${dir}/${exe}`];
 
-test("Chromium: the matching revision first, Ensemble's own before Playwright's cache, then the newest, then an installed Chrome", () => {
+test("Chromium: full Chromium before the headless shell, the matching revision first, Ensemble's own before Playwright's cache, then the newest, then an installed Chrome", () => {
   const shellExe = "chrome-headless-shell-linux64/chrome-headless-shell";
   const fullExe = "chrome-linux64/chrome";
   const mixed = files([
@@ -99,7 +101,9 @@ test("Chromium: the matching revision first, Ensemble's own before Playwright's 
     `${cache}/chromium_headless_shell-1/${shellExe}`,
   ]);
   const headless = findChromium({ headless: true, host: host(), dataHome: data, files: mixed });
-  assert.deepEqual(headless, { executablePath: `${ours}/chromium_headless_shell-${wanted.headlessShell}/${shellExe}`, kind: "headless-shell", revision: wanted.headlessShell, matches: true, source: "ensemble" });
+  assert.deepEqual(headless, { executablePath: `${cache}/chromium-${wanted.chromium}/${fullExe}`, kind: "chromium", revision: wanted.chromium, matches: true, source: "playwright" }, "headless runs full Chromium when it is installed: sites block the headless shell");
+  const shellOnly = findChromium({ headless: true, host: host(), dataHome: data, files: files([...build(cache, `chromium_headless_shell-${wanted.headlessShell}`, shellExe), ...build(ours, `chromium_headless_shell-${wanted.headlessShell}`, shellExe)]) });
+  assert.deepEqual(shellOnly, { executablePath: `${ours}/chromium_headless_shell-${wanted.headlessShell}/${shellExe}`, kind: "headless-shell", revision: wanted.headlessShell, matches: true, source: "ensemble" });
   const headed = findChromium({ headless: false, host: host(), dataHome: data, files: mixed });
   assert.equal(headed?.kind, "chromium", "a window needs full Chromium");
   assert.equal(headed?.source, "playwright");
@@ -180,4 +184,43 @@ test("tool calls are validated before anything runs, and fail as results, not ex
   const tabs = await runBrowserTool(broker, "browser_tabs", {}, context);
   assert.deepEqual(tabs, { ok: true, summary: "No tabs open.", result: { tabs: [] } });
   await broker.shutdown();
+});
+
+test("the browser looks like this computer's Chrome: no automation switches, no HeadlessChrome, its language and time zone", () => {
+  assert.deepEqual(LAUNCH_ARGS, ["--disable-blink-features=AutomationControlled"]);
+  assert.deepEqual(IGNORED_DEFAULT_ARGS, ["--enable-automation"]);
+  assert.match(HIDE_WEBDRIVER, /webdriver/);
+  assert.equal(userAgentFor("131.0.6778.33", "linux"), "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+  assert.equal(userAgentFor("140.0.7339.16", "darwin"), "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
+  assert.match(userAgentFor("140.0.7339.16", "win32")!, /Windows NT 10\.0; Win64; x64.*Chrome\/140\.0\.0\.0/);
+  assert.equal(userAgentFor(null, "linux"), null);
+  assert.deepEqual(computerLocale({ locale: "en-IN", timeZone: "Asia/Kolkata" }), { locale: "en-IN", timezoneId: "Asia/Kolkata", acceptLanguage: "en-IN,en;q=0.9" });
+  assert.deepEqual(computerLocale({ locale: "de", timeZone: "Europe/Berlin" }), { locale: "de", timezoneId: "Europe/Berlin", acceptLanguage: "de" });
+  assert.equal(computerLocale({ locale: "x_bad", timeZone: undefined }).locale, "en-US");
+  const look = browserLook({ platform: "linux", version: "131.0.6778.33", resolved: { locale: "en-GB", timeZone: "Europe/London" } });
+  assert.deepEqual(look, { userAgent: userAgentFor("131.0.6778.33", "linux"), locale: "en-GB", timezoneId: "Europe/London", extraHTTPHeaders: { "Accept-Language": "en-GB,en;q=0.9" } });
+  assert.doesNotMatch(JSON.stringify(look), /Headless/);
+  assert.equal(chromiumVersion("/fake/chrome-a", () => "Chromium 131.0.6778.33 snap\n"), "131.0.6778.33");
+  assert.equal(chromiumVersion("/fake/chrome-b", () => ""), null, "Windows prints none");
+  assert.equal(browserLook({ platform: "linux", executablePath: "/fake/chrome-a", resolved: {} }).userAgent, userAgentFor("131.0.6778.33", "linux"));
+});
+
+test("human checks and pages that block automated browsing are told apart from ordinary pages", () => {
+  const page = (over: Partial<Parameters<typeof humanCheck>[0]>) => humanCheck({ title: "", text: "", frames: [], status: 200, ...over });
+  assert.equal(page({ title: "Robot or human?", text: "Activate and hold the button to confirm that you're human. Thank You!" }), "\u201cRobot or human?\u201d");
+  assert.equal(page({ title: "Just a moment...", text: "Checking if the site connection is secure" }), "Cloudflare's check");
+  assert.equal(page({ title: "Amazon.com", text: "Enter the characters you see below\nSorry, we just need to make sure you're not a robot." }), "a robot check");
+  assert.equal(page({ title: "Sorry! Something went wrong!", text: "Sorry! Something went wrong on our end.", status: 503 }), "Amazon's block (503)");
+  assert.equal(page({ title: "https://www.google.com/search?q=x", text: "Our systems have detected unusual traffic from your computer network." }), "an unusual-traffic block");
+  assert.equal(page({ title: "Access Denied", text: "You don't have permission to access \"http://www.bestbuy.com/\" on this server. Reference #18.5f2" }), "an Akamai block");
+  assert.equal(page({ title: "Sign in", text: "Email\nPassword", frames: ["https://www.google.com/recaptcha/api2/anchor?ar=1&k=abc&size=normal"] }), "a reCAPTCHA");
+  assert.equal(page({ title: "Log in", frames: ["https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html#frame=checkbox"] }), "an hCaptcha");
+  assert.equal(page({ title: "Checkout", frames: ["https://challenges.cloudflare.com/cdn-cgi/challenge-platform/turnstile/if/ov2"] }), "Cloudflare's check");
+  assert.equal(page({ title: "Forbidden", text: "Blocked: automated traffic is not allowed.", status: 403 }), "a block of automated browsing");
+  // Ordinary pages: an invisible reCAPTCHA, a long article that mentions robots, a 503 that is not Amazon's, an access-denied page of an app.
+  assert.equal(page({ title: "Contact us", text: "Write to us", frames: ["https://www.google.com/recaptcha/api2/anchor?ar=1&k=abc&size=invisible"] }), null);
+  assert.equal(page({ title: "How captchas work", text: `${"Some sites ask: are you a robot? ".repeat(5)}${"x".repeat(5000)}` }), null);
+  assert.equal(page({ title: "Maintenance", text: "We will be back soon.", status: 503 }), null);
+  assert.equal(page({ title: "Access denied", text: "Ask your admin for access to this project." }), null);
+  assert.equal(page({ title: "Laptop support", text: "Press and hold the power button for 10 seconds." }), null);
 });

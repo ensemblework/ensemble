@@ -742,3 +742,80 @@ test("B18: two helpers in parallel report into one plan and their node tells its
   const thread = await h.prisma.nodeRoom.findFirstOrThrow({ where: { kind: "task", members: { some: { nodeId: betaNode.id } } } });
   assert.deepEqual((await read(mira, thread.id)).map((row) => row.body), ["Find vendor Beta's price per seat.", "Beta costs 12 a seat (beta.example/pricing)."]);
 });
+
+/** What the node's last tool calls said back, from its conversation (refusals included). */
+async function lastToolCalls(nodeId: string): Promise<string> {
+  const rooms = await h.prisma.nodeRoomMember.findMany({ where: { nodeId }, select: { conversationId: true, privateConversationId: true } });
+  const ids = rooms.flatMap((row) => [row.conversationId, row.privateConversationId]).filter((id): id is string => Boolean(id));
+  const reply = await h.prisma.assistantMessage.findFirst({ where: { conversationId: { in: ids }, role: "assistant" }, orderBy: { createdAt: "desc" } });
+  return JSON.stringify(reply?.toolCalls ?? []);
+}
+
+test("crews stay crews: work goes only to members; another node joins only on its owner's card, which wakes the lead", async () => {
+  const kofi = await person("Kofi");
+  const { crew } = await crewOf(kofi, ["manager", "feature-engineer"]);
+  const outsider = await createNode(kofi, "assistant");
+  const researcher = await createNode(kofi, "researcher");
+  const lead = await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: kofi.id, slug: "manager" } });
+  const releaseNotes = { goal: "Release notes", requirements: [{ id: "r1", text: "Release notes for 0.6" }], constraints: {}, steps: [{ id: "s1", to: "assistant", kind: "write", requirementIds: ["r1"], brief: "Write the release notes." }], deferred: [] };
+  script = (turn) => {
+    if (turn.slug === "manager" && turn.transcript.includes("hand it to the assistant")) return { calls: [delegate("assistant", "Write the release notes.")], then: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("plan it")) return { calls: [planCall(releaseNotes)], then: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("ask me to add")) return { calls: [{ name: "node_crew_add", arguments: { node: "assistant", reason: "It writes our release notes." } }], then: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("ask about the researcher")) return { calls: [{ name: "node_crew_add", arguments: { node: "researcher", reason: "It could check the changelog." } }], then: "(no reply)" };
+    if (turn.slug === "manager" && turn.transcript.includes("joined this crew")) return { calls: [delegate("assistant", "Write the release notes.")], then: "Planned." };
+    if (turn.slug === "manager" && turn.transcript.includes("nothing left to run")) return { text: "The release notes are written." };
+    if (turn.slug === "assistant" && turn.transcript.includes("Your step in")) return report("done", "Release notes written.");
+    if (turn.slug === "researcher" && turn.transcript.includes("ask the builder")) return { calls: [delegate("builder", "Fix the build.")], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const members = () => h.prisma.nodeRoomMember.findMany({ where: { roomId: crew.id, nodeId: { not: null } }, select: { handle: true } }).then((rows) => rows.map((row) => row.handle).sort());
+
+  // A delegation or a plan step for a node outside the crew is refused with what to do; nobody joins.
+  await say(kofi, crew.id, "hand it to the assistant: the release notes");
+  assert.match(seen.find((turn) => turn.slug === "manager")!.system, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
+  assert.match(await lastToolCalls(lead.id), /@assistant is not in this crew\. Give it to a member \(@builder\), make a temporary helper \(node_helper\), or ask your owner to add @assistant \(node_crew_add\)\./);
+  await say(kofi, crew.id, "plan it");
+  assert.match(await lastToolCalls(lead.id), /The plan needs changes:[\s\S]*@assistant is not in this crew/);
+  assert.deepEqual(await members(), ["builder", "manager"]);
+  assert.equal((await read(kofi, crew.id)).filter((row) => row.kind === "plan").length, 0, "no plan was made");
+
+  // The lead asks; its owner's card in this chat adds the node, and the lead goes on by itself.
+  await say(kofi, crew.id, "ask me to add the assistant");
+  const card = (await read(kofi, crew.id)).find((row) => row.kind === "approval" && row.data.type === "crew_add")!;
+  assert.deepEqual(
+    (({ type, status, nodeId, nodeSlug, nodeName, roomId, reason }) => ({ type, status, nodeId, nodeSlug, nodeName, roomId, reason }))(card.data),
+    { type: "crew_add", status: "pending", nodeId: outsider.node.id, nodeSlug: "assistant", nodeName: "Assistant", roomId: crew.id, reason: "It writes our release notes." },
+  );
+  assert.deepEqual((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [kofi.id], "only its owner sees it");
+  assert.match(await lastToolCalls(lead.id), /Stop here and say nothing about it/);
+  assert.deepEqual(await members(), ["builder", "manager"], "nothing changes before the owner answers");
+  seen.length = 0;
+  const approved = await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+  assert.equal(approved.statusCode, 200, approved.body);
+  await settleTurns();
+  assert.equal(json(approved).message.data.status, "approved");
+  assert.deepEqual(await members(), ["assistant", "builder", "manager"], "its handle there is its slug");
+  assert.ok((await read(kofi, crew.id)).some((row) => row.kind === "status" && row.body === "@assistant joined."));
+  assert.match(seen[0]!.transcript, /@assistant joined this crew \(“Crew [0-9a-f]+”\); continue/);
+  const plan = await planCard(kofi, crew.id);
+  assert.deepEqual([plan.data.status, plan.data.steps[0].handle, plan.data.steps[0].status], ["succeeded", "assistant", "done"]);
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } })).statusCode, 409, "a card is settled once");
+
+  // Discarded: nothing joins, and the lead hears it.
+  seen.length = 0;
+  await say(kofi, crew.id, "ask about the researcher");
+  const second = (await read(kofi, crew.id)).find((row) => row.kind === "approval" && row.data.type === "crew_add" && row.data.nodeSlug === "researcher")!;
+  assert.equal((await kofi.inject({ method: "POST", url: `/api/node/approvals/${second.id}`, payload: { decision: "discard" } })).statusCode, 200);
+  await settleTurns();
+  assert.equal(((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: second.id } })).data as { status: string }).status, "discarded");
+  assert.deepEqual(await members(), ["assistant", "builder", "manager"]);
+  assert.ok(seen.some((turn) => turn.slug === "manager" && /did not add @researcher to the crew/.test(turn.transcript)));
+
+  // A node with no crew cannot pull one in from its own chat either, and no crew is made for the attempt.
+  await say(kofi, researcher.room.id, "ask the builder to fix the build");
+  const researcherId = (await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: kofi.id, slug: "researcher" } })).id;
+  assert.match(await lastToolCalls(researcherId), /@builder is not in a crew with you\. Make a temporary helper \(node_helper\), or ask your owner to add @builder \(node_crew_add\)\./);
+  assert.equal(await h.prisma.nodeRoom.count({ where: { userId: kofi.id, kind: "crew" } }), 1, "no crew was made");
+  assert.equal(await h.prisma.nodeRoomMember.count({ where: { nodeId: (await h.prisma.nodeAgent.findFirstOrThrow({ where: { userId: kofi.id, slug: "builder" } })).id } }), 2, "the builder is still only in its chat and its crew");
+});

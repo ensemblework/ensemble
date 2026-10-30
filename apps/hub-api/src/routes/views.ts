@@ -17,6 +17,7 @@ import { canUseHostCredentials, isHosted } from "../lib/hosted-access.js";
 import { defaultSpaceName } from "../spaces/store.js";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
+import { hubApprovalCount } from "../node/routes.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -43,10 +44,9 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
       // The same check as `requireHostAccess` in front of `/api/code/*`.
       canUseHostCredentials(userId).catch(() => false),
-      // Ensemble Node's approval cards are the account's own: they count in its own space only.
-      accountId === userId
-        ? countOrZero(prisma.nodeMessage.count({ where: { kind: "approval", userId: accountId, visibleTo: { equals: [accountId] }, data: { path: ["status"], equals: "pending" } } }))
-        : 0,
+      // Ensemble Node's approval cards are the account's own: they count in its own space only (not the
+      // ones answered only in the Node chat, or listed here as decisions already).
+      accountId === userId ? countOrZero(hubApprovalCount(prisma, accountId)) : 0,
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
