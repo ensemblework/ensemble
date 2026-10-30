@@ -578,3 +578,35 @@ export function dangerousCommand(line: string, options: { root?: boolean } = {})
 export function dangerousMessage(found: DangerousHit): string {
   return `Refused by Ensemble's hard floor (${found.title.toLowerCase()}): ${found.why} No setting or approval runs it; your owner can run it themselves in their own terminal.`;
 }
+
+const SYSTEM_PACKAGES: Record<string, (args: readonly string[]) => boolean> = {
+  apt: (args) => /^(install|reinstall|remove|purge|autoremove|autopurge|upgrade|full-upgrade|dist-upgrade|update|satisfy)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  "apt-get": (args) => /^(install|reinstall|remove|purge|autoremove|upgrade|dist-upgrade|update|build-dep|satisfy)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  aptitude: (args) => /^(install|reinstall|remove|purge|upgrade|safe-upgrade|full-upgrade|update)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  dpkg: (args) => args.some((arg) => /^(-i|--install|-r|--remove|-P|--purge|--configure|--unpack)$/.test(arg)),
+  snap: (args) => /^(install|remove|refresh|revert|enable|disable)$/.test(args[0] ?? ""),
+  dnf: (args) => /^(install|reinstall|remove|erase|update|upgrade|autoremove|downgrade)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  yum: (args) => /^(install|reinstall|remove|erase|update|upgrade|autoremove|downgrade)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  zypper: (args) => /^(in|install|rm|remove|up|update|dup|dist-upgrade|patch)$/.test(args.find((arg) => !arg.startsWith("-")) ?? ""),
+  pacman: (args) => args.some((arg) => /^-(S|U|R)/.test(arg)),
+  rpm: (args) => args.some((arg) => /^(-i|-U|-F|-e|--install|--upgrade|--erase)/.test(arg)),
+  installer: (args) => args.includes("-pkg"),
+};
+/** systemctl verbs that change the system (not `--user` ones, not status or lists). */
+const SERVICE_CHANGES = /^(start|stop|restart|reload|try-restart|reload-or-restart|enable|disable|mask|unmask|daemon-reload|edit|set-property|kill)$/;
+
+/**
+ * Whether a command needs the administrator, so a node's plain `computer_run` cannot do it: it uses
+ * `sudo` (or `doas`, `pkexec`, `su`) anywhere in the line, or changes the system's packages or
+ * services. Reading them (`dpkg -s`, `apt list`, `systemctl status`) does not. Null when it does not.
+ */
+export function needsAdministrator(line: string): string | null {
+  for (const command of simpleCommands(line)) {
+    // Each simple command as written (`bash -c "…"` is read again by simpleCommands): one that starts with sudo.
+    if (/^\s*([A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(sudo|doas|pkexec|su)(\s|$)/.test(command.raw)) return "it uses sudo";
+    const packages = SYSTEM_PACKAGES[command.program];
+    if (packages?.(command.args)) return `\`${command.program}\` changes the system's packages`;
+    if (command.program === "systemctl" && !command.args.includes("--user") && command.args.some((arg) => SERVICE_CHANGES.test(arg))) return "`systemctl` changes the system's services";
+  }
+  return null;
+}

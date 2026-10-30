@@ -593,8 +593,13 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     else if (step && (await stepPending(prisma, step.planId, step.stepId))) await stepProgress(prisma, step.planId, step.stepId, "Waiting for its agent run.");
     else if (step) await finishStep(app, step.planId, step.stepId, { status: "blocked", result: `@${node.slug} could not do its step: ${result.content}` });
     else {
-      // A stop or a pause already said so; only a real failure needs a notice.
-      if (!result.interrupted) await ownerNotice(app, node, room.id, result.content);
+      // What the turn captured still reaches its owner (where only they read): a model that ended without words loses nothing.
+      const captured = !result.interrupted && room.kind !== "task" ? takeTurnMedia(turn.id) : [];
+      const ownerReads = Boolean(privateTo) || !(await roomPeople(prisma, room.id)).some((id) => id !== owner);
+      if (captured.length && ownerReads) await postAsNode({ prisma, node, lineage, dispatch: deps.dispatch }, room, "", privateTo, { data: { media: captured.slice(0, 8) } });
+      // A stop or a pause already said so; only a real failure needs a notice (not a reply that only lacked words, when its captures came).
+      const wordless = /returned no answer/i.test(result.content) && captured.length > 0 && ownerReads;
+      if (!result.interrupted && !wordless) await ownerNotice(app, node, room.id, result.content);
       // Steps the lead added before its turn failed still run; a stopped turn's plan stops with it.
       const made = turn.planId ? null : await currentPlan(prisma, node.id, turn.id, null);
       if (made?.data.status === "draft") {

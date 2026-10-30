@@ -339,6 +339,8 @@ async function drive(
   let mutated = false;
   let text = "";
   let nudged = false;
+  /** The model was asked once for its reply after it ran tools and said nothing. */
+  let answerAsked = false;
 
   const maxSteps = isSubscriptionProvider(args.provider) ? 0 : args.code ? MAX_CODE_STEPS : MAX_STEPS;
   if (isSubscriptionProvider(args.provider)) {
@@ -563,6 +565,13 @@ async function drive(
         messages.push({ role: "user", content: NUDGE });
         args.emit({ type: "status", text: "Looking through your context." });
         text = "";
+        continue;
+      }
+      // A model that ran tools and then said nothing has not answered: it is asked once for its reply,
+      // so what it did reaches the person (small models end like this now and then).
+      if (!finalAnswer && !answerAsked && calls.length > 0 && !text && !turn.text.trim()) {
+        answerAsked = true;
+        messages.push({ role: "user", content: ANSWER_NUDGE });
         continue;
       }
       break;
@@ -960,6 +969,8 @@ const PROMISE_RE =
   /\b(i['’]?ll|i will|let me|i['’]?m going to|i am going to|i can go(?:\s+ahead)?(?:\s+and)?)\s+(?:now\s+)?(?:go\s+)?(?:ahead\s+and\s+)?(read|check|look|fetch|search|scan|pull|open|list|get|find|review)\b/i;
 
 const soundsLikeAPromise = (text: string): boolean => PROMISE_RE.test(text);
+
+const ANSWER_NUDGE = "Your tools have answered, but you wrote nothing. Write your reply to the person now, from what they returned.";
 
 const NUDGE =
   "You described what you were going to do but called no tool, so nothing happened. " +

@@ -24,7 +24,7 @@ import { truncateText } from "../lib/text.js";
 import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
-import { dangerousCommand, dangerousMessage } from "../device-tools/dangerous.js";
+import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
 import { postLoginCard } from "./logins.js";
@@ -276,7 +276,8 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       isWrite: false,
       risk: "medium",
       async run(ctx, input) {
-        if (/^\s*sudo\s/.test(input.command)) throw new ToolBlockedError("computer_run cannot run a command as the administrator.", "Use computer_sudo with the same command (without `sudo`): your owner approves it on a card in this chat.");
+        const admin = needsAdministrator(input.command);
+        if (admin) throw new ToolBlockedError(`That needs the administrator (${admin}), which computer_run cannot do.`, "Use computer_sudo with the command (without `sudo`), for example `apt-get install -y ./app.deb`: your owner approves it on a card in this chat. Download with computer_run first.");
         refuseDangerous(input.command);
         const runId = randomUUID();
         const mode = await modeFor(prisma, node);

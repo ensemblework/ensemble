@@ -468,6 +468,15 @@ test("what the node captures comes with its reply by itself; its own choice with
     assert.deepEqual(reply.data.media.map((item: { evidenceId: string }) => item.evidenceId), [shots[0], shots[1]], "in the order taken, without node_show");
     assert.match(reply.data.tools[0].summary, /This screenshot will appear with your reply\./);
 
+    // A model that says nothing after its tools is asked once for its reply; nothing it captured is lost.
+    script = (turn) =>
+      turn.transcript.includes("one more of example") ? { calls: [shoot], then: "" } : turn.transcript.includes("you wrote nothing") ? { text: "Here it is." } : { text: "ok" };
+    await say(mira, room.id, "one more of example.com");
+    const answered = (await replies(mira, room.id, node.id)).at(-1)!;
+    assert.equal(answered.body, "Here it is.");
+    assert.deepEqual(answered.data.media.map((item: { evidenceId: string }) => item.evidenceId), [shots.at(-1)]);
+    assert.ok(seen.some((row) => row.transcript.includes("Your tools have answered, but you wrote nothing.")));
+
     const older = await uploaded(mira.id, node.id, laptop.id, "screenshot", "older.png");
     script = (turn) => (turn.transcript.includes("the older one") ? { calls: [shoot, { name: "node_show", arguments: { evidence: [older] } }], then: "Here is the older one." } : { text: "ok" });
     await say(mira, room.id, "show me the older one");

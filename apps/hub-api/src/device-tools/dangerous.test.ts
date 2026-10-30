@@ -153,3 +153,25 @@ test("simple commands split on shell operators and keep quoted words together", 
     ],
   );
 });
+
+test("commands that need the administrator are told apart from reading the system", async () => {
+  const { needsAdministrator } = await import("./dangerous.js");
+  for (const line of [
+    "sudo apt-get install -y htop",
+    "cd /tmp && sudo dpkg -i code.deb",
+    "bash -c 'sudo apt update'",
+    "apt install -y ./code.deb",
+    "apt-get update",
+    "dpkg -i ~/Downloads/code_1.99_amd64.deb",
+    "snap install code --classic",
+    "dnf install -y htop",
+    "pacman -S htop",
+    "systemctl restart nginx",
+    "installer -pkg App.pkg -target /",
+  ]) {
+    assert.ok(needsAdministrator(line), `“${line}” needs the administrator`);
+  }
+  for (const line of ["dpkg -s htop", "apt list --installed", "apt-cache policy code", "snap list", "systemctl status nginx", "systemctl --user restart pipewire", "which htop", "curl -L -o code.deb https://go.microsoft.com/fwlink/?LinkID=760868", "echo sudo is a word", "npm install", "pip install --user requests", "brew install htop"]) {
+    assert.equal(needsAdministrator(line), null, `“${line}” does not`);
+  }
+});
