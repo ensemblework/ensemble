@@ -444,16 +444,19 @@ export const CodeSettingsShape = z.object({
 });
 export type CodeSettingsShape = z.infer<typeof CodeSettingsShape>;
 
-/** Highest values an account may choose for its sharing limits: a system bound, not a product limit. */
-export const SHARING_CAPS = { contacts: 500, members: 50 } as const;
+/** Highest values an account may choose for its own limits: a system bound, not a product limit. */
+export const SHARING_CAPS = { contacts: 500, members: 50, roomPeople: 50, spaces: 100 } as const;
 
 /**
- * How many people an account shares with: contacts, and people per shared space. The owner's choice;
- * the defaults keep today's small circles (5 contacts, 2 people per space).
+ * An account's own limits (Settings › Sharing › Limits): contacts, people per space it owns, people in an
+ * Ensemble Node room it makes (itself included), and spaces it owns (its account's own included). The
+ * owner's choice; the defaults keep today's sizes (5 contacts, 2 people per space, 10 per room, 12 spaces).
  */
 export const SharingSettings = z.object({
   contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).default(5),
   members: z.number().int().min(1).max(SHARING_CAPS.members).default(2),
+  roomPeople: z.number().int().min(2).max(SHARING_CAPS.roomPeople).default(10),
+  spaces: z.number().int().min(1).max(SHARING_CAPS.spaces).default(12),
 });
 
 export const Settings = z.object({

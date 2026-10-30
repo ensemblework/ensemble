@@ -13,14 +13,16 @@ Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.
 | Roles | `viewer` (reads) or `editor` (reads and writes) | `view` or `edit`; `meeting`, `workspace` and `code` are always view-only (`VIEW_ONLY_KINDS` in `policy.ts`) |
 | Opens at | The space switcher, under **Shared with you** | `/shared/<shareId>`, only for its recipient |
 
-Limits: contacts and people per space are each account's own choice (`settings.sharing`, `sharingLimits` in `sharing/store.ts`), set in Settings › Sharing › Limits or with `PUT /api/sharing/limits {contacts?, members?}`:
+Limits: contacts, people per space, people per Ensemble Node room and spaces are each account's own choice (`settings.sharing`, `accountLimits` in `lib/limits.ts`), set in Settings › Sharing › Limits or with `PUT /api/sharing/limits {contacts?, members?, roomPeople?, spaces?}`:
 
 | Setting | Default | Most an account may choose (`SHARING_CAPS`) |
 |---|---|---|
 | `contacts` | 5 (`MAX_CONTACTS`) | 500 |
 | `members` (people per space you own) | 2 (`MAX_MEMBERS`) | 50 |
+| `roomPeople` (people in an Ensemble Node room you make, you and open requests to join included) | 10 | 50 |
+| `spaces` (spaces you own, your account's own included; [28](28_ENSEMBLE_SPACES.md)) | 12 | 100 |
 
-A lower limit takes nobody away; it only stops new additions until fewer are in use. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+A lower limit takes nobody and nothing away; it only stops new additions until fewer are in use. A space handed over counts against the receiver's own `spaces`. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
 
 **Never shared**, even with a member: Today, metrics, settings, model keys, connected apps (connectors, MCP connections, imports), reminders, the terminal, editor tokens, paired computers, the kill switch, Trash, data deletion, page history and templates. Runs, Needs me, metrics and settings cannot be shared on their own.
 

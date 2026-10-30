@@ -2024,3 +2024,49 @@ test("follow-up #3: moving a requested task out of Proposed answers its request,
   await assert.rejects(h.prisma.$transaction((tx) => updateTask(tx, spaceId, third.taskId, { status: "todo" }, "me")), /the person asked accepts or declines it/);
   assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: third.taskId } })).status, "proposed");
 });
+
+test("follow-up #4: people per room and spaces are each person's own limits, up to the system's ceilings", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const overview = json(await akash.inject({ method: "GET", url: "/api/sharing/overview" }));
+  assert.deepEqual([overview.limits.roomPeople, overview.limits.spaces, overview.caps.roomPeople, overview.caps.spaces], [10, 12, 50, 100], "today's sizes by default");
+  assert.equal(json(await akash.inject({ method: "GET", url: "/api/node/bootstrap" })).limits.roomPeople, 10);
+  const limit = (user: HttpUser, payload: Record<string, number>) => user.inject({ method: "PUT", url: "/api/sharing/limits", payload });
+
+  // People per room: the maker's own choice, counting open requests.
+  assert.equal((await limit(akash, { roomPeople: 51 })).statusCode, 400, "the system's own ceiling");
+  assert.equal((await limit(akash, { roomPeople: 3 })).statusCode, 200);
+  assert.equal(json(await akash.inject({ method: "GET", url: "/api/node/bootstrap" })).limits.roomPeople, 3);
+  const [cara, dana] = [await person("Cara"), await person("Dana")];
+  const invite = (email: string) => akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email } });
+  assert.equal((await invite(cara.email)).statusCode, 201);
+  const full = await invite(dana.email);
+  assert.equal(full.statusCode, 409);
+  assert.match(json(full).error, /Your rooms hold at most 3 people, counting open requests/);
+  // Lowered after inviting: Cara cannot join past it.
+  assert.equal((await limit(akash, { roomPeople: 2 })).statusCode, 200);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const pending = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  const refused = await cara.inject({ method: "POST", url: `/api/node/invites/${pending.id}/accept`, payload: { nodeIds: [carasLead.id] } });
+  assert.equal(refused.statusCode, 409);
+  assert.match(json(refused).error, /already has 2 people, the most the person who made it allows/);
+  assert.equal((await limit(akash, { roomPeople: 50 })).statusCode, 200);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${pending.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+
+  // Spaces: his own space counts; a lower limit stops new ones, a higher one allows them.
+  assert.equal((await limit(akash, { spaces: 101 })).statusCode, 400);
+  assert.equal((await limit(akash, { spaces: 2 })).statusCode, 200);
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  const another = await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/space`, payload: { create: true, name: "Second space" } });
+  assert.equal(another.statusCode, 409);
+  assert.match(json(another).error ?? "", /up to 2 spaces/);
+  assert.equal((await limit(akash, { spaces: 100 })).statusCode, 200);
+  const second = await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/space`, payload: { create: true, name: "Second space" } });
+  assert.equal(second.statusCode, 200, second.body);
+  assert.notEqual(json(second).space.id, spaceId);
+  // A space handed over counts against the receiver's own limit.
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  assert.equal((await limit(ben, { spaces: 1 })).statusCode, 200);
+  const handed = await akash.inject({ method: "POST", url: `/api/sharing/spaces/${json(second).space.id}/transfer`, payload: { toId: ben.id, confirmation: "Second space" } });
+  assert.equal(handed.statusCode, 409, handed.body);
+  assert.match(json(handed).error, /as many spaces as their limit allows/);
+});

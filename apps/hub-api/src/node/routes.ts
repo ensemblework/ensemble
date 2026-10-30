@@ -13,7 +13,7 @@ import { isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { stripLoneSurrogates, truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
 import { includedUsage } from "../included/budget.js";
-import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
+import { INCLUDED_PROVIDER, SHARING_CAPS } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { abortAssistantTurn } from "../assistant/agent.js";
 import { ApprovalError, settleApproval } from "./approvals.js";
@@ -58,6 +58,7 @@ import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 import { confirmDecision } from "./room-pages.js";
 import { startOnYes } from "./room-results.js";
+import { accountLimits } from "../lib/limits.js";
 import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
 
@@ -80,8 +81,6 @@ const Slug = z.string().min(1).max(24).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowerc
 const ModelPick = z.string().max(120).nullable();
 const ProviderPick = z.string().max(40).regex(/^[a-z0-9][a-z0-9-]*$/).nullable();
 
-/** At most this many people in a room, counting open requests to join. */
-export const MAX_ROOM_PEOPLE = 10;
 /** Each person brings 1–3 of their nodes to a room; one is their lead. */
 export const MAX_NODES_PER_PERSON = 3;
 export const MAX_CREW_NODES = 24;
@@ -358,7 +357,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
         return { default: options.find((row) => row.default)?.model ?? NODE_DEFAULT_MODEL, options };
       })(),
       invites,
-      limits: { roomPeople: MAX_ROOM_PEOPLE, nodesPerPerson: MAX_NODES_PER_PERSON, crewNodes: MAX_CREW_NODES, pins: MAX_PINS, reactions: REACTIONS, declineBlockDays: DECLINE_BLOCK_MS / 86_400_000 },
+      // People in a room I make, counting open requests: my own limit (Settings › Sharing › Limits, lib/limits.ts).
+      limits: { roomPeople: (await accountLimits(prisma, accountId)).roomPeople, nodesPerPerson: MAX_NODES_PER_PERSON, crewNodes: MAX_CREW_NODES, pins: MAX_PINS, reactions: REACTIONS, declineBlockDays: DECLINE_BLOCK_MS / 86_400_000 },
       // Suggestions for a new crew: the person picks, renames, adds or drops nodes before it is made.
       templates: { nodes: NODE_TEMPLATES, crews: CREW_TEMPLATES },
     };
@@ -585,7 +585,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       title: z.string().min(1).max(80),
       nodeIds: z.array(z.string().uuid()).min(1).max(MAX_NODES_PER_PERSON),
       leadNodeId: z.string().uuid().optional(),
-      invite: z.array(z.string().email().max(320)).max(MAX_ROOM_PEOPLE - 1).default([]),
+      invite: z.array(z.string().email().max(320)).max(SHARING_CAPS.roomPeople - 1).default([]),
     }).strict().parse(request.body);
     const title = body.title.trim();
     if (!title) throw fail(400, "Give the room a name.");
@@ -694,7 +694,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } }),
       prisma.nodeRoomInvite.count({ where: { roomId: room.id, status: "pending" } }),
     ]);
-    if (people + pending >= MAX_ROOM_PEOPLE) throw fail(409, `A room holds at most ${MAX_ROOM_PEOPLE} people, counting open requests.`);
+    // The room's maker chooses how many people their rooms hold (Settings › Sharing › Limits).
+    const most = (await accountLimits(prisma, room.userId)).roomPeople;
+    if (people + pending >= most) throw fail(409, `Your rooms hold at most ${most} people, counting open requests. You can raise that in Ensemble's Settings › Sharing › Limits.`);
     let invite;
     try {
       invite = await prisma.nodeRoomInvite.create({ data: { roomId: room.id, inviterId, inviteeId: person.id } });
@@ -747,7 +749,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const nodes = await prisma.nodeAgent.findMany({ where: { id: { in: ids }, userId: accountId } });
     if (nodes.length !== ids.length) throw fail(404, "That node is not available.");
     const lead = nodes.find((node) => node.id === body.leadNodeId) ?? nodes.find((node) => node.id === ids[0])!;
-    if ((await prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } })) >= MAX_ROOM_PEOPLE) throw fail(409, `This room already has ${MAX_ROOM_PEOPLE} people.`);
+    const most = (await accountLimits(prisma, room.userId)).roomPeople;
+    if ((await prisma.nodeRoomMember.count({ where: { roomId: room.id, nodeId: null } })) >= most) throw fail(409, `This room already has ${most} people, the most the person who made it allows.`);
     const handles = await prisma.$transaction(async (tx) => {
       const taken = await tx.nodeRoomInvite.updateMany({ where: { id: invite.id, status: "pending" }, data: { status: "accepted", respondedAt: new Date() } });
       if (!taken.count) throw fail(409, "That request was already answered or withdrawn.");
