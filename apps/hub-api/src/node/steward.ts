@@ -78,6 +78,15 @@ export async function dropStewardOf(tx: Prisma.TransactionClient, roomId: string
     WHERE id = ${roomId} AND settings->'steward'->>'sponsorId' = ${accountId}`;
 }
 
+/** Its node left the room: the room has no steward, and nobody else's node takes its place (in the caller's transaction). */
+export async function dropStewardNodes(tx: Prisma.TransactionClient, roomId: string, nodeIds: readonly string[]): Promise<void> {
+  for (const nodeId of nodeIds) {
+    await tx.$executeRaw`
+      UPDATE node_rooms SET settings = (settings - 'steward') || jsonb_build_object('leadNodeIds', '[]'::jsonb)
+      WHERE id = ${roomId} AND settings->'steward'->>'nodeId' = ${nodeId}`;
+  }
+}
+
 /**
  * One steward turn: who it acts for (`askerId`), and everyone who asked it in this turn (`askers`). Messages
  * from several people can arrive in one turn: it then acts with the least of their rights, reading only

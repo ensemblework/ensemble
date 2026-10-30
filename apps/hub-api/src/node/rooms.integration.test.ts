@@ -1896,3 +1896,30 @@ test("review C6–C7 #3: when several people ask the steward in one turn, it wri
   const page = await h.prisma.taskPage.findFirstOrThrow({ where: { userId: spaceId, title: "Vendor notes" } });
   assert.deepEqual([page.editorAccountId, page.editorNodeId], [akash.id, builder!.id]);
 });
+
+test("review C6–C7 #4: the steward ends with its node or its sponsor, and no one else's node takes its place", async () => {
+  const { akash, ben, builder, tester, room } = await twoPeople({ builder: true, tester: true });
+  const settings = async () => (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: room.id } })).settings as { steward?: unknown; leadNodeIds?: string[] };
+  const stewardNow = async () => json(await akash.inject({ method: "GET", url: `/api/node/rooms/${room.id}/steward` })).steward;
+  const memberOf = async (nodeId: string | null, userId: string) => (await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { roomId: room.id, nodeId, userId } })).id;
+
+  // Its node leaves: no steward, and leadNodeIds does not pass to another node.
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: builder!.id } })).statusCode, 200);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${await memberOf(builder!.id, akash.id)}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual([(await settings()).steward, (await settings()).leadNodeIds], [undefined, []]);
+
+  // Its sponsor leaves: it ends, and is not written back.
+  assert.equal((await ben.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: tester!.id } })).statusCode, 200);
+  assert.equal((await ben.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${await memberOf(null, ben.id)}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual([(await settings()).steward, (await settings()).leadNodeIds], [undefined, []]);
+
+  // So someone else can have one; deleting its node ends it too.
+  const { node: helper } = await createNode(akash, "feature-engineer");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/nodes`, payload: { nodeId: helper.id } })).statusCode, 201);
+  assert.equal((await akash.inject({ method: "PUT", url: `/api/node/rooms/${room.id}/steward`, payload: { nodeId: helper.id } })).statusCode, 200);
+  assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/nodes/${helper.id}` })).statusCode, 204);
+  assert.equal(await stewardNow(), null);
+  assert.deepEqual((await settings()).leadNodeIds, []);
+});

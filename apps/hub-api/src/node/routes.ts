@@ -58,6 +58,7 @@ import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 import { confirmDecision } from "./room-pages.js";
 import { startOnYes } from "./room-results.js";
+import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -853,14 +854,19 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       const lost = !member.nodeId && room.kind === "room" ? await revokeOnLeave(tx, room.id, member.userId) : null;
       const next = theirs.find((row) => row.id !== member.id);
       if (member.representative && next) await tx.nodeRoomMember.update({ where: { id: next.id }, data: { representative: true } });
-      // A crew whose lead left is led by its manager, else its first remaining node.
-      const settings = roomSettings(room);
       const gone = new Set(member.nodeId ? [member.nodeId] : theirs.map((row) => row.nodeId!));
-      if (settings.leadNodeIds.some((id) => gone.has(id))) {
-        const remaining = await tx.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true }, orderBy: { joinedAt: "asc" } });
-        const kept = settings.leadNodeIds.filter((id) => !gone.has(id));
-        const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
-        await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
+      if (room.kind === "room") {
+        // A room with people lists only its steward in leadNodeIds: it ends with its node (and with its sponsor, above).
+        await dropStewardNodes(tx, room.id, [...gone]);
+      } else {
+        // A crew whose lead left is led by its manager, else its first remaining node. Settings are read here, not before.
+        const settings = roomSettings(await tx.nodeRoom.findUniqueOrThrow({ where: { id: room.id } }));
+        if (settings.leadNodeIds.some((id) => gone.has(id))) {
+          const remaining = await tx.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true }, orderBy: { joinedAt: "asc" } });
+          const kept = settings.leadNodeIds.filter((id) => !gone.has(id));
+          const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
+          await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
+        }
       }
       return lost;
     });
