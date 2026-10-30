@@ -165,6 +165,8 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
     if (input.decision === "discard") return (await answerLoginCard(app, accountId, messageId, { action: "decline" })).message;
     throw new ApprovalError("Sign in with the card's buttons: your saved login, on the computer, or typed for the computer.", 400);
   }
+  // A computer card is answered as its Ensemble decision, a sudo card with its own box (node/sudo.ts).
+  if (type === "computer" || type === "sudo") throw new ApprovalError("Answer it with the card's own buttons.", 400);
 
   const parsed = ToolsCard.parse(card.data);
   const chosen = input.callIds?.length ? parsed.calls.filter((call) => input.callIds!.includes(call.callId)) : parsed.calls;
