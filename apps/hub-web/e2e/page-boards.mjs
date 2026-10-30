@@ -95,12 +95,24 @@ try {
   await page.waitForURL(/board\?board=/);
   await page.getByRole("heading", { name: "Research", exact: true }).waitFor();
   const boardId = new URL(page.url()).searchParams.get("board");
-  await page.getByRole("button", { name: "New page in On-going experiments", exact: true }).click();
-  // A new page opens in the side peek, title first, like a new task on the Ensemble board.
+  // New task in a column makes a task page there and opens it in the task peek, like the Ensemble board.
+  await page.getByRole("button", { name: "New task in On-going experiments", exact: true }).click();
+  await page.waitForURL(/[?&]peek=/);
+  const taskId = new URL(page.url()).searchParams.get("peek");
+  await page.locator("[data-peek-kind=task]").waitFor();
+  await page.getByRole("region", { name: "On-going experiments", exact: true }).locator(`[data-bdg-card][data-id="${taskId}"] .board-card`).waitFor();
+  assert.equal((await api(`/api/tasks/${taskId}`)).task.status, "todo");
+  // A click on the board beside the peek closes it, like Notion.
+  await page.getByRole("heading", { name: "Research", exact: true }).click();
+  await page.waitForFunction(() => !new URL(location.href).searchParams.get("peek"));
+  // A notes-only page comes from More.
+  await page.getByRole("button", { name: "More board actions", exact: true }).click();
+  await page.getByRole("button", { name: /New page \(notes only\)/ }).click();
+  // A new page opens in the side peek, title first.
   await page.waitForURL(/[?&]peek=.*kind=page/);
   const pageId = new URL(page.url()).searchParams.get("peek");
   await page.locator("[data-peek-kind=page] .ProseMirror").waitFor();
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Page title");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Page title", null, { timeout: 5000 });
   const record = await api(`/api/pages/${pageId}`);
   await api(`/api/pages/${pageId}`, "PATCH", { title: "Control group notes" });
   await api(`/api/pages/${pageId}`, "PUT", { revision: record.revision, content: doc });
@@ -114,7 +126,7 @@ try {
   await picker.waitFor({ state: "hidden" });
   await page.goto(`${WEB}/board?board=${boardId}`);
   await page.getByRole("region", { name: "Done", exact: true }).getByText("Control group notes", { exact: true }).waitFor();
-  const donut = page.getByRole("img", { name: /On-going experiments: 0.*Done: 1/ });
+  const donut = page.getByRole("img", { name: /On-going experiments: 1.*Done: 1/ });
   await donut.waitFor();
   // The card is the Ensemble board's: the whole card moves, its trash button shows on hover, a click opens the peek.
   const card = page.locator("[data-bdg-card]", { hasText: "Control group notes" });

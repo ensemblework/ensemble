@@ -3,9 +3,9 @@
 import { DndContext, closestCorners, type DragEndEvent, type DragOverEvent, type DragStartEvent, type UniqueIdentifier } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Ellipsis, FileText, Plus, Settings2 } from "lucide-react";
+import { ArrowLeft, Ellipsis, FilePlus2, FileText, Plus, Settings2 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BoardPage, PageBoardColumn, PatchPageBoard } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
@@ -21,7 +21,7 @@ import { usePeek } from "../shell/peek";
 import { BoardSettings } from "./custom-boards";
 import { BoardWidgets } from "./board-widgets";
 import { BoardColumn } from "./board-column";
-import { SortableBoardCard } from "./task-card";
+import { CardBody, SortableBoardCard } from "./task-card";
 import { PageCardBody } from "./page-card";
 import { markFreshPage } from "../pages/fresh-page";
 
@@ -41,6 +41,9 @@ function lanesOf(columns: PageBoardColumn[], pages: BoardPage[]): Lanes {
 export function CustomBoard({ id }: { id: string }) {
   const query = useQuery({ queryKey: ["boards", id], queryFn: () => api.board(id) });
   const directory = useQuery({ queryKey: ["pages", "directory"], queryFn: api.pageDirectory });
+  // Task pages show the Ensemble board's task card: priority, owner, people, due date, labels.
+  const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
+  const taskById = useMemo(() => new Map((tasks.data?.tasks ?? []).map((task) => [task.id, task])), [tasks.data?.tasks]);
   const access = useSpaceAccess(), client = useQueryClient(), toast = useToast(), peek = usePeek();
   useWarmEditors("peek");
   const [settings, setSettings] = useState(false), [search, setSearch] = useState("");
@@ -48,6 +51,8 @@ export function CustomBoard({ id }: { id: string }) {
   const [dragId, setDragId] = useState<string | null>(null);
   // While a card is in the air its column changes live, as on the Ensemble board; null otherwise.
   const [dragLanes, setDragLanes] = useState<Lanes | null>(null);
+  // After a drop, the arrangement it made, until the board's own data shows it (`key` is the order it replaced).
+  const [held, setHeld] = useState<{ key: string; lanes: Lanes } | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
   const [overlayWidth, setOverlayWidth] = useState(248);
   const origin = useRef<string | null>(null);
@@ -79,37 +84,43 @@ export function CustomBoard({ id }: { id: string }) {
     return () => columns.forEach((node) => { node.style.minHeight = ""; });
   }, [dragId]);
   const editable = access.ready && access.canEdit;
-  const invalidate = () => { void client.invalidateQueries({ queryKey: ["boards"] }); void client.invalidateQueries({ queryKey: ["pages"] }); void client.invalidateQueries({ queryKey: ["tasks"] }); };
+  const invalidate = () => { void client.invalidateQueries({ queryKey: ["boards"] }); void client.invalidateQueries({ queryKey: ["pages"] }); void client.invalidateQueries({ queryKey: ["tasks"] }); void client.invalidateQueries({ queryKey: ["shell"] }); };
   const fail = (error: Error) => { toast(error.message, { tone: "error" }); invalidate(); };
   const patch = useMutation({
     mutationFn: (data: Omit<PatchPageBoard, "revision">) => api.patchBoard(id, { ...data, revision: query.data!.board.revision }),
     onSuccess: ({ board }) => { client.setQueryData<Awaited<ReturnType<typeof api.board>>>(["boards", id], (old) => old ? { ...old, board } : old); invalidate(); },
     onError: fail,
   });
-  // A new page opens in the side peek with its title ready, like a new task on the Ensemble board.
+  // New tasks (and pages) open in the side peek, like a new task on the Ensemble board.
   const create = useMutation({
-    mutationFn: (columnId: string) => api.createBoardPage(id, columnId),
-    onSuccess: ({ page }) => { invalidate(); markFreshPage(page.id); peek.open(page.id, page.kind === "task" ? "task" : "page"); },
+    mutationFn: (input: { columnId: string; kind: "page" | "task" }) => api.createBoardPage(id, input.columnId, input.kind),
+    onSuccess: ({ page }) => { invalidate(); if (page.kind === "task") peek.open(page.id); else { markFreshPage(page.id); peek.open(page.id, "page"); } },
     onError: fail,
   });
+  type Placement = { page: { id: string; kind: "page" | "task" }; columnId: string; beforeId?: string | null; afterId?: string | null };
+  /**
+   * Puts the page where it goes in the cached board at once, in the same render that lets go of the
+   * dragged card, so the drop lands in its new column instead of flying home first.
+   */
+  const place = (input: Placement) => {
+    const previous = client.getQueryData<Awaited<ReturnType<typeof api.board>>>(["boards", id]);
+    if (!previous) return previous;
+    const before = previous.pages.find((page) => page.id === input.beforeId)?.boardOrder;
+    const after = previous.pages.find((page) => page.id === input.afterId)?.boardOrder;
+    const order = before !== undefined && after !== undefined ? (before + after) / 2 : before !== undefined ? before + 1 : after !== undefined ? after - 1 : Math.max(-1, ...previous.pages.filter((page) => page.columnId === input.columnId).map((page) => page.boardOrder)) + 1;
+    const moved = previous.pages.some((page) => page.id === input.page.id);
+    const added = moved ? [] : [{ ...(directory.data?.pages.find((page) => page.id === input.page.id) ?? { title: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }), id: input.page.id, kind: input.page.kind, columnId: input.columnId, boardOrder: order } as BoardPage];
+    client.setQueryData(["boards", id], { ...previous, pages: [...previous.pages.map((page) => page.id === input.page.id ? { ...page, columnId: input.columnId, boardOrder: order } : page), ...added].sort((a, b) => a.boardOrder - b.boardOrder) });
+    // A refetch already on its way would put the old order back; it is dropped, and the save refetches.
+    void client.cancelQueries({ queryKey: ["boards", id] }, { revert: false });
+    return previous;
+  };
   const assign = useMutation({
-    mutationFn: (input: { page: { id: string; kind: "page" | "task" }; columnId: string; beforeId?: string | null; afterId?: string | null }) => api.assignPageBoard(input.page.kind, input.page.id, { boardId: id, columnId: input.columnId, beforeId: input.beforeId, afterId: input.afterId }),
-    onMutate: async (input) => {
-      await client.cancelQueries({ queryKey: ["boards", id] });
-      const previous = client.getQueryData<Awaited<ReturnType<typeof api.board>>>(["boards", id]);
-      if (previous) {
-        const before = previous.pages.find((page) => page.id === input.beforeId)?.boardOrder;
-        const after = previous.pages.find((page) => page.id === input.afterId)?.boardOrder;
-        const order = before !== undefined && after !== undefined ? (before + after) / 2 : before !== undefined ? before + 1 : after !== undefined ? after - 1 : Math.max(-1, ...previous.pages.filter((page) => page.columnId === input.columnId).map((page) => page.boardOrder)) + 1;
-        const moved = previous.pages.some((page) => page.id === input.page.id);
-        const added = moved ? [] : [{ ...(directory.data?.pages.find((page) => page.id === input.page.id) ?? { title: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }), id: input.page.id, kind: input.page.kind, columnId: input.columnId, boardOrder: order } as BoardPage];
-        client.setQueryData(["boards", id], { ...previous, pages: [...previous.pages.map((page) => page.id === input.page.id ? { ...page, columnId: input.columnId, boardOrder: order } : page), ...added].sort((a, b) => a.boardOrder - b.boardOrder) });
-      }
-      return { previous };
-    },
-    onError: (error, _input, context) => { if (context?.previous) client.setQueryData(["boards", id], context.previous); fail(error); },
+    mutationFn: (input: Placement & { previous?: Awaited<ReturnType<typeof api.board>> }) => api.assignPageBoard(input.page.kind, input.page.id, { boardId: id, columnId: input.columnId, beforeId: input.beforeId, afterId: input.afterId }),
+    onError: (error, input) => { setHeld(null); if (input.previous) client.setQueryData(["boards", id], input.previous); fail(error); },
     onSettled: invalidate,
   });
+  const moveTo = (input: Placement) => assign.mutate({ ...input, previous: place(input) });
   // The card's trash button, as on the Ensemble board: gone at once, back with Undo, back on failure.
   const remove = useMutation({
     mutationFn: (page: BoardPage) => page.kind === "task" ? api.deleteTask(page.id) : api.deletePage(page.id).then(() => ({ undoEntryId: null })),
@@ -146,9 +157,11 @@ export function CustomBoard({ id }: { id: string }) {
   const needle = search.trim().toLowerCase();
   const visiblePages = useMemo(() => (query.data?.pages ?? []).filter((page) => page.title.toLowerCase().includes(needle)), [query.data?.pages, needle]);
   const settled = useMemo(() => lanesOf(query.data?.board.columns ?? [], visiblePages), [query.data?.board.columns, visiblePages]);
+  const settledKey = JSON.stringify(settled);
+  useEffect(() => { setHeld((current) => (current && current.key !== settledKey ? null : current)); }, [settledKey]);
   if (!query.data) return <div className="p-6"><Link href="/board" className="btn-ghost mb-6"><ArrowLeft size={14} />All boards</Link>{query.isError ? <LoadError what="this board" error={query.error} onRetry={() => void query.refetch()} /> : <p role="status" className="text-muted">Opening board…</p>}</div>;
   const { board, pages } = query.data;
-  const lanes = dragLanes ?? settled;
+  const lanes = dragLanes ?? (held && held.key === settledKey ? held.lanes : settled);
   const busy = assign.isPending || create.isPending || patch.isPending;
   const canMove = editable && !needle;
   const laneOf = (pageId: string, from: Lanes = lanes): string | null => pageId in from ? pageId : Object.keys(from).find((key) => from[key]!.includes(pageId)) ?? null;
@@ -200,7 +213,8 @@ export function CustomBoard({ id }: { id: string }) {
     if (overIndex >= 0 && activeIndex !== overIndex) list = arrayMove(list, activeIndex, overIndex);
     if (origin.current === column && list.join("|") === settled[column]?.join("|")) return;
     const index = list.indexOf(pageId);
-    assign.mutate({ page, columnId: column, beforeId: list[index - 1] ?? null, afterId: list[index + 1] ?? null });
+    setHeld({ key: settledKey, lanes: { ...current, [column]: list } });
+    moveTo({ page, columnId: column, beforeId: list[index - 1] ?? null, afterId: list[index + 1] ?? null });
   };
   const onDragCancel = () => { moveMotion.skipNext(); setDragId(null); setOverColumn(null); setDragLanes(null); };
   const dragged = dragId ? byId.get(dragId) : undefined;
@@ -232,13 +246,14 @@ export function CustomBoard({ id }: { id: string }) {
             trigger={(open, toggle) => <button type="button" className="btn px-2" aria-label="More board actions" title="More board actions" aria-expanded={open} disabled={busy} onClick={toggle}><Ellipsis size={16} /></button>}
           >
             {(close) => <div className="cb-existing-pages" role="group" aria-label="Add a page to the board">
-              <p className="px-2 pb-1.5 pt-1 text-[12px] font-medium text-muted">Add a page…</p>
+              <MenuItem onClick={() => { close(); create.mutate({ columnId: board.columns[0]!.id, kind: "page" }); }}><span className="inline-flex items-center gap-2"><FilePlus2 size={14} className="text-muted" aria-hidden />New page (notes only)</span></MenuItem>
+              <p className="px-2 pb-1.5 pt-2 text-[12px] font-medium text-muted">Add a page…</p>
               <input className="field mb-2 w-full text-[12px]" type="search" aria-label="Find an existing page" placeholder="Find a page…" value={existingSearch} onChange={(event) => setExistingSearch(event.target.value)} />
-              {directory.isError ? <p role="alert" className="p-2 text-[13px] text-danger">{directory.error.message}<button type="button" className="btn" onClick={() => void directory.refetch()}>Retry</button></p> : directory.isPending ? <p className="p-2 text-[13px] text-muted">Loading pages…</p> : directory.data.pages.filter((page) => page.board?.id !== id && page.title.toLowerCase().includes(existingSearch.trim().toLowerCase())).map((page) => <MenuItem key={page.id} onClick={() => { close(); assign.mutate({ page, columnId: board.columns[0]!.id }); }}><FileText size={13} /><span className="truncate">{page.title}</span><small className="ml-auto text-muted">{page.board?.title || "Independent"}</small></MenuItem>)}
+              {directory.isError ? <p role="alert" className="p-2 text-[13px] text-danger">{directory.error.message}<button type="button" className="btn" onClick={() => void directory.refetch()}>Retry</button></p> : directory.isPending ? <p className="p-2 text-[13px] text-muted">Loading pages…</p> : directory.data.pages.filter((page) => page.board?.id !== id && page.title.toLowerCase().includes(existingSearch.trim().toLowerCase())).map((page) => <MenuItem key={page.id} onClick={() => { close(); moveTo({ page, columnId: board.columns[0]!.id }); }}><FileText size={13} /><span className="truncate">{page.title}</span><small className="ml-auto text-muted">{page.board?.title || "Independent"}</small></MenuItem>)}
               {directory.data && directory.data.pages.every((page) => page.board?.id === id || !page.title.toLowerCase().includes(existingSearch.trim().toLowerCase())) && <p className="p-2 text-[13px] text-muted">{existingSearch.trim() ? "No matching pages." : "No other pages. Create one in a column below."}</p>}
             </div>}
           </Popover>
-          <button type="button" className="btn-primary" disabled={busy} onClick={() => create.mutate(board.columns[0]!.id)}><Plus size={14} />New page</button>
+          <button type="button" className="btn-primary" disabled={busy} onClick={() => create.mutate({ columnId: board.columns[0]!.id, kind: "task" })}><Plus size={14} />New task</button>
         </div>
       ) : null}
     </div>
@@ -267,17 +282,18 @@ export function CustomBoard({ id }: { id: string }) {
                   label={<span className="inline-flex items-center gap-2" data-board-color={column.color}><i className="cb-column-dot" aria-hidden />{column.name}</span>}
                   count={ids.length}
                   over={overColumn === column.id && origin.current !== column.id ? "yes" : undefined}
-                  createLabel="New page"
-                  onCreate={editable ? () => create.mutate(column.id) : undefined}
+                  createLabel="New task"
+                  onCreate={editable ? () => create.mutate({ columnId: column.id, kind: "task" }) : undefined}
                   disabled={busy}
                   empty={needle ? "No pages match." : "Room for your next idea."}
                 >
                   <SortableContext id={column.id} items={ids} strategy={verticalListSortingStrategy}>
                     {ids.map((pageId) => {
                       const page = byId.get(pageId);
+                      const task = page?.kind === "task" ? taskById.get(page.id) : undefined;
                       return page ? (
                         <SortableBoardCard key={page.id} id={page.id} active={peek.peekId === page.id} disabled={!canMove || busy} motion={motion.sortable} onOpen={openPage} onWarm={page.kind === "task" ? () => warmTask(client, page.id) : undefined}>
-                          <PageCardBody page={page} onDelete={editable ? deletePage : undefined} />
+                          {task ? <CardBody task={{ ...task, title: page.title || task.title }} onDelete={editable ? () => deletePage(page) : undefined} /> : <PageCardBody page={page} onDelete={editable ? deletePage : undefined} />}
                         </SortableBoardCard>
                       ) : null;
                     })}
@@ -289,7 +305,7 @@ export function CustomBoard({ id }: { id: string }) {
           </div>
           {boardMore ? <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-12" style={{ background: "linear-gradient(to left, var(--bg), transparent)" }} /> : null}
         </div>
-        <BoardDragOverlay width={overlayWidth}>{dragged ? <PageCardBody page={dragged} /> : null}</BoardDragOverlay>
+        <BoardDragOverlay width={overlayWidth}>{dragged ? (taskById.get(dragged.id) && dragged.kind === "task" ? <CardBody task={{ ...taskById.get(dragged.id)!, title: dragged.title || taskById.get(dragged.id)!.title }} /> : <PageCardBody page={dragged} />) : null}</BoardDragOverlay>
       </DndContext>
     </div>
     {settings && <BoardSettings board={board} onClose={() => setSettings(false)} />}
