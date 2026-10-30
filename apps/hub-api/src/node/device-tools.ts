@@ -82,9 +82,9 @@ type ToolCall = DistributiveOmit<z.input<typeof NodeToolRequest>, "id" | "nodeId
 function ledgerOf(call: ToolCall): Record<string, string | null> {
   if (call.tool === "browser" || call.tool === "capture") return { name: call.name, origin: typeof call.input?.url === "string" ? safeOrigin(call.input.url) : null };
   if (call.tool === "http" || call.tool === "secret_http") return { origin: safeOrigin(call.url) };
-  if (call.tool === "run") return { folder: call.folder, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "" };
-  if (call.tool === "git") return { folder: call.folder, op: call.op };
-  return { folder: call.folder, action: call.action };
+  if (call.tool === "run" || call.tool === "terminal" || call.tool === "sudo") return { folder: call.folder ?? null, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "", ...(call.tool === "sudo" ? { sudo: "yes" } : {}) };
+  if (call.tool === "git") return { folder: call.folder ?? null, op: call.op };
+  return { folder: call.folder ?? null, action: call.action };
 }
 
 /** Sends one call to the computer and reads its answer; a call that needs the owner opens one Needs me card. */

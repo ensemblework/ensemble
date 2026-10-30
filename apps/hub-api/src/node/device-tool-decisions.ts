@@ -54,7 +54,7 @@ export function grantScope(row: Pick<AgentDecision, "decision" | "reason" | "det
   return "once";
 }
 
-const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse" };
+const VERBS: Record<NodeToolAsk["capability"], string> = { run: "run commands", git: "read git", files: "change files", http: "call", browse: "browse", read: "share files" };
 
 /** The card's question: what the node wants to do, where, on which computer. */
 function title(card: Pick<NodeToolCard, "nodeSlug" | "capability" | "label" | "scope" | "deviceName">): string {

@@ -548,8 +548,16 @@ export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
 
 // ── node tools (protocol 6) ─────────────────────────────────────────────────
 
-/** `capabilities.nodeTools`: this computer answers `node.tool.request` (a node's own tool calls). */
-export const NODE_TOOLS_API = 1;
+/**
+ * `capabilities.nodeTools`: this computer answers `node.tool.request` (a node's own tool calls).
+ * 1: run, git, files (write, move, delete), http, secret_http, browser and capture.
+ * 2: also `terminal` (a command's screen as an image), `sudo` (one command as the administrator, with the
+ * owner's password sealed for this computer), files `share` (a file as evidence), and calls without a
+ * folder, which run in the node's own folder on this computer.
+ */
+export const NODE_TOOLS_API = 2;
+/** The first `nodeTools` version with terminal screenshots, sudo, file sharing and the node's own folder. */
+export const NODE_TOOLS_OWN_FOLDER = 2;
 /** What one node tool answer carries inline; a command's longer output goes to `ROUTES.toolOutput`. */
 export const NODE_TOOL_INLINE_BYTES = 64 * 1024;
 /** A command still going after this becomes a background tool run that wakes the node when it ends. */
@@ -576,16 +584,20 @@ const NodeToolBase = z.object({
   grants: z.array(NodeToolGrant).max(20).default([]),
   /** The call's operation id: the ledger entry names it. */
   operationId: text(200).optional(),
+  /** nodeTools 2: the node's handle, which names its own folder on this computer (a call without a folder works there). */
+  nodeSlug: text(64).regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
 });
 
 const Folder = text(4096).min(1);
+/** nodeTools 2: absent means the node's own folder on this computer (created on first use; never asks). */
+const OptionalFolder = Folder.optional();
 
 /** A node's browser or capture tool call (protocol 7). */
 const CaptureCall = {
   /** The tool's name (`browser_open`, `capture_screenshot`, …) and its input, validated on the computer by the tool layer. */
   name: text(60).regex(/^(browser|capture)_[a-z_]+$/),
   input: z.record(z.string().max(100), z.unknown()).default({}),
-  /** The node's tool operation on this computer (`node:<nodeId>:<mission>`): its tabs, apps and files. */
+  /** The node's tool operation on this computer (`node:<nodeId>:<scope>`): its tabs, apps and files. */
   operation: text(300).regex(/^node:[A-Za-z0-9-]{1,64}:[A-Za-z0-9:_-]{1,200}$/),
   /** Where the files it writes go (`ROUTES.evidenceUpload`). */
   uploadId: text(100).min(1),
@@ -602,7 +614,7 @@ const CaptureCall = {
 export const NodeToolRequest = z.discriminatedUnion("tool", [
   NodeToolBase.extend({
     tool: z.literal("run"),
-    folder: Folder,
+    folder: OptionalFolder,
     /** A subfolder to run in, inside the folder. */
     cwd: text(1000).optional(),
     command: text(4000).min(1),
@@ -619,7 +631,7 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   }),
   NodeToolBase.extend({
     tool: z.literal("git"),
-    folder: Folder,
+    folder: OptionalFolder,
     op: z.enum(["status", "diff", "log", "show", "branch"]),
     args: z.array(text(500)).max(20).default([]),
   }),
@@ -632,13 +644,62 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   }),
   NodeToolBase.extend({
     tool: z.literal("files"),
-    action: z.enum(["write", "move", "delete"]),
-    folder: Folder,
+    /** share (nodeTools 2): the file becomes evidence the node can show its owner (answered as a `NodeCaptureAnswer`). */
+    action: z.enum(["write", "move", "delete", "share"]),
+    folder: OptionalFolder,
     path: text(1000).min(1),
     /** move: the new path, inside the same folder. */
     to: text(1000).optional(),
     /** write: the file's whole new text. */
     content: z.string().max(NODE_TOOL_WRITE_BYTES).optional(),
+    /** share: the node's tool operation (its evidence folder) and where the file goes (`ROUTES.evidenceUpload`). */
+    operation: CaptureCall.operation.optional(),
+    uploadId: text(100).min(1).optional(),
+    /** share: one line for the owner, what the file is. */
+    caption: text(300).optional(),
+  }),
+  /**
+   * nodeTools 2: a command in a pseudo-terminal of `columns` × `rows`; after `seconds` (or when it ends,
+   * if sooner) its screen is captured as a PNG in the operation's evidence folder, with secrets hidden.
+   * Works for full-screen programs (htop, top, vim) and plain output alike. Judged and sandboxed like `run`
+   * (it may see this computer's processes); answered as a `NodeCaptureAnswer` whose result is
+   * `{ screen: string, exitCode: number | null, ended: boolean }`.
+   */
+  NodeToolBase.extend({
+    tool: z.literal("terminal"),
+    folder: OptionalFolder,
+    command: text(4000).min(1),
+    seconds: z.number().min(0.5).max(60).default(3),
+    columns: z.number().int().min(40).max(300).default(120),
+    rows: z.number().int().min(10).max(100).default(32),
+    /** Keys to type once it started, in order: text, or a key name in braces ({Enter}, {Escape}, {F10}, {Down}). */
+    keys: z.array(text(200)).max(20).default([]),
+    title: text(200).optional(),
+    operation: CaptureCall.operation,
+    uploadId: text(100).min(1),
+    network: z.boolean().default(true),
+  }),
+  /**
+   * nodeTools 2: one command as the administrator (`sudo`), which the owner approved on a card in the chat.
+   * Never in the sandbox. The hard floor's dangerous commands (device-tools/dangerous.ts) are refused here
+   * whatever the owner answered. The password, when the owner gave one, is sealed in their browser for
+   * this computer (purpose "sudo", decisionId `cardId`, name `commandHash`): only this computer opens it,
+   * only for this exact command, once. Answered like `run` (200 with the output, or 202 running on).
+   */
+  NodeToolBase.extend({
+    tool: z.literal("sudo"),
+    /** Where it runs (its working folder); absent: the node's own folder. */
+    folder: OptionalFolder,
+    command: text(4000).min(1),
+    /** sha256 (hex) of `command`: the sealed password is bound to it. */
+    commandHash: z.string().regex(/^[0-9a-f]{64}$/),
+    /** The approval card's id: the sealed box is bound to it. */
+    cardId: text(100).min(1),
+    /** The owner's password, sealed for this computer. Absent: sudo without a password (`sudo -n`). */
+    sealed: SealedShape.optional(),
+    timeoutSec: z.number().int().min(1).max(1800).default(600),
+    /** Where its output goes when it does not fit the answer, or runs on. */
+    runId: text(100).min(1),
   }),
   /** A request with a saved secret put in where {{ref}} appears (B12, `capabilities.secretHttp`; credentials/secret-http.ts). */
   NodeToolBase.extend({
@@ -795,8 +856,8 @@ export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: t
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({
-  /** `browse`: a page opened in the browser, or captured (protocol 7). */
-  capability: z.enum(["run", "git", "http", "files", "browse"]),
+  /** `browse`: a page opened in the browser, or captured (protocol 7). `read`: a file shared into the chat (nodeTools 2). */
+  capability: z.enum(["run", "git", "http", "files", "browse", "read"]),
   /** What the answer covers: the folder's real path, or the address's origin. */
   target: text(4096).min(1),
   /** How the card names it: the folder's label or path, or the origin. */

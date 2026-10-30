@@ -40,8 +40,12 @@ async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }
     const { url } = await checkTarget(request.url);
     return { folder: null, input: { capability: "http", target: url.origin, label: url.origin, scope: "origin" } };
   }
+  if (request.tool === "sudo") return null;
+  // TODO(nodeTools 2): the node's own folder when a call names none.
+  if (!request.folder) throw new GuardError("Name a folder for this call.");
   const folder = await resolveToolFolder(request.folder);
-  return { folder, input: { capability: request.tool, target: folder.path, label: folder.label, scope: "folder" } };
+  const capability = request.tool === "terminal" ? "run" : request.tool === "files" && request.action === "share" ? "read" : request.tool;
+  return { folder, input: { capability, target: folder.path, label: folder.label, scope: "folder" } };
 }
 
 /**
@@ -69,6 +73,8 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
       }
     }
     if (request.tool === "browser" || request.tool === "capture") return reply(200, (await runNodeCapture(app, client, request, where?.folder ?? null)) as Record<string, unknown>);
+    // TODO(nodeTools 2): terminal screenshots, sudo and file sharing.
+    if (request.tool === "terminal" || request.tool === "sudo" || (request.tool === "files" && request.action === "share")) return reply(409, { error: "This computer cannot do that yet." });
     if (!where) return reply(400, { error: "That request could not be read." });
     if (request.tool === "run") return await runNodeCommand(app, client, request, where.folder!, (out) => reply(out.status, (out.body ?? {}) as Record<string, unknown>));
     const done = request.tool === "git" ? await runNodeGit(request, where.folder!) : request.tool === "files" ? await runNodeFiles(request, where.folder!) : await runNodeHttp(request);
