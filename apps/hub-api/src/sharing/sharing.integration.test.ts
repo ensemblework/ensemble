@@ -289,11 +289,11 @@ test("one shared item opens that item only, and only for its recipient", async (
   assert.equal(meeting.statusCode, 201);
   assert.equal((meeting.json() as { viewOnly: boolean; shares: Array<{ role: string }> }).shares[0]?.role, "view", "code is shared view-only");
 
-  const overview = await ok<{ items: Array<{ id: string }>; contacts: Array<{ id: string }>; limits: { contacts: number; members: number } }>(
+  const overview = await ok<{ items: Array<{ id: string }>; contacts: Array<{ id: string }>; limits: { contacts: number; members: number; roomPeople: number; spaces: number } }>(
     as(mira, { method: "GET", url: "/api/sharing/overview" }),
   );
   assert.ok(overview.items.some((row) => row.id === share));
-  assert.deepEqual(overview.limits, { contacts: 5, members: 2 });
+  assert.deepEqual(overview.limits, { contacts: 5, members: 2, roomPeople: 10, spaces: 12 });
   claim("GET /api/sharing/overview", "happy-path");
 
   await ok(as(cara, { method: "DELETE", url: `/api/sharing/items/${share}` }), 204);

@@ -46,6 +46,7 @@ import { agentRoutes } from "./routes/agents.js";
 import { engineRoutes } from "./routes/engine.js";
 import { handoffRoutes } from "./routes/handoffs.js";
 import { runSecretRoutes } from "./routes/run-secrets.js";
+import { browserLoginRoutes } from "./routes/browser-logins.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { viewRoutes } from "./routes/views.js";
 import { commentRoutes } from "./routes/comments.js";
@@ -95,8 +96,13 @@ export function bypassesGlobalAuth(path: string): boolean {
     /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) ||
     path === "/api/engine/ask" ||
     path === "/api/engine/tool" ||
+    path === "/api/engine/tools" ||
     path === "/api/engine/assistant/tools" ||
-    path === "/api/engine/assistant/tool"
+    path === "/api/engine/assistant/tool" ||
+    // git's credential helper in a run: the run's own token (credentials/git-credential.ts).
+    path === "/api/engine/git-credential" ||
+    // A routine's webhook authenticates with the routine's own token (node/routine-routes.ts).
+    /^\/api\/node\/hooks\/routines\/[0-9a-f-]{36}$/.test(path)
   );
 }
 
@@ -258,6 +264,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     engineRoutes,
     handoffRoutes,
     runSecretRoutes,
+    browserLoginRoutes,
     deviceRoutes,
     deviceCodeRoutes,
     subscriptionRoutes,

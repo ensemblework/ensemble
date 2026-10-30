@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Actor, Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { lockUserTransaction } from "./user-lock.js";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, nodeActingIn } from "../sharing/context.js";
 
 type LedgerInput = {
   userId: string;
@@ -19,12 +19,13 @@ export async function appendLedger(input: LedgerInput): Promise<void> {
 }
 
 export async function appendLedgerInTransaction(tx: Prisma.TransactionClient, input: LedgerInput): Promise<void> {
-  // Someone the space is shared with: the entry says who it was.
+  // Someone the space is shared with, or a node acting for its owner: the entry says who it was.
   const by = actorFor(input.userId);
-  if (by) {
+  const node = nodeActingIn(input.userId);
+  if (by || node) {
     const plain = input.payload && typeof input.payload === "object" && !Array.isArray(input.payload);
     const base = plain ? (input.payload as Record<string, Prisma.InputJsonValue>) : input.payload === undefined ? {} : { value: input.payload };
-    input = { ...input, payload: { ...base, byAccountId: by } };
+    input = { ...input, payload: { ...base, ...(by ? { byAccountId: by } : {}), ...(node ? { byNodeId: node } : {}) } };
   }
   await lockUserTransaction(tx, input.userId);
   const prev = await tx.auditLedger.findFirst({

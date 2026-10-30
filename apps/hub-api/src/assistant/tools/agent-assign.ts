@@ -173,6 +173,8 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
           mode: input.mode ?? profile.mode,
           sandbox: profile.sandbox,
           useCredentials: profile.useCredentials,
+          // The saved secrets the profile names: the run gets only those on the computer (docs/35 §8.7).
+          ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
         }
       : {}),
     ...(where.deviceId ? { deviceId: where.deviceId } : {}),

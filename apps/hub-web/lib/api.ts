@@ -1,3 +1,5 @@
+import type { SecretAnswer, SecretTarget } from "./node-secret";
+import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
 import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
@@ -279,6 +281,13 @@ export type TaskRecord = {
   taskType: string | null;
   measure?: number | null;
   createdBy: "agent" | "me" | "system";
+  /** "@node for person": who a node made this for, and which node (null when a person made it themselves). */
+  createdByAccountId?: string | null;
+  createdByNodeId?: string | null;
+  /** A work request from someone in an Ensemble Node room, proposed to the assignee (docs/35 §12.11). */
+  peerRequestId?: string | null;
+  requestedByAccountId?: string | null;
+  requestedByNodeId?: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -355,7 +364,28 @@ export type NodeApprovalCard = {
   roomId: string;
   body: string;
   createdAt: string;
-  data: { type?: "tools" | "post" | "session" | "secret"; status?: string; error?: string | null; name?: string; computer?: string | null; calls?: Array<{ callId: string; name: string; summary: string }> };
+  data: {
+    type?: "tools" | "post" | "session" | "secret" | "login" | "node_proposal" | "disclosure" | "peer_request" | "media_preview";
+    /** Session cards: start, send, or hand_over (hand a session to another node). */
+    action?: string;
+    status?: string;
+    error?: string | null;
+    name?: string;
+    computer?: string | null;
+    /** Secret cards: the destinations the secret may be sent to (secret_http). */
+    allow?: string[];
+    /** Held captures: the files waiting for a check (previewed in Node). */
+    evidence?: Array<{ id: string; name: string }>;
+    /** A request to someone in a room, drafted by the node for the person to send (`type: "post"`). */
+    request?: { kind: string; to: { accountId: string; name: string; handle?: string | null } };
+    /** Sign-in cards (B11): the site, and what the computer offers (a saved login, a screen to sign in on). */
+    origin?: string;
+    saved?: boolean;
+    display?: boolean;
+    takeover?: boolean;
+    note?: string | null;
+    calls?: Array<{ callId: string; name: string; summary: string }>;
+  };
   node: { id: string; slug: string; name: string; role: string } | null;
   room: { id: string; title: string; kind: string } | null;
 };
@@ -791,6 +821,8 @@ export type AssignInput = {
   useCredentials?: boolean;
   sandbox?: boolean;
   network?: boolean;
+  /** The saved secrets the run may have on the computer, by name (from its run profile). */
+  secrets?: string[];
   /** In a sandboxed run, outside the work folder. Default: Settings. */
   outsideAccess?: "none" | "read" | "read-write";
   markDone?: boolean;
@@ -1279,8 +1311,9 @@ export const api = bindClient({
   createTask: (data: Partial<TaskRecord> & { title: string }) =>
     post<{ task: TaskRecord; undoEntryId?: string | null }>("/api/tasks", { sourceKind: "manual", ...data }),
   patchTask: (id: string, data: Record<string, unknown>) => patch<{ task: TaskRecord; undoEntryId?: string | null }>(`/api/tasks/${id}`, data),
+  /** `answered`: moving a task someone asked for in an Ensemble Node room out of Proposed answered that request. */
   moveTask: (id: string, data: { status: TaskStatus; beforeId?: string | null; afterId?: string | null }) =>
-    post<{ task: { id: string }; undoEntryId?: string | null }>(`/api/tasks/${id}/move`, data),
+    post<{ task: { id: string }; undoEntryId?: string | null; answered?: string }>(`/api/tasks/${id}/move`, data),
   deleteTask: (id: string) => del<{ undoEntryId?: string | null }>(`/api/tasks/${id}`),
   taskRuns: (id: string) =>
     get<{ runs: Array<{ id: string; outcome: string | null; result: string | null; requestedModel: string | null; startedAt: string }> }>(
@@ -1395,8 +1428,14 @@ export const api = bindClient({
   /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
   nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
   settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),
-  /** A secret a node asked for: relayed straight to the person's computer, never stored by Ensemble on the web. */
-  saveNodeSecret: (id: string, value: string) => post(`/api/node/secrets/${id}`, { value }),
+  /** Where a node's secret request goes: the computer and its key, for a box sealed in this browser (docs/35 §8.7). */
+  nodeSecretTarget: (id: string) => get<SecretTarget>(`/api/node/secrets/${id}`),
+  /** The answer to a node's secret request: sealed for the computer (or, for an older one, the value over HTTPS); never stored by Ensemble on the web. */
+  saveNodeSecret: (id: string, answer: SecretAnswer) => post(`/api/node/secrets/${id}`, answer),
+  /** A sign-in card's computer, its key for a login typed here, and what it offers (B11). */
+  nodeLoginTarget: (id: string) => get<LoginTarget>(`/api/node/logins/${id}`),
+  /** The answer to a sign-in card: a button, or a login sealed in this browser for the computer. */
+  answerNodeLogin: (id: string, answer: LoginAnswer) => post<{ message: { data: NodeApprovalCard["data"] }; result: { status: string; message?: string } }>(`/api/node/logins/${id}`, answer),
 
   // context
   entities: () => get<{ entities: Entity[] }>("/api/entities"),
@@ -1479,6 +1518,9 @@ export const api = bindClient({
         lastSeenAt: string | null;
         createdAt: string;
         online: boolean;
+        /** The key the web encrypts secrets for, pinned at pairing, and whether the computer now reports another (docs/35 §8.7). */
+        sealKey?: { kid: string; fingerprint: string } | null;
+        sealKeyMismatch?: boolean;
       }>;
     }>("/api/devices"),
   /** The person's AI subscriptions on their computers (docs/30 §8). */
@@ -1871,6 +1913,10 @@ export const api = bindClient({
   // sharing
   searchPeople: (q: string) => get<{ people: SharingPerson[] }>(`/api/sharing/people${qs({ q })}`),
   sharingOverview: () => get<SharingOverview>("/api/sharing/overview"),
+  saveSharingLimits: (limits: Partial<SharingLimits>) => put<{ limits: SharingLimits; caps: SharingLimits }>("/api/sharing/limits", limits),
+  /** A room request's proposed task (Ensemble Node): the person asked accepts (private work, or a shared run) or declines. */
+  acceptRoomRequest: (requestId: string, mode: "private" | "shared") => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/accept`, { mode }),
+  declineRoomRequest: (requestId: string, note?: string) => post<{ request: { id: string; status: string } }>(`/api/node/requests/${requestId}/decline`, note ? { note } : {}),
   contacts: () => get<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts"),
   addContact: (personId: string) => post<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts", { personId }),
   removeContact: (personId: string) =>
@@ -1964,8 +2010,12 @@ export type ItemShare = { id: string; person: SharingPerson & { email: string };
 export type SharedSpace = { id: string; name: string; icon: string | null; owner: SharingPerson; role: MemberRole; since: string };
 export type SharedItem = { id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; owner: SharingPerson; spaceName: string; since: string; openedAt: string | null };
 export type SharedWithMe = { spaces: SharedSpace[]; items: SharedItem[] };
+/** Your own limits: contacts, people per space you own, people per Ensemble Node room you make, spaces you own. */
+export type SharingLimits = { contacts: number; members: number; roomPeople: number; spaces: number };
 export type SharingOverview = {
-  limits: { contacts: number; members: number };
+  limits: SharingLimits;
+  /** The most an account may choose. */
+  caps?: SharingLimits;
   contacts: SharingContact[];
   spaces: Array<{ id: string; name: string; icon: string | null; primary: boolean; members: SpaceMember[]; transferredAt: string | null }>;
   items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;

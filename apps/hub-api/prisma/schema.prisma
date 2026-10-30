@@ -236,6 +236,14 @@ model Task {
   externalId        String?          @map("external_id")
   /// The meeting an action item came from (meeting-notes connectors).
   meetingNoteId     String?          @map("meeting_note_id")
+  /// A proposed task someone asked for in an Ensemble Node room (node/room-space.ts): who asked, the node that
+  /// relayed it, and the peer request the assignee accepts or declines.
+  requestedByAccountId String?       @map("requested_by_account_id")
+  requestedByNodeId    String?       @map("requested_by_node_id")
+  peerRequestId        String?       @map("peer_request_id")
+  /// "@node for person": the person a node made this task for, and the node (set when a node acts in a space).
+  createdByAccountId   String?       @map("created_by_account_id")
+  createdByNodeId      String?       @map("created_by_node_id")
 
   planSteps     PlanStep[]
   runs          Run[]
@@ -263,6 +271,7 @@ model Task {
   @@index([userId, completedAt])
   @@index([userId, taskType], map: "tasks_user_id_task_type_idx")
   @@index([userId, orderDate], map: "tasks_user_id_order_date_idx")
+  @@index([peerRequestId])
   @@map("tasks")
 }
 
@@ -273,6 +282,8 @@ model TaskPage {
   board           PageBoard?        @relation(fields: [boardId], references: [id], onDelete: SetNull)
   historySavedAt  DateTime?         @map("history_saved_at")
   editorAccountId String?           @map("editor_account_id")
+  /// The node that last edited the page for `editorAccountId` (Ensemble Node acting in a space).
+  editorNodeId    String?           @map("editor_node_id")
   versions        PageRevision[]
   parentId        String?           @map("parent_id")
   parent          TaskPage?         @relation("PageChildren", fields: [parentId], references: [id], onDelete: SetNull)
@@ -373,6 +384,8 @@ model PageDiscussion {
   authorKind         String           @default("human") @map("author_kind")
   /// The person who wrote a human comment, in a shared space. Null: the space owner.
   authorAccountId    String?          @map("author_account_id")
+  /// The node that wrote it for that person (Ensemble Node acting in a space).
+  authorNodeId       String?          @map("author_node_id")
   markId             String?          @map("mark_id")
   quote              String           @default("")
   deletedAt          DateTime?        @map("deleted_at")
@@ -561,6 +574,17 @@ model WorkspaceJob {
   folderLabel          String?             @map("folder_label")
   /// What a device reported on complete: [{ kind: pr | commit | branch, url, sha? }].
   results              Json?
+  /// The worker's structured result (node/report.ts StepReport), from the run's report_result tool or
+  /// its .ensemble/result.json. Null: the worker reported nothing; the summary is prose only.
+  report               Json?
+  /// Idempotency for a job started by an outbox effect (node/outbox.ts): a redelivered effect finds this job.
+  operationId          String?             @unique @map("operation_id")
+  /// Order among the queued messages of an agent session, separate from continueFromJobId (which stays
+  /// the true resume ancestry and is set when the job is claimed). Null: creation order.
+  queuePosition        Int?                @map("queue_position")
+  /// What the engine reported it ran with: { model, effort, context, contextTokens, fast }
+  /// (workspace/engines/observed.ts), from the computer's progress and complete. Null: nothing reported yet.
+  observedSettings     Json?               @map("observed_settings")
   error                String?
   createdAt            DateTime            @default(now()) @map("created_at")
   startedAt            DateTime?           @map("started_at")
@@ -572,6 +596,7 @@ model WorkspaceJob {
   logChunks            WorkspaceLogChunk[]
   files                JobFile[]
   review               CodeReview?
+  evidenceFiles        JobEvidence[]
 
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
@@ -592,6 +617,8 @@ model Device {
   tokenId      String         @unique @map("token_id")
   /// Sandbox strength, max concurrent jobs, folder labels. Never paths to secrets.
   capabilities Json           @default("{}")
+  /// The public key this computer reported first ({kid, alg, spki, fingerprint, pinnedAt}); the web encrypts secrets for it (credentials/device-key.ts).
+  sealKey      Json?          @map("seal_key")
   lastSeenAt   DateTime?      @map("last_seen_at")
   createdAt    DateTime       @default(now()) @map("created_at")
   revokedAt    DateTime?      @map("revoked_at")
@@ -2407,6 +2434,8 @@ model NodeAgent {
   memberships  NodeRoomMember[]
   memories     NodeMemory[]
   turns        NodeTurn[]
+  routines     NodeRoutine[]
+  sessionEvents NodeSessionEvent[]
 
   @@unique([userId, slug])
   @@index([parentNodeId])
@@ -2432,6 +2461,12 @@ model NodeRoom {
   messages      NodeMessage[]
   runs          NodeRun[]
   invites       NodeRoomInvite[]
+  peerRequests  NodePeerRequest[]
+  events        NodeRoomEvent[]
+  seenTasks     NodeRoomTask[]
+  feed          NodeRoomFeed?
+  pages         NodeRoomPage[]
+  decisions     NodeRoomDecision[]
 
   @@index([userId])
   @@map("node_rooms")
@@ -2479,8 +2514,16 @@ model NodeRoomMember {
   privateConversationId String?    @map("private_conversation_id")
   /// The newest message seq the private thread has read (it reads shared messages too).
   privateSeenSeq        Int        @default(0) @map("private_seen_seq")
-  /// The newest message seq this person has read.
+  /// The newest message seq this person has read: in a room with other people, its Room tab (the shared thread).
   readSeq               Int        @default(0) @map("read_seq")
+  /// In a room with other people, the newest seq read in their My crew tab (their private thread).
+  readSeqCrew           Int        @default(0) @map("read_seq_crew")
+  /// A person's own settings for a room with other people (node/trust.ts): `{ trust: { everyone, people: { accountId: … } },
+  /// budget, away: { until, note, since }, shareable: [{ kind, id, spaceId, title }] }`. Empty for nodes.
+  prefs                 Json       @default("{}")
+  /// A person's last read of the room, and their last catch-up digest there (node/room-events.ts).
+  seenAt                DateTime?  @map("seen_at")
+  digestAt              DateTime?  @map("digest_at")
   joinedAt              DateTime   @default(now()) @map("joined_at")
   room                  NodeRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   node                  NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
@@ -2547,6 +2590,14 @@ model NodeRun {
   planId     String?   @map("plan_id")
   planStep   String?   @map("plan_step")
   reportedAt DateTime? @map("reported_at")
+  /// The plan step's attempt this run belongs to: a late end from an earlier attempt changes nothing.
+  attempt    Int       @default(1)
+  /// Run settings: { requested, resolved, observed } with agent, model, effort, context, fast
+  /// (node/settings.ts). observed values are "not_reported" when the engine does not say.
+  settings   Json?
+  /// What the watchdog already raised for this run (node/watchdog.ts): { <condition>: ISO time }, so each
+  /// condition reaches the node once.
+  watchdog   Json      @default("{}")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   room       NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
@@ -2559,13 +2610,40 @@ model NodeRun {
   @@map("node_runs")
 }
 
+/// What happened to one of a node's agent sessions (node/session-queue.ts): a message queued, a steer, a
+/// replacement, a stop, the queue reordered or a message taken out of it, a question answered, a watchdog
+/// attention. From the node's tools (chat), its owner's session card (card) or the watchdog. The node's work
+/// board reads it, so the node is never surprised by what its owner did on the card.
+model NodeSessionEvent {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  nodeId    String    @map("node_id")
+  /// The session's id: its first run's job id.
+  sessionId String    @map("session_id")
+  /// The run it concerns, when one: the new run, the stopped one, the one taken out of the queue.
+  jobId     String?   @map("job_id")
+  /// queue | steer | replace | stop | reorder | cancel | answer | attention | adopt
+  action    String
+  /// owner | node | watchdog
+  actor     String
+  /// chat | card | watchdog
+  via       String
+  detail    Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at")
+  node      NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+  @@index([sessionId, createdAt])
+  @@map("node_session_events")
+}
+
 /// One node turn: why it ran, how it ended. Queued rows left by a restart run again.
 model NodeTurn {
   id               String    @id @default(uuid())
   userId           String    @map("user_id")
   nodeId           String    @map("node_id")
   roomId           String?   @map("room_id")
-  /// mentioned | dm | lead | relevance | run | approval | plan
+  /// mentioned | dm | lead | run | approval | plan | request (a peer request) | answer, disclose (the owner's answer to a disclosure card)
   reason           String
   /// The owner's private thread in the room rather than the shared one.
   private          Boolean   @default(false)
@@ -2579,6 +2657,28 @@ model NodeTurn {
   attempt          Int       @default(0)
   /// A retry waits until then.
   runAfter         DateTime? @map("run_after")
+  /// The lane it runs in (node/lanes.ts): conv:<room>:<s|p> for conversation, work:<plan>:<step> for
+  /// work. Turns run in order within a lane and in parallel across lanes. Null: derived (legacy rows).
+  lane             String?
+  /// owner: the answer goes only to the owner (DM, private thread, plan work). room: other people read
+  /// the answer, so only room-safe context is reachable. Set by where the output goes, never widened.
+  audience         String    @default("owner")
+  /// The Ensemble space the turn works in. Null: the node's home space.
+  spaceId          String?   @map("space_id")
+  /// Idempotency for a turn enqueued by an outbox effect.
+  operationId      String?   @unique @map("operation_id")
+  /// Set when the turn first dispatched a tool that changes something: from then on it is not
+  /// aborted to coalesce a new message, and a restart reconciles it instead of running it again.
+  sideEffectsAt    DateTime? @map("side_effects_at")
+  /// Tools the turn ran, written as each one ends: [{ name, state, summary }]. A restart reads them.
+  receipts         Json      @default("[]")
+  /// The peer request this turn answers or plans (node/peer-requests.ts): a mission it makes carries `requestedBy`.
+  peerRequestId    String?   @map("peer_request_id")
+  /// For a turn done for someone other than the owner: { data, billing, executionDevice, approver, askedBy } account ids.
+  principals       Json      @default("{}")
+  /// The first turn this one continues: a retry after a rate limit or a resume after a restart keeps
+  /// that turn's operation and peer request through it.
+  originTurnId     String?   @map("origin_turn_id")
   /// queued | running | done | failed
   status           String    @default("queued")
   model            String?
@@ -2591,6 +2691,152 @@ model NodeTurn {
   @@index([status, createdAt])
   @@index([nodeId, createdAt])
   @@map("node_turns")
+}
+
+/// What concerns one person in a room with other people (node/room-events.ts, docs/35 §12.12): from the
+/// room's linked space (a task assigned to them, a status change, a comment that mentions them or their
+/// node, an edit to a page they watch) or the room (a public message that mentions them). Code batches
+/// them into one private message from their lead, and the catch-up digest reads them.
+model NodeRoomEvent {
+  id             String    @id @default(uuid())
+  roomId         String    @map("room_id")
+  /// The person it is for.
+  userId         String    @map("user_id")
+  /// assigned | status | mention | page_edited
+  kind           String
+  spaceId        String?   @map("space_id")
+  /// task | page | comment | message
+  subjectKind    String    @map("subject_kind")
+  subjectId      String    @map("subject_id")
+  title          String
+  actorAccountId String?   @map("actor_account_id")
+  actorNodeId    String?   @map("actor_node_id")
+  data           Json      @default("{}")
+  /// One event per change: the same change seen twice (a frame and the sweep) is one row.
+  dedupeKey      String    @map("dedupe_key")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deliverAfter   DateTime  @map("deliver_after")
+  deliveredAt    DateTime? @map("delivered_at")
+  /// The private message (a batch or a digest) that told them.
+  messageId      String?   @map("message_id")
+  room           NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId, dedupeKey])
+  @@index([deliveredAt, deliverAfter])
+  @@index([roomId, userId, createdAt])
+  @@map("node_room_events")
+}
+
+/// What a room last saw of each task in its linked space, so code can tell an assignment or a status change.
+model NodeRoomTask {
+  roomId        String   @map("room_id")
+  taskId        String   @map("task_id")
+  /// The account the task is with (the space's owner for their own "me" tasks); null: nobody.
+  assignee      String?
+  status        String
+  taskUpdatedAt DateTime @map("task_updated_at")
+  room          NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, taskId])
+  @@map("node_room_tasks")
+}
+
+/// A room following its linked space: which space, and how far its changes have been read.
+model NodeRoomFeed {
+  roomId    String   @id @map("room_id")
+  spaceId   String   @map("space_id")
+  scannedAt DateTime @map("scanned_at")
+  room      NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([spaceId])
+  @@map("node_room_feeds")
+}
+
+/// A page of the room's linked space that the room follows: `watched`, a `contract` or the `decisions` log
+/// (docs/35 §12.12–12.13). Its watchers hear about edits.
+model NodeRoomPage {
+  id        String   @id @default(uuid())
+  roomId    String   @map("room_id")
+  spaceId   String   @map("space_id")
+  pageId    String   @map("page_id")
+  role      String   @default("watched")
+  watchers  String[] @default([])
+  createdBy String   @map("created_by")
+  /// A contract's text as its watchers last heard of it, to tell them what changed (node/room-pages.ts).
+  seenRevision Int?    @map("seen_revision")
+  seenText     String? @map("seen_text")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  room      NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, pageId])
+  @@map("node_room_pages")
+}
+
+/// A decision in a room's decisions log (node/room-pages.ts, docs/35 §12.14): a room message a person
+/// confirmed (✅ on it, or a reply "log this"), written to the log page; one that replaces an older one links it.
+model NodeRoomDecision {
+  id           String   @id @default(uuid())
+  roomId       String   @map("room_id")
+  spaceId      String   @map("space_id")
+  pageId       String   @map("page_id")
+  messageId    String   @map("message_id")
+  text         String
+  /// Who said it (the message's author, or the node's owner for a node's message), and who confirmed it.
+  saidBy       String   @map("said_by")
+  loggedBy     String   @map("logged_by")
+  supersedesId String?  @map("supersedes_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  room         NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, messageId])
+  @@map("node_room_decisions")
+}
+
+/// A question, share, review or work request from one person in a room to another, through the other
+/// person's lead (node/peer-requests.ts). The requester sees its status and public answers; the target
+/// owner sees everything and decides. Work and reviews never start before the target owner accepts.
+model NodePeerRequest {
+  id            String    @id @default(uuid())
+  roomId        String    @map("room_id")
+  fromAccountId String    @map("from_account_id")
+  /// The requester's node when it relayed the request for them.
+  fromNodeId    String?   @map("from_node_id")
+  toAccountId   String    @map("to_account_id")
+  /// The target person's lead when the request was made.
+  toNodeId      String    @map("to_node_id")
+  /// question | share | review | work
+  kind          String
+  text          String
+  /// [{ kind, id, title }]: tasks, pages, files or links the request names.
+  refs          Json      @default("[]")
+  /// A review's pinned candidate: { repo?, commit?, url? }.
+  candidate     Json?
+  /// open | answered | awaiting_owner | approved | declined | done | cancelled
+  status        String    @default("open")
+  /// For the two people only: the target owner's decline note, or a line from code (someone left).
+  answer        String?
+  /// The public message that answered a question or share: the card links to it and copies nothing.
+  answerMessageId String? @map("answer_message_id")
+  /// The target owner's own words for their lead when accepting (an edit of the ask): theirs alone. The
+  /// public card always shows the requester's `text`.
+  brief         String?
+  missionId     String?   @map("mission_id")
+  /// The public card in the room, and the target owner's private card.
+  cardId        String?   @map("card_id")
+  ownerCardId   String?   @map("owner_card_id")
+  /// The proposed task in the room's shared space a work request became (node/room-space.ts).
+  taskId        String?   @map("task_id")
+  /// How accepted work runs: private (the assignee's own space, the result delivered to the task) or shared.
+  mode          String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  decidedAt     DateTime? @map("decided_at")
+  room          NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@index([toAccountId, status])
+  @@map("node_peer_requests")
 }
 
 /// What a node keeps between conversations. The owner sees, edits and deletes every row.
@@ -2606,6 +2852,162 @@ model NodeMemory {
   @@map("node_memories")
 }
 
+/// Work a node owns (node/missions.ts): a crew plan, or a job the node does itself. Its id is its card's
+/// message id, so `planId` everywhere names it. Steps are rows in node_steps; the card's data is a view.
+model NodeMission {
+  id            String     @id
+  /// The owner: whose access, credits and computer the work uses unless principals say otherwise.
+  userId        String     @map("user_id")
+  leadNodeId    String     @map("lead_node_id")
+  /// Where the lead was asked, and so where it reports.
+  originRoomId  String     @map("origin_room_id")
+  originPrivate Boolean    @default(false) @map("origin_private")
+  /// The lead's turn that made it: its reply opens the card.
+  leadTurnId    String?    @map("lead_turn_id")
+  /// plan: a crew plan. self: one step the node does itself (node_work_start).
+  kind          String     @default("plan")
+  /// 1: migrated from the plan card's JSON (steps keep their old meaning). 3: this table.
+  contract      Int        @default(3)
+  /// draft | running | reporting | succeeded | partially_completed | failed | stopped
+  status        String     @default("draft")
+  revision      Int        @default(0)
+  /// Compare-and-set counter for every change.
+  version       Int        @default(0)
+  goal          String?
+  /// { computer, folder, repos, branch, publish, environment, agent, model, effort, context, substitution, order, notes }
+  constraints   Json       @default("{}")
+  /// [{ id, text, acceptance: [{ id, text, mandatory }], evidence, status }]
+  requirements  Json       @default("[]")
+  /// [{ requirementId, reason }]
+  deferred      Json       @default("[]")
+  /// The Ensemble space the work lives in. Null: the owner's home space.
+  spaceId       String?    @map("space_id")
+  /// { accountId, nodeId?, roomId? } when someone other than the owner asked for it.
+  requestedBy   Json?      @map("requested_by")
+  /// { roomId, audience } where the result goes, when not the origin.
+  deliverTo     Json?      @map("deliver_to")
+  /// { data, billing, executionDevice, approver }: account ids; empty means the owner for all four.
+  principals    Json       @default("{}")
+  /// { id, runId, title, notify } when a routine's occurrence started it (node/routines.ts).
+  routine       Json?
+  /// The lead was told the outcome (its report turn ran).
+  reportedAt    DateTime?  @map("reported_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  endedAt       DateTime?  @map("ended_at")
+  steps         NodeStep[]
+
+  @@index([userId, status])
+  @@index([leadNodeId, status])
+  @@index([originRoomId])
+  @@map("node_missions")
+}
+
+/// One step of a mission. Execution (status) and result (outcome) are separate; attempts keep history.
+model NodeStep {
+  missionId      String      @map("mission_id")
+  /// s1-ab12cd: unique in its mission; turns, runs and cards name it as planStep.
+  id             String
+  position       Int
+  nodeId         String      @map("node_id")
+  handle         String
+  name           String
+  /// build | verify | write | research | other
+  kind           String      @default("other")
+  /// node: the step's node takes turns for it. self: the lead's own work. session: dispatched straight to an agent session.
+  executor       String      @default("node")
+  brief          String
+  /// Step ids that must be done (or passed) before this one starts.
+  after          String[]    @default([])
+  /// For a verify step: the build step it checks.
+  verifies       String?
+  /// For an integration step (a build): the build steps whose worktrees or snapshots it brings into the folder (B13).
+  integrates     String[]    @default([])
+  requirementIds String[]    @default([]) @map("requirement_ids")
+  /// Agent run settings the lead gave: { agent, model, effort, context }.
+  run            Json?
+  /// waiting | working | done | blocked | skipped | stopped
+  status         String      @default("waiting")
+  /// unknown | done | pass | fail | blocked | unverified: the current attempt's result.
+  outcome        String      @default("unknown")
+  /// The current attempt: 1, 2, …
+  attempt        Int         @default(1)
+  /// Earlier and current attempts: [{ n, reason, outcome, summary, checks, candidate, signature, startedAt, endedAt }]
+  attempts       Json        @default("[]")
+  /// The current attempt's StepReport (node/report.ts).
+  report         Json?
+  /// One-paragraph result shown on the card.
+  result         String?
+  progress       String?
+  /// The agent session this step's runs use, once it has one.
+  sessionId      String?     @map("session_id")
+  /// The step node's own assistant conversation for this step (work lanes never share the room's).
+  conversationId String?     @map("conversation_id")
+  /// The worker was asked once to report; another miss makes the attempt unverified.
+  nudged         Boolean     @default(false)
+  startedAt      DateTime?   @map("started_at")
+  endedAt        DateTime?   @map("ended_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  mission        NodeMission @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@id([missionId, id])
+  @@unique([missionId, position])
+  @@index([nodeId, status])
+  @@map("node_steps")
+}
+
+/// Effects of committed mission changes (node/outbox.ts): delivered at least once, applied once by the
+/// consumer through operationId (a turn's or job's unique operation_id).
+model NodeOutbox {
+  id           String    @id @default(uuid())
+  operationId  String    @unique @map("operation_id")
+  missionId    String?   @map("mission_id")
+  /// turn | report | refresh | expire_decisions | notify
+  kind         String
+  payload      Json      @default("{}")
+  availableAt  DateTime  @default(now()) @map("available_at")
+  attempts     Int       @default(0)
+  claimedUntil DateTime? @map("claimed_until")
+  deliveredAt  DateTime? @map("delivered_at")
+  error        String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([deliveredAt, availableAt])
+  @@index([missionId])
+  @@map("node_outbox")
+}
+
+/// What a plan step (or another holder, such as the browser broker) uses on a computer, so two never use it
+/// at once (node/claims.ts, B13): a folder's checkout, a git worktree, a branch, a development-server port, a
+/// browser profile or tab. One holder at a time; the others wait in line, in the order they asked, and the
+/// next one gets it when the holder lets go. A claim never refuses work.
+model ResourceClaim {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// checkout | worktree | branch | port | browser_profile | browser_tab
+  kind      String
+  /// The resource, scoped to its computer: `<deviceId>:<folder>`, `<deviceId>:<folder>:<worktree>`, `<deviceId>:<port>`.
+  key       String
+  /// Who holds it or waits for it: `step:<missionId>:<stepId>`, or the caller's own id (a job, a browser session).
+  holder    String
+  /// held | waiting
+  state     String   @default("held")
+  missionId String?  @map("mission_id")
+  stepId    String?  @map("step_id")
+  /// What the holder needs back: a waiting step's { attempt, reason }; a worktree's { name, branch, detached, reuse }.
+  data      Json     @default("{}")
+  /// The order holders asked in: the first one waiting gets the resource next.
+  sequence  BigInt   @default(autoincrement())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([kind, key, holder])
+  @@index([kind, key, state])
+  @@index([holder])
+  @@index([missionId])
+  @@map("resource_claims")
+}
+
 /// A secret a person saved on their own computer for its agent runs (lib/run-secrets.ts): given to the
 /// runs there as an environment variable, never to a model. Encrypted with that computer's key.
 /// Ensemble on the web never stores one; the value only passes through on its way to the computer.
@@ -2615,9 +3017,126 @@ model RunSecret {
   /// An environment variable name, such as GITHUB_TOKEN.
   name      String
   value     String
+  /// Origins it may be sent to by reference (secret_http, git); null: nowhere (credentials/secret-store.ts).
+  allow     Json?
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([userId, name])
   @@map("run_secrets")
+}
+
+/// Work a node does on a schedule, on an Ensemble event or on a webhook (node/routines.ts, B14).
+model NodeRoutine {
+  id          String           @id @default(uuid())
+  userId      String           @map("user_id")
+  nodeId      String           @map("node_id")
+  /// Where it reports: the node's DM, or a crew only its owner reads.
+  roomId      String           @map("room_id")
+  title       String
+  /// prompt: the node does `instruction` as its own work. plan: `template` (a node_plan input) runs as a plan.
+  action      String           @default("prompt")
+  instruction String?
+  template    Json?
+  /// schedule | event | webhook (any routine can also be run now)
+  trigger     String           @default("schedule")
+  /// Five-field cron in `timezone` (schedule).
+  cron        String?
+  timezone    String           @default("UTC")
+  /// { on: task | page, actions?, space?, windowSeconds } (event)
+  event       Json?
+  /// sha256 of the webhook token (webhook); the token is shown once.
+  hookHash    String?          @map("hook_hash")
+  /// always | needed | never: when its result is posted.
+  notify      String           @default("always")
+  /// active | paused
+  status      String           @default("active")
+  nextRunAt   DateTime?        @map("next_run_at")
+  lastRunAt   DateTime?        @map("last_run_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  node        NodeAgent        @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  runs        NodeRoutineRun[]
+
+  @@index([userId])
+  @@index([status, trigger, nextRunAt])
+  @@map("node_routines")
+}
+
+/// One occurrence of a routine. The key is unique per routine, so each occurrence starts once.
+model NodeRoutineRun {
+  id            String      @id @default(uuid())
+  routineId     String      @map("routine_id")
+  userId        String      @map("user_id")
+  /// at:<scheduled time> | event:<window> | hook:<window> | manual:<id>
+  occurrenceKey String      @map("occurrence_key")
+  /// schedule | event | webhook | manual
+  trigger       String
+  /// What happened (events gathered in its window, webhook deliveries): information, never instructions.
+  payload       Json?
+  /// pending | starting | started | skipped | failed
+  status        String      @default("pending")
+  dueAt         DateTime    @default(now()) @map("due_at")
+  missionId     String?     @map("mission_id")
+  error         String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  startedAt     DateTime?   @map("started_at")
+  routine       NodeRoutine @relation(fields: [routineId], references: [id], onDelete: Cascade)
+
+  @@unique([routineId, occurrenceKey])
+  @@index([status, dueAt])
+  @@map("node_routine_runs")
+}
+
+/// A file the worker of a run attached for its owner (evidence/, docs/32 §7): a screenshot, image, video,
+/// trace, report, log or file. On a computer the bytes stay in the run's evidence folder; on the web they
+/// are in the blob store Files uses, or on the row when this server keeps uploads in the database.
+/// Only the account it belongs to reads it.
+model JobEvidence {
+  /// Made by the computer, so a repeated upload finds the same row.
+  id            String       @id @default(uuid())
+  /// The account whose computer ran the job (its runner, else the space's owner), or whose node captured it.
+  userId        String       @map("user_id")
+  /// The run that attached or captured it; null for a node's own capture (`nodeId`, `operation`).
+  jobId         String?      @map("job_id")
+  /// screenshot | image | video | trace | report | log | file
+  kind          String
+  /// The file's name (no folders).
+  name          String
+  /// The type sniffed from the bytes, never the sender's word.
+  mime          String
+  size          Int
+  sha256        String
+  /// Where the bytes are: the blob key (evidence/<userId>/<jobId>/<id>) on the web, the file's name in the
+  /// run's evidence folder on a computer.
+  storageKey    String       @map("storage_key")
+  /// The bytes, when this server keeps uploads in the database (no blob store).
+  bytes         Bytes?
+  /// Kept on the computer only: evidence upload is off there, so the web has its name and size, not the bytes.
+  local         Boolean      @default(false)
+  caption       String?
+  /// The mission requirement it supports, when the worker named one.
+  requirementId String?      @map("requirement_id")
+  /// A node's own capture (its device tools, no job): the node, and the tool operation on the computer.
+  nodeId        String?      @map("node_id")
+  operation     String?
+  /// Kept on the computer for the owner to preview first (a secret on screen, a desktop app's window,
+  /// a preview-first site): never sent to a model or shown in a chat until the owner releases it.
+  held          Boolean      @default(false)
+  holdReason    String?      @map("hold_reason")
+  /// The computer that keeps the file (held, or evidence upload off there).
+  deviceId      String?      @map("device_id")
+  /// A video's poster or small preview image: the video's evidence id, and `poster` or `preview`.
+  variantOf     String?      @map("variant_of")
+  variant       String?
+  /// What capture measured: width, height, durationMs, fps, frames, codec.
+  details       Json?
+  createdAt     DateTime     @default(now()) @map("created_at")
+  job           WorkspaceJob? @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([userId, createdAt])
+  @@index([nodeId, createdAt])
+  @@index([variantOf])
+  @@map("job_evidence")
 }

@@ -11,9 +11,15 @@ import { dispatchMessage, enqueueTurn } from "./queue.js";
 import { mentionsFor, postMessage, updateMessageData } from "./store.js";
 import { refsNote, savedRefs } from "../assistant/refs.js";
 import { sessionOfJob } from "../workspace/sessions.js";
-import { ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
+import { HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
+import { answerLoginCard, LOGIN_CARD } from "./logins.js";
 import { finishStep, planLinkOf } from "./plans.js";
+import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
+import { noteTold } from "./dispatch.js";
+import { ToolBlockedError } from "../assistant/types.js";
+import { roomDraftPosted, settleRoomCard } from "./audience.js";
+import { MEDIA_PREVIEW_CARD, settleHeld } from "../evidence/held.js";
 
 export const NOT_APPROVED = "Not approved by the person.";
 
@@ -30,6 +36,7 @@ const PostCard = z.object({ type: z.literal("post"), status: z.string(), fromNon
 const SessionCard = z.union([
   z.object({ type: z.literal("session"), status: z.string(), action: z.literal("start"), input: StartInput, private: z.boolean().optional() }).passthrough(),
   z.object({ type: z.literal("session"), status: z.string(), action: z.literal("send"), input: SendInput, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("session"), status: z.string(), action: z.literal("hand_over"), input: HandOverInput, private: z.boolean().optional() }).passthrough(),
 ]);
 
 export class ApprovalError extends Error {
@@ -113,13 +120,18 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
   const prisma = app.prisma;
   const { card, node } = await ownCard(app, accountId, messageId);
   const type = (card.data as { type?: unknown }).type;
+  // Rooms with other people: disclosure and peer-request cards (node/audience.ts, node/peer-requests.ts).
+  const roomCard = await settleRoomCard(app, card, node, input);
+  if (roomCard) return roomCard;
 
   if (type === "post") {
     PostCard.parse(card.data);
     const data = await claim(app, card);
     if (input.decision === "discard") return updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "discarded" });
     const body = (input.body ?? card.body).trim();
-    if (!body) {
+    const shown = data as { media?: unknown; refs?: unknown };
+    const carried = { ...(Array.isArray(shown.media) && shown.media.length ? { media: shown.media } : {}), ...(Array.isArray(shown.refs) && shown.refs.length ? { refs: shown.refs } : {}) };
+    if (!body && !carried.media) {
       await updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "pending" });
       throw new ApprovalError("The message is empty.", 400);
     }
@@ -131,19 +143,27 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
       authorKind: "node",
       authorNodeId: node.id,
       body,
-      data: { approvedBy: accountId },
+      data: { approvedBy: accountId, ...carried },
       mentions: mentionsFor(body, members, []),
       rootMessageId: card.rootMessageId,
       botDepth: card.botDepth,
     });
     await dispatchMessage(app, message);
+    await roomDraftPosted(app, card, message);
     return updateMessageData(prisma, { ...card, data: data as Prisma.JsonValue }, { status: "posted", postedMessageId: message.id }, body);
   }
 
   if (type === "session") return settleSession(app, card, node, input);
+  if (type === "node_proposal") return settleProposal(app, card, node, input);
+  if (type === MEDIA_PREVIEW_CARD) return settlePreview(app, card, node, input);
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);
     throw new ApprovalError("Type the secret into its box: it goes straight to your computer.", 400);
+  }
+  // A sign-in card (node/logins.ts): Not now ends it; signing in takes the card's own buttons.
+  if (type === LOGIN_CARD) {
+    if (input.decision === "discard") return (await answerLoginCard(app, accountId, messageId, { action: "decline" })).message;
+    throw new ApprovalError("Sign in with the card's buttons: your saved login, on the computer, or typed for the computer.", 400);
   }
 
   const parsed = ToolsCard.parse(card.data);
@@ -236,14 +256,98 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
     return updateMessageData(prisma, current, { status: "pending", error: error instanceof Error ? error.message : String(error) });
   }
   const updated = await updateMessageData(prisma, current, { status: "applied", error: null, result: { summary: done.summary, href: null, failed: [] } });
+  // A packet code handed over (node/dispatch.ts): its run shows what the agent was told, and is asked for its result as any other.
+  const told = (card.data as { told?: unknown }).told;
+  if (typeof told === "string") await noteTold(prisma, done.data.jobId, told);
   await enqueueTurn(app, {
     nodeId: node.id,
     roomId: card.roomId,
     reason: "approval",
-    note: `Your owner approved and it started: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
+    note: `${parsed.action === "hand_over" ? "Your owner agreed" : "Your owner approved and it started"}: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
     private: parsed.private === true,
     ...(planLinkOf(card.data) ?? {}),
   });
+  return updated;
+}
+
+const ProposalCard = z.union([
+  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("node"), input: NewNode, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("crew"), input: NewCrew, private: z.boolean().optional() }).passthrough(),
+]);
+
+/** A node or crew a node proposed (node/helpers.ts): made exactly as shown once approved; the node hears it. */
+async function settleProposal(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = ProposalCard.parse(card.data);
+  const data = await claim(app, card);
+  const current = { ...card, data: data as Prisma.JsonValue };
+  if (input.decision === "discard") return updateMessageData(prisma, current, { status: "discarded" });
+  let made: { summary: string; result: Record<string, unknown> };
+  try {
+    if (parsed.action === "node") {
+      const created = await makeNode(prisma, node, parsed.input);
+      made = { summary: `made @${created.slug} (${created.name}); its chat is in your owner's sidebar`, result: { nodeId: created.id, handle: created.slug } };
+    } else {
+      const room = await makeCrew(prisma, node.userId, parsed.input);
+      made = { summary: `made the crew “${room.title}”`, result: { roomId: room.id } };
+    }
+  } catch (error) {
+    // Nothing was made (a name taken meanwhile, a node gone): the owner can try again or discard.
+    const message = error instanceof ToolBlockedError ? [error.message, error.remedy].filter(Boolean).join(" ") : error instanceof Error ? error.message : String(error);
+    return updateMessageData(prisma, current, { status: "pending", error: message });
+  }
+  const updated = await updateMessageData(prisma, current, { status: "applied", error: null, result: { summary: made.summary, ...made.result } });
+  await enqueueTurn(app, {
+    nodeId: node.id,
+    roomId: card.roomId,
+    reason: "approval",
+    note: `Your owner approved your proposal: ${made.summary}. Continue if there is more to do (node_delegate hands it work); otherwise reply ${"(no reply)"}.`,
+    private: parsed.private === true,
+  });
+  return updated;
+}
+
+const PreviewCard = z
+  .object({
+    type: z.literal(MEDIA_PREVIEW_CARD),
+    status: z.string(),
+    evidence: z.array(z.object({ id: z.string(), name: z.string() }).passthrough()),
+    nodeCapture: z.boolean().optional(),
+    private: z.boolean().optional(),
+    planId: z.string().nullish(),
+    planStep: z.string().nullish(),
+  })
+  .passthrough();
+
+/**
+ * Captures the computer held for the owner's preview (evidence/held.ts): approving releases every
+ * file on the card (the computer uploads it; then node_show and a plan's report can show it),
+ * discarding deletes them. The node that captured them hears that it may show them now.
+ */
+async function settlePreview(app: FastifyInstance, card: NodeMessage, node: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = PreviewCard.parse(card.data);
+  await claim(app, card);
+  const settled = await settleHeld(app, node.userId, parsed.evidence.map((item) => item.id), input.decision);
+  const current = await prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
+  // Files answered one by one earlier keep their answers (evidence/held.ts `data.answers`).
+  const answers = (current.data as { answers?: Record<string, string> }).answers ?? {};
+  const answered = (kind: "released" | "discarded", now: readonly string[]) => parsed.evidence.filter((item) => now.includes(item.id) || answers[item.id] === kind).map((item) => item.id);
+  const result = { released: answered("released", settled.released), discarded: answered("discarded", settled.discarded) };
+  // Some could not be sent (the computer offline, upload off there): the owner can try again or discard.
+  if (settled.failed.length) return updateMessageData(prisma, current, { status: "pending", error: settled.failed.map((item) => `“${item.name}”: ${item.error}`).join(" "), result });
+  const updated = await updateMessageData(prisma, current, { status: result.released.length ? "released" : "discarded", error: null, result });
+  if (input.decision === "approve" && settled.released.length && parsed.nodeCapture) {
+    const names = parsed.evidence.filter((item) => settled.released.includes(item.id)).map((item) => `“${item.name}” [${item.id}]`).join(", ");
+    await enqueueTurn(app, {
+      nodeId: node.id,
+      roomId: card.roomId,
+      reason: "approval",
+      note: `Your owner previewed and released ${names}: you may show them now (node_show), if they still help. Otherwise reply ${"(no reply)"}.`,
+      // A conversation turn where the card is: the step that captured them may have ended meanwhile.
+      private: parsed.private === true,
+    });
+  }
   return updated;
 }
 

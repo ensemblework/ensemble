@@ -6,6 +6,8 @@ import { accountIdOf } from "../lib/auth.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { SHARE_KINDS } from "./context.js";
+import { SHARING_CAPS } from "@ensemble/shared-types";
+import { saveSettings } from "../lib/settings.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
 import { presenceIn, updatePresence } from "./presence.js";
 import { revokeMember, revokeShare } from "./revoke.js";
@@ -19,8 +21,7 @@ import {
   listContacts,
   listItemShares,
   listMembers,
-  MAX_CONTACTS,
-  MAX_MEMBERS,
+  sharingLimits,
   ownedSpaceIds,
   removeContact,
   removeMember,
@@ -103,7 +104,8 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       });
     }
     return {
-      limits: { contacts: MAX_CONTACTS, members: MAX_MEMBERS },
+      limits: await sharingLimits(prisma, accountIdOf(request)),
+      caps: SHARING_CAPS,
       contacts,
       spaces: owned,
       items: items
@@ -123,16 +125,40 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  /**
+   * The account's own limits: contacts, people per space it owns, people per Ensemble Node room it makes,
+   * and spaces it owns. Its choice, up to SHARING_CAPS.
+   */
+  app.put("/api/sharing/limits", async (request) => {
+    browserOnly(request);
+    const body = z
+      .object({
+        contacts: z.number().int().min(1).max(SHARING_CAPS.contacts).optional(),
+        members: z.number().int().min(1).max(SHARING_CAPS.members).optional(),
+        roomPeople: z.number().int().min(2).max(SHARING_CAPS.roomPeople).optional(),
+        spaces: z.number().int().min(1).max(SHARING_CAPS.spaces).optional(),
+      })
+      .strict()
+      .parse(request.body ?? {});
+    const accountId = accountIdOf(request);
+    const current = await sharingLimits(prisma, accountId);
+    // A lower limit takes nobody and nothing away: it only stops new additions until fewer are in use.
+    await saveSettings(prisma, accountId, { sharing: { ...current, ...body } });
+    await appendLedger({ userId: accountId, actor: "me", action: "sharing.limits", payload: body });
+    nudge([accountId]);
+    return { limits: await sharingLimits(prisma, accountId), caps: SHARING_CAPS };
+  });
+
   app.get("/api/sharing/contacts", async (request) => {
     browserOnly(request);
-    return { limit: MAX_CONTACTS, contacts: await listContacts(prisma, accountIdOf(request)) };
+    return { limit: (await sharingLimits(prisma, accountIdOf(request))).contacts, contacts: await listContacts(prisma, accountIdOf(request)) };
   });
 
   app.post("/api/sharing/contacts", async (request, reply) => {
     browserOnly(request);
     const { personId } = z.object({ personId: Id }).parse(request.body);
     await ensureContact(prisma, accountIdOf(request), personId);
-    return reply.code(201).send({ limit: MAX_CONTACTS, contacts: await listContacts(prisma, accountIdOf(request)) });
+    return reply.code(201).send({ limit: (await sharingLimits(prisma, accountIdOf(request))).contacts, contacts: await listContacts(prisma, accountIdOf(request)) });
   });
 
   /** Removing a contact takes back every space and item you shared with them, at once. */
@@ -143,7 +169,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     await revokeMember(prisma, await ownedSpaceIds(prisma, accountIdOf(request)), id);
     await appendLedger({ userId: accountIdOf(request), actor: "me", action: "sharing.contact.remove", payload: { contactId: id, ...removed } });
     nudge([id]);
-    return { removed, limit: MAX_CONTACTS, contacts: await listContacts(prisma, accountIdOf(request)) };
+    return { removed, limit: (await sharingLimits(prisma, accountIdOf(request))).contacts, contacts: await listContacts(prisma, accountIdOf(request)) };
   });
 
   app.get("/api/sharing/with-me", async (request) => {
@@ -165,7 +191,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     return {
       owner: { id: owner.id, name: displayName(owner.name, owner.email), initials: initialsOf(owner.name, owner.email), avatar: owner.avatar ?? null },
       you: ownerId === account ? "owner" : member!.role === "viewer" ? "viewer" : "editor",
-      limit: MAX_MEMBERS,
+      limit: (await sharingLimits(prisma, ownerId!)).members,
       members: await listMembers(prisma, spaceId),
       canTransfer: ownerId === account && Boolean(space.ownerId) && !transfer,
       transferredAt: transfer?.createdAt.toISOString() ?? null,
@@ -179,7 +205,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     const members = await addMember(prisma, accountIdOf(request), spaceId, body.personId, body.role);
     await appendLedger({ userId: spaceId, actor: "me", action: "sharing.member.add", payload: { memberId: body.personId, role: body.role } });
     nudge([body.personId]);
-    return reply.code(201).send({ limit: MAX_MEMBERS, members });
+    return reply.code(201).send({ limit: (await sharingLimits(prisma, accountIdOf(request))).members, members });
   });
 
   app.patch("/api/sharing/spaces/:id/members/:personId", async (request) => {
@@ -191,7 +217,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     if (!updated.count) throw new SharingError("They are not in this space.", 404);
     await appendLedger({ userId: spaceId, actor: "me", action: "sharing.member.role", payload: { memberId: personId, role } });
     nudge([personId]);
-    return { limit: MAX_MEMBERS, members: await listMembers(prisma, spaceId) };
+    return { limit: (await sharingLimits(prisma, accountIdOf(request))).members, members: await listMembers(prisma, spaceId) };
   });
 
   /** The owner removes a member, or a member removes themself (leaves). */

@@ -20,6 +20,8 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   browseFiles: true,
   webEdit: true,
   webTerminal: true,
+  evidenceUpload: true,
+  captureSites: { never: [], preview: [] },
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",
@@ -28,6 +30,7 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   disconnected: null,
   unreachable: null,
   installId: "install-test",
+  secretsMode: "all",
 });
 
 function spec(over: Partial<JobSpec> = {}): JobSpec {

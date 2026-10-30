@@ -19,7 +19,7 @@ after(async () => {
   await h.close();
 });
 const { outsidePath } = await import("./tools.js");
-const { noteChanges, setFolderPollForTests, writtenOutside } = await import("./folder-claims.js");
+const { holdFolder, noteChanges, setFolderPollForTests, writtenOutside } = await import("./folder-claims.js");
 const { queueConflict } = await import("./queue-policy.js");
 const { decisionBus } = await import("../lib/decisions.js");
 type Ctx = import("./tools.js").JobContext;
@@ -28,13 +28,13 @@ setFolderPollForTests(50);
 const user = await h.asUser();
 let order = 0;
 
-async function run(title: string, over: { unattended?: boolean; provider?: string; accessMode?: "auto" | "read-write" } = {}) {
+async function run(title: string, over: { unattended?: boolean; provider?: string; accessMode?: "auto" | "read-write"; context?: Record<string, unknown> } = {}) {
   const task = await h.prisma.task.create({ data: { userId: user.id, title, boardOrder: (order += 1), createdBy: "me" } });
   const id = crypto.randomUUID();
   const root = join(ws, "runs", id);
   mkdirSync(root, { recursive: true });
   const job = (await h.prisma.workspaceJob.create({
-    data: { id, userId: user.id, taskId: task.id, kind: "code", executionMode: "sandbox", status: "running", startedAt: new Date(), provider: over.provider ?? "claude-code", model: "default", repoPath: root, unattended: over.unattended ?? true },
+    data: { id, userId: user.id, taskId: task.id, kind: "code", executionMode: "sandbox", status: "running", startedAt: new Date(), provider: over.provider ?? "claude-code", model: "default", repoPath: root, unattended: over.unattended ?? true, ...(over.context ? { context: over.context as never } : {}) },
   })) as WorkspaceJob;
   const control = new AbortController();
   const ctx = {
@@ -256,4 +256,28 @@ test("Codex's own changes outside its folder hold it from then on; one another r
   assert.ok((await kinds(a.job.id)).includes("folder_clash"));
   assert.ok(await h.prisma.notification.findFirst({ where: { userId: user.id, title: "Two tasks are changing lib/ at once" } }));
   await Promise.all([a.finish(), codex.finish()]);
+});
+
+test("two runs of one Ensemble Node mission take turns without a card, even in Ask; another mission's run is asked as before", async () => {
+  const shared = folder("shared");
+  const a = await run("Build the header", { context: { mission: { id: "mission-1", step: "s1" } } });
+  const b = await run("Build the footer", { unattended: false, context: { mission: { id: "mission-1", step: "s2" } } });
+  await outsidePath(a.ctx, join(shared, "header.tsx"), true);
+  const waiting = holdFolder(b.ctx, join(shared, "footer.tsx"));
+  assert.equal(await settled(waiting), false, "it waits while the other run of its mission changes the folder");
+  assert.equal(await pending(b.job.id), null, "nobody is asked");
+  assert.equal(b.ctx.decisions![0]!.recommended, "Wait until “Build the header” finishes, then work in shared/");
+  const decided = await h.prisma.workspaceEvent.findFirstOrThrow({ where: { jobId: b.job.id, kind: "decision" } });
+  assert.equal((decided.data as { by?: string }).by, "mission");
+  await a.finish();
+  assert.deepEqual(await waiting, { held: null, asked: false, answered: false });
+  assert.ok((await keys(b.job.id)).includes(`dir:${shared}`));
+
+  const c = await run("Another plan's step", { unattended: false, context: { mission: { id: "mission-2", step: "s1" } } });
+  const asking = holdFolder(c.ctx, join(shared, "other.ts"));
+  const card = await until(() => pending(c.job.id), "the card for another mission's run");
+  assert.equal(card.event, "question");
+  await b.finish();
+  assert.equal((await asking).held, null, "the card closes by itself once the folder is free");
+  await c.finish();
 });

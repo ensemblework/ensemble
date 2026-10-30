@@ -19,7 +19,7 @@ try {
     await app.ready();
     await app.close();
   }
-  if (routes.length > 1500) throw new Error(`Unexpectedly large route inventory: ${routes.length}; review the bound before increasing it.`);
+  if (routes.length > 2000) throw new Error(`Unexpectedly large route inventory: ${routes.length}; review the bound before increasing it.`);
   const inventory = sortedRoutes(routes);
   const routeKeys = new Set(inventory.map((route) => `${route.method} ${route.path}`));
   const stale = Object.keys(routeCoverage).filter((key) => !routeKeys.has(key));

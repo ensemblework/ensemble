@@ -7,6 +7,7 @@ import { AgentIcon as Orbit } from "@/components/agent-icon";
 import { ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 import { startOfDay } from "@/lib/format";
 import { AssignDialog } from "../agent/assign-dialog";
 import { useQuickAssign } from "../agent/use-quick-assign";
@@ -15,6 +16,8 @@ import { useToast } from "../toast";
 import { cx } from "../ui";
 
 type Decision = "mine" | "drop" | "later";
+/** A room request's task (Ensemble Node): the person asked answers it there, or here. */
+type Answer = "private" | "shared" | "decline";
 
 /** The real proposal inbox on persona Today desks; previews remain fictional and inert. */
 export function ProposalsWidget() {
@@ -39,13 +42,27 @@ export function ProposalsWidget() {
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
-  const busy = quick.isPending || decide.isPending;
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const access = useSpaceAccess();
+  // Null assignee: the space's owner.
+  const askedOfMe = (task: TaskRecord) => (task.assigneeAccountId ? task.assigneeAccountId === shell.data?.user.id : !access.guest);
+  const answer = useMutation({
+    mutationFn: ({ task, action }: { task: TaskRecord; action: Answer }) => (action === "decline" ? api.declineRoomRequest(task.peerRequestId!) : api.acceptRoomRequest(task.peerRequestId!, action)),
+    onSuccess: (_result, { action }) => {
+      void client.invalidateQueries();
+      toast(action === "decline" ? "Declined. The room sees it was declined." : "Accepted. Your lead plans it in My crew in Ensemble Node.", { tone: "ok" });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const busy = quick.isPending || decide.isPending || answer.isPending;
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || busy || options || peek.peekId || document.querySelector("[data-modal-layer], [data-layout-editing], [data-desk-form]")) return;
       if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
       const task = proposals[Math.min(selected, proposals.length - 1)];
       if (!task) return;
+      // A room request is answered with its own buttons, never M, A, L or D.
+      if (task.peerRequestId && ["m", "a", "d", "l"].includes(event.key.toLowerCase())) return;
       switch (event.key.toLowerCase()) {
         case "j": case "arrowdown": setSelected((index) => Math.min(index + 1, proposals.length - 1)); break;
         case "k": case "arrowup": setSelected((index) => Math.max(index - 1, 0)); break;
@@ -66,12 +83,18 @@ export function ProposalsWidget() {
     {!proposals.length ? <p className="py-2 text-[12px] text-muted">No proposals waiting. Snoozed work returns tomorrow.</p> : proposals.map((task, index) => <div key={task.id} className={cx("mb-2 rounded-lg border border-transparent p-2", selected === index && "border-line bg-raised")} onMouseEnter={() => setSelected(index)} onFocus={() => setSelected(index)}>
       <button type="button" className="flex w-full items-start gap-2 text-left text-[13px] font-medium leading-5" onClick={() => peek.open(task.id)}><span className="min-w-0 flex-1">{task.title}</span><ArrowUpRight size={12} className="mt-1 shrink-0 text-faint" /></button>
       {task.rationale ? <p className="mt-1 line-clamp-2 text-[11.5px] leading-4 text-muted">{task.rationale}</p> : null}
-      <div className="mt-2 flex flex-wrap gap-1">
+      {task.peerRequestId ? <div className="mt-2 flex flex-wrap gap-1">
+        {askedOfMe(task) ? <>
+          <button type="button" className="btn-primary px-2 py-0.5 text-[11px]" disabled={busy} title="Your nodes work in your own space; the result comes back to this task." onClick={() => answer.mutate({ task, action: "private" })}>Accept · private work</button>
+          <button type="button" className="btn px-2 py-0.5 text-[11px]" disabled={busy} title="The run happens in this shared space, where its members see it." onClick={() => answer.mutate({ task, action: "shared" })}>Accept · shared run</button>
+          <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => answer.mutate({ task, action: "decline" })}>Decline</button>
+        </> : <span className="text-[11px] text-muted">Asked in an Ensemble Node room. Waiting for the person asked.</span>}
+      </div> : <div className="mt-2 flex flex-wrap gap-1">
         <button type="button" className="btn-primary px-2 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "mine" })}>Me <kbd>M</kbd></button>
         <button type="button" className="btn px-2 py-0.5 text-[11px]" disabled={busy} title="Use the default run profile" onClick={() => quick.mutate(task.id)}><Orbit size={11} /> Agent <kbd>A</kbd></button>
         <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "later" })}>Later <kbd>L</kbd></button>
         <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "drop" })}>Drop <kbd>D</kbd></button>
-      </div>
+      </div>}
     </div>)}
     <AssignDialog open={Boolean(options)} taskId={options ?? undefined} onClose={() => setOptions(null)} />
   </div>;

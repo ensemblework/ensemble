@@ -25,6 +25,7 @@ import type { JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
 import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { windowTier } from "./observed.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
 
@@ -347,10 +348,15 @@ export async function runCopilot(
     if (effort) {
       const levels = config.find((option) => option.id === "reasoning_effort")?.options?.map((option) => option.value) ?? [];
       const now = config.find((option) => option.id === "reasoning_effort")?.currentValue ?? null;
-      if (now !== effort && levels.includes(effort)) await setOption(rpc, sessionId, "reasoning_effort", effort);
-      else if (now !== effort) await ctx.event("engine_note", { note: `${result.model ?? "This model"} has no ${effort} thinking level on Copilot; it runs at its default.` });
+      if (now !== effort && levels.includes(effort)) {
+        const next = await setOption(rpc, sessionId, "reasoning_effort", effort);
+        if (next.length) config = next;
+      } else if (now !== effort) await ctx.event("engine_note", { note: `${result.model ?? "This model"} has no ${effort} thinking level on Copilot; it runs at its default.` });
     }
-    await ctx.event("engine", { engine: "copilot", model: result.model, effort, context: options.context === "long_context" ? "long_context" : "default", session: sessionId });
+    // What Copilot's own session options say it runs (node/settings.ts observed); the window comes after the run.
+    const reported = (id: string) => config.find((option) => option.id === id)?.currentValue ?? null;
+    const observed = { ...(reported("model") ? { model: reported("model") } : {}), ...(reported("reasoning_effort") ? { effort: reported("reasoning_effort") } : {}) };
+    await ctx.event("engine", { engine: "copilot", model: result.model, effort, context: options.context === "long_context" ? "long_context" : "default", session: sessionId, observed });
     await ctx.progress("GitHub Copilot started");
     let prompt: Array<Record<string, unknown>> = [{ type: "text", text: options.prompt }, ...(await attachmentBlocks(options.attachments ?? [], options.vision !== false))];
     for (let round = 0; ; round += 1) {
@@ -368,8 +374,10 @@ export async function runCopilot(
       prompt = [{ type: "text", text: refusalMessage(refusals) }];
     }
     if (usage.window) {
-      await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size });
-      // The window Copilot reports is the one it used: say so when it is not the long one chosen.
+      // The window Copilot reports is the one it used; as a tier where the model's long window is known.
+      const context = windowTier(usage.window.size, { long: options.longWindow ?? null });
+      await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size, ...(context ? { context } : {}) });
+      // Say so when it is not the long one chosen.
       if (options.context === "long_context" && options.longWindow && usage.window.size < options.longWindow * 0.95) {
         await ctx.event("engine_note", { note: `GitHub Copilot ran with a ${Math.round(usage.window.size / 1000)}K context window, not the ${Math.round(options.longWindow / 1000)}K long window chosen.` });
       }

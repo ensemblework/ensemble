@@ -7,15 +7,23 @@ import { sharePreviews } from "./previews.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { personInitials } from "@ensemble/shared-types";
 import { isHosted } from "../lib/hosted-access.js";
-import { copySettings, listSpaces, MAX_SPACES } from "../spaces/store.js";
+import { copySettings, listSpaces } from "../spaces/store.js";
+import { accountLimits } from "../lib/limits.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
+/** The defaults: an account raises or lowers its own limits in Settings, Sharing (`settings.sharing`). */
 export const MAX_CONTACTS = 5;
 export const MAX_MEMBERS = 2;
 export const MAX_TRANSFERS = 1;
+
+/**
+ * The account's own limits: contacts, people per space it owns, people per Node room it makes and spaces
+ * it owns (its choice, up to SHARING_CAPS; Settings, Sharing; lib/limits.ts).
+ */
+export const sharingLimits = accountLimits;
 const SPACE_EMAIL = "@spaces.ensemble.invalid";
 const ACTIVE_JOBS = ["running", "claimed", "stopping", "waiting_approval"] as const;
 
@@ -167,8 +175,9 @@ export async function ensureContact(db: Db, accountId: string, personId: string)
   const existing = await db.contact.findUnique({ where: { ownerId_contactId: { ownerId: accountId, contactId: personId } } });
   if (existing) return;
   const count = await db.contact.count({ where: { ownerId: accountId } });
-  if (count >= MAX_CONTACTS) {
-    throw new SharingError(`You can share with up to ${MAX_CONTACTS} people. Remove someone from your contacts in Settings, Sharing, to add another.`, 409, "CONTACT_LIMIT");
+  const { contacts } = await sharingLimits(db, accountId);
+  if (count >= contacts) {
+    throw new SharingError(`You can share with up to ${contacts} people. Remove someone from your contacts, or raise the limit, in Settings, Sharing.`, 409, "CONTACT_LIMIT");
   }
   await db.contact.create({ data: { ownerId: accountId, contactId: personId } });
 }
@@ -222,8 +231,9 @@ export async function addMember(db: PrismaClient, accountId: string, spaceId: st
       await tx.spaceMember.update({ where: { id: already.id }, data: { role } });
       return;
     }
-    if ((await tx.spaceMember.count({ where: { spaceId } })) >= MAX_MEMBERS) {
-      throw new SharingError(`A space can be shared with ${MAX_MEMBERS} people. Remove someone to add another.`, 409, "MEMBER_LIMIT");
+    const { members } = await sharingLimits(tx, accountId);
+    if ((await tx.spaceMember.count({ where: { spaceId } })) >= members) {
+      throw new SharingError(`A space can be shared with ${members} people. Remove someone, or raise the limit in Settings, Sharing.`, 409, "MEMBER_LIMIT");
     }
     await ensureContact(tx, accountId, personId);
     await tx.spaceMember.create({ data: { spaceId, accountId: personId, role, addedBy: accountId } });
@@ -417,12 +427,13 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     if (await tx.workspaceJob.count({ where: { userId: spaceId, status: { in: [...ACTIVE_JOBS, "queued"] } } })) {
       throw new SharingError("Stop or cancel the agent runs in this space before handing it over.", 409);
     }
-    if ((await tx.user.count({ where: { ownerId: toId } })) + 1 >= MAX_SPACES) {
-      throw new SharingError("They already have the most spaces an account can have.", 409);
+    // Their own limit on spaces (Settings › Sharing › Limits), their account's own space included.
+    if ((await tx.user.count({ where: { ownerId: toId } })) + 1 >= (await accountLimits(tx, toId)).spaces) {
+      throw new SharingError("They already have as many spaces as their limit allows (they can raise it in Settings, Sharing).", 409);
     }
     // They keep the old owner as an editor. That needs a free contact slot on their side.
     const theirs = await tx.contact.findUnique({ where: { ownerId_contactId: { ownerId: toId, contactId: accountId } } });
-    if (!theirs && (await tx.contact.count({ where: { ownerId: toId } })) >= MAX_CONTACTS) {
+    if (!theirs && (await tx.contact.count({ where: { ownerId: toId } })) >= (await sharingLimits(tx, toId)).contacts) {
       throw new SharingError("Their contact list is full, so they could not keep you on the space. Ask them to make room first.", 409);
     }
 

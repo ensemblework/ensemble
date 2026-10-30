@@ -15,6 +15,16 @@
  * In Chat with the person's own agent (ENSEMBLE_CHAT=1) it also offers their
  * Ensemble board: ensemble_list_tasks, ensemble_create_task and
  * ensemble_search, answered by /api/engine/tool for that chat's run only.
+ * In a task run it offers report_result (the run's structured result) and
+ * attach_evidence (a file the owner should see), answered by the same route
+ * (hub-api src/evidence/run-tools.ts, docs/30 §9), and the browser and
+ * capture tools this computer has (browser_*, capture_*), listed by
+ * /api/engine/tools and answered by /api/engine/tool too: what they capture
+ * is the run's evidence (hub-api src/evidence/capture-tools.ts, docs/25 §10).
+ *
+ * In both it offers secret_http: a web request made by this computer's Ensemble with one of the
+ * person's saved secrets put in where {{NAME}} appears, only to the destinations they allowed for it,
+ * the answer coming back with the value hidden (hub-api src/credentials/secret-http.ts, docs/35 §8.7).
  *
  * For an assistant turn run on the person's own subscription
  * (ENSEMBLE_ASSISTANT_TURN set, docs/30 §8) it offers that turn's Ensemble
@@ -73,8 +83,126 @@ const CHAT_TOOLS = [
   },
 ];
 
+const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log", "file"];
+
+/** The worker's result, in the shape of hub-api src/node/report.ts (StepReport). */
+const REPORT_TOOL = {
+  name: "report_result",
+  description:
+    "Report your result once, when you finish or cannot go on. outcome: done (you built or wrote it), pass or fail (you verified something: list each check with its verdict), or blocked (say why in blockedBy). Ensemble checks it (a commit or contentHash you name must exist in your folder) and keeps it as the run's result; calling it again replaces it. Attach files first with attach_evidence and name them in checks or evidence.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      outcome: { type: "string", enum: ["done", "pass", "fail", "blocked"] },
+      summary: { type: "string", maxLength: 2000, description: "One paragraph: what you did and what came of it." },
+      checks: {
+        type: "array",
+        maxItems: 50,
+        description: "Each check you ran, with its verdict. A verification passes only when every check passed.",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "The acceptance criterion's id, when your brief gave one." },
+            name: { type: "string", description: "What was checked." },
+            verdict: { type: "string", enum: ["pass", "fail", "blocked", "skipped"] },
+            detail: { type: "string", maxLength: 2000, description: "What you saw: the failure, the output that matters." },
+            evidence: { type: "array", maxItems: 20, items: { type: "string" }, description: "Evidence ids from attach_evidence, URLs or paths." },
+            rerun: {
+              type: "object",
+              description: "How to run the check again without you.",
+              properties: {
+                command: { type: "string" },
+                cwd: { type: "string" },
+                expects: { anyOf: [{ type: "string", enum: ["exit_0"] }, { type: "object", properties: { outputMatches: { type: "string" } }, required: ["outputMatches"], additionalProperties: false }] },
+              },
+              required: ["command", "expects"],
+              additionalProperties: false,
+            },
+          },
+          required: ["name", "verdict"],
+          additionalProperties: false,
+        },
+      },
+      subject: {
+        type: "object",
+        description: "What you built or tested: the commit, or the working tree's git tree id as contentHash when nothing was committed.",
+        properties: { repo: { type: "string" }, folder: { type: "string" }, branch: { type: "string" }, commit: { type: "string" }, contentHash: { type: "string" }, url: { type: "string" } },
+        additionalProperties: false,
+      },
+      evidence: {
+        type: "array",
+        maxItems: 30,
+        items: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["commit", "file", "url", "log", "screenshot", "video", "report", "evidence"] },
+            ref: { type: "string", description: "An evidence id, a commit, a URL or a path." },
+            caption: { type: "string", maxLength: 300 },
+          },
+          required: ["kind", "ref"],
+          additionalProperties: false,
+        },
+      },
+      blockedBy: { type: "string", enum: ["needs_owner", "login_required", "missing_access", "environment", "no_report", "no_progress", "unknown"] },
+    },
+    required: ["outcome", "summary"],
+    additionalProperties: false,
+  },
+};
+
+const EVIDENCE_TOOL = {
+  name: "attach_evidence",
+  description:
+    "Attach a file your owner should see with this run's result: a screenshot, image, video, trace, report, log or file, by its path (in your folder, or one this run may read). Ensemble checks it (never keys, .env files, histories or anything holding a secret; images and files up to 20 MB, video and traces up to 100 MB), copies it into this run's evidence folder and returns its evidence id.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "The file, relative to your folder or absolute." },
+      kind: { type: "string", enum: EVIDENCE_KINDS },
+      caption: { type: "string", maxLength: 300, description: "What it shows, in one line." },
+      requirementId: { type: "string", description: "The requirement it shows, when your brief named one." },
+    },
+    required: ["path", "kind"],
+    additionalProperties: false,
+  },
+};
+
+/** A saved secret used by reference, never seen (hub-api src/credentials/secret-http.ts). */
+const SECRET_HTTP_TOOL = {
+  name: "secret_http",
+  description:
+    "Call a web API with one of your person's saved secrets without ever seeing it. Name the secret in ref (STRIPE_KEY) and put {{STRIPE_KEY}} where its value goes: in a header (Authorization: Bearer {{STRIPE_KEY}}) or inside the body (in a JSON string). " +
+    "It goes only to the destinations your person allowed for that secret, never in the address, redirects are not followed, and the answer (at most 64 KB) comes back with the value hidden. A secret with no allowed destination is refused with how your person can allow one.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      ref: { type: "string", description: "The saved secret's name, for example STRIPE_KEY." },
+      url: { type: "string", description: "The full https address, on one of the secret's allowed origins." },
+      method: { type: "string", enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
+      headers: { type: "object", additionalProperties: { type: "string" }, description: "Request headers; {{NAME}} in a value is replaced by the secret." },
+      body: { type: "string", description: "The request body (JSON as text); {{NAME}} inside it is replaced by the secret." },
+    },
+    required: ["ref", "url"],
+    additionalProperties: false,
+  },
+};
+
 export function toolsFor(env = process.env) {
-  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS] : [TOOL];
+  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, SECRET_HTTP_TOOL];
+}
+
+/** The browser and capture tools this computer offers a task run, as Ensemble listed them (none in Chat). */
+let captureTools = null;
+
+export async function runCaptureTools(env = process.env, ask = () => post("/api/engine/tools", undefined, (error) => ({ error }), "GET")) {
+  if (env.ENSEMBLE_CHAT === "1") return [];
+  if (captureTools) return captureTools;
+  const answer = await ask();
+  const listed = Array.isArray(answer?.tools) ? answer.tools.filter((tool) => typeof tool?.name === "string" && tool.inputSchema && typeof tool.inputSchema === "object") : null;
+  // Ensemble could not be asked: list none now, and ask again next time.
+  if (!listed) return [];
+  captureTools = listed;
+  return captureTools;
 }
 
 function send(message) {
@@ -205,11 +333,13 @@ async function handle(message) {
   if (message.method === "initialize") {
     send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" } } });
   } else if (message.method === "tools/list") {
-    send({ id: message.id, result: { tools: toolsFor() } });
+    send({ id: message.id, result: { tools: [...toolsFor(), ...(await runCaptureTools())] } });
   } else if (message.method === "tools/call") {
     const name = message.params?.name;
-    if (name !== TOOL.name && toolsFor().some((tool) => tool.name === name)) {
-      const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error }));
+    if (name !== TOOL.name && (toolsFor().some((tool) => tool.name === name) || (await runCaptureTools()).some((tool) => tool.name === name))) {
+      // A browser call can wait for the person to sign in (B11): progress keeps the agent's client waiting too.
+      const stop = String(name).startsWith("browser_") ? heartbeat(message) : () => undefined;
+      const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error })).finally(stop);
       const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
       send({ id: message.id, result: { content: [{ type: "text", text }], ...(typeof answer?.text === "string" ? {} : { isError: true }) } });
       return;

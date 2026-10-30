@@ -221,6 +221,8 @@ export function runRequest(input: {
     ...(profile.maxMinutes ? { maxMinutes: profile.maxMinutes } : {}),
     ...(profile.maxToolCalls ? { maxToolCalls: profile.maxToolCalls } : {}),
     ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
+    // The saved secrets the profile names: the run gets only those (docs/35 §8.7).
+    ...(profile.secrets?.length ? { secrets: profile.secrets } : {}),
   };
 }
 

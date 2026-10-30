@@ -178,6 +178,7 @@ export function bubblewrapArgs(
   for (const path of [...toolchain, ...(extra ? [extra] : [])]) args.push("--ro-bind", path, path);
   for (const path of policy.readOnly) args.push("--ro-bind-try", path, path);
   for (const path of policy.readWrite) args.push("--bind-try", path, path);
+  for (const socket of policy.sockets ?? []) args.push("--ro-bind-try", socket.path, socket.at);
   // Deny wins: re-cover denied places that a grant reaches or that sit outside the home folder.
   const grants = [...toolchain, ...policy.readOnly, ...policy.readWrite];
   for (const listed of denies) {

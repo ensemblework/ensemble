@@ -3,9 +3,11 @@
  *
  * Ids stay in machine-readable places: tool data, `AssistantRef` lists and link targets. This turns
  * reply text into what a person reads, given the records the turn knows: `[@Label](ensemble://kind/id)`
- * links show their label, and a bare id of a known record becomes its title, linked. Unknown ids,
- * code, block quotes, URLs and link targets are left alone, and nothing changes when the person
- * asked for ids. Pure, so the dock, the inline page answers and the server share it.
+ * links show their label, and a bare id of a known record becomes its title, linked. An id or record
+ * link in brackets right after the record's title (`Title (ensemble://task/id)`) links that title
+ * once; the label is never inserted beside the same words. Unknown ids, code, block quotes, URLs and
+ * link targets are left alone, and nothing changes when the person asked for ids. Pure, so the dock,
+ * the inline page answers and the server share it.
  */
 import { EntityMentionKind, type AssistantRef } from "./assistant.js";
 import { mentionAlias, mentionHref } from "./mentions.js";
@@ -146,8 +148,34 @@ export interface EntityTextOptions {
 const KIND_WORDS = "(?:tasks?|projects?|people|persons?|repos?|repositor(?:y|ies)|deliverables?|skills?|diagrams?|plots?|datasets?|files?|pages?|meetings?|reminders?)";
 const BARE_ID = new RegExp(`(?<![\\w/.=?&#%@-])(?:${KIND_WORDS}[:/])?(${UUID_SOURCE})(?![\\w-])`, "gi");
 const OPENER = /\s*[([]\s*(?:[A-Za-z]+\s*[:#]?\s*)?$/;
+/** Only a bracket opens a record link's annotation: "Title (ensemble://task/…)". */
+const LINK_OPENER = /\s*[([]\s*$/;
 const CLOSER = /^\s*[)\]]/;
 const TITLE_END = /[”"'’*_]*$/;
+const CLAUSE_END = /[.:;,!?]$/;
+const SEPARATORS = new Set(["—", "–", "-", "|", "·", "/"]);
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * How many characters at the end of `text` name the record titled `title`: its whole title, or the
+ * title's first clause of two words or more (a long label such as "Title. Description…" or
+ * "Title — detail"). 0 when the text does not end with it. Case and spacing do not matter.
+ */
+export function titledEnd(text: string, title: string): number {
+  const words = title.split(/\s+/).filter(Boolean);
+  for (let count = words.length; count >= 1; count -= 1) {
+    const whole = count === words.length;
+    const clause = CLAUSE_END.test(words[count - 1]!) || SEPARATORS.has(words[count] ?? "");
+    if (!whole && (count < 2 || !clause)) continue;
+    const last = words[count - 1]!.replace(/[.:;,!?]+$/, "");
+    if (!last || SEPARATORS.has(last)) continue;
+    const pattern = [...words.slice(0, count - 1), last].map(escapeRegExp).join("\\s+");
+    const found = new RegExp(`(?:^|(?<=[^\\p{L}\\p{N}_]))${pattern}$`, "iu").exec(text);
+    if (found) return found[0].length;
+  }
+  return 0;
+}
+
 const FENCE = /^\s{0,3}(?:`{3,}|~{3,})/;
 const QUOTE = /^\s{0,3}>/;
 /** Inline code, Markdown links, autolinks, web addresses and bare record links: each is one token. */
@@ -160,7 +188,9 @@ function holdBack(text: string, ids: readonly string[]): string {
   let out = text;
   const link = /\[@?([^\]\n]*)\]\(([^)\s]*)$/.exec(out);
   if (link) out = out.slice(0, link.index) + link[1]!;
-  out = out.replace(/\bensemble:\/\/\S*$/i, "");
+  const unlinked = out.replace(/\bensemble:\/\/\S*$/i, "");
+  // `Title (ensemble://…` is held back with its bracket: the title links once the bracket closes.
+  if (unlinked !== out) out = unlinked.replace(LINK_OPENER, "");
   const run = /(?<![\w-])((?:[a-z]+[:/])?)([0-9a-f][0-9a-f-]{3,})(\s*)$/i.exec(out);
   if (run) {
     const partial = run[2]!.toLowerCase();
@@ -194,6 +224,19 @@ export function formatEntityText(text: string, given: readonly AssistantRef[], o
     const href = target(ref);
     return href ? `[${clean}](${href})` : clean;
   };
+  /**
+   * `Title (id)` or `Title (ensemble://task/id)`: the annotation names the words just before it. Those
+   * words become the record's link and the annotation goes, so the title is never shown twice.
+   * `head` ends where the annotation's bracket opened; null when it does not end with the title.
+   */
+  const linkTitle = (head: string, ref: Shown): string | null => {
+    const quote = TITLE_END.exec(head)![0];
+    const title = head.slice(0, head.length - quote.length);
+    const length = titledEnd(title, ref.original);
+    if (!length) return null;
+    const at = title.length - length;
+    return title.slice(0, at) + show(ref, title.slice(at)) + quote;
+  };
 
   const ids = (segment: string): string => {
     if (options.showIds || !/[0-9a-f]{8}-/i.test(segment)) return segment;
@@ -211,10 +254,9 @@ export function formatEntityText(text: string, given: readonly AssistantRef[], o
         const head = before.slice(0, opener.index);
         const tail = after.slice(closer[0].length);
         const quote = TITLE_END.exec(head)![0];
-        const title = head.slice(0, head.length - quote.length);
-        if (ref && title.toLowerCase().endsWith(ref.original.toLowerCase())) {
-          const at = title.length - ref.original.length;
-          out = title.slice(0, at) + show(ref, title.slice(at)) + quote + tail;
+        const titled = ref ? linkTitle(head, ref) : null;
+        if (titled !== null) {
+          out = titled + tail;
         } else if (ref) {
           const open = opener[0].replace(/[A-Za-z]+\s*[:#]?\s*$/, "").replace(/\s+$/, "");
           out = head + open + show(ref) + closer[0].trimStart() + tail;
@@ -235,9 +277,11 @@ export function formatEntityText(text: string, given: readonly AssistantRef[], o
     for (const match of row.matchAll(TOKEN)) {
       const at = match.index ?? 0;
       out += ids(row.slice(last, at));
-      last = at + match[0].length;
-      const whole = match[0];
-      const dest = match[2] !== undefined ? match[2] : match[3] !== undefined ? whole : null;
+      const bare = match[3] !== undefined;
+      // A sentence's full stop after a bare record link is not part of its address.
+      const whole = bare ? match[0].replace(/[.,;:!?]+$/, "") : match[0];
+      last = at + whole.length;
+      const dest = match[2] !== undefined ? match[2] : bare ? whole : null;
       const record = dest ? RECORD_LINK.exec(dest) : null;
       const kind = record ? refKind(record[1]!) : null;
       if (!record || !kind) {
@@ -252,6 +296,16 @@ export function formatEntityText(text: string, given: readonly AssistantRef[], o
         continue;
       }
       const ref = known(id);
+      if (bare && ref) {
+        const opener = LINK_OPENER.exec(out);
+        const closer = CLOSER.exec(row.slice(last));
+        const titled = opener && opener[0].trim() && closer ? linkTitle(out.slice(0, opener.index), ref) : null;
+        if (titled !== null) {
+          out = titled;
+          last += closer![0].length;
+          continue;
+        }
+      }
       const written = match[1] !== undefined ? match[1].replace(/^@+/, "").trim() : "";
       const label = written && !isUuid(written) ? written : (ref?.label ?? "");
       if (!label) {

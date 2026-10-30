@@ -69,6 +69,10 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
     tables.space_members = (await tx.spaceMember.findMany({ where: { OR: [{ spaceId: userId }, { accountId: userId }] } })) as unknown as Prisma.JsonValue[];
     tables.shares = (await tx.share.findMany({ where: { OR: [{ spaceId: userId }, { recipientId: userId }] } })) as unknown as Prisma.JsonValue[];
     tables.node_room_invites = (await tx.nodeRoomInvite.findMany({ where: { OR: [{ inviterId: userId }, { inviteeId: userId }] } })) as unknown as Prisma.JsonValue[];
+    // A request's brief is the target owner's own words for their lead (docs/35 §12.6): in their export only.
+    tables.node_peer_requests = (await tx.nodePeerRequest.findMany({ where: { OR: [{ fromAccountId: userId }, { toAccountId: userId }] } })).map((row) =>
+      row.toAccountId === userId ? row : { ...row, brief: null },
+    ) as unknown as Prisma.JsonValue[];
     return { version: 1, exportedAt: new Date().toISOString(), user, tables };
   }, { timeout: 60_000, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 }
@@ -95,6 +99,7 @@ export async function deleteAccountData(prisma: PrismaClient, userId: string): P
     }
     // Room requests name two accounts and belong to neither's userId-scoped tables.
     await tx.nodeRoomInvite.deleteMany({ where: { OR: [{ inviterId: { in: scopes } }, { inviteeId: { in: scopes } }] } });
+    await tx.nodePeerRequest.deleteMany({ where: { OR: [{ fromAccountId: { in: scopes } }, { toAccountId: { in: scopes } }] } });
     if (!user.ownerId && !user.email.endsWith("@spaces.ensemble.invalid")) {
       const emailKey = privateIdentifier("account-deletion-log", user.email.trim().toLowerCase());
       const deletedAt = new Date();

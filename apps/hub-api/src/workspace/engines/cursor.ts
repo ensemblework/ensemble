@@ -249,7 +249,9 @@ export async function runCursor(
     }
     sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
     if (!sessionId) throw new Error("Cursor's agent did not start a session.");
-    await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId });
+    // What Cursor's session says it runs (node/settings.ts observed): its current model, when it reports one.
+    const current = (session.models as { currentModelId?: unknown } | undefined)?.currentModelId;
+    await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId, observed: typeof current === "string" && current ? { model: current } : {} });
     await ctx.progress("Cursor started");
     const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: options.prompt }] })) as { stopReason?: string };
     result.turns = 1;

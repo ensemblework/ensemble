@@ -11,7 +11,9 @@ import { resolveWorkFolder } from "../workspace/guard.js";
 import { checkApiBase, hostedClient, registerDevice, RemoteError } from "./client.js";
 import { parseRegistered } from "./contract.js";
 import { deviceCapabilities, devicePlatform, REMOTE_NOTICE, remotePresence, stopRemoteWork, wakeRemote } from "./loop.js";
-import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type SharedFolder } from "./store.js";
+import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type CaptureSites, type SharedFolder } from "./store.js";
+import { loadSealKey, makeSealKey, saveSealKey } from "../credentials/seal-key.js";
+import { MAX_SITES, siteLists } from "../browser/privacy.js";
 
 const CODE = /^[A-Za-z0-9]{8}$/;
 
@@ -34,12 +36,17 @@ async function status(app: FastifyInstance) {
     browseFiles: settings.browseFiles,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
+    evidenceUpload: settings.evidenceUpload,
+    captureSites: settings.captureSites,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
     unreachable: settings.unreachable,
     folders: settings.folders,
     platform: devicePlatform(),
+    // The key the web encrypts secrets for, to compare with the web (B12), and how runs here get secrets.
+    sealKey: token && settings.pairedAt ? (loadSealKey()?.info ?? null) : null,
+    secretsMode: settings.secretsMode,
   };
 }
 
@@ -57,11 +64,19 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         browseFiles: z.boolean().optional(),
         webEdit: z.boolean().optional(),
         webTerminal: z.boolean().optional(),
+        evidenceUpload: z.boolean().optional(),
+        captureSites: z.object({ never: z.array(z.string().max(300)).max(MAX_SITES), preview: z.array(z.string().max(300)).max(MAX_SITES) }).strict().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
       .parse(request.body);
     const current = loadSettings();
+    let captureSites: CaptureSites | undefined;
+    if (body.captureSites) {
+      const lists = siteLists(body.captureSites);
+      if ("error" in lists) return reply.code(400).send({ error: lists.error });
+      captureSites = lists;
+    }
     let apiBase = current.apiBase;
     if (body.apiBase !== undefined) apiBase = body.apiBase ? checkApiBase(body.apiBase) : null;
     if (body.enabled === true) {
@@ -78,12 +93,14 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.browseFiles === undefined ? {} : { browseFiles: body.browseFiles }),
       ...(body.webEdit === undefined ? {} : { webEdit: body.webEdit }),
       ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
+      ...(body.evidenceUpload === undefined ? {} : { evidenceUpload: body.evidenceUpload }),
+      ...(captureSites ? { captureSites } : {}),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled !== undefined || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined) {
+    if (body.enabled !== undefined || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined || body.evidenceUpload !== undefined) {
       const action =
         body.enabled === true
           ? "remote.enable"
@@ -95,9 +112,13 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
                 ? "remote.browse_files"
                 : body.webEdit !== undefined
                   ? "remote.web_edit"
-                  : "remote.web_terminal";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal } });
+                  : body.webTerminal !== undefined
+                    ? "remote.web_terminal"
+                    : "remote.evidence_upload";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal, evidenceUpload: next.evidenceUpload } });
     }
+    // The sites themselves stay on this computer: the ledger keeps how many.
+    if (captureSites) await appendLedger({ userId, actor: "me", action: "remote.capture_sites", payload: { never: captureSites.never.length, preview: captureSites.preview.length } });
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();
     return status(app);
@@ -110,6 +131,8 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
     const settings = loadSettings();
     let registered: unknown;
     let base: string;
+    // Each pairing has its own key pair (B12): the web pins this one for the new pairing; the old one goes once it is accepted.
+    const sealKey = makeSealKey();
     try {
       base = checkApiBase(body.apiBase);
       registered = await registerDevice(base, {
@@ -117,7 +140,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         name: body.name?.trim() || settings.deviceName,
         platform: devicePlatform(),
         appVersion: process.env.ENSEMBLE_APP_VERSION ?? "0.1.0",
-        capabilities: await deviceCapabilities(app),
+        capabilities: { ...(await deviceCapabilities(app)), sealKey: sealKey.info },
       });
     } catch (error) {
       if (error instanceof RemoteError) return reply.code(error.status || 502).send({ error: error.message });
@@ -125,6 +148,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
     }
     const parsed = parseRegistered(registered);
     await saveDeviceToken(parsed.token, base);
+    saveSealKey(sealKey, parsed.deviceId);
     saveSettings({
       ...loadSettings(),
       apiBase: base,

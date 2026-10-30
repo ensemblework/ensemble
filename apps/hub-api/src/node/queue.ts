@@ -1,43 +1,79 @@
 /**
- * Node turns (docs/35 §5): who speaks after a message, and running their turns one at a time per
- * node and a few at a time per server. A queued turn for a node and thread takes in later
- * messages instead of queueing another. Turns are rows, so a restart finds what was waiting.
+ * Node turns (docs/35 §5; ensemble-node docs/design B15): who speaks after a message, and running
+ * their turns in lanes. A node has a conversation lane per room thread (it answers there) and a work
+ * lane per plan step (its own work, which never posts). Turns run in order within a lane and in
+ * parallel across lanes, so a node answers its owner while its work goes on. Conversation turns and
+ * work turns draw on separate capacity, so work can never starve the conversation.
+ *
+ * A queued turn in a lane takes in later messages instead of queueing another. A new message from
+ * the owner aborts a conversation turn that has not yet acted, and it starts again with both
+ * messages. Turns are rows, so a restart finds what was waiting, and a turn cut off before it acted
+ * runs again.
  */
 import type { FastifyInstance } from "fastify";
-import type { NodeMessage, NodeTurn, Prisma } from "@prisma/client";
-import type { ModelTier } from "@ensemble/shared-types";
-import { complete } from "../lib/runtime.js";
-import { loadSettings } from "../lib/settings.js";
+import type { NodeMessage, NodeTurn, Prisma, PrismaClient } from "@prisma/client";
 import { safePublicError, truncateText } from "../lib/text.js";
 import { runNodeTurn } from "./brain.js";
 import type { Mention } from "./mentions.js";
-import { defaultChatModel } from "./model.js";
-import { MAX_BOT_STREAK, botStreak, parseRelevance, relevancePrompt, whoSpeaks, type RelevanceCandidate, type RouteNode } from "./router.js";
+import { MAX_BOT_STREAK, botStreak, whoSpeaks, type RouteNode, type RouteTarget } from "./router.js";
 import { publishTo } from "./events.js";
 import { postMessage, roomSettings } from "./store.js";
-import { planTurnEnded } from "./plans.js";
+import { missionEnded, planTurnEnded } from "./plans.js";
+import { postStatusCards } from "./status-cards.js";
 
 const PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_PARALLEL ?? 4) || 4);
-/** Queued turns older than this when the server starts are dropped, not run late. */
+/** Conversation turns in parallel on this server (kept apart from work, so talking never waits behind work). */
+const TALK_PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_TALK_PARALLEL ?? PARALLEL) || PARALLEL);
+/** Work turns in parallel on this server. */
+const WORK_PARALLEL = Math.max(1, Number(process.env.ENSEMBLE_NODE_WORK_PARALLEL ?? PARALLEL) || PARALLEL);
+/** Work turns of one node at once (the owner's setting later; a concurrency limit, not a product wall). */
+const WORK_PER_NODE = Math.max(1, Number(process.env.ENSEMBLE_NODE_WORK_PER_NODE ?? 3) || 3);
+/** Queued turns older than this when the server starts are dropped, not run late (unless their mission still runs). */
 const STALE_MS = 60 * 60 * 1000;
 
-let active = 0;
-const waiting: Array<() => void> = [];
-const chains = new Map<string, Promise<void>>();
-const live = new Map<string, { controller: AbortController; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null }>();
-
-async function acquire(): Promise<void> {
-  if (active < PARALLEL) {
-    active += 1;
-    return;
+class Pool {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+  constructor(private readonly size: number) {}
+  async acquire(): Promise<void> {
+    if (this.active < this.size) {
+      this.active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    this.active += 1;
   }
-  await new Promise<void>((resolve) => waiting.push(resolve));
-  active += 1;
+  release(): void {
+    this.active -= 1;
+    this.waiting.shift()?.();
+  }
 }
 
-function release(): void {
-  active -= 1;
-  waiting.shift()?.();
+const talkPool = new Pool(TALK_PARALLEL);
+const workPool = new Pool(WORK_PARALLEL);
+const nodeWork = new Map<string, Pool>();
+const chains = new Map<string, Promise<void>>();
+/** `mergeable`: a person's message turn with nothing bound to it, which a newer message may stop and take over (`coalesce`). */
+type LiveTurn = { controller: AbortController; turnId: string; nodeId: string; roomId: string | null; planId: string | null; planStep: string | null; lane: string; acted: boolean; mergeable: boolean };
+const live = new Map<string, LiveTurn>();
+
+/** The lane a turn runs in: a plan step's own work lane, else the room thread's conversation lane. */
+export function laneFor(request: { roomId: string | null; private?: boolean; planId?: string | null; planStep?: string | null }): string {
+  if (request.planId && request.planStep) return `work:${request.planId}:${request.planStep}`;
+  return `conv:${request.roomId ?? "none"}:${request.private ? "p" : "s"}`;
+}
+
+export function isWorkLane(lane: string | null | undefined): boolean {
+  return Boolean(lane?.startsWith("work:"));
+}
+
+function nodePool(nodeId: string): Pool {
+  let pool = nodeWork.get(nodeId);
+  if (!pool) {
+    pool = new Pool(WORK_PER_NODE);
+    nodeWork.set(nodeId, pool);
+  }
+  return pool;
 }
 
 export type TurnRequest = {
@@ -51,6 +87,15 @@ export type TurnRequest = {
   planId?: string | null;
   planStep?: string | null;
   attempt?: number;
+  /** An outbox effect's id: a turn with it already exists → nothing new. */
+  operationId?: string | null;
+  /** owner (default) or room: where the answer goes (C1). */
+  audience?: "owner" | "room";
+  /** The peer request this turn answers or plans, and for whom it is done (node/peer-requests.ts). */
+  peerRequestId?: string | null;
+  principals?: Record<string, unknown> | null;
+  /** The first turn this one continues (a resume after a restart): it keeps that turn's operation and request. */
+  originTurnId?: string | null;
 };
 
 /** Rate-limited turns try again quietly this many times, this far apart. */
@@ -61,16 +106,42 @@ function tainted(message: Pick<NodeMessage, "userId" | "data"> | null, owner: st
   return Boolean(message && (message.userId !== owner || (message.data as { fromNonOwner?: unknown } | null)?.fromNonOwner === true));
 }
 
-/** Queues a node's turn (or adds to the one already waiting there); false when the node is paused or gone. */
+/** Reasons a person's message wakes a node for (a new one of these may coalesce a turn that has not acted yet). */
+const PERSON_REASONS = new Set(["dm", "mentioned", "lead", "relevance"]);
+/** Turns about someone else's words or a request (node/audience.ts, node/peer-requests.ts): never merged with others. */
+const BOUND_REASONS = new Set(["disclose", "answer", "request"]);
+
+/** A turn bound to an effect, a request or the turn it continues, or about someone else's words. */
+function boundRequest(request: Pick<TurnRequest, "operationId" | "originTurnId" | "peerRequestId" | "reason">): boolean {
+  return Boolean(request.operationId || request.originTurnId || request.peerRequestId) || BOUND_REASONS.has(request.reason);
+}
+
+/** Queues a node's turn (or adds to the one already waiting in its lane); false when the node is paused or gone. */
 export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): Promise<boolean> {
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: request.nodeId }, select: { userId: true, status: true } });
   if (!node || node.status !== "active") return false;
+  if (request.operationId && (await prisma.nodeTurn.findUnique({ where: { operationId: request.operationId }, select: { id: true } }))) return true;
   const isPrivate = request.private ?? false;
-  // A plan's turns stay apart: a step's turn never takes in another step's or a chat's.
-  const queued = await prisma.nodeTurn.findFirst({
-    where: { nodeId: request.nodeId, roomId: request.roomId, status: "queued", private: isPrivate, planId: request.planId ?? null, planStep: request.planStep ?? null },
-  });
+  const lane = laneFor({ roomId: request.roomId, private: isPrivate, planId: request.planId, planStep: request.planStep });
+  // A plan's turns stay apart: a step's turn never takes in another step's or a chat's. In a conversation, a
+  // turn bound to something keeps its own row: nothing merges into it and it merges into nothing, so its
+  // operation, its reason (a disclosure only drafts) and its request stay its own.
+  const conversation = !request.planId;
+  const queued =
+    conversation && boundRequest(request)
+      ? null
+      : await prisma.nodeTurn.findFirst({
+          where: {
+            nodeId: request.nodeId,
+            roomId: request.roomId,
+            status: "queued",
+            private: isPrivate,
+            planId: request.planId ?? null,
+            planStep: request.planStep ?? null,
+            ...(conversation ? { operationId: null, originTurnId: null, peerRequestId: null, reason: { notIn: [...BOUND_REASONS] } } : {}),
+          },
+        });
   if (queued) {
     // The queued turn reads every new message anyway. It answers the newest one, unless the one it
     // holds came from someone other than the owner: that keeps the turn's writes held for approval.
@@ -78,11 +149,16 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       [queued.triggerMessageId, request.triggerMessageId].map((id) => (id ? prisma.nodeMessage.findUnique({ where: { id }, select: { userId: true, data: true } }) : null)),
     );
     const keep = tainted(held ?? null, node.userId) && !tainted(incoming ?? null, node.userId);
-    const note = [queued.note, request.note].filter(Boolean).join("\n") || null;
     await prisma.nodeTurn.update({
       where: { id: queued.id },
-      data: { note, ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }) },
+      data: {
+        note: mergedNote(queued.note, request.note),
+        ...(keep || !request.triggerMessageId ? {} : { triggerMessageId: request.triggerMessageId, reason: request.reason }),
+        ...(request.peerRequestId && !queued.peerRequestId ? { peerRequestId: request.peerRequestId, principals: (request.principals ?? {}) as Prisma.InputJsonValue } : {}),
+        ...(request.originTurnId && !queued.originTurnId && !queued.operationId ? { originTurnId: request.originTurnId } : {}),
+      },
     });
+    coalesce(request, lane, node.userId);
     return true;
   }
   const turn = await prisma.nodeTurn.create({
@@ -97,36 +173,107 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       planId: request.planId ?? null,
       planStep: request.planStep ?? null,
       attempt: request.attempt ?? 0,
+      lane,
+      audience: request.audience ?? "owner",
+      operationId: request.operationId ?? null,
+      peerRequestId: request.peerRequestId ?? null,
+      principals: (request.principals ?? {}) as Prisma.InputJsonValue,
+      originTurnId: request.originTurnId ?? null,
     },
   });
+  coalesce(request, lane, node.userId);
   schedule(app, turn);
   return true;
 }
 
-function schedule(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId">): void {
-  const previous = chains.get(turn.nodeId) ?? Promise.resolve();
+function mergedNote(held: string | null, incoming: string | null | undefined): string | null {
+  if (held && incoming && held.includes(incoming)) return held;
+  return [held, incoming].filter(Boolean).join("\n") || null;
+}
+
+/** A person's message turn with nothing bound to it: an approval, a run's end, a request or an outbox effect is never stopped to merge. */
+function mergeable(turn: Pick<NodeTurn, "reason" | "operationId" | "peerRequestId" | "originTurnId">): boolean {
+  return PERSON_REASONS.has(turn.reason) && !turn.operationId && !turn.peerRequestId && !turn.originTurnId;
+}
+
+/** What a turn stopped to merge was told (a run's end merged into it, a routing note) goes on with the turn that answers instead. */
+async function carryNote(prisma: PrismaClient, turn: NodeTurn): Promise<void> {
+  const note = (await prisma.nodeTurn.findUnique({ where: { id: turn.id }, select: { note: true } }))?.note;
+  if (!note) return;
+  const next = await prisma.nodeTurn.findFirst({
+    where: { nodeId: turn.nodeId, roomId: turn.roomId, status: "queued", private: turn.private, planId: null, planStep: null, operationId: null, originTurnId: null, peerRequestId: null, reason: { notIn: [...BOUND_REASONS] } },
+    orderBy: { createdAt: "asc" },
+  });
+  if (next) await prisma.nodeTurn.update({ where: { id: next.id }, data: { note: mergedNote(note, next.note) } });
+}
+
+/**
+ * A person's new message while the lane's conversation turn has not acted yet: that turn stops and
+ * the queued one answers both messages. A turn that has acted finishes; the new message is next.
+ */
+function coalesce(request: TurnRequest, lane: string, _ownerId: string): void {
+  if (isWorkLane(lane) || !request.triggerMessageId || !PERSON_REASONS.has(request.reason)) return;
+  for (const entry of live.values()) {
+    if (entry.nodeId === request.nodeId && entry.lane === lane && !entry.acted && !entry.planId && entry.mergeable) entry.controller.abort("coalesce");
+  }
+}
+
+/** The turn just dispatched a tool that changes something: it is no longer aborted to coalesce, and a restart reconciles it. */
+export async function markActed(app: FastifyInstance, turnId: string): Promise<void> {
+  const entry = live.get(turnId);
+  if (entry?.acted) return;
+  if (entry) entry.acted = true;
+  await app.prisma.nodeTurn.updateMany({ where: { id: turnId, sideEffectsAt: null }, data: { sideEffectsAt: new Date() } });
+}
+
+/** Records a tool the turn ran, as it ends (a restart reads them). */
+export async function addReceipt(app: FastifyInstance, turnId: string, receipt: { name: string; state: string; summary?: string | null }): Promise<void> {
+  const entry = JSON.stringify([{ name: receipt.name, state: receipt.state, summary: receipt.summary ? truncateText(receipt.summary, 200) : null }]);
+  // One statement: tools that end together each keep their receipt.
+  await app.prisma.$executeRaw`UPDATE node_turns SET receipts = receipts || ${entry}::jsonb WHERE id = ${turnId} AND jsonb_array_length(receipts) < 40`;
+}
+
+function laneKey(turn: Pick<NodeTurn, "nodeId" | "lane" | "roomId" | "private" | "planId" | "planStep">): string {
+  return `${turn.nodeId}|${turn.lane ?? laneFor({ roomId: turn.roomId, private: turn.private, planId: turn.planId, planStep: turn.planStep })}`;
+}
+
+function schedule(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "lane" | "roomId" | "private" | "planId" | "planStep">): void {
+  const key = laneKey(turn);
+  const previous = chains.get(key) ?? Promise.resolve();
   const next = previous.then(() => execute(app, turn.id));
-  chains.set(turn.nodeId, next);
+  chains.set(key, next);
   void next.finally(() => {
-    if (chains.get(turn.nodeId) === next) chains.delete(turn.nodeId);
+    if (chains.get(key) === next) chains.delete(key);
   });
 }
 
 async function execute(app: FastifyInstance, turnId: string): Promise<void> {
-  await acquire();
   const prisma = app.prisma;
+  const head = await prisma.nodeTurn.findUnique({ where: { id: turnId }, select: { lane: true, nodeId: true, planId: true, planStep: true } });
+  if (!head) return;
+  const work = isWorkLane(head.lane) || Boolean(head.planStep);
+  const pool = work ? workPool : talkPool;
+  const own = work ? nodePool(head.nodeId) : null;
+  if (own) await own.acquire();
+  await pool.acquire();
   try {
     const claimed = await prisma.nodeTurn.updateMany({ where: { id: turnId, status: "queued" }, data: { status: "running" } });
     if (claimed.count !== 1) return;
     const turn = await prisma.nodeTurn.findUniqueOrThrow({ where: { id: turnId } });
     const controller = new AbortController();
-    live.set(turnId, { controller, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep });
+    const lane = turn.lane ?? laneFor(turn);
+    live.set(turnId, { controller, turnId, nodeId: turn.nodeId, roomId: turn.roomId, planId: turn.planId, planStep: turn.planStep, lane, acted: Boolean(turn.sideEffectsAt), mergeable: mergeable(turn) });
     try {
       const outcome = await runNodeTurn(app, turn, { dispatch: (message) => dispatchMessage(app, message), signal: controller.signal });
       if (outcome.status === "retry") {
         // The model's rate limit: the same turn again a little later, without a message in the room.
         await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "failed", error: truncateText(outcome.error ?? "Rate limited.", 500), finishedAt: new Date() } });
         await retryLater(app, turn);
+        return;
+      }
+      if (outcome.status === "coalesced") {
+        await prisma.nodeTurn.update({ where: { id: turnId }, data: { status: "done", error: "Merged into the next turn: a newer message came first.", finishedAt: new Date() } });
+        await carryNote(prisma, turn);
         return;
       }
       await prisma.nodeTurn.update({
@@ -150,7 +297,8 @@ async function execute(app: FastifyInstance, turnId: string): Promise<void> {
       .catch(() => null);
     if (failed) await planTurnEnded(app, failed, "Its node's turn failed.").catch((problem: unknown) => app.log.error({ err: problem }, "Could not settle a plan turn"));
   } finally {
-    release();
+    pool.release();
+    own?.release();
   }
 }
 
@@ -163,7 +311,7 @@ export function setTurnRetryDelaysForTests(delays: readonly number[] | null): vo
 }
 
 /** Runs a queued turn once its time comes (a retry's `runAfter`); counted as background work. */
-function scheduleLater(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "runAfter">): void {
+function scheduleLater(app: FastifyInstance, turn: Pick<NodeTurn, "id" | "nodeId" | "runAfter" | "lane" | "roomId" | "private" | "planId" | "planStep">): void {
   const wait = Math.max(0, (turn.runAfter?.getTime() ?? 0) - Date.now());
   if (!wait) return schedule(app, turn);
   let done: () => void = () => undefined;
@@ -196,6 +344,11 @@ async function retryLater(app: FastifyInstance, turn: NodeTurn): Promise<void> {
       planId: turn.planId,
       planStep: turn.planStep,
       attempt: turn.attempt + 1,
+      lane: turn.lane,
+      audience: turn.audience,
+      peerRequestId: turn.peerRequestId,
+      principals: (turn.principals ?? {}) as Prisma.InputJsonValue,
+      originTurnId: turn.originTurnId ?? turn.id,
       runAfter: new Date(Date.now() + retryDelays[Math.min(turn.attempt, retryDelays.length - 1)]!),
     },
   });
@@ -244,17 +397,56 @@ export function abortAllTurns(): void {
   delayed.clear();
 }
 
-/** After a restart: a turn cut off mid-way is not run twice; recent queued ones run now. */
+/**
+ * After a restart (B4): a turn cut off before it acted runs again; one cut off after it acted is not
+ * run twice but resumed, with a note of what it already did, so the work goes on instead of ending
+ * blocked. Queued turns run now; old ones are dropped unless their mission still runs.
+ */
 export async function recoverTurns(app: FastifyInstance): Promise<void> {
   const prisma = app.prisma;
   const now = Date.now();
-  const stale = { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } };
-  // A plan's turn cut off here ends its part of the plan as blocked, so the plan goes on.
-  const cut = await prisma.nodeTurn.findMany({ where: { planId: { not: null }, OR: [{ status: "running" }, stale] }, select: { planId: true, planStep: true } });
-  await prisma.nodeTurn.updateMany({ where: { status: "running" }, data: { status: "failed", error: "Interrupted by a server restart.", finishedAt: new Date(now) } });
-  await prisma.nodeTurn.updateMany({ where: stale, data: { status: "failed", error: "Too old to run after a restart.", finishedAt: new Date(now) } });
-  for (const turn of cut) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
-  const queued = await prisma.nodeTurn.findMany({ where: { status: "queued" }, orderBy: { createdAt: "asc" }, select: { id: true, nodeId: true, runAfter: true } });
+  const running = await prisma.nodeTurn.findMany({ where: { status: "running" } });
+  for (const turn of running) {
+    if (!turn.sideEffectsAt) {
+      await prisma.nodeTurn.update({ where: { id: turn.id }, data: { status: "queued", receipts: [] as Prisma.InputJsonValue } });
+      continue;
+    }
+    await prisma.nodeTurn.update({ where: { id: turn.id }, data: { status: "failed", error: "Interrupted by a server restart after it had acted.", finishedAt: new Date(now) } });
+    const receipts = (Array.isArray(turn.receipts) ? (turn.receipts as Array<{ name?: string; state?: string; summary?: string | null }>) : [])
+      .map((row) => `- ${row.name ?? "a tool"} (${row.state ?? "?"})${row.summary ? `: ${row.summary}` : ""}`)
+      .join("\n");
+    const note = [
+      "Your previous turn was cut off by a server restart after it had started acting. Do not repeat what it already did: check first (node_sessions, the plan card, the workspace).",
+      receipts ? `It ran:\n${receipts}` : "",
+      turn.note ?? "",
+    ].filter(Boolean).join("\n");
+    const resumed = turn.roomId
+      ? await enqueueTurn(app, {
+          nodeId: turn.nodeId,
+          roomId: turn.roomId,
+          reason: turn.reason,
+          triggerMessageId: turn.triggerMessageId,
+          note,
+          private: turn.private,
+          planId: turn.planId,
+          planStep: turn.planStep,
+          audience: turn.audience === "room" ? "room" : "owner",
+          peerRequestId: turn.peerRequestId,
+          principals: (turn.principals ?? {}) as Record<string, unknown>,
+          originTurnId: turn.originTurnId ?? turn.id,
+        })
+      : false;
+    if (!resumed) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
+  }
+  const old = await prisma.nodeTurn.findMany({ where: { status: "queued", createdAt: { lt: new Date(now - STALE_MS) } }, select: { id: true, planId: true, planStep: true } });
+  const missions = await prisma.nodeMission.findMany({ where: { id: { in: [...new Set(old.map((row) => row.planId).filter((id): id is string => Boolean(id)))] } }, select: { id: true, status: true } });
+  const liveMission = new Set(missions.filter((row) => !missionEnded(row.status)).map((row) => row.id));
+  const drop = old.filter((row) => !row.planId || !liveMission.has(row.planId));
+  if (drop.length) {
+    await prisma.nodeTurn.updateMany({ where: { id: { in: drop.map((row) => row.id) } }, data: { status: "failed", error: "Too old to run after a restart.", finishedAt: new Date(now) } });
+    for (const turn of drop) if (turn.planId) await planTurnEnded(app, turn, "Too old to run after a restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));
+  }
+  const queued = await prisma.nodeTurn.findMany({ where: { status: "queued" }, orderBy: { createdAt: "asc" }, select: { id: true, nodeId: true, runAfter: true, lane: true, roomId: true, private: true, planId: true, planStep: true } });
   for (const turn of queued) scheduleLater(app, turn);
 }
 
@@ -272,40 +464,6 @@ export async function settleTurns(): Promise<void> {
   while (chains.size || background.size) await Promise.allSettled([...chains.values(), ...background]);
 }
 
-type Relevance = (input: { authorId: string; system: string; prompt: string }) => Promise<unknown>;
-let relevanceForTests: Relevance | null = null;
-
-export function setNodeRelevanceForTests(fn: Relevance | null): void {
-  relevanceForTests = fn;
-}
-
-/** A small model call, paid by the message's author, picks which representatives answer. */
-async function relevant(app: FastifyInstance, message: NodeMessage, candidates: RelevanceCandidate[]): Promise<string[]> {
-  const prisma = app.prisma;
-  const [author, recent] = await Promise.all([
-    prisma.user.findUnique({ where: { id: message.userId }, select: { name: true, email: true } }),
-    prisma.nodeMessage.findMany({ where: { roomId: message.roomId, seq: { lt: message.seq }, kind: "text", visibleTo: { isEmpty: true } }, orderBy: { seq: "desc" }, take: 6 }),
-  ]);
-  const { system, prompt } = relevancePrompt(
-    message.body,
-    author?.name?.trim() || author?.email.split("@")[0] || "someone",
-    candidates,
-    recent.reverse().map((row) => truncateText(row.body, 300)),
-  );
-  try {
-    if (relevanceForTests) return parseRelevance(await relevanceForTests({ authorId: message.userId, system, prompt }), candidates);
-    const settings = await loadSettings(prisma, message.userId);
-    const model = defaultChatModel(settings);
-    if (!model) return [];
-    const easy = { provider: model.provider as ModelTier["provider"], model: model.model, effort: "default" as const };
-    const answer = await complete({ userId: message.userId, settings: { ...settings, models: { ...settings.models, easy } }, tier: "easy", system, prompt, json: true, purpose: "Ensemble Node routing" });
-    return parseRelevance(answer.json, candidates);
-  } catch (error) {
-    app.log.warn({ err: error }, "Node relevance routing failed; nobody answers");
-    return [];
-  }
-}
-
 /** Wakes the nodes that should answer a message. */
 export async function dispatchMessage(app: FastifyInstance, message: NodeMessage): Promise<void> {
   if (message.kind !== "text" || message.authorKind === "system") return;
@@ -318,7 +476,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   const wakes = (node: { id: string; userId: string }) => message.authorKind === "human" && message.userId === node.userId && (room.kind === "dm" || mentioned.has(node.id));
   const nodes: RouteNode[] = members
     .filter((row) => row.node)
-    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active" || wakes(row.node!), representative: row.representative, role: row.node!.role }));
+    .map((row) => ({ id: row.node!.id, ownerId: row.node!.userId, active: row.node!.status === "active" || wakes(row.node!), representative: row.representative, role: row.node!.role, handle: row.handle }));
   const recent = await prisma.nodeMessage.findMany({
     where: { roomId: room.id, seq: { lte: message.seq }, ...(message.visibleTo.length ? {} : { visibleTo: { isEmpty: true } }) },
     orderBy: { seq: "desc" },
@@ -330,6 +488,8 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       kind: message.kind,
       authorKind: message.authorKind as "human" | "node" | "system",
       authorNodeId: message.authorNodeId,
+      authorId: message.userId,
+      text: message.body,
       visibleTo: message.visibleTo,
       mentions: (Array.isArray(message.mentions) ? message.mentions : []) as Mention[],
       botDepth: message.botDepth,
@@ -338,17 +498,9 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
     nodes,
     botStreak(recent),
   );
-  let ids: string[] = decision.nodeIds;
-  if (decision.reason === "relevance") {
-    const owners = await prisma.user.findMany({ where: { id: { in: nodes.map((row) => row.ownerId) } }, select: { id: true, name: true, email: true } });
-    const ownerName = new Map(owners.map((row) => [row.id, row.name?.trim() || row.email.split("@")[0]!]));
-    const duties = roomSettings(room).responsibilities;
-    const candidates = decision.candidates.map((id) => {
-      const row = members.find((member) => member.nodeId === id)!;
-      return { id, handle: row.handle, owner: ownerName.get(row.userId) ?? "someone", role: row.node!.role, focus: duties[row.userId] ?? "" };
-    });
-    ids = await relevant(app, message, candidates);
-  }
+  // `@leads status` in a room with other people: every person's status card, built by code (node/status-cards.ts).
+  if (decision.reason === "status") return postStatusCards(app, room, message);
+  const targets: RouteTarget[] = decision.reason === "none" ? [] : (decision.targets ?? decision.nodeIds.map((nodeId) => ({ nodeId, private: message.visibleTo.length > 0, audience: "owner" as const })));
   if (decision.reason === "none" && decision.brake) {
     // Said once: not again until a person writes here.
     const lastPerson = await prisma.nodeMessage.findFirst({ where: { roomId: room.id, authorKind: "human" }, orderBy: { seq: "desc" }, select: { seq: true } });
@@ -377,10 +529,10 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   if (room.kind === "crew" && message.authorKind === "human") {
     for (const row of members) if (row.node && row.node.status === "paused" && mentioned.has(row.node.id) && row.node.userId === message.userId) await resumeNode(app, row.node);
   }
-  for (const nodeId of ids) {
-    const node = members.find((row) => row.nodeId === nodeId)?.node;
+  for (const target of targets) {
+    const node = members.find((row) => row.nodeId === target.nodeId)?.node;
     if (node?.status === "paused" && wakes(node)) await resumeNode(app, node);
-    await enqueueTurn(app, { nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: message.visibleTo.length > 0 });
+    await enqueueTurn(app, { nodeId: target.nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: target.private, audience: target.audience, note: target.note ?? null });
   }
 }
 

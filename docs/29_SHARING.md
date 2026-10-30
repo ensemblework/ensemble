@@ -8,12 +8,21 @@ Code: `apps/hub-api/src/sharing/` (tests `sharing.integration.test.ts`, `policy.
 
 | | Whole space (members) | One item (shares) |
 |---|---|---|
-| Who | Up to **2** people per space, so 3 with the owner | Any of your contacts |
+| Who | Up to **2** people per space by default, so 3 with the owner (your choice, §1 Limits) | Any of your contacts |
 | Kinds | Everything except the private list below | `page`, `task`, `board`, `diagram`, `plot_space`, `plot`, `meeting`, `skill`, `workspace` (the agent workspace tab), `code` |
 | Roles | `viewer` (reads) or `editor` (reads and writes) | `view` or `edit`; `meeting`, `workspace` and `code` are always view-only (`VIEW_ONLY_KINDS` in `policy.ts`) |
 | Opens at | The space switcher, under **Shared with you** | `/shared/<shareId>`, only for its recipient |
 
-Limits: `MAX_CONTACTS` 5, `MAX_MEMBERS` 2, `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
+Limits: contacts, people per space, people per Ensemble Node room and spaces are each account's own choice (`settings.sharing`, `accountLimits` in `lib/limits.ts`), set in Settings › Sharing › Limits or with `PUT /api/sharing/limits {contacts?, members?, roomPeople?, spaces?}`:
+
+| Setting | Default | Most an account may choose (`SHARING_CAPS`) |
+|---|---|---|
+| `contacts` | 5 (`MAX_CONTACTS`) | 500 |
+| `members` (people per space you own) | 2 (`MAX_MEMBERS`) | 50 |
+| `roomPeople` (people in an Ensemble Node room you make, you and open requests to join included) | 10 | 50 |
+| `spaces` (spaces you own, your account's own included; [28](28_ENSEMBLE_SPACES.md)) | 12 | 100 |
+
+A lower limit takes nobody and nothing away; it only stops new additions until fewer are in use. A space handed over counts against the receiver's own `spaces`. The space owner's limits apply, whoever adds the person (an Ensemble Node room's offer included: [35](35_ENSEMBLE_NODE.md) §12.11; such an offer stands only while the room's creator owns the space, and is withdrawn when the person loses the space). `GET /api/sharing/overview` returns `limits` and `caps`. Fixed: `MAX_TRANSFERS` 1 (`sharing/store.ts`); `MAX_PUBLIC_LINKS` 3 (`sharing/links.ts`).
 
 **Never shared**, even with a member: Today, metrics, settings, model keys, connected apps (connectors, MCP connections, imports), reminders, the terminal, editor tokens, paired computers, the kill switch, Trash, data deletion, page history and templates. Runs, Needs me, metrics and settings cannot be shared on their own.
 
@@ -21,7 +30,7 @@ Limits: `MAX_CONTACTS` 5, `MAX_MEMBERS` 2, `MAX_TRANSFERS` 1 (`sharing/store.ts`
 
 **Trash.** Items in Trash are unavailable to members, recipients and link visitors (`resourceTitle` in `sharing/store.ts` and `pages/store.ts` check `deletedAt`). Restore brings the item back with its shares and links.
 
-**Contacts.** Everyone you share with becomes a contact: 5 per account, counted as unique people across all your spaces and items. A sixth gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`). The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
+**Contacts.** Everyone you share with becomes a contact: 5 per account unless you choose otherwise, counted as unique people across all your spaces and items. One past the limit gets 409 `CONTACT_LIMIT`. Allocations serialise on the account row (`ensureContact`). Removing a contact first revokes their memberships and item shares in every space you own (`removeContact`). The limit dialog (`components/sharing/sharing-limits.tsx`) offers **Remove and revoke access**.
 
 **Ownership transfer** (`transferSpace`). The owner of a space they created (not their first space, which is their account) can hand it to one of its members, **once** per space (`space_transfers.space_id` is unique). The content moves. The old owner's connected apps, model keys, devices, API tokens, settings, sync state and synced communications are removed, and the new owner's settings are copied in. Chats, comments and runs keep their author. Undo history and the space's item shares are deleted. The old owner stays as an editor; other members stay only if they are the new owner's contacts. Refused while an agent run is queued or active, when the new owner has the most spaces allowed, or has no contact slot for the old owner. Both accounts are locked while it runs.
 
@@ -39,9 +48,11 @@ A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scope
 | `member` | the `ensemble_space` cookie naming a space in `space_members` for you | `role` viewer or editor |
 | `share` | `x-ensemble-share: <shareId>`, for a share whose recipient is you | One item, `role` view or edit |
 | `link` | `x-ensemble-link` and `x-ensemble-visitor` (§9) | One public item |
-| `gone` | a share header that is not yours or no longer exists | 404 `SHARE_GONE` on every request |
+| `gone` | a share header that is not yours or no longer exists; a node's request for a space its owner cannot open | 404 `SHARE_GONE` on every request |
 
-`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openableSpace()` in `spaces/store.ts` checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
+`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
+
+**An Ensemble Node acting for its owner** ([35 §5.2](35_ENSEMBLE_NODE.md#52-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id. It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space. It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it. Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
 
 `ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
 
@@ -49,6 +60,8 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 
 - `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.
 - `actorFor(spaceId)`: the acting person when not the owner, stamped on undo entries, comments, assistant conversations, ledger entries (`payload.byAccountId`) and jobs (`runner_account_id`).
+- `nodeActingIn(spaceId)`: the node acting for the person, if any, stamped on ledger entries (`payload.byNodeId`) and undo entries (`source` `node:<id>`).
+- `madeBy(spaceId)`: "@node for person". Tasks keep `created_by_account_id` and `created_by_node_id`, pages `editor_node_id` next to `editor_account_id` (the last editor), and comments `author_node_id` next to `author_account_id`. The account is null when the space's owner acted themselves, as with `actorFor`. A run a node started is `node_runs` (node, its owner, the job).
 
 ### The route policy
 
@@ -76,7 +89,7 @@ A computer downloads a run's attachments (`GET /api/devices/self/jobs/:id/attach
 - **Settings** (`lib/settings.ts`): `loadSettings`/`saveSettings` resolve to your account, so theme, models, assistant tone and page width are yours. `/api/auth/me` and `/api/shell` report your account.
 - **Model keys** (`lib/runtime.ts`, `lib/model-turn.ts`): model calls send your account; the runtime uses it only for keys, pacing and host access.
 - **Connected apps**: for a guest, `guestMayUse` (`assistant/apps.ts`) removes connected-app, reminder and sync tools and `OWNER_TOOLS` (calendar events, layout edits, app relationships, imports, Fetch now, repo links, watchers); viewers get no write tools. The prompt says whose space it is and that their apps are private (`assistant/state.ts`); `loadConnections` returns nothing and `hub_list_connections` says the apps are private.
-- **Assistant actions** that call routes forward the person's own request credentials (`assistant/request.ts`), never an owner token, so route classes apply; workflows recheck each nested tool (`assistant/tools/workflows.ts`). See [34](34_ASSISTANT_ACTIONS.md).
+- **Assistant actions** that call routes forward the person's own request credentials (`assistant/request.ts`), never an owner token, so route classes apply; workflows recheck each nested tool (`assistant/tools/workflows.ts`). See [34](34_ASSISTANT_ACTIONS.md). A node's actions send its delegated identity for the space each call acts in (§2).
 - **Assistant chats** carry `account_id`; each person sees only their own, and stream frames go only to the asker. `hub_list_due` omits the owner's reminders, inline asks about Today or Needs me are refused (`/api/ensemble/invoke`), and shorthand like "mock 7/10" never writes to the owner's desk (`askEnsemble`).
 - **Preferences** (`routes/context.ts`): `ui.*` (your shortcuts) is stored on your account; `desk.*`, `hub.*` and `hosted.*` are the owner's; editors may change other context preferences. `hub.settings` is never written or deleted as a preference.
 - **Undo** (`lib/undo.ts`): one history per person per space (`undo_entries.actor_account_id`).
@@ -207,7 +220,7 @@ Custom boards (`/api/boards*`, `PUT /api/pages/:kind/:id/board`) are space conte
 - **`/shared`**: everything shared with you, with a "New" mark until opened, live page and task titles, first-line previews and share dates (`sharing/previews.ts`, batched). The sidebar link appears when there is something.
 - **`/shared-by-me`**: searchable items and spaces grouped by person with Remove / Remove access, then public links with Turn off; each asks for confirmation. Settings and the limit dialogs link here.
 - **`/shared/[id]`** (outside the Hub shell): the item alone in its usual editor with a `shared` role, a header of who is on it and "Shared by ‹full name› · can edit". Every request carries the share header (`setOpenShare` in `lib/api.ts`), with its own share-scoped event stream; after a reconnect it reloads everything. Page and task editors keep the share they opened under (`withShare`) so the last save on leaving goes to the right place. An address that opens nothing says "Nothing is shared at this link" (or "This was shared with someone else" for another account's share).
-- **Settings › Sharing**: contacts (5 slots), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
+- **Settings › Sharing**: contacts (5 slots unless you choose otherwise), **Limits** (contacts and people per space, up to the caps), spaces you share with their members and hand-over, items you shared ("Ben Ito · can edit"; first five, then **Manage all sharing**), shared with you (first five with excerpt, source space and date, then **View all**; open, leave, remove), and public links. Settings › Spaces points here: spaces never share with each other.
 
 ## 8. Data
 

@@ -196,6 +196,31 @@ test("the live Today proposal inbox handles M/A/L/D and uses the saved default p
   } finally { await act(async () => root.unmount()); client.clear(); host.remove(); globalThis.fetch = realFetch; }
 });
 
+test("a room request's proposed task is answered with Accept or Decline, never M/A/L/D", async () => {
+  const task = { id: "requested", title: "Add the rate limiter", status: "proposed", snoozedUntil: null, rationale: "Ben asked for this in “Launch”.", peerRequestId: "r1", assigneeAccountId: null } as TaskRecord;
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : {} });
+    const result = path === "/api/shell" ? { user: { id: "me" }, space: null } : path === "/api/tasks" ? { tasks: [task] } : { request: { id: "r1", status: "approved" } };
+    return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
+  client.setQueryData(["tasks"], { tasks: [task] });
+  client.setQueryData(["shell"], { user: { id: "me" }, space: null });
+  const host = document.createElement("div"); document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ProposalsWidget /></QueryClientProvider>));
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "m", bubbles: true })); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.ok(!calls.some((call) => call.path.startsWith("/api/tasks/")));
+    const shared = [...host.querySelectorAll("button")].find((button) => button.textContent === "Accept · shared run")!;
+    await act(async () => { shared.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.deepEqual(calls.find((call) => call.path === "/api/node/requests/r1/accept")?.body, { mode: "shared" });
+  } finally { await act(async () => root.unmount()); client.clear(); host.remove(); globalThis.fetch = realFetch; }
+});
+
 test("the day at a glance counts open work, what is due today and what is late", () => {
   const live = sampleLive("engineer", null, date);
   const base = live.tasks[0]!;

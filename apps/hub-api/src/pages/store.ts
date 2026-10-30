@@ -16,7 +16,7 @@ import { assertNewPageImages } from "../files/page-image.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
 import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
-import { currentScope, isGuestIn } from "../sharing/context.js";
+import { currentScope, isGuestIn, nodeActingIn } from "../sharing/context.js";
 
 export class TaskPageError extends Error {
   constructor(
@@ -133,7 +133,7 @@ export async function saveTaskPage(
         userId,
         taskId,
         revision: (existing?.revision ?? 0) + 1,
-        editorAccountId: await pageEditor(db, userId),
+        editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId),
         content: content as Prisma.InputJsonValue,
         annotations: (body.annotations ?? []) as Prisma.InputJsonValue,
         notesSnapshot: notes,
@@ -267,7 +267,7 @@ export async function createStandalonePage(
     data: {
       userId,
       taskId: null,
-      editorAccountId: await pageEditor(prisma, userId),
+      editorAccountId: await pageEditor(prisma, userId), editorNodeId: nodeActingIn(userId),
       title,
       revision: 1,
       content: content as Prisma.InputJsonValue,
@@ -318,7 +318,7 @@ export async function renameStandalonePage(
     const content = page.content ? PageDocument.parse(page.content) : null;
     const updated = await db.taskPage.update({
       where: { id: page.id },
-      data: { title: trimmed, editorAccountId: await pageEditor(db, userId), searchText: pageSearchText(trimmed, content, page.notesSnapshot) },
+      data: { title: trimmed, editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId), searchText: pageSearchText(trimmed, content, page.notesSnapshot) },
       select: { id: true, title: true, updatedAt: true, parentId: true },
     });
     return { id: updated.id, parentId: updated.parentId, title: updated.title, updatedAt: updated.updatedAt.toISOString() };
@@ -347,7 +347,7 @@ export async function saveStandalonePage(
       where: { id: existing.id },
       data: {
         revision: existing.revision + 1,
-        editorAccountId: await pageEditor(db, userId),
+        editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId),
         content: content as Prisma.InputJsonValue,
         annotations: (body.annotations ?? []) as Prisma.InputJsonValue,
         notesSnapshot: notes,
@@ -461,7 +461,7 @@ export async function writePageContent(
   const updated = await db.taskPage.update({
     where: { id: page.id },
     data: {
-      editorAccountId: await pageEditor(db, userId),
+      editorAccountId: await pageEditor(db, userId), editorNodeId: nodeActingIn(userId),
       revision: page.revision + 1,
       content: content as Prisma.InputJsonValue,
       searchText: pageSearchText(task ? page.title || task.title : title, content, notesNow),
@@ -647,12 +647,13 @@ export async function writeCollabPage(
     const { task, page } = found;
     if (page && !found.row.trashed) await checkpointPage(db, page, page.title || task?.title);
     const editorAccountId = next.editorAccountId !== undefined ? next.editorAccountId : await pageEditor(db, userId);
+    const editorNodeId = next.editorAccountId !== undefined ? null : nodeActingIn(userId);
     const revision = found.row.revision + 1;
     const searchText = task ? pageSearchText(page?.title || task.title, content, task.notes) : pageSearchText(page!.title, content, page!.notesSnapshot);
     // A page in Trash keeps its time, which Undo of the delete checks.
     const saved = page
-      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, editorAccountId, content: content as Prisma.InputJsonValue, searchText, ...(found.row.trashed ? { updatedAt: page.updatedAt } : {}) } })
-      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, editorAccountId, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
+      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, editorAccountId, editorNodeId, content: content as Prisma.InputJsonValue, searchText, ...(found.row.trashed ? { updatedAt: page.updatedAt } : {}) } })
+      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, editorAccountId, editorNodeId, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
     await db.taskPageMention.deleteMany({ where: { pageId: saved.id } });
     const mentions = collectMentions(content);
     if (mentions.length) {

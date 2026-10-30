@@ -5,13 +5,16 @@
  * helper as the git token, and is only ever read into this process.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "../config.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { prisma } from "../lib/prisma.js";
+import type { ObservedSettings } from "./contract.js";
 
 export const DEVICE_TOKEN_PROVIDER = "ensemble_device";
+/** This pairing's sealing key, beside remote.json (credentials/seal-key.ts). */
+export const SEAL_KEY_FILE = "seal-key.json";
 
 export type SharedFolder = {
   label: string;
@@ -49,6 +52,25 @@ export interface RemoteSettings {
    * idle, 8 hours at most), with the same allow-list as the terminal on this computer. On by default.
    */
   webTerminal: boolean;
+  /**
+   * Files a run's worker attaches (screenshots, reports, logs) go to Ensemble on the web for the
+   * owner, with the run's result. Off: they stay here, and the web shows their names as on this
+   * computer, not uploaded (`ensemble evidence off`). On by default.
+   */
+  evidenceUpload: boolean;
+  /**
+   * Which saved secrets a coding-agent run here gets in its environment when nothing names any:
+   * `all` (compatibility mode, the default: every saved secret, as before) or `named` (only the ones
+   * its run profile, task or node step names). Ensemble Node runs always get only what they name.
+   * Set here only (`ensemble secrets mode`); credentials/mode.ts.
+   */
+  secretsMode: "all" | "named";
+  /**
+   * Sites the owner never wants captured (no screenshot, video, snapshot or live view) and sites whose
+   * captures they preview before anything is sent (`ensemble capture sites`, docs/25 §10.1). Kept here
+   * only; the browser broker and the capture service read them (capture/runtime.ts).
+   */
+  captureSites: CaptureSites;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -59,6 +81,12 @@ export interface RemoteSettings {
   unreachable: string | null;
   /** This installation's own id, kept through unpairing: a new pairing of it is the same computer to the web. */
   installId: string;
+}
+
+export type CaptureSites = { never: string[]; preview: string[] };
+
+function siteList(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 300))].slice(0, 200) : [];
 }
 
 export type MirroredDecision = { hostedId: string; hash: string; risk: "ordinary" | "high"; settled: boolean };
@@ -84,9 +112,15 @@ export interface HeldJob {
   protocol?: number;
   /** False when the server keeps no changed-file text (its claim said so); absent: it does. */
   keepsFileText?: boolean;
+  /** The observed settings last sent (contract.ts `ObservedSettings`): they go again only when they change. */
+  sentObserved?: ObservedSettings;
   decisions: Record<string, MirroredDecision>;
   /** Set when the Mac refused the spec before a local job existed. */
   refusal?: { code: string; message: string };
+  /** Evidence rows already sent (or refused by the server), by id (protocol 6). */
+  evidenceSent?: string[];
+  /** The server has no evidence route: nothing more is sent for this job. */
+  evidenceUnsupported?: boolean;
 }
 
 export function stateDir(): string {
@@ -130,6 +164,9 @@ export function loadSettings(): RemoteSettings {
     browseFiles: saved.browseFiles !== false,
     webEdit: saved.webEdit !== false,
     webTerminal: saved.webTerminal !== false,
+    evidenceUpload: saved.evidenceUpload !== false,
+    secretsMode: saved.secretsMode === "named" ? "named" : "all",
+    captureSites: { never: siteList(saved.captureSites?.never), preview: siteList(saved.captureSites?.preview) },
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),
@@ -187,4 +224,6 @@ export async function saveDeviceToken(token: string, apiBase: string): Promise<v
 
 export async function dropDeviceToken(): Promise<void> {
   await prisma.modelCredential.deleteMany({ where: { userId: env.ENSEMBLE_DEV_USER_ID, provider: DEVICE_TOKEN_PROVIDER } });
+  // The key the web encrypted secrets for belongs to the pairing: unpaired, nothing can be sent to it.
+  rmSync(join(stateDir(), SEAL_KEY_FILE), { force: true });
 }

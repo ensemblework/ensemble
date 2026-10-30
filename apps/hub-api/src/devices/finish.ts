@@ -10,12 +10,22 @@ import { LIVE_DEVICE_STATUSES } from "./constants.js";
 import { expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
+import { observedUpdate } from "../workspace/engines/observed.js";
+import type { StepReport } from "../node/report.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
 export type DeviceResult = { kind: "pr" | "commit" | "branch"; url: string; sha?: string };
 
 type FinishDb = PrismaClient | Prisma.TransactionClient;
+
+/** Every string in a value with key shapes hidden, as every text a computer sends is. */
+function redactDeep<T>(value: T): T {
+  if (typeof value === "string") return redactText(value) as T;
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item)) as T;
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactDeep(item)])) as T;
+  return value;
+}
 
 function taskStatusFor(outcome: DeviceOutcome, markDone: boolean): "done" | "waiting_approval" | "todo" | "blocked" {
   if (outcome === "succeeded") return markDone ? "done" : "waiting_approval";
@@ -33,7 +43,7 @@ function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelle
 export async function finishDeviceJob(
   prisma: PrismaClient,
   job: WorkspaceJob & { task: { id: string; title: string; status: string; owner: string } },
-  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals },
+  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals; report?: StepReport | null },
 ): Promise<boolean> {
   await requireVerifiedUser(job.userId);
   const summary = redactText(input.summary).slice(0, 20_000);
@@ -61,6 +71,8 @@ export async function finishDeviceJob(
         progress,
         results: input.results,
         leaseToken: null,
+        // The worker's own result (report_result or .ensemble/result.json on the computer), redacted again here.
+        ...(input.report ? { report: redactDeep(input.report) as unknown as Prisma.InputJsonValue } : {}),
         // What the computer reported: counts, the model that answered, its cost estimate, the files changed (names only).
         ...(totals
           ? {
@@ -69,6 +81,7 @@ export async function finishDeviceJob(
               tokensIn: totals.tokensIn ?? 0,
               tokensOut: totals.tokensOut ?? 0,
               evidence: { files: totals.files.map((file) => ({ ...file, path: redactText(file.path).slice(0, 500) })), model: totals.model ?? null, costUsd: totals.costUsd ?? null, ...(totals.reviewId ? { reviewId: totals.reviewId } : {}) } as Prisma.InputJsonValue,
+              ...observedUpdate(totals.observed),
             }
           : {}),
       },

@@ -27,6 +27,42 @@ test("an id annotating its own title goes, and the title links", () => {
   assert.equal(formatEntityText(`the new task (task: ${BRIEF})`, refs), `the new task ([Draft brief](/tasks/${BRIEF}))`);
 });
 
+test("an id or record link right after its own title links that title once, never repeating it", () => {
+  const brief = `Expire Needs Me requests when their task ends (ensemble://task/${BRIEF}), read its page. Ensure terminal tasks cannot leave actionable stale requests`;
+  const bareId = brief.replace(`ensemble://task/${BRIEF}`, BRIEF);
+  const linked = `[Expire Needs Me requests when their task ends](/tasks/${BRIEF}), read its page. Ensure terminal tasks cannot leave actionable stale requests`;
+  const clean = "Expire Needs Me requests when their task ends, read its page. Ensure terminal tasks cannot leave actionable stale requests";
+  // A task's label is its title, or its title with the start of its description.
+  for (const label of ["Expire Needs Me requests when their task ends", "Expire Needs Me requests when their task ends. Ensure terminal tasks cannot leave actionable stale"]) {
+    const known: AssistantRef[] = [{ kind: "task", id: BRIEF, label }];
+    assert.equal(formatEntityText(brief, known), linked, label);
+    assert.equal(formatEntityText(brief, known, { plain: true }), clean, `copy, ${label}`);
+    assert.equal(formatEntityText(bareId, known), linked, `bare id, ${label}`);
+    assert.equal(formatEntityText(bareId, known, { plain: true }), clean, `bare id copy, ${label}`);
+  }
+  assert.equal(
+    formatEntityText(`Ship the release (ensemble://task/${CALL}) today.`, [{ kind: "task", id: CALL, label: "Ship the release — notes for v2" }]),
+    `[Ship the release](/tasks/${CALL}) today.`,
+    "the title's first clause, before a dash",
+  );
+  // A quoted title keeps its quotes; other words before the link are not taken for the title.
+  assert.equal(formatEntityText(`See “Draft brief” (ensemble://task/${BRIEF}).`, refs), `See “[Draft brief](/tasks/${BRIEF})”.`);
+  assert.equal(formatEntityText(`Read the brief (ensemble://task/${BRIEF}).`, refs, { plain: true }), "Read the brief (Draft brief).");
+  assert.equal(formatEntityText(`Relaunch (${LAUNCH_TASK}).`, [{ kind: "task", id: LAUNCH_TASK, label: "Launch" }]), `Relaunch ([Launch](/tasks/${LAUNCH_TASK})).`);
+  // While streaming, the link is held back with its bracket; the title links once the text moves on.
+  const title = "Expire Needs Me requests when their task ends";
+  const known: AssistantRef[] = [{ kind: "task", id: BRIEF, label: title }];
+  assert.equal(formatEntityText(`${title} (ensemble://task/${BRIEF.slice(0, 8)}`, known, { streaming: true }), title);
+  assert.equal(formatEntityText(`${title} (ensemble://task/${BRIEF}`, known, { streaming: true }), title);
+  assert.equal(formatEntityText(`${title} (ensemble://task/${BRIEF}), read`, known, { streaming: true }), `[${title}](/tasks/${BRIEF}), read`);
+});
+
+test("a full stop after a bare record link is not part of its address", () => {
+  assert.equal(formatEntityText(`Open ensemble://task/${BRIEF}.`, refs), `Open [Draft brief](/tasks/${BRIEF}).`);
+  assert.equal(formatEntityText(`Open ensemble://task/${CALL}, then rest.`, refs, { plain: true }), "Open Call Mira, then rest.");
+  assert.equal(formatEntityText(`Open ensemble://task/${UNKNOWN}.`, refs), `Open ensemble://task/${UNKNOWN}.`, "an unknown record stays as written");
+});
+
 test("an old summary keeps its titles and loses the ids beside them", () => {
   const summary = `Added 2 task(s): “Draft brief” (${BRIEF}); “Call Mira” (${CALL}).`;
   assert.equal(formatEntityText(summary, [], { plain: true }), "Added 2 task(s): “Draft brief”; “Call Mira”.");

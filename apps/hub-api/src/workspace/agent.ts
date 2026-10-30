@@ -49,7 +49,10 @@ import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPul
 import { cachedAgents } from "../subscriptions/detect.js";
 import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
 import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, sessionTaskPrompt, STALL_MS, steerPrompt, watchEngine } from "./engine-watch.js";
-import { MISSING_SECRET_RULE, runSecretEnv, secretRules } from "../lib/run-secrets.js";
+import { MISSING_SECRET_RULE, secretRules } from "../lib/run-secrets.js";
+import { runCredentials } from "../credentials/run-env.js";
+import { evidenceDir } from "../evidence/files.js";
+import { collectRunResult, RESULT_FILE } from "../evidence/run-tools.js";
 import { LOCAL_ACCOUNT_NAME } from "../lib/desktop-user.js";
 import { purposeOf } from "../lib/skill-purpose.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -231,8 +234,20 @@ export function workingNotes(ctx: JobContext): string {
   return [
     "How this run works (Ensemble checks every tool call; a refusal is the person's setting, not an error to work around):",
     ...engineRules(ctx),
+    reportingNote(ctx),
     "- Finish with a short summary (2–5 sentences): what you changed, how you checked it, and anything left open.",
   ].join("\n");
+}
+
+/** How the worker reports its result and attaches what its owner should see (docs/30 §9). */
+function reportingNote(ctx: Pick<JobContext, "job">): string {
+  let copied = "";
+  try {
+    copied = ` (copied to ${evidenceDir(ctx.job.id)})`;
+  } catch {
+    // A sample run without an id (the prompt catalogue).
+  }
+  return `- At the end, call report_result (outcome, summary, checks, commit) after attach_evidence for files your owner should see${copied}. No MCP tools: write it as JSON to ${RESULT_FILE}.`;
 }
 
 /** How the run names the person: their first name, or "the person" for the desktop's own unnamed account. */
@@ -267,7 +282,7 @@ function outsideRule(ctx: Pick<JobContext, "job" | "accessMode" | "outsideAccess
 }
 
 function engineRules(ctx: JobContext): string[] {
-  return [...baseEngineRules(ctx), ...secretRules(Object.keys(ctx.secretEnv ?? {})), MISSING_SECRET_RULE];
+  return [...baseEngineRules(ctx), ...secretRules(Object.keys(ctx.secretEnv ?? {}), ctx.secretRefs ?? []), MISSING_SECRET_RULE];
 }
 
 function baseEngineRules(ctx: JobContext): string[] {
@@ -663,10 +678,14 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           : caps.mechanism === "windows"
             ? "the Windows sandbox account"
             : undefined;
+  // Saved secrets: every environment secret for a Hub or CLI run in compatibility mode, only the ones it names
+  // for a run with a scope (Ensemble Node) or in named mode; reference secrets by name only (credentials/run-env.ts).
+  const credentials = job.kind === "code" ? await runCredentials(prisma, userId, job) : { env: {}, references: [] };
   const ctx: JobContext = {
     prisma,
     job,
-    secretEnv: job.kind === "code" ? await runSecretEnv(prisma, userId) : {},
+    secretEnv: credentials.env,
+    secretRefs: credentials.references,
     userId,
     taskId: job.taskId,
     taskTitle: job.task.title,
@@ -1201,6 +1220,15 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   // An engine that stopped or failed never wrote its result: its open tool calls end with the run.
   if (engineTrace && outcome !== "success") await engineTrace.stop(outcome === "failed" || outcome === "blocked" ? "failed" : "skipped", error ?? "The run stopped.");
   if (copies) await removeCopies(ctx, copies).catch((failure: unknown) => app.log.warn({ err: failure }, "could not remove attachment copies"));
+  // Its browser tabs, recordings, apps and displays end with the run; recordings still going are kept as its evidence.
+  if (process.env.ENSEMBLE_DESKTOP === "1") {
+    const { finishRunCapture } = await import("../evidence/capture-tools.js");
+    await finishRunCapture(ctx).catch((failure: unknown) => app.log.warn({ err: failure }, "could not end the run's browser and capture work"));
+  }
+  // The worker's own result when it did not call report_result: its .ensemble/result.json and its evidence folder.
+  if (job.kind === "code" && !chat && ctx.root && outcome !== "interrupted") {
+    await collectRunResult({ ...ctx, signal: new AbortController().signal }, new Date(started)).catch((failure: unknown) => app.log.warn({ err: failure }, "could not read the run's own result"));
+  }
   const blockedNote = ctx.blockedOutside.length
     ? `Blocked by the run's settings: ${[...new Set(ctx.blockedOutside)].join(", ")}.`
     : "";

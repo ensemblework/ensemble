@@ -23,8 +23,8 @@ import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { claudeLaunch } from "@ensemble/shared-types";
-import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { claudeLaunch, claudeModel } from "@ensemble/shared-types";
+import { ensembleDataDenies } from "../data-denies.js";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE, holdsProtected, SECRET_PATHS, within, workspaceFolders, workspaceRoot } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { claudeBinary } from "../../subscriptions/detect.js";
@@ -33,6 +33,7 @@ import { TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { windowTier } from "./observed.js";
 import { EngineTrace } from "./trace.js";
 
 export type EngineResult = {
@@ -162,6 +163,23 @@ function summarize(name: string, input: Record<string, unknown>): string {
   return `${name}${value ? ` ${String(value).slice(0, 120)}` : ""}`;
 }
 
+/**
+ * The context window Claude Code reports it used (the result's `modelUsage`, per model): the main
+ * model's (the one that wrote most), in tokens, and as that model's window choice where the table
+ * knows its windows (a fixed 1M window counts as the long one).
+ */
+export function claudeWindow(modelUsage: unknown, model: string | null): { size: number; context?: "default" | "long_context" } | null {
+  if (typeof modelUsage !== "object" || modelUsage === null) return null;
+  const rows = Object.entries(modelUsage as Record<string, { contextWindow?: unknown; outputTokens?: unknown }>).filter(([, row]) => typeof row?.contextWindow === "number" && row.contextWindow > 0);
+  if (!rows.length) return null;
+  const own = rows.find(([name]) => model && name.replace(/\[1m\]$/i, "") === model.replace(/\[1m\]$/i, "")) ?? [...rows].sort(([, a], [, b]) => Number(b.outputTokens ?? 0) - Number(a.outputTokens ?? 0))[0]!;
+  const size = Math.round(own[1].contextWindow as number);
+  const window = claudeModel(own[0])?.spec.window;
+  const windows = !window ? {} : "fixed" in window ? (window.fixed >= 1_000_000 ? { long: window.fixed } : { standard: window.fixed }) : window;
+  const context = windowTier(size, windows);
+  return { size, ...(context ? { context } : {}) };
+}
+
 export async function runClaudeCode(
   ctx: JobContext,
   options: {
@@ -186,7 +204,7 @@ export async function runClaudeCode(
   const credential = registerEngineRun(ctx);
   const hookCommand = `"${process.execPath}" "${hookScriptPath()}" --source claude --engine`;
   const home = homedir();
-  const closed = [...SECRET_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
+  const closed = [...SECRET_PATHS.map((name) => join(home, name)), ...ensembleDataDenies({ home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
   const { access, writable } = await engineSandboxPaths(ctx);
   const filesystem = claudeFilesystem({
     access,
@@ -267,7 +285,8 @@ export async function runClaudeCode(
       if (message.type === "system" && message.subtype === "init") {
         started = true;
         result.model = typeof message.model === "string" ? message.model : null;
-        await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null });
+        // What Claude Code says it runs (node/settings.ts observed): its model; the window comes with the result.
+        await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null, observed: { ...(result.model ? { model: result.model } : {}) } });
         await ctx.progress(`Claude Code started${result.model ? ` (${result.model})` : ""}`);
       } else if (message.type === "assistant") {
         const body = (message.message ?? {}) as { content?: Array<Record<string, unknown>>; usage?: Record<string, number>; model?: string };
@@ -310,6 +329,8 @@ export async function runClaudeCode(
         const usage = (message.usage ?? {}) as Record<string, number>;
         result.tokensIn = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
         result.tokensOut = usage.output_tokens ?? 0;
+        const window = claudeWindow(message.modelUsage, result.model);
+        if (window) await ctx.event("engine_context", window);
         if (message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")) {
           failure =
             message.subtype === "error_max_turns"

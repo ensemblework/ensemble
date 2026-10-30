@@ -380,7 +380,10 @@ export function TaskPage({
                     close();
                     void api
                       .moveTask(taskId, { status })
-                      .then(() => client.invalidateQueries())
+                      .then((result) => {
+                        if (result.answered) toast(result.answered);
+                        return client.invalidateQueries();
+                      })
                       .catch((error: Error) => toast(error.message, { tone: "error" }));
                   }}
                 >
