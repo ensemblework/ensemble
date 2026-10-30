@@ -559,7 +559,8 @@ export async function convertPage(
       await db.taskPage.update({
         where: { id: page!.id },
         data: {
-          taskId: targetId, revision: page!.revision + 1, boardId: null, boardColumnId: null, boardOrder: 0,
+          // A page on a custom board stays in its column as a task page there.
+          taskId: targetId, revision: page!.revision + 1,
           content: retargetReplies(content, "task", targetId) as Prisma.InputJsonValue,
         },
       });

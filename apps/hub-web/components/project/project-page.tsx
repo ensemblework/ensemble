@@ -19,7 +19,7 @@ import { PageLoadFailure } from "@/components/pages/page-load";
 import { MakeDiagramButton, projectDiagramPrompt } from "@/components/diagrams/make-diagram";
 import { ProjectBody } from "./project-body";
 import { LinkedWork } from "./linked-work";
-import { takeNewProject, UNTITLED_PROJECT } from "./new-project";
+import { isNewProject, UNTITLED_PROJECT } from "./new-project";
 
 
 export function ProjectPage({ id, variant = "page" }: { id: string; variant?: "page" | "peek" }) {
@@ -27,7 +27,7 @@ export function ProjectPage({ id, variant = "page" }: { id: string; variant?: "p
   const toast = useToast();
   const access = useSpaceAccess();
   const [summaryEditing, setSummaryEditing] = useState(false);
-  const [focusTitle] = useState(() => takeNewProject(id));
+  const focusTitle = isNewProject(id);
   const project = useQuery({
     queryKey: ["project", id],
     queryFn: () => api.project(id).then(result => result.project),

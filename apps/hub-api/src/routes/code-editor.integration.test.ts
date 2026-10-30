@@ -297,3 +297,36 @@ test("the repository list names a run's checkout by its task and origin, never i
     await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
   }
 });
+
+test("Accept all commits what the run left even when a path it touched is gone", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const repo = join(base, "runs", "accept-gone");
+  mkdirSync(repo, { recursive: true });
+  git(repo, "init", "-q");
+  writeFileSync(join(repo, "base.txt"), "base\n");
+  git(repo, "add", "-A");
+  git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "start");
+  const initialHead = git(repo, "rev-parse", "HEAD").trim();
+  const startTree = snapshot(repo);
+  writeFileSync(join(repo, "kept.txt"), "kept\n");
+  const endTree = snapshot(repo);
+  const user = await prisma.user.create({ data: { email: `code-accept-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Accept" } });
+  const task = await prisma.task.create({ data: { userId: user.id, title: "Keep the change", createdBy: "me", status: "todo" } });
+  const job = await prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, executionMode: "sandbox", model: "test", repoPath: repo } as never });
+  const review = await prisma.codeReview.create({
+    data: { userId: user.id, jobId: job.id, repoPath: repo, initialHead, startTree, endTree, agentPaths: ["kept.txt", "migrations/20261025010000_gone/migration.sql"], expiresAt: new Date(Date.now() + 86_400_000) },
+  });
+  const app = await build(user.id);
+  try {
+    const res = await app.inject({ method: "POST", url: `/api/code/reviews/${review.id}/accept` });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.ok((res.json() as { commit: string | null }).commit, "the run's change is committed");
+    assert.match(git(repo, "show", "--name-only", "--format=", "HEAD"), /kept\.txt/);
+  } finally {
+    await app.close();
+    await prisma.codeReview.deleteMany({ where: { userId: user.id } });
+    await prisma.workspaceJob.deleteMany({ where: { userId: user.id } });
+    await prisma.task.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+  }
+});

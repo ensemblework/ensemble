@@ -85,8 +85,12 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
     [params, pathname],
   );
 
+  // Set while the event that opened a page is still being handled: that click must not also close it (see below).
+  const opening = useRef(false);
   const open = useCallback(
     (id: string, nextKind: PeekKind = "task") => {
+      opening.current = true;
+      window.setTimeout(() => { opening.current = false; }, 0);
       if (mode === "page" && nextKind === "task") router.push(`/tasks/${id}`);
       else if (mode === "page" && nextKind === "project") router.push(`/projects/${id}`);
       else if (mode === "page" && nextKind === "page") router.push(`/pages/${id}`);
@@ -95,6 +99,32 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
     [mode, router, withPeek],
   );
   const close = useCallback(() => router.push(withPeek(null), { scroll: false }), [router, withPeek]);
+
+  // Like Notion: a plain click on the page beside the peek closes it. Not a drag or a text selection,
+  // not in menus or dialogs, and not the click that opened another page (a card, a row).
+  useEffect(() => {
+    if (!peekId || fullscreen) return;
+    const outside = (target: EventTarget | null) => {
+      const element = target instanceof Element ? target : null;
+      return Boolean(element?.closest("#main-content") && !element.closest(".task-peek, [data-peek-keep], [role=dialog], [role=menu], [role=listbox], [data-modal-layer]"));
+    };
+    let down: { x: number; y: number } | null = null;
+    const onDown = (event: PointerEvent) => { down = event.button === 0 && outside(event.target) ? { x: event.clientX, y: event.clientY } : null; };
+    const onClick = (event: MouseEvent) => {
+      const start = down;
+      down = null;
+      if (!start || !outside(event.target) || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6) return;
+      if (opening.current || window.getSelection()?.toString()) return;
+      close();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    // Bubble phase on the document: React's own click handlers (which may open another page) run first.
+    document.addEventListener("click", onClick);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("click", onClick);
+    };
+  }, [peekId, fullscreen, close]);
 
   useEffect(() => {
     if (!peekId) return;

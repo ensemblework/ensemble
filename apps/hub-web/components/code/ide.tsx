@@ -59,6 +59,7 @@ import { openTab } from "@/lib/code-tabs";
 import { dateTime, languageFor } from "@/lib/format";
 import { looksLikeId, repoName, repoViews, shortBranch, viewFor } from "@/lib/code-repos";
 import { usePersistentState } from "@/lib/prefs";
+import { Fold } from "./code-lists";
 
 type EditorModule = typeof import("@/components/code/review-editor");
 let editorModule: EditorModule | null = null;
@@ -698,10 +699,7 @@ function Explorer({
           </ul>
         ) : (
           <>
-            <div className="flex items-center justify-between px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-              {review ? "Changes from this run" : "Changes"}
-              <span className="rounded bg-raised px-1.5 font-normal">{changed.length}</span>
-            </div>
+            <Fold title={review ? "Changes from this run" : "Changes"} count={changed.length} persist="changes">
             <ul className="px-1">
               {changed.map((row) => {
                 const counts = progressOf(row.path);
@@ -726,16 +724,17 @@ function Explorer({
                 );
               })}
             </ul>
+            </Fold>
             {unreviewable.length ? (
-              <>
-                <div className="mt-3 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Changed, can&apos;t be reviewed</div>
+              <Fold title="Changed, can't be reviewed" count={unreviewable.length} persist="unreviewable">
                 {unreviewable.map((row) => (
                   <div key={row.path} className="truncate px-3 py-0.5 text-[12px] text-faint" title={row.path}>{row.path}</div>
                 ))}
-              </>
+              </Fold>
             ) : null}
-            <div className="mt-3 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Folder</div>
-            <TreeNode source={source} path="" depth={0} active={active} onOpen={onOpen} />
+            <Fold title="Folder" persist="folder">
+              <TreeNode source={source} path="" depth={0} active={active} onOpen={onOpen} />
+            </Fold>
           </>
         )}
       </div>

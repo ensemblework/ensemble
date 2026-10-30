@@ -33,6 +33,9 @@ const pages: BoardPage[] = [
   { id: "task1", kind: "task", title: "Run experiment", columnId: "testing", boardOrder: 1, createdAt: date, updatedAt: date },
 ];
 
+// A task page on the board: shown with the Ensemble board's task card.
+const task = { id: "task1", title: "Run experiment", status: "todo", priority: "p0", owner: "agent", people: [], labels: ["lab"], due: null, boardOrder: 1, projectId: null } as unknown as import("@/lib/api").TaskRecord;
+
 async function mount({ viewer = false } = {}) {
   const { CustomBoard } = await import("./custom-board");
   const pushes: string[] = [], requests: string[] = [];
@@ -45,7 +48,8 @@ async function mount({ viewer = false } = {}) {
     requests.push(`${method} ${path}`);
     let data: unknown = {};
     if (path === "/api/boards/research") data = { board, pages: rows };
-    else if (path === "/api/pages" || path === "/api/tasks") data = { pages: [], tasks: [] };
+    else if (path === "/api/pages") data = { pages: [] };
+    else if (path === "/api/tasks") data = { tasks: [task] };
     else if (path === "/api/shell") data = shell;
     else if (path === "/api/pages/note1" && method === "DELETE") { rows = rows.filter((page) => page.id !== "note1"); return new Response(null, { status: 204 }); }
     else throw new Error(`Unexpected request: ${method} ${path}`);
@@ -91,7 +95,11 @@ test("custom boards draw the Ensemble board's cards and columns, and a card open
     assert.ok(note.querySelector("button[aria-label='Delete Lab notes']"), "the hover trash button");
     await act(async () => note.click());
     assert.deepEqual(board.pushes.at(-1), "/board?board=research&peek=note1&kind=page");
-    await act(async () => board.card("Run experiment")!.click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    const taskCard = board.card("Run experiment")!;
+    assert.match(taskCard.textContent ?? "", /Agent/, "a task page shows its owner, priority and labels like the Ensemble board");
+    assert.match(taskCard.textContent ?? "", /lab/);
+    await act(async () => taskCard.click());
     assert.deepEqual(board.pushes.at(-1), "/board?board=research&peek=task1");
   } finally { await board.done(); }
 });
