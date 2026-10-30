@@ -3,7 +3,7 @@
  * DM, each goes to the owner's computer as `node.tool.request`, and the computer answers with the real
  * tool layer (a headless Chromium against a local server) and its real answer and evidence code, over
  * a simulated event stream and the real device routes. What it captures is the node's own evidence:
- * the owner opens it, `node_show` attaches it. A capture the computer holds (a site the owner previews
+ * the owner opens it, and it comes with the node's reply (or what `node_show` chose). A capture the computer holds (a site the owner previews
  * first) waits on an owner-only card: previewed from the computer, released (uploaded, then usable) or
  * discarded (gone on both sides). A run's held capture gets the same card where its run is followed,
  * and a run's live view reaches its owner only. Plan reports show only media a passing check names
@@ -215,8 +215,8 @@ test("a node browses and captures on its owner's computer; the capture is its ev
     assert.ok(["browser_open", "browser_snapshot", "browser_screenshot", "capture_screenshot", "capture_check", "capture_app_start"].every((name) => seen[0]!.tools.includes(name)), "a DM with its owner has the browser and capture tools");
     const asked = computer.heard.filter((frame) => frame.event === "node.tool.request");
     assert.deepEqual(asked.map((frame) => [frame.data.tool, frame.data.name]), [["browser", "browser_open"], ["browser", "browser_snapshot"], ["capture", "capture_screenshot"]]);
-    const operation = `node:${node.id}:conversation:${room.id}:shared`;
-    assert.ok(asked.every((frame) => frame.data.operation === operation), "one operation for the node in this conversation: its tab lasts across calls");
+    const operation = `node:${node.id}:own`;
+    assert.ok(asked.every((frame) => frame.data.operation === operation), "one operation for the node: its tab lasts across calls and conversations");
     const reply = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id).at(-1)!;
     assert.deepEqual(reply.data.tools!.map((tool) => [tool.name, tool.state]), [["browser_open", "ok"], ["browser_snapshot", "ok"], ["capture_screenshot", "ok"]]);
     assert.match(reply.data.tools![1]!.summary ?? "", /Create your account/, "the page read as an accessibility tree");
@@ -224,7 +224,8 @@ test("a node browses and captures on its owner's computer; the capture is its ev
     // The screenshot is the node's own evidence: uploaded, on no run, the owner's only.
     const shot = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id, kind: "screenshot" } });
     assert.deepEqual([shot.jobId, shot.operation, shot.held, shot.local, shot.mime, shot.userId, shot.deviceId], [null, operation, false, false, "image/png", mira.id, computer.laptop.id]);
-    assert.match(reply.data.tools![2]!.summary ?? "", /Kept as your evidence .*“signup.png”/, "the node reads its id in the tool's data");
+    assert.match(reply.data.tools![2]!.summary ?? "", /Kept as your evidence: .*“signup.png”/, "the node reads its id in the tool's data");
+    assert.deepEqual(reply.data.media!.map((item) => item.evidenceId), [shot.id], "the screenshot came with the reply by itself");
     const local = computer.db.evidence.find((row) => row.id === shot.id)!;
     assert.ok(existsSync(join(operationEvidenceDir(operation), String(local.storageKey))), "the computer keeps its copy in the operation's evidence folder");
     const opened = await mira.inject({ method: "GET", url: `/api/node/evidence/${shot.id}` });

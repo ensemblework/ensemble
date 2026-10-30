@@ -1,9 +1,10 @@
 /**
  * Media in the conversation (ensemble-node docs/design B20, extension §8.5): a node's message can carry
  * the screenshots, videos and files its owner's runs attached (evidence): the owner's own, uploaded (not
- * kept on the computer). A mission's report brings the media of the steps that were done or passed, so
- * what reaches the chat was checked first. Reading a file follows the message: whoever may read a
- * message that shows it may open it; anyone else, only its owner.
+ * kept on the computer). What a node's own tools capture in a turn comes with its reply by itself,
+ * unless it chose with node_show. A mission's report brings the media of the steps that were done or
+ * passed, so what reaches the chat was checked first. Reading a file follows the message: whoever may
+ * read a message that shows it may open it; anyone else, only its owner.
  */
 import type { NodeMessage, PrismaClient } from "@prisma/client";
 import { canSee } from "./store.js";
@@ -13,23 +14,48 @@ export type Media = { evidenceId: string; kind: string; name: string; mime: stri
 
 /** At most this many files on one message. */
 export const MAX_MEDIA = 8;
+/** At most this many captures come with a reply by themselves (the newest first). */
+export const AUTO_MEDIA = 6;
 const SHOWN_KINDS = new Set(["screenshot", "image", "video"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const pending = new Map<string, Media[]>();
+/** What a turn chose with node_show. */
+const chosen = new Map<string, Media[]>();
+/** What a turn's own tools captured (screenshots, videos, terminal screens, shared files), oldest first. */
+const captured = new Map<string, Media[]>();
 
 /** Files a turn attached to its reply (node_show), shown when the reply is posted. */
 export function attachToTurn(turnId: string, items: readonly Media[]): number {
-  const list = pending.get(turnId) ?? [];
+  const list = chosen.get(turnId) ?? [];
   for (const item of items) if (!list.some((row) => row.evidenceId === item.evidenceId) && list.length < MAX_MEDIA) list.push(item);
-  pending.set(turnId, list);
+  chosen.set(turnId, list);
   return list.length;
 }
 
+/** Files a turn's tools captured and kept (not held, uploaded): they come with its reply unless it chose with node_show. */
+export function rememberCaptured(turnId: string, items: readonly Media[]): void {
+  const list = (captured.get(turnId) ?? []).filter((row) => !items.some((item) => item.evidenceId === row.evidenceId));
+  list.push(...items);
+  captured.set(turnId, list.slice(-MAX_MEDIA * 4));
+}
+
+/** What a reply shows: what the turn chose with node_show, else what it captured (the newest first, at most `AUTO_MEDIA`). */
 export function takeTurnMedia(turnId: string): Media[] {
-  const list = pending.get(turnId) ?? [];
-  pending.delete(turnId);
-  return list;
+  const picked = chosen.get(turnId);
+  const own = captured.get(turnId) ?? [];
+  forgetTurnMedia(turnId);
+  return picked ?? own.slice(-AUTO_MEDIA).reverse();
+}
+
+/** The turn ended: what it chose or captured is not shown any more. */
+export function forgetTurnMedia(turnId: string): void {
+  chosen.delete(turnId);
+  captured.delete(turnId);
+}
+
+/** The pictures and videos among files (what a browser or capture call's reply shows by itself). */
+export function shownKinds<T extends { kind: string }>(items: readonly T[]): T[] {
+  return items.filter((item) => SHOWN_KINDS.has(item.kind));
 }
 
 type EvidenceRow = { id: string; kind: string; name: string; mime: string; caption: string | null; size: number; local: boolean; held: boolean; details: unknown };

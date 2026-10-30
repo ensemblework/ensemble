@@ -11,6 +11,7 @@ import { z } from "zod";
 import { NODE_TOOL_OUTPUT_BYTES, TERMINAL_CHUNK_BYTES } from "../remote/contract.js";
 import { enqueueTurn } from "../node/queue.js";
 import { recoverNodeToolDecisions } from "../node/device-tool-decisions.js";
+import { recoverSudoCards, sudoRunEnded } from "../node/sudo.js";
 
 type Redisish = { get(key: string): Promise<string | null>; set(key: string, value: string, ...args: Array<string | number>): Promise<unknown>; del(...keys: string[]): Promise<unknown>; mget(...keys: string[]): Promise<Array<string | null>> };
 
@@ -27,6 +28,8 @@ export type ToolRunState = {
   command: string;
   folder: string;
   startedAt: string;
+  /** A command run as the administrator: its approval card, which says how it ended (node/sudo.ts). */
+  cardId?: string | null;
   next: number;
   bytes: number;
   done: boolean;
@@ -104,6 +107,7 @@ export async function nodeToolRoutes(app: FastifyInstance, gate: Gate): Promise<
   if (process.env.ENSEMBLE_DESKTOP !== "1") {
     app.addHook("onReady", async () => {
       await recoverNodeToolDecisions(app).catch((error: unknown) => app.log.warn({ err: error }, "could not resume node tool questions"));
+      await recoverSudoCards(app).catch((error: unknown) => app.log.warn({ err: error }, "could not resume sudo cards"));
     });
   }
 
@@ -123,6 +127,7 @@ export async function nodeToolRoutes(app: FastifyInstance, gate: Gate): Promise<
     await redis.set(runKey(runId), JSON.stringify(next), "EX", TOOL_RUN_TTL_SECONDS);
     // A command that ran on in the background wakes its node once, when it ends.
     if (chunk.done && chunk.wake && (await redis.set(wokenKey(runId), "1", "EX", TOOL_RUN_TTL_SECONDS, "NX")) === "OK") {
+      if (run.cardId) await sudoRunEnded(app, run.cardId, next.exitCode).catch((error: unknown) => request.log.warn({ err: error }, "could not update the sudo card"));
       const tail = (await tailOf(redis, runId, next)).trim();
       await enqueueTurn(app, {
         nodeId: run.nodeId,

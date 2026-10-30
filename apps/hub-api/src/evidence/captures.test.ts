@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { after } from "node:test";
@@ -14,7 +14,7 @@ import test, { after } from "node:test";
 const scratch = mkdtempSync(join(homedir(), ".ensemble-captures-"));
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "data");
 process.env.DATABASE_URL ??= "postgresql://localhost/unused";
-const { capturedFiles, recordCaptures, recordedNote } = await import("./captures.js");
+const { capturedFiles, recordCaptures, recordedNote, sweepOperationFolders } = await import("./captures.js");
 const { evidenceDir, operationEvidenceDir, isNodeOperation } = await import("./files.js");
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -99,4 +99,63 @@ test("a node's own captures belong to its tool operation; a file outside that fo
   assert.equal(recorded.rows.length, 1);
   assert.deepEqual([recorded.rows[0]!.jobId, recorded.rows[0]!.nodeId, recorded.rows[0]!.operation], [null, "node-1", operation]);
   assert.match(recorded.refused[0]!.reason, /not in this work's evidence folder/);
+});
+
+/** Evidence rows that answer the filters the brake and the sweep use (a date from, a list, not null). */
+function filteredTable(rows: Array<Record<string, unknown>>) {
+  const fits = (value: unknown, want: unknown) => {
+    if (want && typeof want === "object" && !(want instanceof Date)) {
+      const rule = want as { gte?: Date; in?: unknown[]; not?: unknown };
+      if (rule.gte) return value instanceof Date && value >= rule.gte;
+      if (rule.in) return rule.in.includes(value);
+      if ("not" in rule) return value !== rule.not;
+    }
+    return value === want;
+  };
+  const matches = (row: Record<string, unknown>, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, want]) => fits(row[key], want));
+  return {
+    rows,
+    jobEvidence: {
+      count: async ({ where }: { where: Record<string, unknown> }) => rows.filter((row) => matches(row, where)).length,
+      findFirst: async ({ where }: { where: Record<string, unknown> }) => rows.find((row) => matches(row, where)) ?? null,
+      findMany: async ({ where }: { where: Record<string, unknown> }) => rows.filter((row) => matches(row, where)),
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        const row = { jobId: null, nodeId: null, operation: null, held: false, variantOf: null, createdAt: new Date(), ...data };
+        rows.push(row);
+        return row;
+      },
+      deleteMany: async ({ where }: { where: Record<string, unknown> }) => {
+        const gone = rows.filter((row) => matches(row, where));
+        for (const row of gone) rows.splice(rows.indexOf(row), 1);
+        return { count: gone.length };
+      },
+    },
+  };
+}
+
+test("a node's one operation brakes on the files of its last day only, and loses files older than 30 days while it stays in use", async () => {
+  const operation = "node:6f1c2b9e-0000-4000-8000-000000000003:own";
+  const dir = operationEvidenceDir(operation);
+  mkdirSync(dir, { recursive: true });
+  const day = 86_400_000;
+  const old = Array.from({ length: 100 }, (_, index) => ({ id: randomUUID(), operation, nodeId: "node-1", jobId: null, storageKey: `old-${index}.png`, createdAt: new Date(Date.now() - 2 * day) }));
+  const table = filteredTable([...old]);
+  writeFileSync(join(dir, "today.png"), PNG);
+  const recorded = await recordCaptures(table as never, { userId: "owner", nodeId: "node-1", operation }, [{ path: join(dir, "today.png"), kind: "screenshot", held: false }], []);
+  assert.equal(recorded.rows.length, 1, "a hundred files from before today do not stop it");
+  for (let index = 0; index < 99; index += 1) table.rows.push({ id: randomUUID(), operation, nodeId: "node-1", jobId: null, storageKey: `new-${index}.png`, createdAt: new Date() });
+  writeFileSync(join(dir, "more.png"), PNG);
+  const braked = await recordCaptures(table as never, { userId: "owner", nodeId: "node-1", operation }, [{ path: join(dir, "more.png"), kind: "screenshot", held: false }], []);
+  assert.equal(braked.rows.length, 0);
+  assert.match(braked.refused[0]!.reason, /A node keeps at most 100 new files a day/);
+
+  // The folder is in use (today.png), so it stays; a file from 31 days ago goes, with its row.
+  writeFileSync(join(dir, "old-0.png"), PNG);
+  const longAgo = new Date(Date.now() - 31 * day);
+  utimesSync(join(dir, "old-0.png"), longAgo, longAgo);
+  assert.equal(await sweepOperationFolders(table as never), 0, "no folder removed");
+  assert.equal(existsSync(join(dir, "old-0.png")), false);
+  assert.equal(existsSync(join(dir, "today.png")), true);
+  assert.equal(table.rows.some((row) => row.storageKey === "old-0.png"), false);
+  assert.equal(table.rows.some((row) => row.storageKey === "today.png"), true);
 });

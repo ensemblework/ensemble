@@ -20,6 +20,9 @@ export const EVIDENCE_MAX_BYTES = 100 * MB;
 /** The most files one run attaches: a brake on a looping agent, not on real work. */
 export const MAX_EVIDENCE_PER_JOB = 100;
 
+/** A node's own tool operation lasts as long as the node: the same brake counts only what it made in the last day. */
+export const NODE_EVIDENCE_WINDOW_MS = 86_400_000;
+
 /** Folders of keys and sign-ins, and git's own: nothing under them is attached. */
 const CREDENTIAL_FOLDERS = new Set([".git", ".ssh", ".aws", ".kube", ".gnupg", ".docker", ".azure", ".gcloud", ".password-store", ".terraform.d"]);
 

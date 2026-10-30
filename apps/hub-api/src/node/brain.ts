@@ -25,7 +25,7 @@ import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js
 import { helperGrant } from "./helpers.js";
 import { computerWorkAsks } from "./sessions.js";
 import { RuntimeError } from "../lib/runtime-error.js";
-import { addReceipt, markActed, mayRetry } from "./queue.js";
+import { addReceipt, markActed, mayRetry, parkedFor, parkIfAsked } from "./queue.js";
 import { afterReport, currentPlan, finishStep, nudgeStep, startPlan, stepCardsWaiting, stepLive, stepPending, stepProgress, stepRow, stepRuns, stopPlans, STEP_RULES } from "./plans.js";
 import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
@@ -43,7 +43,8 @@ export const NODE_REPLACED_TOOLS = ["hub_assign_to_agent", "hub_list_agent_sessi
 
 /** retry: the model's rate limit cut the turn off before anything was posted; queue.ts runs it again later. */
 /** coalesced: a newer message from the owner came before this turn acted; the next turn answers both. */
-export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced"; model?: string; credits?: number | null; error?: string };
+/** parked: the turn waits for its owner's answer on a card; it ended without a reply, and the answer wakes the node. */
+export type TurnOutcome = { status: "done" | "failed" | "skipped" | "retry" | "coalesced" | "parked"; model?: string; credits?: number | null; error?: string };
 export type TurnDeps = { dispatch: (message: NodeMessage) => Promise<void>; signal?: AbortSignal };
 
 /** Background turns call Ensemble's own routes as the owner, like a signed-in request would. */
@@ -432,6 +433,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
         if (frame.type === "tool" || frame.type === "pending") {
           toolsRan += 1;
           void addReceipt(app, turn.id, { name: frame.call.name, state: String(frame.call.state ?? "ok"), summary: frame.call.summary ?? null }).catch(() => undefined);
+          // A tool asked to park the turn (its owner has a card to answer): it stops once this step's calls have run.
+          parkIfAsked(turn.id);
         }
         // A step's words are its report, not a message: nothing is written out live.
         if (step && frame.type === "delta") return;
@@ -462,6 +465,28 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     // A newer message from the owner came before this turn acted: the next turn answers both, so this one leaves no trace.
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
     return { status: "coalesced" };
+  }
+  if (deps.signal?.aborted && deps.signal.reason === "park") {
+    // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing. What it
+    // did and what it waits for stay in its conversation; the answer wakes it.
+    const done = failure ? null : result!;
+    const calls = done?.toolCalls ?? [];
+    const waits = parkedFor(turn.id).join("\n") || `Waiting for ${ownerName} to answer a card in this chat.`;
+    await prisma.assistantMessage.create({
+      data: { conversationId: conversationId!, userId: spaceId, role: "assistant", content: waits, toolCalls: calls as never, model: done?.model ?? null, credentialSource: done?.credentialSource, credits: done?.credits ?? undefined },
+    });
+    await prisma.assistantConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+    await saveCursor(readUpTo);
+    const parkedHeld = calls.filter((call) => call.state === "awaiting_approval");
+    if (parkedHeld.length) await holdCalls(app, node, room, conversationId, fromNonOwner, turn.private, lineage, parkedHeld, turn.planId ? { plan: { id: turn.planId, step: turn.planStep } } : {});
+    if (step) {
+      if (await stepLive(prisma, step.planId, step.stepId)) await stepProgress(prisma, step.planId, step.stepId, `Waiting for ${ownerName}'s answer on a card in the chat.`);
+    } else if (!turn.planId) {
+      // A plan this turn made starts; its card opens without a reply.
+      const made = await currentPlan(prisma, node.id, turn.id, null);
+      if (made?.data.status === "draft") await startPlan(app, made.message.id, null);
+    }
+    return { status: "parked", model: done?.model, credits: done?.credits ?? null };
   }
   if (failure) {
     const error = failure;

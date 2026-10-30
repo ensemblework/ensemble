@@ -306,8 +306,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
     name: "node_show",
     area: "tasks",
     description:
-      "Show your owner screenshots, videos or files their agent runs attached (evidence ids, from a run's report or card): they appear with your reply in this conversation. " +
-      "Show only what was checked: a screenshot you or a check looked at, a video of the thing working. A plan's report shows its checked media by itself.",
+      "Choose the screenshots, videos or files that appear with your reply (evidence ids). What you capture in this turn (browser and capture screenshots, terminal screenshots, shared files) appears with your reply by itself: " +
+      "use node_show only to choose among several, or to show older evidence or a run's evidence (ids from a run's report or card). Show only what was checked. A plan's report shows its checked media by itself.",
     input: z.object({ evidence: z.array(z.string().max(64)).min(1).max(MAX_MEDIA), caption: z.string().max(300).optional() }).strict(),
     isWrite: false,
     risk: "low",

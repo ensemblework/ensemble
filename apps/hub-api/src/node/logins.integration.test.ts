@@ -279,8 +279,11 @@ test("a site that wants the owner's account pauses the tab and asks them; a logi
   try {
     script = (turn) => (turn.transcript.includes("check my invoices") ? { calls: [{ name: "browser_open", arguments: { url: `${OTHER_SITE}/dashboard` } }], then: "I need you to sign in first." } : { text: "ok" });
     await say(mira, room.id, "check my invoices");
-    const opened = (await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind !== "approval").at(-1)!;
-    const openTool = (opened.data.tools as Array<{ name: string; state: string; summary: string | null }>)[0]!;
+    // The turn waits for the owner's sign-in: it ends without a reply, what it did kept in its conversation.
+    assert.deepEqual((await messages(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text"), [], "no reply while the card waits");
+    const parked = await h.prisma.assistantMessage.findFirstOrThrow({ where: { userId: mira.id, role: "assistant" }, orderBy: { createdAt: "desc" } });
+    assert.ok(parked.content.includes(`Waiting for Mira to sign in to ${OTHER_SITE} on Mira's laptop`), parked.content);
+    const openTool = (parked.toolCalls as Array<{ name: string; state: string; summary: string | null }>)[0]!;
     assert.equal(openTool.state, "ok");
     assert.match(openTool.summary ?? "", /needs the owner to sign in to http:\/\/signin\.example\.test/);
     assert.match(openTool.summary ?? "", /asked on a card in this chat/);
