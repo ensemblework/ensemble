@@ -364,7 +364,7 @@ export type NodeApprovalCard = {
   body: string;
   createdAt: string;
   data: {
-    type?: "tools" | "post" | "session" | "secret" | "node_proposal" | "disclosure" | "peer_request";
+    type?: "tools" | "post" | "session" | "secret" | "node_proposal" | "disclosure" | "peer_request" | "media_preview";
     /** Session cards: start, send, or hand_over (hand a session to another node). */
     action?: string;
     status?: string;
@@ -373,6 +373,8 @@ export type NodeApprovalCard = {
     computer?: string | null;
     /** Secret cards: the destinations the secret may be sent to (secret_http). */
     allow?: string[];
+    /** Held captures: the files waiting for a check (previewed in Node). */
+    evidence?: Array<{ id: string; name: string }>;
     calls?: Array<{ callId: string; name: string; summary: string }>;
   };
   node: { id: string; slug: string; name: string; role: string } | null;

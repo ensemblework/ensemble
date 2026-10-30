@@ -16,7 +16,16 @@ const WANTS: Record<string, string> = {
   node_proposal: "proposes something new for you",
   disclosure: "asks before sharing something with a room",
   peer_request: "has a request for you from a room",
+  media_preview: "has a capture for you to check first",
 };
+
+/** What the node wants, as the card's first line says it after its handle. */
+function wants(card: NodeApprovalCard): string {
+  if (card.data.type === "session" && card.data.action === "hand_over") return "wants to hand a session to another node";
+  const count = Array.isArray(card.data.evidence) ? card.data.evidence.length : 0;
+  if (card.data.type === "media_preview" && count > 1) return `has ${count} captures for you to check first`;
+  return WANTS[card.data.type ?? "tools"] ?? WANTS.tools;
+}
 
 /**
  * The value is encrypted here for the computer on the card (lib/node-secret.ts) and sent once; it is
@@ -108,7 +117,7 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
           <span className="min-w-0">
             <span className="block text-[12px] uppercase tracking-[0.04em] text-muted">Ensemble Node</span>
             <span className="block text-[15px] font-medium">
-              @{card.node?.slug ?? "node"} {card.data.type === "session" && card.data.action === "hand_over" ? "wants to hand a session to another node" : (WANTS[card.data.type ?? "tools"] ?? WANTS.tools)}
+              @{card.node?.slug ?? "node"} {wants(card)}
             </span>
             <span className="mt-0.5 block text-[12px] text-muted">
               {relative(card.createdAt)}
@@ -135,7 +144,7 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
         <div className="mt-3 flex items-center gap-2">
           {card.data.type === "secret" ? null : (
             <button type="button" className="btn-primary" onClick={() => settle.mutate("approve")} disabled={settle.isPending}>
-              <Check size={13} /> Approve
+              <Check size={13} /> {card.data.type === "media_preview" ? "Send" : "Approve"}
             </button>
           )}
           <button type="button" className="btn-ghost" onClick={() => settle.mutate("discard")} disabled={settle.isPending}>
