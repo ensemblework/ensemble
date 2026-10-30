@@ -16,6 +16,7 @@ import { declineSecret } from "./node-secrets.js";
 import { answerLoginCard, LOGIN_CARD } from "./logins.js";
 import { finishStep, planLinkOf } from "./plans.js";
 import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
+import { CREW_ADD_CARD, joinCrew } from "./crew.js";
 import { noteTold } from "./dispatch.js";
 import { ToolBlockedError } from "../assistant/types.js";
 import { roomDraftPosted, settleRoomCard } from "./audience.js";
@@ -155,6 +156,7 @@ export async function settleApproval(app: FastifyInstance, accountId: string, me
 
   if (type === "session") return settleSession(app, card, node, input);
   if (type === "node_proposal") return settleProposal(app, card, node, input);
+  if (type === CREW_ADD_CARD) return settleCrewAdd(app, card, node, input);
   if (type === MEDIA_PREVIEW_CARD) return settlePreview(app, card, node, input);
   if (type === "secret") {
     if (input.decision === "discard") return declineSecret(app, accountId, messageId);
@@ -306,6 +308,38 @@ async function settleProposal(app: FastifyInstance, card: NodeMessage, node: Nod
     note: `Your owner approved your proposal: ${made.summary}. Continue if there is more to do (node_delegate hands it work); otherwise reply ${"(no reply)"}.`,
     private: parsed.private === true,
   });
+  return updated;
+}
+
+const CrewAddCard = z
+  .object({ type: z.literal(CREW_ADD_CARD), status: z.string(), nodeId: z.string(), nodeSlug: z.string(), roomId: z.string(), private: z.boolean().optional() })
+  .passthrough();
+
+/**
+ * A crew's lead asked to bring another of its owner's nodes into the crew (node/crew.ts): approving adds
+ * it (its handle is its slug) and wakes the lead to go on; discarding tells the lead to do without it.
+ */
+async function settleCrewAdd(app: FastifyInstance, card: NodeMessage, lead: NodeAgent, input: Decision): Promise<NodeMessage> {
+  const prisma = app.prisma;
+  const parsed = CrewAddCard.parse(card.data);
+  const data = await claim(app, card);
+  const current = { ...card, data: data as Prisma.JsonValue };
+  const wake = (note: string) => enqueueTurn(app, { nodeId: lead.id, roomId: card.roomId, reason: "approval", note, private: parsed.private === true, ...(planLinkOf(card.data) ?? {}) });
+  if (input.decision === "discard") {
+    const discarded = await updateMessageData(prisma, current, { status: "discarded", answeredAt: new Date().toISOString() });
+    await wake(`Your owner did not add @${parsed.nodeSlug} to the crew. Do the work with the crew's members, a temporary helper (node_helper) or yourself, or say in one line what you need. Otherwise reply ${"(no reply)"}.`);
+    return discarded;
+  }
+  let joined: Awaited<ReturnType<typeof joinCrew>>;
+  try {
+    joined = await joinCrew(app, { ownerId: lead.userId, crewId: parsed.roomId, nodeId: parsed.nodeId });
+  } catch (error) {
+    // Nothing changed (the crew or node is gone, the crew is full): the owner can try again or discard.
+    const message = error instanceof ToolBlockedError ? [error.message, error.remedy].filter(Boolean).join(" ") : error instanceof Error ? error.message : String(error);
+    return updateMessageData(prisma, current, { status: "pending", error: message });
+  }
+  const updated = await updateMessageData(prisma, current, { status: "approved", error: null, handle: joined.handle, answeredAt: new Date().toISOString() });
+  await wake(`Your owner agreed: @${joined.handle} joined this crew (“${joined.title}”); continue. Give it its step with node_delegate (or node_plan) if that is still what the work needs.`);
   return updated;
 }
 

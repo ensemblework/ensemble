@@ -111,6 +111,8 @@ export async function reserveIncluded(args: {
   inputTokens: number;
   maxOutputTokens: number;
   purpose?: string | null;
+  /** Fees on top of the tokens (built-in tool calls such as web search, pricing.ts), at most this much. */
+  extraUsd?: number;
 }): Promise<IncludedReservation> {
   if (fake) return fake.reserve(args);
   const config = configured(args.model);
@@ -121,7 +123,7 @@ export async function reserveIncluded(args: {
   const resetsAt = includedResetsAt(now);
   const inputTokens = Math.max(0, Math.ceil(args.inputTokens));
   const maxOutputTokens = Math.max(1, Math.ceil(args.maxOutputTokens));
-  const need = worstCaseUsd(args.model, inputTokens, maxOutputTokens);
+  const need = worstCaseUsd(args.model, inputTokens, maxOutputTokens) + Math.max(0, args.extraUsd ?? 0);
   const limitUsd = config.monthlyCredits / CREDITS_PER_USD;
   return db.$transaction(
     async (tx) => {
@@ -152,7 +154,7 @@ export async function reserveIncluded(args: {
  * the provider saying what it used (a cancelled request), so the reservation is charged in full.
  * Settling twice returns the first result.
  */
-export async function settleIncluded(args: { id: string; usage: IncludedTokens | null; answeredBy?: string | null }): Promise<{ credits: number }> {
+export async function settleIncluded(args: { id: string; usage: IncludedTokens | null; answeredBy?: string | null; extraUsd?: number }): Promise<{ credits: number }> {
   if (fake) return fake.settle(args);
   const head = await db.includedUsage.findUnique({ where: { id: args.id }, select: { period: true, accountId: true } });
   if (!head) throw new Error("Unknown included reservation.");
@@ -170,9 +172,12 @@ export async function settleIncluded(args: { id: string; usage: IncludedTokens |
       if (row.status !== "reserved") return { credits: num(row.usd) * CREDITS_PER_USD };
       const reserved = num(row.reserved);
       const usage = args.usage;
-      const cost = usage
+      const tokenCost = usage
         ? includedCost(row.model, usage)
         : includedCost(row.model, { inputTokens: row.est_in, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: row.max_out });
+      // Fees on top of the tokens (a web search call's) count with the output.
+      const extra = Math.max(0, args.extraUsd ?? 0);
+      const cost = { usd: tokenCost.usd + extra, inputUsd: tokenCost.inputUsd, outputUsd: tokenCost.outputUsd + extra };
       const tokens = (row.erased ? null : usage) ?? { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
       // Cannot happen while Azure stops each reply at the cap; it is charged as reported if it does.
       if (cost.usd > reserved + 1e-9) console.error(`Included call ${args.id} on ${row.model} settled above its reservation: $${cost.usd.toFixed(6)} > $${reserved.toFixed(6)}.`);
