@@ -266,7 +266,12 @@ export async function roomBoundTurn(
   const spaces = new RoomSpaces(gateway, allowed);
   // The owner acts as a guest of their own account: their connected apps, reminders and syncs stay out of the turn.
   const scope: RequestScope = { spaceId: owner, accountId: owner, access: { kind: "member", role: "editor", ownerId: owner, node: node.id } };
-  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName })] : roomTools(ctx);
+  // Everyone who asked the steward in this turn (its sponsor too): with more than one, it writes for nobody (node/steward.ts).
+  const namesSteward = (row: NodeMessage) => Array.isArray(row.mentions) && (row.mentions as Array<{ kind?: unknown; id?: unknown }>).some((mention) => mention.kind === "node" && mention.id === node.id);
+  const stewardAskers = steward
+    ? [...new Set([...kept, ...(trigger && !gated.has(trigger.userId) ? [trigger] : [])].filter((row) => row.authorKind === "human" && row.visibleTo.length === 0 && (row.id === trigger?.id || namesSteward(row))).map((row) => row.userId))]
+    : [];
+  const tools = steward ? [historyTool(ctx), ...stewardTools({ app, room, members, nodeId: node.id, askerId, askerName, askers: stewardAskers.length ? stewardAskers : [askerId] })] : roomTools(ctx);
   return {
     held: false,
     persona: steward
