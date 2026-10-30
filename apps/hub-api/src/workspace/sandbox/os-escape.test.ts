@@ -13,7 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import type { SandboxPolicy } from "./policy.js";
-import { capabilities, prepareNetwork, prepareSandbox, setupSandbox, startSandboxed } from "./spawn.js";
+import { capabilities, prepareNetwork, prepareSandbox, prepareSpawn, setupSandbox, startSandboxed } from "./spawn.js";
 
 const home = homedir();
 
@@ -215,5 +215,36 @@ test("a run with the internet on can reach the network stack", { timeout: 60_000
     }
   } finally {
     rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a process monitor lists this computer's processes but reads none of them, and signals none", { timeout: 120_000 }, async (t) => {
+  const caps = await sandboxHere();
+  if (!caps.osSandbox || process.platform === "win32") {
+    t.skip(caps.osSandbox ? "Windows has no process monitor in a terminal here" : `no OS sandbox here: ${caps.reason}`);
+    return;
+  }
+  const root = mkdtempSync(join(homedir(), ".ensemble-escape-procs-"));
+  try {
+    // This runtime's own process holds what a command must never read: its environment, its files.
+    const target = process.pid;
+    const prepared = prepareSpawn(base(root, { hostPids: true }), { program: process.execPath, args: ["-e", "0"] });
+    const probe = await run(
+      base(root, { hostPids: true }),
+      `const fs = require("fs");
+       const read = (path) => { try { fs.readFileSync(path); return "read"; } catch (error) { return error.code; } };
+       const list = (path) => { try { fs.readdirSync(path); return "read"; } catch (error) { return error.code; } };
+       let signal; try { process.kill(${target}, 0); signal = "sent"; } catch (error) { signal = error.code; }
+       console.log(JSON.stringify({ visible: fs.existsSync("/proc/${target}/stat"), environ: read("/proc/${target}/environ"), root: list("/proc/${target}/root/"), cwd: list("/proc/${target}/cwd/"), signal }));`,
+    );
+    const seen = JSON.parse(probe.output.trim().split("\n").at(-1)!) as Record<string, unknown>;
+    if (process.platform === "linux" && prepared.hostPids) assert.equal(seen.visible, true, "the monitor lists this computer's processes");
+    assert.notEqual(seen.environ, "read", "never another process's environment");
+    assert.notEqual(seen.root, "read", "never another process's files");
+    assert.notEqual(seen.cwd, "read");
+    // bubblewrap keeps the monitor in its own PID namespace (Landlock shares the system's, as for every command there).
+    if (caps.mechanism === "bubblewrap") assert.notEqual(seen.signal, "sent", "never a signal to a process outside the sandbox");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

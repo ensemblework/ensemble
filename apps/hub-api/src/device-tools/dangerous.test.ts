@@ -89,6 +89,14 @@ test("everyday commands, installs and admin work go through", () => {
     "brew uninstall git",
     "ln -sf /opt/app/bin/tool /usr/local/bin/tool",
     "echo x > ./out.txt 2>&1",
+    "rm ~/.ssh/known_hosts",
+    "rm ~/.ssh/id_ed25519.pub",
+    "rm -rf ./project/.aws-cache",
+    "ip addr show",
+    "ip route flush cache",
+    "ip route add default via 192.168.1.1",
+    "apt remove 'firefox*'",
+    "apt remove python3.11-venv",
   ]) {
     assert.equal(dangerousCommand(line), null, `“${line}” was refused`);
   }

@@ -54,7 +54,7 @@ export function clipOutput(text: string, max = NODE_TOOL_INLINE_BYTES): { text: 
  * Sends a command's output to the server in order, cut at line ends so a redaction never meets half a
  * secret, at most 1 MB in all. `finish` sends the last chunk with the exit code.
  */
-function outputStream(client: HostedClient, runId: string, onStop: () => void) {
+function outputStream(client: HostedClient, runId: string, onStop: () => void, clean: (text: string) => string = cleanOutput) {
   let seq = 0;
   let pending = "";
   let sent = 0;
@@ -77,7 +77,7 @@ function outputStream(client: HostedClient, runId: string, onStop: () => void) {
     // A long line with no end yet goes once it is large, so output keeps moving.
     const upTo = end > 0 ? end : Buffer.byteLength(pending) >= TERMINAL_CHUNK_BYTES / 2 ? pending.length : 0;
     if (!upTo) return;
-    let text = cleanOutput(pending.slice(0, upTo));
+    let text = clean(pending.slice(0, upTo));
     pending = pending.slice(upTo);
     while (Buffer.byteLength(text) > TERMINAL_CHUNK_BYTES) {
       const part = sliceBytes(text, TERMINAL_CHUNK_BYTES);
@@ -102,7 +102,7 @@ function outputStream(client: HostedClient, runId: string, onStop: () => void) {
     },
     async finish(tail: string, exitCode: number, wake: boolean) {
       flush(true);
-      await post(cleanOutput(tail), true, exitCode, wake);
+      await post(clean(tail), true, exitCode, wake);
       await chain;
     },
   };
@@ -123,10 +123,87 @@ async function prepare(app: App, request: RunRequest, folder: ToolFolder, sandbo
   return { argv, program, cwd: await jailPath(folder.path, request.cwd ?? ".", true) };
 }
 
+/** A command as `deliverCommand` runs it: started with where its output goes and what stops it. */
+export type CommandStart = (sink: { onChunk: (text: string) => void; signal: AbortSignal }) => Promise<{ exitCode: number; timedOut: boolean }>;
+
+export type Delivered = { exitCode: number; ms: number; timedOut: boolean; background: boolean; output: string };
+
 /**
- * Runs the command and answers: inline when it ends within the minute (and fits), else 202 with the
- * output so far, the rest following as chunks; `background` answers at once. The run's last chunk
- * says whether to wake the node (when its result was not in the answer).
+ * Runs a node's command and answers the way every one answers: inline when it ends within the
+ * minute (and fits), else 202 with the output so far, the rest following as chunks; `background`
+ * answers at once. The run's last chunk says whether to wake the node (when its result was not in the
+ * answer). `clean` hides what must not leave this computer (default: saved secrets and key shapes);
+ * `inline` adds to the inline answer's body; `stop` ends what is left of the command afterwards.
+ */
+export async function deliverCommand(
+  client: HostedClient,
+  input: { runId: string; background: boolean; timeoutSec: number; clean?: (text: string) => string; inline?: (result: { exitCode: number; output: string }) => Record<string, unknown>; stop?: () => void },
+  start: CommandStart,
+  answer: (reply: CodeAnswer) => Promise<void>,
+): Promise<Delivered> {
+  const clean = input.clean ?? cleanOutput;
+  const controller = new AbortController();
+  running.set(input.runId, controller);
+  const stream = outputStream(client, input.runId, () => controller.abort(), clean);
+  let collected = "";
+  let answered = false;
+  let streaming = input.background;
+  const started = Date.now();
+  const done = start({
+    signal: controller.signal,
+    onChunk: (text) => {
+      if (streaming) stream.write(text);
+      else if (Buffer.byteLength(collected) < NODE_TOOL_OUTPUT_BYTES) collected += text;
+    },
+  });
+  const goBackground = async () => {
+    if (answered) return;
+    answered = true;
+    streaming = true;
+    // What it printed so far goes first, so the stored output is whole.
+    if (collected) stream.write(collected);
+    const shown = clipOutput(clean(collected));
+    await answer({ status: 202, body: { runId: input.runId, background: true, output: shown.text, startedAt: new Date(started).toISOString() } });
+  };
+  if (input.background) await goBackground();
+  const timer = input.background ? null : setTimeout(() => void goBackground().catch(() => undefined), foregroundMs);
+  timer?.unref?.();
+  let exitCode = 127;
+  let tail = "";
+  let timedOut = false;
+  try {
+    const result = await done;
+    exitCode = result.exitCode;
+    timedOut = result.timedOut;
+    if (result.timedOut) tail = `\n[stopped after ${input.timeoutSec} s]`;
+  } catch (error) {
+    tail = `${error instanceof Error ? error.message : String(error)}\n`;
+  } finally {
+    if (timer) clearTimeout(timer);
+    running.delete(input.runId);
+    input.stop?.();
+  }
+  const ms = Date.now() - started;
+  const background = streaming;
+  if (!answered) {
+    answered = true;
+    const output = clean(collected + tail);
+    const shown = clipOutput(output);
+    await answer({ status: 200, body: { exitCode, output: shown.text, ms, timedOut, ...(shown.clipped ? { runId: input.runId, clipped: true } : {}), ...(input.inline?.({ exitCode, output }) ?? {}) } });
+    // A long output is kept whole for computer_run_output; the node already has the result, so nothing wakes it.
+    if (shown.clipped) {
+      stream.write(collected);
+      await stream.finish(tail, exitCode, false);
+    }
+  } else {
+    await stream.finish(tail, exitCode, true);
+  }
+  return { exitCode, ms, timedOut, background, output: collected + tail };
+}
+
+/**
+ * Runs the command under this computer's sandbox and answers (`deliverCommand`). The ledger keeps
+ * its program, folder and exit code.
  */
 export async function runNodeCommand(app: App, client: HostedClient, request: RunRequest, folder: ToolFolder, answer: (reply: CodeAnswer) => Promise<void>): Promise<void> {
   const sandboxed = sandboxAvailable();
@@ -139,81 +216,43 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
     if (byReference.length) throw new GuardError(`${byReference.join(", ")} ${byReference.length === 1 ? "is" : "are"} kept for use by reference only, never in a command's environment. Call the service with secret_http instead.`);
     throw new GuardError(`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not saved on this computer. Ask your owner for ${missing.length === 1 ? "it" : "them"} with node_secret_request.`);
   }
-  const controller = new AbortController();
-  running.set(request.runId, controller);
-  const stream = outputStream(client, request.runId, () => controller.abort());
-  let collected = "";
-  let answered = false;
-  let streaming = request.background;
   const group = `node-tool:${request.runId}`;
-  const started = Date.now();
-  const done = runCommand({
-    userId: userId(),
-    argv: prepared.argv,
-    cwd: prepared.cwd,
-    root: folder.path,
-    sandboxed,
-    network: request.network,
-    useCredentials: false,
-    who: "agent",
-    readWrite: [folder.path],
-    deny: await nodeToolDenies(),
-    timeoutMs: request.timeoutSec * 1000,
-    signal: controller.signal,
-    group,
-    extraEnv: saved,
-    onChunk: (text) => {
-      if (streaming) stream.write(text);
-      else if (Buffer.byteLength(collected) < NODE_TOOL_OUTPUT_BYTES) collected += text;
-    },
-  });
-  const goBackground = async () => {
-    if (answered) return;
-    answered = true;
-    streaming = true;
-    // What it printed so far goes first, so the stored output is whole.
-    if (collected) stream.write(collected);
-    const shown = clipOutput(cleanOutput(collected));
-    await answer({ status: 202, body: { runId: request.runId, background: true, output: shown.text, startedAt: new Date(started).toISOString() } });
-  };
-  if (request.background) await goBackground();
-  const timer = request.background ? null : setTimeout(() => void goBackground().catch(() => undefined), foregroundMs);
-  timer?.unref?.();
-  let exitCode = 127;
-  let tail = "";
-  let timedOut = false;
-  try {
-    const result = await done;
-    exitCode = result.exitCode;
-    timedOut = result.timedOut;
-    if (result.timedOut) tail = `\n[stopped after ${request.timeoutSec} s]`;
-  } catch (error) {
-    tail = `${error instanceof Error ? error.message : String(error)}\n`;
-  } finally {
-    if (timer) clearTimeout(timer);
-    running.delete(request.runId);
-    killGroup(group);
-  }
-  const ms = Date.now() - started;
-  if (!answered) {
-    answered = true;
-    const output = cleanOutput(collected + tail);
-    const shown = clipOutput(output);
-    await answer({ status: 200, body: { exitCode, output: shown.text, ms, timedOut, ...(shown.clipped ? { runId: request.runId, clipped: true } : {}) } });
-    // A long output is kept whole for computer_run_output; the node already has the result, so nothing wakes it.
-    if (shown.clipped) {
-      stream.write(collected);
-      await stream.finish(tail, exitCode, false);
-    }
-  } else {
-    await stream.finish(tail, exitCode, true);
-  }
+  const deny = await nodeToolDenies();
+  const result = await deliverCommand(client, { runId: request.runId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group) }, ({ onChunk, signal }) =>
+    runCommand({
+      userId: userId(),
+      argv: prepared.argv,
+      cwd: prepared.cwd,
+      root: folder.path,
+      sandboxed,
+      network: request.network,
+      useCredentials: false,
+      who: "agent",
+      readWrite: [folder.path],
+      deny,
+      timeoutMs: request.timeoutSec * 1000,
+      signal,
+      group,
+      extraEnv: saved,
+      onChunk,
+    }), answer);
   await appendLedger({
     userId: userId(),
     actor: "agent",
     action: "node.tool.run",
-    payload: { nodeId: request.nodeId, program: prepared.program, folder: folder.label, exitCode, ms, timedOut, background: streaming, operationId: request.operationId ?? null },
+    payload: { nodeId: request.nodeId, program: prepared.program, folder: folder.label, exitCode: result.exitCode, ms: result.ms, timedOut: result.timedOut, background: result.background, operationId: request.operationId ?? null },
   }).catch(() => undefined);
+}
+
+/** Work for nodes that is not a command run (a terminal screen being captured), stopped with them. */
+const others = new Map<string, () => void>();
+
+/** Registers how to stop such work; the returned function forgets it once it is over. */
+export function stopWithCommands(id: string, stop: () => void): () => void {
+  others.set(id, stop);
+  return () => {
+    others.delete(id);
+  };
 }
 
 /** Stops every command run for a node here (the remote loop is ending). */
@@ -223,4 +262,6 @@ export function stopNodeCommands(): void {
     killGroup(`node-tool:${id}`);
   }
   running.clear();
+  for (const stop of others.values()) stop();
+  others.clear();
 }

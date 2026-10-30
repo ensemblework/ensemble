@@ -18,6 +18,8 @@ import { chooseVideoEncoder, findFfmpegs } from "../capture/ffmpeg.js";
 import { RealtimeRecording } from "../capture/frames.js";
 import { CaptureError, DEFAULT_MAX_DURATION_MS, reserveFile, slugName, stillFile, VideoEncoder, type MediaFile } from "../capture/media.js";
 import { findChromium, type ChromiumChoice } from "./chromium.js";
+import { humanCheck } from "./human-check.js";
+import { browserLook, HIDE_WEBDRIVER, IGNORED_DEFAULT_ARGS, LAUNCH_ARGS } from "./launch.js";
 import { readableSnapshot, scanPage, sensitiveMasks } from "./page-scan.js";
 import { browserProfileDir, ensembleDataHome, isProfileName } from "./paths.js";
 import { hasSecrets, hideSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "./privacy.js";
@@ -417,15 +419,18 @@ export class BrowserBroker {
 
   private async launchProfile(key: string, profile: string, headless: boolean): Promise<ContextEntry> {
     const platform = this.options.platform ?? process.platform;
-    const args = [...(!headless && platform === "linux" ? ["--ozone-platform-hint=auto"] : []), ...(this.options.args ?? [])];
+    const args = [...LAUNCH_ARGS, ...(!headless && platform === "linux" ? ["--ozone-platform-hint=auto"] : []), ...(this.options.args ?? [])];
     let context: BrowserContext;
     try {
+      const executablePath = this.executable(headless);
       context = await chromium.launchPersistentContext(browserProfileDir(profile, this.dataHome()), {
-        executablePath: this.executable(headless),
+        executablePath,
         headless,
         viewport: DEFAULT_VIEWPORT,
         acceptDownloads: true,
         args,
+        ignoreDefaultArgs: IGNORED_DEFAULT_ARGS,
+        ...browserLook({ executablePath, platform }),
         handleSIGINT: false,
         handleSIGTERM: false,
         handleSIGHUP: false,
@@ -435,6 +440,7 @@ export class BrowserBroker {
       const message = error instanceof Error ? error.message.split("\n")[0]! : String(error);
       throw new BrowserError("unavailable", /ProcessSingleton|SingletonLock|profile.*in use/i.test(message) ? `The browser profile "${profile}" is open in another Chromium. Close it first.` : `The browser did not start: ${message}`);
     }
+    await context.addInitScript(HIDE_WEBDRIVER).catch(() => undefined);
     const entry: ContextEntry = { key, profile, owner: null, context, headless, idleSince: this.now(), tracing: null };
     this.watchContext(entry);
     this.log(`started profile ${profile} (${headless ? "headless" : "with a window"})`);
@@ -449,7 +455,7 @@ export class BrowserBroker {
       const { defaultBrowserType: _ignored, ...rest } = descriptor;
       emulation = rest;
     }
-    this.privateBrowser ??= chromium.launch({ executablePath: this.executable(true), headless: true, args: this.options.args ?? [], handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
+    this.privateBrowser ??= chromium.launch({ executablePath: this.executable(true), headless: true, args: [...LAUNCH_ARGS, ...(this.options.args ?? [])], ignoreDefaultArgs: IGNORED_DEFAULT_ARGS, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false });
     let browser: Browser;
     try {
       browser = await this.privateBrowser;
@@ -458,7 +464,10 @@ export class BrowserBroker {
       if (error instanceof BrowserError) throw error;
       throw new BrowserError("unavailable", `The browser did not start: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
     }
-    const context = await browser.newContext({ viewport: DEFAULT_VIEWPORT, acceptDownloads: true, ...emulation, ...(viewport ? { viewport } : {}) });
+    // An emulated device keeps its own user agent.
+    const look = browserLook({ platform: this.options.platform ?? process.platform, version: browser.version() });
+    const context = await browser.newContext({ viewport: DEFAULT_VIEWPORT, acceptDownloads: true, ...look, ...emulation, ...(viewport ? { viewport } : {}) });
+    await context.addInitScript(HIDE_WEBDRIVER).catch(() => undefined);
     const entry: ContextEntry = { key, profile: null, owner: operation, context, headless: true, idleSince: this.now(), tracing: null };
     this.watchContext(entry);
     return entry;
@@ -606,6 +615,24 @@ export class BrowserBroker {
       }
     }
     return { ...(await this.describe(tab)), status, ...(error ? { error } : {}), ...(note ? { note } : {}) };
+  }
+
+  /**
+   * Whether the tab shows a human check or a page that refuses automated browsing, and which
+   * (browser/human-check.ts): from its title, its visible text and its visible frames.
+   */
+  async humanCheck(operation: string, id: string, input: { status?: number | null } = {}): Promise<string | null> {
+    const page = this.tab(operation, id, "observe").page;
+    const title = await page.title().catch(() => "");
+    const text = await page.locator("body").innerText({ timeout: 2_000 }).catch(() => "");
+    const frames: string[] = [];
+    for (const frame of page.frames().slice(1, 20)) {
+      const element = await frame.frameElement().catch(() => null);
+      const box = element ? await element.boundingBox().catch(() => null) : null;
+      await element?.dispose().catch(() => undefined);
+      if (box && box.width >= 40 && box.height >= 30 && box.x + box.width > 0 && box.y + box.height > 0) frames.push(frame.url());
+    }
+    return humanCheck({ title, text, frames, status: input.status ?? null });
   }
 
   async list(operation: string): Promise<TabInfo[]> {

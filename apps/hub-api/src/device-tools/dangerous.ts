@@ -58,12 +58,48 @@ const SECRET_PLACES = /(^|\/)(\.ssh|\.gnupg|\.aws|\.kube|\.docker\/config\.json|
 const CRITICAL_PACKAGES =
   /^(libc6|libc-bin|glibc|systemd|systemd-sysv|init|sysvinit-core|sudo|apt|dpkg|rpm|dnf|yum|pacman|zypper|coreutils|util-linux|bash|dash|zsh|login|passwd|shadow|base-files|base-passwd|libpam.*|linux-image.*|linux-generic.*|linux-headers-generic|linux|kernel.*|grub.*|shim.*|ubuntu-minimal|ubuntu-standard|ubuntu-desktop.*|ubuntu-server|gnome-shell|gdm3?|xorg|xserver-xorg.*|plasma-desktop|sddm|lightdm|openssh-server|openssh|network-manager|networkmanager|netplan\.io|ifupdown|python3|python3-minimal|perl-base|zlib1g|libssl.*|openssl|ca-certificates|tar|gzip|findutils|grep|sed|mount|e2fsprogs|filesystem)(:\w+)?$/i;
 
+/** Packages of every distribution that `CRITICAL_PACKAGES` names, to test a removal's wildcard or pattern against. */
+const CRITICAL_NAMES = ["libc6", "libc-bin", "glibc", "systemd", "systemd-sysv", "init", "sudo", "apt", "dpkg", "rpm", "dnf", "yum", "pacman", "zypper", "coreutils", "util-linux", "bash", "dash", "login", "passwd", "base-files", "base-passwd", "libpam0g", "libpam-modules", "linux-image-generic", "linux-generic", "kernel", "grub-common", "grub2-common", "shim-signed", "ubuntu-minimal", "ubuntu-desktop", "gnome-shell", "gdm3", "xorg", "openssh-server", "network-manager", "netplan.io", "python3", "python3-minimal", "perl-base", "zlib1g", "libssl3", "openssl", "ca-certificates", "tar", "gzip", "findutils", "grep", "sed", "mount", "e2fsprogs", "filesystem"];
+
+/** A package name, glob (`lib*`) or apt-style pattern (`.*`, `^python3-`) that names a package the system needs. */
+function criticalPackage(name: string): boolean {
+  const plain = name.replace(/^["']|["']$/g, "");
+  if (CRITICAL_PACKAGES.test(plain.replace(/[*?].*$/, ""))) return true;
+  if (!/[*?[\]^$]/.test(plain)) return false;
+  const glob = new RegExp(`^${plain.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+  let pattern: RegExp | null = null;
+  try {
+    pattern = new RegExp(plain, "i");
+  } catch {
+    pattern = null;
+  }
+  return CRITICAL_NAMES.some((pkg) => glob.test(pkg) || Boolean(pattern?.test(pkg)));
+}
+
+/** Where keys and sign-ins live in a home folder (`~`, `$HOME`, `/home/<user>`, `/Users/<user>`, `/root`, or relative to it). */
+const HOME_PREFIX = String.raw`(?:~\/|\$\{?HOME\}?\/|\/home\/[^/]+\/|\/Users\/[^/]+\/|\/root\/|\.\/)?`;
+/** A folder of keys and sign-ins: deleting it (or all in it) loses them. */
+const KEY_FOLDER = new RegExp(String.raw`^${HOME_PREFIX}(\.ssh|\.gnupg|\.aws|\.kube|\.password-store|\.local\/share\/keyrings|\.config\/gcloud)\/?(\*)?$`);
+/** A key file in them; public keys, known_hosts and settings are not. */
+const KEY_FILE = new RegExp(String.raw`^${HOME_PREFIX}(\.ssh\/(id_[^/]+|authorized_keys2?|[^/]*\.pem)|\.gnupg\/(private-keys-v1\.d(\/.*)?|secring\.gpg)|\.aws\/credentials|\.kube\/config|\.password-store\/.+)$`);
+const deletesKeys = (path: string, recursive: boolean) => {
+  const value = path.replace(/^["']|["']$/g, "");
+  if (/\.pub$/.test(value)) return false;
+  return (recursive && KEY_FOLDER.test(value)) || KEY_FILE.test(value);
+};
+
 export const DANGEROUS_RULES: readonly DangerousRule[] = [
   {
     id: "delete-system",
     title: "Recursive delete of the whole disk, the home folder or a system folder",
     why: "It deletes the operating system or every file of the owner, beyond recovery.",
     examples: ["rm -rf /", "rm -rf /*", "rm -rf ~", "rm -rf $HOME", "rm -rf /home", "rm -rf /etc", "rm -rf --no-preserve-root /", "find / -delete", "find ~ -exec rm -rf {} +"],
+  },
+  {
+    id: "delete-keys",
+    title: "Deleting the owner's keys and sign-ins",
+    why: "SSH and GPG keys, cloud credentials and the password store cannot be recovered once deleted, and deleting authorized_keys locks the owner out of this computer.",
+    examples: ["rm -rf ~/.ssh", "rm -rf ~/.ssh/*", "rm ~/.ssh/id_ed25519", "rm -f $HOME/.ssh/authorized_keys", "shred -u ~/.gnupg/private-keys-v1.d/*", "rm -rf ~/.aws", "rm -rf /home/akash/.password-store", "cd ~ && rm -rf .gnupg"],
   },
   {
     id: "format-disk",
@@ -117,13 +153,13 @@ export const DANGEROUS_RULES: readonly DangerousRule[] = [
     id: "network-lockout",
     title: "Cutting the computer off the network or remote access",
     why: "The owner (and Ensemble) can lose access to the computer.",
-    examples: ["iptables -P INPUT DROP", "nft flush ruleset", "ufw default deny outgoing", "ip link set eth0 down", "ifconfig wlan0 down", "ifdown eth0", "nmcli networking off", "nmcli radio all off", "systemctl stop NetworkManager", "systemctl disable --now ssh", "rfkill block all"],
+    examples: ["iptables -P INPUT DROP", "nft flush ruleset", "ufw default deny outgoing", "ip link set eth0 down", "ip addr flush dev eth0", "ip route del default", "ip -4 route flush table main", "ifconfig wlan0 down", "ifdown eth0", "nmcli networking off", "nmcli radio all off", "systemctl stop NetworkManager", "systemctl disable --now ssh", "rfkill block all"],
   },
   {
     id: "remove-critical-package",
     title: "Removing a package the system needs, or forcing a removal",
     why: "Removing the package manager, the C library, init, the shell, the kernel or the desktop breaks the system.",
-    examples: ["apt remove systemd", "apt-get purge -y sudo", "apt autoremove --purge libc6", "dpkg --purge --force-all bash", "dnf remove glibc", "yum erase kernel", "pacman -Rdd systemd", "rpm -e --nodeps coreutils", "snap remove core", "apt remove python3", "apt-get remove --allow-remove-essential login"],
+    examples: ["apt remove systemd", "apt-get purge -y sudo", "apt autoremove --purge libc6", "dpkg --purge --force-all bash", "dnf remove glibc", "yum erase kernel", "pacman -Rdd systemd", "rpm -e --nodeps coreutils", "snap remove core", "apt remove python3", "apt-get remove --allow-remove-essential login", "apt purge '*'", "apt-get remove -y 'lib*'", "apt remove '.*'", "dnf remove 'system*'"],
   },
   {
     id: "system-files",
@@ -401,6 +437,7 @@ function check(command: Simple, root: boolean): DangerousHit | null {
     if (paths.some((path) => /^\/etc\/(fstab|crypttab)$/.test(path) || /^\/boot\//.test(path))) return hit("boot");
   }
   if (program === "find" && paths.length && isRootish(paths[0]!) && args.some((arg, index) => arg === "-delete" || (/^-(exec|execdir|ok)$/.test(arg) && /^(rm|shred|unlink)$/.test(base(args[index + 1] ?? ""))))) return hit("delete-system");
+  if (/^(rm|srm|shred|unlink)$/.test(program) && paths.some((path) => deletesKeys(path, program === "srm" || program === "shred" || flags.has("rR", ["--recursive"])))) return hit("delete-keys");
 
   if (/^mkfs(\..+)?$/.test(program) || /^(mke2fs|mkdosfs|mkntfs|mkexfatfs|newfs.*)$/.test(program)) return hit("format-disk");
   if (program === "mkswap" && paths.some(isDisk)) return hit("format-disk");
@@ -469,7 +506,12 @@ function check(command: Simple, root: boolean): DangerousHit | null {
   if ((program === "iptables" || program === "ip6tables") && args.some((arg, index) => (arg === "-P" || arg === "--policy") && /^(INPUT|OUTPUT)$/i.test(args[index + 1] ?? "") && /^(DROP|REJECT)$/i.test(args[index + 2] ?? ""))) return hit("network-lockout");
   if (program === "nft" && /flush ruleset/.test(args.join(" "))) return hit("network-lockout");
   if (program === "ufw" && /default (deny|reject) (outgoing|incoming)/.test(args.join(" ")) && /outgoing/.test(args.join(" "))) return hit("network-lockout");
-  if (program === "ip" && /^(link|l)$/.test(args[0] ?? "") && args.includes("set") && args.includes("down")) return hit("network-lockout");
+  if (program === "ip") {
+    const [object = "", verb = "", next = ""] = args.filter((arg) => !arg.startsWith("-"));
+    if (/^(l|li|lin|link)$/.test(object) && args.includes("set") && args.includes("down")) return hit("network-lockout");
+    if (/^(a|ad|add|addr|addre|addres|address)$/.test(object) && /^(f|fl|flu|flus|flush)$/.test(verb)) return hit("network-lockout");
+    if (/^(r|ro|rou|rout|route)$/.test(object) && ((/^(d|del|delete)$/.test(verb) && next === "default") || (/^(f|fl|flu|flus|flush)$/.test(verb) && next !== "cache"))) return hit("network-lockout");
+  }
   if (program === "ifconfig" && args.includes("down")) return hit("network-lockout");
   if (program === "ifdown") return hit("network-lockout");
   if (program === "nmcli" && (/^(networking|n|radio|r)$/.test(args[0] ?? "") ? args.includes("off") : /^(con|connection|c|dev|device|d)$/.test(args[0] ?? "") && args.some((arg) => /^(down|delete|disconnect)$/.test(arg)))) return hit("network-lockout");
@@ -482,7 +524,7 @@ function check(command: Simple, root: boolean): DangerousHit | null {
   const remover = PACKAGE_REMOVE[program];
   if (remover && remover(args)) {
     if (args.some((arg) => FORCED_REMOVAL.test(arg))) return hit("remove-critical-package");
-    if (paths.some((name) => CRITICAL_PACKAGES.test(name.replace(/[*?].*$/, "")) || (program === "snap" && /^(core\d*|snapd|bare)$/.test(name)))) return hit("remove-critical-package");
+    if (paths.some((name) => criticalPackage(name) || (program === "snap" && /^(core\d*|snapd|bare)$/.test(name)))) return hit("remove-critical-package");
   }
 
   if ((program === "mv" || program === "rename") && paths.slice(0, -1).some(isRootish)) return hit("system-files");

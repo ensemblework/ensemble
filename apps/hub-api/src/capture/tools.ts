@@ -118,7 +118,7 @@ export async function runCaptureTool(service: CaptureService, name: string, inpu
       }
       case "capture_status": {
         const caps = await service.capabilities(true);
-        const lines = Object.entries(caps.targets).map(([key, value]) => `${key}: screenshots ${value.screenshot ? "yes" : "no"}, video ${value.video ? "yes" : "no"}${value.reason ? ` (${value.reason})` : ""}`);
+        const lines = Object.entries(caps.targets).map(([key, value]) => `${key}: screenshots ${value.screenshot ? "yes" : "no"}, video ${value.video ? "yes" : "no"}${value.tui !== undefined ? `, full-screen programs (htop) ${value.tui ? "yes" : "no"}` : ""}${value.reason ? ` (${value.reason})` : ""}`);
         return { ok: true, summary: lines.join("\n"), result: caps };
       }
     }

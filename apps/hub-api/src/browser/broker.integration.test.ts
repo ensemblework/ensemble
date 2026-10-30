@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { BrowserBroker, BrowserError, checkUrl, type LiveFrame } from "./broker.js";
 import { findChromium } from "./chromium.js";
+import { runBrowserTool } from "./tools.js";
 import type { PrivacyRules } from "./privacy.js";
 import { decodePng, isJpeg, probeVideo } from "../capture/probe.js";
 import { chooseVideoEncoder, findFfmpegs } from "../capture/ffmpeg.js";
@@ -42,7 +43,11 @@ const PAGES: Record<string, string> = {
     <p>Shown: ${QUOTED_SECRET.replace(/</g, "&lt;")}</p>
     <iframe srcdoc="<input autocomplete='cc-number' value='4242 4242 4242 4242' style='width:300px;height:40px;font-size:24px'>" style="position:absolute;left:0;top:200px;width:400px;height:100px;border:0"></iframe>`,
   "/opener": `<!doctype html><title>Opener</title><button onclick="window.open('/next')">Sign in with a popup</button>`,
+  "/whoami": `<!doctype html><title>Who</title><p id="who"></p><script>document.title = [navigator.webdriver, navigator.userAgent, navigator.language].join("|");</script>`,
+  "/robot": `<!doctype html><title>Robot or human?</title><p>Activate and hold the button to confirm that you're human.</p>`,
 };
+/** The headers the browser sent, by path. */
+const seenHeaders = new Map<string, Record<string, string | string[] | undefined>>();
 
 let server: Server;
 let base = "";
@@ -53,6 +58,7 @@ test.before(async () => {
   root = mkdtempSync(join(tmpdir(), "ensemble-broker-"));
   server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://x").pathname;
+    seenHeaders.set(path, request.headers);
     if (path === "/download") {
       response.writeHead(200, { "content-type": "text/plain", "content-disposition": 'attachment; filename="report.txt"' });
       response.end("quarterly numbers\n");
@@ -103,6 +109,31 @@ test("only web pages open: file, javascript and other schemes are refused", () =
   assert.throws(() => checkUrl("chrome://settings"), (error: unknown) => error instanceof BrowserError && error.code === "refused");
   assert.throws(() => checkUrl("not a url"), (error: unknown) => error instanceof BrowserError && error.code === "bad_input");
   assert.equal(checkUrl("http://localhost:3000/a"), "http://localhost:3000/a");
+});
+
+test("sites see a person's Chrome (no webdriver, no HeadlessChrome, the computer's language), and a human check is named", { skip, timeout: 90_000 }, async () => {
+  const broker = newBroker();
+  try {
+    broker.operation("job-look");
+    for (const tab of [await broker.open("job-look", `${base}/whoami`), await broker.open("job-look", `${base}/whoami`, { private: true })]) {
+      const [webdriver, agent, language] = (await broker.list("job-look")).find((row) => row.tab === tab.tab)!.title.split("|");
+      assert.equal(webdriver, "false", tab.tab);
+      assert.doesNotMatch(agent!, /Headless/);
+      assert.match(agent!, /Chrome\/\d+\.0\.0\.0/);
+      assert.ok(language, "a language");
+      const headers = seenHeaders.get("/whoami")!;
+      assert.doesNotMatch(String(headers["user-agent"]), /Headless/);
+      assert.match(String(headers["accept-language"]), /^[a-z]{2}/);
+    }
+    const robot = await runBrowserTool(broker, "browser_open", { url: `${base}/robot` }, { operation: "job-look" });
+    assert.ok(robot.ok);
+    assert.match(robot.summary, /human check.*browser_login_needed \(reason: human check\)/s);
+    assert.equal((robot.result as { humanCheck?: string }).humanCheck, "\u201cRobot or human?\u201d");
+    const plain = await runBrowserTool(broker, "browser_open", { url: `${base}/plain` }, { operation: "job-look" });
+    assert.ok(plain.ok && !/human check/.test(plain.summary));
+  } finally {
+    await broker.shutdown();
+  }
 });
 
 test("opens, reads, types and clicks; snapshots hide password and code values; errors are collected", { skip, timeout: 90_000 }, async () => {
