@@ -65,6 +65,7 @@ export async function setPageRole(app: FastifyInstance, room: NodeRoom, accountI
   await prisma.$transaction(async (tx) => {
     if (role === "decisions") {
       // One decisions log per room: the old one is only watched now.
+      await lockRoom(tx, room.id);
       await tx.nodeRoomPage.updateMany({ where: { roomId: room.id, role: "decisions", pageId: { not: page.pageId } }, data: { role: "watched" } });
     }
     await tx.nodeRoomPage.upsert({
@@ -187,20 +188,31 @@ const decisionText = (message: Pick<NodeMessage, "body">): string =>
 /** The room's decisions log page, made on first use by the person confirming (in their own role). */
 async function decisionsPage(app: FastifyInstance, room: NodeRoom, spaceId: string, scope: RequestScope): Promise<string> {
   const prisma = app.prisma;
-  const marked = await prisma.nodeRoomPage.findFirst({ where: { roomId: room.id, spaceId, role: "decisions" } });
-  if (marked && (await prisma.taskPage.findFirst({ where: { id: marked.pageId, userId: spaceId, deletedAt: null }, select: { id: true } }))) return marked.pageId;
   const { createStandalonePage } = await import("../pages/store.js");
   const { markdownPage } = await import("../assistant/tools/pages.js");
-  const page = await runInScope(scope, () =>
-    prisma.$transaction((tx) => createStandalonePage(tx, spaceId, { title: `Decisions — ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null })),
+  // One log per room: confirmations at once wait on the room's row, and the second finds the first's page.
+  const made = await runInScope(scope, () =>
+    prisma.$transaction(async (tx) => {
+      await lockRoom(tx, room.id);
+      const marked = await tx.nodeRoomPage.findFirst({ where: { roomId: room.id, spaceId, role: "decisions" } });
+      if (marked && (await tx.taskPage.findFirst({ where: { id: marked.pageId, userId: spaceId, deletedAt: null }, select: { id: true } }))) return { id: marked.pageId, created: false };
+      const page = await createStandalonePage(tx, spaceId, { title: `Decisions — ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null });
+      await tx.nodeRoomPage.updateMany({ where: { roomId: room.id, role: "decisions" }, data: { role: "watched" } });
+      await tx.nodeRoomPage.upsert({
+        where: { roomId_pageId: { roomId: room.id, pageId: page.id } },
+        create: { roomId: room.id, spaceId, pageId: page.id, role: "decisions", createdBy: scope.accountId },
+        update: { role: "decisions" },
+      });
+      return { id: page.id, created: true };
+    }),
   );
-  sseHub.publish(spaceId, { event: "page", data: { id: page.id, action: "create" } });
-  await prisma.nodeRoomPage.upsert({
-    where: { roomId_pageId: { roomId: room.id, pageId: page.id } },
-    create: { roomId: room.id, spaceId, pageId: page.id, role: "decisions", createdBy: scope.accountId },
-    update: { role: "decisions" },
-  });
-  return page.id;
+  if (made.created) sseHub.publish(spaceId, { event: "page", data: { id: made.id, action: "create" } });
+  return made.id;
+}
+
+/** Holds the room's row for the rest of the transaction: its decisions log is chosen or made by one at a time. */
+async function lockRoom(tx: Prisma.TransactionClient, roomId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM node_rooms WHERE id = ${roomId} FOR UPDATE`;
 }
 
 async function privateLine(app: FastifyInstance, roomId: string, accountId: string, body: string): Promise<void> {

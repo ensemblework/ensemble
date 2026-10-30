@@ -1964,3 +1964,22 @@ test("review C6–C7 #7: a person cannot react to, pin or log a message from bef
   await settleTurns();
   assert.equal(await h.prisma.nodeRoomDecision.count({ where: { roomId: room.id, messageId: fresh.id, loggedBy: cara.id } }), 1);
 });
+
+test("review C6–C7 #8: two confirmations at once make one decisions log", async () => {
+  const { akash, ben, room } = await twoPeople();
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  assert.equal((await joinSpace(ben, room.id)).statusCode, 200);
+  const first = await say(akash, room.id, "We ship on Friday.");
+  const second = await say(ben, room.id, "The docs go out with it.");
+  const { confirmDecision } = await import("./room-pages.js");
+  const message = (id: string) => h.prisma.nodeMessage.findUniqueOrThrow({ where: { id } });
+  await Promise.all([confirmDecision(h.app, await message(first.id), ben.id), confirmDecision(h.app, await message(second.id), akash.id)]);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomPage.count({ where: { roomId: room.id, role: "decisions" } }), 1);
+  assert.equal(await h.prisma.taskPage.count({ where: { userId: spaceId, title: { startsWith: "Decisions — " }, deletedAt: null } }), 1);
+  const decisions = await h.prisma.nodeRoomDecision.findMany({ where: { roomId: room.id } });
+  assert.equal(decisions.length, 2);
+  assert.equal(new Set(decisions.map((row) => row.pageId)).size, 1, "both in the one log");
+  const log = JSON.stringify((await h.prisma.taskPage.findUniqueOrThrow({ where: { id: decisions[0]!.pageId } })).content);
+  assert.ok(log.includes("We ship on Friday.") && log.includes("The docs go out with it."));
+});
