@@ -1,0 +1,46 @@
+{
+  "secret": "ZW5zZW1ibGUtdGFrZW92ZXItZml4ZWQtc2VjcmV0ISE",
+  "takeoverId": "6f1c0a52-3c3e-4b8e-9d55-2a9f2e1b7c40",
+  "header": {
+    "t": "frame",
+    "w": 1280,
+    "h": 800,
+    "url": "https://ledger.example.com/login"
+  },
+  "jpeg": "_9j_4AAQSkZJRgD_2Q",
+  "messages": [
+    {
+      "direction": "w2d",
+      "seq": 1,
+      "iv": "AQEBAQEBAQEBAQEB",
+      "plaintext": "eyJldmVudHMiOlt7InQiOiJ0ZXh0IiwidGV4dCI6Im1pcmFAZXhhbXBsZS5jb20ifSx7InQiOiJrZXkiLCJ0eXBlIjoia2V5RG93biIsImtleSI6IlRhYiIsImNvZGUiOiJUYWIifV19",
+      "message": {
+        "seq": 1,
+        "iv": "AQEBAQEBAQEBAQEB",
+        "ct": "aV2O162v90GMXdGAErBCAPPupKuZrKcJrTtyM0u8y-1LIDx3CSOgSg48GDw_wLrPvbe2trmSx0UvLdesTThiYpZilragaievRRRlDBlUq8Bqtj33dTIv5QUbBbqrngQ3oN3-bQJPs_OFYFOGZIvrUZmVHMVjp5Eanw"
+      }
+    },
+    {
+      "direction": "w2d",
+      "seq": 2,
+      "iv": "AgICAgICAgICAgIC",
+      "plaintext": "eyJldmVudHMiOlt7InQiOiJwaW5nIn1dfQ",
+      "message": {
+        "seq": 2,
+        "iv": "AgICAgICAgICAgIC",
+        "ct": "hPNVZbH75T4X7lIIbaKC7E4d5Cs0EKYURuOATLQg04qXTxMtSDplbws"
+      }
+    },
+    {
+      "direction": "d2w",
+      "seq": 1,
+      "iv": "AwMDAwMDAwMDAwMD",
+      "plaintext": "AAAAR3sidCI6ImZyYW1lIiwidyI6MTI4MCwiaCI6ODAwLCJ1cmwiOiJodHRwczovL2xlZGdlci5leGFtcGxlLmNvbS9sb2dpbiJ9_9j_4AAQSkZJRgD_2Q",
+      "message": {
+        "seq": 1,
+        "iv": "AwMDAwMDAwMDAwMD",
+        "ct": "kBn8hpaZTJPoA_zRDUN6xvtPiGYFoCbtKbMRmS95DRh-QXMO6lh6zlMT1Q_oWIoP0xi-uAOZSCR7N2pFKPWL4eMImHVrFPUMD4z2df6_PWH25ktnltuF7Q4QEt5giGxkKjOvx8yft20"
+      }
+    }
+  ]
+}

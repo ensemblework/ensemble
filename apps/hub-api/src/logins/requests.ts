@@ -36,7 +36,7 @@ export type LoginInfo = {
   saved: boolean;
   /** This computer can show the tab in a window for its owner. */
   display: boolean;
-  /** The owner can control the tab from the web (B21). */
+  /** The owner can control the tab from the web, end to end (B21, takeover/session.ts). */
   takeover: boolean;
   expiresAt: string;
 };
@@ -80,7 +80,7 @@ function info(login: Login): LoginInfo {
     reasons: login.reasons,
     saved: hasLogin(login.origin),
     display: login.profile !== null && login.broker.hasWindow(),
-    takeover: false,
+    takeover: true,
     expiresAt: new Date(login.expiresAt).toISOString(),
   };
 }

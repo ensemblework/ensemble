@@ -286,3 +286,26 @@ export async function loginCardClosed(app: FastifyInstance, card: NodeMessage): 
   if (!device || !deviceOnline(device.lastSeenAt)) return;
   await askDeviceFor(app.redis as never, { deviceId: device.id, event: "login.resolve", data: { loginId: data.data.loginId, decisionId: card.id, action: "expire" } }, 10_000).catch(() => null);
 }
+
+/**
+ * A takeover of a sign-in's tab ended with I'm done (node/takeovers.ts): the computer checked it. Signed
+ * in, the card says so and its node goes on; not yet, the card stays open with why.
+ */
+export async function loginTakeoverEnded(app: FastifyInstance, accountId: string, cardId: string, signedIn: boolean | null, message?: string): Promise<NodeMessage | null> {
+  if (signedIn === null) return null;
+  let own;
+  try {
+    own = await ownLoginCard(app, accountId, cardId);
+  } catch {
+    return null;
+  }
+  const { card, node, data } = own;
+  if (data.status !== "pending") return null;
+  const pending: Prisma.NodeMessageWhereInput = { data: { path: ["status"], equals: "pending" } };
+  if (!signedIn) return updateMessageDataIf(app.prisma, card, pending, { error: `Still not signed in${message ? `: ${message}` : "."} Open the browser again, or answer another way.` });
+  const updated = await updateMessageDataIf(app.prisma, card, pending, { status: "signed_in", working: null, error: null, note: null, via: "takeover", resolvedAt: new Date().toISOString() });
+  if (!updated) return null;
+  await appendLedger({ userId: accountId, actor: "me", action: "node.login_answered", payload: { nodeId: node.id, deviceId: data.deviceId, origin: data.origin, action: "takeover", status: "signed_in" } });
+  await afterLogin(app, node, updated, "signed_in");
+  return updated;
+}

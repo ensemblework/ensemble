@@ -50,6 +50,10 @@ export const ROUTES = {
   liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
   /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
   runLogin: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/logins`,
+  /** One encrypted frame of a tab the owner controls from the web (protocol 8, B21): the server keeps only the latest, for seconds. */
+  takeoverFrame: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/frames`,
+  /** The computer ended a takeover itself (its time ran out, the tab closed, nobody watched). */
+  takeoverState: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/state`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -104,7 +108,9 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * 8 (17 Nov 2026): a browser tool's answer may say its tab waits for the owner to sign in (`login`,
  * B11, `capabilities.logins`); the server sends the owner's answer as `login.resolve`; a run's agent
  * that needs a sign-in tells the server at `ROUTES.runLogin`, which raises the card where the run is
- * followed.
+ * followed. The owner may control a tab from the web (B21, `capabilities.takeover`): the server sends
+ * `takeover.start`, `takeover.input` and `takeover.end`; the computer sends encrypted frames to
+ * `ROUTES.takeoverFrame` and says when it ended a takeover itself at `ROUTES.takeoverState`.
  */
 export const PROTOCOL = 8;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
@@ -747,6 +753,45 @@ export const LoginResolution = z.object({
   code: text(40).optional(),
 });
 export type LoginResolution = z.infer<typeof LoginResolution>;
+
+/** `capabilities.takeover`: the owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8). */
+export const TAKEOVER_API = 1;
+
+/** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
+export const ChannelMessage = z.object({
+  seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  iv: z.string().regex(/^[A-Za-z0-9_-]{16}$/),
+  ct: z.string().regex(/^[A-Za-z0-9_-]+$/).min(22).max(700_000),
+});
+export type ChannelMessage = z.infer<typeof ChannelMessage>;
+
+/**
+ * `takeover.start` on the event stream: the owner opens a tab of this computer from the web. `sealed`
+ * holds the channel's secret, sealed in their browser for this computer (purpose `takeover`, the
+ * takeover's id as `decisionId`, the tab as `name`). The tab is a sign-in's (`loginId`) or a run's
+ * (`jobId`, the hosted job). The answer is a `CodeAnswer`.
+ */
+export const TakeoverStart = z.object({
+  id: text(100).min(1),
+  takeoverId: z.string().uuid(),
+  tab: text(20).regex(/^t\d{1,9}$/),
+  loginId: z.string().regex(/^lg_[0-9a-f]{32}$/).optional(),
+  jobId: z.string().uuid().optional(),
+  sealed: SealedShape,
+  endsAt: text(40),
+});
+export type TakeoverStart = z.infer<typeof TakeoverStart>;
+
+/** `takeover.input`: input from the owner's browser, encrypted for this computer; relayed as it came, without an answer. */
+export const TakeoverInput = ChannelMessage.extend({ takeoverId: z.string().uuid() });
+export type TakeoverInput = z.infer<typeof TakeoverInput>;
+
+/** `takeover.end`: the owner pressed I'm done (`done`: check the sign-in and give the tab back) or Stop, or the server ended it. */
+export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });
+export type TakeoverEnd = z.infer<typeof TakeoverEnd>;
+
+/** What a computer posts when it ends a takeover itself. */
+export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: text(200) });
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */
 export const NodeToolAsk = z.object({

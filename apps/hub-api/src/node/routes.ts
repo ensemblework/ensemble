@@ -53,6 +53,7 @@ import { registerRoutineRoutes } from "./routine-routes.js";
 import { stopCommand, stoppedLine, stopWork } from "./stop.js";
 import { registerPeerRoutes } from "./peer-routes.js";
 import { registerLoginRoutes } from "./login-routes.js";
+import { registerTakeoverRoutes } from "./takeover-routes.js";
 import { LoginCardError } from "./logins.js";
 import { afterLeave, revokeOnLeave, type Revoked } from "./peer-requests.js";
 
@@ -317,6 +318,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   await registerPeerRoutes(app);
   // Sign-in cards: the computer's pinned key for typed answers, and the answers (node/logins.ts, B11).
   await registerLoginRoutes(app, nodeAccount);
+  // Taking over a tab of the owner's computer from the web, end to end (node/takeovers.ts, B21).
+  await registerTakeoverRoutes(app, nodeAccount);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};
