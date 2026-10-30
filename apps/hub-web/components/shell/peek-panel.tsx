@@ -11,8 +11,7 @@ import { usePeek, type PeekKind } from "./peek";
 import { ShareButton } from "../sharing/share-dialog";
 import { TaskExportMenu } from "../task/task-export";
 import { NotePage } from "../pages/note-page";
-import { takeFreshPage } from "../pages/fresh-page";
-import { useState } from "react";
+import { isFreshPage } from "../pages/fresh-page";
 
 
 export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }) {
@@ -67,7 +66,7 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
 }
 
 function PagePeek({ id }: { id: string }) {
-  const [focusTitle] = useState(() => takeFreshPage(id));
+  const focusTitle = isFreshPage(id);
   return <NotePage pageId={id} variant="peek" focusTitle={focusTitle} />;
 }
 

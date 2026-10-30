@@ -1,6 +1,6 @@
 [package]
 name = "ensemble-capture"
-version = "0.5.0"
+version = "0.5.1"
 description = "Cross-platform tray and global shortcut for Ensemble quick capture"
 edition = "2021"
 rust-version = "1.77"

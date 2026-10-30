@@ -1302,7 +1302,8 @@ export const api = bindClient({
   createBoard: (data: CreatePageBoard) => post<{ board: PageBoardRecord }>("/api/boards", data),
   patchBoard: (id: string, data: PatchPageBoard) => patch<{ board: PageBoardRecord }>(`/api/boards/${id}`, data),
   deleteBoard: (id: string) => del<void>(`/api/boards/${id}`),
-  createBoardPage: (id: string, columnId: string) => post<{ page: BoardPage }>(`/api/boards/${id}/pages`, { columnId }),
+  /** `task`: a task page in that column; `page` (default): a standalone page. */
+  createBoardPage: (id: string, columnId: string, kind: "page" | "task" = "page") => post<{ page: BoardPage }>(`/api/boards/${id}/pages`, { columnId, kind }),
   assignPageBoard: (kind: "page" | "task", id: string, data: { boardId: string | null; columnId: string | null; beforeId?: string | null; afterId?: string | null }) =>
     put<{ page: BoardPage }>(`/api/pages/${kind}/${id}/board`, data),
   pageDirectory: () => get<{ pages: DirectoryPage[] }>("/api/pages?all=true"),

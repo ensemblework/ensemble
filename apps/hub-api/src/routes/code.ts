@@ -7,7 +7,7 @@
  *   repo=<path>  a local checkout — base is HEAD. Accept stages the hunk;
  *                reject discards it, like stage/revert hunk in an editor.
  */
-import { readFile, rm } from "node:fs/promises";
+import { access, readFile, rm } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -302,6 +302,13 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  /** The paths that exist on disk or that git tracks (a tracked file deleted on disk is staged as a deletion). */
+  async function pathsGitSees(repo: string, paths: string[], trusted: (args: string[]) => Promise<string>): Promise<string[]> {
+    const tracked = new Set((await trusted(["ls-files", "-z", "--", ...paths])).split("\0").filter(Boolean));
+    const present = await Promise.all(paths.map((path) => access(join(repo, path)).then(() => true, () => false)));
+    return paths.filter((path, index) => present[index] || tracked.has(path));
+  }
+
   async function agentReview(userId: string, id: string) {
     const review = await prisma.codeReview.findFirst({ where: { id, userId }, include: { job: { include: { task: true } } } });
     if (!review) throw new GitError("Review not found.", 404);
@@ -326,8 +333,11 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const { review, repo, trusted, branch, runBranch, paths } = await agentReview(request.userId, id);
     let commit: string | null = null;
-    if (runBranch && !review.job.externalRoot && paths.length) {
-      await trusted(["add", "-A", "--", ...paths]);
+    // A path the run touched can be gone by now (it removed the file again, or it was committed and
+    // moved elsewhere); naming it makes `git add` fail for every other file, so only what git still sees is staged.
+    const stageable = runBranch && !review.job.externalRoot && paths.length ? await pathsGitSees(repo, paths, trusted) : [];
+    if (stageable.length) {
+      await trusted(["add", "-A", "--", ...stageable]);
       const staged = await runTrustedGit({ userId: request.userId, cwd: repo, args: ["diff", "--cached", "--quiet"] });
       if (staged.exitCode === 1) {
         const settings = await loadSettings(prisma, request.userId);

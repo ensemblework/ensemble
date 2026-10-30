@@ -30,7 +30,7 @@ The task page's *Review changes* opens the same review. A repository the agent c
 
 `/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area.
 
-- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*.
+- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*. In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and *Folder* sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); what is folded is kept in `ensemble.code.folds`.
 - **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl+B shows or hides it.
 - **Terminal panel** under the editor: drag its top edge, 140 px to three quarters of the window; double-click resets (280 px); arrow keys as above. Ctrl+` shows or hides it. On the web it is the selected computer's terminal (§5).
 - **Status bar**: on the Welcome the computer with an online dot (a menu when there are several), Ensemble's version there, changes to review, code runs working now and the code size; in a review, the items in the next paragraph.
@@ -122,7 +122,7 @@ A run that writes in a repository its folder's snapshot does not cover (another 
 
 The review is start → end, so work you had before the run is never shown as the agent's; Source control lists it as *Your changes*, unticked. Git-ignored files have no snapshot; changed ones are listed as *Changed, can't be reviewed*. Failed and stopped runs get a review too, and their changes stay in the folder until you decide.
 
-*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; in Ensemble's checkout it commits the agent's files on the run's branch with hooks off, while an outside folder is left uncommitted. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only in Ensemble's checkout, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run pushes the run's branch to its `origin` without force, with the computer's sign-in (`git push -u origin HEAD`).
+*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; in Ensemble's checkout it commits the agent's files on the run's branch with hooks off, while an outside folder is left uncommitted. Only the run's files git still sees are staged (on disk, or tracked and so staged as a deletion); one that is gone, such as a file the run removed again or that was committed and moved since, is skipped instead of failing the commit. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only in Ensemble's checkout, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run pushes the run's branch to its `origin` without force, with the computer's sign-in (`git push -u origin HEAD`).
 
 ---
 

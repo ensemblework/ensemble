@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CreatePageBoard, PatchPageBoard, PageBoardColumns } from "@ensemble/shared-types";
 import { assignBoardPage, boardDto, boardPageDto, boardPageSelect, ownedBoard, visibleBoardPages } from "../pages/boards.js";
 import { createStandalonePage, TaskPageError } from "../pages/store.js";
+import { createTask } from "../services/tasks.js";
 import { sseHub } from "../lib/sse.js";
 
 const Id = z.object({ id: z.string().uuid() });
@@ -70,14 +71,19 @@ export async function pageBoardRoutes(app: FastifyInstance) {
   });
   app.post("/api/boards/:id/pages", async (request, reply) => {
     const { id } = Id.parse(request.params);
-    const { columnId } = z.object({ columnId: z.string().uuid() }).parse(request.body);
+    // `task`: a task page in that column, with owner, priority, due date and agents like any task.
+    const { columnId, kind } = z.object({ columnId: z.string().uuid(), kind: z.enum(["page", "task"]).default("page") }).parse(request.body);
     const page = await prisma.$transaction(async (tx) => {
       await ownedBoard(tx, request.userId, id, true);
+      if (kind === "task") {
+        const task = await createTask(tx, request.userId, { title: "Untitled", status: "todo", sourceKind: "manual" }, "me");
+        return assignBoardPage(tx, request.userId, "task", task.id, { boardId: id, columnId });
+      }
       const created = await createStandalonePage(tx, request.userId);
       return assignBoardPage(tx, request.userId, "page", created.id, { boardId: id, columnId });
     });
     changed(request.userId);
-    sseHub.publish(request.userId, { event: "page", data: { id: page.id, action: "create" } });
+    sseHub.publish(request.userId, { event: kind === "task" ? "task" : "page", data: { id: page.id, action: "create" } });
     return reply.code(201).send({ page: boardPageDto(page) });
   });
   app.put("/api/pages/:kind/:id/board", async (request) => {

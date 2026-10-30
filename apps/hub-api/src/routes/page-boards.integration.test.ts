@@ -151,3 +151,25 @@ test("space viewers read boards, editors manage them, and individual page shares
   assert.equal((await recipient.inject({ method: "GET", url: "/api/boards", headers: { "x-ensemble-share": share.id } })).statusCode, 403);
   assert.equal((await recipient.inject({ method: "PUT", url: `/api/pages/page/${id}/board`, payload: { boardId: null, columnId: null }, headers: { "x-ensemble-share": share.id } })).statusCode, 403);
 });
+
+test("a custom board makes task pages in a column, and a page made into a task keeps its column", async () => {
+  const user = await harness.asUser(), board = await newBoard(user);
+  const made = await user.inject({ method: "POST", url: `/api/boards/${board.id}/pages`, payload: { columnId: board.columns[1]!.id, kind: "task" } });
+  assert.equal(made.statusCode, 201, made.body);
+  const page = made.json().page as { id: string; kind: string; columnId: string };
+  assert.equal(page.kind, "task");
+  assert.equal(page.columnId, board.columns[1]!.id);
+  const task = (await user.inject({ method: "GET", url: `/api/tasks/${page.id}` })).json().task as { status: string; title: string };
+  assert.equal(task.status, "todo");
+  const onDefault = (await user.inject({ method: "GET", url: "/api/tasks?board=default" })).json().tasks as Array<{ id: string }>;
+  assert.ok(!onDefault.some((row) => row.id === page.id), "a custom board's task stays off the Ensemble board");
+
+  const note = (await user.inject({ method: "POST", url: `/api/boards/${board.id}/pages`, payload: { columnId: board.columns[2]!.id } })).json().page as { id: string; kind: string };
+  assert.equal(note.kind, "page");
+  const record = (await user.inject({ method: "GET", url: `/api/pages/${note.id}` })).json() as { revision: number };
+  const converted = await user.inject({ method: "POST", url: `/api/pages/page/${note.id}/convert`, payload: { revision: record.revision } });
+  assert.equal(converted.statusCode, 200, converted.body);
+  const pages = (await user.inject({ method: "GET", url: `/api/boards/${board.id}` })).json().pages as Array<{ id: string; kind: string; columnId: string }>;
+  const moved = pages.find((row) => row.id === converted.json().id);
+  assert.deepEqual(moved && { kind: moved.kind, columnId: moved.columnId }, { kind: "task", columnId: board.columns[2]!.id });
+});

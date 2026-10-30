@@ -11,6 +11,7 @@ import { cx } from "@/components/ui";
 import type { ReviewSummary } from "@/lib/api";
 import { repoSecond, shortBranch, type RepoView } from "@/lib/code-repos";
 import { plural, relative } from "@/lib/format";
+import { usePersistentState } from "@/lib/prefs";
 
 export function reviewState(review: Pick<ReviewSummary, "completedAt" | "decisions">): { label: string; dot: string } {
   if (review.completedAt) return { label: "Reviewed", dot: "bg-ok" };
@@ -79,9 +80,12 @@ export function RepoItem({ repo, href, where, dense = false }: { repo: RepoView;
   );
 }
 
-/** A heading that folds its rows away, like a section of VS Code's Explorer. */
-export function Fold({ title, count, open: initial = true, children, actions, icon }: { title: ReactNode; count?: number; open?: boolean; children: ReactNode; actions?: ReactNode; icon?: ReactNode }) {
-  const [open, setOpen] = useState(initial);
+/** A heading that folds its rows away, like a section of VS Code's Explorer. `persist` keeps it folded across visits. */
+export function Fold({ title, count, open: initial = true, children, actions, icon, persist }: { title: ReactNode; count?: number; open?: boolean; children: ReactNode; actions?: ReactNode; icon?: ReactNode; persist?: string }) {
+  const [local, setLocal] = useState(initial);
+  const [saved, setSaved] = usePersistentState<Record<string, boolean>>("ensemble.code.folds", {});
+  const open = persist ? saved[persist] ?? initial : local;
+  const setOpen = (next: boolean) => (persist ? setSaved((current) => ({ ...current, [persist]: next })) : setLocal(next));
   return (
     <section className="min-w-0">
       <div className="group flex h-7 items-center gap-1 pr-1.5">
