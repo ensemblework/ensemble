@@ -32,6 +32,14 @@ export const INCLUDED_PRICES: Record<string, Price> = {
 };
 
 /**
+ * What one call of the hosted web search tool (Responses `tools: [{ type: "web_search" }]`) costs on
+ * top of its tokens: Azure bills $10 per 1,000 web search calls (checked 31 Oct 2026); the pages it
+ * reads are input tokens of the call at the model's rates. A built-in tool's fee counts with the
+ * call's output in the ledger.
+ */
+export const WEB_SEARCH_CALL_USD = 0.01;
+
+/**
  * Tokens of one call. `inputTokens` is every input token, including the ones read from or written
  * to the prompt cache (Anthropic reports those separately; each runtime adds them up).
  */

@@ -12,6 +12,7 @@ import { enqueueTurn, inBackground } from "./queue.js";
 import { endPlan, finishStep, loadPlan, onMissionEffects, reportNote, stepNote, type PlanData } from "./plans.js";
 import { updateMessageData } from "./store.js";
 import { loginCardClosed } from "./logins.js";
+import { closeComputerQuestion } from "./device-tool-decisions.js";
 import type { AttemptReason } from "./missions-core.js";
 import { dispatchStep } from "./dispatch.js";
 import { helperRoomOf } from "./helpers.js";
@@ -138,8 +139,9 @@ export async function expireCards(app: FastifyInstance, planId: string, steps: s
       if (row && (row.status === "working" || row.status === "waiting") && !(row.startedAt && card.createdAt < row.startedAt)) continue;
     }
     const closed = await updateMessageData(app.prisma, card, { status: "expired", expiredReason: why });
-    // A sign-in card's computer frees its tab (node/logins.ts).
+    // A sign-in card's computer frees its tab (node/logins.ts); a computer card's question closes with it.
     if ((card.data as { type?: unknown }).type === "login") void loginCardClosed(app, closed).catch(() => undefined);
+    await closeComputerQuestion(app, closed);
     expired += 1;
   }
   return expired;

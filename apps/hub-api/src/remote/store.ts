@@ -71,6 +71,12 @@ export interface RemoteSettings {
    * only; the browser broker and the capture service read them (capture/runtime.ts).
    */
   captureSites: CaptureSites;
+  /**
+   * Ask the owner before a node opens or captures a public web page it has not opened before (once
+   * per site, like a folder). Off by default: public pages open without asking; this computer's own
+   * and its network's addresses always ask (device-tools/policy.ts). `ensemble approvals websites`.
+   */
+  askBeforeBrowsing: boolean;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -167,6 +173,7 @@ export function loadSettings(): RemoteSettings {
     evidenceUpload: saved.evidenceUpload !== false,
     secretsMode: saved.secretsMode === "named" ? "named" : "all",
     captureSites: { never: siteList(saved.captureSites?.never), preview: siteList(saved.captureSites?.preview) },
+    askBeforeBrowsing: saved.askBeforeBrowsing === true,
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

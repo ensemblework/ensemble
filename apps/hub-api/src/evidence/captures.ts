@@ -17,7 +17,7 @@ import type { MediaFile, StillFile } from "../capture/media.js";
 import type { EvidenceKind } from "../remote/contract.js";
 import { within } from "../workspace/guard.js";
 import { evidenceDir, evidenceRoot, operationEvidenceDir, readEvidenceFile } from "./files.js";
-import { kindFor, MAX_EVIDENCE_PER_JOB } from "./limits.js";
+import { kindFor, MAX_EVIDENCE_PER_JOB, NODE_EVIDENCE_WINDOW_MS } from "./limits.js";
 
 /** Who the captures belong to: a run (its job), or a node's tool operation. */
 export type CaptureOwner = { userId: string; jobId: string } | { userId: string; nodeId: string; operation: string };
@@ -29,6 +29,8 @@ export type CapturedFile = {
   reason?: string;
   details?: Record<string, number | string>;
   variants?: Array<{ path: string; variant: "poster" | "preview" }>;
+  /** One line for the owner, what the file is (a file a node shares). */
+  caption?: string;
 };
 
 function details(file: MediaFile | StillFile): Record<string, number | string> {
@@ -88,10 +90,12 @@ export async function recordCaptures(prisma: Pick<PrismaClient, "jobEvidence">, 
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const realFolder = await realpath(folder);
   const where = "jobId" in owner ? { jobId: owner.jobId } : { operation: owner.operation, jobId: null };
+  // A node's operation lasts as long as the node: its brake counts the last day only.
+  const counted = "jobId" in owner ? where : { ...where, createdAt: { gte: new Date(Date.now() - NODE_EVIDENCE_WINDOW_MS) } };
   const recorded: Recorded = { rows: [], refused: [] };
   const one = async (path: string, kind: EvidenceKind, extra: Partial<Prisma.JobEvidenceUncheckedCreateInput>): Promise<JobEvidence | null> => {
     try {
-      if ((await prisma.jobEvidence.count({ where })) >= MAX_EVIDENCE_PER_JOB) throw new Error(`This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.`);
+      if ((await prisma.jobEvidence.count({ where: counted })) >= MAX_EVIDENCE_PER_JOB) throw new Error("jobId" in owner ? `This work keeps at most ${MAX_EVIDENCE_PER_JOB} files.` : `A node keeps at most ${MAX_EVIDENCE_PER_JOB} new files a day.`);
       const checked = await readEvidenceFile(path, { kind, secrets });
       if (!within(realFolder, checked.real, false) || dirname(checked.real) !== realFolder) throw new Error("It is not in this work's evidence folder.");
       const known = await prisma.jobEvidence.findFirst({ where: { ...where, storageKey: basename(checked.real) } });
@@ -119,7 +123,8 @@ export async function recordCaptures(prisma: Pick<PrismaClient, "jobEvidence">, 
   };
   for (const file of files) {
     const hold = file.held ? { held: true, holdReason: (file.reason ?? "The computer could not check it.").slice(0, 300) } : {};
-    const row = await one(file.path, file.kind, { ...hold, ...(file.details && Object.keys(file.details).length ? { details: file.details } : {}) });
+    const caption = file.caption?.trim().slice(0, 300);
+    const row = await one(file.path, file.kind, { ...hold, ...(file.details && Object.keys(file.details).length ? { details: file.details } : {}), ...(caption ? { caption } : {}) });
     if (!row) {
       for (const variant of file.variants ?? []) await rm(variant.path, { force: true }).catch(() => undefined);
       continue;
@@ -145,24 +150,36 @@ export function recordedNote(recorded: Recorded): string {
   return lines.join("\n");
 }
 
-/** Node operations' evidence folders unchanged for this long are removed, with their rows. */
+/** Node operations' evidence folders unchanged for this long are removed, with their rows; so are older files in a folder still in use. */
 const KEEP_MS = 30 * 86_400_000;
 
-/** Removes node operations' evidence folders (and their rows here) not changed for 30 days. */
+/** Removes node operations' evidence folders (and their rows here) not changed for 30 days, and files older than that in the others. */
 export async function sweepOperationFolders(prisma: Pick<PrismaClient, "jobEvidence">, now = Date.now()): Promise<number> {
   const root = join(evidenceRoot(), "node");
   const names = await readdir(root).catch(() => [] as string[]);
   let removed = 0;
+  const rowsIn = async (dir: string, keys?: readonly string[]) => {
+    const rows = await prisma.jobEvidence.findMany({ where: { jobId: null, operation: { not: null }, ...(keys ? { storageKey: { in: [...keys] } } : {}) }, select: { id: true, operation: true } });
+    return rows.filter((row) => row.operation && operationEvidenceDir(row.operation) === dir).map((row) => row.id);
+  };
   for (const name of names) {
     if (!/^[0-9a-f]{32}$/.test(name)) continue;
     const dir = join(root, name);
     const info = await lstat(dir).catch(() => null);
     if (!info?.isDirectory()) continue;
     const files = await readdir(dir).catch(() => [] as string[]);
-    const newest = Math.max(info.mtimeMs, ...(await Promise.all(files.map((file) => stat(join(dir, file)).then((row) => row.mtimeMs, () => 0)))));
-    if (now - newest < KEEP_MS) continue;
-    const rows = await prisma.jobEvidence.findMany({ where: { jobId: null, operation: { not: null } }, select: { id: true, operation: true } });
-    const gone = rows.filter((row) => row.operation && operationEvidenceDir(row.operation) === dir).map((row) => row.id);
+    const stats = await Promise.all(files.map((file) => stat(join(dir, file)).then((row) => ({ time: row.mtimeMs, file: row.isFile() }), () => null)));
+    const newest = Math.max(info.mtimeMs, ...stats.map((row) => row?.time ?? 0));
+    if (now - newest < KEEP_MS) {
+      // A node's one operation stays in use for as long as the node: its old files go on their own.
+      const old = files.filter((_, index) => stats[index]?.file && now - stats[index]!.time >= KEEP_MS);
+      if (!old.length) continue;
+      const gone = await rowsIn(dir, old);
+      if (gone.length) await prisma.jobEvidence.deleteMany({ where: { id: { in: gone } } });
+      for (const file of old) await rm(join(dir, file), { force: true });
+      continue;
+    }
+    const gone = await rowsIn(dir);
     if (gone.length) await prisma.jobEvidence.deleteMany({ where: { id: { in: gone } } });
     await rm(dir, { recursive: true, force: true });
     removed += 1;

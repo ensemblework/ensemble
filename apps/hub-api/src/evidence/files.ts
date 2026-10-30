@@ -189,7 +189,7 @@ export async function readEvidenceFile(path: string, input: { kind: EvidenceKind
 }
 
 /** A name not yet used in the folder: `shot.png`, then `shot-2.png`, … */
-async function freeName(dir: string, name: string): Promise<string> {
+export async function freeName(dir: string, name: string): Promise<string> {
   const ext = extname(name);
   const stem = ext ? name.slice(0, -ext.length) : name;
   for (let index = 1; index < 1000; index += 1) {

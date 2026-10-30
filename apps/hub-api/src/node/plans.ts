@@ -123,6 +123,14 @@ const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"
 
 export class PlanError extends Error {}
 
+/** Crews stay crews (node/crew.ts): a step for another node goes only to a member of the plan's room. */
+async function assertInRoom(db: Db, roomId: string, nodes: ReadonlyArray<Pick<NodeAgent, "id" | "name">>): Promise<void> {
+  if (!nodes.length) return;
+  const members = await db.nodeRoomMember.findMany({ where: { roomId, nodeId: { in: nodes.map((row) => row.id) } }, select: { nodeId: true } });
+  const missing = nodes.filter((row) => !members.some((member) => member.nodeId === row.id));
+  if (missing.length) throw new PlanError(`${missing.map((row) => `“${row.name}”`).join(", ")} ${missing.length === 1 ? "is" : "are"} not in this crew; only its members get steps (node_crew_add asks your owner to add one).`);
+}
+
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /** The card's data, when the message is a plan card. */
@@ -409,6 +417,7 @@ export async function addStep(
   input: { lead: NodeAgent; turnId: string; continuing: string | null; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; step: NewStep; kind?: "plan" | "self"; goal?: string; routine?: RoutineLink },
 ): Promise<{ planId: string; step: PlanStep; position: number }> {
   let plan = await currentPlan(db, input.lead.id, input.turnId, input.continuing);
+  if ((input.step.executor ?? "node") === "node" && input.step.node.id !== input.lead.id) await assertInRoom(db, plan?.message.roomId ?? input.room.id, [input.step.node]);
   if (!plan) {
     const { message } = await postMessage(db, {
       roomId: input.room.id,
@@ -804,8 +813,10 @@ export function stepNote(data: PlanData, step: PlanStep, reason: Attempt["reason
 
 export const STEP_RULES = [
   "How a step works: nothing you write is posted in the conversation, and nobody talks to you meanwhile. Your result is what you report with node_step_report.",
-  "- Quick work (reading, searching, a short text or report): do it now, then call node_step_report.",
-  "- Code, files, commands or tests on the computer: run them in ONE agent session for this step (node_session_start, or node_session_send to your session when it is the same line of work), then reply exactly (no reply). You get a turn when the run ends.",
+  "- Simple work you do yourself, now: look things up (hub_web_search), browse and take screenshots, run a command, read or write a file or a report on the computer. Then call node_step_report.",
+  "- Writing or changing code in a repository, or a long test-and-fix loop: ONE agent session for this step (node_session_start, or node_session_send to your session when it is the same line of work), then reply exactly (no reply). You get a turn when the run ends.",
+  "- Tell the agent to attach what your owner should see (reports, screenshots, videos) with attach_evidence and to finish with report_result. When the step's result is a file on the computer and no evidence of it was attached, bring it into the chat with node_share_file and name it in your report's evidence.",
+  "- When a tool says it is waiting for your owner (a card), reply exactly (no reply): you get a turn when they answer. Never report blocked because a card is waiting.",
   "- When the step is finished, call node_step_report: outcome done (build, write, research) or pass/fail (a verification), a short summary of what changed and how it was checked, the commit in subject, each check with its verdict, and evidence (links, files).",
   "- A verification passes only if every check passes. Name each check; a fail needs the failing check. Do not fix what you test.",
   "- If it cannot be done (a decision only your owner can make, missing access, a failure you cannot fix), report outcome blocked with why (or node_step_blocked). Do not retry the same failing run.",
@@ -866,6 +877,7 @@ export async function createPlan(
   input: { lead: NodeAgent; turnId: string; room: NodeRoom; originRoomId: string; originPrivate: boolean; visibleTo: string[]; plan: PlanInput; nodes: Map<string, PlanNode>; routine?: RoutineLink },
 ): Promise<{ planId: string; steps: Map<string, string> }> {
   if (await currentPlan(db, input.lead.id, input.turnId, null)) throw new PlanError("This turn already made a plan; add to it with node_delegate or revise it with node_plan_revise.");
+  await assertInRoom(db, input.room.id, [...input.nodes.values()].map((row) => row.node).filter((row) => row.id !== input.lead.id));
   const { message } = await postMessage(db, {
     roomId: input.room.id,
     userId: input.lead.userId,
@@ -954,6 +966,9 @@ export async function revisePlan(app: FastifyInstance, planId: string, change: R
   const added: string[] = [];
   const cancelled: string[] = [];
   let revision = 0;
+  const card = await app.prisma.nodeMessage.findUnique({ where: { id: planId }, select: { roomId: true } });
+  const lead = (await app.prisma.nodeMission.findUnique({ where: { id: planId }, select: { leadNodeId: true } }))?.leadNodeId;
+  if (card) await assertInRoom(app.prisma, card.roomId, [...(change.nodes?.values() ?? [])].map((row) => row.node).filter((row) => row.id !== lead));
   await app.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM node_missions WHERE id = ${planId} FOR UPDATE`;
     const mission = await tx.nodeMission.findUniqueOrThrow({ where: { id: planId } });

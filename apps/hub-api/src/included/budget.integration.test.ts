@@ -97,6 +97,20 @@ test("a call reserves, then settles at its real cost, and people see credits onl
   claim("GET /api/metrics/credits", "isolation");
 });
 
+test("a web search's fee is reserved with its worst case and charged with its output, per search", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const { WEB_SEARCH_CALL_USD } = await import("./pricing.js");
+  const { id } = await reserveIncluded({ userId: user.id, model: "gpt-6-luna", inputTokens: 10_000, maxOutputTokens: 16_000, purpose: "Web search", extraUsd: 5 * WEB_SEARCH_CALL_USD });
+  // The tokens' worst case ($0.009) and five searches.
+  assert.equal(Number((await db.includedUsage.findUniqueOrThrow({ where: { id } })).reservedUsd), 0.059);
+  const { credits } = await settleIncluded({ id, usage: { inputTokens: 10_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 500 }, answeredBy: "gpt-6-luna", extraUsd: 2 * WEB_SEARCH_CALL_USD });
+  // 10,000 in at $0.10/M ($0.001), 500 out at $0.50/M ($0.00025), and two searches at $0.01.
+  assert.ok(Math.abs(credits - 21.25) < 1e-9, String(credits));
+  const row = await db.includedUsage.findUniqueOrThrow({ where: { id } });
+  assert.deepEqual([Number(row.usd), Number(row.inputUsd), Number(row.outputUsd)], [0.02125, 0.001, 0.02025]);
+});
+
 test("malformed reserve and settle requests are refused", async () => {
   const user = await harness.asUser();
   assert.equal((await reserve(user, { model: "gpt-6-luna", inputTokens: -1, maxOutputTokens: 10 })).statusCode, 400);

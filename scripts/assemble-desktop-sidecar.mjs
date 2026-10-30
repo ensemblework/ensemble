@@ -97,6 +97,8 @@ function checkImports(engineLibrary) {
     "const { PrismaClient } = await import('@prisma/client');",
     "await new PrismaClient().$connect().catch((error) => { if (/query engine|libquery/i.test(String(error?.message))) throw error; });",
     "await import('@electric-sql/pglite');",
+    // A node's terminal screenshots replay the screen in it (capture/screen.ts loads it only then).
+    "await import('@xterm/headless');",
     "console.log('sidecar-import-ok')",
   ].join(" ");
   const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL || "postgresql://sidecar:check@127.0.0.1:1/check" };

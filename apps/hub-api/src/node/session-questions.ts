@@ -142,7 +142,7 @@ export async function answerQuestion(app: FastifyInstance, node: Pick<NodeAgent,
   const run = row.sessionId ? await prisma.nodeRun.findFirst({ where: { jobId: row.sessionId, nodeId: node.id } }) : null;
   if (!run) throw new ToolBlockedError("That question is not from one of your runs.", "Leave it for your owner.");
   const refusal = questionRefusal(row);
-  if (refusal) throw new ToolBlockedError(refusal, "Leave it in Needs me for your owner; say so in one line if they should know.");
+  if (refusal) throw new ToolBlockedError(refusal, "Leave it for your owner: it waits for them on the run's card in the chat. Say so in one line only if they should know.");
   const detail = record(row.detail);
   const offered = strings(detail.options);
   let answer = input.answer.trim();
@@ -187,7 +187,7 @@ export function questionTools(scope: Pick<SessionToolScope, "node" | "ownerOnly"
       area: "tasks",
       description:
         "Answer a question one of your agents asked (from an attention note), only when the mission, your step's brief, the mission's constraints or your owner's own message that started the work states the answer: quote those words exactly and name the source. " +
-        "Never for permissions, widening the scope, security, cost or anything destructive, and never from memory or a guess: leave those in Needs me for your owner.",
+        "Never for permissions, widening the scope, security, cost or anything destructive, and never from memory or a guess: leave those for your owner (they answer on the run's card in the chat).",
       input: AnswerInput,
       isWrite: false,
       risk: "low",

@@ -64,12 +64,12 @@ export const BROWSER_TOOLS = [
   {
     name: "browser_screenshot",
     description:
-      "Save a screenshot of the tab to this work's evidence folder: the viewport, the full page, or one element (a ref or CSS selector), optionally at another viewport size. Password and code fields are masked. A screenshot showing a saved secret or a key-like string comes back held: the owner previews it before it is sent.",
+      "Save a screenshot of the tab to this work's evidence folder: the viewport by default; one element (a table, a chart) by its ref or a CSS selector; the full page only when asked for it. Optionally at another viewport size. Password and code fields are masked. A screenshot showing a saved secret or a key-like string comes back held: the owner previews it before it is sent.",
     input: z
       .object({
         tab,
-        fullPage: z.boolean().optional(),
-        element: z.string().max(500).optional(),
+        fullPage: z.boolean().optional().describe("The whole page, top to bottom: only when your owner asked for the full page."),
+        element: z.string().max(500).optional().describe("Just this element (a table, a chart): its ref from browser_snapshot, or a CSS selector."),
         viewport: viewport.optional(),
         name: z.string().max(80).optional().describe("A short file name."),
         format: z.enum(["png", "jpeg"]).optional(),
@@ -96,7 +96,7 @@ export const BROWSER_TOOLS = [
   {
     name: "browser_login_needed",
     description:
-      "Ask the owner to sign in to a site in one of this work's tabs, when a page needs their account (a sign-in form, a session that ended). The tab pauses (no reading, screenshots or actions) until they sign in on the computer, pick the login saved there, or type it on the web for this computer only; you never see or type a password. `signedIn` says how to tell it worked: a URL glob the tab reaches, or a CSS selector the signed-in page shows (default: no sign-in form left on the site). Ensemble asks by itself when a page of another site clearly wants a sign-in in the shared profile; a private tab or this computer's own addresses only get a hint.",
+      "Hand one of this work's tabs to the owner when a page needs a person: their account (a sign-in form, a session that ended), or a human check (a captcha, \"Robot or human?\", \"Just a moment…\", a page that blocks automated browsing; give reason \"human check\"). Never try to solve a human check yourself. The tab pauses (no reading, screenshots or actions) until they sign in or pass the check on the computer, pick the login saved there, or type it on the web for this computer only; you never see or type a password. `signedIn` says how to tell it worked: a URL glob the tab reaches, or a CSS selector the page then shows (default: no sign-in form left on the site). Ensemble asks by itself when a page of another site clearly wants a sign-in in the shared profile; a private tab or this computer's own addresses only get a hint.",
     input: z
       .object({
         tab,

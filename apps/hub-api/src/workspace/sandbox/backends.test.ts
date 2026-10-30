@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bubblewrapArgs, kernelHasLandlockNetwork, landrunArgs } from "./linux.js";
+import { bubblewrapArgs, kernelHasLandlockNetwork, landrunArgs, processScopeCommand } from "./linux.js";
 import type { SandboxPolicy } from "./policy.js";
 import { cmdLine, quoteWindowsArg, windowsToolchainReads } from "./windows.js";
 
@@ -45,6 +45,30 @@ test("bubblewrap hides the home folder, mounts back the grants, and cuts the net
   assert.ok(text.includes(`--ro-bind ${home}/.nvm ${home}/.nvm`), "toolchains are readable");
   assert.ok(text.includes("--tmpfs /opt/ensemble-cli/sidecar/app"), "Ensemble's own code is hidden even outside home");
   assert.deepEqual(args.slice(-5), ["--chdir", `${home}/ensemble-workspace/runs/job`, "--", "/usr/bin/git", "status"]);
+});
+
+test("a process monitor in bubblewrap gets the system's /proc read-only, still in its own PID namespace", () => {
+  const options = { exists: () => false, execPath: "/usr/bin/node", real: (path: string) => path };
+  const monitor = bubblewrapArgs(policy({ hostPids: true }), { program: "/usr/bin/script", args: ["-qfec", "htop", "/dev/null"] }, options).join(" ");
+  assert.ok(monitor.includes("--unshare-pid"), "it cannot signal the processes it lists");
+  assert.ok(monitor.includes("--ro-bind /proc /proc"));
+  assert.ok(!monitor.includes("--proc /proc"));
+  const ordinary = bubblewrapArgs(policy(), { program: "/usr/bin/git", args: [] }, options).join(" ");
+  assert.ok(ordinary.includes("--proc /proc") && !ordinary.includes("--ro-bind /proc /proc"), "every other command sees only its own processes");
+});
+
+test("a Landlock domain keeps a process monitor out of what it lists: setpriv, else landrun granting what bubblewrap shows", () => {
+  const cmd = { program: "/usr/bin/script", args: ["-qfec", "htop", "/dev/null"] };
+  assert.deepEqual(processScopeCommand({ helper: "setpriv", path: "/usr/bin/setpriv" }, policy(), cmd, {}), { program: "/usr/bin/setpriv", args: ["--no-new-privs", "--landlock-access", "fs:make-block", "--", ...[cmd.program, ...cmd.args]] });
+  const landrun = processScopeCommand({ helper: "landrun", path: "/opt/ensemble/bin/landrun" }, policy(), cmd, { PATH: "/usr/bin", TERM: "xterm-256color", GONE: undefined });
+  const pairs = (flag: string) => landrun.args.flatMap((value, index) => (value === flag ? [landrun.args[index + 1]] : []));
+  assert.equal(landrun.program, "/opt/ensemble/bin/landrun");
+  assert.deepEqual(pairs("--rox"), ["/"]);
+  assert.deepEqual(pairs("--rwx"), ["/tmp", `${home}/ensemble-workspace/runs/job`, `${home}/ensemble-workspace/.cache`]);
+  assert.deepEqual(pairs("--env"), ["PATH", "TERM"]);
+  assert.ok(landrun.args.includes("--unrestricted-network"), "bubblewrap decides the network");
+  assert.deepEqual(landrun.args.slice(-4), ["--", ...[cmd.program, ...cmd.args]].slice(-4));
+  assert.deepEqual(processScopeCommand({ helper: null, path: null }, policy(), cmd, {}), cmd, "where the system's own confinement does it");
 });
 
 test("bubblewrap keeps the network when the run allows it", () => {

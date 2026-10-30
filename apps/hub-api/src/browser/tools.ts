@@ -8,6 +8,7 @@ import { z } from "zod";
 import { CaptureError } from "../capture/media.js";
 import { BrowserError, type BrowserBroker, type LiveFrame } from "./broker.js";
 import { askForLogin, checkForLogin, waitingNote } from "../logins/requests.js";
+import { HUMAN_CHECK_HINT } from "./human-check.js";
 import { BROWSER_TOOLS, inputSchema, type ToolSpec } from "./tool-specs.js";
 
 export { BROWSER_TOOLS, inputSchema, type ToolSpec };
@@ -64,12 +65,18 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       if (found.login) return { ok: true, summary: `${done.summary}\n${waitingNote(found.login)}`, result: { ...(done.result as Record<string, unknown>), login: found.login } };
       return { ok: true, summary: `${done.summary}\n${found.note}`, result: done.result };
     };
+    // A page that is a human check, or refuses automated browsing, says so: the node hands it to its owner or looks elsewhere.
+    const withHumanCheck = async (done: ToolCallResult, tabId: string, status?: number | null): Promise<ToolCallResult> => {
+      if (!done.ok || (done.result as { login?: unknown } | null)?.login) return done;
+      const kind = await broker.humanCheck(context.operation, tabId, { status }).catch(() => null);
+      return kind ? { ok: true, summary: `${done.summary}\n${HUMAN_CHECK_HINT} It shows ${kind}.`, result: { ...(done.result as Record<string, unknown>), humanCheck: kind } } : done;
+    };
     switch (spec.name) {
       case "browser_open": {
         const opened = await op.open(a.url as string, { tab: a.tab as string | undefined, profile: a.profile as string | undefined, private: a.private as boolean | undefined, headed: a.headed as boolean | undefined, device: a.device as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined });
         const summary = opened.error ? `Tab ${opened.tab} could not load the page: ${opened.error}` : `Opened ${opened.tab}: ${opened.title || opened.url}${opened.status ? ` (${opened.status})` : ""}.`;
         const done = { ok: true as const, summary: opened.note ? `${summary} ${opened.note}` : summary, result: opened };
-        return opened.error ? done : withLogin(done, opened.tab, { requested: a.url as string, status: opened.status });
+        return opened.error ? done : withHumanCheck(await withLogin(done, opened.tab, { requested: a.url as string, status: opened.status }), opened.tab, opened.status);
       }
       case "browser_tabs": {
         const tabs = await op.tabs();
@@ -81,7 +88,7 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       }
       case "browser_snapshot": {
         const snapshot = await op.snapshot(a.tab as string, { maxChars: a.maxChars as number | undefined });
-        return { ok: true, summary: `${snapshot.title || snapshot.url}\n${snapshot.snapshot}`, result: snapshot };
+        return withHumanCheck({ ok: true, summary: `${snapshot.title || snapshot.url}\n${snapshot.snapshot}`, result: snapshot }, snapshot.tab);
       }
       case "browser_click": {
         const info = await op.click(a.tab as string, a.ref as string, { button: a.button as "left" | undefined, double: a.double as boolean | undefined });

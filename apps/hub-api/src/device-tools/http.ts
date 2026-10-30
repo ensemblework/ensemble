@@ -8,7 +8,7 @@
 import { lookup } from "node:dns/promises";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { GuardError } from "../workspace/guard.js";
@@ -37,6 +37,41 @@ export function loopbackAddress(address: string): boolean {
 let resolveName: (host: string) => Promise<string[]> = async (host) => (await lookup(host, { all: true, verbatim: true })).map((row) => row.address);
 export function setResolverForTests(resolver: ((host: string) => Promise<string[]>) | null): void {
   resolveName = resolver ?? (async (host) => (await lookup(host, { all: true, verbatim: true })).map((row) => row.address));
+}
+
+/** This computer, its networks and addresses that are not on the internet (IPv4-mapped IPv6 included). */
+const NOT_PUBLIC = new BlockList();
+for (const [network, prefix] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4]] as const) NOT_PUBLIC.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8], ["2001:db8::", 32], ["100::", 64], ["64:ff9b:1::", 48]] as const) NOT_PUBLIC.addSubnet(network, prefix, "ipv6");
+/** Names that never mean a public site. */
+const LOCAL_NAME = /(^|\.)(localhost|local|localdomain|internal|intranet|lan|home|corp|private|test|invalid|example|home\.arpa)$/;
+
+/** An address on the public internet. */
+export function publicAddress(address: string): boolean {
+  const plain = address.replace(/^\[|\]$/g, "").toLowerCase();
+  const family = isIP(plain);
+  if (!family) return false;
+  return !NOT_PUBLIC.check(plain, family === 4 ? "ipv4" : "ipv6");
+}
+
+/**
+ * Whether a page's address is a public web site: a dotted name that is not a local one (localhost,
+ * `.local`, `.internal`…) and resolves only to public addresses, or a public IP address. This
+ * computer's own servers and its network's (a router, a NAS) are not.
+ */
+export async function publicWebAddress(raw: string): Promise<boolean> {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+  if (isIP(host)) return publicAddress(host);
+  if (!host.includes(".") || LOCAL_NAME.test(host)) return false;
+  const addresses = await Promise.race([resolveName(host).catch(() => [] as string[]), new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 3_000).unref())]);
+  return addresses.length > 0 && addresses.every(publicAddress);
 }
 
 /** Ensemble's own local API, when this runtime knows its port. */

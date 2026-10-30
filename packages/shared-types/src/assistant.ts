@@ -459,6 +459,13 @@ export const SharingSettings = z.object({
   spaces: z.number().int().min(1).max(SHARING_CAPS.spaces).default(12),
 });
 
+/** Ensemble Node, for all of the account's nodes. */
+export const NodeSettings = z.object({
+  /** Ask once before a node opens or captures a new website in the browser on the owner's computer (off: public pages need no answer). */
+  askBeforeBrowsing: z.boolean().default(false),
+});
+export type NodeSettings = z.infer<typeof NodeSettings>;
+
 export const Settings = z.object({
   assistant: AssistantSettings.default({}),
   autonomy: AutonomyLevel.default("assist"),
@@ -501,6 +508,7 @@ export const Settings = z.object({
   timezoneMode: z.enum(["auto", "manual"]).default("auto"),
   email: z.string().default("you@ensemble.local"),
   sharing: SharingSettings.default({}),
+  node: NodeSettings.default({}),
 });
 export type Settings = z.infer<typeof Settings>;
 
