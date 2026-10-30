@@ -283,7 +283,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     if (!row || row.userId !== accountId || row.variantOf) return reply.code(404).send({ error: "That evidence is not available." });
     if (!row.held) return reply.code(409).send({ error: "That file is not waiting for a preview." });
     const settled = await settleHeld(app, accountId, [id], decision);
-    if (settled.failed.length) return reply.code(409).send({ error: settled.failed[0]!.error });
+    if (settled.failed.length) return reply.code(settled.failed[0]!.status === 504 ? 504 : 409).send({ error: settled.failed[0]!.error });
     return { released: settled.released, discarded: settled.discarded };
   });
 

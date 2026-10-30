@@ -324,10 +324,13 @@ async function settlePreview(app: FastifyInstance, card: NodeMessage, node: Node
   await claim(app, card);
   const settled = await settleHeld(app, node.userId, parsed.evidence.map((item) => item.id), input.decision);
   const current = await prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
-  const result = { released: settled.released, discarded: settled.discarded };
+  // Files answered one by one earlier keep their answers (evidence/held.ts `data.answers`).
+  const answers = (current.data as { answers?: Record<string, string> }).answers ?? {};
+  const answered = (kind: "released" | "discarded", now: readonly string[]) => parsed.evidence.filter((item) => now.includes(item.id) || answers[item.id] === kind).map((item) => item.id);
+  const result = { released: answered("released", settled.released), discarded: answered("discarded", settled.discarded) };
   // Some could not be sent (the computer offline, upload off there): the owner can try again or discard.
   if (settled.failed.length) return updateMessageData(prisma, current, { status: "pending", error: settled.failed.map((item) => `“${item.name}”: ${item.error}`).join(" "), result });
-  const updated = await updateMessageData(prisma, current, { status: input.decision === "discard" ? "discarded" : "released", error: null, result });
+  const updated = await updateMessageData(prisma, current, { status: result.released.length ? "released" : "discarded", error: null, result });
   if (input.decision === "approve" && settled.released.length && parsed.nodeCapture) {
     const names = parsed.evidence.filter((item) => settled.released.includes(item.id)).map((item) => `“${item.name}” [${item.id}]`).join(", ");
     await enqueueTurn(app, {

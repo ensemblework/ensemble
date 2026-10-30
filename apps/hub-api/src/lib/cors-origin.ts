@@ -83,9 +83,13 @@ export function corsPluginOptions(policy: CorsPolicy): FastifyCorsOptions {
     origin: (origin, done) => done(null, !origin || policy.origins.has(origin)),
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-ensemble-user", "x-ensemble-internal", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor"],
+    // A run's live view describes its picture in these (node live view, devices/live.ts); Node reads them cross-origin.
+    exposedHeaders: [...LIVE_VIEW_HEADERS],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   };
 }
+
+export const LIVE_VIEW_HEADERS = ["X-Ensemble-Live-At", "X-Ensemble-Live-Tab", "X-Ensemble-Live-Url", "X-Ensemble-Live-Title", "X-Ensemble-Live-Width", "X-Ensemble-Live-Height", "X-Ensemble-Live-Paused"] as const;
 
 /**
  * CORS headers for a response written with `reply.hijack()` and

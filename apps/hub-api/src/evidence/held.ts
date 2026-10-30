@@ -30,7 +30,7 @@ type Redisish = Parameters<typeof grantUpload>[0] & Parameters<typeof askDeviceF
 export class HeldError extends Error {
   constructor(
     message: string,
-    readonly statusCode: 404 | 409 | 413 | 502,
+    readonly statusCode: 404 | 409 | 413 | 502 | 504,
   ) {
     super(message);
   }
@@ -42,7 +42,7 @@ const redisOf = (app: App) => app.redis as unknown as Redisish;
 async function keeper(app: App, row: Pick<JobEvidence, "deviceId" | "userId" | "name">): Promise<Device> {
   const device = row.deviceId ? await app.prisma.device.findUnique({ where: { id: row.deviceId } }) : null;
   if (!device || device.userId !== row.userId || device.revokedAt) throw new HeldError(`“${row.name}” was kept on a computer that is no longer paired.`, 409);
-  if (!deviceOnline(device.lastSeenAt)) throw new HeldError(`“${row.name}” is kept on ${device.name}, which is offline. Try again when Ensemble runs there.`, 409);
+  if (!deviceOnline(device.lastSeenAt)) throw new HeldError(`“${row.name}” is kept on ${device.name}, which is offline. Try again when Ensemble runs there.`, 504);
   return device;
 }
 
@@ -64,7 +64,7 @@ export async function previewHeld(app: App, row: Pick<JobEvidence, "id" | "userI
   if (row.size > PREVIEW_MAX_BYTES) throw new HeldError(`“${row.name}” is too large to preview from the computer (${Math.ceil(row.size / 1024 / 1024)} MB); preview its poster, or release it.`, 413);
   const device = await keeper(app, row);
   const answer = await ask(app, device, row, "preview", 60_000);
-  if (answer.status !== 200) throw new HeldError(answer.error ?? `${device.name} could not send it (${answer.status}).`, answer.status === 404 ? 404 : answer.status === 413 ? 413 : 409);
+  if (answer.status !== 200) throw new HeldError(answer.error ?? `${device.name} could not send it (${answer.status}).`, answer.status === 404 || answer.status === 413 || answer.status === 504 ? answer.status : 409);
   const sent = await previewOf(redisOf(app), row.id);
   if (!sent) throw new HeldError(`${device.name} did not send “${row.name}”.`, 502);
   return sent;
@@ -75,7 +75,7 @@ async function withVariants(app: App, row: JobEvidence): Promise<JobEvidence[]> 
   return [row, ...(await app.prisma.jobEvidence.findMany({ where: { variantOf: row.id, userId: row.userId }, orderBy: { createdAt: "asc" } }))];
 }
 
-export type Settled = { released: string[]; discarded: string[]; failed: Array<{ id: string; name: string; error: string }> };
+export type Settled = { released: string[]; discarded: string[]; failed: Array<{ id: string; name: string; error: string; status: number }> };
 
 /**
  * The owner releases (uploads, then usable everywhere evidence is) or discards held files: each with
@@ -116,7 +116,7 @@ export async function settleHeld(app: App, accountId: string, ids: readonly stri
       settled.released.push(row.id);
       await appendLedger({ userId: accountId, actor: "me", action: "evidence.release", payload: { evidenceId: row.id, jobId: row.jobId, nodeId: row.nodeId, deviceId: device.id } }).catch(() => undefined);
     } catch (error) {
-      settled.failed.push({ id: row.id, name: row.name, error: error instanceof Error ? error.message : String(error) });
+      settled.failed.push({ id: row.id, name: row.name, error: error instanceof Error ? error.message : String(error), status: error instanceof HeldError ? error.statusCode : 409 });
     }
   }
   for (const jobId of jobs) await refreshRunCard(app.prisma as never, jobId).catch(() => undefined);
@@ -128,18 +128,36 @@ const CARD_TYPE = "media_preview";
 
 type PreviewCardData = { type: typeof CARD_TYPE; status: string; evidence: CardEvidence[]; jobId?: string | null; operation?: string | null; nodeCapture?: boolean };
 
-/** Pending preview cards that name these files: settled when all of theirs are. */
+/**
+ * Pending preview cards that name these files. Each file's answer is kept on its card as it is given
+ * (`data.answers`, one statement per file, so answers given at once all stay); the card is settled when
+ * none of its files is held any more, with every answer it was given.
+ */
 async function settleCards(app: App, accountId: string, settled: Settled): Promise<void> {
-  const done = new Set([...settled.released, ...settled.discarded]);
+  const done = new Map<string, "released" | "discarded">([...settled.released.map((id) => [id, "released"] as const), ...settled.discarded.map((id) => [id, "discarded"] as const)]);
   if (!done.size) return;
   const cards = await app.prisma.nodeMessage.findMany({ where: { userId: accountId, kind: "approval", data: { path: ["type"], equals: CARD_TYPE } }, orderBy: { createdAt: "desc" }, take: 100 });
   for (const card of cards) {
     const data = card.data as PreviewCardData;
     if (data.status !== "pending" || !Array.isArray(data.evidence) || !data.evidence.some((item) => done.has(item.id))) continue;
-    const left = await app.prisma.jobEvidence.count({ where: { id: { in: data.evidence.map((item) => item.id) }, held: true } });
-    if (left) continue;
-    const released = data.evidence.filter((item) => settled.released.includes(item.id)).map((item) => item.id);
-    await updateMessageData(app.prisma, card, { status: released.length ? "released" : "discarded", result: { released, discarded: data.evidence.filter((item) => settled.discarded.includes(item.id)).map((item) => item.id) } });
+    for (const item of data.evidence) {
+      const answer = done.get(item.id);
+      if (!answer) continue;
+      await app.prisma.$executeRaw`UPDATE node_messages SET data = jsonb_set(data, '{answers}', COALESCE(data->'answers', '{}'::jsonb) || jsonb_build_object(${item.id}::text, ${answer}::text)) WHERE id = ${card.id}`;
+    }
+    const fresh = await app.prisma.nodeMessage.findUnique({ where: { id: card.id } });
+    if (!fresh) continue;
+    const now = fresh.data as PreviewCardData & { answers?: Record<string, string> };
+    const answers = now.answers ?? {};
+    const left = await app.prisma.jobEvidence.count({ where: { id: { in: now.evidence.map((item) => item.id) }, held: true } });
+    if (left || now.status !== "pending") {
+      // Still waiting for some: the card shows the answers so far.
+      await updateMessageData(app.prisma, fresh, {});
+      continue;
+    }
+    const released = now.evidence.filter((item) => answers[item.id] === "released").map((item) => item.id);
+    const discarded = now.evidence.filter((item) => answers[item.id] === "discarded").map((item) => item.id);
+    await updateMessageData(app.prisma, fresh, { status: released.length ? "released" : "discarded", result: { released, discarded } });
   }
 }
 

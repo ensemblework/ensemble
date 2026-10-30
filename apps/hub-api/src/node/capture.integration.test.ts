@@ -398,10 +398,19 @@ test("a run's held capture is announced on a preview card where the run is follo
   const after = (await messages(mira, room.id)).find((message) => message.id === cards[0]!.id)!;
   assert.equal(after.data.status, "pending");
   assert.match(String((after.data as { error?: string }).error), /offline/);
-  // A preview from an offline computer says so too.
+  // A preview from an offline computer says so too, as a computer out of reach (504).
   const preview = await mira.inject({ method: "GET", url: `/api/node/evidence/${id}` });
-  assert.equal(preview.statusCode, 409);
+  assert.equal(preview.statusCode, 504);
   assert.match(json(preview).error, /offline/);
+  // One file discarded on its own, then the rest from the card: the card keeps every answer.
+  const one = await mira.inject({ method: "POST", url: `/api/node/evidence/${id}/release`, payload: { decision: "discard" } });
+  assert.equal(one.statusCode, 200, one.body);
+  let kept = (await messages(mira, room.id)).find((message) => message.id === cards[0]!.id)!;
+  assert.deepEqual([kept.data.status, (kept.data as { answers?: Record<string, string> }).answers], ["pending", { [id]: "discarded" }]);
+  const rest = await mira.inject({ method: "POST", url: `/api/node/approvals/${cards[0]!.id}`, payload: { decision: "discard" } });
+  assert.equal(rest.statusCode, 200, rest.body);
+  kept = (await messages(mira, room.id)).find((message) => message.id === cards[0]!.id)!;
+  assert.deepEqual([kept.data.status, kept.data.result], ["discarded", { released: [], discarded: [id, second.id] }]);
 });
 
 test("a run's live view: the latest small picture for its owner only, a pause with why, a hint on the Node stream", async () => {
