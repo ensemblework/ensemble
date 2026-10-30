@@ -287,6 +287,10 @@ export async function roomBoundTurn(
           extraRefs: [],
           // Files on the owner's messages stay in the owner's Files: a room-bound turn does not open them.
           mentions: undefined,
+          // Other people read this: the instructions name no space of the owner's, only the room's.
+          where: spaceName
+            ? `You're working in an Ensemble room with other people; the room's shared space “${spaceName}” is the only space you can reach.`
+            : "You're working in an Ensemble room with other people; no Ensemble space is reachable from here.",
         }),
       ),
     replyData: ctx.requestId ? { peerRequest: ctx.requestId } : {},

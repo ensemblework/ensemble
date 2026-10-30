@@ -1760,3 +1760,32 @@ test("follow-up #1: a request's public card shows only what the requester wrote 
   const reviewRequest = await h.prisma.nodePeerRequest.findFirstOrThrow({ where: { roomId: room.id, kind: "review" } });
   assert.deepEqual(reviewRequest.candidate, { repo: "github.com/ben/app", commit: "abc1234" });
 });
+
+test("follow-up #2: a room-bound turn's instructions name no space of its owner's, only the room's", async () => {
+  const { akash, ben, room, dm } = await twoPeople();
+  // His own space has a name of his own; his email the room never shows.
+  await h.prisma.user.update({ where: { id: akash.id }, data: { spaceName: "CANARY-SPACE Initech deal" } });
+  script = (turn) => (turn.slug === "manager" ? { text: "On track." } : { text: "(no reply)" });
+  seen.length = 0;
+  inputs.length = 0;
+  await say(ben, room.id, "@manager how is the launch going?");
+  let turn = seen.find((row) => row.slug === "manager")!;
+  assert.match(turn.system, /^You're working in an Ensemble room with other people; no Ensemble space is reachable from here\./);
+  for (const hidden of ["CANARY-SPACE", "Akash's space", akash.email, "Only this space is reachable"]) {
+    assert.ok(inputs.every((text) => !text.includes(hidden)), `${hidden} is not in what the model was sent`);
+  }
+
+  // With the room's space linked, that one is named, and still none of his.
+  await linkSpace(akash, room.id, "Launch space");
+  seen.length = 0;
+  inputs.length = 0;
+  await say(ben, room.id, "@manager and the board?");
+  turn = seen.find((row) => row.slug === "manager")!;
+  assert.match(turn.system, /^You're working in an Ensemble room with other people; the room's shared space “Launch space” is the only space you can reach\./);
+  assert.ok(inputs.every((text) => !text.includes("CANARY-SPACE") && !text.includes(akash.email)));
+
+  // His own chats keep naming his space.
+  seen.length = 0;
+  await say(akash, dm.id, "@manager anything new?");
+  assert.match(seen.find((row) => row.slug === "manager")!.system, /in their space “CANARY-SPACE Initech deal”/);
+});

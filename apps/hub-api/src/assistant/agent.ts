@@ -168,6 +168,8 @@ export interface AssistantTurnArgs {
    * current access (node/spaces.ts). The assistant never sets it: it stays in one space per conversation.
    */
   spaces?: SpaceGateway;
+  /** Where the turn works, in place of the person's own space (Ensemble Node's room-bound turns): see `assistantInstructions`. */
+  where?: string;
   /** Metrics and credit purpose for the model calls. Default "Hub chat". */
   purpose?: string;
 }
@@ -286,6 +288,7 @@ async function drive(
     apps: isGuestIn(userId) ? undefined : appsPrompt(connections, settings),
     playbooks,
     ...(args.spaces ? { spaces: await args.spaces.instructions() } : {}),
+    ...(args.where ? { where: args.where } : {}),
   });
   const context = turnContext(openPage, {
     today: clock.date,
