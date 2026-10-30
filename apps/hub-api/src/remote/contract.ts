@@ -698,7 +698,7 @@ export const LiveFramePost = z.object({
   jpeg: z.string().max(300_000).optional(),
   width: z.number().int().min(0).max(10_000).optional(),
   height: z.number().int().min(0).max(10_000).optional(),
-  paused: z.enum(["sensitive", "private_site", "secret_on_screen"]).optional(),
+  paused: z.enum(["sensitive", "controlled", "private_site", "secret_on_screen"]).optional(),
 });
 export type LiveFramePost = z.infer<typeof LiveFramePost>;
 

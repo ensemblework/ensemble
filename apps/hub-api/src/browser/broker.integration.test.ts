@@ -336,6 +336,10 @@ test("a sensitive tab refuses capture and actions, pauses the live view, and com
     await rejects(op.console(opened.tab), "sensitive");
     assert.equal((await op.tabs())[0]!.sensitive, true);
     await op.wait(opened.tab, { url: "**/moving", timeoutMs: 2_000 });
+    // Taken over from the web, its live view says so instead of "signing in".
+    broker.markControlled(opened.tab, true);
+    await waitFor(() => frames.some((frame) => frame.paused === "controlled"), 5_000);
+    broker.markControlled(opened.tab, false);
     await broker.markSensitive(opened.tab, false);
     const resumedAt = frames.length;
     await waitFor(() => frames.slice(resumedAt).some((frame) => frame.jpeg), 5_000);

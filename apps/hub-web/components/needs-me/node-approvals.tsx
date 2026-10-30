@@ -24,6 +24,7 @@ const WANTS: Record<string, string> = {
 /** What the node wants, as the card's first line says it after its handle. */
 function wants(card: NodeApprovalCard): string {
   if (card.data.type === "session" && card.data.action === "hand_over") return "wants to hand a session to another node";
+  if (card.data.type === "post" && card.data.request) return `drafted a request to ${card.data.request.to.handle ? `@${card.data.request.to.handle}` : card.data.request.to.name} for you to send`;
   const count = Array.isArray(card.data.evidence) ? card.data.evidence.length : 0;
   if (card.data.type === "media_preview" && count > 1) return `has ${count} captures for you to check first`;
   return WANTS[card.data.type ?? "tools"] ?? WANTS.tools;
@@ -260,7 +261,7 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
         <div className="mt-3 flex items-center gap-2">
           {card.data.type === "secret" || card.data.type === "login" ? null : (
             <button type="button" className="btn-primary" onClick={() => settle.mutate("approve")} disabled={settle.isPending}>
-              <Check size={13} /> {card.data.type === "media_preview" ? "Send" : "Approve"}
+              <Check size={13} /> {card.data.type === "media_preview" ? "Send" : card.data.type === "post" && card.data.request ? "Send request" : "Approve"}
             </button>
           )}
           <button type="button" className="btn-ghost" onClick={() => settle.mutate("discard")} disabled={settle.isPending}>

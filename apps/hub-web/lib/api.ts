@@ -376,6 +376,8 @@ export type NodeApprovalCard = {
     allow?: string[];
     /** Held captures: the files waiting for a check (previewed in Node). */
     evidence?: Array<{ id: string; name: string }>;
+    /** A request to someone in a room, drafted by the node for the person to send (`type: "post"`). */
+    request?: { kind: string; to: { accountId: string; name: string; handle?: string | null } };
     /** Sign-in cards (B11): the site, and what the computer offers (a saved login, a screen to sign in on). */
     origin?: string;
     saved?: boolean;

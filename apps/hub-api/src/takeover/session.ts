@@ -201,6 +201,7 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
       const keys = takeoverKeys(box.secret, frame.takeoverId);
       box.secret.fill(0);
       const marked = !tab.sensitive;
+      broker.markControlled(frame.tab, true);
       if (marked) await broker.markSensitive(frame.tab, true);
       const cdp = await tab.context.newCDPSession(tab.page);
       const size = tab.page.viewportSize() ?? { width: 1280, height: 800 };
@@ -307,6 +308,7 @@ export async function endTakeover(id: string, input: { done: boolean; reason: st
   for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
   await session.cdp.send("Page.stopScreencast").catch(() => undefined);
   await session.cdp.detach().catch(() => undefined);
+  browserBroker().markControlled(session.tab, false);
   let signedIn: boolean | null = null;
   let message: string | undefined;
   if (session.loginId && input.done) {

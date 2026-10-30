@@ -44,7 +44,8 @@ export type LiveFrame = {
   jpeg?: Buffer;
   width?: number;
   height?: number;
-  paused?: "sensitive" | "private_site" | "secret_on_screen";
+  /** sensitive: a sign-in; controlled: its owner is taking it over from the web. */
+  paused?: "sensitive" | "controlled" | "private_site" | "secret_on_screen";
 };
 
 export type ConsoleEntry = { at: string; type: string; text: string; location?: string };
@@ -139,6 +140,8 @@ type Tab = {
   recording: Recording | null;
   /** Its browser is restarting (shown in a window): the old page closing does not close the tab. */
   moving?: boolean;
+  /** Its owner is controlling it from the web (takeover/): its live view says so rather than "signing in". */
+  controlled?: boolean;
 };
 
 type Operation = {
@@ -983,6 +986,12 @@ export class BrowserBroker {
     return this.info(tab);
   }
 
+  /** Marks a tab as taken over from the web, or back (takeover/): only what its live view says changes. */
+  markControlled(id: string, on: boolean): void {
+    const tab = this.tabs.get(id);
+    if (tab) tab.controlled = on;
+  }
+
   // ── Ensemble's own sign-in and takeover code (logins/, takeover/), never agents ──
 
   /**
@@ -1111,9 +1120,9 @@ export class BrowserBroker {
         if (live.paused !== reason) send({ ...base, paused: reason });
         live.paused = reason;
       };
-      if (tab.sensitive) return pause("sensitive");
+      if (tab.sensitive) return pause(tab.controlled ? "controlled" : "sensitive");
       const scan = await scanPage(tab.page, rules);
-      if (tab.sensitive) return pause("sensitive");
+      if (tab.sensitive) return pause(tab.controlled ? "controlled" : "sensitive");
       if (scan.site === "never") return pause("private_site");
       if (hasSecrets(scan.hits)) return pause("secret_on_screen");
       const jpeg = await tab.page.screenshot({ type: "jpeg", quality: live.quality, scale: "css", mask: sensitiveMasks(tab.page), caret: "hide", timeout: 5_000 });
