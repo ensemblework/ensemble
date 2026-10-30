@@ -149,7 +149,7 @@ pnpm desktop:build      # tauri build
 
 | Target | Runner | Bundles | Artifact |
 | --- | --- | --- | --- |
-| `macos-arm64` | `macos-14` | app, dmg | `ensemble-desktop-macos-arm64` |
+| `macos-arm64` | `macos-15` | app, dmg | `ensemble-desktop-macos-arm64` |
 | `macos-x64` | `macos-15-intel` | app, then `scripts/package-mac-dmg.mjs` | `ensemble-desktop-macos-x64` |
 | `windows` | `windows-latest` | msi, nsis | `ensemble-desktop-windows` |
 | `linux` | `ubuntu-22.04` | deb, rpm, AppImage | `ensemble-desktop-linux` |

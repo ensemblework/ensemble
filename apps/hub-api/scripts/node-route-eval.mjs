@@ -10,7 +10,8 @@
  *   HUB_API=http://127.0.0.1:4098 node apps/hub-api/scripts/node-route-eval.mjs
  *   NODE_EVAL_MODELS=gpt-6-luna:low,gpt-6-luna:medium,gpt-6.1-sol:low
  *
- * Run it against a local server (sign-up without Turnstile). It spends included credits.
+ * Run it against a local server (sign-up without Turnstile), or a hosted one with a verified test
+ * account (NODE_SMOKE_EMAIL, NODE_SMOKE_PASSWORD). It spends included credits.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { deflateSync } from "node:zlib";
@@ -191,11 +192,13 @@ async function fakeComputer(cookie, signal) {
   return { device: registered.device, calls };
 }
 
+/** A new account on a local server; against a hosted one (Turnstile), a verified test account: NODE_SMOKE_EMAIL and NODE_SMOKE_PASSWORD. */
 async function signup(label) {
-  const response = await fetch(`${API}/api/auth/signup`, {
+  const given = process.env.NODE_SMOKE_EMAIL && process.env.NODE_SMOKE_PASSWORD;
+  const response = await fetch(`${API}/api/auth/${given ? "login" : "signup"}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: `node-route-${label}-${stamp}@ensemble.test`, password: `node-route-pass-${stamp}`, name: "Eval" }),
+    body: JSON.stringify(given ? { email: process.env.NODE_SMOKE_EMAIL, password: process.env.NODE_SMOKE_PASSWORD } : { email: `node-route-${label}-${stamp}@ensemble.test`, password: `node-route-pass-${stamp}`, name: "Eval" }),
   });
   if (!response.ok) throw new Error(`sign-up ${response.status}: ${await response.text()}`);
   const pair = (response.headers.getSetCookie?.() ?? []).join(",").match(/(ensemble_(?:[a-z0-9_]+_)?session)=([^;]+)/);
