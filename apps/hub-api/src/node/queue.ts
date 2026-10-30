@@ -108,6 +108,13 @@ function tainted(message: Pick<NodeMessage, "userId" | "data"> | null, owner: st
 
 /** Reasons a person's message wakes a node for (a new one of these may coalesce a turn that has not acted yet). */
 const PERSON_REASONS = new Set(["dm", "mentioned", "lead", "relevance"]);
+/** Turns about someone else's words or a request (node/audience.ts, node/peer-requests.ts): never merged with others. */
+const BOUND_REASONS = new Set(["disclose", "answer", "request"]);
+
+/** A turn bound to an effect, a request or the turn it continues, or about someone else's words. */
+function boundRequest(request: Pick<TurnRequest, "operationId" | "originTurnId" | "peerRequestId" | "reason">): boolean {
+  return Boolean(request.operationId || request.originTurnId || request.peerRequestId) || BOUND_REASONS.has(request.reason);
+}
 
 /** Queues a node's turn (or adds to the one already waiting in its lane); false when the node is paused or gone. */
 export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): Promise<boolean> {
@@ -117,10 +124,24 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
   if (request.operationId && (await prisma.nodeTurn.findUnique({ where: { operationId: request.operationId }, select: { id: true } }))) return true;
   const isPrivate = request.private ?? false;
   const lane = laneFor({ roomId: request.roomId, private: isPrivate, planId: request.planId, planStep: request.planStep });
-  // A plan's turns stay apart: a step's turn never takes in another step's or a chat's.
-  const queued = await prisma.nodeTurn.findFirst({
-    where: { nodeId: request.nodeId, roomId: request.roomId, status: "queued", private: isPrivate, planId: request.planId ?? null, planStep: request.planStep ?? null },
-  });
+  // A plan's turns stay apart: a step's turn never takes in another step's or a chat's. In a conversation, a
+  // turn bound to something keeps its own row: nothing merges into it and it merges into nothing, so its
+  // operation, its reason (a disclosure only drafts) and its request stay its own.
+  const conversation = !request.planId;
+  const queued =
+    conversation && boundRequest(request)
+      ? null
+      : await prisma.nodeTurn.findFirst({
+          where: {
+            nodeId: request.nodeId,
+            roomId: request.roomId,
+            status: "queued",
+            private: isPrivate,
+            planId: request.planId ?? null,
+            planStep: request.planStep ?? null,
+            ...(conversation ? { operationId: null, originTurnId: null, peerRequestId: null, reason: { notIn: [...BOUND_REASONS] } } : {}),
+          },
+        });
   if (queued) {
     // The queued turn reads every new message anyway. It answers the newest one, unless the one it
     // holds came from someone other than the owner: that keeps the turn's writes held for approval.
@@ -180,7 +201,7 @@ async function carryNote(prisma: PrismaClient, turn: NodeTurn): Promise<void> {
   const note = (await prisma.nodeTurn.findUnique({ where: { id: turn.id }, select: { note: true } }))?.note;
   if (!note) return;
   const next = await prisma.nodeTurn.findFirst({
-    where: { nodeId: turn.nodeId, roomId: turn.roomId, status: "queued", private: turn.private, planId: null, planStep: null },
+    where: { nodeId: turn.nodeId, roomId: turn.roomId, status: "queued", private: turn.private, planId: null, planStep: null, operationId: null, originTurnId: null, peerRequestId: null, reason: { notIn: [...BOUND_REASONS] } },
     orderBy: { createdAt: "asc" },
   });
   if (next) await prisma.nodeTurn.update({ where: { id: next.id }, data: { note: mergedNote(note, next.note) } });

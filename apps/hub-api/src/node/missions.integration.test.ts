@@ -320,6 +320,37 @@ test("a newer message never stops a turn bound to something else (an approval); 
   assert.match((await h.prisma.nodeTurn.findUniqueOrThrow({ where: { id: running.id } })).error ?? "", /Merged into the next turn/);
 });
 
+test("in a conversation a bound turn keeps its own row: a message never merges into a disclosure being drafted, and a started room task never merges into a message", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira, "assistant");
+  const { enqueueTurn } = await import("./queue.js");
+  // Something bound runs slowly, so what comes next waits in the queue.
+  let release: () => void = () => undefined;
+  const slow = new Promise<void>((resolve) => (release = resolve));
+  script = (turn) => (turn.transcript.includes("hold the lane") ? { text: "(no reply)", wait: slow } : { text: "(no reply)" });
+  await enqueueTurn(h.app, { nodeId: node.id, roomId: room.id, reason: "approval", note: "Your owner approved: hold the lane." });
+  for (let i = 0; i < 50 && !seen.length; i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  // A disclosure to draft (another person's words), then the owner's own message.
+  await enqueueTurn(h.app, { nodeId: node.id, roomId: room.id, reason: "disclose", operationId: `disclose:${randomBytes(4).toString("hex")}`, note: "Ben asked: what is the budget?" });
+  await post(mira, room.id, "also, what's on my calendar?");
+  for (let i = 0; i < 100 && (await h.prisma.nodeTurn.count({ where: { nodeId: node.id, status: "queued" } })) < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  // And a room task started from its card while the owner's message waits.
+  const start = `room-task:${randomBytes(4).toString("hex")}:private:1`;
+  try {
+    await enqueueTurn(h.app, { nodeId: node.id, roomId: room.id, reason: "approval", operationId: start, note: "Start the task “Billing page”." });
+    const queued = await h.prisma.nodeTurn.findMany({ where: { nodeId: node.id, status: "queued" }, orderBy: { createdAt: "asc" } });
+    assert.deepEqual(
+      queued.map((row) => [row.reason, Boolean(row.operationId), Boolean(row.triggerMessageId)]),
+      [["disclose", true, false], ["dm", false, true], ["approval", true, false]],
+      "three turns: the disclosure still only drafts, the message is its own, the started task keeps its operation",
+    );
+    assert.equal(queued[2]!.operationId, start);
+  } finally {
+    release();
+    await settleTurns();
+  }
+});
+
 test("stop needs no model: it stops the conversation's work and says what stopped", async () => {
   const mira = await person("Mira");
   await laptopFor(mira);
