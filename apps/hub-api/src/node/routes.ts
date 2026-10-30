@@ -1044,7 +1044,10 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ emoji: z.enum(REACTIONS) }).strict().parse(request.body);
     const id = (request.params as { id: string }).id;
     const found = await prisma.nodeMessage.findUnique({ where: { id } });
-    if (!found || !canSee(found, accountId) || !(await personIn(prisma, found.roomId, accountId)) || messageDeleted(found)) throw fail(404, "That message is not available.");
+    const me = found ? await personIn(prisma, found.roomId, accountId) : null;
+    // In a room with other people, only messages from since they joined, as everywhere else.
+    const kind = me ? (await prisma.nodeRoom.findUnique({ where: { id: found!.roomId }, select: { kind: true } }))?.kind : null;
+    if (!found || !canSee(found, accountId) || !me || messageDeleted(found) || (kind === "room" && found.createdAt < me.joinedAt)) throw fail(404, "That message is not available.");
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM node_messages WHERE id = ${id} FOR UPDATE`;
       const row = (await tx.nodeMessage.findUnique({ where: { id } }))!;
@@ -1079,7 +1082,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ messageId: z.string().uuid(), pinned: z.boolean() }).strict().parse(request.body);
     const settings = roomSettings(room);
     if (body.pinned) {
-      const message = await prisma.nodeMessage.findFirst({ where: { id: body.messageId, roomId: room.id } });
+      const message = await prisma.nodeMessage.findFirst({ where: { id: body.messageId, roomId: room.id, ...(await sinceJoined(room, accountId)) } });
       if (!message || message.visibleTo.length > 0 || messageDeleted(message) || (message.kind !== "text" && message.kind !== "run")) throw fail(400, "Only messages everyone here can read can be pinned.");
       if (!settings.pinned.includes(message.id)) {
         if (settings.pinned.length >= MAX_PINS) throw fail(409, `A room keeps at most ${MAX_PINS} pins. Unpin one first.`);

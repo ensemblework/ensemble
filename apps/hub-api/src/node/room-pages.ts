@@ -217,7 +217,9 @@ export async function confirmDecision(app: FastifyInstance, message: NodeMessage
   const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
   if (!room || room.archivedAt || room.kind !== "room") return;
   if (message.visibleTo.length || message.kind !== "text" || (message.data as { deleted?: unknown } | null)?.deleted) return;
-  if (!(await personIn(prisma, room.id, accountId))) return;
+  // Only a message they could read: one from before they joined is not theirs to log (and so publish).
+  const member = await personIn(prisma, room.id, accountId);
+  if (!member || member.joinedAt > message.createdAt) return;
   if (await prisma.nodeRoomDecision.findUnique({ where: { roomId_messageId: { roomId: room.id, messageId: message.id } } })) return;
   const spaceId = await linkedSpace(app, room);
   if (!spaceId) return privateLine(app, room.id, accountId, "This room has no shared space to keep its decisions log in. Link one first.");
@@ -229,7 +231,7 @@ export async function confirmDecision(app: FastifyInstance, message: NodeMessage
   // What it replaces: the logged decision it replies to, or one it names (“replaces #12”).
   const replyTo = (message.data as { replyTo?: { id?: unknown } } | null)?.replyTo?.id;
   const named = /(?:replaces|supersedes)\s+#(\d+)/i.exec(message.body)?.[1];
-  const target = typeof replyTo === "string" ? replyTo : named ? (await prisma.nodeMessage.findFirst({ where: { roomId: room.id, seq: Number(named) }, select: { id: true } }))?.id : null;
+  const target = typeof replyTo === "string" ? replyTo : named ? (await prisma.nodeMessage.findFirst({ where: { roomId: room.id, seq: Number(named), createdAt: { gte: member.joinedAt } }, select: { id: true } }))?.id : null;
   const old = target ? await prisma.nodeRoomDecision.findUnique({ where: { roomId_messageId: { roomId: room.id, messageId: target } } }) : null;
   const users = await prisma.user.findMany({ where: { id: { in: [message.userId, accountId, ...(old ? [old.saidBy] : [])] } }, select: { id: true, name: true, email: true } });
   const name = (id: string) => nameOf(users.find((row) => row.id === id));

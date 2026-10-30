@@ -1940,3 +1940,27 @@ test("review C6–C7 #6: only people who can edit the room's space change a page
   assert.deepEqual([line.data.pageRole.role, line.data.pageRole.was], ["watched", "contract"]);
   assert.match(line.body, /“API contract” an ordinary page again: it is no longer a contract\./);
 });
+
+test("review C6–C7 #7: a person cannot react to, pin or log a message from before they joined", async () => {
+  const { akash, room } = await twoPeople();
+  await linkSpace(akash, room.id, "Launch space");
+  const old = await say(akash, room.id, "We price the API at 9 euros a month.");
+  // Cara joins the room, and its space, later.
+  const cara = await person("Cara");
+  assert.equal((await akash.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: cara.email } })).statusCode, 201);
+  const { node: carasLead } = await createNode(cara, "assistant");
+  const invite = json(await cara.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [carasLead.id] } })).statusCode, 201);
+  assert.equal((await joinSpace(cara, room.id)).statusCode, 200);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/messages/${old.id}/reactions`, payload: { emoji: "✅" } })).statusCode, 404);
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/rooms/${room.id}/pins`, payload: { messageId: old.id, pinned: true } })).statusCode, 400);
+  const { confirmDecision } = await import("./room-pages.js");
+  await confirmDecision(h.app, await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: old.id } }), cara.id);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomDecision.count({ where: { roomId: room.id } }), 0, "nothing from before she joined is logged, or published");
+  // One from since she joined, she can.
+  const fresh = await say(akash, room.id, "And the free tier stays.");
+  assert.equal((await cara.inject({ method: "POST", url: `/api/node/messages/${fresh.id}/reactions`, payload: { emoji: "✅" } })).statusCode, 200);
+  await settleTurns();
+  assert.equal(await h.prisma.nodeRoomDecision.count({ where: { roomId: room.id, messageId: fresh.id, loggedBy: cara.id } }), 1);
+});
