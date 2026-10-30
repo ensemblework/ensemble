@@ -57,6 +57,7 @@ import { boundSpaceId, offerSpace } from "./room-space.js";
 import { freshSharedThreads } from "./audience.js";
 import { noteMentions, roomOpened } from "./room-events.js";
 import { confirmDecision } from "./room-pages.js";
+import { startOnYes } from "./room-results.js";
 import { followPresence } from "./status-cards.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -940,7 +941,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     if (command && members.some((row) => row.nodeId && row.userId === accountId)) {
       const stopped = await stopWork(app, room, accountId, command);
       await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
-    } else if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
+    } else if (!duplicate) {
+      // An explicit yes to the lead's offer of one room task starts it, as the Start button does (node/room-results.ts).
+      inBackground(app, async () => {
+        if (!(await startOnYes(app, room, message))) await dispatchMessage(app, message);
+      });
+    }
     // A person named in public hears of it privately, from their lead (node/room-events.ts).
     if (!duplicate) inBackground(app, () => noteMentions(app, room, message));
     // A reply “log this” confirms the message it replies to as a decision (node/room-pages.ts).

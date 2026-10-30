@@ -1789,3 +1789,40 @@ test("follow-up #2: a room-bound turn's instructions name no space of its owner'
   await say(akash, dm.id, "@manager anything new?");
   assert.match(seen.find((row) => row.slug === "manager")!.system, /in their space “CANARY-SPACE Initech deal”/);
 });
+
+// ── review of C6–C7 ─────────────────────────────────────────────────────────────────────────
+
+test("review C6–C7 #1: only Start, or an explicit yes to the offer, links work to the room's task; anything else stays private", async () => {
+  const { akash, lead, room } = await twoPeople({ builder: true });
+  const spaceId = await linkSpace(akash, room.id, "Launch space");
+  const billing = json(await inSpace(akash, spaceId, { method: "POST", url: "/api/tasks", payload: { title: "Billing page", assignee: akash.id, status: "todo" } })).task as { id: string };
+  await flushEvents();
+  const [offer] = await notes(akash, room.id);
+  assert.deepEqual(offer!.data.start, { taskIds: [billing.id] });
+  script = (turn) => {
+    if (turn.slug !== "manager") return { text: "(no reply)" };
+    if (turn.transcript.includes("Your step in")) return { calls: [{ name: "node_step_report", arguments: { outcome: "done", summary: "Done." } }], then: "(no reply)" };
+    if (turn.transcript.includes("start the room's task “Billing page”")) return { calls: [{ name: "node_work_start", arguments: { title: "Billing page", brief: "Build the billing page.", kind: "other" } }], then: "(no reply)" };
+    if (turn.transcript.includes("summarize my October bank statements")) return { calls: [{ name: "node_work_start", arguments: { title: "October statements", brief: "Summarize my October bank statements.", kind: "other" } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const linked = () => h.prisma.nodeMission.count({ where: { deliverTo: { path: ["taskId"], equals: billing.id } } });
+
+  await say(akash, room.id, "Not now — summarize my October bank statements instead", { private: true });
+  const other = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id, goal: { contains: "October" } } });
+  assert.equal(other.status, "succeeded");
+  assert.equal(other.deliverTo, null, "his own work, delivered nowhere");
+  assert.equal(await linked(), 0);
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: billing.id } })).status, "todo");
+  assert.equal(await h.prisma.document.count({ where: { userId: spaceId } }), 0, "nothing of it reaches the shared space");
+  // A yes that answers no offer (other messages came since) is an ordinary message too.
+  await say(akash, room.id, "yes", { private: true });
+  assert.equal(await linked(), 0);
+
+  // A yes replying to the offer is the Start button.
+  await say(akash, room.id, "Yes, start it.", { private: true, replyToId: offer!.id });
+  const work = await h.prisma.nodeMission.findFirstOrThrow({ where: { userId: akash.id, goal: { contains: "Billing page" } } });
+  assert.equal((work.deliverTo as { taskId?: string }).taskId, billing.id);
+  assert.ok((await turnsOf([lead.id], room.id)).some((row) => row.operationId?.startsWith(`room-task:${billing.id}:private:`)), "started as Start starts it");
+  assert.equal((await h.prisma.task.findUniqueOrThrow({ where: { id: billing.id } })).status, "done");
+});
