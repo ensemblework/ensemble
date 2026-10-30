@@ -86,7 +86,7 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     const where = await scopeOf(request);
     if (where?.input) {
       const settings = loadSettings();
-      const verdict = await decide(app.prisma, userId(), { ...where.input, mission: request.mission, attended: request.attended, grants: request.grants }, { weak: weakSandbox(), acceptWeb: settings.acceptWebApprovals, askBeforeBrowsing: settings.askBeforeBrowsing });
+      const verdict = await decide(app.prisma, userId(), { ...where.input, mission: request.mission, attended: request.attended, grants: request.grants }, { weak: weakSandbox(), acceptWeb: settings.acceptWebApprovals, askBeforeBrowsing: settings.askBeforeBrowsing || request.askBeforeBrowsing === true });
       if (verdict.kind === "refuse") return reply(verdict.status, { error: verdict.reason });
       grantsUsed = verdict.grantsUsed;
       if (verdict.kind === "ask") {

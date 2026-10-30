@@ -25,7 +25,7 @@ import { openToolRun } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { MemoryRateLimiter } from "../lib/rate-limit.js";
 import { truncateText } from "../lib/text.js";
-import { CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOLS_OWN_FOLDER } from "../remote/contract.js";
+import { CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOLS_OWN_FOLDER, SUDO_PASSWORD_REFUSED } from "../remote/contract.js";
 import { ownerName, permissionWaitMs, waitForOwner } from "./device-tool-decisions.js";
 import { planLinkOf } from "./plans.js";
 import { enqueueTurn, inBackground, requestPark } from "./queue.js";
@@ -41,6 +41,8 @@ const RUN_ASK_MS = NODE_TOOL_FOREGROUND_MS + 25_000;
 const RECHECK_MS = 3_000;
 /** A card left "running" this long with no answer from its computer (a restart) is closed. */
 const RUNNING_STALE_MS = RUN_ASK_MS + 60_000;
+/** Passwords sudo may refuse for one card before it closes: more wrong tries can lock the account (faillock). */
+export const SUDO_PASSWORD_TRIES = 3;
 
 export class SudoError extends Error {
   constructor(
@@ -70,6 +72,8 @@ const SudoCard = z
     mission: z.string(),
     timeoutSec: z.number(),
     runId: z.string().nullish(),
+    /** Passwords sudo did not take so far. */
+    tries: z.number().optional(),
   })
   .passthrough();
 type SudoCardData = z.infer<typeof SudoCard>;
@@ -147,12 +151,16 @@ async function sudoCard(app: Pick<FastifyInstance, "prisma">, ask: SudoAsk): Pro
 export async function askSudo(app: FastifyInstance, ask: SudoAsk): Promise<ToolResult> {
   const { scope, device } = ask;
   const card = await sudoCard(app, ask);
-  const handoff = await waitForOwner({ turnId: scope.turnId, ownerId: scope.node.userId, nodeId: scope.node.id, roomId: scope.room.id, private: Boolean(scope.privateTo), threadRootId: scope.lineage.rootMessageId }, card.id, (signal) => handedOver(app, card.id, signal, permissionWaitMs()));
   const where = `on ${device.name}`;
-  if (handoff?.action === "deny") return toolOk(`Your owner chose not to run \`${ask.command}\` as administrator ${where}. Continue without it, or say what cannot be done without it.`, { ran: false });
-  if (handoff?.action === "run") {
+  const waiting = { turnId: scope.turnId, ownerId: scope.node.userId, nodeId: scope.node.id, roomId: scope.room.id, private: Boolean(scope.privateTo), threadRootId: scope.lineage.rootMessageId };
+  // A password sudo refused puts the card back for another try: the call waits again, a few times.
+  for (let attempt = 0; attempt <= SUDO_PASSWORD_TRIES; attempt += 1) {
+    const handoff = await waitForOwner(waiting, card.id, (signal) => handedOver(app, card.id, signal, permissionWaitMs()));
+    if (handoff?.action === "deny") return toolOk(`Your owner chose not to run \`${ask.command}\` as administrator ${where}. Continue without it, or say what cannot be done without it.`, { ran: false });
+    if (handoff?.action !== "run") break;
     const current = await app.prisma.nodeMessage.findUnique({ where: { id: card.id } });
     const outcome = current ? await relaySudo(app, current, handoff.sealed) : ({ kind: "failed", error: "The card is gone." } as const);
+    if (outcome.kind === "retry") continue;
     if (outcome.kind === "failed") throw new ToolBlockedError(`It did not run: ${outcome.error}`);
     if (outcome.kind === "background") return toolOk(`\`${ask.command}\` is running as administrator in the background ${where}. You are woken when it ends; do not wait for it.`, { computer: device.name, run: outcome.runId, output: outcome.output });
     return toolOk(`Ran as administrator ${where}: exit code ${outcome.exitCode ?? "unknown"}${outcome.timedOut ? " (stopped at its time limit)" : ""}.`, {
@@ -167,6 +175,7 @@ export async function askSudo(app: FastifyInstance, ask: SudoAsk): Promise<ToolR
   const status = (now?.data as { status?: unknown } | null)?.status;
   if (status === "denied") return toolOk(`Your owner chose not to run \`${ask.command}\` as administrator ${where}. Continue without it, or say what cannot be done without it.`, { ran: false });
   if (status === "expired") return toolOk(`Your owner did not answer the card about \`${ask.command}\` in time, and it closed. It did not run.`, { ran: false });
+  if (status === "failed") throw new ToolBlockedError(`It did not run: ${String((now?.data as { error?: unknown } | null)?.error ?? "it failed")}`);
   const owner = await ownerName(app.prisma, scope.node.userId);
   const waits = status === "pending" ? `Waiting for ${owner} to answer the card about running \`${truncateText(ask.command, 200)}\` as administrator ${where}.` : `${owner} answered the card about running \`${truncateText(ask.command, 200)}\` as administrator ${where}; you hear how it went.`;
   if (status === "pending") scheduleExpiry(app, card);
@@ -205,7 +214,8 @@ function handedOver(app: Pick<FastifyInstance, "prisma">, cardId: string, signal
   });
 }
 
-type Outcome = { kind: "done"; exitCode: number | null; output: string; timedOut: boolean; clipped: boolean; runId: string } | { kind: "background"; runId: string; output: string } | { kind: "failed"; error: string };
+/** retry: sudo did not take the password; the card waits for another (`SUDO_PASSWORD_TRIES`). */
+type Outcome = { kind: "done"; exitCode: number | null; output: string; timedOut: boolean; clipped: boolean; runId: string } | { kind: "background"; runId: string; output: string } | { kind: "failed"; error: string } | { kind: "retry" };
 
 /** The card's patch for how its command ended. */
 async function finishCard(app: Pick<FastifyInstance, "prisma">, cardId: string, patch: Record<string, unknown>): Promise<NodeMessage | null> {
@@ -274,6 +284,13 @@ async function relaySudo(app: FastifyInstance, card: NodeMessage, sealed?: Seale
   await appendLedger({ userId: card.userId, actor: "agent", action: "node.device_tool.sudo", payload: { nodeId: node.id, deviceId: device.id, program: data.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "", status: answer.data.status, operationId } });
   if (answer.data.status >= 400) return fail(typeof body.error === "string" ? body.error.slice(0, 500) : `${device.name} refused it (${answer.data.status}).`);
   const output = typeof body.output === "string" ? body.output : "";
+  if (body.error === SUDO_PASSWORD_REFUSED) {
+    // Wrong password: the card waits for another, unless that was the last try.
+    const tries = (data.tries ?? 0) + 1;
+    if (tries >= SUDO_PASSWORD_TRIES) return fail(`The password was not accepted ${SUDO_PASSWORD_TRIES} times, so it did not run.`);
+    await finishCard(app, card.id, { status: "pending", tries, answeredAt: null, exitCode: null, error: "The password was not accepted. Type it again." });
+    return { kind: "retry" };
+  }
   if (answer.data.status === 202) {
     await finishCard(app, card.id, { runId });
     return { kind: "background", runId, output };
@@ -295,8 +312,8 @@ async function relayAndWake(app: FastifyInstance, card: NodeMessage, sealed?: Se
   const data = SudoCard.parse(card.data);
   const where = `on ${data.deviceName ?? "the computer"}`;
   const outcome = await relaySudo(app, card, sealed);
-  // A command that runs on wakes its node when it ends (devices/tool-runs.ts).
-  if (outcome.kind === "background") return;
+  // A command that runs on wakes its node when it ends (devices/tool-runs.ts); a refused password waits for another.
+  if (outcome.kind === "background" || outcome.kind === "retry") return;
   if (outcome.kind === "failed") return wake(app, card, `Your owner approved running \`${data.command}\` as administrator ${where}, but it did not run: ${outcome.error}`);
   const tail = outcome.output.length > 3000 ? `…${outcome.output.slice(-3000)}` : outcome.output;
   await wake(

@@ -21,9 +21,8 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, type NodeToolGrant } from "../remote/contract.js";
+import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
-import { checkUrl } from "../browser/broker.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage } from "../device-tools/dangerous.js";
 import { grantUpload } from "../evidence/grants.js";
@@ -114,23 +113,6 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
   return { folder: call.folder ?? null, action: call.action };
 }
 
-/**
- * Public pages need no answer unless the owner asks before browsing: a call that opens or captures an
- * address carries a standing answer for its origin, worked out exactly as the computer does
- * (device-tools/capture.ts `captureScope`). Null for any other call.
- */
-function browseGrant(request: ToolCall): NodeToolGrant | null {
-  if (request.tool !== "browser" && request.tool !== "capture") return null;
-  const url = request.input?.url;
-  if (typeof url !== "string") return null;
-  try {
-    const origin = new URL(checkUrl(url)).origin;
-    return origin && origin !== "null" ? { id: `browse:${randomUUID()}`, scope: "once", target: origin } : null;
-  } catch {
-    return null;
-  }
-}
-
 /** The call exactly as the node made it, for the note that has it make the call again. */
 function callText(name: string, input: unknown): string {
   return truncateText(`${name} ${JSON.stringify(input ?? {})}`, 800);
@@ -156,13 +138,12 @@ async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
   const device = await toolComputer(prisma, node.userId, computer, options.need);
   const mode = await modeFor(prisma, node);
-  const browse = mode.askBeforeBrowsing ? null : browseGrant(request);
   for (let asks = 0; ; asks += 1) {
     const extra = (await options.before?.(device)) ?? {};
-    const answers = await pendingGrants(prisma, node.userId, node.id, device.id);
-    const grants = browse ? [...answers.slice(-19), { ...browse, id: `browse:${randomUUID()}` }] : answers;
+    const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
     const operationId = `${scope.turnId}:${randomUUID()}`;
-    const data = { ...request, ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId } as Record<string, unknown>;
+    // Public web pages need no answer on the computer (device-tools/policy.ts) unless the owner asks to be asked, there or here.
+    const data = { ...request, ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
     const raw = await askDeviceFor(ctx.app.redis, { deviceId: device.id, event: "node.tool.request", data }, options.timeoutMs);
     if (!raw) throw new ToolBlockedError(`${device.name} did not answer. It may be asleep or busy; try again.`);
     const answer = CodeAnswer.safeParse(raw);

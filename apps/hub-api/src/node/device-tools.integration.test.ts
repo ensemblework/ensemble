@@ -409,19 +409,21 @@ test("a plan step waiting for its owner stays working: it is not nudged or block
   }
 });
 
-test("public pages need no answer unless the owner asks before browsing; the node's tabs are its own across conversations", async () => {
+test("the computer decides about public pages; the owner's choice to be asked goes with each call; the node's tabs are its own across conversations", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira, "ask", { nodeTools: 2, browser: 1, capture: { browser: true } });
   const { node, room } = await createNode(mira);
-  const device = computer(laptop.id, key, (data) => ({ status: 200, body: { ok: true, summary: "Opened t1: Example Domain.", evidence: [], refused: [], grantsUsed: (data.grants as Array<{ id: string }>).filter((grant) => grant.id.startsWith("browse:")).map((grant) => grant.id) } }));
+  const device = computer(laptop.id, key, () => ({ status: 200, body: { ok: true, summary: "Opened t1: Example Domain.", evidence: [], refused: [] } }));
   try {
     script = (turn) => (turn.transcript.includes("open example") ? { calls: [{ name: "browser_open", arguments: { url: "https://www.example.com/pricing?plan=pro" } }], then: "Opened." } : { text: "ok" });
     await say(mira, room.id, "open example.com");
     const first = device.heard[0]!;
     assert.equal(first.tool, "browser");
-    assert.deepEqual((first.grants as Array<{ id: string; scope: string; target: string }>).map((grant) => [grant.id.startsWith("browse:"), grant.scope, grant.target]), [[true, "once", "https://www.example.com"]]);
+    // No answer is made up on the web: the computer allows public pages itself and asks for its own and its network's (device-tools/policy.ts).
+    assert.deepEqual(first.grants, []);
+    assert.equal(first.askBeforeBrowsing, undefined);
     assert.equal(first.operation, `node:${node.id}:own`, "one operation per node");
-    assert.equal((await replies(mira, room.id, node.id)).at(-1)!.data.tools[0].state, "ok", "a standing answer the computer used is not a question");
+    assert.equal((await replies(mira, room.id, node.id)).at(-1)!.data.tools[0].state, "ok");
     assert.equal(await h.prisma.agentDecision.count({ where: { userId: mira.id } }), 0);
 
     // The same node in a crew: the same operation, so its tabs carry across.
@@ -430,12 +432,12 @@ test("public pages need no answer unless the owner asks before browsing; the nod
     await say(mira, json(crew).room.id, `@${node.slug} open example.com`);
     assert.equal(device.heard[1]!.operation, `node:${node.id}:own`);
 
-    // The owner asks before browsing: no standing answer goes with the call.
+    // The owner asks to be asked before a node opens a new website: the computer hears it with the call.
     const saved = await mira.inject({ method: "PATCH", url: "/api/settings", payload: { node: { askBeforeBrowsing: true } } });
     assert.equal(saved.statusCode, 200, saved.body);
     assert.equal(json(saved).settings.node.askBeforeBrowsing, true);
     await say(mira, room.id, "open example.com");
-    assert.deepEqual(device.heard[2]!.grants, []);
+    assert.equal(device.heard[2]!.askBeforeBrowsing, true);
   } finally {
     device.stop();
   }

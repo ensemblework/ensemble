@@ -558,6 +558,10 @@ export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
 export const NODE_TOOLS_API = 2;
 /** The first `nodeTools` version with terminal screenshots, sudo, file sharing and the node's own folder. */
 export const NODE_TOOLS_OWN_FOLDER = 2;
+/** A `sudo` answer's `error` when sudo did not take the owner's password: the card waits for another try. */
+export const SUDO_PASSWORD_REFUSED = "The password was not accepted.";
+/** A `sudo` answer's `error` when the command needs a password and none came. */
+export const SUDO_PASSWORD_NEEDED = "This command needs your owner's password.";
 /** What one node tool answer carries inline; a command's longer output goes to `ROUTES.toolOutput`. */
 export const NODE_TOOL_INLINE_BYTES = 64 * 1024;
 /** A command still going after this becomes a background tool run that wakes the node when it ends. */
@@ -586,6 +590,8 @@ const NodeToolBase = z.object({
   operationId: text(200).optional(),
   /** nodeTools 2: the node's handle, which names its own folder on this computer (a call without a folder works there). */
   nodeSlug: text(64).regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
+  /** nodeTools 2: the owner chose, on the web, to be asked before a node opens a new website (public pages ask too). */
+  askBeforeBrowsing: z.boolean().optional(),
 });
 
 const Folder = text(4096).min(1);

@@ -394,6 +394,20 @@ test("a public web page: a public name and address; never this computer, its net
   }
 });
 
+test("a public page opens without asking, unless the owner asked to be asked here or on the web", async () => {
+  updateSettings({ acceptWebApprovals: true, askBeforeBrowsing: false });
+  setResolverForTests(async (host) => ({ "example.com": ["93.184.216.34"] })[host] ?? []);
+  try {
+    const open = { tool: "browser", name: "browser_open", input: { url: "https://example.com/" }, operation: `node:${NODE}:own`, uploadId: "u1" };
+    assert.equal((await ask(memoryDb(), { ...open, askBeforeBrowsing: true })).status, 428, "the owner's choice on the web");
+    updateSettings({ askBeforeBrowsing: true });
+    assert.equal((await ask(memoryDb(), open)).status, 428, "this computer's own choice");
+  } finally {
+    updateSettings({ askBeforeBrowsing: false });
+    setResolverForTests(null);
+  }
+});
+
 test("the hard floor's dangerous commands are refused on this computer for every tool that starts one, whatever was answered", async () => {
   const db = memoryDb();
   const refused = async (request: Record<string, unknown>) => {

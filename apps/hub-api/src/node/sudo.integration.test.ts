@@ -115,7 +115,7 @@ async function pairedComputer(user: HttpUser) {
 }
 
 /** The computer: hears sudo requests, opens a sealed password with its own key (bound to the card and the command), and answers. */
-function listen(deviceId: string, key: { inject: HttpUser["inject"] }) {
+function listen(deviceId: string, key: { inject: HttpUser["inject"] }, options: { wrong?: string } = {}) {
   const heard: Array<Record<string, unknown>> = [];
   const frames: string[] = [];
   const passwords: string[] = [];
@@ -133,7 +133,10 @@ function listen(deviceId: string, key: { inject: HttpUser["inject"] }) {
         const opened = openSealed(data.sealed, { kid: own.info.kid, privateKey: own.privateKey });
         checkAad(opened.aad, { purpose: "sudo", kid: own.info.kid, deviceId, decisionId: data.cardId, name: data.commandHash, origins: [NODE_SITE] });
         if (createHash("sha256").update(data.command).digest("hex") !== data.commandHash) throw new Error("the box is for another command");
-        passwords.push(String((JSON.parse(opened.plaintext.toString("utf8")) as { password: string }).password));
+        const password = String((JSON.parse(opened.plaintext.toString("utf8")) as { password: string }).password);
+        passwords.push(password);
+        // What the computer answers when sudo did not take the password (device-tools/sudo.ts).
+        if (password === options.wrong) answer = { status: 200, body: { exitCode: 1, output: "Sorry, try again.\nsudo: 1 incorrect password attempt\n", error: "The password was not accepted." } };
       } else answer = { status: 200, body: { exitCode: 1, output: "sudo: a password is required\n" } };
     } catch (error) {
       problems.push(String(error));
@@ -248,6 +251,36 @@ test("the owner approves the exact command with their password, sealed for the c
     assert.ok(logged.join("").includes(`/api/node/sudo/${card.id}`), "the request logs were captured");
     const everything = [tables, logged.join(""), redisWrites.join("\n"), modelInputs.join("\n")].join("\n");
     for (const form of [CANARY, Buffer.from(CANARY).toString("base64"), Buffer.from(CANARY).toString("base64url"), Buffer.from(CANARY).toString("hex")]) assert.ok(!everything.includes(form), "the password is nowhere");
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a password sudo did not take puts the card back for another try; the waiting call then gets the output", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await pairedComputer(mira);
+  const computer = listen(laptop.id, key, { wrong: "not-it" });
+  const { node, room } = await createNode(mira);
+  try {
+    script = (transcript) => (transcript.includes("install xvfb") ? install() : { text: "ok" });
+    await post(mira, room.id, "install xvfb please");
+    const card = await sudoCard(mira, room.id);
+    const target = json(await mira.inject({ method: "GET", url: `/api/node/sudo/${card.id}` }));
+    const box = (password: string) => sealFor(target.route.sealKey, { purpose: "sudo", deviceId: laptop.id, decisionId: card.id, name: hashOf(INSTALL), origin: NODE_SITE }, { password });
+    const answer = async (password: string) => mira.inject({ method: "POST", url: `/api/node/sudo/${card.id}`, headers: { origin: NODE_SITE }, payload: { action: "run", sealed: (await box(password)).sealed } });
+
+    assert.equal((await answer("not-it")).statusCode, 200);
+    const again = await until(async () => (await rows(mira, room.id)).find((row) => row.id === card.id && row.data.status === "pending" && row.data.tries === 1), "the card back for another try");
+    assert.equal(again.data.error, "The password was not accepted. Type it again.");
+    assert.equal((await rows(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text").length, 0, "the node says nothing meanwhile");
+
+    assert.equal((await answer("right-one")).statusCode, 200);
+    await settleTurns();
+    assert.deepEqual(computer.passwords, ["not-it", "right-one"]);
+    const done = (await rows(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.deepEqual([done.data.status, done.data.exitCode, done.data.error], ["done", 0, null]);
+    const reply = (await rows(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "text").at(-1)!;
+    assert.match(reply.data.tools[0].summary, /Ran as administrator on Mira's laptop: exit code 0/);
   } finally {
     computer.stop();
   }

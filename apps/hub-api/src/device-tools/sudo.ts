@@ -25,7 +25,7 @@ import { claimOnce } from "../credentials/replay.js";
 import { checkAad, openSealed, SealError } from "../credentials/seal.js";
 import { loadSealKey } from "../credentials/seal-key.js";
 import { remoteApiBase, type HostedClient } from "../remote/client.js";
-import type { CodeAnswer, NodeToolRequest } from "../remote/contract.js";
+import { SUDO_PASSWORD_NEEDED, SUDO_PASSWORD_REFUSED, type CodeAnswer, type NodeToolRequest } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
 import { GuardError } from "../workspace/guard.js";
 import { dangerousCommand, dangerousMessage } from "./dangerous.js";
@@ -40,8 +40,8 @@ type Spawn = (command: string, args: readonly string[], options: Parameters<type
 const SudoPayload = z.object({ password: z.string().min(1).max(1024) }).strict();
 
 export const SUDO_WINDOWS = "Running as administrator is not available on Windows yet.";
-export const PASSWORD_REFUSED = "The password was not accepted.";
-export const PASSWORD_NEEDED = "This command needs your owner's password.";
+export const PASSWORD_REFUSED = SUDO_PASSWORD_REFUSED;
+export const PASSWORD_NEEDED = SUDO_PASSWORD_NEEDED;
 
 /** The system's own sudo: never one found on PATH, where a folder a program can write may come first. */
 export function systemSudo(exists: (path: string) => boolean = existsSync): string | null {
