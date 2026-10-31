@@ -6,7 +6,8 @@
  * real system. Keys the node gives are typed once it has started. After `seconds`, or when it ends if
  * sooner, its screen, replayed in a headless terminal (capture/screen.ts), is rendered to a PNG in
  * the operation's evidence folder, secrets hidden, and kept as the node's evidence like a capture;
- * then it is stopped (SIGTERM, then SIGKILL a second later). Without a pseudo-terminal (Windows, or
+ * then it is stopped (SIGTERM, then SIGKILL a second later). A full-screen program that quits (a key
+ * typed) is pictured as it last drew; an empty screen keeps no picture, and the node is told why. Without a pseudo-terminal (Windows, or
  * no `script`), the command runs as `run` runs it and its output becomes a transcript image.
  */
 import type { ChildProcess } from "node:child_process";
@@ -17,7 +18,7 @@ import { env } from "../config.js";
 import { hideSecrets, type PrivacyRules } from "../browser/privacy.js";
 import { captureService } from "../capture/index.js";
 import { slugName, type MediaFile } from "../capture/media.js";
-import { drawn, headlessTerminal, renderScreen, screenViewport } from "../capture/screen.js";
+import { drawn, headlessTerminal, holdAlternateScreen, renderScreen, screenViewport } from "../capture/screen.js";
 import { findOnPath } from "../capture/system.js";
 import { settleLines, stripAnsi } from "../capture/terminal.js";
 import { capturedFiles } from "../evidence/captures.js";
@@ -162,6 +163,7 @@ function checkCommand(command: string, folder: ToolFolder, sandboxed: boolean, n
 /** Runs the command in a pseudo-terminal, types the keys, and returns its screen at the end. */
 async function ptyScreen(request: TerminalRequest, folder: ToolFolder, input: { platform: string; sandboxed: boolean; rules: PrivacyRules; title: string }): Promise<Ran & { screen: ReturnType<typeof renderScreen>; hostPids: boolean }> {
   const term = await headlessTerminal(request.columns, request.rows);
+  const held = holdAlternateScreen(term);
   const group = `node-terminal:${request.id}`;
   const controller = new AbortController();
   let child: ChildProcess | null = null;
@@ -245,6 +247,7 @@ async function ptyScreen(request: TerminalRequest, folder: ToolFolder, input: { 
     return { screen, exitCode: ended ? (finished?.result?.exitCode ?? null) : null, ended, ms, hostPids };
   } finally {
     answers.dispose();
+    held.dispose();
     controller.abort();
     killGroup(group);
     forget();
@@ -310,26 +313,35 @@ export async function runNodeTerminal(app: App, client: HostedClient, request: T
   let ran: Ran;
   let screen: string;
   let hostPids = true;
-  let shot: Promise<MediaFile>;
+  let shot: () => Promise<MediaFile>;
   if (pty) {
     const result = await ptyScreen(request, folder, { platform, sandboxed, rules, title });
     ({ hostPids } = result);
     ran = result;
     screen = result.screen.text;
-    shot = captureService().then((service) => service.htmlScreenshot(capture, { html: result.screen.html, name, viewport: screenViewport(request.columns, request.rows), element: "#term", title }));
+    shot = () => captureService().then((service) => service.htmlScreenshot(capture, { html: result.screen.html, name, viewport: screenViewport(request.columns, request.rows), element: "#term", title }));
   } else {
     const result = await plainTranscript(request, folder, sandboxed, shell);
     ({ hostPids } = result);
     ran = result;
     screen = transcriptText(result.transcript, request.rows, rules);
-    shot = captureService().then((service) => service.screenshot(capture, { kind: "terminal", transcript: result.transcript, title, columns: request.columns }, name));
+    shot = () => captureService().then((service) => service.screenshot(capture, { kind: "terminal", transcript: result.transcript, title, columns: request.columns }, name));
   }
   const view = ran.ended ? `It ended (exit code ${ran.exitCode ?? "unknown"}).` : `It was still running after ${request.seconds} s and was stopped after the capture.`;
   const processes = hostPids || platform !== "linux" ? "" : " Only its own processes were visible to it: this computer cannot show it the others safely.";
   const result = { screen, exitCode: ran.exitCode, ended: ran.ended };
   let answer: NodeCaptureAnswer;
+  if (!screen.trim()) {
+    // An empty picture is worth nothing to the owner: the node is told why, and nothing is kept.
+    const why = ran.ended
+      ? `${view} If a key you typed quit it (q, {F10}, {Ctrl+C}), leave the keys out: it is stopped by itself after the picture.`
+      : `${view} Give it more seconds to draw.`;
+    answer = { ok: false, error: { code: "empty_screen", message: `The terminal was empty when the picture was taken, so no picture was kept. ${why}` }, result, evidence: [], refused: [] };
+    await appendLedger({ userId, actor: "agent", action: "node.tool.terminal", payload: { nodeId: request.nodeId, program, folder: folder.label, exitCode: ran.exitCode, ended: ran.ended, ms: ran.ms, files: 0, empty: true, operationId: request.operationId ?? null } }).catch(() => undefined);
+    return answer;
+  }
   try {
-    const file = await shot;
+    const file = await shot();
     const kept = await keepEvidence(app, client, { nodeId: request.nodeId, operation: request.operation, uploadId: request.uploadId }, capturedFiles(file));
     answer = { ok: true, summary: `The terminal running \`${request.command.slice(0, 120)}\` (${request.columns}×${request.rows}), as an image. ${view}${processes}`, result, ...kept };
   } catch (error) {
