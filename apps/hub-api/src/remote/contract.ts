@@ -721,8 +721,14 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 
-/** `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`, protocol 7). */
-export const BROWSER_API = 1;
+/**
+ * `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`,
+ * protocol 7). 2: the web tools too (`WEB_TOOLS`), focused screenshots, interactive snapshots and page hygiene.
+ */
+export const BROWSER_API = 2;
+
+/** The browser tools a computer has from `capabilities.browser` 2 on. */
+export const WEB_TOOLS: readonly string[] = ["browser_view", "browser_fetch", "browser_extract", "browser_set_location", "browser_shop"];
 
 /** What a node's browser or capture tool call answers: the tool's summary and result, and the files it kept as evidence. */
 export const NodeCaptureAnswer = z.object({

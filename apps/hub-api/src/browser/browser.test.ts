@@ -154,7 +154,7 @@ test("the tool sets: typed inputs as JSON Schema, and no evaluate or raw CDP too
   const browser = browserToolDefinitions();
   assert.deepEqual(
     browser.map((tool) => tool.name),
-    ["browser_open", "browser_tabs", "browser_close", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_wait", "browser_screenshot", "browser_console", "browser_network_errors", "browser_record", "browser_upload", "browser_login_needed", "browser_download"],
+    ["browser_open", "browser_tabs", "browser_close", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_wait", "browser_screenshot", "browser_console", "browser_network_errors", "browser_record", "browser_upload", "browser_login_needed", "browser_download", "browser_view", "browser_fetch", "browser_extract", "browser_set_location", "browser_shop"],
   );
   const capture = captureToolDefinitions();
   assert.deepEqual(capture.map((tool) => tool.name), ["capture_screenshot", "capture_video", "capture_app_start", "capture_app_stop", "capture_apps", "capture_check", "capture_status"]);
@@ -165,7 +165,11 @@ test("the tool sets: typed inputs as JSON Schema, and no evaluate or raw CDP too
     assert.doesNotMatch(tool.name, /eval|script|cdp|devtools/i);
   }
   assert.deepEqual((browser.find((tool) => tool.name === "browser_click")!.inputSchema.required as string[]).sort(), ["ref", "tab"]);
-  assert.equal(BROWSER_TOOLS.length + CAPTURE_TOOLS.length, 22);
+  assert.equal(BROWSER_TOOLS.length + CAPTURE_TOOLS.length, 27);
+  // Every input is a plain object the node's tools can extend with `computer`.
+  for (const spec of BROWSER_TOOLS) assert.equal(typeof (spec.input as unknown as { extend?: unknown }).extend, "function", spec.name);
+  assert.deepEqual((browser.find((tool) => tool.name === "browser_shop")!.inputSchema.required as string[]).sort(), ["query"]);
+  assert.deepEqual((browser.find((tool) => tool.name === "browser_view")!.inputSchema.required as string[]).sort(), ["url"]);
 });
 
 test("tool calls are validated before anything runs, and fail as results, not exceptions", async () => {

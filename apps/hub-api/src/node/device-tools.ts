@@ -21,7 +21,7 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
+import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
@@ -72,8 +72,11 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
     throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.ownFolder}.`, "Your owner updates it there; tell them in one line if it matters now.");
   }
   if (need?.browser) {
-    if (typeof caps.browser !== "number" || caps.browser < BROWSER_API) {
+    if (typeof caps.browser !== "number" || caps.browser < 1) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to browse or capture for a node.`, "Your owner updates it there (`ensemble update`, or the desktop app's update).");
+    }
+    if (WEB_TOOLS.includes(need.browser) && caps.browser < BROWSER_API) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name} to use ${need.browser}: it is too old for it.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use browser_open and browser_screenshot.");
     }
     if (need.browser === "browser_login_needed" && (typeof caps.logins !== "number" || caps.logins < 1)) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to hand a sign-in to your owner.`, "Your owner updates it there (`ensemble update`, or the desktop app's update), or signs in by hand in the browser there.");
@@ -571,22 +574,37 @@ export function captureOperation(scope: Pick<NodeScope, "node">): string {
   return `node:${scope.node.id}:own`;
 }
 
-/** How long a call may take on the computer: a video for its length, every call for its upload. */
+/** How long a call may take on the computer: a video for its length, a shop for its stores, every call for its upload. */
 function captureTimeout(name: string, input: Record<string, unknown>): number {
   const seconds = typeof input.durationSec === "number" ? Math.min(input.durationSec, 600) : 0;
-  return name === "capture_video" ? 120_000 + seconds * 2_000 : name === "capture_app_start" ? 90_000 : 75_000;
+  if (name === "capture_video") return 120_000 + seconds * 2_000;
+  if (name === "browser_shop") return 190_000;
+  if (name === "browser_view" || name === "browser_extract" || name === "browser_fetch" || name === "browser_set_location") return 120_000;
+  return name === "capture_app_start" ? 90_000 : 75_000;
 }
 
-/** A small result the node reads besides the summary (checks, a status, apps); a page's snapshot is in its summary. */
+/** Page text the summary already carries (a snapshot, a page's Markdown, a store's text): left out of the result. */
+const TEXT_FIELDS = new Set(["snapshot", "markdown", "text"]);
+
+function withoutText(value: unknown, depth = 0): unknown {
+  if (depth > 3 || !value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => withoutText(item, depth + 1));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !TEXT_FIELDS.has(key)).map(([key, item]) => [key, withoutText(item, depth + 1)]));
+}
+
+/** A small result the node reads besides the summary (checks, a status, apps, offers); a page's text is in its summary. */
 function smallResult(result: unknown): Record<string, unknown> {
   if (result === undefined) return {};
-  const text = JSON.stringify(result);
-  return text.length <= 8_000 ? { result } : {};
+  const lean = withoutText(result);
+  const text = JSON.stringify(lean);
+  return text.length <= 8_000 ? { result: lean } : {};
 }
 
 const NOUNS: Record<string, string> = { screenshot: "screenshot", image: "picture", video: "video" };
 /** What a capture tool is meant to bring back. */
-const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", capture_screenshot: "screenshot", capture_video: "video" };
+const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", browser_view: "screenshot", browser_shop: "screenshot", capture_screenshot: "screenshot", capture_video: "video" };
+/** Tools whose files are documents to keep, not pictures to show: nothing comes with the reply by itself. */
+const DOCUMENTS = new Set(["browser_fetch", "browser_download"]);
 
 /**
  * What a capture-like call kept: its evidence is the node's own; a capture the computer holds waits for
@@ -625,6 +643,9 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
     media.length === 1 ? `This ${NOUNS[media[0]!.kind] ?? "file"} will appear with your reply.` : media.length > 1 ? `These ${media.length} files will appear with your reply (node_show to choose fewer).` : "",
     held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they release it, and you are told when they do. The card asks them; do not ask in your reply.` : "",
     expects && answer.ok && !media.length && !held.length ? `No ${expects} came back, so nothing will show with your reply: never say one is attached or shown. Try again, or tell your owner it did not work.` : "",
+    show === "none" && kept.length
+      ? `It is in your evidence, not yet in your owner's Ensemble Files: to put it there, call hub_save_file with evidence "${kept[0]!.id}"; to show it in this chat, node_show. Never write a link to it yourself.`
+      : "",
     answer.refused.length ? `Not kept: ${answer.refused.map((item) => `“${item.name}”: ${item.reason}`).join("; ")}.` : "",
   ].filter(Boolean);
   if (!answer.ok) throw new ToolBlockedError(lines.join("\n"));
@@ -668,7 +689,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "pictures", EXPECTS[spec.name]);
+        const kept = await keepCaptures(ctx, scope, done, operation, DOCUMENTS.has(spec.name) ? "none" : "pictures", EXPECTS[spec.name]);
         const { login } = kept.answer;
         // The tab waits for the owner to sign in (B11): one owner-only card; the turn parks and the node is woken when it ends.
         if (login) {

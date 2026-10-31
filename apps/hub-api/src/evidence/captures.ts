@@ -14,7 +14,7 @@ import { lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { JobEvidence, Prisma, PrismaClient } from "@prisma/client";
 import type { MediaFile, StillFile } from "../capture/media.js";
-import type { EvidenceKind } from "../remote/contract.js";
+import { EVIDENCE_KINDS, type EvidenceKind } from "../remote/contract.js";
 import { within } from "../workspace/guard.js";
 import { evidenceDir, evidenceRoot, operationEvidenceDir, readEvidenceFile } from "./files.js";
 import { kindFor, MAX_EVIDENCE_PER_JOB, NODE_EVIDENCE_WINDOW_MS } from "./limits.js";
@@ -51,8 +51,14 @@ function isMedia(value: unknown): value is MediaFile {
   return Boolean(file && typeof file.path === "string" && typeof file.kind === "string" && typeof file.held === "boolean" && file.kind in KIND);
 }
 
-/** The files a browser or capture tool's result names: a capture (with a video's poster and preview), a recording, a download. */
+/**
+ * The files a browser or capture tool's result names: a capture (with a video's poster and preview), a
+ * recording, a download or fetched file (its own `kind` when it names one), or several (`files`: one
+ * screenshot per store of browser_shop).
+ */
 export function capturedFiles(result: unknown): CapturedFile[] {
+  const many = (result as { files?: unknown } | null)?.files;
+  if (Array.isArray(many)) return [...many.flatMap((item) => capturedFiles(item)), ...capturedFiles({ ...(result as object), files: undefined })];
   const media = isMedia(result) ? result : isMedia((result as { file?: unknown } | null)?.file) ? (result as { file: MediaFile }).file : null;
   if (media) {
     const variants: CapturedFile["variants"] = [];
@@ -60,9 +66,10 @@ export function capturedFiles(result: unknown): CapturedFile[] {
     if (media.preview?.path) variants.push({ path: media.preview.path, variant: "preview" });
     return [{ path: media.path, kind: KIND[media.kind], held: media.held, ...(media.reason ? { reason: media.reason } : {}), details: details(media), variants }];
   }
-  const download = result as { path?: unknown; mime?: unknown; name?: unknown } | null;
+  const download = result as { path?: unknown; mime?: unknown; name?: unknown; kind?: unknown } | null;
   if (download && typeof download.path === "string" && typeof download.mime === "string" && typeof download.name === "string") {
-    return [{ path: download.path, kind: kindFor(download.mime), held: false }];
+    const kind = typeof download.kind === "string" && (EVIDENCE_KINDS as readonly string[]).includes(download.kind) ? (download.kind as EvidenceKind) : kindFor(download.mime);
+    return [{ path: download.path, kind, held: false }];
   }
   return [];
 }
