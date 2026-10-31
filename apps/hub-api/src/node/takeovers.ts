@@ -17,9 +17,10 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { fileAnswers, publishDeviceFrame, publishFileAnswer } from "../devices/revoke-notify.js";
 import { appendLedger } from "../lib/ledger.js";
 import { readAad, SealError } from "../credentials/seal.js";
-import { CodeAnswer, TAKEOVER_CLEAN_API, TAKEOVER_MIN_API, type ChannelMessage } from "../remote/contract.js";
+import { CodeAnswer, LIVE_API, TAKEOVER_CLEAN_API, TAKEOVER_MIN_API, type ChannelMessage } from "../remote/contract.js";
 import { secretRouteFor } from "./node-secrets.js";
 import { loginTakeoverEnded } from "./logins.js";
+import { endLiveCard, liveCardTarget } from "./live-views.js";
 
 type Redisish = {
   get(key: string): Promise<string | null>;
@@ -66,6 +67,11 @@ export type TakeoverRecord = {
   jobId: string | null;
   /** "clean": a sign-in in a clean browser on the computer (`TAKEOVER_CLEAN_API`); "tab": the tab itself. */
   mode?: "tab" | "clean";
+  /** A live view (node/live-views.ts): its card, what it shows, the node's operation that owns it, and whether the owner watches or controls it. */
+  liveCardId?: string | null;
+  kind?: "browser" | "terminal";
+  operation?: string | null;
+  view?: "watch" | "control";
   createdAt: string;
   startBy: string;
   endsAt: string | null;
@@ -91,9 +97,29 @@ async function write(app: FastifyInstance, record: TakeoverRecord): Promise<void
   await redisOf(app).set(recordKey(record.id), JSON.stringify(record), "EX", RECORD_TTL_SECONDS);
 }
 
-/** What the page is given about a takeover: never the token's hash or the session. */
+/**
+ * What the page is given about a takeover: never the token's hash or the session. `tab` is what the
+ * start box is sealed for (a terminal's session id for a terminal); `mode` whether the owner watches or
+ * controls it; `browser` which browser it shows.
+ */
 export function publicTakeover(record: TakeoverRecord, sealKey?: SealKeyInfo) {
-  return { id: record.id, computer: { id: record.deviceId, name: record.computer }, tab: record.tab, origin: record.origin, state: record.state, startBy: record.startBy, endsAt: record.endsAt, loginCardId: record.loginCardId, mode: record.mode ?? "tab", ...(sealKey ? { sealKey } : {}), ...(record.reason ? { reason: record.reason } : {}) };
+  return {
+    id: record.id,
+    computer: { id: record.deviceId, name: record.computer },
+    tab: record.tab,
+    origin: record.origin,
+    state: record.state,
+    startBy: record.startBy,
+    endsAt: record.endsAt,
+    loginCardId: record.loginCardId,
+    kind: record.kind ?? "browser",
+    mode: record.view ?? "control",
+    browser: record.mode ?? "tab",
+    ...(record.liveCardId ? { liveCardId: record.liveCardId } : {}),
+    ...(record.kind === "terminal" ? { session: record.tab } : {}),
+    ...(sealKey ? { sealKey } : {}),
+    ...(record.reason ? { reason: record.reason } : {}),
+  };
 }
 
 /** Ends a takeover here: no more frames or input; the tab is free for another controller. */
@@ -116,11 +142,12 @@ export function cleanTakeover(device: Pick<Device, "capabilities">): boolean {
 }
 
 /** The computer a takeover may use: the owner's, paired, online, able to take over and with a pinned key. */
-async function takeoverDevice(app: FastifyInstance, accountId: string, deviceId: string): Promise<{ device: Device; sealKey: SealKeyInfo }> {
+async function takeoverDevice(app: FastifyInstance, accountId: string, deviceId: string, live = false): Promise<{ device: Device; sealKey: SealKeyInfo }> {
   const device = await app.prisma.device.findFirst({ where: { id: deviceId, userId: accountId, revokedAt: null } });
   if (!device) throw new TakeoverError("That computer is no longer paired.", 409);
-  const caps = (device.capabilities ?? {}) as { takeover?: unknown };
+  const caps = (device.capabilities ?? {}) as { takeover?: unknown; live?: unknown };
   if (typeof caps.takeover !== "number" || caps.takeover < TAKEOVER_MIN_API) throw new TakeoverError(`Update Ensemble on ${device.name}: it is too old to show its browser here.`, 409, "update");
+  if (live && !(typeof caps.live === "number" && caps.live >= LIVE_API)) throw new TakeoverError(`Update Ensemble on ${device.name}: it is too old to show this live.`, 409, "update");
   const route = secretRouteFor(device);
   if (route.mode === "pair_again") throw new TakeoverError(`${device.name} now reports a different key from the one it was paired with. Pair it again first.`, 409, "pair_again");
   if (route.mode !== "sealed") throw new TakeoverError(`Update Ensemble on ${device.name}: it cannot encrypt its browser for this page yet.`, 409, "update");
@@ -128,10 +155,20 @@ async function takeoverDevice(app: FastifyInstance, accountId: string, deviceId:
   return { device, sealKey: route.sealKey };
 }
 
-/** What a takeover is of: a sign-in card's tab, or a run's tab (the one its live view shows). */
-export type TakeoverTarget = { loginCardId: string } | { jobId: string; tab?: string };
+/** What a takeover is of: a sign-in card's tab, a run's tab (the one its live view shows), or a live card's terminal or tab. */
+export type TakeoverTarget = { loginCardId: string } | { jobId: string; tab?: string } | { liveCardId: string };
 
-async function targetOf(app: FastifyInstance, accountId: string, input: TakeoverTarget): Promise<{ deviceId: string; tab: string; origin: string; loginCardId: string | null; loginId: string | null; jobId: string | null }> {
+type Target = { deviceId: string; tab: string; origin: string; loginCardId: string | null; loginId: string | null; jobId: string | null; live?: { cardId: string; kind: "browser" | "terminal"; operation: string } };
+
+async function targetOf(app: FastifyInstance, accountId: string, input: TakeoverTarget): Promise<Target> {
+  if ("liveCardId" in input) {
+    const live = await liveCardTarget(app, accountId, input.liveCardId);
+    if (!live) throw new TakeoverError("That live view is not available.", 404);
+    if (live.data.status !== "open") throw new TakeoverError(live.data.kind === "terminal" ? "That terminal has ended." : "That tab has closed.", 410, "ended");
+    const tab = live.data.kind === "terminal" ? live.data.session : live.data.tab;
+    if (!tab) throw new TakeoverError("That live view cannot be opened here.", 409);
+    return { deviceId: live.data.deviceId, tab, origin: "", loginCardId: null, loginId: null, jobId: null, live: { cardId: live.card.id, kind: live.data.kind, operation: live.operation } };
+  }
   if ("loginCardId" in input) {
     const card = await app.prisma.nodeMessage.findUnique({ where: { id: input.loginCardId } });
     const data = (card?.data ?? {}) as { type?: unknown; status?: unknown; deviceId?: unknown; tab?: unknown; origin?: unknown; loginId?: unknown };
@@ -163,7 +200,7 @@ async function targetOf(app: FastifyInstance, accountId: string, input: Takeover
  */
 export async function createTakeover(app: FastifyInstance, accountId: string, sessionId: string, input: TakeoverTarget): Promise<{ takeover: ReturnType<typeof publicTakeover>; controller: string }> {
   const target = await targetOf(app, accountId, input);
-  const { device, sealKey } = await takeoverDevice(app, accountId, target.deviceId);
+  const { device, sealKey } = await takeoverDevice(app, accountId, target.deviceId, Boolean(target.live));
   const redis = redisOf(app);
   const id = randomUUID();
   const lock = targetKey(device.id, target.tab);
@@ -189,13 +226,14 @@ export async function createTakeover(app: FastifyInstance, accountId: string, se
     loginId: target.loginId,
     jobId: target.jobId,
     mode: target.loginId && cleanTakeover(device) ? "clean" : "tab",
+    ...(target.live ? { liveCardId: target.live.cardId, kind: target.live.kind, operation: target.live.operation, view: "watch" as const } : {}),
     createdAt: new Date(now).toISOString(),
     startBy: new Date(now + START_MS).toISOString(),
     endsAt: null,
     state: "created",
   };
   await write(app, record);
-  await appendLedger({ userId: accountId, actor: "me", action: "node.takeover_created", payload: { takeoverId: id, deviceId: device.id, tab: target.tab, origin: target.origin, login: Boolean(target.loginId) } });
+  await appendLedger({ userId: accountId, actor: "me", action: "node.takeover_created", payload: { takeoverId: id, deviceId: device.id, tab: target.tab, origin: target.origin, login: Boolean(target.loginId), ...(target.live ? { kind: target.live.kind } : {}) } });
   return { takeover: publicTakeover(record, sealKey), controller };
 }
 
@@ -258,18 +296,26 @@ function checkStartBox(sealed: Sealed, record: TakeoverRecord, sealKey: SealKeyI
 export async function startTakeover(app: FastifyInstance, record: TakeoverRecord, sealed: Sealed, origin: string | undefined): Promise<{ takeover: ReturnType<typeof publicTakeover>; width?: number; height?: number; note?: string }> {
   const current = await stillGood(app, record);
   if (current.state !== "created") throw new TakeoverError(current.state === "live" ? "This takeover has started already." : "This takeover has ended. Open the browser again.", 409, "state");
-  const { device, sealKey } = await takeoverDevice(app, current.accountId, current.deviceId);
+  const { device, sealKey } = await takeoverDevice(app, current.accountId, current.deviceId, Boolean(current.liveCardId));
   checkStartBox(sealed, current, sealKey, origin);
   // Single use: the first start wins.
   if ((await redisOf(app).set(startedKey(current.id), "1", "EX", RECORD_TTL_SECONDS, "NX")) !== "OK") throw new TakeoverError("This takeover has started already.", 409, "state");
   const endsAt = new Date(Date.now() + takeoverMaxMs()).toISOString();
   // A sign-in on a computer that can runs in a clean browser; an older computer is never sent a mode it does not know.
   const mode = current.loginId && cleanTakeover(device) ? { mode: "clean" as const } : {};
-  const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "takeover.start", data: { takeoverId: current.id, tab: current.tab, ...(current.loginId ? { loginId: current.loginId } : {}), ...(current.jobId ? { jobId: current.jobId } : {}), sealed, endsAt, ...mode } }, 25_000).catch(() => null);
+  // A live view says what it shows, whose it must be, and that it starts by watching.
+  const liveView = current.liveCardId ? { kind: current.kind ?? "browser", operation: current.operation, view: current.view ?? "watch" } : {};
+  const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "takeover.start", data: { takeoverId: current.id, tab: current.tab, ...(current.loginId ? { loginId: current.loginId } : {}), ...(current.jobId ? { jobId: current.jobId } : {}), sealed, endsAt, ...mode, ...liveView } }, 25_000).catch(() => null);
   const answer = raw ? CodeAnswer.safeParse(raw) : null;
   const body = (answer?.success && answer.data.body && typeof answer.data.body === "object" ? answer.data.body : {}) as { error?: unknown; width?: unknown; height?: unknown; endsAt?: unknown; mode?: unknown; note?: unknown };
   if (!answer?.success || answer.data.status >= 400) {
     await markEnded(app, current, "refused");
+    // The terminal or tab is gone from the computer: its card ends.
+    if (current.liveCardId && answer?.success && answer.data.status === 410) {
+      const card = await app.prisma.nodeMessage.findUnique({ where: { id: current.liveCardId }, select: { data: true } });
+      const liveId = (card?.data as { liveId?: unknown } | null)?.liveId;
+      if (typeof liveId === "string") await endLiveCard(app, current.accountId, liveId, "gone");
+    }
     throw new TakeoverError(typeof body.error === "string" ? body.error : `${device.name} did not answer. Check Ensemble is running there.`, 502);
   }
   // The computer says which browser it shows (takeover 2): the clean one, or the tab when that could not start (`note` says why).
@@ -311,6 +357,28 @@ export async function relayInput(app: FastifyInstance, record: TakeoverRecord, m
   const current = await stillGood(app, record);
   if (current.state !== "live") throw new TakeoverError(current.state === "ended" ? "This takeover has ended." : "This takeover has not started.", 410, current.reason);
   publishDeviceFrame(current.deviceId, "takeover.input", { takeoverId: current.id, seq: message.seq, iv: message.iv, ct: message.ct });
+}
+
+/**
+ * A live view's owner takes control (`on`) or goes back to watching (takeover 3, `takeover.control`):
+ * control pauses the node on that tab, or makes its typing in that terminal wait. A sign-in's or a run's
+ * takeover is always in control.
+ */
+export async function controlTakeover(app: FastifyInstance, record: TakeoverRecord, on: boolean): Promise<{ takeover: ReturnType<typeof publicTakeover> }> {
+  const current = await stillGood(app, record);
+  if (current.state !== "live") throw new TakeoverError(current.state === "ended" ? "This takeover has ended." : "This takeover has not started.", 410, current.reason);
+  if (!current.liveCardId) throw new TakeoverError("You are already in control here.", 409, "control");
+  const raw = await askDeviceFor(app.redis as never, { deviceId: current.deviceId, event: "takeover.control", data: { takeoverId: current.id, on } }, 20_000).catch(() => null);
+  const answer = raw ? CodeAnswer.safeParse(raw) : null;
+  const body = (answer?.success && answer.data.body && typeof answer.data.body === "object" ? answer.data.body : {}) as { view?: unknown; error?: unknown };
+  if (!answer?.success || answer.data.status >= 400 || (body.view !== "watch" && body.view !== "control")) {
+    if (answer?.success && answer.data.status === 410) await markEnded(app, current, "ended");
+    throw new TakeoverError(typeof body.error === "string" ? body.error : `${current.computer} did not answer. Check Ensemble is running there.`, answer?.success && answer.data.status === 410 ? 410 : 502);
+  }
+  const next: TakeoverRecord = { ...current, view: body.view };
+  await write(app, next);
+  await appendLedger({ userId: current.accountId, actor: "me", action: "node.takeover_control", payload: { takeoverId: current.id, deviceId: current.deviceId, on } });
+  return { takeover: publicTakeover(next) };
 }
 
 /**

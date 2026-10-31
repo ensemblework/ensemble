@@ -62,6 +62,7 @@ import { pinReportedSealKey, sealKeyOnPairing, sealKeyView } from "../credential
 import { liveRoutes } from "./live.js";
 import { loginDeviceRoutes } from "./logins.js";
 import { takeoverDeviceRoutes } from "./takeovers.js";
+import { liveSessionDeviceRoutes } from "./live-sessions.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -283,6 +284,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   await app.register(liveRoutes, { ownDevice, holdLease });
   await app.register(loginDeviceRoutes, { ownDevice, holdLease });
   await app.register(takeoverDeviceRoutes, { ownDevice });
+  await app.register(liveSessionDeviceRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);

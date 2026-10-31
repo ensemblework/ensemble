@@ -38,12 +38,12 @@ import { setLiveSink } from "./live.js";
 import { setRunLoginSink } from "../logins/run.js";
 import { setLoginStateSink } from "../logins/requests.js";
 import { answerLoginResolve } from "../logins/answer.js";
-import { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } from "../takeover/session.js";
+import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -149,6 +149,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     logins: LOGINS_API,
     // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8; 2: sign-ins in a clean browser).
     takeover: TAKEOVER_API,
+    // A node's terminals stay open here between its calls, and the owner watches them and the node's tabs live (C3).
+    live: LIVE_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
 }
@@ -353,6 +355,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         if (event === "takeover.start") void answerTakeoverStart(client, data, (hostedJobId) => Object.values(held()).find((row) => row.hostedId === hostedJobId && row.phase === "active")?.localJobId ?? null).catch(() => undefined);
         if (event === "takeover.input") takeoverInput(data);
         if (event === "takeover.end") void answerTakeoverEnd(client, data).catch(() => undefined);
+        if (event === "takeover.control") void answerTakeoverControl(client, data).catch(() => undefined);
         // The owner previews, releases or discards a file kept here (protocol 7).
         if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).

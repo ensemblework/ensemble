@@ -189,7 +189,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |
 | Sharing/presence | `sharing/routes.ts`; [29](29_SHARING.md#6-routes) |
 | Device login/editor MCP | `routes/cli-auth.ts`, `routes/mcp.ts`; [26](26_CLI.md) |
-| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals and `GET /api/node/approvals` for Needs me, plans, runs, activity, events, run and capture evidence with `POST /api/node/evidence/:id/release`, a run's live view `GET /api/node/live/:jobId`) and `GET /api/bridge/node`; `node/routes.ts`, `evidence/routes.ts`, `devices/live.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
+| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals and `GET /api/node/approvals` for Needs me, plans, runs, activity, events, run and capture evidence with `POST /api/node/evidence/:id/release`, a run's live view `GET /api/node/live/:jobId`, takeovers and live views of a node's terminal or tab `/api/node/takeovers`) and `GET /api/bridge/node`; `node/routes.ts`, `evidence/routes.ts`, `devices/live.ts`, `node/takeover-routes.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
 
 Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 

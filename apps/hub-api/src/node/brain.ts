@@ -163,6 +163,8 @@ async function persona(
       ? "- Facts, news, “look up”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps."
       : "- Facts, prices, news, “look up”, “compare”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps.",
     ...(hands ? HANDS : []),
+    // Only in a DM: the crew lead's persona has no room left in its budget (persona.integration.test.ts).
+    hands && room.kind === "dm" ? LIVE_ROW : "",
     fromNonOwner ? "" : "- A paper or PDF into your owner's Ensemble Files: hub_save_file (url: the direct file link); link only what it returns.",
     `- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs ${agentDefaults(pickRunProfile(settings, node.runProfileId))} unless your owner names an agent, model, thinking level or context.`,
     ...(step || fromNonOwner
@@ -216,6 +218,9 @@ const HANDS = [
   "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
   "- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.",
 ];
+
+/** Live terminals and live views (node/live-views.ts). */
+const LIVE_ROW = "- A shell that stays open (a REPL, a program that asks questions): terminal_open, then terminal_send. Your owner wants to watch it or your browser live: live_view.";
 
 /**
  * Who the node can give work to: in a crew it leads, the owner's nodes outside it (only the owner adds

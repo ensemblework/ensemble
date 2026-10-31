@@ -21,7 +21,7 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, LOGIN_CHECKS_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
+import { BROWSER_API, LIVE_API, LOGIN_CHECKS_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
@@ -35,6 +35,7 @@ import { helperFolders, helperGrant } from "./helpers.js";
 import { ownerMedia, rememberCaptured, shownKinds } from "./media.js";
 import { requestPark } from "./queue.js";
 import { askSudo } from "./sudo.js";
+import { liveTools } from "./live-views.js";
 import type { NodeScope } from "./tools.js";
 
 const ASK_MS = 30_000;
@@ -48,8 +49,8 @@ const SCREEN_CHARS = 8_000;
 
 type Redisish = Parameters<typeof openToolRun>[0];
 
-/** What a call needs of the computer: the browser and capture tools (by tool name), or a nodeTools 2 feature (what it lets the node do there). */
-type Need = { browser?: string; ownFolder?: string };
+/** What a call needs of the computer: the browser and capture tools (by tool name), a nodeTools 2 feature, or live sessions (what it lets the node do there). */
+export type Need = { browser?: string; ownFolder?: string; live?: string };
 
 const nodeToolsOf = (device: Pick<Device, "capabilities">): number => {
   const value = (device.capabilities as { nodeTools?: unknown } | null)?.nodeTools;
@@ -57,7 +58,7 @@ const nodeToolsOf = (device: Pick<Device, "capabilities">): number => {
 };
 
 /** The owner's computer for a node tool: by name, else the one online; it must be new enough (and, for the browser and capture tools, have them). */
-async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined, need?: Need): Promise<Device> {
+export async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined, need?: Need): Promise<Device> {
   const devices = await prisma.device.findMany({ where: { userId: ownerId, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
   if (!devices.length) throw new ToolBlockedError("Your owner has no paired computer.", "They can pair one with `ensemble login` (the Ensemble CLI) or the Ensemble desktop app.");
   const wanted = name?.trim().toLowerCase();
@@ -67,6 +68,10 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
   const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; browser?: unknown; logins?: unknown; capture?: { browser?: unknown } | null };
   if (nodeToolsOf(device) < 1) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to let a node use it directly.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then, have a coding agent do it (node_session_start).");
+  }
+  const live = (device.capabilities as { live?: unknown } | null)?.live;
+  if (need?.live && !(typeof live === "number" && live >= LIVE_API)) {
+    throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.live}.`, "Your owner updates it there; until then use computer_run, or computer_terminal_screenshot for a picture.");
   }
   if (need?.ownFolder && nodeToolsOf(device) < NODE_TOOLS_OWN_FOLDER) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.ownFolder}.`, "Your owner updates it there; tell them in one line if it matters now.");
@@ -94,7 +99,7 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
 type Mode = { attended: boolean; delivery: "local" | "commit" | "push"; network: boolean; askBeforeBrowsing: boolean };
 
 /** Attended unless the owner's run profile for this node runs unattended (and they did not ask this node to check first); whether they ask before browsing. */
-async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mode> {
+export async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mode> {
   const settings = await loadSettings(prisma, node.userId);
   const profile = pickRunProfile(settings, node.runProfileId);
   return { attended: computerWorkAsks(node) || profile.mode !== "unattended", delivery: profile.delivery, network: profile.network, askBeforeBrowsing: settings.node.askBeforeBrowsing };
@@ -121,7 +126,7 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
 }
 
 /** The call exactly as the node made it, for the note that has it make the call again. */
-function callText(name: string, input: unknown): string {
+export function callText(name: string, input: unknown): string {
   return truncateText(`${name} ${JSON.stringify(input ?? {})}`, 800);
 }
 
@@ -155,7 +160,7 @@ export function forComputer<T extends Record<string, unknown>>(device: Pick<Devi
   return Object.keys(older).length === Object.keys(input).length ? request : { ...request, input: older };
 }
 
-async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
+export async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
   const { prisma, node } = scope;
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
   const device = await toolComputer(prisma, node.userId, computer, options.need);
@@ -247,7 +252,7 @@ function safeOrigin(url: string): string | null {
   }
 }
 
-const isResult = (value: Called | ToolResult): value is ToolResult => !("device" in value);
+export const isResult = (value: Called | ToolResult): value is ToolResult => !("device" in value);
 
 const Computer = z.string().max(120).optional().describe("The computer's name, when your owner has more than one.");
 const Folder = z
@@ -258,7 +263,7 @@ const Folder = z
   .describe("Omit it to work in your own folder on the computer. Or a folder the computer shares with Ensemble (its label, or a path node_computer_files lists), or a project folder's full path.");
 
 /** A command no answer runs (the hard floor's list, checked again on the computer): refused before anything is sent. */
-function refuseDangerous(command: string, root = false): void {
+export function refuseDangerous(command: string, root = false): void {
   const hit = dangerousCommand(command, { root });
   if (hit) throw new ToolBlockedError(dangerousMessage(hit));
 }
@@ -548,6 +553,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
     // A helper never runs commands as the administrator.
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
+    ...liveTools(scope),
   ];
   return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
 }
@@ -734,7 +740,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
 }
 
 /** The tools that take a folder: a helper names one of its own each time. */
-const FOLDER_TOOLS = new Set(["computer_run", "computer_git", "computer_files_write", "computer_files_move", "computer_files_delete", "computer_terminal_screenshot", "node_share_file"]);
+const FOLDER_TOOLS = new Set(["computer_run", "computer_git", "computer_files_write", "computer_files_move", "computer_files_delete", "computer_terminal_screenshot", "node_share_file", "terminal_open"]);
 
 /** A helper's tool that works only in the folders its parent named (by label, path or last part); an app it starts for capture too. */
 function onlyIn(tool: AnyHubTool, folders: readonly string[]): AnyHubTool {

@@ -252,8 +252,9 @@ test("a sign-in's takeover runs in a clean browser on a computer that can; an ol
       const { card } = await cardFor(computer, waitingTab("https://accounts.google.com"));
       const created = await computer.user.inject({ method: "POST", url: "/api/node/takeovers", headers: { origin: NODE_SITE }, payload: { loginCardId: card.id } });
       assert.equal(created.statusCode, 200, created.body);
-      const { takeover, controller } = json(created) as { takeover: { id: string; tab: string; mode: string; computer: { id: string }; sealKey: Parameters<typeof sealFor>[0] }; controller: string };
-      assert.equal(takeover.mode, mode ?? "tab");
+      const { takeover, controller } = json(created) as { takeover: { id: string; tab: string; mode: string; browser: string; computer: { id: string }; sealKey: Parameters<typeof sealFor>[0] }; controller: string };
+      assert.equal(takeover.browser, mode ?? "tab");
+      assert.equal(takeover.mode, "control", "a sign-in's takeover is always in control");
       computer.respond = (event) => (event === "takeover.start" ? { status: 200, body: { width: 1280, height: 800 } } : { status: 404, body: {} });
       const box = await sealFor(takeover.sealKey, { purpose: "takeover", deviceId: takeover.computer.id, decisionId: takeover.id, name: takeover.tab, origin: NODE_SITE }, { k: randomBytes(32).toString("base64url") }, { ttlMs: 120_000 });
       const started = await computer.user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/start`, headers: { origin: NODE_SITE, "x-ensemble-takeover": controller }, payload: { sealed: box.sealed } });
