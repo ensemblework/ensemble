@@ -233,7 +233,7 @@ Tests: `subscriptions/subscriptions.test.ts` (including each agent's form for fi
 
 A coding agent reports its own result, separate from its closing words, and attaches what its owner should see (`evidence/run-tools.ts`). Ensemble Node reads the report to decide whether a step is done ([35 §8.12](35_ENSEMBLE_NODE.md#812-results-and-evidence)).
 
-**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has two tools next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools instead. Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`).
+**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has two tools next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools instead. Its `initialize` answer carries `instructions` (`instructionsFor`): the agent acts in Ensemble through this server and its brief, and never opens Ensemble's web app to sign in or to read the person's work ([39 §4](39_ENSEMBLE_TOOLS_AUDIT.md#4-never-ensemble-in-a-browser)). Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`).
 
 | Tool | Input | What happens |
 | --- | --- | --- |

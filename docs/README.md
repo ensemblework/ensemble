@@ -16,6 +16,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [07 · Governance](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | Access, approvals, audit, retention, erasure, metrics, interaction log and dashboards |
 | [11 · Assistant](11_HOW_THE_ASSISTANT_WORKS.md) | How a turn works, context, playbooks, Apply and Undo, extending it |
 | [34 · Assistant actions](34_ASSISTANT_ACTIONS.md) | Exact action and tool map, tiles and layouts, limits |
+| [39 · Ensemble tools](39_ENSEMBLE_TOOLS_AUDIT.md) | What the assistant, a node and a node's agent run can do in each area of Ensemble, what is not offered and why, never Ensemble in a browser |
 | [17 · Repository map](17_REPOSITORY_STRUCTURE.md) | Apps, packages, folders and ownership |
 
 ## Features

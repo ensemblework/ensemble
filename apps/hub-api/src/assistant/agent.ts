@@ -284,7 +284,7 @@ async function drive(
   const playbooks = playbooksFor(args.modules);
   const active = new Map<string, Playbook>(
     routePlaybooks(
-      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected },
+      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected, customBoard: args.page?.surface?.filters?.customBoard === true },
       playbooks,
     ).map((playbook) => [playbook.name, playbook]),
   );

@@ -12,6 +12,7 @@ import type { AssistantToolArea, AssistantToolInfo } from "@ensemble/shared-type
 import { hasModule, parseModules, type OptionalModule } from "@ensemble/shared-types";
 import type { AnyHubTool } from "./types.js";
 import { taskTools } from "./tools/tasks.js";
+import { boardTools } from "./tools/boards.js";
 import { projectTools } from "./tools/projects.js";
 import { contextTools } from "./tools/context.js";
 import { fileTools } from "./tools/files.js";
@@ -65,6 +66,7 @@ const ALL: readonly AnyHubTool[] = [
   ...surfaceTools,
   ...recordActionTools,
   ...taskTools,
+  ...boardTools,
   ...projectTools,
   ...contextTools,
   ...fileTools,

@@ -66,6 +66,7 @@ export const NODE_SKILLS: readonly NodeSkill[] = [
       "- Your owner gets a card with “Sign in here”, which shows them the page live on their phone or computer: Google sign-in, 2FA codes and approvals, and making an account all work there. You go on by yourself when it is done.",
       "- Never ask for passwords or codes in chat, and never type them.",
       has("browser_login_check") ? "- When your owner says they did it: browser_login_check with the tab." : "- When your owner says they did it, try the page again.",
+      "- Never Ensemble itself (app.ensemblework.com, a board or task link): you are in it already, through your Ensemble tools.",
     ],
   },
   {

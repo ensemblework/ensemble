@@ -16,7 +16,7 @@ import { recordMetric } from "../lib/metrics.js";
 import { callCost } from "../lib/pricing.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { captureTools } from "./device-tools.js";
+import { captureTools, refuseEnsembleApp } from "./device-tools.js";
 import { chatModelFor, fastChatModel, type ChatModel } from "./model.js";
 import { parkedFor } from "./queue.js";
 import type { NodeScope } from "./tools.js";
@@ -167,6 +167,7 @@ export function webTaskTool(scope: NodeScope): AnyHubTool {
     async run(ctx, input) {
       if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
       if (!input.url && !input.tab) throw new ToolBlockedError("Give the url to start at, or the tab to go on in.");
+      refuseEnsembleApp("web_task", input);
       return runWebTask(ctx, scope, input);
     },
   });
