@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/desktop",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Tauri shell for the local Ensemble desktop app",
   "scripts": {

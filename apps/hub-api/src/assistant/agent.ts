@@ -58,7 +58,7 @@ import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ens
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
-import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
+import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
 import { ToolBlockedError, type AnyHubTool, type CallSpace, type CodeSession, type SpaceGateway, type ToolContext } from "./types.js";
 import { codePreamble, codeTools } from "./tools/code.js";
@@ -172,7 +172,25 @@ export interface AssistantTurnArgs {
   where?: string;
   /** Metrics and credit purpose for the model calls. Default "Hub chat". */
   purpose?: string;
+  /**
+   * Checks the model's final text before the turn ends (Ensemble Node's deliverables, node/deliverables.ts):
+   * a string is what is still missing, given to the model as a user message, and the turn goes on. At most
+   * `MAX_VERIFY_ROUNDS` per turn, within the step cap; null (or a failure) ends the turn as usual.
+   */
+  verify?: (state: VerifyState) => string | null | Promise<string | null>;
 }
+
+/** What a `verify` hook sees when the model gives its final text. */
+export interface VerifyState {
+  text: string;
+  /** Every tool call this turn made, in order, with what the model was told it returned. */
+  calls: ReadonlyArray<{ call: AssistantToolCall; result: unknown }>;
+  /** Rounds of feedback already given in this turn (0 the first time). */
+  round: number;
+}
+
+/** Feedback rounds a `verify` hook may give in one turn. */
+export const MAX_VERIFY_ROUNDS = 2;
 
 export interface AssistantTurnResult {
   failed?: boolean;
@@ -341,6 +359,11 @@ async function drive(
   let nudged = false;
   /** The model was asked once for its reply after it ran tools and said nothing. */
   let answerAsked = false;
+  /** What each call returned to the model, for the `verify` hook. */
+  const results: Array<{ call: AssistantToolCall; result: unknown }> = [];
+  let verifyRounds = 0;
+  /** The answer a `verify` round sent back: still the reply if the model gives no better one. */
+  let checkedText = "";
 
   const maxSteps = isSubscriptionProvider(args.provider) ? 0 : args.code ? MAX_CODE_STEPS : MAX_STEPS;
   if (isSubscriptionProvider(args.provider)) {
@@ -515,7 +538,12 @@ async function drive(
         continue;
       }
       const settled = replyAfterStreamFailure(streamed, error, false);
-      if (settled.kind === "error") throw error;
+      if (settled.kind === "error") {
+        // The answer a check sent back still stands when the model fails after it.
+        if (!checkedText) throw error;
+        text = checkedText;
+        break;
+      }
       text = settled.text;
       break;
     }
@@ -526,7 +554,8 @@ async function drive(
     if (turn.cutOff) {
       text = cutOffReply(turn.text, turn.finishReason ?? null);
     } else if (turn.toolCalls.length === 0 && turn.text.trim()) {
-      text = turn.text.trim();
+      // A small model copies the history's "(You did: …)" note; that note is never part of a reply.
+      text = withoutEcho(turn.text).trim();
     }
     try {
       await recordMetric(app.prisma, {
@@ -574,10 +603,28 @@ async function drive(
         messages.push({ role: "user", content: ANSWER_NUDGE });
         continue;
       }
+      // A surface that checks the answer against what was asked (Ensemble Node, node/deliverables.ts): what
+      // is missing goes back as a user message, while a step with tools and one to answer remain.
+      if (args.verify && text && !finalAnswer && verifyRounds < MAX_VERIFY_ROUNDS && step < maxSteps - 2) {
+        const feedback = await checkAnswer(args.verify, { text, calls: results, round: verifyRounds }, app);
+        if (feedback && !stop.signal.aborted) {
+          verifyRounds += 1;
+          checkedText = text;
+          messages.push({ role: "assistant", content: turn.text });
+          messages.push({ role: "user", content: feedback });
+          args.emit({ type: "status", text: "Checking the answer against what was asked." });
+          text = "";
+          continue;
+        }
+      }
       break;
     }
 
     if (finalAnswer) {
+      if (checkedText) {
+        text = checkedText;
+        break;
+      }
       throw new ToolBlockedError(
         "The model did not produce a final answer within the request budget. Its recorded actions are available separately.",
       );
@@ -612,6 +659,7 @@ async function drive(
         args.emit({ type: "tool", call: outcome.call });
       }
       calls.push(outcome.call);
+      results.push({ call: outcome.call, result: outcome.forModel });
       learn(outcome.call.refs);
       if (outcome.call.state === "ok" && outcome.call.isWrite) mutated = true;
       messages.push(toolResult(outcome.call.id, outcome.call.name, outcome.forModel));
@@ -633,6 +681,7 @@ async function drive(
   }
 
   const stopped = stop.signal.aborted;
+  if (!text && checkedText) text = checkedText;
   if (!text) {
     text = stopped
       ? calls.length
@@ -770,7 +819,7 @@ async function runOne(
   }
 
   // The stricter policy holds: this turn's, and the person's own in the space the call acts in.
-  const holds = (settings: Settings) => holdsAssistantWrite(settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
+  const holds = (settings: Settings) => !tool.immediate && holdsAssistantWrite(settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
   const held = tool.isWrite && (holds(ctx.settings) || Boolean(space?.settings && holds(space.settings)));
   if (held) {
     let preview: string;
@@ -971,6 +1020,17 @@ const PROMISE_RE =
 const soundsLikeAPromise = (text: string): boolean => PROMISE_RE.test(text);
 
 const ANSWER_NUDGE = "Your tools have answered, but you wrote nothing. Write your reply to the person now, from what they returned.";
+
+/** A `verify` hook's feedback, or null when it has none or fails (a check never breaks a turn). */
+async function checkAnswer(verify: NonNullable<AssistantTurnArgs["verify"]>, state: VerifyState, app: FastifyInstance): Promise<string | null> {
+  try {
+    const feedback = await verify(state);
+    return typeof feedback === "string" && feedback.trim() ? feedback.trim() : null;
+  } catch (error) {
+    app.log.warn({ err: error }, "The answer check failed; the answer stands");
+    return null;
+  }
+}
 
 const NUDGE =
   "You described what you were going to do but called no tool, so nothing happened. " +

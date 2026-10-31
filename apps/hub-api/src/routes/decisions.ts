@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import type { Prisma } from "@prisma/client";
+import type { AgentDecision, Prisma, PrismaClient } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
@@ -18,6 +18,8 @@ import { handoffFor } from "../workspace/handoff.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
+import { takesRunAnswer } from "../remote/policy.js";
+import { nodeChatDecisions, nodeChatLine, ownerAnswering, recoverRunDecisions, settleRunDecisionCards } from "../node/run-decisions.js";
 
 // In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
 const HOOK_SCRIPT = hookScriptPath();
@@ -75,36 +77,50 @@ export async function applyAnswer(
     if (detail.confirm === true && body.decision === "allow" && actor === "me" && body.confirmed !== true) {
       throw new AnswerError(400, "Confirm this before allowing it.");
     }
-    if (body.scope !== "once") throw new AnswerError(400, "A phone answer is once only. Change trust on your computer.");
+    // "For this run" on a permission becomes a rule of that run on the computer (remote/policy.ts `judgeAnswer`), when its Ensemble takes one.
+    const forRun = body.scope === "session" && takesRunAnswer(row) && (await takesRunAnswers(prisma, deviceId));
+    if (body.scope === "session" && takesRunAnswer(row) && !forRun) {
+      const name = typeof detail.deviceName === "string" && detail.deviceName.trim() ? detail.deviceName.trim() : "that computer";
+      throw new AnswerError(400, `Update Ensemble on ${name} to allow this for the whole run from here. Allow once works now.`);
+    }
+    if (body.scope !== "once" && !forRun) throw new AnswerError(400, "A phone answer is once only. Change trust on your computer.");
     const offered = offeredOptions(detail.options);
     const picked = typeof body.reason === "string" && body.reason.length > 0 ? body.reason : null;
     if (row.event !== "question" && picked) throw new AnswerError(400, "A permission answer cannot include a note.");
     if (picked !== null && !offered.includes(picked) && !(row.event === "question" && detail.allowCustom === true)) throw new AnswerError(400, "Pick one of the offered answers.");
     if (body.decision === "allow" && offered.length > 0 && picked === null) throw new AnswerError(400, "Pick one of the offered answers.");
-    scope = "once";
+    scope = forRun ? "session" : "once";
     reason = picked ?? undefined;
   }
   // Checked before the answer is taken; saved only by the answer that wins.
   const rule = !deviceId && row.source === "ensemble" ? await ensembleRule(userId, row, body) : null;
-  const decided = await prisma.$transaction(async (tx) => {
-    const updated = await decideOnce(tx, id, { status: "decided", decision: body.decision, scope, reason: deviceId ? (reason ?? null) : body.reason, decidedAt: new Date() });
-    if (!updated) return null;
-    const trusted = rule ? await saveRule(tx, rule) : false;
-    if (!deviceId && body.scope !== "once" && row.source !== "ensemble") {
-      const command = (row.detail as { command?: string | null }).command ?? null;
-      await tx.decisionRule.create({
-        data: {
-          userId,
-          source: row.source,
-          toolName: row.toolName,
-          pattern: command ?? "*",
-          decision: body.decision,
-          sessionId: body.scope === "session" ? row.sessionId : null,
-        },
-      });
-    }
-    return { updated, trusted };
-  });
+  // A node run's card in the chat says its owner answered (node/run-decisions.ts), wherever they did.
+  const answering = ownerAnswering(id);
+  let decided: { updated: AgentDecision; trusted: boolean } | null;
+  try {
+    decided = await prisma.$transaction(async (tx) => {
+      const updated = await decideOnce(tx, id, { status: "decided", decision: body.decision, scope, reason: deviceId ? (reason ?? null) : body.reason, decidedAt: new Date() });
+      if (!updated) return null;
+      const trusted = rule ? await saveRule(tx, rule) : false;
+      if (!deviceId && body.scope !== "once" && row.source !== "ensemble") {
+        const command = (row.detail as { command?: string | null }).command ?? null;
+        await tx.decisionRule.create({
+          data: {
+            userId,
+            source: row.source,
+            toolName: row.toolName,
+            pattern: command ?? "*",
+            decision: body.decision,
+            sessionId: body.scope === "session" ? row.sessionId : null,
+          },
+        });
+      }
+      return { updated, trusted };
+    });
+    if (decided) await settleRunDecisionCards(app, decided.updated, "owner").catch((error: unknown) => app.log.warn({ err: error, decisionId: id }, "could not update a run's question in the chat"));
+  } finally {
+    answering();
+  }
   if (!decided) {
     const now = await prisma.agentDecision.findUnique({ where: { id } });
     throw new AnswerError(409, now ? closedRefusal(now) : "Decision not found.");
@@ -159,6 +175,13 @@ function decisionFrame(row: { id: string; status: string; title: string; source:
 
 export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+
+  // A node run's questions waiting in its chat are followed again after a restart (node/run-decisions.ts).
+  if (process.env.ENSEMBLE_DESKTOP !== "1") {
+    app.addHook("onReady", async () => {
+      await recoverRunDecisions(app).catch((error: unknown) => app.log.warn({ err: error }, "could not resume run questions in node chats"));
+    });
+  }
 
   /** Called by the hook script. Answers at once when a rule matches; otherwise opens a card. */
   app.post("/api/decisions", async (request, reply) => {
@@ -261,8 +284,13 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  /**
+   * Requests waiting for this person. `surface=hub` (the Hub's Needs me): requests a node's runs and a
+   * node's own tools ask in a Node chat are left out, and `nodeChat` says how many wait there and where
+   * to open them (only where Ensemble Node has a site; elsewhere the Hub lists them all).
+   */
   app.get("/api/decisions", async (request) => {
-    const { status } = z.object({ status: z.enum(["pending", "recent"]).default("pending") }).parse(request.query);
+    const { status, surface } = z.object({ status: z.enum(["pending", "recent"]).default("pending"), surface: z.enum(["hub"]).optional() }).parse(request.query);
     await expireStale(request.userId);
     const rows = await prisma.agentDecision.findMany({
       where: {
@@ -274,7 +302,10 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
       orderBy: { requestedAt: status === "pending" ? "asc" : "desc" },
       take: 100,
     });
-    return { decisions: rows.map(publicDecision) };
+    if (surface !== "hub") return { decisions: rows.map(publicDecision) };
+    const chat = await nodeChatDecisions(prisma, request.userId);
+    const inChat = rows.filter((row) => row.status === "pending" && chat.ids.has(row.id)).map((row) => row.id);
+    return { decisions: rows.filter((row) => !(row.status === "pending" && chat.ids.has(row.id))).map(publicDecision), nodeChat: nodeChatLine(inChat, chat) };
   });
 
   app.post("/api/decisions/:id/decide", async (request) => {
@@ -383,6 +414,13 @@ async function connectedTargets(): Promise<string[]> {
 /** Strings the computer offered. A device answer has to be one of these, exactly. */
 function offeredOptions(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** Whether the computer's Ensemble keeps a permission answered "for this run" as a rule of the run (capabilities `runAnswers`). */
+async function takesRunAnswers(prisma: PrismaClient, deviceId: string): Promise<boolean> {
+  const device = await prisma.device.findUnique({ where: { id: deviceId }, select: { capabilities: true } });
+  const runAnswers = (device?.capabilities as { runAnswers?: unknown } | null)?.runAnswers;
+  return typeof runAnswers === "number" && runAnswers >= 1;
 }
 
 function label(source: string): string {

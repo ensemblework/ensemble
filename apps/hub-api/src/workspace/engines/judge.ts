@@ -20,10 +20,21 @@ import { parseShell } from "../shell-parse.js";
 import { allowOrRefuse, askPerson, cloneForAgent, granted, outsideArgs, outsidePath, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
 import type { ShellSegment } from "../shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "../../device-tools/dangerous.js";
+import { inSkillFolder, skillRootsHere, skillScript } from "./skills.js";
 
 /** `signal` aborts when the agent stops waiting for this answer (its call timed out or was cancelled): a question it asked is withdrawn. */
 export type EngineCall = { tool: string; input: Record<string, unknown>; signal?: AbortSignal };
 export type EngineAnswer = { decision: "allow" | "deny"; message?: string; updatedInput?: Record<string, unknown> };
+
+/**
+ * Ensemble's own tools on the run's MCP server that touch nothing outside Ensemble, passed without a
+ * prompt: `ask_person` (the question itself is judged when it asks, as AskUserQuestion), the run's own
+ * result and evidence (a file it attaches is judged there, as a read: evidence/run-tools.ts), the
+ * person's own board in Chat only (/api/engine/tool refuses other runs), and a saved secret used by
+ * reference, where the owner's allowed destinations and the run's scope decide (credentials/secret-http.ts).
+ * The run's browser and capture tools follow its mode, like any MCP tool.
+ */
+export const ENSEMBLE_OWN_TOOLS = ["ask_person", "report_result", "attach_evidence", "ensemble_list_tasks", "ensemble_search", "ensemble_create_task", "secret_http"] as const;
 
 const ALLOW: EngineAnswer = { decision: "allow" };
 const READS = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);
@@ -33,17 +44,7 @@ const SHELLS = new Set(["Bash", "PowerShell"]);
 const HARMLESS = new Set([
   "TodoWrite", "TodoRead", "Task", "Agent", "ExitPlanMode", "BashOutput", "KillShell", "KillBash", "Skill", "SlashCommand", "ToolSearch",
   "ListMcpResourcesTool", "ReadMcpResourceTool",
-  // Ensemble's own question tool: the question itself is judged when the tool asks (as AskUserQuestion).
-  "mcp__ensemble__ask_person",
-  // The run's own result and evidence (evidence/run-tools.ts): a file it attaches is judged there, as a read.
-  "mcp__ensemble__report_result",
-  "mcp__ensemble__attach_evidence",
-  // The person's own board, in Chat only (/api/engine/tool refuses other runs): nothing outside Ensemble.
-  "mcp__ensemble__ensemble_list_tasks",
-  "mcp__ensemble__ensemble_search",
-  "mcp__ensemble__ensemble_create_task",
-  // A saved secret used by reference: the owner's allowed destinations and the run's scope decide (credentials/secret-http.ts).
-  "mcp__ensemble__secret_http",
+  ...ENSEMBLE_OWN_TOOLS.map((name) => `mcp__ensemble__${name}`),
 ]);
 
 const str = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
@@ -58,6 +59,8 @@ function refused(result: { result: unknown } | null): EngineAnswer {
 async function outside(ctx: JobContext, path: string, write: boolean, options: { command?: string; withdrawn?: AbortSignal } = {}): Promise<EngineAnswer & { asked?: boolean }> {
   const real = await realOutside(path);
   if (harmlessPath(real) || harmlessPath(path)) return ALLOW;
+  // The agents' own skill folders are read in every mode, as the agent reads them when it loads a skill.
+  if (!write && inSkillFolder(real) && !outsideRefusal(real, false)) return ALLOW;
   const verdict = await outsidePath(ctx, real, write, options);
   return verdict.held ? { ...refused(verdict.held), asked: verdict.asked } : { decision: "allow", asked: verdict.asked };
 }
@@ -97,13 +100,14 @@ export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): voi
 /**
  * `posix`: a POSIX shell reads the command (Bash, not PowerShell or Windows), so its parse holds.
  * `unsandboxed`: the agent asked to run it outside its OS sandbox (Claude Code's retry after the
- * sandbox stopped a command).
+ * sandbox stopped a command). `cwd`: the folder the agent runs it in, when it says (Codex's
+ * approval names it); else the run's folder.
  */
-async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, posix = true, unsandboxed = false): Promise<EngineAnswer> {
+async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, posix = true, unsandboxed = false, cwd = ctx.root): Promise<EngineAnswer> {
   // The hard floor's dangerous commands (wiping disks, locking the owner out, …): refused whatever the mode or anyone's answer.
   const hit = dangerousCommand(command);
   if (hit) return { decision: "deny", message: dangerousMessage(hit) };
-  const parsed = parseShell(command, ctx.root);
+  const parsed = parseShell(command, cwd);
   const segments = parsed.map((segment) => segment.argv).filter((argv) => argv.length > 0);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
   // clone there always fails: Ensemble clones for it instead, hooks-free (clone.ts). Only Claude Code:
@@ -151,11 +155,16 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, 
   const touched = new Map<string, boolean>();
   const mark = (path: string, write: boolean) => touched.set(path, (touched.get(path) ?? false) || write);
   const writesIn: string[] = [];
+  const roots = skillRootsHere();
   for (const segment of parsed) {
     const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
-    for (const path of segment.argv.length ? outsideArgs(ctx.root, segment.argv, segment.cwd) : []) mark(path, writes);
-    if (writes && !within(ctx.root, segment.cwd)) mark(segment.cwd, true);
-    if (writes) writesIn.push(segment.cwd);
+    // Running a skill's script (`python3 ~/.agents/skills/x/scripts/search.py …`, or from that folder) reads the
+    // skill's folder, never changes it; anything else the command names or redirects to is judged as usual.
+    const script = writes ? skillScript(segment, roots) : null;
+    for (const path of segment.argv.length ? outsideArgs(ctx.root, segment.argv, segment.cwd) : []) mark(path, writes && !(script !== null && (await realOutside(path)) === script));
+    const scriptFolder = script !== null && inSkillFolder(await realOutside(segment.cwd), roots);
+    if (writes && !within(ctx.root, segment.cwd) && !scriptFolder) mark(segment.cwd, true);
+    if (writes && !scriptFolder) writesIn.push(segment.cwd);
     for (const redirect of segment.redirects) {
       const full = resolve(segment.cwd, expandHome(redirect.path));
       if (harmlessPath(full)) continue;
@@ -270,9 +279,12 @@ export async function judgeEngineCall(ctx: JobContext, call: EngineCall): Promis
   if (SHELLS.has(tool)) {
     const command = str(input.command);
     if (!command) return ALLOW;
-    return shell(ctx, command, call.signal, tool === "Bash" && process.platform !== "win32", input.dangerouslyDisableSandbox === true);
+    const cwd = str(input.cwd) ? resolve(ctx.root, expandHome(str(input.cwd)!)) : ctx.root;
+    return shell(ctx, command, call.signal, tool === "Bash" && process.platform !== "win32", input.dangerouslyDisableSandbox === true, cwd);
   }
-  // MCP tools and anything new: the mode decides, like a command.
+  // MCP tools and anything new: the mode decides, like a command. The run's browser and capture tools are asked
+  // about as one group each, so "Allow for this run" on one covers the others (`ruleKind` in tools.ts).
   if (ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only." };
-  return refused(await allowOrRefuse(ctx, "command", true, { toolName: tool, title: `Use ${tool.replace(/^mcp__/, "").replace(/__/g, " → ")}`, command: tool }, call.signal));
+  const group = /^mcp__ensemble__(browser|capture)_/.exec(tool);
+  return refused(await allowOrRefuse(ctx, "command", true, { toolName: group ? `mcp__ensemble__${group[1]}` : tool, title: `Use ${tool.replace(/^mcp__/, "").replace(/__/g, " → ")}`, command: tool }, call.signal));
 }

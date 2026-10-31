@@ -21,13 +21,14 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest } from "../remote/contract.js";
+import { BROWSER_API, LOGIN_CHECKS_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
 import { postLoginCard } from "./logins.js";
+import { nodeSaveFileTool } from "../assistant/tools/save-file.js";
 import { askOwner, awaitAnswer, computerCard, markGrantsUsed, noticeAsked, ownerName, pendingGrants, permissionWaitMs, placeOf, waitForOwner, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
 import { helperFolders, helperGrant } from "./helpers.js";
@@ -71,11 +72,17 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
     throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.ownFolder}.`, "Your owner updates it there; tell them in one line if it matters now.");
   }
   if (need?.browser) {
-    if (typeof caps.browser !== "number" || caps.browser < BROWSER_API) {
+    if (typeof caps.browser !== "number" || caps.browser < 1) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to browse or capture for a node.`, "Your owner updates it there (`ensemble update`, or the desktop app's update).");
+    }
+    if (WEB_TOOLS.includes(need.browser) && caps.browser < BROWSER_API) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name} to use ${need.browser}: it is too old for it.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then use browser_open and browser_screenshot.");
     }
     if (need.browser === "browser_login_needed" && (typeof caps.logins !== "number" || caps.logins < 1)) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to hand a sign-in to your owner.`, "Your owner updates it there (`ensemble update`, or the desktop app's update), or signs in by hand in the browser there.");
+    }
+    if (need.browser === "browser_login_check" && (typeof caps.logins !== "number" || caps.logins < LOGIN_CHECKS_API)) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name} to check a sign-in from here.`, "Their card in this chat still works: your owner presses I'm done there, and you are woken when they are signed in.");
     }
     if (caps.capture?.browser === false && need.browser !== "capture_status") {
       throw new ToolBlockedError(`${device.name} has no browser for Ensemble yet.`, "Your owner runs `ensemble capture setup` there once; it installs one. capture_status says what else that computer can capture.");
@@ -133,6 +140,21 @@ type CallOptions = {
  * card in this chat and waits for it: allowed, the same call goes again with the answer; denied, the
  * node hears no; not answered in time (or the owner wrote meanwhile), the turn parks.
  */
+/** Options of the browser tools a computer before `capabilities.browser` 2 refuses: left out there, so the call still works. */
+const BROWSER_2_OPTIONS = ["focus", "clean", "mode"] as const;
+
+/** The request as this computer takes it: a 0.6.0 one gets the browser tools' older inputs (its input checks are strict). */
+export function forComputer<T extends Record<string, unknown>>(device: Pick<Device, "capabilities">, request: T): T {
+  const caps = (device.capabilities ?? {}) as { browser?: unknown; logins?: unknown };
+  const input = request.input;
+  if (request.tool !== "browser" || !input || typeof input !== "object") return request;
+  const older = { ...(input as Record<string, unknown>) };
+  if (!(typeof caps.browser === "number" && caps.browser >= BROWSER_API)) for (const key of BROWSER_2_OPTIONS) delete older[key];
+  // A sign-in's purpose (a human check) is for logins 2; an older computer finds a human check itself.
+  if (request.name === "browser_login_needed" && !(typeof caps.logins === "number" && caps.logins >= LOGIN_CHECKS_API)) delete older.purpose;
+  return Object.keys(older).length === Object.keys(input).length ? request : { ...request, input: older };
+}
+
 async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
   const { prisma, node } = scope;
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
@@ -143,7 +165,7 @@ async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string
     const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
     const operationId = `${scope.turnId}:${randomUUID()}`;
     // Public web pages need no answer on the computer (device-tools/policy.ts) unless the owner asks to be asked, there or here.
-    const data = { ...request, ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
+    const data = { ...forComputer(device, request), ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
     const raw = await askDeviceFor(ctx.app.redis, { deviceId: device.id, event: "node.tool.request", data }, options.timeoutMs);
     if (!raw) throw new ToolBlockedError(`${device.name} did not answer. It may be asleep or busy; try again.`);
     const answer = CodeAnswer.safeParse(raw);
@@ -427,7 +449,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       description:
         "Take a screenshot of a terminal on your owner's computer: it runs a command in a real terminal and captures the screen as a picture, which appears with your reply by itself. " +
         "Use it whenever your owner asks for a screenshot of their terminal, shell, htop, top or any command's output (`htop`, `top`, `df -h`, `ls -la`, `git log --oneline`). " +
-        "seconds: how long it runs before the picture (3 by default; htop and top keep running until then). keys: what to type once it started ({Enter}, {F10}, q). You also get the screen as text.",
+        "seconds: how long it runs before the picture (3 by default; htop and top keep running until then, and are stopped for you after it). keys: only to change what it shows once it started ({Down}, {F6}, a search); never a key that quits it (q, {F10}, {Ctrl+C}). You also get the screen as text.",
       input: z
         .object({
           computer: Computer,
@@ -496,6 +518,33 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         return toolOk(kept.lines.join("\n"), { computer: done.device.name, evidence: kept.evidence });
       },
     }),
+    // hub_save_file with a path too: the file is shared from the computer as evidence, then saved in Files (assistant/tools/save-file.ts).
+    nodeSaveFileTool({
+      computerFields: { computer: Computer, folder: Folder },
+      async share(ctx, input) {
+        const operation = captureOperation(scope);
+        const done = await callComputer(
+          ctx,
+          scope,
+          input.computer,
+          { tool: "files", action: "share", folder: input.folder, path: input.path, operation, uploadId: "pending" },
+          {
+            timeoutMs: 90_000,
+            describe: `Save ${input.path} to Ensemble Files`,
+            again: callText("hub_save_file", input),
+            need: { ownFolder: "share files from it" },
+            before: async (device) => ({ uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) }),
+          },
+        );
+        if (isResult(done)) return done;
+        const kept = await keepCaptures(ctx, scope, done, operation, "none");
+        const file = kept.evidence.find((item) => !item.held);
+        if (file) return { evidence: file.id };
+        const held = kept.evidence[0];
+        if (!held) throw new ToolBlockedError(`${done.device.name} shared nothing for ${input.path}.`);
+        return toolOk(`${kept.lines.join("\n")}\nOnce your owner releases it, save it with hub_save_file {evidence: "${held.id}"}.`, { computer: done.device.name, evidence: kept.evidence, saved: false });
+      },
+    }),
     // A helper never runs commands as the administrator.
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
@@ -543,22 +592,37 @@ export function captureOperation(scope: Pick<NodeScope, "node">): string {
   return `node:${scope.node.id}:own`;
 }
 
-/** How long a call may take on the computer: a video for its length, every call for its upload. */
+/** How long a call may take on the computer: a video for its length, a shop for its stores, every call for its upload. */
 function captureTimeout(name: string, input: Record<string, unknown>): number {
   const seconds = typeof input.durationSec === "number" ? Math.min(input.durationSec, 600) : 0;
-  return name === "capture_video" ? 120_000 + seconds * 2_000 : name === "capture_app_start" ? 90_000 : 75_000;
+  if (name === "capture_video") return 120_000 + seconds * 2_000;
+  if (name === "browser_shop") return 190_000;
+  if (name === "browser_view" || name === "browser_extract" || name === "browser_fetch" || name === "browser_set_location") return 120_000;
+  return name === "capture_app_start" ? 90_000 : 75_000;
 }
 
-/** A small result the node reads besides the summary (checks, a status, apps); a page's snapshot is in its summary. */
+/** Page text the summary already carries (a snapshot, a page's Markdown, a store's text): left out of the result. */
+const TEXT_FIELDS = new Set(["snapshot", "markdown", "text"]);
+
+function withoutText(value: unknown, depth = 0): unknown {
+  if (depth > 3 || !value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => withoutText(item, depth + 1));
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !TEXT_FIELDS.has(key)).map(([key, item]) => [key, withoutText(item, depth + 1)]));
+}
+
+/** A small result the node reads besides the summary (checks, a status, apps, offers); a page's text is in its summary. */
 function smallResult(result: unknown): Record<string, unknown> {
   if (result === undefined) return {};
-  const text = JSON.stringify(result);
-  return text.length <= 8_000 ? { result } : {};
+  const lean = withoutText(result);
+  const text = JSON.stringify(lean);
+  return text.length <= 8_000 ? { result: lean } : {};
 }
 
 const NOUNS: Record<string, string> = { screenshot: "screenshot", image: "picture", video: "video" };
 /** What a capture tool is meant to bring back. */
-const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", capture_screenshot: "screenshot", capture_video: "video" };
+const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", browser_view: "screenshot", browser_shop: "screenshot", capture_screenshot: "screenshot", capture_video: "video" };
+/** Tools whose files are documents to keep, not pictures to show: nothing comes with the reply by itself. */
+const DOCUMENTS = new Set(["browser_fetch", "browser_download"]);
 
 /**
  * What a capture-like call kept: its evidence is the node's own; a capture the computer holds waits for
@@ -566,7 +630,7 @@ const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", capt
  * to share) comes with the node's reply by itself.
  */
 /** `expects`: what the call was meant to bring back (a screenshot, a file), so the node hears plainly when nothing will show. */
-async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all", expects?: string) {
+async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
   const { prisma, node } = scope;
   const parsed = NodeCaptureAnswer.safeParse(done.body);
   if (!parsed.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
@@ -588,7 +652,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
       private: Boolean(scope.privateTo),
     });
   }
-  const showable = (show === "all" ? kept : shownKinds(kept)).filter((item) => !item.local);
+  const showable = show === "none" ? [] : (show === "all" ? kept : shownKinds(kept)).filter((item) => !item.local);
   const { media } = showable.length ? await ownerMedia(prisma, node.userId, showable.map((item) => item.id)) : { media: [] };
   if (media.length) rememberCaptured(scope.turnId, media);
   const lines = [
@@ -597,6 +661,9 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
     media.length === 1 ? `This ${NOUNS[media[0]!.kind] ?? "file"} will appear with your reply.` : media.length > 1 ? `These ${media.length} files will appear with your reply (node_show to choose fewer).` : "",
     held.length ? `Held for your owner to preview first, on a card in this chat: nothing is shown or sent until they release it, and you are told when they do. The card asks them; do not ask in your reply.` : "",
     expects && answer.ok && !media.length && !held.length ? `No ${expects} came back, so nothing will show with your reply: never say one is attached or shown. Try again, or tell your owner it did not work.` : "",
+    show === "none" && kept.length
+      ? `It is in your evidence, not yet in your owner's Ensemble Files: to put it there, call hub_save_file with evidence "${kept[0]!.id}"; to show it in this chat, node_show. Never write a link to it yourself.`
+      : "",
     answer.refused.length ? `Not kept: ${answer.refused.map((item) => `“${item.name}”: ${item.reason}`).join("; ")}.` : "",
   ].filter(Boolean);
   if (!answer.ok) throw new ToolBlockedError(lines.join("\n"));
@@ -609,7 +676,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
  * they capture is the node's own evidence and comes with its reply; a capture the computer holds
  * waits for the owner's preview card.
  */
-function captureTools(scope: NodeScope): AnyHubTool[] {
+export function captureTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny }>;
   return specs.map((spec) =>
@@ -640,7 +707,7 @@ function captureTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
-        const kept = await keepCaptures(ctx, scope, done, operation, "pictures", EXPECTS[spec.name]);
+        const kept = await keepCaptures(ctx, scope, done, operation, DOCUMENTS.has(spec.name) ? "none" : "pictures", EXPECTS[spec.name]);
         const { login } = kept.answer;
         // The tab waits for the owner to sign in (B11): one owner-only card; the turn parks and the node is woken when it ends.
         if (login) {

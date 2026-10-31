@@ -21,6 +21,7 @@ import { parseReport } from "./report.js";
 import { startRoutines } from "./routines.js";
 import { refreshRunCard, settingsLine, storedSettings } from "./settings.js";
 import { startWatchdog, stopWatchdog } from "./watchdog.js";
+import { closeRunDecisions } from "./run-decisions.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 /** How often run states are mirrored: a run's end reaches its node within this time. */
@@ -87,6 +88,8 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   if (status !== run.status || ended) {
     await prisma.nodeRun.update({ where: { id: run.id }, data: { status, ...(ended ? { reportedAt: new Date() } : {}) } });
   }
+  // Its questions in the chat close with it (node/run-decisions.ts).
+  if (ended) await closeRunDecisions(app, run.jobId).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not close a run's questions in the chat"));
   // The card's settings (as asked, sent and reported by the agent) and its session's queue follow the job.
   if (status !== run.status || ended || shown.progress !== progress) await refreshRunCard(prisma, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not refresh a run card"));
   if (!ended) return;

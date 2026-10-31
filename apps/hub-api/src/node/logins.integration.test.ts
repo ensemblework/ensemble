@@ -298,7 +298,8 @@ test("a site that wants the owner's account pauses the tab and asks them; a logi
 
     const card = await loginCard(mira, room.id);
     assert.deepEqual((await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } })).visibleTo, [mira.id], "only the owner sees it");
-    assert.equal(card.body, `@${node.slug} needs you to sign in to ${OTHER_SITE} on Mira's laptop.`);
+    assert.equal(card.body, `@${node.slug} needs you to sign in to ${SITE_HOST}:${port}.`);
+    assert.equal(card.data.purpose, "sign_in");
     assert.equal(card.data.status, "pending");
     assert.equal(card.data.origin, OTHER_SITE);
     assert.deepEqual([card.data.saved, card.data.display], [false, false], "no saved login, no screen: the card offers typing it");

@@ -18,6 +18,7 @@ import { env } from "../config.js";
 import { browserBroker, runningBroker } from "../browser/index.js";
 import { checkUrl } from "../browser/broker.js";
 import { isBrowserTool, runBrowserTool } from "../browser/tools.js";
+import { genericRecipe, recipeFor } from "../browser/shop/recipes.js";
 import { captureService } from "../capture/index.js";
 import { isCaptureTool, runCaptureTool } from "../capture/tools.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -36,7 +37,18 @@ import type { LoginInfo } from "../logins/requests.js";
 export type CaptureRequest = Extract<NodeToolRequest, { tool: "browser" | "capture" }>;
 
 /** The tools that take a page address: opening or capturing it asks once per address. */
-const URL_TOOLS = new Set(["browser_open", "capture_screenshot", "capture_video", "capture_check"]);
+const URL_TOOLS = new Set(["browser_open", "browser_view", "browser_fetch", "browser_extract", "capture_screenshot", "capture_video", "capture_check"]);
+
+/** The sites a browser_shop call searches: the known stores' and any shop named by its address. */
+function shopOrigins(input: Record<string, unknown>): string[] {
+  const stores = Array.isArray(input.stores) ? input.stores.filter((store): store is string => typeof store === "string") : [];
+  const origins: string[] = [];
+  for (const store of stores) {
+    const recipe = recipeFor(store) ?? genericRecipe(store);
+    if (recipe && !origins.includes(recipe.origin)) origins.push(recipe.origin);
+  }
+  return origins;
+}
 
 /**
  * What a call acts on, for the policy: a page's origin, the folder an app starts in, or nothing
@@ -47,6 +59,14 @@ export async function captureScope(request: CaptureRequest): Promise<{ folder: T
   if (url) {
     const origin = new URL(checkUrl(url)).origin;
     return { folder: null, input: { capability: "browse", target: origin, label: origin, scope: "origin", publicWeb: await publicWebAddress(origin) } };
+  }
+  if (request.name === "browser_shop") {
+    // The known stores are public sites; a shop named by its address is judged like any page.
+    const named = shopOrigins(request.input);
+    for (const origin of named) {
+      if (!(await publicWebAddress(origin))) return { folder: null, input: { capability: "browse", target: origin, label: origin, scope: "origin", publicWeb: false } };
+    }
+    return null;
   }
   if (request.name === "capture_app_start") {
     // No cwd: the app starts in the node's own folder.
@@ -83,6 +103,25 @@ export async function keepEvidence(app: Pick<FastifyInstance, "prisma">, client:
   return { evidence, refused: recorded.refused };
 }
 
+/**
+ * browser_shop's result as the web reads it: its files' local paths left out, and each store's
+ * screenshot named by its evidence id once kept (by the file's name, which is unique in the folder).
+ */
+export function withEvidenceIds(result: unknown, evidence: NodeCaptureAnswer["evidence"]): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result) || !Array.isArray((result as { stores?: unknown }).stores)) return result;
+  const { files: _files, ...rest } = result as Record<string, unknown> & { stores: unknown[] };
+  const idFor = (name: unknown) => (typeof name === "string" ? evidence.find((item) => item.name === name && !item.variantOf)?.id : undefined);
+  return {
+    ...rest,
+    stores: rest.stores.map((store) => {
+      if (!store || typeof store !== "object") return store;
+      const { screenshot, ...other } = store as Record<string, unknown>;
+      const id = idFor(screenshot);
+      return id ? { ...other, screenshot: id } : other;
+    }),
+  };
+}
+
 /** Runs one browser or capture call for the node's operation, keeps what it wrote, and answers. */
 export async function runNodeCapture(app: Pick<FastifyInstance, "prisma">, client: HostedClient, request: CaptureRequest, folder: ToolFolder | null): Promise<NodeCaptureAnswer> {
   const userId = env.ENSEMBLE_DEV_USER_ID;
@@ -103,5 +142,5 @@ export async function runNodeCapture(app: Pick<FastifyInstance, "prisma">, clien
   if (!result.ok) return { ok: false, error: { code: result.error.code.slice(0, 40), message: result.error.message.slice(0, 2000) }, evidence, refused };
   // The tab waits for the owner to sign in (B11): the server raises the card and wakes the node when it ends.
   const login = (result.result as { login?: LoginInfo } | undefined)?.login;
-  return { ok: true, summary: result.summary, result: result.result, evidence, refused, ...(login ? { login } : {}) };
+  return { ok: true, summary: result.summary, result: withEvidenceIds(result.result, evidence), evidence, refused, ...(login ? { login } : {}) };
 }

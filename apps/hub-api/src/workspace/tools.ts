@@ -20,6 +20,7 @@ import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
 import { blockedReason, checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, holdsProtected, inTemp, isRemoteProgram, jailPath, knownWorkspace, outsideRefusal, parseCommand, relativeTo, within, workspaceFolders } from "./guard.js";
 import { expandWord, programArgv } from "./shell-parse.js";
+import { commandKind, urlKind } from "./command-kind.js";
 import type { RunChanges } from "./outside-changes.js";
 import { ghSandboxRefusal, runTrustedGh, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
@@ -30,6 +31,7 @@ import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js"
 import { commandGate, type AccessMode, type GateAction, type OutsideZone, type SandboxStrength } from "./trust.js";
 import { busyWith, copyFor, holdFolder, releaseFolder } from "./folder-claims.js";
 import { evidenceDir } from "../evidence/files.js";
+import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
@@ -282,8 +284,10 @@ export async function askPerson(
       expiresAt: new Date(Date.now() + 24 * 3600_000),
     },
   });
+  // A node's run on this server asks in its node's chat too (node/run-decisions.ts); elsewhere there is none.
+  const card = await postRunDecisionCard({ prisma: ctx.prisma }, row).catch(() => null);
   await ctx.prisma.notification.create({
-    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, urgent: true, url: "/needs-me" },
+    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, urgent: true, url: (card && cardUrl(card)) ?? "/needs-me" },
   });
   sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "pending", title: input.title, source: "ensemble" } });
   await ctx.event("needs_me", { decisionId: row.id, title: input.title });
@@ -345,14 +349,26 @@ export function outsideReadAllowed(ctx: JobContext): boolean {
   return gate(ctx, "outside", false, false) === "allow";
 }
 
-/** "Allow for this run" / "Deny for this run" answers, saved by the decide route. */
+/** "Allow for this run" / "Deny for this run" answers, saved by the decide route: the very command, or one of its kind (`commandKind`). */
 async function runRule(ctx: JobContext, toolName: string, command: string | undefined): Promise<"allow" | "deny" | null> {
   if (!ctx.prisma) return null;
-  const rule = await ctx.prisma.decisionRule.findFirst({
-    where: { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName, pattern: { in: [command ?? "*", "*"] } },
-    orderBy: { createdAt: "desc" },
-  });
-  return rule ? (rule.decision === "deny" ? "deny" : "allow") : null;
+  const where = { userId: ctx.userId, source: RUN_RULE_SOURCE, sessionId: ctx.job.id, toolName };
+  const rule = await ctx.prisma.decisionRule.findFirst({ where: { ...where, pattern: { in: [command ?? "*", "*"] } }, orderBy: { createdAt: "desc" } });
+  if (rule) return rule.decision === "deny" ? "deny" : "allow";
+  const kind = command ? ruleKind(ctx, toolName, command) : null;
+  if (!kind) return null;
+  const rows = await ctx.prisma.decisionRule.findMany({ where, orderBy: { createdAt: "desc" }, take: 200 });
+  const same = rows.find((row) => ruleKind(ctx, toolName, row.pattern) === kind);
+  return same ? (same.decision === "deny" ? "deny" : "allow") : null;
+}
+
+/** What a run rule covers beyond its very value: a write anywhere in the run's own folder, a site, the run's browser or capture tools, or a command's kind. */
+function ruleKind(ctx: Pick<JobContext, "root">, toolName: string, value: string): string | null {
+  if (toolName === OUTSIDE_TOOL || toolName === OUTSIDE_READ_TOOL || value === "*") return null;
+  if (toolName === WRITE_TOOL) return within(ctx.root, resolve(ctx.root, expandHome(value))) ? "inside" : null;
+  const ensembleTools = /^mcp__ensemble__(browser|capture)_/.exec(value);
+  if (ensembleTools) return `mcp__ensemble__${ensembleTools[1]}`;
+  return urlKind(value) ?? commandKind(value, ctx.root);
 }
 
 /** Where a path outside the run's folder lies, for the mode's rules. */

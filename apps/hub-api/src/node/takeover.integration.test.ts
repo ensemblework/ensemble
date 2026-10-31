@@ -3,8 +3,10 @@
  * sign-in asks for a password and then a one-time code. A node's tab waits for its owner to sign in
  * (B11); a simulated owner's browser (the Node and Hub pages' own channel code: sealFor and
  * takeover.ts, in WebCrypto) opens it through the real Node routes, while the computer's real broker,
- * takeover and login code run against a headless Chromium. The owner sees the tab in frames only their
- * browser can open, signs in with the code from their phone, and I'm done gives the tab back to the node.
+ * takeover and login code run against a headless Chromium. The owner sees the sign-in, in the clean
+ * browser the computer opens at the tab's page, in frames only their browser can open, signs in with the
+ * code from their phone; the computer sees it done, moves the session into the node's tab and ends the
+ * takeover, and the node carries on.
  * Also: a second browser cannot take control, a replayed or changed input is refused, the relay holds
  * no readable frame, key or keystroke, no model sees a frame or a credential, and expiry, sign-out and
  * unpairing end it. Browser parts skip without a Chromium.
@@ -51,7 +53,8 @@ const { updateSettings } = await import("../remote/store.js");
 const { makeSealKey, saveSealKey } = await import("../credentials/seal-key.js");
 const { answerNodeToolRequest } = await import("../device-tools/answer.js");
 const { answerLoginResolve } = await import("../logins/answer.js");
-const { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput, takeoverStats } = await import("../takeover/session.js");
+const { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverCleanSignIn, takeoverInput, takeoverStats } = await import("../takeover/session.js");
+const { closeCleanBrowsers } = await import("../logins/clean-signin.js");
 const { takeoverKeys: deviceKeys } = await import("../takeover/channel.js");
 const { configureBrowser, browserBroker, shutdownBrowser } = await import("../browser/index.js");
 const { sha256, SESSION_COOKIE } = await import("../lib/auth.js");
@@ -130,6 +133,7 @@ for (const name of ["set", "setex", "publish", "rpush", "lpush", "hset", "sadd"]
 }
 
 after(async () => {
+  await closeCleanBrowsers().catch(() => undefined);
   await shutdownBrowser().catch(() => undefined);
   site.close();
   await h.close();
@@ -300,17 +304,40 @@ async function until(check: () => Promise<boolean> | boolean, what: string, ms =
   assert.fail(`timed out waiting for ${what}`);
 }
 
-/** Where an element is on the tab, as the owner would click it on the frame: a fraction of the page. */
-async function spot(tab: string, selector: string) {
-  const page = browserBroker().ownerTab(tab).page;
-  const box = (await page.locator(selector).boundingBox())!;
-  const size = page.viewportSize()!;
-  return { x: (box.x + box.width / 2) / size.width, y: (box.y + box.height / 2) / size.height };
+/** The clean browser's page the takeover shows. */
+const shown = (takeoverId: string) => takeoverCleanSignIn(takeoverId)!.current!;
+
+/** Where an element is on the page shown, as the owner would click it on the frame: a fraction of the page. */
+async function spot(takeoverId: string, selector: string) {
+  const page = shown(takeoverId);
+  let box = await page.find(selector);
+  for (let tries = 0; !box && tries < 100; tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    box = await page.find(selector);
+  }
+  assert.ok(box, `${selector} on the page`);
+  const size = await page.viewport();
+  return { x: box.x / size.width, y: box.y / size.height };
 }
 
-const value = (tab: string, selector: string) => browserBroker().ownerTab(tab).page.locator(selector).inputValue();
+/** A field's value on the page shown, read from a DOM snapshot by the test (Ensemble's own code never reads one). */
+async function value(takeoverId: string, selector: string): Promise<string> {
+  const page = shown(takeoverId) as unknown as { send(method: string, params?: Record<string, unknown>): Promise<Record<string, any>> };
+  const doc = await page.send("DOM.getDocument", { depth: 0 });
+  const found = await page.send("DOM.querySelector", { nodeId: doc.root.nodeId, selector });
+  if (!found.nodeId) return "";
+  const backend = (await page.send("DOM.describeNode", { nodeId: found.nodeId })).node.backendNodeId as number;
+  const snapshot = await page.send("DOMSnapshot.captureSnapshot", { computedStyles: [] });
+  for (const document of snapshot.documents as Array<{ nodes: { backendNodeId: number[]; inputValue: { index: number[]; value: number[] } } }>) {
+    const node = document.nodes.backendNodeId.indexOf(backend);
+    if (node < 0) continue;
+    const at = document.nodes.inputValue.index.indexOf(node);
+    return at < 0 || document.nodes.inputValue.value[at]! < 0 ? "" : (snapshot.strings as string[])[document.nodes.inputValue.value[at]!]!;
+  }
+  return "";
+}
 
-test("the owner signs in from the web with a one-time code: frames only their browser opens, input in order, I'm done gives the tab back; nothing readable stays on the relay", { skip: noBrowser, timeout: 240_000 }, async () => {
+test("the owner signs in from the web with a one-time code, in a clean browser: frames only their browser opens, input in order, seen done and the session moved into the node's tab; nothing readable stays on the relay", { skip: noBrowser, timeout: 240_000 }, async () => {
   const mira = await person("Mira");
   const computer = await computerFor(mira);
   const { node, card } = await signInCard(mira);
@@ -341,56 +368,67 @@ test("the owner signs in from the web with a one-time code: frames only their br
     assert.ok(first.frame, "a frame came");
     assert.deepEqual([first.frame.jpeg[0], first.frame.jpeg[1], first.frame.jpeg[2]], [0xff, 0xd8, 0xff], "a JPEG");
     assert.match(String(first.frame.header.url), /\/login$/);
+    assert.deepEqual([first.frame.header.site, first.frame.header.mode, first.frame.header.popup], [SITE_HOST, "clean", false], "the frame says which site it shows, in the clean browser");
+    assert.equal(json(started).mode ?? "clean", "clean");
+    assert.equal(takeoverStats(owner.takeover.id)?.mode, "clean");
     assert.equal(browserBroker().ownerTab(tab).sensitive, true, "no agent or model sees the tab meanwhile");
 
+    // The relay's view of it: only the latest frame, opaque.
+    const keys = deviceKeys(owner.secret, owner.takeover.id);
+    const stored = await (h.app.redis as unknown as { get(key: string): Promise<string | null> }).get(`ensemble:takeover:frame:${owner.takeover.id}`);
+    assert.ok(stored, "the latest frame is in flight");
+    assert.deepEqual(Object.keys(JSON.parse(stored)).sort(), ["ct", "iv", "seq"], "only ciphertext");
+
+    // A person looks before acting: the clean browser has looked at the page once.
+    await until(() => Boolean(takeoverCleanSignIn(owner.takeover.id)?.lastJudged), "the first look");
     // Click the email field, type; the same message again is refused, as is one changed on the way.
-    const email = await spot(tab, 'input[name="email"]');
+    const email = await spot(owner.takeover.id, 'input[name="email"]');
     await owner.send([{ t: "mouse", type: "down", ...email }, { t: "mouse", type: "up", ...email }]);
     const typed = await owner.send([{ t: "text", text: USER }]);
-    await until(async () => (await value(tab, 'input[name="email"]')) === USER, "the email typed");
+    await until(async () => (await value(owner.takeover.id, 'input[name="email"]')) === USER, "the email typed");
     assert.equal((await owner.raw(typed.message)).statusCode, 200, "the relay passes it on; the computer decides");
     const changed = await owner.send([{ t: "text", text: "x" }]);
     const ct = Buffer.from(changed.message.ct, "base64url");
     ct[0] = ct[0]! ^ 1;
     await owner.raw({ ...changed.message, seq: changed.message.seq + 1, ct: ct.toString("base64url") });
     await until(() => (takeoverStats(owner.takeover.id)?.refused ?? 0) >= 2, "refusals");
-    assert.equal(await value(tab, 'input[name="email"]'), `${USER}x`, "the replay was not typed again; the changed message did nothing");
+    await until(async () => (await value(owner.takeover.id, 'input[name="email"]')) === `${USER}x`, "the replay was not typed again; the changed message did nothing");
     await owner.send([{ t: "key", type: "down", key: "Backspace" }, { t: "key", type: "up", key: "Backspace" }], changed.message.seq + 2);
-    await until(async () => (await value(tab, 'input[name="email"]')) === USER, "the extra letter deleted");
+    await until(async () => (await value(owner.takeover.id, 'input[name="email"]')) === USER, "the extra letter deleted");
 
-    const password = await spot(tab, 'input[name="password"]');
+    const password = await spot(owner.takeover.id, 'input[name="password"]');
     await owner.send([{ t: "mouse", type: "down", ...password }, { t: "mouse", type: "up", ...password }, { t: "text", text: CANARY }, { t: "key", type: "down", key: "Enter" }, { t: "key", type: "up", key: "Enter" }]);
-    await until(() => /\/login\/code$/.test(browserBroker().ownerTab(tab).page.url()), "the code page");
+    await until(() => /\/login\/code$/.test(shown(owner.takeover.id).url), "the code page");
     assert.ok(code, "the site sent a code to the owner's phone");
-    await owner.send([{ t: "text", text: code }, { t: "key", type: "down", key: "Enter" }, { t: "key", type: "up", key: "Enter" }]);
-    await until(() => /\/accounts$/.test(browserBroker().ownerTab(tab).page.url()), "signed in");
-    await until(async () => {
-      const next = await owner.frame();
-      return Boolean(next.frame && /\/accounts$/.test(String(next.frame.header.url)));
-    }, "a frame of the signed-in page", 60_000);
-    const stats = takeoverStats(owner.takeover.id)!;
-    assert.ok(stats.refused >= 2 && stats.applied >= 10, JSON.stringify(stats));
+    await until(async () => (await shown(owner.takeover.id).find('input[name="code"]')) !== null, "the code field");
+    script = (transcript) => (transcript.includes("signed in to") ? { calls: [{ name: "browser_snapshot", arguments: { tab } }], then: "2 payments are waiting." } : { text: "ok" });
+    // Key by key, as a phone's keyboard sends it, then Enter.
+    await owner.send([...[...code].flatMap((char) => [{ t: "key", type: "down", key: char }, { t: "key", type: "up", key: char }]), { t: "key", type: "down", key: "Enter" }, { t: "key", type: "up", key: "Enter" }]);
 
-    // The relay's view of it, checked before it ends: only the latest frame, opaque.
-    const keys = deviceKeys(owner.secret, owner.takeover.id);
-    const stored = await (h.app.redis as unknown as { get(key: string): Promise<string | null> }).get(`ensemble:takeover:frame:${owner.takeover.id}`);
-    assert.ok(stored, "the latest frame is in flight");
-    assert.deepEqual(Object.keys(JSON.parse(stored)).sort(), ["ct", "iv", "seq"], "only ciphertext");
-
-    script = (transcript) => (transcript.includes("Your owner signed in to") ? { calls: [{ name: "browser_snapshot", arguments: { tab } }], then: "2 payments are waiting." } : { text: "ok" });
-    const done = await owner.end(true);
-    await settleTurns();
-    assert.equal(done.statusCode, 200, done.body);
-    assert.equal(json(done).signedIn, true);
-    assert.equal(json(done).card.data.status, "signed_in");
-    assert.equal(json(done).card.data.via, "takeover");
+    // Seen done: the session moves into the node's tab, and the computer ends the takeover itself.
+    let ended = await owner.frame();
+    for (let tries = 0; ended.state !== "ended" && tries < 20; tries += 1) ended = await owner.frame();
+    assert.deepEqual([ended.state, ended.reason], ["ended", "signed_in"]);
+    assert.ok(owner.seen.some((frame) => /\/login\/code$/.test(String(frame.header.url))), "the owner saw the code page");
+    const stats = takeoverStats(owner.takeover.id);
+    assert.equal(stats, null, "nothing left on the computer");
     assert.equal(browserBroker().ownerTab(tab).sensitive, false, "the tab is the node's again");
+    assert.match(browserBroker().ownerTab(tab).page.url(), /\/accounts$/, "signed in, in the node's own browser");
+    assert.ok((await browserBroker().ownerTab(tab).context.cookies()).some((cookie) => cookie.name === "session" && cookie.expires === -1), "with the site's session cookie");
+
+    // The card: the computer told the web it is done (logins 2), or the owner's I'm done on the card finds it so.
+    let current = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${node.room.id}/messages` })).messages as Array<{ id: string; data: Record<string, any> }>).find((row) => row.id === card.id)!;
+    if (current.data.status === "pending") {
+      const done = await mira.inject({ method: "POST", url: `/api/node/logins/${card.id}`, headers: { origin: NODE_SITE }, payload: { action: "done" } });
+      await settleTurns();
+      assert.equal(done.statusCode, 200, done.body);
+      current = json(done).message;
+    }
+    await settleTurns();
+    assert.equal(current.data.status, "signed_in");
     assert.ok(transcripts.some((text) => text.includes(`Your owner signed in to ${SITE} on Mira's laptop`)));
     const reply = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${node.room.id}/messages` })).messages as Array<{ authorNodeId: string | null; kind: string; data: Record<string, any> }>).filter((row) => row.authorNodeId && row.kind !== "approval").at(-1)!;
     assert.match(reply.data.tools[0].summary, /Your accounts/);
-    const after = await owner.frame();
-    assert.deepEqual([after.state, after.reason], ["ended", "done"]);
-    assert.equal(takeoverStats(owner.takeover.id), null, "nothing left on the computer");
 
     // Inspection: no readable frame, key, keystroke or credential anywhere the relay or the model could hold it.
     const tables = await everyTable();
@@ -431,11 +469,18 @@ test("a takeover ends on expiry, on sign-out and on unpairing; a computer too ol
     assert.equal(browserBroker().ownerTab(card.data.tab).sensitive, true, "the sign-in still waits, so the tab stays paused");
     delete process.env.ENSEMBLE_TAKEOVER_SECONDS;
 
-    // Sign-out: the page that waits for frames sees it end, and so does the computer.
+    // Sign-out: the page that waits for frames sees it end, and so does the computer. Here the clean browser is off,
+    // as where it cannot start: the tab itself is shown, and its frames say so.
+    process.env.ENSEMBLE_CLEAN_SIGNIN = "off";
     const elsewhere = await anotherBrowser(mira);
     const second = await ownerBrowser(elsewhere, card.id);
     assert.equal((await second.start()).statusCode, 200);
-    await second.frame();
+    assert.equal(takeoverStats(second.takeover.id)?.mode, "tab");
+    let shownTab = await second.frame();
+    for (let tries = 0; !shownTab.frame && shownTab.state === "live" && tries < 4; tries += 1) shownTab = await second.frame();
+    assert.equal(shownTab.frame?.header.mode, "tab");
+    assert.equal(shownTab.frame?.header.site, SITE_HOST);
+    delete process.env.ENSEMBLE_CLEAN_SIGNIN;
     const waiting = second.frame();
     await new Promise((resolve) => setTimeout(resolve, 300));
     await h.prisma.session.delete({ where: { id: sha256(elsewhere.cookie.split("=")[1]!) } });
@@ -450,6 +495,7 @@ test("a takeover ends on expiry, on sign-out and on unpairing; a computer too ol
     assert.equal((await third.send([{ t: "ping" }])).response.statusCode, 410);
     assert.equal(json(await mira.inject({ method: "GET", url: `/api/node/takeovers/${third.takeover.id}/frames`, headers: third.headers })).reason, "unpaired");
   } finally {
+    delete process.env.ENSEMBLE_CLEAN_SIGNIN;
     // The unpaired computer stops its takeovers as it stops all work from the web (remote/loop.ts).
     await endAllTakeovers("stopped");
     computer.stop();

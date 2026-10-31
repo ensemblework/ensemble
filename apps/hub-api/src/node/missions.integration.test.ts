@@ -751,6 +751,36 @@ async function lastToolCalls(nodeId: string): Promise<string> {
   return JSON.stringify(reply?.toolCalls ?? []);
 }
 
+test("a node asks to join a crew its owner names, from its own chat; a crew of nodes that do not exist yet starts with node_create", async () => {
+  const kofi = await person("Kofi");
+  const { crew } = await crewOf(kofi, ["manager", "feature-engineer"]);
+  const title = (await h.prisma.nodeRoom.findUniqueOrThrow({ where: { id: crew.id } })).title;
+  const assistant = await createNode(kofi, "assistant");
+  script = (turn) => {
+    if (turn.slug !== "assistant") return { text: "(no reply)" };
+    if (turn.transcript.includes("add yourself")) return { calls: [{ name: "node_crew_add", arguments: { node: "assistant", crew: `the ${title.replace(/^Crew /, "")} crew`, reason: "Kofi asked me to join." } }], then: "(no reply)" };
+    if (turn.transcript.includes("crew of SWE-1")) return { calls: [{ name: "node_create_group", arguments: { title: "SWE", members: ["swe-1", "swe-2", "builder"] } }], then: "(no reply)" };
+    return { text: "(no reply)" };
+  };
+  const members = () => h.prisma.nodeRoomMember.findMany({ where: { roomId: crew.id, nodeId: { not: null } }, select: { handle: true } }).then((rows) => rows.map((row) => row.handle).sort());
+
+  await say(kofi, assistant.room.id, `add yourself to the ${title.replace(/^Crew /, "")} crew`);
+  const card = (await read(kofi, assistant.room.id)).find((row) => row.kind === "approval" && row.data.type === "crew_add")!;
+  assert.ok(card, "its owner's card, in the chat where they asked");
+  assert.equal(card.body, `@assistant wants to join “${title}”: Kofi asked me to join.`);
+  assert.deepEqual([card.data.nodeId, card.data.roomId], [assistant.node.id, crew.id]);
+  assert.deepEqual(await members(), ["builder", "manager"], "nothing changes before the owner answers");
+  seen.length = 0;
+  const approved = await kofi.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } });
+  assert.equal(approved.statusCode, 200, approved.body);
+  await settleTurns();
+  assert.deepEqual(await members(), ["assistant", "builder", "manager"]);
+  assert.ok(seen.some((turn) => turn.slug === "assistant" && turn.transcript.includes(`Your owner agreed: you joined “${title}” as @assistant`)));
+
+  await say(kofi, assistant.room.id, "make a crew of SWE-1, SWE-2 and the builder");
+  assert.match(await lastToolCalls(assistant.node.id), /Your owner has no node @swe-1, @swe-2 yet\. Propose each of them first with node_create \(one call per node, with a role and a charter\); once your owner has made them \(you are told\), call node_create_group again\./);
+});
+
 test("crews stay crews: work goes only to members; another node joins only on its owner's card, which wakes the lead", async () => {
   const kofi = await person("Kofi");
   const { crew } = await crewOf(kofi, ["manager", "feature-engineer"]);

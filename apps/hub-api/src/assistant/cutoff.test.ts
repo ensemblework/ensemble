@@ -13,6 +13,7 @@ import {
   historyEntries,
   replyAfterStreamFailure,
   splitCutOffReply,
+  withoutEcho,
 } from "./cutoff.js";
 import { ASSISTANT_INSTRUCTIONS, assistantInstructions } from "./state.js";
 
@@ -205,4 +206,11 @@ test("a cut-off marker is only the first line, and the reason cannot break that 
 
   const blank = cutOffReply("partial", "]\n\n");
   assert.match(blank, /Reason: none\./);
+});
+
+test("a reply that copies the history's (You did: …) note loses it", () => {
+  assert.equal(withoutEcho("(You did: Ran `htop` in the terminal and captured a screenshot.)"), "Ran `htop` in the terminal and captured a screenshot.");
+  assert.equal(withoutEcho("Here is htop.\n\n(You did: The terminal running `htop`.\nKept as your evidence.)"), "Here is htop.");
+  assert.equal(withoutEcho("Prices (in USD) are below.\n\n| Store | Price |"), "Prices (in USD) are below.\n\n| Store | Price |");
+  assert.equal(withoutEcho("Done (twice)."), "Done (twice).");
 });

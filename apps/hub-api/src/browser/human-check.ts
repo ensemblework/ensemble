@@ -9,7 +9,7 @@
  */
 
 export const HUMAN_CHECK_HINT =
-  "This page is a human check (or blocked automated browsing). Ask your owner to pass it with browser_login_needed (reason: human check), or use another source.";
+  "This page is a human check (or blocked automated browsing). Ask your owner to pass it with browser_login_needed (purpose: \"human_check\"), or use another source.";
 
 /** What a tab shows: its title, its visible text, the addresses of its visible frames, the page's HTTP status. */
 export type PageSigns = { title: string; text: string; frames: readonly string[]; status: number | null };

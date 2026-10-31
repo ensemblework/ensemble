@@ -5,7 +5,7 @@
  * this computer has no Chromium (`ensemble capture setup` installs one).
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -59,6 +59,17 @@ test.before(async () => {
   server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://x").pathname;
     seenHeaders.set(path, request.headers);
+    if (path === "/session-start") {
+      // A sign-in for the session only: no Max-Age, no Expires.
+      response.writeHead(200, { "content-type": "text/html", "set-cookie": "portal=signed-in-7; Path=/; HttpOnly" });
+      response.end("<!doctype html><title>Portal</title><p>Signed in for this session</p>");
+      return;
+    }
+    if (path === "/session-who") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<!doctype html><title>${/portal=signed-in-7/.test(String(request.headers.cookie ?? "")) ? "Still signed in" : "Signed out"}</title>`);
+      return;
+    }
     if (path === "/download") {
       response.writeHead(200, { "content-type": "text/plain", "content-disposition": 'attachment; filename="report.txt"' });
       response.end("quarterly numbers\n");
@@ -127,7 +138,7 @@ test("sites see a person's Chrome (no webdriver, no HeadlessChrome, the computer
     }
     const robot = await runBrowserTool(broker, "browser_open", { url: `${base}/robot` }, { operation: "job-look" });
     assert.ok(robot.ok);
-    assert.match(robot.summary, /human check.*browser_login_needed \(reason: human check\)/s);
+    assert.match(robot.summary, /human check.*browser_login_needed \(purpose: "human_check"\)/s);
     assert.equal((robot.result as { humanCheck?: string }).humanCheck, "\u201cRobot or human?\u201d");
     const plain = await runBrowserTool(broker, "browser_open", { url: `${base}/plain` }, { operation: "job-look" });
     assert.ok(plain.ok && !/human check/.test(plain.summary));
@@ -414,6 +425,48 @@ test("Ensemble's own sign-in code reads a sensitive tab, keeps it open, shows it
     assert.match((await op.snapshot(opened.tab)).snapshot, /Signed in/);
   } finally {
     await broker.shutdown();
+  }
+});
+
+test("session cookies survive the browser's restarts and its last tab closing: kept every 30 s and before it closes, in a 0600 file in the profile, and put back when it starts", { skip, timeout: 90_000 }, async () => {
+  const dataHome = join(root, `data-session-${Math.random().toString(36).slice(2)}`);
+  const first = newBroker({ dataHome });
+  try {
+    const op = first.operation("job-session");
+    const opened = await op.open(`${base}/session-start`);
+    const context = first.ownerTab(opened.tab).context;
+    assert.ok((await context.cookies()).some((cookie) => cookie.name === "portal" && cookie.expires === -1), "a session cookie");
+    // A restart for a window, and back: it is still signed in.
+    await first.restartProfile("default", { headless: true });
+    assert.equal((await op.tabs()).length, 1);
+    assert.ok((await first.ownerTab(opened.tab).context.cookies()).some((cookie) => cookie.name === "portal" && cookie.value === "signed-in-7" && cookie.expires === -1), "back after the restart");
+    const file = join(dataHome, "browser", "default", "ensemble-session-cookies.json");
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    // Its last tab closing ends Chromium's session (the janitor, browser_close): the next tab is still signed in.
+    await op.close(opened.tab);
+    const next = await op.open(`${base}/session-who`);
+    assert.equal((await op.tabs()).find((tab) => tab.tab === next.tab)?.title, "Still signed in");
+  } finally {
+    await first.shutdown();
+  }
+  // Ensemble restarted: a new broker on the same profile is still signed in.
+  const second = newBroker({ dataHome });
+  try {
+    const op = second.operation("job-session-2");
+    const opened = await op.open(`${base}/session-who`);
+    assert.equal((await op.tabs()).find((tab) => tab.tab === opened.tab)?.title, "Still signed in");
+    // Signed out in the meantime: it is not brought back.
+    await second.ownerTab(opened.tab).context.clearCookies();
+  } finally {
+    await second.shutdown();
+  }
+  const third = newBroker({ dataHome });
+  try {
+    const op = third.operation("job-session-3");
+    const opened = await op.open(`${base}/session-who`);
+    assert.equal((await op.tabs()).find((tab) => tab.tab === opened.tab)?.title, "Signed out");
+  } finally {
+    await third.shutdown();
   }
 });
 

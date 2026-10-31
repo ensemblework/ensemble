@@ -93,7 +93,7 @@ Ids are for tool calls, links and records; people read titles.
 
 ### Turn limits and final answer
 
-In `agent.ts`: `MAX_STEPS` 8 model requests per Hub turn and `MAX_CODE_STEPS` 16 for Ensemble Code, the last one a tools-off final answer; `MAX_TOOL_RESULT_CHARS` 6,000 per tool result; `MAX_COMPUTER_CALLS` 24 tool calls per turn on an AI subscription ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)). A held write is reported as proposed. Error turns are saved but never enter model history as answers; without a valid final answer the UI shows the failure and Retry.
+In `agent.ts`: `MAX_STEPS` 8 model requests per Hub turn and `MAX_CODE_STEPS` 16 for Ensemble Code, the last one a tools-off final answer; `MAX_TOOL_RESULT_CHARS` 6,000 per tool result; `MAX_COMPUTER_CALLS` 24 tool calls per turn on an AI subscription ([30 §8](30_ENGINES.md#8-your-ai-subscriptions-for-the-assistant)). A held write is reported as proposed. Error turns are saved but never enter model history as answers; without a valid final answer the UI shows the failure and Retry. A surface may pass a `verify` hook (Ensemble Node's answer check, [35 §6.1](35_ENSEMBLE_NODE.md#61-who-does-the-work)): on the model's final text it returns what is still missing, which goes back to the model as a user message, at most `MAX_VERIFY_ROUNDS` (2) per turn and only while a step with tools remains; if the model then fails, the answer it was sent back with stands.
 
 ## 5. Provider and credential paths
 
@@ -158,7 +158,7 @@ Besides the stale-input (§4), partial-Apply and workflow (§6) cases:
 
 ### 10.1 Adding a playbook
 
-A playbook is a Markdown file in `assistant/skills/` with `key: value` front matter: `name`, `title`, `when` (required; `name` is what `hub_how_to` takes, `when` the index line), `tools` (shown while loaded), `match` (regex of words that preload it), `paths` and `mentions` (open paths and mention kinds that preload it), `appTools: true` (show every connected-app tool), `module` (hidden without that module), `include` (appends a shared skill; only `block-diagrams`).
+A playbook is a Markdown file in `assistant/skills/` with `key: value` front matter: `name`, `title`, `when` (required; `name` is what `hub_how_to` takes, `when` the index line), `tools` (shown while loaded), `match` (regex of words that preload it), `paths` and `mentions` (open paths and mention kinds that preload it), `appTools: true` (show every connected-app tool), `module` (hidden without that module), `requires` (tools the build must have, or the playbook is not offered: `setToolCatalog` in `registry.ts`), `include` (appends a shared skill; only `block-diagrams`).
 
 Add one only for a distinct request area, keep the recipe small, and let `hub_how_to` load it. Do not put area instructions in the global prompt. Tile metadata is generated from the UI ([34 §3](34_ASSISTANT_ACTIONS.md#3-tiles-and-layouts)).
 

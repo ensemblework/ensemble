@@ -87,7 +87,7 @@ function answering(answer: "allow" | "deny", over: Omit<Partial<Ctx>, "job"> & {
   const asked: string[] = [];
   const saved: string[] = [];
   const prisma = {
-    decisionRule: { findFirst: async () => null, create: async ({ data }: { data: { pattern: string } }) => (saved.push(data.pattern), data) },
+    decisionRule: { findFirst: async () => null, findMany: async () => [], create: async ({ data }: { data: { pattern: string } }) => (saved.push(data.pattern), data) },
     agentDecision: { create: async ({ data }: { data: { title: string } }) => (asked.push(data.title), { id: `d${asked.length}` }), updateMany: async () => ({ count: 0 }) },
     notification: { create: async () => ({}) },
   };
@@ -249,9 +249,10 @@ test("Claude Code's own sandbox follows the outside-folder setting", () => {
   const read = claudeFilesystem({ ...base, access: "read" });
   assert.deepEqual(read.allowWrite, base.writable);
   assert.deepEqual(read.denyRead, base.closed);
-  const none = claudeFilesystem({ ...base, access: "none" });
+  const none = claudeFilesystem({ ...base, access: "none", skills: ["/h/.agents/skills", "/h/.claude/skills"] });
   assert.ok(none.denyRead.includes("/h") && none.denyRead.includes("/h/.ssh"));
   assert.ok(none.allowRead?.includes("/h/ensemble-workspace/runs/1") && none.allowRead.includes("/h/.nvm"));
+  assert.ok(none.allowRead?.includes("/h/.agents/skills") && !none.allowWrite.includes("/h/.agents/skills"), "skills are read, never written, with No access");
   const both = claudeFilesystem({ ...base, access: "read-write", homeEntries: ["Documents", "code", ".zshrc", ".ssh", "Library", "AppData"] });
   assert.deepEqual(both.allowWrite, [...base.writable, "/h/Documents", "/h/code"]);
   assert.deepEqual(both.denyWrite, base.closed);
@@ -338,6 +339,141 @@ test("a read the person allowed where reading asks never lets the run write ther
   assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: join(folder, "a.md") } })).decision, "allow");
   assert.equal(asked.length, 2, "changing it is a question of its own");
   assert.deepEqual(saved, [folder, folder]);
+});
+
+test("the agents' skill folders are read in every mode, and running a skill's script there does not count as changing them", async () => {
+  const base = mkdtempSync(join(tmpdir(), "ensemble-skills-"));
+  const saved = process.env.CODEX_HOME;
+  try {
+    // A skill folder of the agent (Codex's, here) inside the run's workspace, so changing it would be asked about.
+    process.env.CODEX_HOME = join(base, "codex");
+    const skill = join(base, "codex", "skills", "ui-ux-pro-max");
+    mkdirSync(join(skill, "scripts"), { recursive: true });
+    writeFileSync(join(skill, "SKILL.md"), "# skill");
+    writeFileSync(join(skill, "scripts", "search.py"), "print('ok')");
+    writeFileSync(join(skill, ".env"), "TOKEN=x");
+    const runRoot = join(base, "runs", "job-1");
+    mkdirSync(runRoot, { recursive: true });
+    const review = () => answering("allow", { root: runRoot, workspace: base, accessMode: "auto", job: { unattended: false } });
+    for (const command of [
+      `python3 ${join(skill, "scripts", "search.py")} "fintech dashboard" --domain style`,
+      `cd ${skill} && python3 scripts/search.py "landing page" --design-system`,
+      `${join(skill, "scripts", "search.py")} --stack react`,
+      `bash -c 'python3 ${join(skill, "scripts", "search.py")} "x"'`,
+    ]) {
+      const { run, asked } = review();
+      assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command } })).decision, "allow", command);
+      assert.deepEqual(asked, [], command);
+    }
+    // Writing there is still a change to that folder, asked once.
+    for (const [tool, input] of [
+      ["Bash", { command: `python3 ${join(skill, "scripts", "search.py")} "x" > ${join(skill, "out.md")}` }],
+      ["Bash", { command: `cp notes.md ${join(skill, "SKILL.md")}` }],
+      ["Bash", { command: `cd ${skill} && rm -rf scripts` }],
+      ["Bash", { command: `python3 -c "print(1)" ${join(skill, "SKILL.md")}` }],
+      ["Write", { file_path: join(skill, "SKILL.md") }],
+    ] as const) {
+      const { run, asked } = review();
+      assert.equal((await judgeEngineCall(run, { tool, input })).decision, "allow");
+      assert.equal(asked.length, 1, JSON.stringify(input));
+      assert.match(asked[0]!, /codex/, JSON.stringify(input));
+    }
+    // Where reading asks (No access), the skill folders are still read without a question; a credential file there is not.
+    process.env.CODEX_HOME = join(homedir(), "ensemble-judge-test", "codex");
+    const none = answering("allow", { accessMode: "auto", outsideAccess: "none", job: { unattended: false } });
+    assert.equal((await judgeEngineCall(none.run, { tool: "Read", input: { file_path: join(homedir(), "ensemble-judge-test", "codex", "skills", "demo", "SKILL.md") } })).decision, "allow");
+    assert.equal((await judgeEngineCall(none.run, { tool: "Bash", input: { command: `cat ${join(homedir(), "ensemble-judge-test", "codex", "skills", "demo", "references", "a.md")}` } })).decision, "allow");
+    assert.equal(none.asked.length, 0);
+    assert.equal((await judgeEngineCall(none.run, { tool: "Read", input: { file_path: join(homedir(), "ensemble-judge-test", "codex", "skills", "demo", ".env") } })).decision, "allow");
+    assert.equal(none.asked.length, 1, "a credential file in a skill folder follows the run's rules");
+  } finally {
+    if (saved === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = saved;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("“Allow for this run” covers the same command with other arguments, an edit anywhere in the run's folder and the same site; anything else asks again", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "ensemble-kinds-"));
+  try {
+    writeFileSync(join(folder, "search.py"), "print(1)");
+    writeFileSync(join(folder, "other.py"), "print(2)");
+    // The answers the person gave "for this run" (the decide route saves them as run rules), and the questions asked after.
+    const rules = [
+      { toolName: "Bash", pattern: `python3 ${join(folder, "search.py")} "fintech" --domain style`, decision: "allow" },
+      { toolName: "Bash", pattern: "npm run build", decision: "allow" },
+      { toolName: "Bash", pattern: "npm publish", decision: "deny" },
+      { toolName: "write", pattern: join(folder, "src", "a.ts"), decision: "allow" },
+      { toolName: "WebFetch", pattern: "https://docs.example.com/a", decision: "allow" },
+      { toolName: "mcp__ensemble__browser", pattern: "mcp__ensemble__browser_open", decision: "allow" },
+    ];
+    const matches = (where: { toolName: string; pattern?: { in: string[] } }) => rules.filter((rule) => rule.toolName === where.toolName && (!where.pattern || where.pattern.in.includes(rule.pattern)));
+    const asked: string[] = [];
+    const run = ctx({
+      root: folder,
+      network: true,
+      trusted: false,
+      explicitTrust: false,
+      silentWorkspace: false,
+      job: { unattended: false },
+      prisma: {
+        decisionRule: { findFirst: async ({ where }: never) => matches(where)[0] ?? null, findMany: async ({ where }: never) => matches(where) },
+        agentDecision: { create: async ({ data }: { data: { title: string } }) => (asked.push(data.title), { id: `d${asked.length}` }), updateMany: async () => ({ count: 0 }) },
+        notification: { create: async () => ({}) },
+      },
+      signal: new AbortController().signal,
+      waitForPerson: async () => ({ status: "decided", decision: "deny", reason: null }),
+    } as never);
+    const covered: Array<[string, Record<string, unknown>]> = [
+      ["Bash", { command: `python3 ${join(folder, "search.py")} "landing page" --design-system` }],
+      ["Bash", { command: `cd ${folder} && python3 search.py "x"` }],
+      ["Bash", { command: "npm run build -- --prod" }],
+      ["Write", { file_path: join(folder, "src", "b.ts") }],
+      ["WebFetch", { url: "https://docs.example.com/b?q=1" }],
+      // The run's browser tools are one group: allowed for the run once, each of them goes ahead.
+      ["mcp__ensemble__browser_click", {}],
+    ];
+    for (const [tool, input] of covered) assert.equal((await judgeEngineCall(run, { tool, input })).decision, "allow", JSON.stringify(input));
+    assert.deepEqual(asked, []);
+    const denied = await judgeEngineCall(run, { tool: "Bash", input: { command: "npm publish --tag beta" } });
+    assert.equal(denied.decision, "deny");
+    assert.equal(asked.length, 0, "a denial for this run covers its kind too");
+    for (const [tool, input] of [
+      ["Bash", { command: `python3 ${join(folder, "other.py")}` }],
+      ["Bash", { command: `python3 -c "import os" ${join(folder, "search.py")}` }],
+      ["Bash", { command: "npm run deploy" }],
+      ["Bash", { command: "FOO=1 npm run build" }],
+      ["WebFetch", { url: "https://evil.example.net/a" }],
+      ["mcp__ensemble__capture_video", {}],
+      ["mcp__github__delete_repo", {}],
+    ] as const) {
+      const before: number = asked.length;
+      await judgeEngineCall(run, { tool, input });
+      assert.equal(asked.length, before + 1, JSON.stringify(input));
+    }
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a command's kind is the program and what it does, never inline code, a variable or another computer", async () => {
+  const { commandKind } = await import("../command-kind.js");
+  assert.equal(commandKind('git commit -m "fix"', "/r"), "git commit");
+  assert.equal(commandKind("npm run -s build --prod", "/r"), "npm run build");
+  assert.equal(commandKind("npx playwright test --headed", "/r"), "npx playwright test");
+  assert.equal(commandKind("docker compose up -d", "/r"), "docker compose up");
+  assert.equal(commandKind("python3 -m pytest -x", "/r"), "python3 -m pytest");
+  assert.equal(commandKind("./scripts/deploy.sh staging", "/r"), "/r/scripts/deploy.sh staging", "a program named by its path is that file");
+  assert.equal(commandKind("uv run python -m pytest -q", "/r"), "uv run python -m pytest");
+  assert.equal(commandKind("docker build -t app .", "/r"), "docker build");
+  for (const command of [
+    "git -C /x commit", "rm -rf build", "node -e 'x()'", "ssh host uptime", "npm run $TARGET", "FOO=1 npm test", "python3 missing.py",
+    // What a wrapper, a runner's inline code or a container runs is never covered by a kind.
+    "sudo bash x.sh", "env python3 x.py", "xargs rm", "timeout 10 node x.js", "uv run python -c 'x()'", "npx cross-env A=1 node x.js",
+    "docker exec app ls", "docker compose exec web sh", "kubectl exec pod -- ls", "find . -name '*.log' -delete", "find . -exec rm {} ;",
+  ]) {
+    assert.equal(commandKind(command, "/r"), null, command);
+  }
 });
 
 const { grantFolder, granted } = await import("../tools.js");

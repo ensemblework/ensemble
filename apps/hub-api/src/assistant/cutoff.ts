@@ -71,6 +71,20 @@ export function replyAfterStreamFailure(streamed: string, error: unknown, cancel
   return { kind: "notice", text: CONNECTION_DROPPED_NOTICE };
 }
 
+const ECHO = "(You did: ";
+
+/**
+ * A reply without the "(You did: …)" note that `historyEntries` adds to earlier replies: a small model
+ * copies it, sometimes as its whole reply. The note is the history's, never the model's to write.
+ */
+export function withoutEcho(text: string): string {
+  const whole = text.trim();
+  if (whole.startsWith(ECHO) && whole.endsWith(")") && whole.indexOf(ECHO, 1) === -1) return whole.slice(ECHO.length, -1).trim();
+  const at = text.lastIndexOf(`\n${ECHO}`);
+  if (at === -1 || !text.trimEnd().endsWith(")")) return text;
+  return text.slice(0, at).trimEnd();
+}
+
 export function historyEntries(
   rows: Array<{ role: string; content: string; toolCalls?: unknown }>,
 ): Array<{ role: string; content: string }> {

@@ -15,6 +15,7 @@ import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
+import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
@@ -49,7 +50,7 @@ export function cursorCall(toolCall: ToolCall): { tool: string; input: Record<st
   if (toolCall.kind === "fetch") return { tool: "WebFetch", input: { url: typeof toolCall.rawInput?.url === "string" ? toolCall.rawInput.url : title } };
   // MCP tools are titled "<server>: <tool>".
   const mcp = /^([^:]+):\s*(.+)$/.exec(title);
-  if (mcp) return { tool: mcp[1]!.trim() === "ensemble" ? "mcp__ensemble__ask_person" : `mcp__${mcp[1]!.trim()}__${mcp[2]!.trim()}`, input: {} };
+  if (mcp) return { tool: `mcp__${mcp[1]!.trim()}__${mcp[2]!.trim()}`, input: {} };
   return { tool: title || "tool", input: {} };
 }
 
@@ -110,6 +111,8 @@ export async function answerCursor(
     }
     return { outcome: { outcome: "answered", answers } };
   }
+  // A question as a form (ACP's `elicitation/create`), asked like `ask_person`.
+  if (method === "elicitation/create") return answerElicitation(ctx, params, ask);
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
@@ -216,7 +219,7 @@ export async function runCursor(
   };
   ctx.signal.addEventListener("abort", stop, { once: true });
   try {
-    await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+    await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: ACP_CLIENT_CAPABILITIES });
     // The login the person already made with `agent login`; Ensemble never sees it.
     await rpc.request("authenticate", { methodId: "cursor_login" }).catch(() => undefined);
     const mcpServers = [

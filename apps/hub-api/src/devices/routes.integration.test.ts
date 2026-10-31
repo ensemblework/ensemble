@@ -1694,6 +1694,60 @@ test("a device answer is once and must be an offered option", async (t) => {
   }
 });
 
+test("a permission is answered for the whole run from the web when the computer keeps run rules", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({
+    data: { email: `for-run-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "For run" },
+  });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(agentRoutes);
+  await app.register(decisionRoutes);
+  const session = await sessionFor(user.id);
+  try {
+    const permission = async (capabilities: Record<string, unknown>) => {
+      const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+      const registered = await app.inject({
+        method: "POST",
+        url: "/api/devices/register",
+        payload: { code: (paired.json() as { code: string }).code, name: "Build box", platform: "linux", capabilities: { folders: ["Desk"], ...capabilities } },
+      });
+      const { token, device } = registered.json() as { token: string; device: { id: string } };
+      const task = await prisma.task.create({ data: { userId: user.id, title: "Run rules", createdBy: "me", status: "todo" } });
+      await app.inject({ method: "POST", url: "/api/agent/assign", headers: cookie(session), payload: { taskId: task.id, kind: "code", deviceId: device.id, folderLabel: "Desk", instructions: "build" } });
+      const claimed = (await app.inject({ method: "POST", url: "/api/devices/self/claim", headers: bearer(token) })).json() as { id: string; leaseToken: string };
+      const asked = await app.inject({
+        method: "POST",
+        url: `/api/devices/self/jobs/${claimed.id}/ask`,
+        headers: bearer(token),
+        payload: { leaseToken: claimed.leaseToken, title: "Run npm test", event: "permission", toolName: "Bash", command: "npm test" },
+      });
+      return (asked.json() as { decisionId: string }).decisionId;
+    };
+    const decide = (id: string, scope: "once" | "session" | "always") => app.inject({ method: "POST", url: `/api/decisions/${id}/decide`, headers: cookie(session), payload: { decision: "allow", scope } });
+
+    const older = await permission({});
+    const refused = await decide(older, "session");
+    assert.equal(refused.statusCode, 400);
+    assert.match((refused.json() as { error: string }).error, /Update Ensemble on Build box/);
+    assert.equal((await prisma.agentDecision.findUniqueOrThrow({ where: { id: older } })).status, "pending");
+
+    const newer = await permission({ runAnswers: 1 });
+    assert.equal((await decide(newer, "always")).statusCode, 400, "trust stays the computer's");
+    const forRun = await decide(newer, "session");
+    assert.equal(forRun.statusCode, 200);
+    assert.equal((forRun.json() as { decision: { scope: string } }).decision.scope, "session");
+    // The rule is kept on the computer, which reads the answer's scope; none is saved here.
+    assert.equal(await prisma.decisionRule.count({ where: { userId: user.id } }), 0);
+  } finally {
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
 test("the web cannot approve a run-branch push", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const user = await prisma.user.create({

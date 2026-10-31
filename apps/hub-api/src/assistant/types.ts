@@ -114,6 +114,8 @@ export interface AnyHubTool {
   outsideTransaction?: boolean;
   /** Waits for Apply even when the person lets the assistant write without asking (settings changes). */
   alwaysHold?: boolean;
+  /** Never waits for Apply: it only adds what its owner asked for (a node saving a file to Files). Write checks still apply. */
+  immediate?: boolean;
   /** Turns a filter into the exact records before preview, so Apply changes only what the person was shown. */
   prepare?: (ctx: ToolContext, input: unknown) => Promise<unknown>;
   preview?: (ctx: ToolContext, input: unknown) => Promise<string> | string;
@@ -136,6 +138,7 @@ export function defineTool<I extends z.ZodTypeAny>(tool: {
   app?: AppToolMeta;
   outsideTransaction?: boolean;
   alwaysHold?: boolean;
+  immediate?: boolean;
   prepare?: (ctx: ToolContext, input: z.infer<I>) => Promise<z.infer<I>>;
   preview?: (ctx: ToolContext, input: z.infer<I>) => Promise<string> | string;
   run: (ctx: ToolContext, input: z.infer<I>) => Promise<ToolResult>;

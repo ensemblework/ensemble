@@ -23,6 +23,8 @@ export interface Playbook {
   when: string;
   /** Tools the playbook's steps call. Advertised while it is in play. */
   tools: string[];
+  /** Tools this build must have for the playbook to be offered at all (`requires`): it stays out without them. */
+  requires: string[];
   /** Every connected-app tool (area "apps", including remote MCP tools) while it is in play. */
   appTools: boolean;
   /** Hidden when the person does not have this module. */
@@ -69,6 +71,7 @@ export function parsePlaybook(raw: string, file = "playbook"): Playbook {
     title: meta.title,
     when: meta.when,
     tools: list(meta.tools),
+    requires: list(meta.requires),
     appTools: meta.appTools === "true",
     ...(meta.module ? { module: meta.module as OptionalModule } : {}),
     ...(meta.match ? { match: new RegExp(meta.match, "gi") } : {}),
@@ -99,9 +102,21 @@ export function appMap(): string {
   return load().map;
 }
 
+let toolInBuild: ((name: string) => boolean) | null = null;
+
+/** The tool catalog tells which tools this build has (registry.ts), for playbooks that require one. */
+export function setToolCatalog(has: (name: string) => boolean): void {
+  toolInBuild = has;
+}
+
+/** Whether this build has the tools a playbook requires. */
+export function playbookAvailable(playbook: Pick<Playbook, "requires">): boolean {
+  return !playbook.requires.length || (toolInBuild !== null && playbook.requires.every(toolInBuild));
+}
+
 /** The playbooks this person can use: a module playbook needs its module. Undefined modules means an older caller. */
 export function playbooksFor(modules?: string | null): Playbook[] {
-  return allPlaybooks().filter((playbook) => !playbook.module || modules === undefined || hasModule(modules, playbook.module));
+  return allPlaybooks().filter((playbook) => playbookAvailable(playbook) && (!playbook.module || modules === undefined || hasModule(modules, playbook.module)));
 }
 
 export function findPlaybook(name: string, modules?: string | null): Playbook | undefined {
