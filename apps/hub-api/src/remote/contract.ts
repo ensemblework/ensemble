@@ -815,8 +815,6 @@ export const LoginRequired = z.object({
   display: z.boolean(),
   takeover: z.boolean().default(false),
   expiresAt: text(40),
-  /** Absent: a sign-in. */
-  purpose: z.enum(["sign_in", "human_check"]).optional(),
 });
 export type LoginRequired = z.infer<typeof LoginRequired>;
 

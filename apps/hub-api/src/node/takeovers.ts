@@ -273,7 +273,7 @@ export async function startTakeover(app: FastifyInstance, record: TakeoverRecord
     throw new TakeoverError(typeof body.error === "string" ? body.error : `${device.name} did not answer. Check Ensemble is running there.`, 502);
   }
   // The computer says which browser it shows (takeover 2): the clean one, or the tab when that could not start (`note` says why).
-  const shown = body.mode === "clean" || body.mode === "tab" ? { mode: body.mode } : {};
+  const shown: Pick<TakeoverRecord, "mode"> = body.mode === "clean" || body.mode === "tab" ? { mode: body.mode } : {};
   const live: TakeoverRecord = { ...current, ...shown, state: "live", endsAt: typeof body.endsAt === "string" ? body.endsAt : endsAt };
   await write(app, live);
   await appendLedger({ userId: current.accountId, actor: "me", action: "node.takeover_started", payload: { takeoverId: current.id, deviceId: device.id } });
