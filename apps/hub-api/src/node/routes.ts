@@ -65,6 +65,7 @@ import { startOnYes } from "./room-results.js";
 import { accountLimits } from "../lib/limits.js";
 import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
+import { assignable, registerTaskAssignment } from "./task-assignment.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -370,6 +371,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   await registerSudoRoutes(app, nodeAccount);
   // Taking over a tab of the owner's computer from the web, end to end (node/takeovers.ts, B21).
   await registerTakeoverRoutes(app, nodeAccount);
+  // A task given to a node or a crew from its owner field: the node, or the crew's lead, hears once (node/task-assignment.ts).
+  registerTaskAssignment(app);
 
   async function sinceJoined(room: NodeRoom, accountId: string): Promise<Prisma.NodeMessageWhereInput> {
     if (room.kind !== "room") return {};
@@ -422,6 +425,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const nodes = await prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" } });
     return { nodes: nodes.map(wireNode) };
   });
+
+  // The nodes and crews of mine a task's owner field offers (docs/35 §6.6).
+  app.get("/api/node/assignable", async (request) => assignable(prisma, nodeAccount(request)));
 
   app.post("/api/node/nodes", async (request, reply) => {
     const accountId = nodeAccount(request);
@@ -711,6 +717,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     await prisma.$transaction([
       prisma.nodeRoom.update({ where: { id: room.id }, data: { archivedAt: new Date() } }),
       prisma.nodeRoomInvite.updateMany({ where: { roomId: room.id, status: "pending" }, data: { status: "cancelled", respondedAt: new Date() } }),
+      // Tasks given to a crew that is gone are with nobody again.
+      prisma.task.updateMany({ where: { owner: "node", assigneeRoomId: room.id }, data: { owner: "unassigned", assigneeRoomId: null } }),
     ]);
     publishTo(people, "node.room", { deleted: [room.id] });
     return reply.code(204).send();

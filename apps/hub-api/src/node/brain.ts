@@ -37,6 +37,7 @@ import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
+import { taskReplyData } from "./task-assignment.js";
 
 /** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
 const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
@@ -726,8 +727,11 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     // Tool chips name the owner's workspace items: shown only where nobody else reads. `refs` are only
     // the records the reply itself names by id, so their titles show in place of the ids.
     const toolData = single || replyPrivateTo ? { tools: chips(result.toolCalls.filter((call) => call.state !== "awaiting_approval")) } : {};
-    const named = result.refs?.length ? { refs: result.refs } : {};
-    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData }, ...(bound ? { roomBound: room.id } : {}) });
+    // A reply to a task given to the node names that task (node/task-assignment.ts).
+    const given = await taskReplyData(prisma, turn);
+    const refs = [...(result.refs ?? []), ...(given && !result.refs?.some((ref) => ref.kind === "task" && ref.id === given.task.id) ? [given.ref] : [])];
+    const named = refs.length ? { refs } : {};
+    const posted = await postAsNode(scope, replyRoom, text, replyPrivateTo, { data: { ...toolData, ...named, ...(given ? { task: given.task } : {}), ...(showIds ? { showIds } : {}), ...(bound?.replyData ?? {}), ...mediaData }, ...(bound ? { roomBound: room.id } : {}) });
     await bound?.afterReply(posted);
   } else if (mediaData.media && !drafted) {
     // Files chosen with nothing to say (or a reply that opened a plan) still reach the owner, on their own.
