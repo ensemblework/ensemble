@@ -39,3 +39,25 @@ test("an ACP agent's models and thinking levels from its session options", () =>
   ]);
   assert.deepEqual(acpModels([], { availableModels: [{ modelId: "a", name: "A" }], currentModelId: "a" }), [{ id: "a", label: "A", isDefault: true }]);
 });
+
+test("an agent's form question (elicitation) reaches the person field by field; secrets and links are declined", async () => {
+  const { answerElicitation } = await import("./elicitation.js");
+  type Ask = NonNullable<Parameters<typeof answerElicitation>[2]>;
+  const asked: Array<{ title: string; options?: string[]; allowCustom?: boolean }> = [];
+  const answering = (...answers: string[]) => (async (_ctx: unknown, input: { title: string; options?: string[]; allowCustom?: boolean }) => (asked.push(input), { decision: "allow" as const, answer: answers.shift() ?? null })) as unknown as Ask;
+  const ctx = (unattended = false) => ({ job: { unattended }, decisions: [] as unknown[], event: async () => undefined, progress: async () => undefined }) as never;
+  const strategy = { type: "object", properties: { strategy: { type: "string", title: "Strategy", oneOf: [{ const: "safe", title: "Conservative" }, { const: "fast", title: "Aggressive" }] } }, required: ["strategy"] };
+  assert.deepEqual(await answerElicitation(ctx(), { mode: "form", message: "How should I refactor?", requestedSchema: strategy }, answering("Aggressive")), { action: "accept", content: { strategy: "fast" } });
+  assert.deepEqual(asked[0], { event: "question", toolName: "question", title: "How should I refactor? (Strategy)", options: ["Conservative", "Aggressive"], allowCustom: false, recommended: "Conservative" });
+  const both = { type: "object", properties: { tests: { type: "boolean", title: "Add tests" }, name: { type: "string", title: "Branch name" } }, required: ["tests"] };
+  assert.deepEqual(await answerElicitation(ctx(), { mode: "form", message: "Set up the branch", requestedSchema: both }, answering("Yes", "feature/x")), { action: "accept", content: { tests: true, name: "feature/x" } });
+  assert.deepEqual(await answerElicitation(ctx(), { mode: "form", message: "Set up the branch", requestedSchema: both }, answering()), { action: "decline" }, "a required field left unanswered declines the form");
+  const unattended = ctx(true) as { decisions: unknown[] };
+  assert.deepEqual(await answerElicitation(unattended as never, { mode: "form", message: "How should I refactor?", requestedSchema: strategy }, answering()), { action: "accept", content: { strategy: "safe" } });
+  assert.equal(unattended.decisions.length, 1, "an unattended run takes the first choice and lists it");
+  const before = asked.length;
+  const secret = { type: "object", properties: { token: { type: "string", title: "GitHub token" } } };
+  assert.deepEqual(await answerElicitation(ctx(), { mode: "form", message: "Paste it", requestedSchema: secret }, answering("x")), { action: "decline" });
+  assert.deepEqual(await answerElicitation(ctx(), { mode: "url", message: "Sign in", url: "https://example.com" }, answering("x")), { action: "decline" });
+  assert.equal(asked.length, before, "nobody is asked for a secret or to open a link");
+});

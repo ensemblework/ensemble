@@ -27,16 +27,18 @@ const ask = (method, params) => new Promise((resolve) => { const id = next++; wa
 const OPTIONS = [{ optionId: "allow_once", kind: "allow_once", name: "Allow once" }, { optionId: "allow_always", kind: "allow_always", name: "Always allow" }, { optionId: "reject_once", kind: "reject_once", name: "Deny" }];
 const seen = [];
 const flag = (name) => args.includes(name);
-seen.push("noask:" + flag("--no-ask-user"), "sandbox:" + flag("--sandbox"), "context:" + (args[args.indexOf("--context") + 1] || "none"), "allowensemble:" + (args[args.indexOf("--allow-tool") + 1] === "ensemble"));
+seen.push("noask:" + flag("--no-ask-user"), "sandbox:" + flag("--sandbox"), "context:" + (args[args.indexOf("--context") + 1] || "none"), "allowensemble:" + (args.includes("ensemble(ask_person)") && args.includes("ensemble(report_result)") && !args.includes("ensemble")));
 seen.push("allowall:" + (process.env.COPILOT_ALLOW_ALL ? "leaked" : "none"), "ghtoken:" + (process.env.GH_TOKEN || process.env.GITHUB_TOKEN ? "leaked" : "none"));
 const flagValue = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 // Like Copilot CLI: --model and --reasoning-effort pick the starting model and level; switching the
 // model over ACP afterwards puts the session back on that model's standard context window.
-const config = { model: ["auto", "claude-sonnet-5.5", "gpt-5.6-luna"].includes(flagValue("--model")) ? flagValue("--model") : "claude-sonnet-5.5", reasoning_effort: flagValue("--reasoning-effort") || "medium" };
+// The person turned on /allow-all in their own Copilot: Ensemble must turn it off for its run.
+const config = { model: ["auto", "claude-sonnet-5.5", "gpt-5.6-luna"].includes(flagValue("--model")) ? flagValue("--model") : "claude-sonnet-5.5", reasoning_effort: flagValue("--reasoning-effort") || "medium", allow_all: "on" };
 let tier = flagValue("--context") || "default";
 const options = () => [
   { id: "model", currentValue: config.model, options: [{ value: "auto" }, { value: "claude-sonnet-5.5" }, { value: "gpt-5.6-luna" }] },
   { id: "reasoning_effort", currentValue: config.reasoning_effort, options: ["none", "low", "medium", "high"].map((value) => ({ value })) },
+  { id: "allow_all", currentValue: config.allow_all, options: [{ value: "on" }, { value: "off" }] },
 ];
 let session = null;
 let prompts = 0;
@@ -70,7 +72,7 @@ async function second(promptId, text) {
     env: { ...process.env, ...server.env },
   });
   seen.push("mcp:" + reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2).result.content[0].text);
-  seen.push("model:" + config.model, "effort:" + config.reasoning_effort, "prompts:" + prompts);
+  seen.push("model:" + config.model, "effort:" + config.reasoning_effort, "prompts:" + prompts, "allowalloff:" + (config.allow_all === "off"));
   seen.push("window:" + tier);
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "usage_update", used: 1234, size: tier === "long_context" ? 922000 : 200000 } } });
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: seen.join(" ") } } } });
@@ -119,8 +121,9 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
     assert.match(summary, /noask:true/, "questions go through ask_person, not Copilot's own prompt");
     assert.match(summary, /sandbox:false/, "the sandbox was off for this run");
     assert.match(summary, /context:long_context/, "the long context window the task chose");
-    assert.match(summary, /allowensemble:true/, "Ensemble's own MCP tools do not ask");
+    assert.match(summary, /allowensemble:true/, "Ensemble's own MCP tools do not ask; its browser and capture tools are judged");
     assert.match(summary, /allowall:none/, "COPILOT_ALLOW_ALL never reaches Copilot");
+    assert.match(summary, /allowalloff:true/, "the person's own /allow-all is turned off for the run, so every call reaches the judge");
     assert.match(summary, /ghtoken:none/, "a GitHub token in Ensemble's environment never reaches Copilot");
     assert.match(summary, /mcpservers:0/, "the MCP server comes from the config file, not session/new");
     assert.match(summary, /ssh:reject_once/, "keys are never readable");

@@ -108,6 +108,9 @@ const opening = (spec: AgentTurnSpec, session: TurnSession) => (session?.resume 
 
 const chosen = (value: string | null | undefined): string | null => (value && value !== "default" ? value : null);
 
+/** How long the agent waits for one of Ensemble's tools: a browser task or a slow connected app takes minutes. */
+export const TOOL_TIMEOUT_MS = 600_000;
+
 /** Words for a failed turn: the agent's own message, read for sign-in and plan limits. */
 export function agentProblem(agent: SubscriptionProvider, detail: string): AgentTurnError {
   const label = SUBSCRIPTION_INFO[agent].label;
@@ -181,7 +184,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
-    env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: "600000", ENSEMBLE_RUN: "assistant-turn" }),
+    env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -319,7 +322,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
       ...(model ? { model } : {}),
       config: {
         projects: { [folder]: { trust_level: "untrusted" } },
-        mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: 600 } },
+        mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: TOOL_TIMEOUT_MS / 1000 } },
       },
     };
     const { serviceName: _serviceName, ephemeral: _ephemeral, ...resumeSettings } = settings;
@@ -507,7 +510,8 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
 
 const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const mcpFile = join(folder, "mcp.json");
-  await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"] } } }), "utf8");
+  // A tool call may take minutes (a browser task, a slow connected app); Copilot's own MCP timeout is shorter.
+  await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"], timeout: TOOL_TIMEOUT_MS } } }), "utf8");
   const { attachments, sections } = copilotFiles(files);
   const prompt = copilotPrompt(opening(spec, session), sections);
   const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? null }), {

@@ -20,7 +20,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ENGINE_LABELS, isCodeEngine, pickRunProfile, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
+import { CODE_ENGINES, ENGINE_LABELS, engineHasSandbox, isCodeEngine, pickRunProfile, type CodeEngine, type RunProfile, type Settings } from "@ensemble/shared-types";
 import { AssignInput, chooseComputer, chooseProfile, plan, type Plan } from "../assistant/tools/agent-assign.js";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { isPaused } from "../lib/activity.js";
@@ -249,12 +249,27 @@ export function agentDefaults(profile: RunProfile): string {
   return `${parts.join(" · ")} (the run profile “${profile.name}”)`;
 }
 
-/** A coding agent signed in on the computer, for a run whose profile names none. */
-async function agentOn(prisma: PrismaClient, deviceId: string | undefined, engines: string[]): Promise<CodeEngine> {
+/**
+ * A coding agent signed in on the computer, for a run whose profile names none. With the sandbox on,
+ * one that runs in its own OS sandbox there comes first: the others stop at once in a sandboxed run.
+ */
+export async function agentOn(prisma: Pick<PrismaClient, "device">, deviceId: string | undefined, engines: string[], sandboxed = false): Promise<CodeEngine> {
   const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId } }) : null;
   const signedIn = device ? computerAgents(device).agents.filter((agent) => agent.signedIn !== false).map((agent) => agent.id as string) : [];
   const runnable: string[] = engines.filter(isCodeEngine);
-  return (signedIn.find((id) => runnable.includes(id)) ?? runnable[0] ?? "claude-code") as CodeEngine;
+  const fits = (id: string) => !sandboxed || engineHasSandbox(id as CodeEngine, device?.platform);
+  return (signedIn.find((id) => runnable.includes(id) && fits(id)) ?? signedIn.find((id) => runnable.includes(id)) ?? runnable.find(fits) ?? runnable[0] ?? "claude-code") as CodeEngine;
+}
+
+/** An agent that has no OS sandbox on that computer cannot take a sandboxed run: said before the run is made, with what to do. */
+export async function refuseUnsandboxable(prisma: Pick<PrismaClient, "device">, deviceId: string | null | undefined, engine: string, sandboxed: boolean | undefined): Promise<void> {
+  if (sandboxed === false || !isCodeEngine(engine)) return;
+  const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId }, select: { platform: true, name: true } }) : null;
+  if (!device || engineHasSandbox(engine, device.platform)) return;
+  throw new ToolBlockedError(
+    `${ENGINE_LABELS[engine]} has no OS sandbox Ensemble can turn on on ${device.name}, and this run profile has the sandbox on, so the run would stop at once.`,
+    "Use another agent (Claude Code, Codex, Cursor or GitHub Copilot run sandboxed), or ask your owner to turn the sandbox off in the run profile: Ensemble still judges every command, edit and fetch.",
+  );
 }
 
 /** The task a run keeps its record on: the board task named, else a new internal one off the board. */
@@ -546,7 +561,7 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   const profile = input.profile ? chooseProfile(env.ctx, input.profile) : nodeRunProfile(env.ctx.settings, env.node);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
-  if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? []);
+  if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? [], profile.sandbox);
   const named = await agentModel(env.prisma, where.deviceId, agent, input.model, input.effort);
   input = { ...input, ...named };
   const task = await taskFor(env, input);
@@ -559,6 +574,7 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
     if (isCodeEngine(found.engine) && fast !== undefined) found.body.fast = fast;
     if (isCodeEngine(found.engine) && input.effort === "default") found.body.reasoningEffort = "default";
     await refuseUnhonoured(env.prisma, found.where.deviceId, found.engine, found.body);
+    await refuseUnsandboxable(env.prisma, found.where.deviceId, found.engine, found.body.sandbox);
   } catch (error) {
     await cleanup?.().catch(() => undefined);
     throw error;

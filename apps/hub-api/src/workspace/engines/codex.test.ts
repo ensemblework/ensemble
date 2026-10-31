@@ -7,7 +7,7 @@ const { RpcConnection: AppServer } = await import("./rpc.js");
 
 type Ctx = Parameters<typeof answerCodex>[0];
 const ctx = (overrides: Record<string, unknown> = {}) =>
-  ({ job: { unattended: false }, network: true, accessMode: "read-write", trusted: true, decisions: [], event: async () => undefined, ...overrides }) as unknown as Ctx;
+  ({ job: { unattended: false }, network: true, accessMode: "read-write", trusted: true, decisions: [], event: async () => undefined, progress: async () => undefined, ...overrides }) as unknown as Ctx;
 
 /** A judge that allows everything except what it is told to refuse, and records what it saw. */
 function judgeLike(refuse: (tool: string, input: Record<string, unknown>) => boolean) {
@@ -30,6 +30,19 @@ test("a command, a network host and a file change are judged as the run's own to
   assert.deepEqual(calls.slice(-2).map((call) => call.input.file_path), ["/w/a.txt", "/w/b.txt"]);
   // A change Ensemble never saw the files of is not allowed blind.
   assert.deepEqual(await answerCodex(ctx(), "item/fileChange/requestApproval", { itemId: "unknown" }, files, judge), { decision: "decline" });
+  // The folder Codex runs a command in goes to the judge, so `cd`-free relative paths are judged where they are.
+  await answerCodex(ctx(), "item/commandExecution/requestApproval", { kind: "command", command: "python3 scripts/search.py x", cwd: "/home/p/.agents/skills/ui" }, files, judge);
+  assert.deepEqual(calls.at(-1), { tool: "Bash", input: { command: "python3 scripts/search.py x", cwd: "/home/p/.agents/skills/ui" } });
+});
+
+test("an MCP server's form inside Codex is the person's question; a bare approval is judged like a tool", async () => {
+  const { judge, calls } = judgeLike(() => false);
+  const ask = (async () => ({ decision: "allow", answer: "Staging" })) as unknown as Parameters<typeof answerCodex>[5];
+  const form = { serverName: "deploy", threadId: "t", mode: "form", message: "Where to?", requestedSchema: { type: "object", properties: { target: { type: "string", enum: ["staging", "production"], enumNames: ["Staging", "Production"] } }, required: ["target"] } };
+  assert.deepEqual(await answerCodex(ctx(), "mcpServer/elicitation/request", form, new Map(), judge, ask), { action: "accept", content: { target: "staging" }, _meta: null });
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await answerCodex(ctx(), "mcpServer/elicitation/request", { serverName: "deploy", threadId: "t", mode: "form", message: "Run it?", requestedSchema: { type: "object", properties: {} } }, new Map(), judge, ask), { action: "accept", content: null, _meta: null });
+  assert.equal(calls.at(-1)!.tool, "mcp__deploy");
 });
 
 test("more access is granted only as far as the run's rules allow", async () => {

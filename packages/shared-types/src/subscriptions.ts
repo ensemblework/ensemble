@@ -103,6 +103,16 @@ export function isCodeEngine(value: string | null | undefined): value is CodeEng
   return (CODE_ENGINES as readonly string[]).includes(value ?? "");
 }
 
+/**
+ * Whether the agent runs in its own OS sandbox on that platform ("macos", "darwin", "linux"…): Grok
+ * Build, OpenCode and Antigravity have none Ensemble can turn on, and Gemini CLI has one on macOS
+ * only. A run with the sandbox on stops at once with any other (docs/30 §3.3).
+ */
+export function engineHasSandbox(engine: CodeEngine, platform: string | null | undefined): boolean {
+  if (engine === "gemini-cli") return /^(mac|darwin)/i.test(platform ?? "");
+  return !isAcpEngine(engine);
+}
+
 /** A context window a model offers: Copilot's `default` and `long_context` tiers, with their size when the agent says. */
 export const ContextTier = z.enum(["default", "long_context"]);
 export type ContextTier = z.infer<typeof ContextTier>;

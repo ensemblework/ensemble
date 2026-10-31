@@ -34,6 +34,7 @@ import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
+import { skillRootsHere } from "./skills.js";
 import { EngineTrace } from "./trace.js";
 
 export type EngineResult = {
@@ -83,11 +84,13 @@ export function claudeFilesystem(input: {
   homeEntries?: string[];
   /** Toolchains under the home folder that commands still need to read (no access only). */
   toolchain?: string[];
+  /** The agents' skill folders (`engines/skills.ts`): readable in every mode, as the agent reads them itself. */
+  skills?: string[];
 }): ClaudeFilesystem {
   const denyWrite = [...input.closed, ...(input.readOnly ?? [])];
   if (input.access === "none") {
     // Claude Code sources its shell snapshot from its own folder before each command.
-    const allowRead = [...input.writable, ...(input.readOnly ?? []), ...(input.toolchain ?? []), join(input.home, ".claude", "shell-snapshots")];
+    const allowRead = [...input.writable, ...(input.readOnly ?? []), ...(input.toolchain ?? []), ...(input.skills ?? []), join(input.home, ".claude", "shell-snapshots")];
     return { allowWrite: input.writable, denyWrite, denyRead: [input.home, ...input.closed], allowRead };
   }
   if (input.access === "read") return { allowWrite: input.writable, denyWrite, denyRead: input.closed };
@@ -214,6 +217,7 @@ export async function runClaudeCode(
     readOnly: [join(await workspaceRoot(), "files")],
     homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [],
     toolchain: (process.platform === "darwin" ? TOOLCHAIN_HOME_READS : process.platform === "linux" ? LINUX_TOOLCHAIN_HOME : []).map((name) => join(home, name)),
+    skills: skillRootsHere(home),
   });
   // The model, its context window, thinking level and fast mode as Claude Code takes them (shared-types/claude-models.ts).
   const launch = claudeLaunch({ model: options.model, effort: options.effort, context: options.context ?? null, fast: options.fast === true });

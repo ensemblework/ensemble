@@ -130,6 +130,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
+    // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
+    runAnswers: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
     nodeTools: NODE_TOOLS_API,
     // Files a run's worker attaches go to the web, unless the person turned it off here (`ensemble evidence off`).
@@ -592,7 +594,11 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
     mirror.settled = true;
     persist();
     if (verdict.kind === "apply") {
-      await applyAnswer(app, userId(), localId, { decision: verdict.decision, scope: "once", reason: verdict.reason ?? undefined }, "system").catch(() => undefined);
+      // "For this run" is saved here as a rule of the run (routes/decisions.ts); should this computer refuse that, the answer still counts once.
+      const apply = (scope: "once" | "session") => applyAnswer(app, userId(), localId, { decision: verdict.decision, scope, reason: verdict.reason ?? undefined }, "system");
+      await apply(verdict.scope ?? "once")
+        .catch((error: unknown) => (verdict.scope ? apply("once") : Promise.reject(error)))
+        .catch(() => undefined);
     } else if (verdict.kind === "refuse") {
       await appendLedger({
         userId: userId(),

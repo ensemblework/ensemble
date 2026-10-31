@@ -191,6 +191,21 @@ test("a phone answer applies only to the question the Mac asked, once", () => {
   assert.equal(judgeAnswer({ ...base, local: { ...local, status: "decided" }, answer: { id: "hosted-d", status: "answered", decision: "allow", scope: "once", reason: "world", actionHash: "abc" } }).kind, "stop");
 });
 
+test("a permission answered on the web for this run applies here as a rule of the run; a question, a push or trust never does", () => {
+  const command: LocalDecision = { id: "local-2", event: "permission", toolName: "Bash", title: "Run npm test", detail: { command: "npm test" }, status: "pending" };
+  const base = { askedId: "hosted-d", hash: "abc", risk: "ordinary" as const, local: command };
+  const answer = (scope: string, decision: "allow" | "deny" = "allow") => ({ id: "hosted-d", status: "answered" as const, decision, scope, reason: null, actionHash: "abc" });
+  assert.deepEqual(judgeAnswer({ ...base, answer: answer("session") }), { kind: "apply", decision: "allow", reason: null, scope: "session" });
+  assert.deepEqual(judgeAnswer({ ...base, answer: answer("session", "deny") }), { kind: "apply", decision: "deny", reason: null, scope: "session" });
+  assert.equal(judgeAnswer({ ...base, answer: answer("always") }).kind, "refuse");
+  assert.equal(judgeAnswer({ ...base, local: question(), answer: { ...answer("session"), reason: "world" } }).kind, "refuse");
+  assert.equal(judgeAnswer({ ...base, local: { ...command, toolName: "git push" }, risk: "high", acceptWeb: true, answer: answer("session") }).kind, "refuse");
+  // A folder outside the run's is high risk: for this run only when this computer takes web answers.
+  const outside: LocalDecision = { ...command, toolName: "outside", detail: { command: "/home/p/notes" } };
+  assert.equal(judgeAnswer({ ...base, local: outside, risk: "high", answer: answer("session") }).kind, "refuse");
+  assert.deepEqual(judgeAnswer({ ...base, local: outside, risk: "high", acceptWeb: true, answer: answer("session") }), { kind: "apply", decision: "allow", reason: null, scope: "session" });
+});
+
 test("pushes, outside paths and trust grants are high risk; an ordinary question is not, whatever it says", () => {
   assert.equal(riskOf({ toolName: "git push" }), "high");
   assert.equal(riskOf({ toolName: "outside" }), "high");
