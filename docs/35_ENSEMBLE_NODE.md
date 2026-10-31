@@ -640,7 +640,7 @@ On a paired computer a node and the coding agents it runs browse and capture thr
 | `capture_status` | What this computer can capture, and what `ensemble capture setup` would add |
 | `browser_login_needed`, `browser_login_check` | Hand a tab to the owner to sign in or to pass a human check (`purpose`); it pauses until it is done, which the computer sees by itself. The check asks now (§8.16.1) |
 | `browser_view` | "Show me this page" in one call: open, close banners, set the place, a screenshot of what `focus` names ("the stock chart"), the page's text; a site that refuses the browser is shown read-only from a clean browser |
-| `browser_shop` | Prices across stores in one call (default Amazon, Walmart, Target, Best Buy, Costco), with the delivery place set ("Wisconsin" → ZIP 53703): each store's top offers, a screenshot of its results and its status (`ok`, `human_check`, `blocked`, `no_results`, `error`) |
+| `browser_shop` | Prices across stores in one call (default Amazon, Walmart, Target, Best Buy, Costco), with the delivery place set where the store takes it ("Wisconsin" → ZIP 53703 on Amazon and Target): each store's top offers, the place its page shows, a screenshot of its results (none of a human check or an empty page) and its status (`ok`, `human_check`, `blocked`, `no_results`, `error`) |
 | `browser_fetch` | A file (a paper's PDF, an image, a CSV) downloaded with the browser's sign-ins into the node's evidence; `hub_save_file {evidence}` then puts it in Ensemble Files |
 | `browser_extract` | A page as Markdown (tables as tables) with its products and prices |
 | `browser_set_location` | Where the browser shops from: Amazon's "Deliver to" ZIP, Best Buy's US site, the browser's location |

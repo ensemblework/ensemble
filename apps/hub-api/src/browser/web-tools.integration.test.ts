@@ -423,13 +423,17 @@ test("browser_shop: Amazon's ZIP before its prices, a refusing store read cleanl
     assert.equal(generic.status, "ok");
     assert.deepEqual(generic.offers.map((offer) => [offer.title, offer.price, offer.availability]), [["PS5 Console Slim", 479, "in stock"]], "the hose is not a PS5");
 
-    assert.equal(result.files.length, 6, "one screenshot per store");
+    assert.equal(result.files.length, 5, "one screenshot per store, but none of a human check (its tab is kept for the owner's card)");
     for (const row of result.stores) {
+      if (row.status === "human_check") {
+        assert.equal(row.screenshot, undefined, row.store);
+        continue;
+      }
       assert.ok(row.screenshot, row.store);
       assert.ok(result.files.some((file) => file.path.endsWith(row.screenshot!)), row.store);
     }
     for (const file of result.files) assert.ok(existsSync(file.path));
-    assert.equal(capturedFiles(result).length, 6);
+    assert.equal(capturedFiles(result).length, 5);
     // Only tabs kept for the owner stay open.
     assert.deepEqual((await broker.list(context.operation)).map((tab) => tab.tab), [target.tab]);
   } finally {

@@ -214,7 +214,10 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
     const file = read.png ? await saveCleanShot(broker, operation, read.png, { name: `${store.recipe.id}-${query}`, url: read.url, title: read.title, text: textOf(doc).slice(0, 20_000) }).catch(() => null) : null;
     const screenshot = file ? { screenshot: basename(file.path) } : {};
     const kept = file ?? undefined;
-    if (check) return { result: { ...base, status: "human_check", note: `${why}; a clean browser got ${check}.`, ...screenshot }, file: kept };
+    if (check) {
+      await drop(kept);
+      return { result: { ...base, status: "human_check", note: `${why}; a clean browser got ${check}.` } };
+    }
     if (offers.length) return { result: { ...base, status: "ok", offers, note: `A read-only view from a clean browser: ${why}.`, ...screenshot }, file: kept };
     return { result: { ...base, status: "blocked", note: `${why}; a clean browser showed no offers either.`, ...screenshot }, file: kept };
   };
@@ -250,10 +253,10 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
       }
       await page.locator(recipe.card).first().waitFor({ state: "attached", timeout: Math.max(1_000, Math.min(10_000, left() - 12_000)) }).catch(() => undefined);
       const check = await broker.humanCheck(operation, opened.tab, { status: opened.status }).catch(() => null);
+      // A human check's picture shows the owner nothing they want: its tab is kept for them to pass it on a card instead.
       if (check) {
-        const shot = await broker.screenshot(operation, opened.tab, { name: `${recipe.id}-${query}` }).catch(() => null);
         keep = true;
-        return { result: { ...base, status: "human_check", note: `${recipe.name} showed ${check}. Tab ${opened.tab} is kept: the owner can pass it with browser_login_needed (purpose human_check) if they want this store.`, tab: opened.tab, ...(shot ? { screenshot: basename(shot.path) } : {}) }, file: shot ?? undefined };
+        return { result: { ...base, status: "human_check", note: `${recipe.name} showed ${check}. Tab ${opened.tab} is kept: the owner can pass it with browser_login_needed (purpose human_check) if they want this store.`, tab: opened.tab } };
       }
       // The store's own results (not its ads) and their prices come a moment after the first card; a lazy grid fills as it is scrolled to.
       let html = await page.content().catch(() => "");
@@ -285,9 +288,8 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
       // A check that came after the page (PerimeterX's "Press & hold" once its search is refused) is a human check, not a failed search.
       const late = offers.length ? null : await broker.humanCheck(operation, opened.tab, { status: opened.status }).catch(() => null);
       if (late) {
-        const shot = await broker.screenshot(operation, opened.tab, { name: `${recipe.id}-${query}` }).catch(() => null);
         keep = true;
-        return { result: { ...base, status: "human_check", note: `${recipe.name} showed ${late}. Tab ${opened.tab} is kept: the owner can pass it with browser_login_needed (purpose human_check) if they want this store.`, tab: opened.tab, ...(shot ? { screenshot: basename(shot.path) } : {}) }, file: shot ?? undefined };
+        return { result: { ...base, status: "human_check", note: `${recipe.name} showed ${late}. Tab ${opened.tab} is kept: the owner can pass it with browser_login_needed (purpose human_check) if they want this store.`, tab: opened.tab } };
       }
       if (!offers.length) {
         const refusal = blockedSearch(broker, operation, opened.tab, page.url());
