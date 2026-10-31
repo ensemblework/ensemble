@@ -10,7 +10,8 @@ import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
 import { CreateTask, TaskLabels } from "@ensemble/shared-types";
-import { actorFor, madeBy } from "../sharing/context.js";
+import { actorFor, madeBy, nodeActingIn } from "../sharing/context.js";
+import { actingAccount, assigneeOf, taskAssignmentChanged, type TaskAssignee } from "./task-assignee.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -62,6 +63,9 @@ export interface TaskDraft {
   boardOrder?: number;
   /** In a shared space: who a "me" task is with. */
   assignee?: string | null;
+  /** Owner "node": one of the acting person's own nodes, or one of their crews (a `crew` room). */
+  assigneeNodeId?: string | null;
+  assigneeRoomId?: string | null;
   sourceRef?: string;
   taskType?: string | null;
   measure?: number | null;
@@ -84,22 +88,45 @@ export interface TaskPatch extends Partial<TaskDraft> {
   matchTitle?: string;
 }
 
+type Who = { owner?: Task["owner"]; assigneeAccountId?: string | null; assigneeNodeId?: string | null; assigneeRoomId?: string | null };
+const NO_NODE = { assigneeNodeId: null, assigneeRoomId: null } as const;
+
 /**
  * Who a task is with. "me" is relative: the person acting (null when that is the space's owner).
- * An explicit assignee must be the space's owner or one of its members.
+ * An explicit assignee must be the space's owner or one of its members. A node or a crew must be the
+ * acting person's own, in any space they can edit: nobody gives a task to someone else's node.
  */
-async function resolveAssignee(tx: Tx, spaceId: string, owner: string | undefined, assignee: string | null | undefined): Promise<{ owner?: Task["owner"]; assigneeAccountId?: string | null }> {
+async function resolveAssignee(tx: Tx, spaceId: string, owner: string | undefined, assignee: string | null | undefined, target: { assigneeNodeId?: string | null; assigneeRoomId?: string | null } = {}): Promise<Who> {
+  const nodeId = target.assigneeNodeId ?? null;
+  const roomId = target.assigneeRoomId ?? null;
+  if (owner === "node" || nodeId || roomId) {
+    const refuse = (message: string, statusCode = 400) => Object.assign(new Error(message), { statusCode });
+    if ((owner && owner !== "node") || (assignee !== undefined && assignee !== null)) throw refuse("A task is with a person or with a node, not both.");
+    if (Boolean(nodeId) === Boolean(roomId)) throw refuse("Name one of your nodes (assigneeNodeId) or one of your crews (assigneeRoomId).");
+    const account = await actingAccount(tx, spaceId);
+    if (nodeId && !(await tx.nodeAgent.findFirst({ where: { id: nodeId, userId: account, parentNodeId: null }, select: { id: true } }))) throw refuse("That node is not one of yours.", 404);
+    if (roomId && !(await tx.nodeRoom.findFirst({ where: { id: roomId, userId: account, kind: "crew", archivedAt: null }, select: { id: true } }))) throw refuse("That crew is not one of yours.", 404);
+    return { owner: "node", assigneeAccountId: null, assigneeNodeId: nodeId, assigneeRoomId: roomId };
+  }
   if (assignee !== undefined && assignee !== null) {
     const space = await tx.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });
     const spaceOwner = space?.ownerId ?? space?.id ?? spaceId;
-    if (assignee === spaceOwner || assignee === spaceId) return { owner: "me", assigneeAccountId: null };
+    if (assignee === spaceOwner || assignee === spaceId) return { owner: "me", assigneeAccountId: null, ...NO_NODE };
     const member = await tx.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId, accountId: assignee } }, select: { id: true } });
     if (!member) throw Object.assign(new Error("Assign it to someone this space is shared with."), { statusCode: 400 });
-    return { owner: "me", assigneeAccountId: assignee };
+    return { owner: "me", assigneeAccountId: assignee, ...NO_NODE };
   }
-  if (owner === "me") return { owner: "me", assigneeAccountId: actorFor(spaceId) };
-  if (owner === "agent" || owner === "unassigned" || assignee === null) return { owner: owner as Task["owner"] | undefined, assigneeAccountId: null };
+  if (owner === "me") return { owner: "me", assigneeAccountId: actorFor(spaceId), ...NO_NODE };
+  if (owner === "agent" || owner === "unassigned") return { owner: owner as Task["owner"], assigneeAccountId: null, ...NO_NODE };
+  if (assignee === null) return { owner: undefined, assigneeAccountId: null };
   return {};
+}
+
+/** Tells Ensemble Node of a write that changed a task's node or crew (it waits for the write to commit). */
+async function noteAssignment(tx: Tx, spaceId: string, before: TaskAssignee | null, task: Task): Promise<void> {
+  const after = assigneeOf(task);
+  if (before?.owner !== "node" && after.owner !== "node") return;
+  taskAssignmentChanged({ taskId: task.id, spaceId, at: task.updatedAt, before, after, byAccountId: await actingAccount(tx, spaceId), byNodeId: nodeActingIn(spaceId) });
 }
 
 function asDate(value: string | null | undefined): Date | null {
@@ -190,8 +217,8 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       ...(actor !== "me" && draft.description?.trim() ? { page: { create: { userId, content: { type: "doc", content: markdownToNodes(draft.description) } as unknown as Prisma.InputJsonValue, notesSnapshot: draft.description, searchText: `${title}\n${draft.description}` } } } : {}),
       notes: draft.notes ?? "",
       ...(await (async () => {
-        const who = await resolveAssignee(tx, userId, draft.owner, draft.assignee);
-        return { owner: who.owner ?? draft.owner ?? "unassigned", assigneeAccountId: who.assigneeAccountId ?? null };
+        const who = await resolveAssignee(tx, userId, draft.owner, draft.assignee, draft);
+        return { owner: who.owner ?? draft.owner ?? "unassigned", assigneeAccountId: who.assigneeAccountId ?? null, assigneeNodeId: who.assigneeNodeId ?? null, assigneeRoomId: who.assigneeRoomId ?? null };
       })()),
       status,
       priority: draft.priority ?? "p1",
@@ -226,6 +253,7 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       completedAt: status === "done" || status === "dropped" ? new Date() : null,
     },
   });
+  await noteAssignment(tx, userId, null, created);
   await tx.taskTransition.create({
     data: {
       userId,
@@ -273,7 +301,7 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       : undefined;
   const enteringDone = patch.status === "done" || patch.status === "dropped";
   const leavingDone = Boolean(patch.status && patch.status !== "done" && patch.status !== "dropped" && (existing.status === "done" || existing.status === "dropped"));
-  const who = await resolveAssignee(tx, userId, patch.owner, patch.assignee);
+  const who = await resolveAssignee(tx, userId, patch.owner, patch.assignee, patch);
   const updated = await tx.task.update({
     where: { id },
     data: {
@@ -282,6 +310,8 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       notes: patch.notes,
       owner: who.owner ?? patch.owner,
       ...(who.assigneeAccountId !== undefined ? { assigneeAccountId: who.assigneeAccountId } : {}),
+      ...(who.assigneeNodeId !== undefined ? { assigneeNodeId: who.assigneeNodeId } : {}),
+      ...(who.assigneeRoomId !== undefined ? { assigneeRoomId: who.assigneeRoomId } : {}),
       status: patch.status,
       priority: patch.priority,
       complexity: patch.complexity,
@@ -303,7 +333,8 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       completedAt: enteringDone ? new Date() : leavingDone ? null : undefined,
     },
   });
-  if (patch.status || patch.owner) {
+  await noteAssignment(tx, userId, assigneeOf(existing), updated);
+  if (patch.status || patch.owner || who.owner === "node") {
     await tx.taskTransition.create({
       data: {
         userId,

@@ -1216,6 +1216,8 @@
   {"method":"GET","path":"/api/node/approvals","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/approvals","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"POST","path":"/api/node/approvals/:messageId","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
+  {"method":"GET","path":"/api/node/assignable","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
+  {"method":"HEAD","path":"/api/node/assignable","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"GET","path":"/api/node/bootstrap","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/bootstrap","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"POST","path":"/api/node/crews","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},

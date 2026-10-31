@@ -23,6 +23,7 @@ import { resolveSession } from "./sessions.js";
 import { currentDevice } from "../devices/successor.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
+import { actingAccount, assigneeOf, taskAssignmentChanged } from "../services/task-assignee.js";
 
 export const Assign = z.object({
   taskId: z.string().uuid(),
@@ -257,6 +258,23 @@ export interface CreateJobOptions {
 type AssignTask = NonNullable<Awaited<ReturnType<PrismaClient["task"]["findFirst"]>>>;
 
 /**
+ * Who has the task once a run is made for it: the agent. A node's own run on a task with a node or crew
+ * keeps it with them (docs/35 §6.6); anyone else's run takes it from them, and the node hears so.
+ */
+async function handOver(prisma: PrismaClient, userId: string, task: AssignTask, status: AssignTask["status"], options: CreateJobOptions): Promise<AssignTask["owner"]> {
+  const byNode = (options.context as { node?: { nodeId?: unknown } } | undefined)?.node?.nodeId;
+  const keep = task.owner === "node" && typeof byNode === "string";
+  const updated = await prisma.task.update({
+    where: { id: task.id },
+    data: { owner: keep ? "node" : "agent", status, completedAt: null, blockedQuestion: undefined, ...(keep ? {} : { assigneeNodeId: null, assigneeRoomId: null }) },
+  });
+  if (task.owner === "node" && !keep) {
+    taskAssignmentChanged({ taskId: task.id, spaceId: userId, at: updated.updatedAt, before: assigneeOf(task), after: assigneeOf(updated), byAccountId: await actingAccount(prisma, userId), byNodeId: null });
+  }
+  return updated.owner;
+}
+
+/**
  * A run in its own git worktree of a shared folder (an Ensemble Node build, `context.mission.worktree`)
  * waits only for runs in that worktree, not for the folder's other runs: it never changes the folder itself.
  */
@@ -333,10 +351,10 @@ async function createDeviceJob(
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
-  await prisma.task.update({ where: { id: task.id }, data: { owner: "agent", status: nextStatus, completedAt: null, blockedQuestion: undefined } });
-  if (task.owner !== "agent" || task.status !== nextStatus) {
+  const holder = await handOver(prisma, userId, task, nextStatus, options);
+  if (task.owner !== holder || task.status !== nextStatus) {
     await prisma.taskTransition.create({
-      data: { userId, taskId: task.id, fromStatus: task.status, toStatus: nextStatus, fromOwner: task.owner, toOwner: "agent", actor: options.actor ?? "me", reason: `Assigned to the agent (${body.kind})` },
+      data: { userId, taskId: task.id, fromStatus: task.status, toStatus: nextStatus, fromOwner: task.owner, toOwner: holder, actor: options.actor ?? "me", reason: `Assigned to the agent (${body.kind})` },
     });
   }
   await appendLedger({
@@ -497,10 +515,10 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
     });
   }
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
-  await prisma.task.update({ where: { id: task.id }, data: { owner: "agent", status: nextStatus, completedAt: null, blockedQuestion: undefined } });
-  if (task.owner !== "agent" || task.status !== nextStatus) {
+  const holder = await handOver(prisma, userId, task, nextStatus, options);
+  if (task.owner !== holder || task.status !== nextStatus) {
     await prisma.taskTransition.create({
-      data: { userId, taskId: task.id, fromStatus: task.status, toStatus: nextStatus, fromOwner: task.owner, toOwner: "agent", actor: options.actor ?? "me", reason: `Assigned to the agent (${body.kind})` },
+      data: { userId, taskId: task.id, fromStatus: task.status, toStatus: nextStatus, fromOwner: task.owner, toOwner: holder, actor: options.actor ?? "me", reason: `Assigned to the agent (${body.kind})` },
     });
   }
   await appendLedger({

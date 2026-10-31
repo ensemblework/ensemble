@@ -17,7 +17,8 @@ export const TaskSource = z.enum([
   "monday",
   "other",
 ]);
-export const TaskOwner = z.enum(["me", "agent", "unassigned"]);
+/** `node`: one of the person's Ensemble Nodes or crews (`assigneeNodeId` or `assigneeRoomId`). */
+export const TaskOwner = z.enum(["me", "agent", "unassigned", "node"]);
 export const TaskStatus = z.enum([
   "proposed",
   "todo",

@@ -6,6 +6,8 @@
 import type { NodeAgent, PrismaClient } from "@prisma/client";
 import { truncateText } from "../lib/text.js";
 import { sessionEventLine, sessionEvents } from "./session-queue.js";
+import { tasksWith } from "./task-assignment.js";
+import { labelStatus } from "../services/tasks.js";
 
 const LIVE_JOB = ["queued", "claimed", "running", "waiting_approval", "stopping"];
 const LIVE_MISSION = ["draft", "running", "reporting"];
@@ -62,6 +64,17 @@ export async function workBoard(prisma: PrismaClient, node: Pick<NodeAgent, "id"
     lines.push(`- Session ${run.sessionId ?? run.jobId} (${row.provider ?? "agent"} on ${row.device?.name ?? "a computer"}): ${row.status}${row.progress ? ` — ${truncateText(row.progress.replace(/\s+/g, " "), 140)}` : ""}${run.prompt ? `; asked: “${truncateText(run.prompt.replace(/\s+/g, " "), 100)}”` : ""} (${ago(run.createdAt)})`);
   }
   for (const card of cards) lines.push(`- Waiting for your owner since ${ago(card.createdAt)}: ${truncateText(card.body.replace(/\s+/g, " "), 140)}`);
+  // Ensemble tasks your owner gave you, or a crew you lead (docs/35 §6.6).
+  const tasks = await tasksWith(prisma, node);
+  if (tasks.length) {
+    const spaces = await prisma.user.findMany({ where: { id: { in: [...new Set(tasks.map((task) => task.userId))].filter((id) => id !== node.userId) } }, select: { id: true, spaceName: true } });
+    const spaceOf = new Map(spaces.map((row) => [row.id, row.spaceName?.trim() || "a shared space"]));
+    lines.push("- Tasks your owner gave you (move them with hub_update_task as work goes):");
+    for (const task of tasks) {
+      const where = [task.assigneeRoomId ? "for your crew" : "", spaceOf.has(task.userId) ? `in “${spaceOf.get(task.userId)}”` : ""].filter(Boolean).join(", ");
+      lines.push(`  - [${truncateText(task.title.replace(/[[\]]/g, ""), 100)}](ensemble://task/${task.id}) ${labelStatus(task.status)}${task.due ? `, due ${task.due.toISOString().slice(0, 10)}` : ""}${where ? ` (${where})` : ""}`);
+    }
+  }
   // What your owner (from a session card) or the watchdog did to your sessions lately: never undo it unasked.
   const events = (await sessionEvents(prisma, node.id, { since: new Date(Date.now() - 2 * 3_600_000), limit: 6 })).filter((row) => row.actor !== "node");
   for (const event of events) lines.push(`- ${sessionEventLine(event)}`);
