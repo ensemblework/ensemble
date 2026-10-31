@@ -119,12 +119,12 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /Facts, news, “look up”: hub_web_search first/,
     /Prices, “compare” stores, “where to buy”: browser_shop \(product, stores, location\) in one call; reply with a Markdown table/,
     /“Screenshot of” or “show me” a page: browser_view \(url; focus: what was asked[^\n]*\), one call per screenshot/,
-    /Several steps on a site \(a dashboard, a console, a form\): web_task with the goal/,
-    /A sign-in or a human check[^\n]*: browser_login_needed \(your owner does it on a card, from their phone too; never ask for passwords or codes\)\. They say they did it: browser_login_check/,
+    /Steps on a site \(a dashboard, “log in to my Azure portal and check …”\): web_task with the goal; sign-ins go to your owner's card, not Connections\./,
+    /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even from their phone; never ask for passwords or codes\)\. They say done: browser_login_check/,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
-    /terminal, htop or a command's output: computer_terminal_screenshot/,
+    /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
     /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
-    /administrator rights: computer_sudo \(your owner types their password on a card in this chat; you never see it\)/,
+    /administrator rights: computer_sudo \(your owner types their password on a card here; you never see it\)/,
     /Writing or changing code in a repository[^\n]*whenever your owner names an agent[^\n]*: an agent session/,
     /What you capture shows with your reply by itself: never say something is attached unless a tool said it will appear/,
     /When a tool says it is waiting for your owner \(a card in this chat\), stop and say nothing about it/,
@@ -140,7 +140,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
 
   assert.match(lead.persona, /node_plan, with this crew's members only/);
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
-  assert.ok(lead.persona.length < 8_000 && persona.length < 6_800, "as short as before (6,479 and 7,892 characters before the web routing rows)");
+  assert.ok(lead.persona.length < 8_000 && persona.length < 6_800, `as short as before (6,479 and 7,892 characters before the web routing rows; now ${persona.length} and ${lead.persona.length})`);
 });
 
 test("a node's own run profile is what its sessions use and what it says they use; the run card names the agent, model, thinking and context", async () => {
