@@ -506,6 +506,31 @@ async function findByText(page: Page, focus: string): Promise<FocusFound | null>
 
 export type FocusShot = { clip: { x: number; y: number; width: number; height: number }; fullPage: boolean };
 
+/**
+ * In the page: whether a chart has drawn (a long SVG path, or a canvas that is not blank). A chart drawn
+ * after it scrolled into view would otherwise be pictured as an empty frame. A tainted canvas counts as
+ * drawn; an element with no graphic has nothing to wait for.
+ */
+export function chartDrawn(el: unknown): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const target = el as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const paths: any[] = [...target.querySelectorAll("svg path, svg polyline")];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (paths.some((path: any) => (path.getAttribute("d") ?? path.getAttribute("points") ?? "").length > 200)) return true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const canvases: any[] = target.tagName === "CANVAS" ? [target] : [...target.querySelectorAll("canvas")];
+  for (const canvas of canvases) {
+    if (canvas.width < 50 || canvas.height < 30) continue;
+    try {
+      if (canvas.toDataURL("image/png").length > 6_000) return true;
+    } catch {
+      return true;
+    }
+  }
+  return paths.length === 0 && !canvases.some((canvas) => canvas.width >= 50 && canvas.height >= 30);
+}
+
 const MARGIN = 16;
 
 /**

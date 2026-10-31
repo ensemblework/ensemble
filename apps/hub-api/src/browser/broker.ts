@@ -19,7 +19,7 @@ import { RealtimeRecording } from "../capture/frames.js";
 import { CaptureError, DEFAULT_MAX_DURATION_MS, reserveFile, slugName, stillFile, VideoEncoder, type MediaFile } from "../capture/media.js";
 import { findChromium, type ChromiumChoice } from "./chromium.js";
 import { CleanReader } from "./clean-view.js";
-import { findFocus, placeForShot, type FocusShot } from "./focus.js";
+import { chartDrawn, findFocus, placeForShot, type FocusShot } from "./focus.js";
 import { humanCheck } from "./human-check.js";
 import { cleanPage } from "./hygiene.js";
 import { interactiveSnapshot } from "./interactive.js";
@@ -823,7 +823,7 @@ export class BrowserBroker {
       if (input.viewport) await page.setViewportSize(input.viewport);
       let shot: FocusShot | null = null;
       if ((input.focus || input.focusSelector) && !input.element) {
-        let found: { element: ElementHandle; description: string } | null = null;
+        let found: { element: ElementHandle; description: string; kind?: string | null } | null = null;
         // A selector list is tried in its own order (the first that is shown wins), then the words.
         for (const selector of input.focusSelector ? input.focusSelector.split(/,(?![^[]*\])/).map((part) => part.trim()).filter(Boolean) : []) {
           const locator = page.locator(selector).filter({ visible: true }).first();
@@ -837,6 +837,8 @@ export class BrowserBroker {
         if (found) {
           // The runtime's own results areas are shown at least 480 pixels tall.
           shot = await placeForShot(page, found.element, 700, input.focusSelector ? 480 : 0).catch(() => null);
+          // A chart on screen draws a moment later: pictured once it has.
+          if (shot && found.kind === "chart") await page.waitForFunction(chartDrawn, found.element, { timeout: 4_000 }).catch(() => undefined);
           await found.element.dispose().catch(() => undefined);
         }
         focus = { found: Boolean(shot), ...(shot && found ? { on: found.description } : {}) };
