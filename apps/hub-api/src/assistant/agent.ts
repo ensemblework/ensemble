@@ -819,7 +819,7 @@ async function runOne(
   }
 
   // The stricter policy holds: this turn's, and the person's own in the space the call acts in.
-  const holds = (settings: Settings) => holdsAssistantWrite(settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
+  const holds = (settings: Settings) => !tool.immediate && holdsAssistantWrite(settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
   const held = tool.isWrite && (holds(ctx.settings) || Boolean(space?.settings && holds(space.settings)));
   if (held) {
     let preview: string;

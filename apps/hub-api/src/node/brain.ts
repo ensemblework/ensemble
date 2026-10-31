@@ -495,6 +495,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   );
   // A conversation turn offers the advanced browser and capture tools only for that work (node/skills.ts).
   const extraTools = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
@@ -532,8 +533,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       agentPersona: nodePersona.text,
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
-      spaces: nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" }),
-      extraTools,
+      spaces: gateway,
+      // The node's own versions of Hub tools (hub_save_file with a path) take a space like the rest.
+      extraTools: extraTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       signal: deps.signal,

@@ -251,7 +251,8 @@ export function problemsWith(checks: readonly Check[], evidence: Evidence): stri
     if (check.kind === "file_in_chat" && media.length === 0 && !explained) problems.push("a file was to be sent into this chat and none will show with your reply (node_share_file, or node_show with its evidence id)");
     if (check.kind === "links" && !/https?:\/\/\S+|ensemble:\/\/\S+|\]\((?:https?:|ensemble:|\/)/i.test(text) && !explained) problems.push("links were asked for: give the links your tools returned");
   }
-  for (const link of evidence.brokenLinks) problems.push(`the link ${link.href} leads nowhere (${link.problem}): link only what a tool returned`);
+  // Each problem says what to do instead (node/refs-check.ts).
+  for (const link of evidence.brokenLinks) problems.push(`the link ${link.href} leads nowhere: ${link.problem.replace(/\.$/, "")}`);
   if (MEDIA_CLAIM.test(text) && media.length + held === 0) problems.push("your reply says something is attached or shown, but nothing will show with it: never say so unless a tool said it will appear");
   if (FILES_CLAIM.test(text) && evidence.savedFiles === 0) problems.push("your reply says a file is in your owner's Files, but no hub_save_file call saved it");
   return problems;

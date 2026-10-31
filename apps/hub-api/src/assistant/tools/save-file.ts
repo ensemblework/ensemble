@@ -374,8 +374,10 @@ export const saveFileTools: AnyHubTool[] = [
 ];
 
 /**
- * The same tool for a node's own turn with its owner: saved at once (it only adds a file), and it also
- * takes a `path` on the owner's computer, which `share` brings in as evidence first.
+ * The same tool for a node's own turn with its owner: saved at once (it only adds a file, so it never
+ * waits for Apply, though the owner's write settings and access to the space still decide), and it also
+ * takes a `path` on the owner's computer, which `share` brings in as evidence first. node/brain.ts gives
+ * it a `space` like every Hub tool.
  */
 export function nodeSaveFileTool(options: {
   computerFields: { computer: z.ZodTypeAny; folder: z.ZodTypeAny };
@@ -402,8 +404,10 @@ export function nodeSaveFileTool(options: {
     area: "context",
     description: `${DESCRIPTION} Or path: a file on your owner's computer (after computer_run downloaded it, say); it is brought in and saved.`,
     input: NodeInput,
-    isWrite: false,
+    isWrite: true,
+    immediate: true,
     risk: "low",
+    outsideTransaction: true,
     async run(ctx, input) {
       const values = input as z.infer<typeof NodeInput>;
       if (values.path === undefined) return runSave(ctx, values);

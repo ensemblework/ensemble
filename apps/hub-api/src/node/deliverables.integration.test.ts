@@ -220,7 +220,7 @@ test("a link the model made up is sent back; a link to the owner's own file stan
   script = (turn) => (turn.last.startsWith("Not done yet") ? { text: "It is not in your Ensemble Files yet; I can add it if you want." } : { text: `Here it is: [BMD-45.pdf](ensemble://file/${invented})` });
   await say(mira, room.id, "where is the BMD-45 paper?");
   assert.equal(feedbacks().length, 1);
-  assert.equal(feedbacks()[0]!.last, `Not done yet: the link ensemble://file/${invented} leads nowhere (no such file in your owner's Ensemble): link only what a tool returned. ${FEEDBACK_END}`);
+  assert.equal(feedbacks()[0]!.last, `Not done yet: the link ensemble://file/${invented} leads nowhere: There is no file in Ensemble Files with this id that your owner can open (it may be in Trash, or never existed). Link only what a tool returned. ${FEEDBACK_END}`);
   assert.equal((await replies(mira, room.id, node.id)).at(-1)!.body, "It is not in your Ensemble Files yet; I can add it if you want.");
 
   const notes = await uploaded(mira.id, node.id, laptop.id, "report", "notes.md", "text/markdown", new TextEncoder().encode("# Notes\n"));
