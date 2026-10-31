@@ -68,11 +68,16 @@ export type TerminalSession = {
   events: EventEmitter;
   startedAt: number;
   lastUsed: number;
-  /** Where typing starts after the latest prompt; null while a command runs. */
+  /** Where typing starts after the latest prompt. */
   prompt: { marker: IMarker; x: number } | null;
   prompts: number;
   /** What the node typed on the current line since its last Enter (null: it recalled a line, so only the screen knows it). */
   typed: string | null;
+  /** Lines the node submitted since the prompt that the shell has not run yet (a line ending in `\`, an open quote). */
+  typedLines: string[];
+  /** bash: a prompt showed and no command started since (its PS0 mark): what is typed is shell input. */
+  awaiting: boolean;
+  bash: boolean;
   /** The takeover controlling it from the web: the node's typing waits meanwhile. */
   controlledBy: string | null;
   viewers: number;
@@ -122,8 +127,16 @@ export function promptEnv(slug: string, bash: boolean): Record<string, string> {
     PS0: "\\e]133;C\\a",
     HISTFILE: "",
     HISTCONTROL: "ignoreboth",
+    PROMPT_COMMAND: BASH_SETUP,
   };
 }
+
+/**
+ * Run once by bash before its first prompt (it reads no rc file): no history expansion (`!!`,
+ * `^old^new` would run an earlier line unjudged), no editor for `fc` or edit-and-execute (it would
+ * run what was edited unjudged), and the prompt and its marks fixed for this shell.
+ */
+export const BASH_SETUP = "set +H; EDITOR=false; VISUAL=false; FCEDIT=false; PROMPT_COMMAND=; readonly PS0 PS1 PS2 PROMPT_COMMAND EDITOR VISUAL FCEDIT";
 
 /** The prompt as the environment carries it to the shell: a shell started by `script -c` drops PS1, so it is set again just before the shell starts. */
 function promptCarried(prompt: Record<string, string>): { env: Record<string, string>; line: string } {
@@ -149,21 +162,37 @@ export function atPrompt(session: Pick<TerminalSession, "prompt" | "term">): boo
   const prompt = session.prompt;
   if (!prompt || prompt.marker.isDisposed || prompt.marker.line < 0) return false;
   const buffer = session.term.buffer.active;
+  // A full-screen program draws on the other screen: the prompt is not there.
+  if (buffer.type !== "normal") return false;
   const cursor = buffer.baseY + buffer.cursorY;
   if (cursor < prompt.marker.line) return false;
   for (let y = prompt.marker.line + 1; y <= cursor; y += 1) if (!buffer.getLine(y)?.isWrapped) return false;
   return true;
 }
 
-/** The command typed after the prompt, as the screen shows it (wrapped lines joined). */
-export function promptLine(session: Pick<TerminalSession, "prompt" | "term">): string | null {
-  if (!atPrompt(session)) return null;
-  const { marker, x } = session.prompt!;
+/**
+ * What was typed since the prompt, as the screen shows it: wrapped rows joined, and with `all` the
+ * continuation rows too (after a line ending in `\` or an open quote, bash's `> ` taken off).
+ */
+export function promptLine(session: Pick<TerminalSession, "prompt" | "term">, all = false): string | null {
+  const prompt = session.prompt;
+  if (!prompt || prompt.marker.isDisposed || prompt.marker.line < 0) return null;
+  if (!all && !atPrompt(session)) return null;
   const buffer = session.term.buffer.active;
-  let text = buffer.getLine(marker.line)?.translateToString(false, x) ?? "";
-  for (let y = marker.line + 1; buffer.getLine(y)?.isWrapped; y += 1) text += buffer.getLine(y)!.translateToString(false);
+  if (buffer.type !== "normal") return null;
+  const cursor = buffer.baseY + buffer.cursorY;
+  if (cursor < prompt.marker.line || cursor - prompt.marker.line > 200) return null;
+  let text = buffer.getLine(prompt.marker.line)?.translateToString(false, prompt.x) ?? "";
+  for (let y = prompt.marker.line + 1; y <= cursor; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) break;
+    text = line.isWrapped ? text + line.translateToString(false) : `${text.trimEnd()}\n${line.translateToString(false).replace(/^> /, "")}`;
+  }
   return text.trim();
 }
+
+/** A line continued with a backslash is one command to the shell. */
+const joined = (text: string) => text.replace(/\\\r?\n/g, "");
 
 /**
  * Judges a line the node submits: the hard floor's dangerous commands always; at the shell's prompt
@@ -171,15 +200,19 @@ export function promptLine(session: Pick<TerminalSession, "prompt" | "term">): s
  * scripts by path included). Null when it may run.
  */
 export function judgeLine(line: string, input: { shell: boolean; network: boolean; cwd: string }): string | null {
-  const text = line.trim();
+  const text = joined(line).trim();
   if (!text) return null;
   const hit = dangerousCommand(text);
   if (hit) return dangerousMessage(hit);
   if (!input.shell) return null;
+  // History expansion runs an earlier line again, changed, where it is not judged (a shell started inside this one has it on).
+  if (/(?:^|[\s;&|(`])!(?=[!\-0-9A-Za-z?#$^*])|^\s*\^[^^\s]*\^/.test(text)) return "History expansion (!!, !-1, ^old^new) runs earlier commands again without them being checked: type the command itself.";
   try {
     for (const segment of parseShell(text, input.cwd)) {
       if (!segment.argv.length) continue;
       const [program, ...rest] = segment.argv;
+      // `fc` runs earlier lines again (edited or substituted) where they are not judged.
+      if (basename(program!) === "fc") return "fc runs earlier commands again without them being checked: type the command itself.";
       checkProgram([basename(program!), ...rest], { who: "agent", sandboxed: true, network: input.network });
     }
   } catch (error) {
@@ -300,6 +333,9 @@ async function openSession(app: App, client: HostedClient, request: LiveRequest,
     prompt: null,
     prompts: 0,
     typed: "",
+    typedLines: [],
+    awaiting: false,
+    bash,
     controlledBy: null,
     viewers: 0,
     ended: null,
@@ -315,13 +351,16 @@ async function openSession(app: App, client: HostedClient, request: LiveRequest,
   term.parser.registerOscHandler(133, (data) => {
     const mark = data.split(";")[0];
     if (mark === "B") {
+      session.awaiting = true;
+      session.typedLines = [];
       session.prompt?.marker.dispose();
       const marker = term.registerMarker(0);
       session.prompt = marker ? { marker, x: term.buffer.active.cursorX } : null;
       session.prompts += 1;
     } else if (mark === "C") {
-      session.prompt?.marker.dispose();
-      session.prompt = null;
+      // The prompt's place is kept: whether the cursor is still on it is told by the screen, not by a mark a program could print.
+      session.awaiting = false;
+      session.typedLines = [];
     }
     return true;
   });
@@ -394,10 +433,18 @@ function ownSession(request: LiveRequest): TerminalSession | CodeAnswer {
 /** A token the node sends: text as typed, or a named key. */
 type Token = { text: string } | { key: string; bytes: string; app?: string };
 
+/** Keys the node does not send: they run or insert a line where it is not judged (operate-and-get-next, edit-and-execute, quoted insert, Alt bindings). */
+const UNSENT_KEYS = /^(?:(?:alt|meta|option)[+-].+|ctrl[+-][oxv])$/i;
+
+/** Whether bytes typed submit the line (Enter, Ctrl+M, Ctrl+J). */
+const submits = (bytes: string) => bytes === "\r" || bytes === "\n";
+
 function tokensOf(request: LiveRequest): Token[] | string {
   const tokens: Token[] = [];
-  // A new line in the text is Enter, as a terminal sends it.
   const text = request.text ?? "";
+  // Control characters go as named keys, where they are judged; in text only tabs and new lines.
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) return "Send control keys in keys (Escape, Ctrl+C, Backspace…), not inside text.";
+  // A new line in the text is Enter, as a terminal sends it.
   for (const [index, part] of text.split(/\r\n|\r|\n/).entries()) {
     if (index > 0) tokens.push({ key: "enter", bytes: "\r" });
     if (part) tokens.push({ text: part });
@@ -405,6 +452,7 @@ function tokensOf(request: LiveRequest): Token[] | string {
   for (const name of request.keys) {
     const key = namedKey(name);
     if (!key) return `${name} is not a key this terminal knows. Use Enter, Tab, Escape, Backspace, Up, Down, Left, Right, Home, End, PageUp, PageDown, Delete, F1–F12 or Ctrl+A…Ctrl+Z.`;
+    if (UNSENT_KEYS.test(name.trim().replace(/\s+/g, ""))) return `${name} is not sent from here: it would run or insert a line without it being checked. Type the line and press Enter.`;
     tokens.push({ key: name.trim().toLowerCase(), bytes: key.normal, ...(key.app ? { app: key.app } : {}) });
   }
   return tokens;
@@ -421,6 +469,8 @@ function track(session: TerminalSession, token: Token): void {
     }
     return;
   }
+  // Ctrl+C drops what waits to be run too.
+  if (token.bytes === "\u0003") session.typedLines = [];
   if (token.bytes === "\u0003" || token.bytes === "\u0015") session.typed = "";
   else if (token.bytes === "\u007f") session.typed = session.typed?.slice(0, -1) ?? null;
   else if (["up", "down", "pageup", "pagedown", "tab", "ctrl+r", "ctrl+p", "ctrl+n"].includes(token.key)) session.typed = null;
@@ -438,23 +488,26 @@ async function sendTo(app: App, request: LiveRequest, session: TerminalSession):
   let submitted = false;
   for (const token of tokens) {
     if (session.ended) break;
-    const enter = "key" in token && token.bytes === "\r";
+    const enter = "key" in token && submits(token.bytes);
     if (enter) {
-      // What the shell would run: the node's own record of the line and, at the prompt, the line as the screen shows it.
+      // What the shell would run: the node's own record of what it typed since the prompt and, at the prompt, the input as the screen shows it.
       await settle(session, 40, 400);
-      const shell = atPrompt(session);
-      const lines = [session.typed ?? "", shell ? (promptLine(session) ?? "") : ""];
+      const shell = atPrompt(session) || (session.bash && session.awaiting);
+      const lines = [[...session.typedLines, session.typed ?? ""].join("\n"), shell ? (promptLine(session, session.bash && session.awaiting) ?? "") : ""];
       const why = lines.map((line) => judgeLine(line, { shell, network: session.network, cwd: session.folder.path })).find(Boolean);
       if (why) {
-        // The line is cleared, not run: to its end, then all of it (readline and a plain terminal alike).
-        write(session, "\u0005\u0015");
+        // Not run: at the shell its whole input is dropped (Ctrl+C, a continued line too); in a program the line is cleared (to its end, then all of it).
+        write(session, shell ? "\u0003" : "\u0005\u0015");
         session.typed = "";
+        session.typedLines = [];
         await settle(session, 60, 400);
         await ledger("node.tool.refused", { nodeId: request.nodeId, tool: "terminal_send", session: session.id });
         return answer(403, { error: why, ...(await sessionView(session)) });
       }
       const program = (lines[1] || lines[0] || "").trim().split(/\s+/)[0]?.slice(0, 60) ?? "";
       if (program) await ledger("node.tool.terminal_line", { nodeId: request.nodeId, session: session.id, program, prompt: shell });
+      // Until the shell runs it (a line ending in `\`, an open quote), the next line is judged with this one.
+      if (shell) session.typedLines.push(session.typed ?? "");
       session.typed = "";
       submitted = true;
     }

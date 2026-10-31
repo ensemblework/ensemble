@@ -77,6 +77,9 @@ test("lines are judged as the shell runs them: the hard floor always, at the pro
   assert.equal(judgeLine("", { shell: true, network: true, cwd }), null);
   assert.match(promptEnv("my-node", true).PS1!, /133;A.*my-node.*133;B/);
   assert.match(promptEnv("my-node", true).PS0!, /133;C/);
+  assert.match(judgeLine("kill -9 \\\n1", { shell: false, network: true, cwd }) ?? "", /.+/, "a continued line is one command");
+  assert.equal(judgeLine("echo 'Hello!' && test ! -f x", { shell: true, network: true, cwd }), null, "an exclamation mark that expands nothing");
+  assert.match(judgeLine("sudo !!", { shell: true, network: true, cwd }) ?? "", /sudo|History/);
 });
 
 const caps = await prepareSandbox();
@@ -185,6 +188,19 @@ test("a dangerous line is refused and cleared, typed by the node, recalled from 
   assert.equal(recalled.status, 403, JSON.stringify(recalled.raw));
 
   assert.equal((await live(fake.client, { action: "terminal_send", session, text: "sudo true\n" })).status, 403, "sudo is computer_sudo's");
+  // A line continued with a backslash is judged as the one command the shell runs.
+  const continued = await live(fake.client, { action: "terminal_send", session, text: "rm -rf \\\n~\n" });
+  assert.equal(continued.status, 403, JSON.stringify(continued.raw));
+  assert.match(String(continued.raw.error), /home folder|Recursive/i);
+  assert.equal(continued.body.atPrompt, true, "the whole command was dropped");
+  // Ctrl+J submits as Enter does, and is judged as Enter is; keys that run or insert a line unjudged are not sent.
+  assert.equal((await live(fake.client, { action: "terminal_send", session, text: "crontab -r", keys: ["Ctrl+J"] })).status, 403);
+  for (const keys of [["Ctrl+O"], ["ctrl-x"], ["Alt+x"], ["Ctrl+V"]]) assert.equal((await live(fake.client, { action: "terminal_send", session, text: "true", keys })).status, 400, keys[0]);
+  assert.equal((await live(fake.client, { action: "terminal_send", session, text: "crontab -r\u000f" })).status, 400, "no control characters inside text");
+  // Earlier lines run again unjudged: history expansion and fc.
+  await live(fake.client, { action: "terminal_send", session, text: "echo crontab -r\n" });
+  assert.equal((await live(fake.client, { action: "terminal_send", session, text: "!!:s/echo //\n" })).status, 403);
+  assert.equal((await live(fake.client, { action: "terminal_send", session, text: "fc -s echo=\n" })).status, 403);
   const fine = await live(fake.client, { action: "terminal_send", session, text: "echo still here\n" });
   assert.equal(fine.status, 200);
   assert.match(fine.body.screen!, /^still here$/m);
