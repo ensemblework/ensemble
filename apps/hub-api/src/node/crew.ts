@@ -1,8 +1,8 @@
 /**
  * Crews stay crews (docs/35 §6): a plan or a delegation in a crew reaches only that crew's members (and
- * the lead's own temporary helpers, in their rooms). Another of the owner's nodes joins a crew only when
- * the owner agrees, on a card the crew's lead asks for with `node_crew_add`; approving it adds the node
- * (node/approvals.ts) and wakes the lead to go on.
+ * the lead's own temporary helpers, in their rooms). A node joins a crew only when the owner agrees, on
+ * a card a node asks for with `node_crew_add` (for another node, or to join itself); approving it adds
+ * the node (node/approvals.ts) and wakes the asking node to go on.
  */
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
@@ -66,11 +66,27 @@ export async function joinCrew(app: FastifyInstance, input: { ownerId: string; c
 }
 
 const Handle = z.string().min(1).max(60).transform((value) => value.trim().replace(/^@/, "").toLowerCase());
+const SELF = new Set(["me", "myself", "yourself", "self", "you"]);
+const bare = (title: string) => title.trim().toLowerCase().replace(/\s+(?:crew|team|group)$/, "");
+
+/** The owner's crew a request names: by id or title ("the SWE crew" finds “SWE”), else why not. */
+export async function namedCrew(prisma: Db, ownerId: string, name: string): Promise<NodeRoom> {
+  const crews = await prisma.nodeRoom.findMany({ where: { userId: ownerId, kind: "crew", archivedAt: null }, orderBy: { createdAt: "asc" } });
+  const wanted = name.trim().replace(/^(?:the|my|our)\s+/i, "");
+  const exact = crews.filter((row) => row.id === wanted || row.title.trim().toLowerCase() === wanted.toLowerCase());
+  const close = exact.length ? exact : crews.filter((row) => bare(row.title) === bare(wanted));
+  const found = close.length ? close : crews.filter((row) => bare(row.title).includes(bare(wanted)) || bare(wanted).includes(bare(row.title)));
+  if (found.length === 1) return found[0]!;
+  const list = crews.map((row) => `“${row.title}”`).join(", ");
+  if (found.length > 1) throw new ToolBlockedError(`More than one crew matches “${name}”: ${found.map((row) => `“${row.title}”`).join(", ")}.`, "Name the crew exactly.");
+  throw new ToolBlockedError(`Your owner has no crew called “${name}”.`, list ? `Their crews: ${list}.` : "They have no crews yet (node_create_group proposes one).");
+}
 
 /**
- * `node_crew_add`: the crew's lead asks its owner, on a card in this conversation, to add another of
- * their nodes to the crew. Nothing changes until the owner agrees (node/approvals.ts settles the card).
- * `crewRoom` is where the lead's plans run outside a crew (`crewRoomFor` in node/tools.ts, made on first use).
+ * `node_crew_add`: a node asks its owner, on a card in this conversation, to add a node to one of their
+ * crews: another of their nodes, or itself, to the crew it is in or one the owner names. Nothing changes
+ * until the owner agrees (node/approvals.ts settles the card). `crewRoom` is where the node's plans run
+ * outside a crew (`crewRoomFor` in node/tools.ts, made on first use).
  */
 export function crewAddTool(scope: NodeScope, crewRoom: () => Promise<NodeRoom>): AnyHubTool {
   const { prisma, node } = scope;
@@ -78,29 +94,31 @@ export function crewAddTool(scope: NodeScope, crewRoom: () => Promise<NodeRoom>)
     name: "node_crew_add",
     area: "tasks",
     description:
-      "Ask your owner to add another of their nodes to the crew you lead, when a piece of work needs that node and no member fits. " +
+      "Ask your owner to add a node to one of their crews: another of their nodes, or yourself (your own handle). crew: the crew's name as your owner says it; omit it for the crew you are in or lead. " +
       "They answer on a card in this chat; nothing changes until they agree, and then you are woken to go on. " +
-      "Otherwise give the work to a member, make a temporary helper (node_helper), or do it yourself.",
+      "For work a member could do, give it to that member, make a temporary helper (node_helper), or do it yourself.",
     input: z
       .object({
-        node: Handle.describe("The node's handle, for example assistant."),
-        reason: z.string().trim().min(1).max(300).describe("Why the crew needs it, in one line for your owner."),
+        node: Handle.describe("The node's handle, for example assistant; your own handle to join the crew yourself."),
+        crew: z.string().trim().min(1).max(120).optional().describe("The crew's name (or id), as your owner gave it. Omit it for the crew you are in."),
+        reason: z.string().trim().min(1).max(300).describe("Why, in one line for your owner."),
       })
       .strict(),
     isWrite: false,
     risk: "low",
     async run(_ctx, input) {
       if (scope.lineage.fromNonOwner) throw new ToolBlockedError("Only your owner can add nodes to their crews.");
-      const crew = scope.room.kind === "crew" ? scope.room : await crewRoom();
-      if (!roomSettings(crew).leadNodeIds.includes(node.id)) throw new ToolBlockedError(`Only the lead of “${crew.title}” asks to add nodes to it.`, "Tell your owner what you need.");
-      const target = await prisma.nodeAgent.findFirst({ where: { userId: node.userId, slug: input.node, parentNodeId: null } });
-      if (!target || target.id === node.id) {
+      const self = SELF.has(input.node) || input.node === node.slug;
+      if (self && !input.crew && scope.room.kind !== "crew") throw new ToolBlockedError("Name the crew to join (crew).", "Ask your owner which crew if they did not say.");
+      const crew = input.crew ? await namedCrew(prisma, node.userId, input.crew) : scope.room.kind === "crew" ? scope.room : await crewRoom();
+      const target = self ? node : await prisma.nodeAgent.findFirst({ where: { userId: node.userId, slug: input.node, parentNodeId: null } });
+      if (!target) {
         const mine = await prisma.nodeAgent.findMany({ where: { userId: node.userId, status: "active", parentNodeId: null, id: { not: node.id } }, select: { slug: true } });
-        throw new ToolBlockedError(`Your owner has no other node called @${input.node}.`, mine.length ? `Their nodes: ${mine.map((row) => `@${row.slug}`).join(", ")}.` : "They have no other nodes.");
+        throw new ToolBlockedError(`Your owner has no node called @${input.node}.`, mine.length ? `Their other nodes: ${mine.map((row) => `@${row.slug}`).join(", ")}; you are @${node.slug}.` : `They have no other nodes; you are @${node.slug}.`);
       }
       if (target.status !== "active") throw new ToolBlockedError(`@${target.slug} is paused.`, "Tell your owner; they resume it in its settings.");
       const member = await prisma.nodeRoomMember.findFirst({ where: { roomId: crew.id, nodeId: target.id } });
-      if (member) return toolOk(`@${member.handle} is already in “${crew.title}”: give it its step (node_delegate or node_plan).`);
+      if (member) return toolOk(self ? `You are already in “${crew.title}” (as @${member.handle}).` : `@${member.handle} is already in “${crew.title}”: give it its step (node_delegate or node_plan).`);
       const asked = await prisma.nodeMessage.findFirst({
         where: {
           roomId: scope.room.id,
@@ -117,14 +135,14 @@ export function crewAddTool(scope: NodeScope, crewRoom: () => Promise<NodeRoom>)
         authorKind: "node",
         authorNodeId: node.id,
         kind: "approval",
-        body: `@${node.slug} wants to add @${target.slug} (${target.name}) to “${crew.title}”: ${input.reason}`,
+        body: self ? `@${node.slug} wants to join “${crew.title}”: ${input.reason}` : `@${node.slug} wants to add @${target.slug} (${target.name}) to “${crew.title}”: ${input.reason}`,
         data: { type: CREW_ADD_CARD, status: "pending", nodeId: target.id, nodeSlug: target.slug, nodeName: target.name, roomId: crew.id, crewTitle: crew.title, reason: input.reason, private: Boolean(scope.privateTo) },
         visibleTo: [node.userId],
         rootMessageId: scope.lineage.rootMessageId,
         botDepth: scope.lineage.botDepth,
       });
       return toolOk(
-        `Your owner is asked on a card in this chat to add @${target.slug} to “${crew.title}”. Stop here and say nothing about it: you are woken to go on when they answer.`,
+        `Your owner is asked on a card in this chat to ${self ? "add you" : `add @${target.slug}`} to “${crew.title}”. Stop here and say nothing about it: you are woken to go on when they answer.`,
         { waitingForOwner: true, approvalId: message.id },
       );
     },

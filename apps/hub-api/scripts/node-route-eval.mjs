@@ -1,11 +1,15 @@
 /**
  * The routing evaluation (docs/35 §11): the owner's own everyday requests, given to a node in its DM
- * on each model under test, with a fake paired computer that answers every computer tool at once.
- * For each request it records which tools the node used and checks the route: simple work on the
- * computer the node does itself (a terminal screenshot, a command, a file, a download and install with
- * sudo, a web page's screenshot), prices and facts from web search, and only coding goes to an agent
- * session. It also checks the reply: no "please approve" chatter, a Markdown table when one was asked.
- * Not a CI gate: it informs the node's default model.
+ * on each model under test, with a fake paired computer that answers every computer tool at once
+ * (the web tools with their result shapes: browser_view, browser_shop, browser_fetch, browser_extract,
+ * browser_set_location, sign-ins). For each request it records which tools the node used and checks the
+ * route: simple work on the computer the node does itself (a terminal screenshot, a command, a file, a
+ * download and install with sudo, a web page's screenshot with its focus), prices from browser_shop with
+ * the place asked for, a paper into Ensemble Files with hub_save_file, a sign-in on the owner's card,
+ * joining a crew on the owner's card, and only coding goes to an agent session. It also checks the
+ * reply: no "please approve" chatter, no password asked in chat, a Markdown table when one was asked,
+ * as many pictures as were asked, no made-up file links. Not a CI gate: it informs the node's default
+ * model.
  *
  *   HUB_API=http://127.0.0.1:4098 node apps/hub-api/scripts/node-route-eval.mjs
  *   NODE_EVAL_MODELS=gpt-6-luna:low,gpt-6-luna:medium,gpt-6.1-sol:low
@@ -32,13 +36,23 @@ const CASES = [
   { ask: "what's the public IP address of my computer?", want: [["computer_run", "computer_terminal_screenshot"]], avoid: AGENT },
   { ask: "download Visual Studio Code (the .deb) for my linux machine and install it", want: [["computer_run", "hub_web_search", "browser_open"], ["computer_sudo"]], avoid: AGENT, sudo: true },
   { ask: "install htop on my computer", want: [["computer_sudo"]], avoid: AGENT, sudo: true },
-  { ask: "take a screenshot of https://ensemblework.com and send it here", want: [["browser_open", "capture_screenshot"], ["browser_screenshot", "capture_screenshot"]], avoid: AGENT, media: true },
-  { ask: "compare the price of a PS5 console at Best Buy, Walmart and Target (US). give me a table", want: [["hub_web_search", "browser_open"]], avoid: AGENT, table: true },
+  { ask: "take a screenshot of https://ensemblework.com and send it here", want: [["browser_view", "browser_screenshot"]], avoid: AGENT, media: true },
+  { ask: "compare the price of a PS5 console at Best Buy, Walmart and Target (US). give me a table", want: [["browser_shop", "hub_web_search"]], avoid: AGENT, table: true },
   { ask: "write a short markdown report of what you can do for me, save it as capabilities.md on my computer and send me the file here", want: [["computer_files_write", "computer_run"], ["node_share_file"]], avoid: AGENT, media: true },
   { ask: "in my app folder, fix the failing login test and commit the fix", want: [["node_session_start"]], avoid: [] },
   { ask: "add a dark mode toggle to the settings page of the project in my app folder", want: [["node_session_start"]], avoid: [] },
   { ask: "if you start a coding session for me, which agent and model will it use?", want: [], avoid: AGENT, says: /copilot/i },
+  // Round 2: the owner's web requests (docs/35 §6.1).
+  { ask: "compare the PS5 console price in Wisconsin at Amazon, Walmart and Best Buy, with screenshots of each store and a table", want: [["browser_shop"]], avoid: AGENT, table: true, media: 2, input: { tool: "browser_shop", pattern: /wisconsin|53\d{3}|madison/i } },
+  { ask: "send me a screenshot of the Google stock chart", want: [["browser_view"]], avoid: AGENT, media: 1, input: { tool: "browser_view", pattern: /"focus":"[^"]+"/ } },
+  { ask: "4 screenshots: Microsoft, Amazon, Nvidia, Apple stock", want: [["browser_view", "browser_screenshot"]], avoid: AGENT, media: 4 },
+  { ask: "fetch the BMD-45 CVPR paper from CVF and add it to my Ensemble files", want: [["hub_save_file"]], avoid: AGENT, links: true },
+  { ask: "log in to my Azure console and check yesterday's resource usage", want: [["browser_login_needed", "web_task"]], avoid: AGENT, card: "login", noPassword: true },
+  { ask: "add yourself to the SWE crew", want: [["node_crew_add"]], avoid: AGENT, card: "crew_add", setup: "crew" },
 ];
+
+/** Asking the owner for a password or a code in the chat (they sign in on a card). */
+const PASSWORD_ASK = /\b(?:send|give|tell|share|type|enter|paste)\b[^.?!\n]{0,40}\b(?:your|the)\s+(?:password|passcode|2fa|two-factor|verification|one-time|authenticator)\b|\bwhat(?:'s| is) your (?:password|passcode)\b/i;
 
 /** Replies the owner should never see from a node. */
 const CHATTER = /\b(please (approve|allow)|approve (it|the request|this) in|needs me|allow (it|access) and (re)?try|requested access|waiting for (your )?(approval|permission))\b/i;
@@ -109,6 +123,9 @@ async function upload(token, uploadId, name, kind, bytes, mime) {
   return { id, name, kind, held: false, local: false };
 }
 
+/** What the fake computer's browser shows across calls (the Azure sign-in page once it opened). */
+const browsed = { signIn: false };
+
 /** What the fake computer answers for each node tool call: a plausible, successful result. */
 async function answerFor(request, token) {
   const tool = request.tool;
@@ -140,8 +157,48 @@ async function answerFor(request, token) {
   }
   if (tool === "browser" || tool === "capture") {
     const name = request.name;
-    if (name === "browser_open") return capture(`Opened ${request.input?.url ?? "the page"} in tab t1. Title: “Home”.`, { tab: "t1", url: request.input?.url ?? "", title: "Home" });
-    if (name === "browser_snapshot") return capture("Page t1: Home. Headings: Welcome. Price: $499.99 (ref e12).", { tab: "t1" });
+    const input = request.input ?? {};
+    const url = String(input.url ?? "");
+    // The Azure portal sends a new browser to Microsoft's sign-in page.
+    const signIn = /portal\.azure\.com|login\.microsoftonline\.com/.test(url);
+    const opened = signIn ? "https://login.microsoftonline.com/common/oauth2/v2.0/authorize" : url;
+    if (name === "browser_open") {
+      if (signIn) browsed.signIn = true;
+      return capture(`Opened t1: ${signIn ? "Sign in to your account" : "Home"}.`, { tab: "t1", url: opened, title: signIn ? "Sign in to your account" : "Home", status: 200 });
+    }
+    if (name === "browser_snapshot") {
+      const page = signIn || browsed.signIn ? '- heading "Sign in" [ref=e1]\n- textbox "Email, phone, or Skype" [ref=e2]\n- button "Next" [ref=e3]' : '- heading "Welcome" [ref=e1]\n- link "Pricing" [ref=e5]\n- text: Price: $499.99 [ref=e12]';
+      return capture(`${signIn || browsed.signIn ? "Sign in to your account" : "Home"}\n${page}`, { tab: "t1", url: browsed.signIn ? "https://login.microsoftonline.com/common/oauth2/v2.0/authorize" : url || "https://example.com/", title: browsed.signIn ? "Sign in to your account" : "Home", snapshot: page, truncated: false });
+    }
+    if (name === "browser_view") {
+      if (signIn) {
+        browsed.signIn = true;
+        return capture("Opened login.microsoftonline.com: Sign in to your account. The page asks to sign in.", { tab: "t1", url: opened, title: "Sign in to your account", mode: "browser", text: "Sign in. Email, phone, or Skype." }, shot("sign-in.png"));
+      }
+      const focus = typeof input.focus === "string" ? input.focus : null;
+      return capture(`Opened ${url} (browser): ${focus ? `screenshot of ${focus}` : "screenshot of the page"}.`, { tab: "t2", url, title: "Quote", mode: "browser", text: "AAPL 227.48 USD +1.2% today. 5D chart.", ...(focus ? { focusFound: true } : {}) }, shot(`${String(input.name ?? "view")}.png`));
+    }
+    if (name === "browser_shop") {
+      const stores = Array.isArray(input.stores) && input.stores.length ? input.stores.map(String) : ["amazon", "walmart", "target", "bestbuy", "costco"];
+      const evidence = [];
+      const rows = [];
+      for (const store of stores) {
+        const key = store.toLowerCase().replace(/[^a-z]/g, "");
+        const status = key === "walmart" ? "human_check" : key === "bestbuy" ? "blocked" : "ok";
+        const file = status === "blocked" ? null : await upload(token, request.uploadId, `${key}.png`, "screenshot", png(), "image/png");
+        if (file) evidence.push(file);
+        rows.push({ store: key, status, url: `https://www.${key}.com/s?k=${encodeURIComponent(String(input.query ?? ""))}`, offers: status === "ok" ? [{ title: `${input.query} Console`, price: key === "costco" ? 549.99 : 499.99, currency: "USD", availability: "In stock", delivery: "Arrives Tue", url: `https://www.${key}.com/p/1` }] : [], ...(file ? { screenshot: file.id } : {}), ...(status === "human_check" ? { note: "Robot or human? (press and hold)" } : status === "blocked" ? { note: "Blocked automated browsing (HTTP/2 error)" } : {}) });
+      }
+      return { status: 200, body: { ok: true, summary: `Searched ${stores.length} stores for ${input.query}${input.location ? ` near ${input.location} (53703)` : ""}.`, result: { location: { zip: input.location ? "53703" : null, country: "US" }, stores: rows }, evidence, refused: [] } };
+    }
+    if (name === "browser_fetch") return capture(`Saved ${input.name ?? "paper.pdf"} (14 KB) to your evidence.`, { bytes: 14_000, mime: "application/pdf", name: String(input.name ?? "paper.pdf") }, [String(input.name ?? "paper.pdf"), "report", Buffer.from("%PDF-1.4\n% eval\n"), "application/pdf"]);
+    if (name === "browser_extract") return capture("Read the page.", { url: url || "https://example.com/", title: "Page", markdown: "# Page\n\n| Item | Price |\n| --- | --- |\n| PS5 | $499.99 |" });
+    if (name === "browser_set_location") return capture(`Set the location: Deliver to Madison 53703.`, { zip: "53703", country: "US", shown: "Deliver to Madison 53703" });
+    if (name === "browser_login_needed") {
+      const login = { loginId: `lg_${randomUUID().replace(/-/g, "")}`, origin: "https://login.microsoftonline.com", tab: String(input.tab ?? "t1"), profile: null, reasons: [String(input.reason ?? "sign in")], saved: false, display: false, takeover: false, expiresAt: new Date(Date.now() + 600_000).toISOString() };
+      return { status: 200, body: { ok: true, summary: "The tab waits for the owner to sign in.", result: { login }, login, evidence: [], refused: [] } };
+    }
+    if (name === "browser_login_check") return capture("Not signed in yet.", { status: "waiting", message: "The sign-in page is still open." });
     if (name === "browser_screenshot" || name === "capture_screenshot") return capture("Saved the screenshot.", null, shot("screenshot.png"));
     return capture("Done.", null);
   }
@@ -220,6 +277,12 @@ async function runModel({ model, effort }) {
   const rows = [];
   for (const [index, item] of CASES.entries()) {
     if (ONLY && !ONLY.has(index + 1)) continue;
+    browsed.signIn = false;
+    if (item.setup === "crew") {
+      // A crew called SWE the node is not in.
+      const { node: engineer } = await call("/api/node/nodes", { method: "POST", cookie, body: { templateId: "feature-engineer" } });
+      await call("/api/node/crews", { method: "POST", cookie, body: { title: "SWE", nodeIds: [engineer.id], leadNodeId: engineer.id } }).catch(() => undefined);
+    }
     const seen = new Set((await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.map((row) => row.id));
     const callsBefore = computer.calls.length;
     const started = Date.now();
@@ -248,17 +311,27 @@ async function runModel({ model, effort }) {
     const deviceTools = computer.calls.slice(callsBefore).map((request) => (request.tool === "browser" || request.tool === "capture" ? request.name : request.tool === "files" && request.action === "share" ? "node_share_file" : request.tool === "terminal" ? "computer_terminal_screenshot" : request.tool === "sudo" ? "computer_sudo" : `computer_${request.tool === "files" ? "files_write" : request.tool}`));
     const cards = fresh.filter((row) => row.kind === "approval").map((row) => row.data?.type);
     const runs = fresh.filter((row) => row.kind === "run");
-    const used = new Set([...chips, ...deviceTools, ...(runs.length ? ["node_session_start"] : []), ...(cards.includes("sudo") ? ["computer_sudo"] : [])]);
+    // A turn that waits on a card posts no reply: the card says which tool asked for it.
+    const carded = [...(cards.includes("sudo") ? ["computer_sudo"] : []), ...(cards.includes("login") ? ["browser_login_needed"] : []), ...(cards.includes("crew_add") ? ["node_crew_add"] : [])];
+    const used = new Set([...chips, ...deviceTools, ...(runs.length ? ["node_session_start"] : []), ...carded]);
     const text = replies.map((row) => row.body).join("\n");
     const problems = [];
     for (const group of item.want) if (!group.some((name) => used.has(name))) problems.push(`missing ${group.join("|")}`);
     for (const name of item.avoid) if (used.has(name)) problems.push(`used ${name}`);
     if (item.table && !/^\s*\|.*\|\s*$/m.test(text)) problems.push("no table");
     const media = fresh.flatMap((row) => (row.authorKind === "node" && Array.isArray(row.data?.media) ? row.data.media : []));
-    if (item.media && !media.length) problems.push("no media in the reply");
+    const wanted = item.media === true ? 1 : item.media ?? 0;
+    if (wanted && media.length < wanted) problems.push(media.length ? `${media.length} of ${wanted} pictures` : "no media in the reply");
     if (item.says && !item.says.test(text)) problems.push(`reply lacks ${item.says}`);
+    if (item.input && !computer.calls.slice(callsBefore).some((request) => request.name === item.input.tool && item.input.pattern.test(JSON.stringify(request.input ?? {})))) problems.push(`${item.input.tool} without ${item.input.pattern}`);
+    if (item.card && !cards.includes(item.card)) problems.push(`no ${item.card} card`);
+    if (item.noPassword && PASSWORD_ASK.test(text)) problems.push("asked for a password in chat");
+    if (item.links) {
+      const saved = allChips.some((tool) => tool.name === "hub_save_file" && !["failed", "blocked", "error"].includes(String(tool.state)));
+      if (/ensemble:\/\/file\//.test(text) && !saved) problems.push("a file link with nothing saved");
+    }
     if (CHATTER.test(text)) problems.push("approval chatter");
-    if (!replies.length) problems.push("no reply");
+    if (!replies.length && !(item.card && cards.includes(item.card))) problems.push("no reply");
     rows.push({ index: index + 1, ask: item.ask, used: [...used], failedTools, cards, ok: problems.length === 0, problems, seconds: Math.round((Date.now() - started) / 1000), reply: text.replace(/\s+/g, " ").slice(0, 300) });
     console.log(`${model}:${effort} #${index + 1} ${problems.length ? "FAIL " + problems.join("; ") : "ok"} [${[...used].join(", ")}] ${Math.round((Date.now() - started) / 1000)}s`);
   }

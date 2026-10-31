@@ -316,8 +316,8 @@ const CrewAddCard = z
   .passthrough();
 
 /**
- * A crew's lead asked to bring another of its owner's nodes into the crew (node/crew.ts): approving adds
- * it (its handle is its slug) and wakes the lead to go on; discarding tells the lead to do without it.
+ * A node asked to bring one of its owner's nodes, or itself, into a crew (node/crew.ts): approving adds
+ * it (its handle is its slug) and wakes the asking node to go on; discarding tells it to do without.
  */
 async function settleCrewAdd(app: FastifyInstance, card: NodeMessage, lead: NodeAgent, input: Decision): Promise<NodeMessage> {
   const prisma = app.prisma;
@@ -327,7 +327,11 @@ async function settleCrewAdd(app: FastifyInstance, card: NodeMessage, lead: Node
   const wake = (note: string) => enqueueTurn(app, { nodeId: lead.id, roomId: card.roomId, reason: "approval", note, private: parsed.private === true, ...(planLinkOf(card.data) ?? {}) });
   if (input.decision === "discard") {
     const discarded = await updateMessageData(prisma, current, { status: "discarded", answeredAt: new Date().toISOString() });
-    await wake(`Your owner did not add @${parsed.nodeSlug} to the crew. Do the work with the crew's members, a temporary helper (node_helper) or yourself, or say in one line what you need. Otherwise reply ${"(no reply)"}.`);
+    await wake(
+      parsed.nodeId === lead.id
+        ? `Your owner did not add you to the crew. Reply ${"(no reply)"} unless there is more to say.`
+        : `Your owner did not add @${parsed.nodeSlug} to the crew. Do the work with the crew's members, a temporary helper (node_helper) or yourself, or say in one line what you need. Otherwise reply ${"(no reply)"}.`,
+    );
     return discarded;
   }
   let joined: Awaited<ReturnType<typeof joinCrew>>;
@@ -339,7 +343,12 @@ async function settleCrewAdd(app: FastifyInstance, card: NodeMessage, lead: Node
     return updateMessageData(prisma, current, { status: "pending", error: message });
   }
   const updated = await updateMessageData(prisma, current, { status: "approved", error: null, handle: joined.handle, answeredAt: new Date().toISOString() });
-  await wake(`Your owner agreed: @${joined.handle} joined this crew (“${joined.title}”); continue. Give it its step with node_delegate (or node_plan) if that is still what the work needs.`);
+  const where = card.roomId === parsed.roomId ? `this crew (“${joined.title}”)` : `“${joined.title}”`;
+  await wake(
+    parsed.nodeId === lead.id
+      ? `Your owner agreed: you joined ${where} as @${joined.handle}; continue if there is more to do, otherwise reply ${"(no reply)"}.`
+      : `Your owner agreed: @${joined.handle} joined ${where}; continue. Give it its step with node_delegate (or node_plan) if that is still what the work needs.`,
+  );
   return updated;
 }
 

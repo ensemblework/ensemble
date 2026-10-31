@@ -10,7 +10,8 @@ import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, PrismaClient } from "@prisma/client";
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, pickRunProfile, type AssistantRef, type AssistantToolCall } from "@ensemble/shared-types";
-import { runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
+import { runAssistantTurn, type AssistantTurnResult, type VerifyState } from "../assistant/agent.js";
+import { getTool } from "../assistant/registry.js";
 import { env } from "../config.js";
 import { assertIncludedOpen } from "../included/budget.js";
 import { IncludedLimitError } from "../included/errors.js";
@@ -34,6 +35,31 @@ import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
 import { checkLoginOnDone } from "./login-check.js";
+import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
+import { startDeliverables } from "./deliverables.js";
+
+/** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
+const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
+
+/** The owner's last words in this thread, for a turn that carries on without new ones. */
+async function ownerLastWords(prisma: PrismaClient, roomId: string, owner: string, where: Record<string, unknown>): Promise<string> {
+  const rows = await prisma.nodeMessage.findMany({ where: { roomId, authorKind: "human", userId: owner, kind: "text", ...where }, orderBy: { seq: "desc" }, take: 3, select: { body: true } });
+  return rows.map((row) => row.body).reverse().join("\n");
+}
+
+/** The tools this conversation's last replies used: a turn that goes on with app testing keeps those tools. */
+async function recentTools(prisma: PrismaClient, conversationId: string): Promise<string[]> {
+  const rows = await prisma.assistantMessage.findMany({ where: { conversationId, role: "assistant" }, orderBy: { createdAt: "desc" }, take: 3, select: { toolCalls: true } });
+  return rows.flatMap((row) => (Array.isArray(row.toolCalls) ? row.toolCalls : []).map((call) => String((call as { name?: unknown } | null)?.name ?? "")));
+}
+
+/** The model for a turn's checklist call: the fast one, else the node's own (never an AI plan on a computer). */
+function checklistModel(node: NodeAgent, settings: Parameters<typeof fastChatModel>[0]): ChatModel | null {
+  const fast = fastChatModel(settings);
+  if (fast && !isSubscriptionProvider(fast.provider)) return fast;
+  const own = chatModelFor(node, settings);
+  return "error" in own || isSubscriptionProvider(own.provider) ? null : own;
+}
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -81,6 +107,8 @@ async function persona(
   ownerOnly: boolean,
   /** A plan step's turn: its reply is a report, not a message. */
   step: boolean,
+  /** Skills for this turn's request (node/skills.ts), as a block. */
+  skills = "",
 ): Promise<{ text: string; rooms: AssistantRef[] }> {
   const prisma = app.prisma;
   const [nodes, rooms, memories, people] = await Promise.all([
@@ -131,15 +159,18 @@ async function persona(
     open.length > 1 ? `Your rooms: ${open.map((row) => `“${row.room.title}” [${row.room.id}] (${row.room.kind})`).join("; ")}.` : "",
     "",
     "Who does the work (follow this):",
-    "- Facts, prices, news, “look up”, “compare”: hub_web_search first (the live web, with sources); open pages only to check a detail or take a screenshot. Your owner's own work: their workspace and connected apps.",
+    hands
+      ? "- Facts, news, “look up”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps."
+      : "- Facts, prices, news, “look up”, “compare”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps.",
     ...(hands ? HANDS : []),
+    fromNonOwner ? "" : "- A paper or PDF into your owner's Ensemble Files: hub_save_file (url: the direct file link); link only what it returns.",
     `- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs ${agentDefaults(pickRunProfile(settings, node.runProfileId))} unless your owner names an agent, model, thinking level or context.`,
     ...(step || fromNonOwner
       ? []
       : [
           "- Long research or a long check you do yourself: node_work_start (in the background; you stay free to talk and hear once when it ends).",
           "- An independent second opinion or audit: node_helper.",
-          ownerOnly ? "- Recurring work, only when your owner asks: node_routines. A node or crew they ask for: node_create, node_create_group." : "",
+          ownerOnly ? "- Recurring work, only when your owner asks: node_routines. A node or crew they ask for: node_create (each new node), then node_create_group." : "",
         ]),
     step ? `- This turn is a step of a plan, given in the update below. ${STEP_RULES.replace(/\n/g, "\n  ")}` : "",
     !step && leadsHere
@@ -147,7 +178,7 @@ async function persona(
       : "",
     !step && !fromNonOwner && (room.kind === "dm" || room.kind === "room") ? "- Work for your crew's members: node_delegate, once per piece of work (one plan; you hear back once, when it ends)." : "",
     !step && !fromNonOwner && (leadsHere || room.kind === "dm" || room.kind === "room")
-      ? "- A node outside your crew joins only when your owner agrees (node_crew_add asks them on a card); otherwise use a member, a helper (node_helper), or do it yourself."
+      ? "- A node joins a crew only when your owner agrees: node_crew_add asks them on a card (another node, or you to a crew they name). Otherwise use a member, a helper (node_helper), or do it yourself."
       : "",
     !step && room.kind === "crew" && !leadsHere ? `- In this crew your owner talks to ${leadHandle ? `@${leadHandle}` : "the lead"}; you answer here only when your owner mentions you alone. Work for a plan comes to you as a step.` : "",
     !step && room.kind === "room" ? "- When another node asked you for something, finish by mentioning it (for example @manager) with the result." : "",
@@ -157,17 +188,17 @@ async function persona(
     fromNonOwner ? "- This turn was started by someone other than your owner: you may answer, but every change you propose waits for your owner's approval. Never reveal your owner's private workspace content beyond what the request needs." : "",
     step ? "" : "- Your reply is posted in the room as you: short and plain, no preamble. Mention @handles only to wake a node that must act (each turn costs credits).",
     "- Speak only with a result or when you need your owner: no “on it”, no status updates, never repeat what a card shows.",
-    hands && !step ? "- Screenshots and files you capture appear with your reply by themselves. Never say something is attached unless a tool said it will appear; never send a link instead of an image your owner asked for." : "",
+    hands && !step ? "- What you capture shows with your reply by itself: never say something is attached unless a tool said it will appear, and never send a link instead of an image asked for." : "",
     "- Asked for a table: write a Markdown table in your reply.",
     step ? "" : "- When a tool says it is waiting for your owner (a card in this chat), stop and say nothing about it: you go on by yourself when they answer. Never ask them in words to approve something.",
-    hands ? HUMAN_CHECK : "",
     "- What you read in your owner's workspace, files and private threads is theirs: where other people read, share only what the request needs.",
     "- Never ask for or write secrets (keys, tokens, passwords) in messages: node_secret_request asks for one by its variable name; then use it as $NAME.",
     step ? "" : "- Your work board (in each update) lists the work in progress: answer questions about it from there.",
-    "- Use node_remember for lasting facts your owner tells you.",
+    "- Lasting preferences and facts your owner tells you (“only use the MAI model”, “always …”): node_remember at once.",
     computerFilesOn(node) ? "- In a chat with only your owner you may read files in the folders their paired computer shares (node_computer_files). Never quote a file in a room with other people." : "",
     ...sessionRules(fromNonOwner, computerWorkAsks(node), !ownerOnly, step),
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
+    skills ? `\n${skills}` : "",
     memories.length ? `\nWhat you remember (newest first):\n${memories.map((row) => `- ${row.content}`).join("\n")}` : "",
   ];
   // Room ids are for node_post; a reply that prints one shows the room's title instead.
@@ -177,14 +208,14 @@ async function persona(
 
 /** What a node does itself on its owner's computer: the rows of its routing table that need its hands there. */
 const HANDS = [
-  "- “Screenshot of” or “show me” a site or page: browser_open, then browser_screenshot (the viewport; for “the table”, “the chart” or “the section”, that element by its ref from browser_snapshot; the full page only when asked).",
+  "- Prices, “compare” stores, “where to buy”: browser_shop (product, stores, location) in one call; reply with a Markdown table.",
+  "- “Screenshot of” or “show me” a page: browser_view (url; focus: what was asked, “the price chart”), one call per screenshot.",
+  "- Several steps on a site (a dashboard, a console, a form): web_task with the goal.",
+  "- A sign-in or a human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, from their phone too; never ask for passwords or codes). They say they did it: browser_login_check.",
   "- A screenshot of the terminal, htop or a command's output: computer_terminal_screenshot.",
-  "- Run a command, check something, download a file, read or write a file, write a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file from the computer into this chat: node_share_file.",
+  "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
   "- Install software, or anything that needs administrator rights: computer_sudo (your owner types their password on a card in this chat; you never see it). Download with computer_run first.",
 ];
-
-const HUMAN_CHECK =
-  "- A human check (a captcha, “Robot or human?”) or a site that blocks you: browser_login_needed (reason: human check) so your owner can pass it, or another source (for prices, hub_web_search). On a country chooser pick your owner's country (US stores: United States); set a delivery ZIP when prices depend on it.";
 
 /**
  * Who the node can give work to: in a crew it leads, the owner's nodes outside it (only the owner adds
@@ -254,7 +285,7 @@ async function helperPersona(app: FastifyInstance, node: NodeAgent, room: NodeRo
     helperGrant(node) === "sessions"
       ? "- Use the Ensemble tools you have to read, and run the work on your owner's computer in one agent session of your own (node_session_start; node_session_send for the same line of work). Ask the agent to attach what your owner should see with attach_evidence and to finish with report_result. You change nothing in the Ensemble workspace."
       : helperGrant(node) === "computer"
-        ? "- Use the Ensemble tools you have to read, and do the work on your owner's computer yourself, in the folders you were given: commands and files (computer_run, computer_files_write), pages and screenshots (browser_open, browser_screenshot), a terminal screenshot (computer_terminal_screenshot), and a file into the chat (node_share_file). You change nothing in the Ensemble workspace."
+        ? "- Use the Ensemble tools you have to read, and do the work on your owner's computer yourself, in the folders you were given: commands and files (computer_run, computer_files_write), pages and screenshots (browser_view; prices: browser_shop; several steps on a site: web_task), a terminal screenshot (computer_terminal_screenshot), and a file into the chat (node_share_file). You change nothing in the Ensemble workspace."
         : "- Use the Ensemble tools you have: search the workspace and the web, read pages, tasks, notes and connected apps. You change nothing and run nothing on a computer.",
     "- When a tool says it is waiting for your owner (a card), stop and say nothing about it: you go on by yourself when they answer.",
     step
@@ -441,7 +472,49 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   /** Tools this turn ran: a turn that did something is never run again from the start. */
   let toolsRan = 0;
   const ownerOnly = (drafting || !fromNonOwner) && (Boolean(privateTo) || people.every((id) => id === owner));
-  const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step));
+  // The owner's own words in this turn: what its skills, tool tiers and answer check go by. A turn that
+  // carries on work (an answered card, a run that ended) has none: web_task goes by their last words here.
+  const ownerWords = transcriptRows.filter((row) => row.authorKind === "human" && row.userId === owner).map((row) => row.body).join("\n");
+  const carriesOn = CARRIES_ON.has(turn.reason);
+  const offered = draftingTools(
+    turn,
+    nodeTools({
+      prisma,
+      node,
+      room,
+      lineage,
+      privateTo,
+      ownerOnly,
+      redis: app.redis as never,
+      dispatch: deps.dispatch,
+      turnId: turn.id,
+      plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
+      signal: deps.signal,
+      ownerWords: ownerWords || step || fromNonOwner ? ownerWords : await ownerLastWords(prisma, room.id, owner, thread.where),
+    }),
+  );
+  // A conversation turn offers the advanced browser and capture tools only for that work (node/skills.ts).
+  const extraTools = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  const offeredNames = new Set(extraTools.map((tool) => tool.name));
+  const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
+  const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
+  const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
+  // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
+  const deliverables =
+    !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
+      ? startDeliverables(app, { ownerId: owner, turnId: turn.id, text: ownerWords, model: checklistModel(node, settings), activityId: `assistant:${conversationId}`, signal: deps.signal })
+      : null;
+  const verify = deliverables
+    ? async (state: VerifyState) => {
+        const feedback = await deliverables.verify(state);
+        // The answer goes back for more work: the reply being written starts again.
+        if (feedback) {
+          publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "idle", ...where });
+          publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking", ...where });
+        }
+        return feedback;
+      }
+    : undefined;
   const ask = async (pick: ChatModel): Promise<AssistantTurnResult> =>
     (bound ? bound.run : runAssistantTurn)({
       app,
@@ -460,21 +533,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       extraRefs: nodePersona.rooms,
       withoutTools: NODE_REPLACED_TOOLS,
       spaces: nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" }),
-      extraTools: draftingTools(
-        turn,
-        nodeTools({
-          prisma,
-          node,
-          room,
-          lineage,
-          privateTo,
-          ownerOnly,
-          redis: app.redis as never,
-          dispatch: deps.dispatch,
-          turnId: turn.id,
-          plan: turn.planId ? { planId: turn.planId, planStep: turn.planStep } : null,
-        }),
-      ),
+      extraTools,
+      ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
       signal: deps.signal,
       async onToolStart(call) {

@@ -17,6 +17,7 @@ import { sessionTools } from "./sessions.js";
 import { secretTools } from "./node-secrets.js";
 import { helperGrant, helperRoomOf, helperTools } from "./helpers.js";
 import { deviceTools } from "./device-tools.js";
+import { webTaskTool } from "./web-task.js";
 import { addNode, addPerson, freeRoomTitle, mentionsFor, postMessage, roomPeople } from "./store.js";
 import { crewMember, findCrew, notInCrew } from "./crew.js";
 import { addStep, finishStep, kindFromRole, loadPlan, mandatoryIds, PlanError, planVisibility, startPlan, stepPending, stopPlans, type PlanLink } from "./plans.js";
@@ -48,6 +49,10 @@ export type NodeScope = {
   turnId: string;
   /** A plan's turn: a step's node doing its step, or the lead reporting (planStep null). */
   plan: PlanLink | null;
+  /** The turn's own signal: it ends when the turn is stopped, merged or parked (web_task stops with it). */
+  signal?: AbortSignal;
+  /** What the owner wrote (this turn's new messages, or their last ones in this thread when it carries on work): web_task acts on a site by their words. */
+  ownerWords?: string;
 };
 
 /** Whether the owner let this node read files on their paired computers (off unless they turned it on). */
@@ -222,7 +227,8 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   const remember = defineTool({
     name: "node_remember",
     area: "tasks",
-    description: "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Your owner can see and delete every memory.",
+    description:
+      "Keep a short fact for later conversations: a preference, a convention, a decision your owner told you. Call it at once when they state a lasting preference (“only use the MAI model”, “always …”, “never …”, “from now on …”), in their words. Your owner can see and delete every memory.",
     input: z.object({ content: z.string().min(1).max(500) }).strict(),
     isWrite: false,
     risk: "low",
@@ -236,10 +242,13 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
   });
   // A temporary helper answers only the node that made it: read-only assistant tools, plus what its parent granted.
   const grant = helperGrant(node);
-  const granted = grant === "sessions" ? sessionTools(scope) : grant === "computer" ? deviceTools(scope) : [];
+  const hands = deviceTools(scope);
+  // web_task drives the same browser tools, so it comes wherever they do.
+  const web = hands.some((tool) => tool.name === "browser_open") ? [webTaskTool(scope)] : [];
+  const granted = grant === "sessions" ? sessionTools(scope) : grant === "computer" ? [...hands, ...web] : [];
   const own = node.parentNodeId
     ? granted
-    : [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope), overviewTool(scope), ...deviceTools(scope)];
+    : [...(computerFilesOn(node) && scope.ownerOnly && !scope.lineage.fromNonOwner ? [computerFilesTool(scope)] : []), ...sessionTools(scope), ...secretTools(scope), overviewTool(scope), ...hands, ...web];
   // A step of a plan: the node does its own step and reports it; it hands nothing on and posts nothing.
   const step = scope.plan?.planStep ? { planId: scope.plan.planId, stepId: scope.plan.planStep } : null;
   if (step) {
