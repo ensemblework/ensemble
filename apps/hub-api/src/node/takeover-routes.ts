@@ -1,6 +1,6 @@
 /**
- * The owner's side of a takeover (node/takeovers.ts, B21): open one for a sign-in card's tab or a run's
- * tab, start it with the channel's secret sealed for the computer, fetch encrypted frames, send
+ * The owner's side of a takeover (node/takeovers.ts, B21): open one for a sign-in card's tab, a run's
+ * tab or a live card's terminal or tab (watch it, or take control), start it with the channel's secret sealed for the computer, fetch encrypted frames, send
  * encrypted input, and end it (Stop, or I'm done). Only from a signed-in browser session, never a key or
  * an agent; every call after the first carries the capability (`x-ensemble-takeover`).
  */
@@ -10,9 +10,13 @@ import { readCookie, SESSION_COOKIE, sha256 } from "../lib/auth.js";
 import { SealedShape } from "../credentials/seal.js";
 import { ChannelMessage, type ChannelMessage as Message } from "../remote/contract.js";
 import { wireMessage } from "./store.js";
-import { createTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
+import { controlTakeover, createTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
 
-const Target = z.union([z.object({ loginCardId: z.string().min(1).max(100) }).strict(), z.object({ jobId: z.string().uuid(), tab: z.string().regex(/^t\d{1,9}$/).optional() }).strict()]);
+const Target = z.union([
+  z.object({ loginCardId: z.string().min(1).max(100) }).strict(),
+  z.object({ jobId: z.string().uuid(), tab: z.string().regex(/^t\d{1,9}$/).optional() }).strict(),
+  z.object({ liveCardId: z.string().min(1).max(100) }).strict(),
+]);
 
 function browserSession(request: FastifyRequest): string {
   if (request.authVia !== "session") throw new TakeoverError("Open the browser from the Ensemble Node page you are signed in to.", 403, "browser_only");
@@ -36,7 +40,7 @@ export async function registerTakeoverRoutes(app: FastifyInstance, account: (req
   app.post("/api/node/takeovers", async (request, reply) => {
     try {
       const target = Target.safeParse(request.body);
-      if (!target.success) return reply.code(400).send({ error: "Name the sign-in card (loginCardId) or the run (jobId) whose tab to open." });
+      if (!target.success) return reply.code(400).send({ error: "Name the sign-in card (loginCardId), the run (jobId) or the live card (liveCardId) to open." });
       return await createTakeover(app, account(request), browserSession(request), target.data);
     } catch (error) {
       return fail(error, reply);
@@ -73,6 +77,17 @@ export async function registerTakeoverRoutes(app: FastifyInstance, account: (req
       if (!message.success) return reply.code(400).send({ error: "That input could not be read." });
       await relayInput(app, await own(request), message.data as Message);
       return { ok: true };
+    } catch (error) {
+      return fail(error, reply);
+    }
+  });
+
+  // A live view: take control of the node's tab or terminal, or go back to watching.
+  app.post("/api/node/takeovers/:id/control", async (request, reply) => {
+    try {
+      const body = z.object({ on: z.boolean() }).strict().safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: "Say whether to take control (on: true) or watch (on: false)." });
+      return await controlTakeover(app, await own(request), body.data.on);
     } catch (error) {
       return fail(error, reply);
     }

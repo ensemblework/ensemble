@@ -123,6 +123,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even from their phone; never ask for passwords or codes\)\. They say done: browser_login_check/,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
+    /A shell that stays open \(a REPL, a program that asks questions\): terminal_open, then terminal_send\. Your owner wants to watch it or your browser live: live_view/,
     /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
     /administrator rights: computer_sudo \(your owner types their password on a card here; you never see it\)/,
     /Writing or changing code in a repository[^\n]*whenever your owner names an agent[^\n]*: an agent session/,
