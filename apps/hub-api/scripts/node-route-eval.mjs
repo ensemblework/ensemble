@@ -51,7 +51,7 @@ const CASES = [
   { ask: "add yourself to the SWE crew", want: [["node_crew_add"]], avoid: AGENT, card: "crew_add", setup: "crew" },
   // Round 3: Ensemble's own boards (never a browser sign-in), a live terminal, a folder sent zipped, a CLI sign-in.
   { ask: (ctx) => `what's on my EnsembleWork board? ${ctx.boardUrl}`, want: [["hub_read_board", "hub_list_boards"]], avoid: [...AGENT, "browser_open", "browser_view", "browser_login_needed", "web_task"], setup: "board" },
-  { ask: "open a terminal on my computer that I can watch live, and start htop in it", want: [["terminal_open"], ["live_view"]], avoid: AGENT },
+  { ask: "open a terminal on my computer that I can watch live, and start htop in it", want: [["terminal_open"]], avoid: AGENT, liveCard: true },
   { ask: "zip the reports folder on my computer and send it to me here", want: [["node_share_file"]], avoid: AGENT, share: /reports/ },
   { ask: "sign in to the Azure CLI on my computer (az login)", want: [["computer_run"]], avoid: AGENT, run: /\baz\s+login\b/, noPassword: true },
 ];
@@ -147,6 +147,8 @@ async function answerFor(request, token) {
     const command = String(request.command ?? "");
     // Nothing the owner asks to install is there yet.
     if (/\b(which|command -v|type|dpkg(-query)? (-s|-l|--status|-W)|apt(-cache)? (list|policy|show)|snap list|flatpak list)\b/.test(command)) return { status: 200, body: { exitCode: 1, output: "", ms: 40 } };
+    // The owner's reports folder is there, with three files.
+    if (/\breports\b/.test(command) && /\b(ls|find|test|stat|du|tree)\b|\[ -d/.test(command)) return { status: 200, body: { exitCode: 0, output: "reports/summary.md\nreports/q3.csv\nreports/chart.png\n", ms: 30 } };
     const output = /df\b/.test(command)
       ? "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  915G  402G  467G  47% /\n"
       : /ifconfig|ipify|icanhazip|ip\.me|curl/.test(command)
@@ -162,10 +164,10 @@ async function answerFor(request, token) {
   if (tool === "http") return { status: 200, body: { status: 200, body: "ok" } };
   if (tool === "live") {
     const htop = "  1  [|||||     23.1%]   Tasks: 211, 1043 thr; 2 running\n  Mem[||||||||  6.12G/31.2G]   Load average: 0.42 0.51 0.48\n  PID USER  PRI  NI  VIRT   RES  CPU% MEM%  Command";
-    if (request.action === "terminal_open") return { status: 200, body: { session: "s1", title: request.title ?? "Terminal", folder: "app", screen: "akash@home:~/app$ ", atPrompt: true, columns: 120, rows: 32 } };
-    if (request.action === "terminal_close") return { status: 200, body: { session: "s1", ended: true, exitCode: 0 } };
+    if (request.action === "terminal_open") return { status: 200, body: { session: "ts0000000000a1", title: request.title ?? "Terminal", folder: "app", screen: "akash@home:~/app$ ", atPrompt: true, columns: 120, rows: 32 } };
+    if (request.action === "terminal_close") return { status: 200, body: { session: "ts0000000000a1", ended: true, exitCode: 0 } };
     if (request.action === "browser_tab") return { status: 200, body: { title: "Live" } };
-    return { status: 200, body: { session: "s1", screen: /htop/.test(String(request.text ?? "")) ? htop : "akash@home:~/app$ ", atPrompt: !/htop/.test(String(request.text ?? "")), columns: 120, rows: 32 } };
+    return { status: 200, body: { session: "ts0000000000a1", screen: /htop/.test(String(request.text ?? "")) ? htop : "akash@home:~/app$ ", atPrompt: !/htop/.test(String(request.text ?? "")), columns: 120, rows: 32 } };
   }
   if (tool === "files") {
     if (request.action === "share" && !/\.[a-z0-9]{1,5}$/i.test(String(request.path))) return capture(`Zipped ${request.path} into ${String(request.path).split("/").at(-1)}.zip (3 files).`, null, [`${String(request.path).split("/").at(-1)}.zip`, "file", Buffer.from("PK\u0005\u0006" + "\u0000".repeat(18)), "application/zip"]);
@@ -326,8 +328,12 @@ async function runModel({ model, effort }) {
     // Cards the node posted (sudo, permissions): approve a sudo card so the work can go on.
     for (const card of fresh.filter((row) => row.kind === "approval" && row.data?.type === "sudo" && row.data?.status === "pending")) {
       await call(`/api/node/sudo/${card.id}`, { method: "POST", cookie, body: { action: "run" } }).catch(() => undefined);
-      await sleep(15_000);
-      fresh = (await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.filter((row) => !seen.has(row.id));
+      // The node goes on once the command ran: wait for its reply after the card, up to a minute.
+      for (const until = Date.now() + 60_000; Date.now() < until; ) {
+        await sleep(5_000);
+        fresh = (await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.filter((row) => !seen.has(row.id));
+        if (fresh.some((row) => row.authorKind === "node" && row.kind === "text" && row.seq > card.seq)) break;
+      }
     }
     const replies = fresh.filter((row) => row.authorKind === "node" && row.kind === "text");
     const allChips = replies.flatMap((row) => (Array.isArray(row.data?.tools) ? row.data.tools : []));
@@ -351,6 +357,7 @@ async function runModel({ model, effort }) {
     if (item.says && !item.says.test(text)) problems.push(`reply lacks ${item.says}`);
     if (item.input && !computer.calls.slice(callsBefore).some((request) => request.name === item.input.tool && item.input.pattern.test(JSON.stringify(request.input ?? {})))) problems.push(`${item.input.tool} without ${item.input.pattern}`);
     if (item.card && !cards.includes(item.card)) problems.push(`no ${item.card} card`);
+    if (item.liveCard && !fresh.some((row) => row.data?.type === "live")) problems.push("no live card for the owner");
     if (item.share && !computer.calls.slice(callsBefore).some((request) => request.tool === "files" && request.action === "share" && item.share.test(String(request.path)))) problems.push(`node_share_file without ${item.share}`);
     if (item.run && !computer.calls.slice(callsBefore).some((request) => request.tool === "run" && item.run.test(String(request.command)))) problems.push(`computer_run without ${item.run}`);
     if (item.noPassword && PASSWORD_ASK.test(text)) problems.push("asked for a password in chat");
