@@ -300,11 +300,11 @@ test("a live terminal: the node opens it, the owner watches and types from the w
     assert.equal(again.statusCode, 410);
 
     // A shell that exits on the computer (the owner typed exit) ends its card through the computer.
-    script = (transcript) => (transcript.includes("another terminal") ? { calls: [{ name: "terminal_open", arguments: {} }], then: "Open." } : { text: "ok" });
-    const second = /Terminal (ts[0-9a-f]{12}) is open/.exec((await node.say("another terminal"))[0]?.summary ?? "")?.[1] ?? "";
-    script = (transcript) => (transcript.includes("watch the other") ? { calls: [{ name: "live_view", arguments: { kind: "terminal", session: second } }], then: "There." } : { text: "ok" });
-    await node.say("watch the other");
+    // Opened with live: true, its card comes at once, without a live_view call.
+    script = (transcript) => (transcript.includes("another terminal") ? { calls: [{ name: "terminal_open", arguments: { live: true } }], then: "Open." } : { text: "ok" });
+    const second = /Terminal (ts[0-9a-f]{12}) is open/.exec((await node.say("another terminal I can watch"))[0]?.summary ?? "")?.[1] ?? "";
     const secondCard = (await node.cards()).find((row) => row.data.session === second)!;
+    assert.ok(secondCard, "the live card came with terminal_open");
     const viewer = await ownerBrowser(mira, secondCard.id);
     assert.equal((await viewer.start()).statusCode, 200);
     await viewer.send([{ t: "tty", text: "exit\r" }]);

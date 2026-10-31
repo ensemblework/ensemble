@@ -125,7 +125,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /CLI sign-ins \(`az login`\): computer_run; here you may tell your owner its code\./,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
-    /A shell that stays open \(a REPL, a prompt\): terminal_open, then terminal_send\. To show it or your browser live: live_view/,
+    /A shell that stays open \(a REPL, a prompt\): terminal_open \(live: true to show it\), then terminal_send\. Tab live: live_view/,
     /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
     /administrator rights: computer_sudo \(your owner types their password on a card here; you never see it\)/,
     /Writing or changing code in a repository[^\n]*whenever your owner names an agent[^\n]*: an agent session/,

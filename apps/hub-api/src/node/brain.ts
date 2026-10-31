@@ -223,7 +223,7 @@ const HANDS = [
 ];
 
 /** Live terminals and live views (node/live-views.ts). */
-const LIVE_ROW = "- A shell that stays open (a REPL, a prompt): terminal_open, then terminal_send. To show it or your browser live: live_view.";
+const LIVE_ROW = "- A shell that stays open (a REPL, a prompt): terminal_open (live: true to show it), then terminal_send. Tab live: live_view.";
 
 /**
  * Who the node can give work to: in a crew it leads, the owner's nodes outside it (only the owner adds

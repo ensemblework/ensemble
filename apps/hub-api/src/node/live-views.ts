@@ -183,8 +183,15 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
       description:
         "Open a terminal on your owner's computer that stays open between your calls: a shell in your own folder (or folder), sandboxed like computer_run. " +
         "For interactive or long-lived work: a REPL, a program that asks questions, a login that waits, watching a server. Then terminal_send to type and terminal_read to look; terminal_close when done. " +
-        "At most 3 open; one unused for 30 minutes closes. A one-off command: computer_run.",
-      input: z.object({ computer: Computer, folder: z.string().min(1).max(4096).optional().describe("Omit it for your own folder there."), title: z.string().max(200).optional() }).strict(),
+        "At most 3 open; one unused for 30 minutes closes. A one-off command: computer_run. live: true when your owner wants to watch it (their live card is posted at once).",
+      input: z
+        .object({
+          computer: Computer,
+          folder: z.string().min(1).max(4096).optional().describe("Omit it for your own folder there."),
+          title: z.string().max(200).optional(),
+          live: z.boolean().optional().describe("true: your owner watches it live (their card is posted now)."),
+        })
+        .strict(),
       isWrite: false,
       risk: "medium",
       async run(ctx, input) {
@@ -201,6 +208,10 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
         if (!answer.session) throw new ToolBlockedError(`${done.device.name} opened no terminal.`);
         const record: SessionRecord = { session: answer.session, deviceId: done.device.id, computer: done.device.name, nodeId: node.id, ownerId: node.userId, title: answer.title ?? "Terminal", folder: answer.folder ?? input.folder ?? "", startedAt: new Date().toISOString() };
         await redisOf(ctx.app).set(sessionKey(record.session), JSON.stringify(record), "EX", RECORD_TTL_SECONDS);
+        if (input.live) {
+          const { card } = await postLiveCard(ctx.app, scope, { device: { id: done.device.id, name: done.device.name }, kind: "terminal", liveId: record.session, title: record.title, session: record.session });
+          return toolOk(`Terminal ${record.session} is open on ${done.device.name} in ${record.folder} (${record.title}), and your owner has its live card in this chat to watch and type. Type with terminal_send; mention the card in one line.`, { ...data, computer: done.device.name, card: card.id });
+        }
         return toolOk(`Terminal ${record.session} is open on ${done.device.name} in ${record.folder} (${record.title}). Type with terminal_send; if your owner wants to watch it, live_view.`, { ...data, computer: done.device.name });
       },
     }),
