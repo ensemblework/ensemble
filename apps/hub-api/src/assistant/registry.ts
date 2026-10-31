@@ -15,6 +15,7 @@ import { taskTools } from "./tools/tasks.js";
 import { projectTools } from "./tools/projects.js";
 import { contextTools } from "./tools/context.js";
 import { fileTools } from "./tools/files.js";
+import { saveFileTools } from "./tools/save-file.js";
 import { skillTools } from "./tools/skills.js";
 import { reminderTools } from "./tools/reminders.js";
 import { fetchTools } from "./tools/fetch.js";
@@ -50,6 +51,7 @@ import { surfaceTools } from "./tools/surfaces.js";
 import { recordActionTools } from "./tools/record-actions.js";
 import { agentAssignTools } from "./tools/agent-assign.js";
 import { connectionTools } from "./tools/connections.js";
+import { setToolCatalog } from "./skills/index.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...howToTools,
@@ -66,6 +68,7 @@ const ALL: readonly AnyHubTool[] = [
   ...projectTools,
   ...contextTools,
   ...fileTools,
+  ...saveFileTools,
   ...skillTools,
   ...reminderTools,
   ...fetchTools,
@@ -102,6 +105,9 @@ export const TOOL_NAMES: readonly string[] = ALL.map((tool) => tool.name);
 export function getTool(name: string): AnyHubTool | undefined {
   return TOOLS.get(name);
 }
+
+// A playbook that requires a tool is offered only when this build has it (skills/index.ts).
+setToolCatalog((name) => TOOLS.has(name) || APP_TOOL_LIST.some((tool) => tool.name === name));
 
 export const toolInfo = (tool: AnyHubTool): AssistantToolInfo => ({
   name: tool.name,

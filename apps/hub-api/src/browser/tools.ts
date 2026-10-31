@@ -7,9 +7,12 @@
 import { z } from "zod";
 import { CaptureError } from "../capture/media.js";
 import { BrowserError, type BrowserBroker, type LiveFrame } from "./broker.js";
-import { askForLogin, checkForLogin, waitingNote } from "../logins/requests.js";
+import { askForLogin, checkForLogin, checkLoginOfTab, waitingNote, type LoginPurpose } from "../logins/requests.js";
 import { HUMAN_CHECK_HINT } from "./human-check.js";
+import { dismissedNote } from "./hygiene.js";
+import { shopStores, shopSummary } from "./shop/index.js";
 import { BROWSER_TOOLS, inputSchema, type ToolSpec } from "./tool-specs.js";
+import { extractPage, fetchUrl, fileOnTab, setLocation, viewPage, type ExtractResult, type FetchResult, type ViewResult } from "./web.js";
 
 export { BROWSER_TOOLS, inputSchema, type ToolSpec };
 
@@ -45,6 +48,33 @@ export function toolError(error: unknown): ToolCallResult {
   return { ok: false, error: { code: "failed", message: error instanceof Error ? error.message.split("\n")[0]! : String(error) } };
 }
 
+const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+
+function viewSummary(view: ViewResult): string {
+  const lines = [`${view.mode === "clean" ? "Read-only view" : `Viewed in tab ${view.tab}`}: ${view.title || view.url} (${view.url}).`];
+  if (view.focus !== undefined) lines.push(view.focusFound ? `The screenshot shows ${view.focusOn ?? `“${view.focus}”`}.` : `“${view.focus}” was not found on the page, so the screenshot shows the top of the page: try another wording, fullPage, or another site.`);
+  if (!view.file) lines.push("No screenshot could be taken.");
+  else if (view.file.held) lines.push(`The screenshot is held for the owner to preview: ${view.file.reason}`);
+  if (view.location) lines.push(`Place: ${view.location.label}${view.location.shown ? `; the site shows “${view.location.shown}”` : ""}.${view.location.note ? ` ${view.location.note}` : ""}`);
+  if (view.dismissed?.length) lines.push(dismissedNote({ dismissed: view.dismissed, ms: 0 }));
+  if (view.note) lines.push(view.note);
+  if (view.humanCheck) lines.push(`${HUMAN_CHECK_HINT} It shows ${view.humanCheckKind}.`);
+  lines.push(`Text of the page${view.textTruncated ? " (cut)" : ""}:\n${view.text || "(none)"}`);
+  return lines.join("\n");
+}
+
+function extractSummary(page: ExtractResult): string {
+  const lines = [`${page.title || page.url} (${page.url})${page.tab ? ` in tab ${page.tab}` : page.mode === "clean" ? ", read in a clean browser" : ""}.`];
+  if (page.humanCheck) lines.push(`${HUMAN_CHECK_HINT} It shows ${page.humanCheckKind}.`);
+  if (page.products.length) lines.push(`Products: ${page.products.slice(0, 15).map((product) => `${product.name}${product.price !== null ? ` — ${product.currency ?? ""} ${product.price}`.replace("  ", " ") : ""}${product.availability ? ` (${product.availability})` : ""}${product.url ? ` ${product.url}` : ""}`).join("; ")}`);
+  lines.push(`${page.markdown || "(no readable text)"}${page.truncated ? `\n(cut at ${page.markdown.length} of ${page.chars} characters: ask for more with maxChars, or a focus)` : ""}`);
+  return lines.join("\n");
+}
+
+function fetchSummary(file: FetchResult): string {
+  return `Downloaded ${file.name} (${file.mime}, ${size(file.size)}) from ${file.url}.`;
+}
+
 /** Validates and runs one browser tool call for an operation. Never throws. */
 export async function runBrowserTool(broker: BrowserBroker, name: string, input: unknown, context: BrowserToolContext): Promise<ToolCallResult> {
   const spec = BROWSER_TOOLS.find((item) => item.name === name);
@@ -73,8 +103,9 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
     };
     switch (spec.name) {
       case "browser_open": {
-        const opened = await op.open(a.url as string, { tab: a.tab as string | undefined, profile: a.profile as string | undefined, private: a.private as boolean | undefined, headed: a.headed as boolean | undefined, device: a.device as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined });
-        const summary = opened.error ? `Tab ${opened.tab} could not load the page: ${opened.error}` : `Opened ${opened.tab}: ${opened.title || opened.url}${opened.status ? ` (${opened.status})` : ""}.`;
+        const opened = await op.open(a.url as string, { tab: a.tab as string | undefined, profile: a.profile as string | undefined, private: a.private as boolean | undefined, headed: a.headed as boolean | undefined, device: a.device as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined, clean: a.clean !== false });
+        const closed = opened.dismissed?.length ? ` ${dismissedNote({ dismissed: opened.dismissed, ms: 0 })}` : "";
+        const summary = opened.error ? `Tab ${opened.tab} could not load the page: ${opened.error}` : `Opened ${opened.tab}: ${opened.title || opened.url}${opened.status ? ` (${opened.status})` : ""}.${closed}`;
         const done = { ok: true as const, summary: opened.note ? `${summary} ${opened.note}` : summary, result: opened };
         return opened.error ? done : withHumanCheck(await withLogin(done, opened.tab, { requested: a.url as string, status: opened.status }), opened.tab, opened.status);
       }
@@ -87,7 +118,7 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
         return { ok: true, summary: `Closed ${closed.closed}.`, result: closed };
       }
       case "browser_snapshot": {
-        const snapshot = await op.snapshot(a.tab as string, { maxChars: a.maxChars as number | undefined });
+        const snapshot = await op.snapshot(a.tab as string, { maxChars: a.maxChars as number | undefined, mode: a.mode as "interactive" | undefined });
         return withHumanCheck({ ok: true, summary: `${snapshot.title || snapshot.url}\n${snapshot.snapshot}`, result: snapshot }, snapshot.tab);
       }
       case "browser_click": {
@@ -108,8 +139,10 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
         return { ok: true, summary: `Done after ${waited.waitedMs} ms.`, result: waited };
       }
       case "browser_screenshot": {
-        const file = await op.screenshot(a.tab as string, { fullPage: a.fullPage as boolean | undefined, element: a.element as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined, name: a.name as string | undefined, format: a.format as "png" | undefined });
-        return { ok: true, summary: `Saved ${file.path} (${file.width}×${file.height}).${file.held ? ` Held for the owner to preview: ${file.reason}` : ""}`, result: file };
+        const file = await op.screenshot(a.tab as string, { fullPage: a.fullPage as boolean | undefined, element: a.element as string | undefined, focus: a.focus as string | undefined, viewport: a.viewport as { width: number; height: number } | undefined, name: a.name as string | undefined, format: a.format as "png" | undefined, clean: true });
+        const focus = file.focus === undefined ? "" : file.focusFound ? ` It shows ${file.focusOn ?? `“${file.focus}”`}.` : ` “${file.focus}” was not found on the page, so it shows the ${a.fullPage ? "full page" : "visible page"}: try another wording or fullPage.`;
+        const closed = file.dismissed?.length ? ` ${dismissedNote({ dismissed: file.dismissed, ms: 0 })}` : "";
+        return { ok: true, summary: `Saved ${file.path} (${file.width}×${file.height}).${focus}${closed}${file.held ? ` Held for the owner to preview: ${file.reason}` : ""}`, result: file };
       }
       case "browser_console": {
         const log = await op.console(a.tab as string, { level: a.level as "all" | undefined, clear: a.clear as boolean | undefined });
@@ -129,12 +162,53 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
         return { ok: true, summary: `Sent ${sent.file} (${sent.size} bytes).`, result: sent };
       }
       case "browser_login_needed": {
-        const login = await askForLogin(broker, context.operation, a.tab as string, { origin: a.origin as string | undefined, signedIn: a.signedIn as { urlPattern?: string; selector?: string } | undefined, reason: a.reason as string | undefined });
+        const login = await askForLogin(broker, context.operation, a.tab as string, { origin: a.origin as string | undefined, signedIn: a.signedIn as { urlPattern?: string; selector?: string } | undefined, reason: a.reason as string | undefined, purpose: a.purpose as LoginPurpose | undefined });
         return { ok: true, summary: waitingNote(login), result: { login } };
       }
+      case "browser_login_check": {
+        const checked = await checkLoginOfTab(broker, context.operation, a.tab as string);
+        return { ok: true, summary: checked.message, result: { tab: a.tab as string, ...checked } };
+      }
       case "browser_download": {
-        const saved = await op.download(a.tab as string, { ref: a.ref as string | undefined, timeoutMs: a.timeoutMs as number | undefined });
-        return { ok: true, summary: `Saved ${saved.name} to ${saved.path} (${saved.size} bytes).`, result: saved };
+        // A tab that shows a PDF (Chromium's viewer) or another file starts no download: the file is fetched instead.
+        const shown = a.ref ? null : await fileOnTab(broker, context.operation, a.tab as string).catch(() => null);
+        if (shown) {
+          const fetched = await fetchUrl(broker, context.operation, { url: shown, tab: a.tab as string });
+          return { ok: true, summary: fetchSummary(fetched), result: fetched };
+        }
+        try {
+          const saved = await op.download(a.tab as string, { ref: a.ref as string | undefined, timeoutMs: a.timeoutMs as number | undefined });
+          return { ok: true, summary: `Saved ${saved.name} to ${saved.path} (${saved.size} bytes).`, result: saved };
+        } catch (error) {
+          const file = error instanceof BrowserError && error.code === "timeout" ? await fileOnTab(broker, context.operation, a.tab as string).catch(() => null) : null;
+          if (!file) throw error;
+          const fetched = await fetchUrl(broker, context.operation, { url: file, tab: a.tab as string });
+          return { ok: true, summary: fetchSummary(fetched), result: fetched };
+        }
+      }
+      case "browser_view": {
+        const view = await viewPage(broker, context.operation, { url: a.url as string, focus: a.focus as string | undefined, fullPage: a.fullPage as boolean | undefined, location: a.location as string | undefined, name: a.name as string | undefined });
+        const done = { ok: true as const, summary: viewSummary(view), result: view };
+        return view.tab && view.mode === "browser" && !view.humanCheck ? withLogin(done, view.tab, { requested: a.url as string, status: view.status ?? null }) : done;
+      }
+      case "browser_fetch": {
+        const fetched = await fetchUrl(broker, context.operation, { url: a.url as string, name: a.name as string | undefined, tab: a.tab as string | undefined });
+        return { ok: true, summary: fetchSummary(fetched), result: fetched };
+      }
+      case "browser_extract": {
+        if (Boolean(a.tab) === Boolean(a.url)) return { ok: false, error: { code: "bad_input", message: "Give a tab you have open, or a url to open (one of them)." } };
+        const page = await extractPage(broker, context.operation, { tab: a.tab as string | undefined, url: a.url as string | undefined, focus: a.focus as string | undefined, maxChars: a.maxChars as number | undefined });
+        const done = { ok: true as const, summary: extractSummary(page), result: page };
+        return page.tab && a.url && !page.humanCheck ? withLogin(done, page.tab, { requested: a.url as string }) : done;
+      }
+      case "browser_set_location": {
+        const set = await setLocation(broker, context.operation, { tab: a.tab as string | undefined, location: a.location as string, site: a.site as string | undefined });
+        const where = set.shown ? ` ${set.site === "amazon" ? "Amazon shows" : "The site shows"} “${set.shown}”.` : "";
+        return { ok: true, summary: `${set.ok ? "Set" : "Could not fully set"} the place to ${set.location}${set.tab ? ` in tab ${set.tab}` : ""}.${where}${set.note ? ` ${set.note}` : ""}`, result: set };
+      }
+      case "browser_shop": {
+        const result = await shopStores(broker, context.operation, { query: a.query as string, stores: a.stores as string[] | undefined, location: a.location as string | undefined, max: a.max as number | undefined });
+        return { ok: true, summary: shopSummary(result), result };
       }
     }
     return { ok: false, error: { code: "bad_input", message: `Unknown browser tool ${name}.` } };

@@ -56,3 +56,42 @@ test("a takeover lasts 15 minutes unless set, between 2 seconds and an hour", ()
   assert.equal(takeoverMaxMs({ ENSEMBLE_TAKEOVER_SECONDS: "99999" }), 3_600_000);
   assert.equal(takeoverMaxMs({ ENSEMBLE_TAKEOVER_SECONDS: "soon" }), 900_000);
 });
+
+test("keys for the clean browser, as a person's keyboard sends them: printable keys and Enter with their text, editing keys without, modifiers held", async () => {
+  const { CleanKeyboard, keyDefinition } = await import("./keys.js");
+  const keyboard = new CleanKeyboard("linux");
+  assert.deepEqual(keyboard.events("down", "a").events, [{ type: "keyDown", key: "a", code: "KeyA", keyCode: 65, text: "a", modifiers: 0 }]);
+  assert.deepEqual(keyboard.events("up", "a").events, [{ type: "keyUp", key: "a", code: "KeyA", keyCode: 65, modifiers: 0 }]);
+  assert.deepEqual(keyboard.events("down", "Enter").events[0], { type: "keyDown", key: "Enter", code: "Enter", keyCode: 13, text: "\r", modifiers: 0 }, "Enter submits a form, as Puppeteer types it");
+  keyboard.events("up", "Enter");
+  assert.deepEqual(keyboard.events("down", "Tab").events[0], { type: "rawKeyDown", key: "Tab", code: "Tab", keyCode: 9, modifiers: 0 });
+  keyboard.events("up", "Tab");
+  for (const name of ["Backspace", "Delete", "Escape", "ArrowLeft", "ArrowDown", "Home", "End", "PageUp", "PageDown"]) {
+    const [event] = keyboard.events("down", name).events;
+    assert.equal(event?.type, "rawKeyDown", name);
+    assert.ok(!event?.text, name);
+    keyboard.events("up", name);
+  }
+  // Shift keeps text (a capital); Control makes a letter a shortcut.
+  keyboard.events("down", "Shift");
+  assert.deepEqual(keyboard.events("down", "A").events[0], { type: "keyDown", key: "A", code: "KeyA", keyCode: 65, text: "A", modifiers: 8 });
+  keyboard.events("up", "A");
+  keyboard.events("up", "Shift");
+  keyboard.events("down", "Control");
+  assert.deepEqual(keyboard.events("down", "a").events[0], { type: "rawKeyDown", key: "a", code: "KeyA", keyCode: 65, modifiers: 2 });
+  assert.equal(keyboard.modifiersHeld(), 2);
+  keyboard.events("up", "a");
+  keyboard.events("up", "Control");
+  assert.equal(keyboard.modifiersHeld(), 0);
+  // A key held down again is a repeat; a character no US key makes is inserted as text.
+  keyboard.events("down", "x");
+  assert.equal(keyboard.events("down", "x").events[0]?.autoRepeat, true);
+  keyboard.events("up", "x");
+  assert.deepEqual(keyboard.events("down", "é"), { events: [], insert: "é" });
+  assert.deepEqual(keyboard.events("down", "AudioVolumeUp"), { events: [] });
+  assert.deepEqual(keyDefinition("?"), { key: "?", code: "Slash", keyCode: 191, text: "?" });
+  // On a Mac, editing shortcuts with Meta are commands.
+  const mac = new CleanKeyboard("darwin");
+  mac.events("down", "Meta");
+  assert.deepEqual(mac.events("down", "a").events[0]?.commands, ["selectAll"]);
+});

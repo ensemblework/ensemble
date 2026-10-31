@@ -366,6 +366,26 @@ test("a call that names no folder works in the node's own folder: made on first 
   assert.equal(named.status, 428, "another folder still asks once");
 });
 
+test("Ensemble's own run and node folders count as the node's own: no answer asked, the floor still applies", async () => {
+  updateSettings({ acceptWebApprovals: true });
+  const workspace = join(home, "ensemble-workspace");
+  const run = join(workspace, "runs", "job-1");
+  const other = join(workspace, "nodes", "other-node");
+  mkdirSync(join(run, "src"), { recursive: true });
+  mkdirSync(other, { recursive: true });
+  for (const folder of [run, join(run, "src"), other]) assert.equal((await resolveToolFolder(folder)).own, true, folder);
+  assert.equal((await resolveToolFolder(join(workspace, "runs"))).own, undefined, "all the runs at once are not one run's folder");
+  assert.equal((await resolveToolFolder(work)).own, undefined, "a project folder still asks once");
+  const db = memoryDb();
+  const wrote = await ask(db, { tool: "files", action: "write", folder: run, path: "notes.md", content: "# Notes\n" });
+  assert.equal(wrote.status, 200, JSON.stringify(wrote.body));
+  assert.equal(readFileSync(join(run, "notes.md"), "utf8"), "# Notes\n");
+  assert.equal(db.rules.length, 0, "nothing asked, nothing kept");
+  // The floor still holds inside them: a link planted there is refused.
+  symlinkSync(join(home, ".ssh"), join(workspace, "runs", "planted"));
+  await assert.rejects(resolveToolFolder(join(workspace, "runs", "planted")), /link/);
+});
+
 test("the policy: the node's own folder needs no answer (commands ask per mission where the sandbox is weak); public pages open without asking", async () => {
   const own = { capability: "run" as const, target: "/w/nodes/helper", label: "@helper's folder", scope: "folder" as const, own: true, mission: "m1", attended: true, grants: [] };
   assert.equal((await decide(memoryDb() as never, "local", own, { weak: false, acceptWeb: true })).kind, "allow");
@@ -404,6 +424,25 @@ test("a public page opens without asking, unless the owner asked to be asked her
     assert.equal((await ask(memoryDb(), open)).status, 428, "this computer's own choice");
   } finally {
     updateSettings({ askBeforeBrowsing: false });
+    setResolverForTests(null);
+  }
+});
+
+test("browser_shop asks only for a shop on this computer's network; the web tools that take an address are judged like browser_open", async () => {
+  const { captureScope } = await import("./capture.js");
+  setResolverForTests(async (host) => ({ "www.amazon.com": ["93.184.216.34"], "www.walmart.com": ["93.184.216.35"] })[host] ?? []);
+  try {
+    const request = (name: string, input: Record<string, unknown>) => ({ tool: "browser" as const, name, input, operation: `node:${NODE}:own`, uploadId: "u1", network: true, id: randomUUID(), nodeId: NODE, mission: "m1", attended: true, grants: [] });
+    assert.equal(await captureScope(request("browser_shop", { query: "ps5" })), null, "the known stores are public sites");
+    assert.equal(await captureScope(request("browser_shop", { query: "ps5", stores: ["amazon", "walmart"] })), null);
+    const lan = await captureScope(request("browser_shop", { query: "ps5", stores: ["amazon", "http://192.168.1.5/find?q={query}"] }));
+    assert.deepEqual([lan?.input.capability, lan?.input.target, lan?.input.publicWeb], ["browse", "http://192.168.1.5", false]);
+    const view = await captureScope(request("browser_view", { url: "http://localhost:3000/app" }));
+    assert.deepEqual([view?.input.target, view?.input.publicWeb], ["http://localhost:3000", false]);
+    assert.equal((await captureScope(request("browser_fetch", { url: "https://www.amazon.com/paper.pdf" })))?.input.publicWeb, true);
+    assert.equal((await captureScope(request("browser_extract", { url: "https://www.walmart.com/ip/1" })))?.input.target, "https://www.walmart.com");
+    assert.equal(await captureScope(request("browser_extract", { tab: "t1" })), null, "a tab of its own asks nothing");
+  } finally {
     setResolverForTests(null);
   }
 });

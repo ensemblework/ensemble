@@ -25,7 +25,7 @@ const { settleTurns } = await import("./queue.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
-const { deviceTools } = await import("./device-tools.js");
+const { deviceTools, forComputer } = await import("./device-tools.js");
 const { postMessage } = await import("./store.js");
 after(() => h.close());
 
@@ -461,7 +461,7 @@ test("what the node captures comes with its reply by itself; its own choice with
     return { status: 200, body: { ok: true, summary: "Captured.", evidence: [{ id, name: `shot-${shots.length}.png`, kind: "screenshot", held: false, local: false }], refused: [] } };
   });
   try {
-    const shoot = { name: "capture_screenshot", arguments: { target: "web", url: "https://example.com/" } };
+    const shoot = { name: "browser_screenshot", arguments: { tab: "t1" } };
     script = (turn) => (turn.transcript.includes("screenshot of example") ? { calls: [shoot, shoot], then: "Here is example.com." } : { text: "ok" });
     await say(mira, room.id, "send me a screenshot of example.com");
     const reply = (await replies(mira, room.id, node.id)).at(-1)!;
@@ -637,4 +637,15 @@ test("a node's agent run gets only the secrets it names: none by default, a save
   await say(mira, room.id, "run them again with the key");
   const second = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, id: { not: first.id } }, orderBy: { createdAt: "desc" } });
   assert.deepEqual((second.context as { secrets?: unknown }).secrets, ["STRIPE_KEY"]);
+});
+
+test("a 0.6.0 computer gets the browser tools' older inputs, so a focused screenshot still works there", () => {
+  const request = { tool: "browser", name: "browser_screenshot", input: { tab: "t1", focus: "the price chart", clean: true }, operation: "op" };
+  assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, request).input, { tab: "t1" });
+  assert.deepEqual(forComputer({ capabilities: { browser: 2 } }, request), request);
+  const signIn = { tool: "browser", name: "browser_login_needed", input: { tab: "t1", purpose: "human_check" } };
+  assert.deepEqual(forComputer({ capabilities: { browser: 2, logins: 1 } }, signIn).input, { tab: "t1" }, "a sign-in's purpose only for logins 2");
+  assert.equal(forComputer({ capabilities: { browser: 2, logins: 2 } }, signIn), signIn);
+  const command = { tool: "run", command: "ls", mode: "x" };
+  assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, command), command, "only browser calls change");
 });

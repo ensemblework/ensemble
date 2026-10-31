@@ -36,6 +36,7 @@ import { sendEvidence } from "../evidence/upload.js";
 import { answerEvidenceRequest } from "../evidence/requests.js";
 import { setLiveSink } from "./live.js";
 import { setRunLoginSink } from "../logins/run.js";
+import { setLoginStateSink } from "../logins/requests.js";
 import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
@@ -130,6 +131,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     recovery: 1,
     // A run that continues another goes on in the agent's own session, and takes a steer (Ensemble Node's queue, steer, replace).
     sessions: 1,
+    // A permission answered on the web "for this run" becomes a rule of the run here (remote/policy.ts `judgeAnswer`).
+    runAnswers: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
     nodeTools: NODE_TOOLS_API,
     // Files a run's worker attaches go to the web, unless the person turned it off here (`ensemble evidence off`).
@@ -142,9 +145,9 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     ...credentialCapabilities(settings),
     // A node's browser and capture tools run here (protocol 7), and what this computer can capture.
     browser: BROWSER_API,
-    // Sign-ins handed to the owner: the card's answers (`login.resolve`), saved logins here (B11, protocol 8).
+    // Sign-ins and human checks handed to the owner: the card's answers (`login.resolve`), saved logins here, seen done here (B11, protocol 8; 2: purpose, codes, checks).
     logins: LOGINS_API,
-    // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8).
+    // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8; 2: sign-ins in a clean browser).
     takeover: TAKEOVER_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
@@ -274,6 +277,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     if (!job || (job.protocol ?? 1) < 8 || !client.runLogin) return null;
     return client.runLogin(job.hostedId, { leaseToken: job.leaseToken, ...login });
   });
+  // A sign-in seen done here by itself (or gone, or expired) is told to the web, which updates its card (logins 2).
+  setLoginStateSink(async (loginId, state) => client.loginState?.(loginId, state));
   await reconcile(app, client);
   let claiming = false;
   // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
@@ -385,6 +390,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
       currentSession = null;
       setLiveSink(null);
       setRunLoginSink(null);
+      setLoginStateSink(null);
     }
   }
 }
@@ -592,7 +598,11 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
     mirror.settled = true;
     persist();
     if (verdict.kind === "apply") {
-      await applyAnswer(app, userId(), localId, { decision: verdict.decision, scope: "once", reason: verdict.reason ?? undefined }, "system").catch(() => undefined);
+      // "For this run" is saved here as a rule of the run (routes/decisions.ts); should this computer refuse that, the answer still counts once.
+      const apply = (scope: "once" | "session") => applyAnswer(app, userId(), localId, { decision: verdict.decision, scope, reason: verdict.reason ?? undefined }, "system");
+      await apply(verdict.scope ?? "once")
+        .catch((error: unknown) => (verdict.scope ? apply("once") : Promise.reject(error)))
+        .catch(() => undefined);
     } else if (verdict.kind === "refuse") {
       await appendLedger({
         userId: userId(),

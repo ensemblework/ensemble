@@ -40,7 +40,7 @@ export function runCaptureToolList(): Array<{ name: string; description: string;
   return all.filter((tool) => tool.name === "capture_status");
 }
 
-const URL_TOOLS = new Set(["browser_open", "capture_screenshot", "capture_video", "capture_check"]);
+const URL_TOOLS = new Set(["browser_open", "browser_view", "browser_fetch", "browser_extract", "capture_screenshot", "capture_video", "capture_check"]);
 
 /** The run's folder, or one the person let it work in. */
 async function runFolder(ctx: Pick<JobContext, "root" | "grants">, cwd: string): Promise<string> {

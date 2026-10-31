@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bot, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
+import { ArrowUpRight, Bot, Check, CheckCheck, CircleHelp, Clock3, Lock, MessagesSquare, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
 import { EditorDecisions } from "@/components/needs-me/editor-decisions";
@@ -144,6 +144,19 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
   );
 }
 
+/** Requests waiting in Ensemble Node chats: answered there, next to the work that asks. */
+function NodeChatLine({ count, url }: { count: number; url: string | null }) {
+  const words = `${count} waiting in your Ensemble Node chat${count === 1 ? "" : "s"}`;
+  return (
+    <section className="review-section" data-testid="node-chat-waiting">
+      <header>
+        <span><MessagesSquare size={16} />{url ? <a href={url} target="_blank" rel="noreferrer" className="hover:underline">{words} → open</a> : words}</span>
+        {url ? <a className="btn shrink-0" href={url} target="_blank" rel="noreferrer">Open <ArrowUpRight size={13} /></a> : null}
+      </header>
+    </section>
+  );
+}
+
 export default function NeedsMePage() {
   const client = useQueryClient();
   const approvals = useQuery({ queryKey: ["approvals"], queryFn: api.approvals });
@@ -157,13 +170,17 @@ export default function NeedsMePage() {
   const blocked = (tasks.data?.tasks ?? []).filter((task) => task.status === "blocked" || task.status === "waiting_approval").sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const pendingApprovals = approvals.data?.approvals ?? [];
   const requests = decisions.data?.decisions ?? [];
+  // Requests a node's runs and tools ask are answered in their Node chat; here they are only counted.
+  const nodeChat = decisions.data?.nodeChat ?? null;
+  const inNodeChats = nodeChat?.count ?? 0;
   const ready = approvals.isSuccess && tasks.isSuccess && decisions.isSuccess && !nodes.isPending;
   const failed = approvals.isError || tasks.isError || decisions.isError;
-  const clear = ready && !blocked.length && !pendingApprovals.length && !requests.length && !nodeCards.length;
+  const clear = ready && !blocked.length && !pendingApprovals.length && !requests.length && !nodeCards.length && !inNodeChats;
   return <div className="page-read review-page mx-auto max-w-[980px] px-6 pb-24 pt-8">
     <PageHeader title="Needs me" />
     {failed && <div className="work-load-error" role="alert">Some of your review queue could not load.<button className="btn" type="button" onClick={() => { void approvals.refetch(); void decisions.refetch(); void tasks.refetch(); }}>Try again</button></div>}
     {clear ? <div className="work-clear-state"><span><CheckCheck size={30} /></span><h2>All caught up</h2></div> : <>
+      {inNodeChats > 0 && <NodeChatLine count={inNodeChats} url={nodeChat?.url ?? null} />}
       {(requests.length > 0 || decisions.isPending) && <div className="review-requests"><EditorDecisions hideEmpty /></div>}
       {nodeCards.length > 0 && <section className="review-section"><header><span><Bot size={16} />From your nodes</span><small>{nodeCards.length}</small></header><NodeApprovals cards={nodeCards} nodeUrl={nodes.data?.nodeUrl ?? null} /></section>}
       {(pendingApprovals.length > 0 || approvals.isPending) && <section className="review-section"><header><span><ShieldCheck size={16} />Approvals</span><small>{pendingApprovals.length || ""}</small></header><Held pending={approvals.isPending} fallback={<SkeletonRows count={2} />}><div className="space-y-3">{pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div></Held></section>}

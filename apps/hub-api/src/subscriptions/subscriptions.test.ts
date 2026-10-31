@@ -288,6 +288,14 @@ test("a turn's bridge answers only its own secret, and a changed tool list repla
   assert.equal(bridgeFor(opened.credential), null, "a closed turn is gone");
 });
 
+test("a relayed turn waiting on one long tool call is working, not quiet", async () => {
+  const { quiet } = await import("./relay.js");
+  const longAgo = Date.now() - 6 * 60_000;
+  assert.equal(quiet({ picked: true, busy: 1, heard: longAgo }), false, "a browser task running for minutes keeps the turn");
+  assert.equal(quiet({ picked: true, busy: 0, heard: longAgo }), true);
+  assert.equal(quiet({ picked: false, busy: 0, heard: longAgo }), false, "not picked up yet is the pick-up timer's to judge");
+});
+
 test("the conversation reaches an agent as instructions, the new message, and the chat so far for a new session", () => {
   const { system, prompt, history } = agentConversation(
     [

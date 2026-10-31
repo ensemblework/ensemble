@@ -21,7 +21,7 @@ process.env.ENSEMBLE_WORKSPACE_ROOT = join(base, "ensemble-workspace");
 process.env.ENSEMBLE_SECRET_KEY ??= randomBytes(32).toString("base64");
 
 const { keyBytes, keyTokens, namedKey, ptyArgv, terminalEnv, runNodeTerminal } = await import("./terminal.js");
-const { drawn, headlessTerminal, renderScreen } = await import("../capture/screen.js");
+const { drawn, headlessTerminal, holdAlternateScreen, renderScreen } = await import("../capture/screen.js");
 const { ownToolFolder } = await import("./folders.js");
 const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
 const { findChromium } = await import("../browser/chromium.js");
@@ -79,6 +79,16 @@ test("a screen: 16, 256 and true colours, bold, inverse, underline, wide charact
   assert.match(screen.html, /<title>top &lt;1&gt;<\/title>/);
   assert.equal((screen.html.match(/<div class="r">/g) ?? []).length, 6, "every row of the screen, the empty ones too");
   assert.match(screen.html, /width:40ch/);
+});
+
+test("a full-screen program that quits leaves its last frame on the screen, not the empty main screen", async () => {
+  const term = await headlessTerminal(30, 4);
+  const held = holdAlternateScreen(term);
+  term.write("$ htop\r\n\u001b[?1049h\u001b[H\u001b[2JCPU [|||  30%]\r\nMem [|    2G]\u001b[?1049l");
+  await drawn(term);
+  assert.equal(renderScreen(term, { rules: {} }).text, "CPU [|||  30%]\nMem [|    2G]");
+  held.dispose();
+  term.dispose();
 });
 
 test("a secret on the screen is hidden in its text and drawn without colours, even across a wrapped line", async () => {
@@ -157,4 +167,19 @@ test("keys are typed into the program, and a program that ends gives its exit co
   assert.deepEqual([result.ended, result.exitCode], [true, 3]);
   assert.match(result.screen, /got hello there/);
   assert.equal(answer.evidence[0]!.name, "reading-a-line.png");
+});
+
+test("a program quit by a typed key is pictured as it last drew; an empty screen keeps no picture and says why", { skip: skipRun, timeout: 120_000 }, async () => {
+  const folder = await ownToolFolder({ nodeId, nodeSlug: "tester" });
+  const fake = fakeClient();
+  const quit = await runNodeTerminal({ prisma: memoryDb() } as never, fake.client as never, call({ command: `sh -c 'stty -echo; printf "\\033[?1049h\\033[HTOP FRAME"; read key; printf "\\033[?1049l"'`, keys: ["q{Enter}"], seconds: 10 }) as never, folder);
+  assert.equal(quit.ok, true, JSON.stringify(quit.error));
+  assert.deepEqual([(quit.result as { ended: boolean }).ended, (quit.result as { screen: string }).screen], [true, "TOP FRAME"]);
+  assert.equal(quit.evidence.length, 1);
+  const empty = await runNodeTerminal({ prisma: memoryDb() } as never, fake.client as never, call({ command: "true", seconds: 5 }) as never, folder);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.error?.code, "empty_screen");
+  assert.match(empty.error?.message ?? "", /empty when the picture was taken.*leave the keys out/s);
+  assert.equal(empty.evidence.length, 0);
+  assert.equal(fake.uploads.length, 1, "only the frame was uploaded");
 });

@@ -18,6 +18,7 @@ test("Cursor's tool calls are read as the run's own tools", () => {
   assert.deepEqual(cursorCall({ kind: "edit", title: "Delete `/w/old.txt`" }), { tool: "Write", input: { file_path: "/w/old.txt" } });
   assert.deepEqual(cursorCall({ kind: "edit", title: "Write /w/new.txt" }), { tool: "Write", input: { file_path: "/w/new.txt" } });
   assert.equal(cursorCall({ kind: "other", title: "ensemble: ask_person" }).tool, "mcp__ensemble__ask_person");
+  assert.equal(cursorCall({ kind: "other", title: "ensemble: browser_open" }).tool, "mcp__ensemble__browser_open", "the run's browser tools are judged by name, not passed as a question");
   assert.equal(cursorCall({ kind: "other", title: "github: create_issue" }).tool, "mcp__github__create_issue");
 });
 

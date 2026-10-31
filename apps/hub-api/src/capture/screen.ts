@@ -17,6 +17,15 @@ export async function headlessTerminal(columns: number, rows: number): Promise<T
   return new Xterm({ cols: columns, rows, allowProposedApi: true, scrollback: 0 });
 }
 
+/**
+ * Keeps a full-screen program's last frame: htop, top or less draw on the alternate screen, and when
+ * they quit (a key typed, or they end) a terminal goes back to the main screen, empty. Ignoring that
+ * switch leaves their last frame on the screen for the picture.
+ */
+export function holdAlternateScreen(term: Terminal): { dispose(): void } {
+  return term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => params.length > 0 && params.every((param) => param === 47 || param === 1047 || param === 1049));
+}
+
 /** Resolves once everything written so far has been drawn. */
 export function drawn(term: Terminal): Promise<void> {
   return new Promise((resolve) => term.write("", resolve));

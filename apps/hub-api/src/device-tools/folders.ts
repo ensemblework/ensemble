@@ -8,20 +8,34 @@
  */
 import { lstat, mkdir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { DEFAULT_KEY_FILE } from "../lib/secrets.js";
 import { protectedDeviceFolders } from "../evidence/files.js";
 import { ENSEMBLE_SOURCE, GuardError, holdsProtected, knownWorkspace, resolveWorkFolder, SECRET_PATHS, within, workspaceRoot } from "../workspace/guard.js";
 import { loadSettings } from "../remote/store.js";
 import { isEnsembleData } from "../workspace/data-denies.js";
 
-/** `own`: the node's own folder on this computer, which needs no answer from the owner. */
+/** `own`: the node's own folder on this computer, or Ensemble's run and node folders, which need no answer from the owner. */
 export type ToolFolder = { path: string; label: string; own?: boolean };
 
 /** Refuses a folder that holds keys, sign-ins or Ensemble's own files. */
 function checkFloor(path: string): void {
   if (holdsProtected(path)) throw new GuardError("That folder holds keys, sign-ins or Ensemble's own files, so no node may work in it.");
   if (isEnsembleData(path) || protectedDeviceFolders().some((folder) => within(path, folder))) throw new GuardError("Ensemble's own data folder is off limits.");
+}
+
+/**
+ * Whether a folder is Ensemble's own work folder for agents: a run's (`<workspace>/runs/<job>`) or a
+ * node's (`<workspace>/nodes/<handle>`), or a folder inside one. A node's tools work there without
+ * asking, as in its own folder (the floor still applies).
+ */
+export async function isEnsembleWorkFolder(path: string): Promise<boolean> {
+  const root = await workspaceRoot();
+  for (const area of ["runs", "nodes"]) {
+    const rel = relative(join(root, area), path);
+    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return true;
+  }
+  return false;
 }
 
 /** A folder for a node's tool: a shared folder's label, or a full path Ensemble may hand to an agent. */
@@ -31,7 +45,8 @@ export async function resolveToolFolder(input: string): Promise<ToolFolder> {
   const path = await resolveWorkFolder(shared ? shared.path : named);
   checkFloor(path);
   const home = homedir();
-  return { path, label: shared ? shared.label : within(home, path, false) ? `~/${relative(home, path).split(/[\\/]/).join("/")}` : path };
+  const own = await isEnsembleWorkFolder(path);
+  return { path, label: shared ? shared.label : within(home, path, false) ? `~/${relative(home, path).split(/[\\/]/).join("/")}` : path, ...(own ? { own: true } : {}) };
 }
 
 /** The name of a node's own folder: its handle, else the start of its id. */

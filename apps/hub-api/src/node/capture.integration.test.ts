@@ -253,7 +253,7 @@ test("a capture the computer holds waits for its owner's preview: previewed from
   try {
     privacy.previewFirst = ["127.0.0.1"];
     script = (turn) => (turn.transcript.includes("screenshot the page") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Taken." } : { text: "ok" });
-    await say(mira, room.id, "screenshot the page");
+    await say(mira, room.id, "test the sign-up page: screenshot the page");
     const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
     assert.deepEqual([held.held, held.local, held.bytes], [true, true, null], "only its description reached the web");
     assert.match(held.holdReason ?? "", /before they are sent/);
@@ -305,7 +305,7 @@ test("discarding a held capture deletes it on the computer and on the web", { sk
   try {
     privacy.previewFirst = ["127.0.0.1"];
     script = (turn) => (turn.transcript.includes("screenshot again") ? { calls: [{ name: "capture_screenshot", arguments: { target: "web", url: `${base}/signup` } }], then: "Taken." } : { text: "ok" });
-    await say(mira, room.id, "screenshot again");
+    await say(mira, room.id, "test the sign-up page: screenshot again");
     const held = await h.prisma.jobEvidence.findFirstOrThrow({ where: { nodeId: node.id } });
     const local = computer.db.evidence.find((row) => row.id === held.id)!;
     const file = join(operationEvidenceDir(String(local.operation)), String(local.storageKey));

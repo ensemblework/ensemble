@@ -98,3 +98,94 @@ test("logins.json is Ensemble's own data: denied to every run, named even before
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("sign-in v2's page rules: fields from a clean browser's snapshot, steps of signing in, sites, codes and approvals asked for", async () => {
+  const { fieldKinds, countFieldsOf, isSignInFlow, siteOf, cookieOfSite, sessionLike, codePrompt, approvalPrompt } = await import("./detect.js");
+  assert.deepEqual(fieldKinds({ tag: "input", type: "password", autocomplete: "current-password" }), { password: true, newPassword: false, username: false, code: false, other: false });
+  assert.equal(fieldKinds({ tag: "input", type: "email" }).username, true);
+  assert.equal(fieldKinds({ tag: "input", name: "loginfmt" }).username, true, "Microsoft's email field");
+  assert.equal(fieldKinds({ tag: "input", type: "hidden", name: "username" }).username, false);
+  assert.equal(fieldKinds({ tag: "input", type: "tel", name: "totpPin" }).code, true, "Google's code field");
+  assert.equal(fieldKinds({ tag: "input", name: "otc" }).code, true, "Microsoft's code field");
+  assert.equal(fieldKinds({ tag: "input", type: "text", name: "zip" }).other, true);
+  assert.deepEqual(countFieldsOf([{ tag: "input", type: "password", autocomplete: "new-password" }, { tag: "input", type: "email" }, { tag: "textarea" }]), { passwords: 1, newPasswords: 1, usernames: 1, codes: 0, others: 1 });
+  assert.equal(isSignInFlow("https://app.example.com/forgot-password"), true);
+  assert.equal(isSignInFlow("https://app.example.com/account/verify"), true);
+  assert.equal(isSignInFlow("https://accounts.google.com/v3/signin/challenge/pwd"), true);
+  assert.equal(isSignInFlow("https://app.example.com/dashboard"), false);
+  assert.equal(siteOf("https://mail.google.com/mail/u/0/"), "google.com");
+  assert.equal(siteOf("https://www.bbc.co.uk/news"), "bbc.co.uk");
+  assert.equal(siteOf("http://127.0.0.1:3000/x"), "127.0.0.1:3000");
+  assert.equal(siteOf("about:blank"), null);
+  assert.ok(cookieOfSite(".google.com", "google.com") && cookieOfSite("accounts.google.com", "google.com") && !cookieOfSite("evilgoogle.com", "google.com"));
+  assert.ok(sessionLike("SID") && sessionLike("session") && !sessionLike("_ga") && !sessionLike("cf_clearance") && !sessionLike("__cf_bm") && !sessionLike("OptanonConsent"));
+  const none = { passwords: 0, newPasswords: 0, usernames: 0, codes: 0, others: 0 };
+  assert.equal(codePrompt({ text: "2-Step Verification. Enter the 6-digit code from the Google Authenticator app", fields: { ...none, codes: 1 } }), "Enter the 6-digit code from your authenticator app.");
+  assert.equal(codePrompt({ text: "We texted a code to your phone number ending in 42. Enter the code.", fields: { ...none, others: 1 } }), "Enter the code the site sent to your phone.");
+  assert.equal(codePrompt({ text: "Check your email: we sent a verification code to m•••@example.com", fields: { ...none, others: 1 } }), "Enter the code the site emailed you.");
+  assert.equal(codePrompt({ text: "Search our store", fields: { ...none, others: 1 } }), null, "a page without words of a code and no code field");
+  assert.equal(codePrompt({ text: "Enter your password and the code", fields: { ...none, passwords: 1, others: 1 } }), null, "still the password step");
+  assert.equal(approvalPrompt("Approve sign in request. Open your Authenticator app, and enter the number shown to sign in. 42"), "Approve the sign-in on your phone (tap 42); Ensemble sees it when you have.");
+  assert.equal(approvalPrompt("Check your phone. Google sent a notification to your Pixel."), "Approve the sign-in on your phone; Ensemble sees it when you have.");
+  assert.equal(approvalPrompt("Welcome back"), null);
+});
+
+test("what a sign-in's page says, now and over time: a human check is never signed in; a sign-in counts only after the page asked and the site's session changed", async () => {
+  const { judge, Watch, storageFingerprint } = await import("./watch.js");
+  const { forServer } = await import("./answer.js");
+  const none = { passwords: 0, newPasswords: 0, usernames: 0, codes: 0, others: 0 };
+  const signs = (over: Partial<{ url: string; title: string; text: string; frames: string[]; fields: typeof none; loaded: boolean }>) => ({ url: "https://app.example.com/home", title: "App", text: "Welcome", frames: [] as string[], fields: none, loaded: true, ...over });
+  const origin = "https://app.example.com";
+  assert.equal(judge(signs({}), { origin, purpose: "sign_in" }).ok, true);
+  const challenge = judge(signs({ title: "Just a moment..." }), { origin, purpose: "sign_in" });
+  assert.deepEqual([challenge.ok, challenge.asking, challenge.challenge], [false, true, "Cloudflare's check"], "a human-check page is never signed in");
+  assert.equal(judge(signs({ title: "Just a moment..." }), { origin, purpose: "human_check" }).ok, false);
+  assert.equal(judge(signs({}), { origin, purpose: "human_check" }).ok, true);
+  assert.equal(judge(signs({ fields: { ...none, passwords: 1 } }), { origin, purpose: "sign_in" }).asking, true);
+  assert.equal(judge(signs({ url: "https://accounts.google.com/v3/signin" }), { origin, purpose: "sign_in" }).asking, true, "another site asks");
+  assert.equal(judge(signs({ url: "https://app.example.com/forgot-password" }), { origin, purpose: "sign_in", strict: true }).ok, false, "a step of signing in is not signed in yet");
+  assert.equal(judge(signs({ url: "https://www.example.com/start" }), { origin, purpose: "sign_in" }).ok, true, "another address of the same site");
+  // Asked now, too: an identity provider of the same site, a code or approval step, is not signed in.
+  assert.equal(judge(signs({ url: "https://accounts.google.com/v3/signin/challenge/dp" }), { origin: "https://mail.google.com", purpose: "sign_in" }).ok, false);
+  assert.equal(judge(signs({ url: "https://www.amazon.com/ap/mfa" }), { origin: "https://www.amazon.com", purpose: "sign_in" }).ok, false);
+  assert.equal(judge(signs({ url: "https://app.example.com/account/verify" }), { origin, purpose: "sign_in" }).ok, false);
+  assert.equal(judge(signs({ url: "https://myaccount.google.com/" }), { origin: "https://accounts.google.com", purpose: "sign_in" }).ok, true, "signing in to the provider itself lands on its site");
+
+  // The watch: positive before asking is nothing; asking, then the site with a new session cookie, is done.
+  let jar: Array<{ name: string; value: string; domain: string }> = [{ name: "_ga", value: "1", domain: ".example.com" }];
+  let page = signs({});
+  const probe = { signs: async () => page, visible: async () => false, storage: async () => storageFingerprint(jar, origin) };
+  const watch = new Watch({ origin, purpose: "sign_in", condition: null, requireChallenge: false });
+  assert.equal((await watch.observe(probe)).done, false, "it looked signed in before anything happened");
+  page = signs({ url: "https://app.example.com/login", fields: { ...none, passwords: 1 } });
+  assert.equal((await watch.observe(probe)).done, false);
+  page = signs({ url: "https://app.example.com/help" });
+  jar = [...jar, { name: "_ga", value: "2", domain: ".example.com" }];
+  assert.equal((await watch.observe(probe)).done, false, "an analytics cookie is not a session");
+  jar = [...jar, { name: "sid", value: "s3", domain: "app.example.com" }];
+  assert.deepEqual(await watch.observe(probe).then((seen) => [seen.done, seen.status]), [true, "signed_in"]);
+  // A popup on the identity provider asks; the site's page (with a sign-in key already in its storage) did not change: not done.
+  let storage: Array<[string, string]> | null = [["ajs_user_traits", "{}"]];
+  const root = { signs: async () => signs({ url: "https://app.example.com/" }), visible: async () => false, storage: async () => storageFingerprint(jar, origin, storage) };
+  const popup = new Watch({ origin, purpose: "sign_in", condition: null, requireChallenge: false });
+  const asideAsked = { signs: async () => signs({ url: "https://accounts.google.com/v3/signin/identifier", fields: { ...none, usernames: 1 } }), visible: async () => false, storage: async () => storageFingerprint(jar, origin, null) };
+  assert.equal(await popup.observeAside(asideAsked), true);
+  assert.equal((await popup.observe(root, true)).done, false, "the popup asking is no change on the site");
+  assert.equal((await popup.observe(root)).done, false);
+  storage = [["ajs_user_traits", "{}"], ["auth_token", "t1"]];
+  assert.deepEqual(await popup.observe(root).then((seen) => [seen.done, seen.status]), [true, "signed_in"], "a sign-in key in its storage is");
+  // A human check in the node's own tab: passed once the challenge was seen, then gone twice.
+  const human = new Watch({ origin, purpose: "human_check", condition: null, requireChallenge: true });
+  page = signs({});
+  assert.equal((await human.observe(probe)).done, false, "never seen the challenge");
+  page = signs({ title: "Robot or human?" });
+  assert.equal((await human.observe(probe)).done, false);
+  page = signs({});
+  assert.equal((await human.observe(probe)).done, false, "seen clear once");
+  assert.deepEqual(await human.observe(probe).then((seen) => [seen.done, seen.status]), [true, "passed"]);
+
+  // A server before sign-ins 2 hears statuses it knows.
+  assert.deepEqual(forServer({ status: "passed" }, undefined), { status: "signed_in" });
+  assert.equal(forServer({ status: "needs_code", message: "Enter the code." }, 1).status, "failed");
+  assert.deepEqual(forServer({ status: "needs_code", message: "Enter the code." }, 2), { status: "needs_code", message: "Enter the code." });
+});

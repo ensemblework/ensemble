@@ -28,8 +28,12 @@ test("every playbook parses and names only tools that exist", () => {
     names.add(playbook.name);
     assert.ok(playbook.body.length > 200, `${playbook.name} has steps`);
     assert.ok(playbook.when.length < 260, `${playbook.name}'s index line stays one line`);
-    for (const tool of playbook.tools) assert.ok(KNOWN.has(tool), `${playbook.name} names unknown tool ${tool}`);
+    for (const tool of playbook.tools) assert.ok(KNOWN.has(tool) || playbook.requires.includes(tool), `${playbook.name} names unknown tool ${tool}`);
+    for (const tool of playbook.requires) assert.ok(playbook.tools.includes(tool), `${playbook.name} uses what it requires`);
   }
+  // A playbook whose tool this build does not have yet is not offered.
+  for (const playbook of playbooksFor()) for (const tool of playbook.requires) assert.ok(KNOWN.has(tool), `${playbook.name} needs ${tool}`);
+  assert.equal(playbooksFor().some((playbook) => playbook.name === "web-files"), KNOWN.has("hub_save_file"));
   for (const tool of CORE_TOOLS) assert.ok(KNOWN.has(tool), `core tool ${tool} exists`);
   assert.match(appMap(), /Map of Ensemble/);
   assert.match(findPlaybook("diagrams")!.body, /# Block diagrams/, "the diagrams playbook carries the block-diagram skill");
@@ -69,6 +73,7 @@ test("routing picks the playbook for the owner's example requests", () => {
     ["Who is Mira and what parts are we testing?", "context"],
     ["Create a page with an outline for the launch plan", "pages"],
     ["Summarise the contract PDF I uploaded", "files"],
+    ["Look up the latest reviews of the Pixel 10 and cite your sources", "web-research"],
   ];
   for (const [message, expected] of cases) assert.ok(routed(message).includes(expected), `${message} → ${routed(message).join(", ")}`);
   assert.deepEqual(routed("What is 17 times 23?"), [], "a plain question loads nothing");

@@ -9,7 +9,8 @@
  * (`judge.ts`), answered allow-once or reject-once, never "always" (that would change the person's
  * own allowlist, and for Grok and OpenCode it is project-wide). Refusals go back as the next
  * message, as for Copilot. The model and thinking level are the agent's own session options
- * (`session/set_config_option`). Questions go through Ensemble's `ask_person` MCP tool.
+ * (`session/set_config_option`). Questions go through Ensemble's `ask_person` MCP tool, and an
+ * agent's own form questions (`elicitation/create`) reach the person the same way (elicitation.ts).
  *
  * Launch details follow T3 Code's drivers (`packages/provider-grok`, `provider-opencode`,
  * `apps/server/src/provider/acp` in pingdotgg/t3code, MIT License, Copyright (c) 2026 T3 Tools Inc.).
@@ -25,6 +26,7 @@ import { hostExecutable } from "../policy.js";
 import type { JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
+import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
 import { engineTrust, EngineTransientError, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, SIGNED_OUT, UNREACHABLE, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
@@ -331,6 +333,8 @@ export async function runAcp(
   const refusals: Refusal[] = [];
   rpc.onRequest = async (method, params) => {
     if (method === "session/request_permission") return answerAcp(ctx, agent.trace, params, announced, refusals);
+    // A question as a form (OpenCode's question tool): each field is asked like any other question of the run.
+    if (method === "elicitation/create") return answerElicitation(ctx, params);
     throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
   };
   rpc.onNotification = (method, params) => {
@@ -403,7 +407,7 @@ export async function runAcp(
     await rpc
       .request("initialize", {
         protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        clientCapabilities: ACP_CLIENT_CAPABILITIES,
         clientInfo: { name: "ensemble", version: "1" },
         ...(launch.initializeMeta ? { _meta: launch.initializeMeta } : {}),
       })

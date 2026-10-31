@@ -154,7 +154,8 @@ if (process.env.STANDIN_SESSIONS) {
 }
 if (process.env.STANDIN_LOG) {
   const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
-  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ cwd: process.cwd(), prompt: args[args.indexOf('-p') + 1], attached: attached.map((path) => ({ path, data: readFileSync(path).toString('base64') })) }));
+  const server = JSON.parse(readFileSync(args[args.indexOf('--additional-mcp-config') + 1].slice(1), 'utf8')).mcpServers.ensemble;
+  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ cwd: process.cwd(), prompt: args[args.indexOf('-p') + 1], attached: attached.map((path) => ({ path, data: readFileSync(path).toString('base64') })), toolTimeout: server.timeout }));
 }
 const say = (type, data) => console.log(JSON.stringify({type, data}));
 say('session.usage_info', {currentTokens:999999, tokenLimit:1000000});
@@ -208,7 +209,8 @@ test("a turn's files are fetched into its folder and attached to Copilot; one th
     );
     assert.equal(result.text, "Plan ready.");
     assert.deepEqual(asked, ["chart", "notes", "lost"]);
-    const seen = JSON.parse(readFileSync(log, "utf8")) as { cwd: string; prompt: string; attached: Array<{ path: string; data: string }> };
+    const seen = JSON.parse(readFileSync(log, "utf8")) as { cwd: string; prompt: string; attached: Array<{ path: string; data: string }>; toolTimeout: number };
+    assert.equal(seen.toolTimeout, 600_000, "an Ensemble tool may take minutes (a browser task); Copilot waits for it as the other agents do");
     assert.deepEqual(seen.attached.map((file) => [file.path.slice(seen.cwd.length), file.data]), [["/files/chart.png", bytes.chart!.toString("base64")]], "the picture, saved in the turn's files/ folder");
     assert.match(seen.prompt, /What do these say\?\n\nThe person attached 2 files to this message: “chart\.png”, “notes\.md”/);
     assert.match(seen.prompt, /The person attached “lost\.pdf” too, but it could not be given to you: it could not be fetched from Ensemble\./, "a file that could not be fetched is named, not dropped");

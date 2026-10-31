@@ -25,6 +25,7 @@ import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
 import { heldElsewhere, noteChanges, writtenOutside } from "../folder-claims.js";
 import { claudeFilesystem, engineSandboxPaths, openRoots, type EngineResult } from "./claude-code.js";
+import { answerForm } from "./elicitation.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
@@ -71,9 +72,11 @@ export async function answerCodex(
     case "item/commandExecution/requestApproval": {
       if (params.kind === "writeStdin") return { decision: "accept" };
       const network = params.networkApprovalContext as { host?: string } | null | undefined;
+      // The folder Codex runs it in (its `workdir`), so relative paths are judged where they really are.
+      const cwd = typeof params.cwd === "string" && params.cwd ? { cwd: params.cwd } : {};
       const verdict = network?.host
         ? await verdictFor([{ tool: "WebFetch", input: { url: `https://${network.host}` } }])
-        : await verdictFor([{ tool: "Bash", input: { command: words(params.command) } }]);
+        : await verdictFor([{ tool: "Bash", input: { command: words(params.command), ...cwd } }]);
       await note(verdict);
       return { decision: verdict.decision === "allow" ? "accept" : "decline" };
     }
@@ -118,13 +121,19 @@ export async function answerCodex(
       return { answers };
     }
     case "mcpServer/elicitation/request": {
-      // Ensemble's own ask_person server never elicits; anything else needs the person, like a command.
+      // Ensemble's own ask_person server never elicits. A form with fields is a question from that server, asked
+      // like any other; one without fields (Codex's approval to run an MCP tool) needs the person like a command.
       if (params.serverName === "ensemble") return { action: "accept", content: null, _meta: null };
+      const schema = (params.requestedSchema ?? {}) as { properties?: Record<string, unknown> };
+      if (typeof params.mode === "string" && /form/i.test(params.mode) && Object.keys(schema.properties ?? {}).length) {
+        const form = await answerForm(ctx, { message: typeof params.message === "string" ? params.message : "", requestedSchema: schema }, ask);
+        return { action: form.action, content: form.content ?? null, _meta: null };
+      }
       const verdict = await verdictFor([{ tool: `mcp__${String(params.serverName)}`, input: {} }]);
       return { action: verdict.decision === "allow" ? "accept" : "decline", content: null, _meta: null };
     }
     case "execCommandApproval": {
-      const verdict = await verdictFor([{ tool: "Bash", input: { command: words(params.command) } }]);
+      const verdict = await verdictFor([{ tool: "Bash", input: { command: words(params.command), ...(typeof params.cwd === "string" && params.cwd ? { cwd: params.cwd } : {}) } }]);
       return { decision: verdict.decision === "allow" ? "approved" : { denied: { rejection: verdict.message ?? "Not allowed in this run." } } };
     }
     case "applyPatchApproval": {

@@ -52,8 +52,10 @@ export const ROUTES = {
   runLogin: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/logins`,
   /** One encrypted frame of a tab the owner controls from the web (protocol 8, B21): the server keeps only the latest, for seconds. */
   takeoverFrame: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/frames`,
-  /** The computer ended a takeover itself (its time ran out, the tab closed, nobody watched). */
+  /** The computer ended a takeover itself (its time ran out, the tab closed, nobody watched, the sign-in in it finished). */
   takeoverState: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/state`,
+  /** A sign-in ended on this computer by itself (`logins: 2`): seen done, its tab closed, its time ran out (`LoginStatePost`). */
+  loginState: (loginId: string) => `/api/devices/self/logins/${encodeURIComponent(loginId)}/state`,
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -111,6 +113,10 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * followed. The owner may control a tab from the web (B21, `capabilities.takeover`): the server sends
  * `takeover.start`, `takeover.input` and `takeover.end`; the computer sends encrypted frames to
  * `ROUTES.takeoverFrame` and says when it ended a takeover itself at `ROUTES.takeoverState`.
+ * Sign-ins 2 and takeovers 2 (`capabilities.logins`, `capabilities.takeover`, same protocol): a sign-in
+ * has a `purpose` (a human check too), is seen done by the computer itself (`ROUTES.loginState`), may ask
+ * for a one-time code (`needs_code`, answered with `code`), and a sign-in's takeover runs in a clean
+ * browser whose frames say which site they show.
  */
 export const PROTOCOL = 8;
 /** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
@@ -721,8 +727,14 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 
-/** `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`, protocol 7). */
-export const BROWSER_API = 1;
+/**
+ * `capabilities.browser`: this computer answers a node's browser and capture tools (`node.tool.request`,
+ * protocol 7). 2: the web tools too (`WEB_TOOLS`), focused screenshots, interactive snapshots and page hygiene.
+ */
+export const BROWSER_API = 2;
+
+/** The browser tools a computer has from `capabilities.browser` 2 on. */
+export const WEB_TOOLS: readonly string[] = ["browser_view", "browser_fetch", "browser_extract", "browser_set_location", "browser_shop"];
 
 /** What a node's browser or capture tool call answers: the tool's summary and result, and the files it kept as evidence. */
 export const NodeCaptureAnswer = z.object({
@@ -769,21 +781,35 @@ export const LiveFramePost = z.object({
 });
 export type LiveFramePost = z.infer<typeof LiveFramePost>;
 
-/** `capabilities.logins`: this computer hands sign-ins to its owner (B11, protocol 8): `login.resolve`, `ROUTES.runLogin`, saved logins. */
-export const LOGINS_API = 1;
+/**
+ * `capabilities.logins`: this computer hands sign-ins to its owner (B11, protocol 8): `login.resolve`, `ROUTES.runLogin`, saved logins.
+ * 2: a sign-in's `purpose` (`sign_in` or `human_check`); `login.resolve` actions `code` and `check`; statuses
+ * `needs_code` and `passed`; the computer sees a sign-in done by itself and says so at `ROUTES.loginState`;
+ * "Use the window on this computer" opens a clean browser there.
+ */
+export const LOGINS_API = 2;
+/** `capabilities.logins` from which a computer takes `code` and `check` answers and may answer `needs_code` or `passed` (sign-in v2). */
+export const LOGIN_CHECKS_API = 2;
 
 const LoginId = z.string().regex(/^lg_[0-9a-f]{32}$/);
+
+/** What a waiting tab needs from its owner: their account, or a person to pass a human check (a captcha, "Robot or human?"). */
+export const LoginPurpose = z.enum(["sign_in", "human_check"]);
+export type LoginPurpose = z.infer<typeof LoginPurpose>;
 
 /**
  * A tab waiting for its owner to sign in (B11), as a browser tool's answer carries it (`login`) and a
  * run reports it (`ROUTES.runLogin`): which site and tab, why, and how the owner can answer. Never a
- * value; `saved` says only whether a login is saved here for this one site.
+ * value; `saved` says only whether a login is saved here for this one site. `purpose`: a sign-in, or a
+ * human check (a captcha, "Robot or human?") the owner passes.
  */
 export const LoginRequired = z.object({
   loginId: LoginId,
   origin: text(300).min(1),
   tab: text(20),
   profile: text(60).nullable(),
+  /** `human_check`: a person must pass a check on the page; typed and saved logins are refused for it (logins 2). */
+  purpose: LoginPurpose.default("sign_in"),
   reasons: z.array(text(200)).max(6).default([]),
   saved: z.boolean(),
   display: z.boolean(),
@@ -798,22 +824,31 @@ export type RunLoginPost = z.infer<typeof RunLoginPost>;
 
 /**
  * `login.resolve` on the event stream (protocol 8): the owner's answer to a sign-in card. `saved`: fill
- * the login saved here; `local`: show the tab on this computer's screen; `done`: check they signed in;
- * `typed`: fill what they typed, sealed in their browser for this computer (purpose `login`, the card as
- * `decisionId`, the sign-in's id as `name`); `decline` (not now) and `expire` end it. The answer is a
- * `CodeAnswer` whose body is a `LoginResolution`.
+ * the login saved here; `local`: open the page in a window on this computer's screen; `done` and `check`
+ * (logins 2: asked from the chat): check they signed in; `typed`: fill what they typed, sealed in their
+ * browser for this computer (purpose `login`, the card as `decisionId`, the sign-in's id as `name`,
+ * `{origin, username?, password?, code?, save?}` inside); `code` (logins 2): the one-time code the site
+ * asks for after `needs_code`, sealed the same way (`{origin, code}`); `decline` (not now) and `expire`
+ * end it. `v`: the server's sign-in version; 2 reads `needs_code` and `passed` (an older server hears
+ * `failed` and `signed_in` instead). The answer is a `CodeAnswer` whose body is a `LoginResolution`.
  */
 export const LoginResolve = z.object({
   id: text(100).min(1),
   loginId: LoginId,
   decisionId: text(100).min(1),
-  action: z.enum(["saved", "local", "typed", "done", "decline", "expire"]),
+  action: z.enum(["saved", "local", "typed", "code", "done", "check", "decline", "expire"]),
   sealed: SealedShape.optional(),
+  v: z.number().int().min(1).max(100).optional(),
 });
 export type LoginResolve = z.infer<typeof LoginResolve>;
 
 export const LoginResolution = z.object({
-  status: z.enum(["signed_in", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy"]),
+  /**
+   * `signed_in`; `passed` (a human check); `needs_code` (the site asks for a one-time code: `message` says
+   * which, the card asks for it); `waiting` (not yet, `message` says why); `shown` (open in a window on the
+   * computer); the rest end it or say why not.
+   */
+  status: z.enum(["signed_in", "passed", "needs_code", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy"]),
   message: text(500).optional(),
   /** The typed login was saved on this computer, as the owner asked. */
   savedNow: z.boolean().optional(),
@@ -821,8 +856,32 @@ export const LoginResolution = z.object({
 });
 export type LoginResolution = z.infer<typeof LoginResolution>;
 
-/** `capabilities.takeover`: the owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8). */
-export const TAKEOVER_API = 1;
+/**
+ * What a computer posts at `ROUTES.loginState` (logins 2) when a sign-in changed on its own, not as the
+ * answer to a `login.resolve`: seen done (`signed_in`, `passed`), its tab or work gone (`ended`), its time
+ * run out (`expired`), or a problem the card should show while it still waits (`waiting` with `message`).
+ * `via`: `computer` (seen in the node's tab), `window` (the window on this computer), `takeover` (the
+ * owner's remote view), `check` (the node's own `browser_login_check`). A server without the route
+ * answers 404, which the computer ignores.
+ */
+export const LoginStatePost = z.object({
+  status: z.enum(["signed_in", "passed", "waiting", "declined", "expired", "ended"]),
+  message: text(500).optional(),
+  via: z.enum(["computer", "window", "takeover", "check"]).optional(),
+});
+export type LoginStatePost = z.infer<typeof LoginStatePost>;
+
+/**
+ * `capabilities.takeover`: the owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8).
+ * 2: a sign-in's takeover runs in a clean browser (C0, `browser/clean.ts`) at the tab's page and moves the
+ * session into the tab when done; its frames' headers say which site they show (`site`, `title`, `popup`,
+ * `mode`); the computer ends it itself when the sign-in is done (reason `signed_in` or `passed`).
+ */
+export const TAKEOVER_API = 2;
+/** The oldest takeover a server can use. */
+export const TAKEOVER_MIN_API = 1;
+/** `capabilities.takeover` from which a sign-in's takeover can run in a clean browser (`TakeoverStart.mode` "clean", browser/clean.ts). */
+export const TAKEOVER_CLEAN_API = 2;
 
 /** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
 export const ChannelMessage = z.object({
@@ -836,7 +895,12 @@ export type ChannelMessage = z.infer<typeof ChannelMessage>;
  * `takeover.start` on the event stream: the owner opens a tab of this computer from the web. `sealed`
  * holds the channel's secret, sealed in their browser for this computer (purpose `takeover`, the
  * takeover's id as `decisionId`, the tab as `name`). The tab is a sign-in's (`loginId`) or a run's
- * (`jobId`, the hosted job). The answer is a `CodeAnswer`.
+ * (`jobId`, the hosted job). The answer is a `CodeAnswer`: `{started, width, height, endsAt}`, and with
+ * takeover 2 `mode` (`clean`: a sign-in in the clean browser; `tab`: the tab itself) and `note` (why a
+ * sign-in fell back to the tab). Each frame is `packMessage({t: "frame", w, h, url, site, title, popup,
+ * mode}, jpeg)`: `url` without its query, `site` its host, `popup` a window the page opened (a "Sign in
+ * with Google" popup), all inside the encrypted message.
+ * The server may ask for `mode` "clean" (a sign-in, on a computer with `TAKEOVER_CLEAN_API`) or "tab".
  */
 export const TakeoverStart = z.object({
   id: text(100).min(1),
@@ -846,6 +910,7 @@ export const TakeoverStart = z.object({
   jobId: z.string().uuid().optional(),
   sealed: SealedShape,
   endsAt: text(40),
+  mode: z.enum(["tab", "clean"]).optional(),
 });
 export type TakeoverStart = z.infer<typeof TakeoverStart>;
 
@@ -857,7 +922,12 @@ export type TakeoverInput = z.infer<typeof TakeoverInput>;
 export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });
 export type TakeoverEnd = z.infer<typeof TakeoverEnd>;
 
-/** What a computer posts when it ends a takeover itself. */
+/**
+ * What a computer posts when it ends a takeover itself. `reason`: `expired`, `idle`, `tab_closed`, `stopped`,
+ * `relay_gone`; with takeover 2 also `signed_in` and `passed` (the sign-in in it was seen done and its session
+ * moved into the tab), `not_carried` (signed in, but the site did not take the session in the tab) and
+ * `closed` (the clean browser closed).
+ */
 export const TakeoverStatePost = z.object({ state: z.literal("ended"), reason: text(200) });
 
 /** What a computer asks the owner before a node's first use of a folder or address (the answer's body on 428). */

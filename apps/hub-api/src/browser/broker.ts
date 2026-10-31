@@ -12,17 +12,22 @@
 import { constants as fsConstants } from "node:fs";
 import { open as openFile, realpath, rm, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, sep } from "node:path";
-import { chromium, devices, type Browser, type BrowserContext, type Download, type Page } from "playwright-core";
+import { chromium, devices, type Browser, type BrowserContext, type Download, type ElementHandle, type Page } from "playwright-core";
 import { redactRequestUrl } from "../lib/redact.js";
 import { chooseVideoEncoder, findFfmpegs } from "../capture/ffmpeg.js";
 import { RealtimeRecording } from "../capture/frames.js";
 import { CaptureError, DEFAULT_MAX_DURATION_MS, reserveFile, slugName, stillFile, VideoEncoder, type MediaFile } from "../capture/media.js";
 import { findChromium, type ChromiumChoice } from "./chromium.js";
+import { CleanReader } from "./clean-view.js";
+import { chartDrawn, findFocus, placeForShot, type FocusShot } from "./focus.js";
 import { humanCheck } from "./human-check.js";
+import { cleanPage } from "./hygiene.js";
+import { interactiveSnapshot } from "./interactive.js";
 import { browserLook, HIDE_WEBDRIVER, IGNORED_DEFAULT_ARGS, LAUNCH_ARGS } from "./launch.js";
 import { readableSnapshot, scanPage, sensitiveMasks } from "./page-scan.js";
-import { browserProfileDir, ensembleDataHome, isProfileName } from "./paths.js";
+import { browserProfileDir, ensembleDataHome, isProfileName, signInProfileDir } from "./paths.js";
 import { hasSecrets, hideSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "./privacy.js";
+import { restoreSessionCookies, saveSessionCookies, SESSION_COOKIES_EVERY_MS } from "./session-cookies.js";
 
 export type BrowserErrorCode = "not_found" | "not_yours" | "sensitive" | "refused" | "bad_input" | "unavailable" | "busy" | "timeout" | "failed";
 
@@ -77,7 +82,25 @@ export type OpenOptions = {
   viewport?: { width: number; height: number };
   /** Install Playwright's clock before the page loads (capture's frame-stepped video). */
   clock?: boolean;
+  /** Close cookie banners and pop-ups once it loads (browser/hygiene.ts). */
+  clean?: boolean;
 };
+
+export type ScreenshotOptions = {
+  fullPage?: boolean;
+  element?: string;
+  viewport?: { width: number; height: number };
+  name?: string;
+  format?: "png" | "jpeg";
+  /** What to capture, in words ("the stock chart"): found, scrolled to and captured with a margin (browser/focus.ts). */
+  focus?: string;
+  /** The runtime's own: an element by CSS selector, captured like a focus. */
+  focusSelector?: string;
+  /** Close cookie banners first (browser/hygiene.ts). */
+  clean?: boolean;
+};
+
+export type Screenshot = MediaFile & { focus?: string; focusFound?: boolean; focusOn?: string; dismissed?: string[] };
 
 export type OperationOptions = {
   /** Where screenshots, downloads, traces and videos are written (the run's evidence folder). */
@@ -124,6 +147,8 @@ type ContextEntry = {
   headless: boolean;
   idleSince: number | null;
   tracing: { operation: string; tab: string; held: string | null; timer: NodeJS.Timeout } | null;
+  /** A profile's session cookies are written this often (browser/session-cookies.ts). */
+  cookieTimer?: NodeJS.Timeout;
 };
 
 type Recording = { kind: "video"; video: RealtimeRecording; watch: { held: string | null; never: boolean; rules: PrivacyRules } } | { kind: "trace" };
@@ -240,6 +265,7 @@ export class BrowserBroker {
   private readonly operations = new Map<string, Operation>();
   private readonly finished = new Map<string, MediaFile[]>();
   private privateBrowser: Promise<Browser> | null = null;
+  private reader: CleanReader | null = null;
   private janitor: NodeJS.Timeout | null = null;
   private counter = 0;
   private closed = false;
@@ -441,9 +467,14 @@ export class BrowserBroker {
       throw new BrowserError("unavailable", /ProcessSingleton|SingletonLock|profile.*in use/i.test(message) ? `The browser profile "${profile}" is open in another Chromium. Close it first.` : `The browser did not start: ${message}`);
     }
     await context.addInitScript(HIDE_WEBDRIVER).catch(() => undefined);
+    // Sign-ins for the session only survive a restart: their cookies come back, and are kept as they change.
+    const profileDir = browserProfileDir(profile, this.dataHome());
+    const restored = await restoreSessionCookies(context, profileDir);
     const entry: ContextEntry = { key, profile, owner: null, context, headless, idleSince: this.now(), tracing: null };
+    entry.cookieTimer = setInterval(() => void saveSessionCookies(entry.context, profileDir), SESSION_COOKIES_EVERY_MS);
+    entry.cookieTimer.unref();
     this.watchContext(entry);
-    this.log(`started profile ${profile} (${headless ? "headless" : "with a window"})`);
+    this.log(`started profile ${profile} (${headless ? "headless" : "with a window"})${restored ? `; ${restored} session cookie(s) restored` : ""}`);
     return entry;
   }
 
@@ -476,6 +507,7 @@ export class BrowserBroker {
   private watchContext(entry: ContextEntry): void {
     this.contexts.set(entry.key, entry);
     entry.context.on("close", () => {
+      if (entry.cookieTimer) clearInterval(entry.cookieTimer);
       if (this.contexts.get(entry.key) === entry) this.contexts.delete(entry.key);
       for (const tab of [...this.tabs.values()]) if (tab.entry === entry && !tab.moving) this.forgetTab(tab);
     });
@@ -484,9 +516,17 @@ export class BrowserBroker {
 
   private async closeContext(entry: ContextEntry): Promise<void> {
     this.contexts.delete(entry.key);
+    // Before its pages close: Chromium drops session cookies as its last page goes.
+    await this.keepSessionCookies(entry);
     for (const tab of [...this.tabs.values()]) if (tab.entry === entry) await this.closeTab(tab);
     if (entry.tracing) await this.discardTrace(entry, "its browser closed");
     await entry.context.close().catch(() => undefined);
+  }
+
+  /** Writes a profile's session cookies before its browser closes or restarts (`stop`), or its last page closes (browser/session-cookies.ts). */
+  private async keepSessionCookies(entry: ContextEntry, stop = true): Promise<void> {
+    if (stop && entry.cookieTimer) clearInterval(entry.cookieTimer);
+    if (entry.profile !== null) await saveSessionCookies(entry.context, browserProfileDir(entry.profile, this.dataHome()));
   }
 
   // ── tabs ──────────────────────────────────────────────────────────────────
@@ -578,10 +618,12 @@ export class BrowserBroker {
     if (tab.entry.tracing?.tab === tab.id) await this.discardTrace(tab.entry, "its tab closed");
     tab.recording = null;
     this.forgetTab(tab);
+    // The profile's last page: Chromium ends its session as it closes, so its session cookies are kept first.
+    if (tab.entry.profile !== null && tab.entry.context.pages().every((page) => page === tab.page)) await this.keepSessionCookies(tab.entry, false);
     await tab.page.close().catch(() => undefined);
   }
 
-  async open(operation: string, url: string, input: OpenOptions = {}): Promise<TabInfo & { status: number | null; error?: string; note?: string }> {
+  async open(operation: string, url: string, input: OpenOptions = {}): Promise<TabInfo & { status: number | null; error?: string; note?: string; dismissed?: string[] }> {
     const target = checkUrl(url);
     const loopbackOnly = this.op(operation).options.loopbackOnly === true;
     if (loopbackOnly && target !== "about:blank" && !isLoopbackUrl(target)) {
@@ -594,11 +636,16 @@ export class BrowserBroker {
     } else {
       const profile = input.private ? null : (input.profile ?? "default");
       if (profile !== null && !isProfileName(profile)) throw new BrowserError("bad_input", `"${profile}" is not a browser profile name.`);
+      // Ensemble's own clean browsers keep these beside each profile (browser/clean-view.ts, sign-ins).
+      if (profile !== null && /-(?:clean|signin)$/i.test(profile)) throw new BrowserError("bad_input", `"${profile}" is the name of Ensemble's own browser profile. Use another name.`);
       if (this.tabsOf(operation).length >= this.options.maxTabsPerOperation) throw new BrowserError("busy", `This work already has ${this.options.maxTabsPerOperation} tabs open. Close some first.`);
       const found = await this.contextFor(operation, { profile, headed: Boolean(input.headed), device: input.device, viewport: input.viewport });
       note = found.note;
+      const ended = found.entry.profile !== null && found.entry.context.pages().length === 0;
       const blank = found.entry.context.pages().find((page) => !this.pageTabs.has(page) && page.url() === "about:blank");
       tab = this.register(blank ?? (await found.entry.context.newPage()), operation, found.entry);
+      // Its last page had closed, which ended the session's cookies in Chromium: they come back (browser/session-cookies.ts).
+      if (ended) await restoreSessionCookies(found.entry.context, browserProfileDir(found.entry.profile!, this.dataHome()));
       if (input.viewport && profile !== null) await tab.page.setViewportSize(input.viewport);
       if (loopbackOnly) await tab.page.route("**/*", (route) => (isLoopbackUrl(route.request().url()) ? route.continue() : route.abort("blockedbyclient")));
     }
@@ -614,7 +661,9 @@ export class BrowserBroker {
         error = (failure instanceof Error ? failure.message : String(failure)).split("\n")[0]!.replace(/^page\.goto: /, "");
       }
     }
-    return { ...(await this.describe(tab)), status, ...(error ? { error } : {}), ...(note ? { note } : {}) };
+    // This computer's own addresses are apps under test: their dialogs stay as they are.
+    const dismissed = input.clean && target !== "about:blank" && !error && !isLoopbackUrl(target) ? (await cleanPage(tab.page, { moment: "load" })).dismissed : [];
+    return { ...(await this.describe(tab)), status, ...(error ? { error } : {}), ...(note ? { note } : {}), ...(dismissed.length ? { dismissed } : {}) };
   }
 
   /**
@@ -645,7 +694,7 @@ export class BrowserBroker {
     return { closed: id };
   }
 
-  async snapshot(operation: string, id: string, input: { maxChars?: number } = {}): Promise<{ tab: string; url: string; title: string; snapshot: string; truncated: boolean }> {
+  async snapshot(operation: string, id: string, input: { maxChars?: number; mode?: "full" | "interactive" } = {}): Promise<{ tab: string; url: string; title: string; snapshot: string; truncated: boolean; mode?: "interactive" }> {
     const tab = this.tab(operation, id, "observe");
     const rules = await this.rules();
     if (siteRule(tab.page.url(), rules) === "never") throw new BrowserError("refused", "The owner marked this site as never captured, so it cannot be read either.");
@@ -654,6 +703,10 @@ export class BrowserBroker {
       text = await readableSnapshot(tab.page, rules);
     } catch (error) {
       throw new BrowserError("failed", `Could not read the page: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+    }
+    if (input.mode === "interactive") {
+      const view = interactiveSnapshot(text, Math.min(Math.max(1_000, input.maxChars ?? 8_000), 8_000));
+      return { tab: tab.id, url: this.safeUrl(tab.page.url(), rules), title: hideSecrets(await tab.page.title().catch(() => ""), rules), snapshot: view.text, truncated: view.truncated, mode: "interactive" };
     }
     const limit = Math.min(Math.max(1_000, input.maxChars ?? this.options.snapshotChars), 100_000);
     let truncated = false;
@@ -749,27 +802,66 @@ export class BrowserBroker {
     return { tab: tab.id, waitedMs: Date.now() - started, url: tab.sensitive ? "" : this.safeUrl(tab.page.url(), await this.rules()) };
   }
 
-  /** Masked, scanned screenshot of a tab, written to the operation's evidence folder. */
-  async screenshot(operation: string, id: string, input: { fullPage?: boolean; element?: string; viewport?: { width: number; height: number }; name?: string; format?: "png" | "jpeg" } = {}): Promise<MediaFile> {
+  /**
+   * Masked, scanned screenshot of a tab, written to the operation's evidence folder. With `focus`, the
+   * element the words name is found, scrolled into view and captured with a margin (browser/focus.ts);
+   * when none fits, the viewport (or the full page) is captured and `focusFound` is false.
+   */
+  async screenshot(operation: string, id: string, input: ScreenshotOptions = {}): Promise<Screenshot> {
     const tab = this.tab(operation, id, "observe");
     const dir = this.evidenceDir(operation);
     const { page } = tab;
     const rules = await this.rules();
+    const dismissed = input.clean && !isLoopbackUrl(page.url()) ? (await cleanPage(page, { moment: "capture", budgetMs: 1_500 })).dismissed : [];
     const scan = await scanPage(page, rules);
     if (scan.site === "never" || siteRule(page.url(), rules) === "never") throw new BrowserError("refused", "The owner marked this site as never captured.");
     const previous = page.viewportSize();
     const format = input.format ?? "png";
-    const path = await reserveFile(dir, slugName(input.name, `screenshot-${tab.id}`), format === "png" ? "png" : "jpg");
+    const path = await reserveFile(dir, slugName(input.name ?? input.focus, `screenshot-${tab.id}`), format === "png" ? "png" : "jpg");
+    let focus: { found: boolean; on?: string } | null = null;
     try {
       if (input.viewport) await page.setViewportSize(input.viewport);
+      let shot: FocusShot | null = null;
+      if ((input.focus || input.focusSelector) && !input.element) {
+        let found: { element: ElementHandle; description: string; kind?: string | null } | null = null;
+        // A selector list is tried in its own order (the first that is shown wins), then the words.
+        for (const selector of input.focusSelector ? input.focusSelector.split(/,(?![^[]*\])/).map((part) => part.trim()).filter(Boolean) : []) {
+          const locator = page.locator(selector).filter({ visible: true }).first();
+          const element = (await locator.count().catch(() => 0)) ? await locator.elementHandle({ timeout: 1_000 }).catch(() => null) : null;
+          if (element) {
+            found = { element, description: `the results (${selector})` };
+            break;
+          }
+        }
+        if (!found && input.focus) found = await findFocus(page, input.focus).catch(() => null);
+        if (found) {
+          // The runtime's own results areas are shown at least 480 pixels tall.
+          shot = await placeForShot(page, found.element, 700, input.focusSelector ? 480 : 0).catch(() => null);
+          // A chart on screen draws a moment later: pictured once it has.
+          if (shot && found.kind === "chart") await page.waitForFunction(chartDrawn, found.element, { timeout: 4_000 }).catch(() => undefined);
+          await found.element.dispose().catch(() => undefined);
+        }
+        focus = { found: Boolean(shot), ...(shot && found ? { on: found.description } : {}) };
+      }
       const masks = sensitiveMasks(page);
       const masked = (await Promise.all(masks.map((mask) => mask.count().catch(() => 0)))).reduce((sum, count) => sum + count, 0);
       const options = { path, type: format, mask: masks, caret: "hide" as const, timeout: 20_000, ...(format === "jpeg" ? { quality: 90 } : {}) };
-      if (input.element) await page.locator(elementSelector(input.element)).first().screenshot(options);
+      if (shot) await page.screenshot({ ...options, clip: shot.clip, fullPage: shot.fullPage });
+      else if (input.element) await page.locator(elementSelector(input.element)).first().screenshot(options);
       else await page.screenshot({ ...options, fullPage: Boolean(input.fullPage) });
       const still = await stillFile(path);
       const reason = scan.site === "preview" ? PREVIEW_REASON : holdReason(scan.hits);
-      return { ...still, kind: "image", held: Boolean(reason), ...(reason ? { reason } : {}), masked, url: this.safeUrl(page.url(), rules), title: hideSecrets(await page.title().catch(() => ""), rules) };
+      return {
+        ...still,
+        kind: "image",
+        held: Boolean(reason),
+        ...(reason ? { reason } : {}),
+        masked,
+        url: this.safeUrl(page.url(), rules),
+        title: hideSecrets(await page.title().catch(() => ""), rules),
+        ...(focus ? { focus: input.focus ?? "", focusFound: focus.found, ...(focus.on ? { focusOn: focus.on } : {}) } : {}),
+        ...(dismissed.length ? { dismissed } : {}),
+      };
     } catch (error) {
       await rm(path, { force: true });
       throw this.actionError(error, input.element);
@@ -1046,6 +1138,34 @@ export class BrowserBroker {
   }
 
   /**
+   * What the clean sign-in browser (logins/clean-signin.ts) needs for a tab's profile: a Chromium that can
+   * show a window (never the headless shell), its own folder beside the profile (null for a private
+   * tab), the look of this computer's Chrome as the profile has it (so a session moved between them
+   * stays the same browser to a site), this broker's extra switches, and the environment for a window.
+   */
+  cleanSignIn(profile: string | null): { executablePath: string; userDataDir: string | null; userAgent?: string; locale: string; timezone?: string; args: string[]; env: NodeJS.ProcessEnv; platform: NodeJS.Platform } | null {
+    const choice = this.chromium(false);
+    if (!choice) return null;
+    const platform = (this.options.platform ?? process.platform) as NodeJS.Platform;
+    const look = browserLook({ executablePath: choice.executablePath, platform });
+    return {
+      executablePath: choice.executablePath,
+      userDataDir: profile === null ? null : signInProfileDir(profile, this.dataHome()),
+      ...(look.userAgent ? { userAgent: look.userAgent } : {}),
+      locale: look.locale,
+      ...(look.timezoneId ? { timezone: look.timezoneId } : {}),
+      args: [...(this.options.args ?? [])],
+      env: this.options.env ?? process.env,
+      platform,
+    };
+  }
+
+  /** Where the broker keeps its files: a private tab's clean sign-in browser gets a folder for the session there. */
+  dataFolder(): string {
+    return this.dataHome();
+  }
+
+  /**
    * Shows a tab on this computer's screen for its owner to sign in: brought to the front of its window,
    * after restarting its profile's browser with a window when it ran without one. Refused while other
    * work uses that browser or it records, and for a private tab (always without a window).
@@ -1087,6 +1207,7 @@ export class BrowserBroker {
     for (const tab of moving) tab.moving = true;
     const pending = (async () => {
       this.contexts.delete(entry.key);
+      await this.keepSessionCookies(entry);
       await entry.context.close().catch(() => undefined);
       return this.launchProfile(entry.key, profile, headless);
     })();
@@ -1250,8 +1371,61 @@ export class BrowserBroker {
     return this.tab(operation, id, "observe").page;
   }
 
+  // ── the runtime's own web steps (browser/web.ts, browser/shop/), never agents ──
+
+  /** A tab's page for the runtime's own steps on it (a site's location dialog). Refused while the tab is sensitive. */
+  actPage(operation: string, id: string): Page {
+    return this.tab(operation, id, "act").page;
+  }
+
+  /** Where the operation's files go. */
+  evidenceFolder(operation: string): string {
+    return this.evidenceDir(operation);
+  }
+
+  /** Whether the operation browses only this computer's own addresses (`OperationOptions.loopbackOnly`). */
+  loopbackOnly(operation: string): boolean {
+    return this.op(operation).options.loopbackOnly === true;
+  }
+
+  /** An address as the work may read it: secret query values, saved secrets and key shapes hidden. */
+  async readableUrl(url: string): Promise<string> {
+    return this.safeUrl(url, await this.rules());
+  }
+
+  /** The profile a tab's browser uses (null for a private tab). */
+  tabProfile(operation: string, id: string): string | null {
+    return this.tab(operation, id, "observe").entry.profile;
+  }
+
+  /** The browser context of a tab, else of a profile (started without a window if needed): its cookies, its geolocation. */
+  async browserContext(operation: string, input: { tab?: string; profile?: string } = {}): Promise<BrowserContext> {
+    if (input.tab) return this.tab(operation, input.tab, "observe").entry.context;
+    const profile = input.profile ?? "default";
+    if (!isProfileName(profile) || /-(?:clean|signin)$/i.test(profile)) throw new BrowserError("bad_input", `"${profile}" is not a browser profile name.`);
+    this.op(operation);
+    return (await this.contextFor(operation, { profile, headed: false })).entry.context;
+  }
+
+  /** Read-only views of sites that refuse this browser, in a clean browser beside each profile (browser/clean-view.ts). */
+  cleanReader(): CleanReader {
+    if (!this.reader) {
+      this.reader = new CleanReader({
+        executablePath: () => this.executable(true),
+        dataHome: () => this.dataHome(),
+        platform: this.options.platform,
+        args: this.options.args,
+        log: (message) => this.log(message),
+      });
+    }
+    return this.reader;
+  }
+
   async shutdown(): Promise<void> {
     this.closed = true;
+    const reader = this.reader;
+    this.reader = null;
+    await reader?.shutdown().catch(() => undefined);
     if (this.janitor) clearInterval(this.janitor);
     this.janitor = null;
     for (const op of this.operations.values()) this.stopLive(op);
@@ -1286,7 +1460,7 @@ export class BrowserOperation {
   close(tab: string) {
     return this.broker.close(this.id, tab);
   }
-  snapshot(tab: string, options?: { maxChars?: number }) {
+  snapshot(tab: string, options?: { maxChars?: number; mode?: "full" | "interactive" }) {
     return this.broker.snapshot(this.id, tab, options);
   }
   click(tab: string, ref: string, options?: { button?: "left" | "right" | "middle"; double?: boolean }) {
@@ -1301,7 +1475,7 @@ export class BrowserOperation {
   wait(tab: string, condition: { selector?: string; text?: string; url?: string; timeoutMs?: number; state?: "visible" | "hidden" | "attached" | "detached" }) {
     return this.broker.wait(this.id, tab, condition);
   }
-  screenshot(tab: string, options?: { fullPage?: boolean; element?: string; viewport?: { width: number; height: number }; name?: string; format?: "png" | "jpeg" }) {
+  screenshot(tab: string, options?: ScreenshotOptions) {
     return this.broker.screenshot(this.id, tab, options);
   }
   console(tab: string, options?: { level?: "error" | "warning" | "all"; clear?: boolean }) {

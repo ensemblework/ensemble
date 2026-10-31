@@ -195,8 +195,9 @@ test("every assistant tool stays inside the open space", async () => {
     assert.ok(seenThere.includes(name), `${name} finds the records inside their own space (saw: ${seenThere.join(", ")})`);
   }
   const unchecked = [...TOOLS.values()].filter((tool) => !SKIP.has(tool.name) && !checked.includes(tool.name)).map((tool) => `${tool.name}${tool.isWrite ? "(w)" : ""}`);
-  // Left out: tools that only create something new from words (no ids), and reads with nothing of their kind seeded.
-  assert.deepEqual(unchecked.filter((name) => !/^hub_create_(project|reminder|person|diagram|page)\(w\)$|^hub_(read_skill|get_run|add_desk_item\(w\)|remove_desk_item\(w\)|import_app_file\(w\)|save_app_item_as_page\(w\)|update_settings\(w\))$/.test(name)), []);
+  // Left out: tools that only create something new from words (no ids), reads with nothing of their kind seeded,
+  // and hub_save_file, which takes a web link or the person's own evidence, never another space's records.
+  assert.deepEqual(unchecked.filter((name) => !/^hub_create_(project|reminder|person|diagram|page)\(w\)$|^hub_(read_skill|get_run|add_desk_item\(w\)|remove_desk_item\(w\)|import_app_file\(w\)|save_app_item_as_page\(w\)|update_settings\(w\)|save_file\(w\))$/.test(name)), []);
   assert.ok(checked.length >= 45, `checked ${checked.length} tools`);
 
   // Nothing in the other space was changed or trashed.
