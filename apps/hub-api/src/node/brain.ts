@@ -160,8 +160,9 @@ async function persona(
     "",
     "Who does the work (follow this):",
     hands
-      ? "- Facts, news, “look up”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps."
-      : "- Facts, prices, news, “look up”, “compare”: hub_web_search first (the live web, with sources). Your owner's own work: their workspace and connected apps.",
+      ? "- Facts, news, “look up”: hub_web_search first (the live web, with sources)."
+      : "- Facts, prices, news, “look up”, “compare”: hub_web_search first (the live web, with sources).",
+    "- Your owner's work (tasks, boards, Ensemble links) and apps: your tools; you are in Ensemble already, never sign in to it in a browser.",
     ...(hands ? HANDS : []),
     fromNonOwner ? "" : "- A paper or PDF into your owner's Ensemble Files: hub_save_file (url: the direct file link); link only what it returns.",
     `- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs ${agentDefaults(pickRunProfile(settings, node.runProfileId))} unless your owner names an agent, model, thinking level or context.`,

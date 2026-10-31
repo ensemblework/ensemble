@@ -79,6 +79,7 @@ The Hub assistant operates the app through typed tools. Its instructions stay th
 | Capability | What works |
 | --- | --- |
 | Tasks and records | Create and update tasks, people, projects, repositories and profession records; comments, Trash, conversions, history. Clearing the board or a filtered set is one `hub_delete_tasks` call with one Undo |
+| Custom boards | List and read a board by its link, id or title; make, change and delete boards and their columns; put, move and take off tasks and notes. Deleting a board always waits for Apply |
 | Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity on a paired computer or this server, with a run profile; waits for Apply, then queues |
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
@@ -92,7 +93,7 @@ The Hub assistant operates the app through typed tools. Its instructions stay th
 - Hub writes run at once by default (Settings → Assistant → "Just do it (undoable)"); Preview makes them wait. Connected-app writes, settings, workflows and agent assignments always wait for Apply.
 - An interrupted workflow step with an unknown outcome is not replayed. Starting an import is not finishing it.
 - There is no native email, Slack or Teams send. Calendar invitations can notify guests; some connected-item updates and vendor MCP tools write after Apply.
-- Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
+- Surface context is structured app state, not screenshots or DOM access. Neither the assistant nor Ensemble Node ever opens Ensemble's own web app in a browser ([39](39_ENSEMBLE_TOOLS_AUDIT.md)). Credentials, account deletion, sharing permissions and folder trust are human-only.
 - Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button uploads into Files or lists saved Files and searches no connector.
 - Files attached in chat, in Ensemble Node or to a task go to the model as the files themselves, whatever their kind; a provider that refuses one gets the request again without it. A person's own subscription agent gets them in its own input form. Ensemble's extracted text of a file is not given to models; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
 - Replies, receipts and previews name records by title and link to them; ids stay in tool data and link targets, and show only when the person asks ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)).

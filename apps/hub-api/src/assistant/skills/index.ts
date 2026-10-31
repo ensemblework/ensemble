@@ -159,12 +159,13 @@ function wordScore(playbook: Playbook, message: string): number {
 /**
  * The playbooks a turn starts with: those the person's mentions or the words of the message point
  * at (a longer, more specific phrase wins: "meeting notes" over "meeting"), strongest first, at most
- * two; the open page only breaks ties, and never loads one on its own. A message that names one of the person's connected apps, or
+ * two; the open page only breaks ties, and never loads one on its own (on a custom board, task work also gets
+ * the boards playbook). A message that names one of the person's connected apps, or
  * asks about meetings while a meeting-notes app is connected, also gets the apps playbook, on
  * top of those two: without it that app's tools are not shown.
  */
 export function routePlaybooks(
-  turn: { message: string; path?: string; mentions?: ReadonlyArray<{ kind: string }>; apps?: readonly ConnectedAppNames[] },
+  turn: { message: string; path?: string; mentions?: ReadonlyArray<{ kind: string }>; apps?: readonly ConnectedAppNames[]; customBoard?: boolean },
   playbooks: readonly Playbook[],
 ): Playbook[] {
   const kinds = new Set((turn.mentions ?? []).map((mention) => mention.kind));
@@ -180,6 +181,9 @@ export function routePlaybooks(
     .filter((row) => row.score >= 2)
     .sort((a, b) => b.score - a.score || a.order - b.order);
   const routed = scored.slice(0, MAX_ROUTED).map((row) => row.playbook);
+  // On a custom board, task work ("move this to Done") is about that board's cards.
+  const boards = playbooks.find((playbook) => playbook.name === "boards");
+  if (turn.customBoard && boards && !routed.includes(boards) && routed.some((playbook) => playbook.name === "tasks")) routed.push(boards);
   const apps = playbooks.find((playbook) => playbook.name === "apps");
   if (!apps || routed.includes(apps) || !turn.apps?.length) return routed;
   const named = turn.apps.some((app) => namesApp(turn.message, app.names));

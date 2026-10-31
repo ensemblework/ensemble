@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient, type PageBoard } from "@prisma/client";
-import { PageBoardColumns, PageBoardTiles, type BoardPage, type DirectoryPage, type PageBoardRecord } from "@ensemble/shared-types";
+import { PageBoardColumns, PageBoardTiles, type BoardPage, type CreatePageBoard, type DirectoryPage, type PageBoardRecord, type PatchPageBoard } from "@ensemble/shared-types";
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { pageSearchText } from "./markdown.js";
 import { searchSnippet, TaskPageError, taskForPage } from "./store.js";
@@ -39,6 +39,53 @@ export async function ownedBoard(db: Db, userId: string, id: string, lock = fals
   const board = await db.pageBoard.findFirst({ where: { id, userId } });
   if (!board) throw new TaskPageError("BOARD_NOT_FOUND", "Board not found.", 404);
   return board;
+}
+
+/*
+ * The custom boards of a space, shared by `routes/page-boards.ts` and the assistant's board tools
+ * (assistant/tools/boards.ts), so both check and change them the same way. `userId` is the space.
+ */
+
+export async function listBoards(db: Db | PrismaClient, userId: string): Promise<PageBoardRecord[]> {
+  const boards = await db.pageBoard.findMany({
+    where: { userId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    include: { _count: { select: { pages: { where: visibleBoardPages(userId) } } } },
+  });
+  return boards.map((board) => boardDto(board, board._count.pages));
+}
+
+export async function createBoard(db: Db | PrismaClient, userId: string, input: CreatePageBoard): Promise<PageBoardRecord> {
+  const board = await db.pageBoard.create({ data: { userId, ...input } });
+  return boardDto(board, 0);
+}
+
+/** A board and its visible pages in board order. Run it in one RepeatableRead transaction for a consistent read. */
+export async function boardWithPages(db: Db, userId: string, id: string) {
+  const board = await ownedBoard(db, userId, id);
+  const pages = await db.taskPage.findMany({ where: { ...visibleBoardPages(userId), boardId: id }, select: boardPageSelect, orderBy: [{ boardOrder: "asc" }, { id: "asc" }] });
+  return { board: boardDto(board, pages.length), pages: pages.map(boardPageDto) };
+}
+
+/** Changes a board at `revision`; a column that still holds pages (Trash included) cannot be removed. */
+export async function updateBoard(db: Db, userId: string, id: string, revision: number, body: Omit<PatchPageBoard, "revision">): Promise<PageBoardRecord> {
+  const existing = await ownedBoard(db, userId, id, true);
+  if (existing.revision !== revision) throw new TaskPageError("BOARD_CONFLICT", "This board changed in another tab. Reload it before saving.", 409);
+  if (body.columns) {
+    const removed = PageBoardColumns.parse(existing.columns).filter((column) => !body.columns!.some((next) => next.id === column.id));
+    if (removed.length && await db.taskPage.count({ where: { userId, boardId: id, boardColumnId: { in: removed.map((column) => column.id) } } })) {
+      throw new TaskPageError("COLUMN_NOT_EMPTY", "Move the pages out of a column before removing it. Pages in Trash keep their column too.", 409);
+    }
+  }
+  const board = await db.pageBoard.update({ where: { id }, data: { ...body, revision: { increment: 1 } } });
+  return boardDto(board, await db.taskPage.count({ where: { ...visibleBoardPages(userId), boardId: id } }));
+}
+
+/** Deletes a board and keeps its pages: notes become independent, task pages return to the Ensemble board. */
+export async function deleteBoard(db: Db, userId: string, id: string): Promise<void> {
+  await ownedBoard(db, userId, id, true);
+  // Organizational cleanup must not invalidate a page's pending Trash undo timestamp.
+  await db.$executeRaw`UPDATE task_pages SET board_id = NULL, board_column_id = NULL, board_order = 0 WHERE user_id = ${userId} AND board_id = ${id}`;
+  await db.pageBoard.delete({ where: { id } });
 }
 
 /** Board membership does not rewrite a page's document or its live-editor revision. */

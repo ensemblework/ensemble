@@ -102,6 +102,12 @@ test("every assistant tool stays inside the open space", async () => {
   await db.authToken.create({ data: { userId: other, provider: "vercel", accessToken: "sealed-and-never-read", expiresAt: new Date("2100-01-01T00:00:00Z"), account: `${MARK}-vercel` } });
   await db.mcpConnection.create({ data: { userId: other, serverId: "custom-zephyrine", name: `${MARK} server`, url: "https://mcp.example.test/mcp", status: "connected" } });
   const task = await db.task.findFirstOrThrow({ where: { userId: other, title: `${MARK} task` } });
+  // A custom board holding the task and the page, and a watcher on the task.
+  const made = (await run(there, "hub_create_board", { title: `${MARK} board`, columns: [`${MARK} lane`, "Done"] })).data as { board: { id: string; columns: Array<{ id: string }> } };
+  const placeTool = getTool("hub_move_to_board")!;
+  for (const card of [{ taskId: task.id }, { pageId: page.id }]) await placeTool.run(there, await placeTool.prepare!(there, placeTool.input.parse({ board: made.board.id, column: `${MARK} lane`, ...card })));
+  await run(there, "hub_create_watcher", { scopeKind: "task", scopeId: task.id, condition: "all_tasks_done", message: `${MARK} watch` });
+  const watcher = await db.watcher.findFirstOrThrow({ where: { userId: other } });
   const person = await db.person.findFirstOrThrow({ where: { userId: other, name: `${MARK} Bee` } });
   const deliverable = await db.deliverable.findFirstOrThrow({ where: { userId: other, title: `${MARK} deliverable` } });
   const reminder = await db.reminder.findFirstOrThrow({ where: { userId: other, title: `${MARK} reminder` } });
@@ -118,9 +124,12 @@ test("every assistant tool stays inside the open space", async () => {
     plot: (plot.plot?.id ?? plot.id)!,
     file: fileId,
     artifact: artifact.id,
+    board: made.board.id,
+    column: made.board.columns[0]!.id,
+    watcher: watcher.id,
   };
   // The other space's records: their ids and the words stored in them (a tool echoing the search word is not a leak).
-  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|page|sync|data|mail|space|contract|decided|wants|flow|step|chart|server)|${MARK}-vercel|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
+  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|page|sync|data|mail|space|contract|decided|wants|flow|step|chart|server|board|lane|watch)|${MARK}-vercel|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
   const secret = new RegExp([stored, ...Object.values(ids)].join("|"), "i");
 
   const checked: string[] = [];
@@ -165,6 +174,12 @@ test("every assistant tool stays inside the open space", async () => {
       hub_link_repo: [{ fullName: "fieldnote/linked-across", projectId: ids.project }],
       hub_create_watcher: [{ scopeKind: "task", scopeId: ids.task, condition: "all_tasks_done", message: "Across" }],
       hub_create_meeting_note: [{ title: "Linked across", date: "2026-10-12", time: "11:00", notes: "x", attendeeIds: [ids.person] }],
+      hub_read_board: [{ board: ids.board }, { board: `https://app.ensemblework.com/board?board=${ids.board}` }, { board: `${MARK} board` }, { board: ids.board, column: ids.column }],
+      hub_update_board: [{ board: ids.board, title: "Across" }, { board: ids.board, columns: [{ action: "remove", column: ids.column }] }],
+      hub_delete_board: [{ board: ids.board }, { board: `${MARK} board` }],
+      hub_move_to_board: [{ board: ids.board, column: ids.column, taskId: ids.task }, { board: ids.board, column: ids.column, pageId: ids.page }],
+      hub_remove_from_board: [{ taskId: ids.task }, { pageId: ids.page }],
+      hub_cancel_watcher: [{ watcherId: ids.watcher }],
     };
     const variants = [inputFor(tool, ids, false), inputFor(tool, ids, true), ...(extra[tool.name] ?? [])].filter((input): input is Record<string, unknown> => input !== null);
     const tried = new Set<string>();
@@ -191,13 +206,13 @@ test("every assistant tool stays inside the open space", async () => {
   }
 
   // The control: the same reads do find the other space's records when run inside it.
-  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_view_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections"]) {
+  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_view_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections", "hub_list_boards", "hub_read_board", "hub_list_watchers"]) {
     assert.ok(seenThere.includes(name), `${name} finds the records inside their own space (saw: ${seenThere.join(", ")})`);
   }
   const unchecked = [...TOOLS.values()].filter((tool) => !SKIP.has(tool.name) && !checked.includes(tool.name)).map((tool) => `${tool.name}${tool.isWrite ? "(w)" : ""}`);
   // Left out: tools that only create something new from words (no ids), reads with nothing of their kind seeded,
   // and hub_save_file, which takes a web link or the person's own evidence, never another space's records.
-  assert.deepEqual(unchecked.filter((name) => !/^hub_create_(project|reminder|person|diagram|page)\(w\)$|^hub_(read_skill|get_run|add_desk_item\(w\)|remove_desk_item\(w\)|import_app_file\(w\)|save_app_item_as_page\(w\)|update_settings\(w\)|save_file\(w\))$/.test(name)), []);
+  assert.deepEqual(unchecked.filter((name) => !/^hub_create_(project|reminder|person|diagram|page|board)\(w\)$|^hub_(read_skill|get_run|add_desk_item\(w\)|remove_desk_item\(w\)|import_app_file\(w\)|save_app_item_as_page\(w\)|update_settings\(w\)|save_file\(w\))$/.test(name)), []);
   assert.ok(checked.length >= 45, `checked ${checked.length} tools`);
 
   // Nothing in the other space was changed or trashed.
@@ -215,6 +230,10 @@ test("every assistant tool stays inside the open space", async () => {
   assert.equal(await db.watcher.count({ where: { userId: mira.id, scopeId: ids.task } }), 0, "no watcher on the other space's task");
   assert.match((await db.blockDiagram.findUniqueOrThrow({ where: { id: ids.diagram } })).source, /"Done"/);
   assert.equal((await db.plot.findUniqueOrThrow({ where: { id: ids.plot } })).title, `${MARK} chart`);
+  const board = await db.pageBoard.findUniqueOrThrow({ where: { id: ids.board } });
+  assert.deepEqual([board.title, board.revision], [`${MARK} board`, 1], "the other space's board is unchanged");
+  assert.equal(await db.taskPage.count({ where: { userId: other, boardId: ids.board, boardColumnId: ids.column } }), 2, "its cards stay on it");
+  assert.equal((await db.watcher.findUniqueOrThrow({ where: { id: ids.watcher } })).status, "active");
 });
 
 test("trashing a file through the assistant hides it, and restoring brings it back", async () => {

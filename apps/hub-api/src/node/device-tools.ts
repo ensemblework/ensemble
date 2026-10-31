@@ -35,6 +35,7 @@ import { helperFolders, helperGrant } from "./helpers.js";
 import { ownerMedia, rememberCaptured, shownKinds } from "./media.js";
 import { requestPark } from "./queue.js";
 import { askSudo } from "./sudo.js";
+import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
 import type { NodeScope } from "./tools.js";
 
 const ASK_MS = 30_000;
@@ -671,6 +672,19 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
 }
 
 /**
+ * Refuses, before anything reaches the computer, a browser or capture call that would open Ensemble's
+ * own web app (lib/ensemble-origins.ts): the node already acts there through its Ensemble tools.
+ */
+export function refuseEnsembleApp(name: string, input: Record<string, unknown>): void {
+  // browser_wait's url is a pattern the tab's address is waited for, not a page to open.
+  const targets = [name !== "browser_wait" && typeof input.url === "string" ? input.url : null, ...(name === "browser_shop" && Array.isArray(input.stores) ? input.stores : [])];
+  for (const target of targets) {
+    const origin = typeof target === "string" ? ensembleAppOrigin(target) : null;
+    if (origin) throw new ToolBlockedError(`${origin} is Ensemble itself, not a website to open or sign in to.`, ENSEMBLE_IN_BROWSER);
+  }
+}
+
+/**
  * The browser and capture tools (B10, B19) on the owner's computer, for this node: the same tools a
  * coding agent's run has, through `node.tool.request` (device-tools/capture.ts on the computer). What
  * they capture is the node's own evidence and comes with its reply; a capture the computer holds
@@ -689,6 +703,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
       risk: spec.name === "capture_app_start" || spec.name === "browser_type" || spec.name === "browser_upload" ? "medium" : "low",
       async run(ctx, raw) {
         const { computer, ...input } = raw as Record<string, unknown> & { computer?: string };
+        refuseEnsembleApp(spec.name, input);
         const tool = spec.name.startsWith("browser_") ? ("browser" as const) : ("capture" as const);
         const operation = captureOperation(scope);
         const mode = await modeFor(prisma, node);
