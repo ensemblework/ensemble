@@ -17,7 +17,7 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { fileAnswers, publishDeviceFrame, publishFileAnswer } from "../devices/revoke-notify.js";
 import { appendLedger } from "../lib/ledger.js";
 import { readAad, SealError } from "../credentials/seal.js";
-import { CodeAnswer, LIVE_API, TAKEOVER_CLEAN_API, TAKEOVER_MIN_API, type ChannelMessage } from "../remote/contract.js";
+import { CodeAnswer, LIVE_API, TAKEOVER_CLEAN_API, TAKEOVER_EXTEND_API, TAKEOVER_EXTEND_MS, TAKEOVER_LONGEST_MS, TAKEOVER_MIN_API, type ChannelMessage } from "../remote/contract.js";
 import { secretRouteFor } from "./node-secrets.js";
 import { loginTakeoverEnded } from "./logins.js";
 import { endLiveCard, liveCardTarget } from "./live-views.js";
@@ -74,6 +74,8 @@ export type TakeoverRecord = {
   view?: "watch" | "control";
   createdAt: string;
   startBy: string;
+  /** When the computer started it: an extend never moves its end past an hour after this. */
+  startedAt?: string;
   endsAt: string | null;
   state: "created" | "live" | "ended";
   reason?: string;
@@ -111,6 +113,8 @@ export function publicTakeover(record: TakeoverRecord, sealKey?: SealKeyInfo) {
     state: record.state,
     startBy: record.startBy,
     endsAt: record.endsAt,
+    // The latest its end can be moved to with More time.
+    ...(record.startedAt ? { maxEndsAt: new Date(Date.parse(record.startedAt) + TAKEOVER_LONGEST_MS).toISOString() } : {}),
     loginCardId: record.loginCardId,
     kind: record.kind ?? "browser",
     mode: record.view ?? "control",
@@ -123,15 +127,16 @@ export function publicTakeover(record: TakeoverRecord, sealKey?: SealKeyInfo) {
 }
 
 /** Ends a takeover here: no more frames or input; the tab is free for another controller. */
-async function markEnded(app: FastifyInstance, record: TakeoverRecord, reason: string): Promise<TakeoverRecord> {
+async function markEnded(app: FastifyInstance, record: TakeoverRecord, reason: string, detail?: string): Promise<TakeoverRecord> {
   if (record.state === "ended") return record;
+  relays.delete(record.id);
   const ended: TakeoverRecord = { ...record, state: "ended", reason };
   await write(app, ended);
   const redis = redisOf(app);
   if ((await redis.get(targetKey(record.deviceId, record.tab))) === record.id) await redis.del(targetKey(record.deviceId, record.tab));
   await redis.del(frameKey(record.id));
   publishFileAnswer(wake(record.id));
-  await appendLedger({ userId: record.accountId, actor: "me", action: "node.takeover_ended", payload: { takeoverId: record.id, deviceId: record.deviceId, reason } }).catch(() => undefined);
+  await appendLedger({ userId: record.accountId, actor: "me", action: "node.takeover_ended", payload: { takeoverId: record.id, deviceId: record.deviceId, reason, ...(detail ? { detail: detail.slice(0, 200) } : {}) } }).catch(() => undefined);
   return ended;
 }
 
@@ -207,7 +212,9 @@ export async function createTakeover(app: FastifyInstance, accountId: string, se
   const taken = (await redis.set(lock, id, "EX", Math.ceil((START_MS + takeoverMaxMs()) / 1000) + 60, "NX")) === "OK";
   if (!taken) {
     const holder = await redis.get(lock);
-    const current = holder ? await read(app, holder) : null;
+    let current = holder ? await read(app, holder) : null;
+    // The owner watching the tab live makes way for its sign-in (the computer ends the watch too).
+    if (current && current.state !== "ended" && target.loginId && current.liveCardId && current.accountId === accountId && (current.view ?? "watch") === "watch") current = await endOnComputer(app, current, "sign_in");
     if (current && current.state !== "ended" && !(current.state === "created" && Date.parse(current.startBy) < Date.now())) throw new TakeoverError("Someone is already controlling this tab. Stop there first.", 409, "controlled");
     await redis.set(lock, id, "EX", Math.ceil((START_MS + takeoverMaxMs()) / 1000) + 60);
   }
@@ -256,9 +263,11 @@ async function stillGood(app: FastifyInstance, record: TakeoverRecord): Promise<
   if (record.state === "ended") return record;
   if (record.state === "created" && Date.parse(record.startBy) <= Date.now()) return markEnded(app, record, "expired");
   if (record.endsAt && Date.parse(record.endsAt) <= Date.now()) return endOnComputer(app, record, "expired");
-  const session = await app.prisma.session.findUnique({ where: { id: record.sessionId }, select: { expiresAt: true } });
+  const [session, device] = await Promise.all([
+    app.prisma.session.findUnique({ where: { id: record.sessionId }, select: { expiresAt: true } }),
+    app.prisma.device.findFirst({ where: { id: record.deviceId, revokedAt: null }, select: { id: true } }),
+  ]);
   if (!session || session.expiresAt <= new Date()) return endOnComputer(app, record, "signed_out");
-  const device = await app.prisma.device.findFirst({ where: { id: record.deviceId, revokedAt: null }, select: { id: true } });
   if (!device) return markEnded(app, record, "unpaired");
   return record;
 }
@@ -309,18 +318,20 @@ export async function startTakeover(app: FastifyInstance, record: TakeoverRecord
   const answer = raw ? CodeAnswer.safeParse(raw) : null;
   const body = (answer?.success && answer.data.body && typeof answer.data.body === "object" ? answer.data.body : {}) as { error?: unknown; width?: unknown; height?: unknown; endsAt?: unknown; mode?: unknown; note?: unknown };
   if (!answer?.success || answer.data.status >= 400) {
-    await markEnded(app, current, "refused");
+    const why = typeof body.error === "string" ? body.error : `${device.name} did not answer. Check Ensemble is running there.`;
+    // Why it was refused (never a value: the computer's own words, such as "That tab is closed.").
+    await markEnded(app, current, "refused", raw ? `${answer?.success ? answer.data.status : "bad answer"}: ${why}` : "no answer");
     // The terminal or tab is gone from the computer: its card ends.
     if (current.liveCardId && answer?.success && answer.data.status === 410) {
       const card = await app.prisma.nodeMessage.findUnique({ where: { id: current.liveCardId }, select: { data: true } });
       const liveId = (card?.data as { liveId?: unknown } | null)?.liveId;
       if (typeof liveId === "string") await endLiveCard(app, current.accountId, liveId, "gone");
     }
-    throw new TakeoverError(typeof body.error === "string" ? body.error : `${device.name} did not answer. Check Ensemble is running there.`, 502);
+    throw new TakeoverError(why, 502);
   }
   // The computer says which browser it shows (takeover 2): the clean one, or the tab when that could not start (`note` says why).
   const shown: Pick<TakeoverRecord, "mode"> = body.mode === "clean" || body.mode === "tab" ? { mode: body.mode } : {};
-  const live: TakeoverRecord = { ...current, ...shown, state: "live", endsAt: typeof body.endsAt === "string" ? body.endsAt : endsAt };
+  const live: TakeoverRecord = { ...current, ...shown, state: "live", startedAt: new Date().toISOString(), endsAt: typeof body.endsAt === "string" ? body.endsAt : endsAt };
   await write(app, live);
   await appendLedger({ userId: current.accountId, actor: "me", action: "node.takeover_started", payload: { takeoverId: current.id, deviceId: device.id } });
   return { takeover: publicTakeover(live), ...(typeof body.width === "number" ? { width: body.width } : {}), ...(typeof body.height === "number" ? { height: body.height } : {}), ...(typeof body.note === "string" && body.note.trim() ? { note: body.note.slice(0, 500) } : {}) };
@@ -352,11 +363,81 @@ export async function nextFrame(app: FastifyInstance, record: TakeoverRecord, af
   }
 }
 
-/** Passes encrypted input on to the computer, in the order it came. The computer refuses a replay. */
+/**
+ * Input waiting to go to the computer, per takeover: the next number it expects, and messages that came
+ * early (the page sends several at once, and their requests can overtake each other).
+ */
+type Relay = { next: number; early: Map<number, { deviceId: string; message: ChannelMessage }>; timer: NodeJS.Timeout | null };
+const relays = new Map<string, Relay>();
+/** A message that came before the one it follows waits this long for it; then the gap is skipped. */
+export const INPUT_GAP_MS = 250;
+const EARLY_MAX = 64;
+
+function send(id: string, deviceId: string, message: ChannelMessage): void {
+  publishDeviceFrame(deviceId, "takeover.input", { takeoverId: id, seq: message.seq, iv: message.iv, ct: message.ct });
+}
+
+/** Sends what waited, in order, from the next number on; `skip`: past a gap that did not fill in time. */
+function flush(id: string, relay: Relay, skip: boolean): void {
+  if (relay.timer) clearTimeout(relay.timer);
+  relay.timer = null;
+  for (;;) {
+    let item = relay.early.get(relay.next);
+    if (!item && skip && relay.early.size) {
+      relay.next = Math.min(...relay.early.keys());
+      item = relay.early.get(relay.next);
+    }
+    if (!item) break;
+    relay.early.delete(relay.next);
+    send(id, item.deviceId, item.message);
+    relay.next += 1;
+    skip = false;
+  }
+  if (relay.early.size) {
+    relay.timer = setTimeout(() => flush(id, relay, true), INPUT_GAP_MS);
+    relay.timer.unref();
+  }
+}
+
+/**
+ * Passes encrypted input on to the computer in sequence order: one that came early waits briefly for
+ * those before it. One at or below what was sent already goes as it is (the computer refuses a replay).
+ */
 export async function relayInput(app: FastifyInstance, record: TakeoverRecord, message: ChannelMessage): Promise<void> {
   const current = await stillGood(app, record);
   if (current.state !== "live") throw new TakeoverError(current.state === "ended" ? "This takeover has ended." : "This takeover has not started.", 410, current.reason);
-  publishDeviceFrame(current.deviceId, "takeover.input", { takeoverId: current.id, seq: message.seq, iv: message.iv, ct: message.ct });
+  let relay = relays.get(current.id);
+  if (!relay) {
+    relay = { next: 1, early: new Map(), timer: null };
+    relays.set(current.id, relay);
+  }
+  if (message.seq < relay.next) return send(current.id, current.deviceId, message);
+  relay.early.set(message.seq, { deviceId: current.deviceId, message });
+  if (relay.early.size > EARLY_MAX) return flush(current.id, relay, true);
+  flush(current.id, relay, false);
+}
+
+/**
+ * The owner wants more time: its end moves 15 minutes later, at most an hour after it started; the
+ * computer is told (`takeover.extend`, takeover 3).
+ */
+export async function extendTakeover(app: FastifyInstance, record: TakeoverRecord): Promise<{ takeover: ReturnType<typeof publicTakeover> }> {
+  const current = await stillGood(app, record);
+  if (current.state !== "live" || !current.endsAt) throw new TakeoverError(current.state === "ended" ? "This takeover has ended. Open the browser again." : "This takeover has not started.", 409, "state");
+  const device = await app.prisma.device.findFirst({ where: { id: current.deviceId, revokedAt: null } });
+  const caps = (device?.capabilities ?? {}) as { takeover?: unknown };
+  if (!device || typeof caps.takeover !== "number" || caps.takeover < TAKEOVER_EXTEND_API) throw new TakeoverError(`Update Ensemble on ${current.computer} to keep its browser open longer.`, 409, "update");
+  const started = Date.parse(current.startedAt ?? current.createdAt);
+  const endsAt = Math.min(Date.parse(current.endsAt) + TAKEOVER_EXTEND_MS, started + TAKEOVER_LONGEST_MS);
+  if (endsAt <= Date.parse(current.endsAt)) throw new TakeoverError("It is open for an hour at most. Open the browser again when it ends.", 409, "longest");
+  const extended: TakeoverRecord = { ...current, endsAt: new Date(endsAt).toISOString() };
+  await write(app, extended);
+  // The tab stays this controller's until the new end.
+  const lock = targetKey(current.deviceId, current.tab);
+  if ((await redisOf(app).get(lock)) === current.id) await redisOf(app).set(lock, current.id, "EX", Math.ceil((endsAt - Date.now()) / 1000) + 60);
+  publishDeviceFrame(current.deviceId, "takeover.extend", { takeoverId: current.id, endsAt: extended.endsAt });
+  await appendLedger({ userId: current.accountId, actor: "me", action: "node.takeover_extended", payload: { takeoverId: current.id, deviceId: current.deviceId, endsAt: extended.endsAt } }).catch(() => undefined);
+  return { takeover: publicTakeover(extended) };
 }
 
 /**

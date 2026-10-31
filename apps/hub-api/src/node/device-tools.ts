@@ -288,6 +288,24 @@ export function refuseDangerous(command: string, root = false): void {
   if (hit) throw new ToolBlockedError(dangerousMessage(hit));
 }
 
+/**
+ * Commands that sign in a command-line tool (`az login`, `gh auth login`, `aws sso login`, `wandb login`,
+ * `gcloud auth login`, `gcloud init`…: a `login` word of their own): they wait for the owner (a code on a
+ * card, or a page in the computer's sign-in browser), so they run in the background for up to 15 minutes.
+ */
+export const SIGN_IN_COMMAND = /(?:^|[\s"'(;&|])(?:login|gcloud\s+init|aws\s+configure\s+sso|claude\s+setup-token|doctl\s+auth\s+init|oci\s+session\s+authenticate|gh\s+auth\s+refresh)(?=$|[\s"');&|])/i;
+const SIGN_IN_SECONDS = 900;
+
+/** What the node hears of the sign-ins its command asked the owner for (its codes, its pages): the owner has each on a card. */
+function signInLines(body: Record<string, unknown>): string[] {
+  const codes = Array.isArray(body.deviceCodes) ? (body.deviceCodes as Array<{ url?: unknown; code?: unknown }>).filter((item) => typeof item.url === "string" && typeof item.code === "string") : [];
+  const pages = Array.isArray(body.signInPages) ? body.signInPages.filter((item): item is string => typeof item === "string") : [];
+  return [
+    ...codes.map((item) => `It printed a sign-in code for ${String(item.url)}: ${String(item.code)}. Your owner got it on a card in this chat (the code, the page, a countdown). This chat is only you and your owner, so you may say the code if they ask; never repeat it in a room with other people.`),
+    ...pages.map((site) => `It opened a sign-in page (${site}) in your owner's sign-in browser on that computer: their sign-in card in this chat opens it, even from a phone, and the command goes on when they finish.`),
+  ];
+}
+
 /** A call without a folder works in the node's own folder, which older computers do not have. */
 const ownFolder = (folder: string | undefined): Need | undefined => (folder ? undefined : { ownFolder: "work in your own folder there. Until then, name a folder it shares with Ensemble" });
 
@@ -308,6 +326,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         "Examples: download `curl -L -o app.deb https://example.com/app.deb`; read `cat notes.md` or `sed -n 1,80p build.log`; look `ls -la`, `df -h`, `git status`; test `npm test`. " +
         "One program and its arguments; for pipes, && or > use `bash -c \"…\"`. It runs in the computer's sandbox and changes files only in its folder. Omit folder to work in your own folder on the computer. " +
         "Up to 900 seconds: a long build or a server, background: true, and you are woken when it ends. Administrator rights (apt install, systemctl): computer_sudo. A screenshot of a terminal: computer_terminal_screenshot. " +
+        "A CLI sign-in (`az login`, `gh auth login`, `gcloud auth login`, `aws sso login`) runs in the background for 15 minutes by itself: a code it prints reaches your owner on a card, and a page it opens opens in their sign-in browser on that computer. " +
         "Writing or changing code in a repository is an agent session's job (node_session_start).",
       input: z
         .object({
@@ -329,13 +348,18 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         const runId = randomUUID();
         const mode = await modeFor(prisma, node);
         const where = input.folder ?? "your own folder";
+        // A sign-in waits for the owner: in the background, for 15 minutes.
+        const signIn = SIGN_IN_COMMAND.test(input.command);
+        const background = input.background || signIn;
+        const timeoutSec = signIn ? Math.max(input.timeoutSec, SIGN_IN_SECONDS) : input.timeoutSec;
         const done = await callComputer(
           ctx,
           scope,
           input.computer,
-          { tool: "run", folder: input.folder, cwd: input.cwd, command: input.command, timeoutSec: input.timeoutSec, background: input.background, secrets: input.secrets, runId, delivery: mode.delivery, network: mode.network },
+          { tool: "run", folder: input.folder, cwd: input.cwd, command: input.command, timeoutSec, background, secrets: input.secrets, runId, delivery: mode.delivery, network: mode.network },
           {
-            timeoutMs: input.background ? ASK_MS : RUN_ASK_MS,
+            // A background command answers within a few seconds; a sign-in waits a little longer for its prompt.
+            timeoutMs: background ? ASK_MS : RUN_ASK_MS,
             describe: `Run: ${input.command}`,
             again: callText("computer_run", input),
             need: ownFolder(input.folder),
@@ -357,11 +381,13 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
+        const signIns = signInLines(done.body);
         if (done.status === 202) {
-          return toolOk(`\`${input.command}\` is running in the background on ${done.device.name}. You are woken when it ends; do not wait for it.`, { computer: done.device.name, run: runId, output: done.body.output ?? "" });
+          const lines = [`\`${input.command}\` is running in the background on ${done.device.name}${signIn ? ` (up to ${Math.round(timeoutSec / 60)} minutes: it waits for your owner to sign in)` : ""}. You are woken when it ends; do not wait for it.`, ...signIns];
+          return toolOk(lines.join("\n"), { computer: done.device.name, run: runId, output: done.body.output ?? "" });
         }
         const exit = typeof done.body.exitCode === "number" ? done.body.exitCode : null;
-        return toolOk(`Exit code ${exit ?? "unknown"}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, {
+        return toolOk([`Exit code ${exit ?? "unknown"}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, ...signIns].join("\n"), {
           computer: done.device.name,
           exitCode: exit,
           output: typeof done.body.output === "string" ? done.body.output : "",

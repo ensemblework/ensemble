@@ -707,6 +707,66 @@ test("a long command runs on in the background and wakes its node once when it e
   }
 });
 
+test("a CLI sign-in runs 15 minutes in the background; the code it prints is on one owner-only card in the chat (the node may say it here), which follows the command's end; no other computer posts there, and no code in the ledger", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 2, cliLogins: 1 });
+  const { node, room } = await createNode(mira);
+  const url = "https://microsoft.com/devicelogin";
+  const code = "FWQZ8N3XP";
+  let runId = "";
+  const posts: number[] = [];
+  const device = computer(laptop.id, key, async (data) => {
+    runId = String(data.runId);
+    // The computer posts the code it found as it answers.
+    const posted = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, operationId: String(data.operationId), url, code, command: String(data.command) } });
+    posts.push(posted.statusCode);
+    return { status: 202, body: { runId, background: true, output: `To sign in, use a web browser to open the page ${url} and enter the code ${code} to authenticate.\n`, deviceCodes: [{ url, code }] } };
+  });
+  try {
+    script = (turn) => (turn.transcript.includes("sign in to azure") ? { calls: [{ name: "computer_run", arguments: { command: "az login --use-device-code" } }], then: "The code is on the card." } : { text: "ok" });
+    await say(mira, room.id, "sign in to azure on my computer");
+    assert.equal(device.heard[0]!.background, true, "a sign-in runs in the background");
+    assert.equal(device.heard[0]!.timeoutSec, 900, "for 15 minutes");
+    assert.deepEqual(posts, [200]);
+    const summary = (await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!;
+    assert.match(summary, /up to 15 minutes/);
+    assert.match(summary, new RegExp(`sign-in code for ${url}: ${code}\\. Your owner got it on a card in this chat`));
+    assert.match(summary, /you may say the code if they ask; never repeat it in a room with other people/);
+    const cards = (await rows(mira, room.id)).filter((row) => row.data.type === "device_code");
+    assert.equal(cards.length, 1);
+    const card = cards[0]!;
+    assert.equal(card.kind, "text");
+    assert.equal(card.authorNodeId, node.id);
+    assert.deepEqual(
+      { ...card.data, expiresAt: typeof card.data.expiresAt },
+      { type: "device_code", status: "pending", url, code, command: "az login --use-device-code", computer: "Mira's laptop", deviceId: laptop.id, operation: runId, expiresAt: "string" },
+    );
+    assert.ok(Math.abs(Date.parse(card.data.expiresAt) - Date.now() - 15 * 60_000) < 60_000, "good for 15 minutes");
+    assert.match(card.body, new RegExp(`open ${url} and enter the code ${code}`));
+    const stored = await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
+    assert.deepEqual(stored.visibleTo, [mira.id], "only the owner sees it");
+
+    // The same code again is the same card; the command's end settles it.
+    const again = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code, command: "az login --use-device-code" } });
+    assert.equal(json(again).messageId, card.id);
+    const ended = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code, command: "az login --use-device-code", status: "done" } });
+    assert.equal(ended.statusCode, 200);
+    assert.equal((await rows(mira, room.id)).find((row) => row.id === card.id)!.data.status, "done");
+
+    // Another account's computer, or another node's name, posts nothing here.
+    const tom = await person("Tom");
+    const tomKey = await h.asToken(tom, "device");
+    await h.prisma.device.create({ data: { userId: tom.id, name: "Tom's PC", platform: "linux", tokenId: tomKey.id, lastSeenAt: new Date() } });
+    assert.equal((await tomKey.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code: "ABCD1234", command: "x" } })).statusCode, 404);
+    assert.equal((await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: randomUUID(), operation: runId, url, code: "ABCD1234", command: "x" } })).statusCode, 404);
+    const ledger = await h.prisma.auditLedger.findMany({ where: { userId: mira.id, action: "node.device_code" } });
+    assert.deepEqual(ledger.map((row) => (row.payload as { status: string }).status), ["pending", "done"]);
+    assert.ok(!JSON.stringify(ledger).includes(code), "the code is never in the ledger");
+  } finally {
+    device.stop();
+  }
+});
+
 test("a node's agent run gets only the secrets it names: none by default, a saved request's name once saved", async () => {
   const mira = await person("Mira");
   const { key } = await laptopFor(mira, "ask", { secrets: 1 });

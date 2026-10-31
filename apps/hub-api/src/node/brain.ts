@@ -167,12 +167,13 @@ async function persona(
     ...(hands ? HANDS : []),
     // Only in a DM: the crew lead's persona has no room left in its budget (persona.integration.test.ts).
     hands && room.kind === "dm" ? LIVE_ROW : "",
+    hands && room.kind === "dm" ? "- CLI sign-ins (`az login`): computer_run; here you may tell your owner its code." : "",
     fromNonOwner ? "" : "- A paper or PDF into your owner's Ensemble Files: hub_save_file (url: the direct file link); link only what it returns.",
     `- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs ${agentDefaults(pickRunProfile(settings, node.runProfileId))} unless your owner names an agent, model, thinking level or context.`,
     ...(step || fromNonOwner
       ? []
       : [
-          "- Long research or a long check you do yourself: node_work_start (in the background; you stay free to talk and hear once when it ends).",
+          "- Long research or a long check you do yourself: node_work_start (in the background; you hear once when it ends).",
           "- An independent second opinion or audit: node_helper.",
           ownerOnly ? "- Recurring work, only when your owner asks: node_routines. A node or crew they ask for: node_create (each new node), then node_create_group." : "",
         ]),
@@ -180,7 +181,7 @@ async function persona(
     !step && leadsHere
       ? `- You lead this crew: your owner's messages here come to you; the members never read the chat and act only on a step of your plan. For work by several nodes or deliverables, propose the whole plan in this turn with node_plan, with this crew's members only: a goal; one requirement per deliverable (acceptance criteria with ids when it must be checked); constraints written once (computer, folder, repos, branch, publish, environment, the agent, model, thinking level and context your owner named, order serial when each feature must pass its check first, other rules as notes); steps with their kind, requirements and a short brief of their own objective. A check is a verify step after its build (verifies names it): a failed check sends the build back and runs again by itself. What you will not do now goes in deferred, with why. Fix what node_plan returns and call it again. One more step: node_delegate; a change while it runs: node_plan_revise. Your reply opens the plan in a line or two (the card shows the steps); at the end you get every report at once, then tell your owner once.`
       : "",
-    !step && !fromNonOwner && (room.kind === "dm" || room.kind === "room") ? "- Work for your crew's members: node_delegate, once per piece of work (one plan; you hear back once, when it ends)." : "",
+    !step && !fromNonOwner && (room.kind === "dm" || room.kind === "room") ? "- Work for your crew's members: node_delegate, once per piece of work (one plan; you hear back once it ends)." : "",
     !step && !fromNonOwner && (leadsHere || room.kind === "dm" || room.kind === "room")
       ? "- A node joins a crew only when your owner agrees: node_crew_add asks them on a card (another node, or you to a crew they name). Otherwise use a member, a helper (node_helper), or do it yourself."
       : "",
@@ -215,14 +216,14 @@ const HANDS = [
   "- Prices, “compare” stores, “where to buy”: browser_shop (product, stores, location) in one call; reply with a Markdown table.",
   "- “Screenshot of” or “show me” a page: browser_view (url; focus: what was asked, “the price chart”), one call per screenshot.",
   "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.",
-  "- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even from their phone; never ask for passwords or codes). They say done: browser_login_check.",
+  "- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even by phone). They say done: browser_login_check.",
   "- A terminal screenshot (htop, a command's output): computer_terminal_screenshot.",
   "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
   "- Install software, or anything needing administrator rights: computer_sudo (your owner types their password on a card here; you never see it). Download with computer_run first.",
 ];
 
 /** Live terminals and live views (node/live-views.ts). */
-const LIVE_ROW = "- A shell that stays open (a REPL, a program that asks questions): terminal_open, then terminal_send. Your owner wants to watch it or your browser live: live_view.";
+const LIVE_ROW = "- A shell that stays open (a REPL, a prompt): terminal_open, then terminal_send. To show it or your browser live: live_view.";
 
 /**
  * Who the node can give work to: in a crew it leads, the owner's nodes outside it (only the owner adds

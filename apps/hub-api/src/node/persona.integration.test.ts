@@ -120,10 +120,12 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /Prices, “compare” stores, “where to buy”: browser_shop \(product, stores, location\) in one call; reply with a Markdown table/,
     /“Screenshot of” or “show me” a page: browser_view \(url; focus: what was asked[^\n]*\), one call per screenshot/,
     /Steps on a site \(a dashboard, “log in to my Azure portal and check …”\): web_task with the goal; sign-ins go to your owner's card, not Connections\./,
-    /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even from their phone; never ask for passwords or codes\)\. They say done: browser_login_check/,
+    /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even by phone\)\. They say done: browser_login_check/,
+    // A command's sign-in code is the owner's: in a chat with only them, the node may say it.
+    /CLI sign-ins \(`az login`\): computer_run; here you may tell your owner its code\./,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
-    /A shell that stays open \(a REPL, a program that asks questions\): terminal_open, then terminal_send\. Your owner wants to watch it or your browser live: live_view/,
+    /A shell that stays open \(a REPL, a prompt\): terminal_open, then terminal_send\. To show it or your browser live: live_view/,
     /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
     /administrator rights: computer_sudo \(your owner types their password on a card here; you never see it\)/,
     /Writing or changing code in a repository[^\n]*whenever your owner names an agent[^\n]*: an agent session/,
@@ -140,6 +142,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   assert.ok(direct.tools.includes("node_crew_add"));
 
   assert.match(lead.persona, /node_plan, with this crew's members only/);
+  assert.doesNotMatch(lead.persona, /here you may tell your owner its code/, "a sign-in code is said only in a chat with the owner alone");
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
   assert.match(persona, /Your owner's work \(tasks, boards, Ensemble links\) and apps: your tools; you are in Ensemble already, never sign in to it in a browser\./);
   // 6,582 and 7,995 before the Ensemble row (about 80 characters each).

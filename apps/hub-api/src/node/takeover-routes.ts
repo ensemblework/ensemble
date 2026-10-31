@@ -1,7 +1,8 @@
 /**
  * The owner's side of a takeover (node/takeovers.ts, B21): open one for a sign-in card's tab, a run's
- * tab or a live card's terminal or tab (watch it, or take control), start it with the channel's secret sealed for the computer, fetch encrypted frames, send
- * encrypted input, and end it (Stop, or I'm done). Only from a signed-in browser session, never a key or
+ * tab or a live card's terminal or tab (watch it, or take control), start it with the channel's secret
+ * sealed for the computer, fetch encrypted frames, send encrypted input, give it more time, and end it
+ * (Stop, or I'm done). Only from a signed-in browser session, never a key or
  * an agent; every call after the first carries the capability (`x-ensemble-takeover`).
  */
 import { z } from "zod";
@@ -10,7 +11,7 @@ import { readCookie, SESSION_COOKIE, sha256 } from "../lib/auth.js";
 import { SealedShape } from "../credentials/seal.js";
 import { ChannelMessage, type ChannelMessage as Message } from "../remote/contract.js";
 import { wireMessage } from "./store.js";
-import { controlTakeover, createTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
+import { controlTakeover, createTakeover, extendTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
 
 const Target = z.union([
   z.object({ loginCardId: z.string().min(1).max(100) }).strict(),
@@ -88,6 +89,15 @@ export async function registerTakeoverRoutes(app: FastifyInstance, account: (req
       const body = z.object({ on: z.boolean() }).strict().safeParse(request.body);
       if (!body.success) return reply.code(400).send({ error: "Say whether to take control (on: true) or watch (on: false)." });
       return await controlTakeover(app, await own(request), body.data.on);
+    } catch (error) {
+      return fail(error, reply);
+    }
+  });
+
+  // More time: 15 minutes later, at most an hour after it started (takeover 3 on the computer).
+  app.post("/api/node/takeovers/:id/extend", async (request, reply) => {
+    try {
+      return await extendTakeover(app, await own(request));
     } catch (error) {
       return fail(error, reply);
     }

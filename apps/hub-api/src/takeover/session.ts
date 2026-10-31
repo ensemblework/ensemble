@@ -24,12 +24,12 @@ import { loadSealKey } from "../credentials/seal-key.js";
 import { appendLedger } from "../lib/ledger.js";
 import { env } from "../config.js";
 import { remoteApiBase, type HostedClient } from "../remote/client.js";
-import { TakeoverControl, TakeoverEnd, TakeoverInput, TakeoverStart, type ChannelMessage } from "../remote/contract.js";
+import { TAKEOVER_LONGEST_MS, TakeoverControl, TakeoverEnd, TakeoverExtend, TakeoverInput, TakeoverStart, type ChannelMessage } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
 import type { CleanFrame, CleanSignIn } from "../logins/clean-signin.js";
 import { closeCleanSignIn, loginEvents, markLoginControlled, openCleanSignIn, resolveLogin, waitingLogin, type LoginOutcome } from "../logins/requests.js";
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, type ChannelKeys } from "./channel.js";
-import { controlTerminalView, endAllTerminalViews, endTerminalView, isTerminalView, startTerminalView, terminalViewInput } from "./terminal-view.js";
+import { controlTerminalView, endAllTerminalViews, endTerminalView, extendTerminalView, isTerminalView, startTerminalView, terminalViewInput } from "./terminal-view.js";
 
 /** Nobody sent input or a ping for this long: the takeover ends. */
 export const TAKEOVER_IDLE_MS = 60_000;
@@ -83,6 +83,10 @@ type Session = {
   sending: boolean;
   queue: Promise<void>;
   timers: NodeJS.Timeout[];
+  /** When it started, and its end (`takeover.extend` moves it, never past an hour after the start). */
+  startedAt: number;
+  endsAt: number;
+  deadline: NodeJS.Timeout | null;
   ended: boolean;
 };
 
@@ -91,9 +95,9 @@ const sessions = new Map<string, Session>();
 const ledger = (action: string, payload: Record<string, string | number | boolean | null>) => appendLedger({ userId: env.ENSEMBLE_DEV_USER_ID, actor: "me", action, payload }).catch(() => undefined);
 
 /** What a takeover did, for tests and the computer's own checks: counts only, never what was typed or shown. */
-export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number; mode: "clean" | "tab" } | null {
+export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number; mode: "clean" | "tab"; endsAt: string } | null {
   const session = sessions.get(id);
-  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames, mode: session.mode } : null;
+  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames, mode: session.mode, endsAt: new Date(session.endsAt).toISOString() } : null;
 }
 
 /** The clean browser a takeover shows, for tests. */
@@ -222,8 +226,13 @@ async function apply(session: Session, event: InputEvent): Promise<void> {
 export async function startTakeover(client: HostedClient, frame: TakeoverStart, runOperation: (hostedJobId: string) => string | null): Promise<{ status: number; body: Record<string, unknown> }> {
   if (frame.kind === "terminal") return startTerminalView(client, frame, openStartBox, takeoverMaxMs());
   if (sessions.has(frame.takeoverId)) return { status: 409, body: { error: "That takeover has started already." } };
+  // The owner watching the tab live makes way for its sign-in: they sign in in its remote view instead.
+  const watching = frame.loginId ? [...sessions.values()].find((session) => session.tab === frame.tab && session.live && session.view === "watch" && !session.ended) : undefined;
+  if (watching) await endTakeover(watching.id, { done: false, reason: "sign_in", tell: true });
   if ([...sessions.values()].some((session) => session.tab === frame.tab)) return { status: 409, body: { error: "Someone already controls that tab." } };
   const broker = browserBroker();
+  // A tab whose browser is restarting, or that is being opened again after its browser closed, is waited for.
+  await broker.whenTab(frame.tab, 20_000);
   let tab;
   try {
     tab = broker.ownerTab(frame.tab);
@@ -292,20 +301,22 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         sending: false,
         queue: Promise.resolve(),
         timers: [],
+        startedAt: Date.now(),
+        endsAt: 0,
+        deadline: null,
         ended: false,
       };
       sessions.set(session.id, session);
       if (frame.loginId && !clean) markLoginControlled(frame.loginId, true);
       tab.page.once("close", () => void endTakeover(session.id, { done: false, reason: "tab_closed", tell: true }));
       const endsAt = Math.min(Date.parse(frame.endsAt) || Infinity, Date.now() + takeoverMaxMs());
-      const deadline = setTimeout(() => void endTakeover(session.id, { done: false, reason: "expired", tell: true }), Math.max(0, endsAt - Date.now()));
+      endAt(session, endsAt);
       const idle = setInterval(() => {
         if (Date.now() - session.lastInput > TAKEOVER_IDLE_MS) void endTakeover(session.id, { done: false, reason: "idle", tell: true });
         else broker.keepTab(session.tab, TAKEOVER_IDLE_MS * 5);
       }, Math.min(10_000, TAKEOVER_IDLE_MS / 2));
-      deadline.unref();
       idle.unref();
-      session.timers.push(deadline, idle);
+      session.timers.push(idle);
       broker.keepTab(session.tab, TAKEOVER_IDLE_MS * 5);
       try {
         if (clean) {
@@ -342,6 +353,30 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
   }
 }
 
+/** Sets when a takeover ends on its time. */
+function endAt(session: Session, endsAt: number): void {
+  if (session.deadline) clearTimeout(session.deadline);
+  session.endsAt = endsAt;
+  session.deadline = setTimeout(() => void endTakeover(session.id, { done: false, reason: "expired", tell: true }), Math.max(0, endsAt - Date.now()));
+  session.deadline.unref();
+}
+
+/** `takeover.extend` (takeover 3): the owner asked for more time; never past an hour after it started. A terminal view too. */
+export function takeoverExtend(data: unknown): { endsAt: string } | null {
+  const parsed = TakeoverExtend.safeParse(data);
+  if (!parsed.success) return null;
+  if (extendTerminalView(parsed.data.takeoverId, parsed.data.endsAt)) return { endsAt: parsed.data.endsAt };
+  const session = sessions.get(parsed.data.takeoverId);
+  const wanted = Date.parse(parsed.data.endsAt);
+  if (!session || session.ended || !Number.isFinite(wanted)) return null;
+  const endsAt = Math.min(wanted, session.startedAt + TAKEOVER_LONGEST_MS);
+  if (endsAt > session.endsAt) {
+    endAt(session, endsAt);
+    void ledger("takeover.extended", { takeoverId: session.id, endsAt: new Date(endsAt).toISOString() });
+  }
+  return { endsAt: new Date(session.endsAt).toISOString() };
+}
+
 /** Whether a sign-in's takeover uses the clean browser (`ENSEMBLE_CLEAN_SIGNIN=off` shows the tab itself). */
 function cleanSignInOn(source: NodeJS.ProcessEnv = process.env): boolean {
   return !/^(?:0|off|false|no)$/i.test(source.ENSEMBLE_CLEAN_SIGNIN?.trim() ?? "");
@@ -373,6 +408,15 @@ export function takeoverInput(data: unknown): void {
   }
   session.inSeq = message.seq;
   session.lastInput = Date.now();
+  if (session.clean) {
+    // The clean browser takes them at once, in order (one round trip for a burst of keys); they are counted as they land.
+    const landed = session.clean.inputs(events).catch(() => undefined);
+    session.queue = session.queue.then(async () => {
+      await landed;
+      session.applied += events.length;
+    });
+    return;
+  }
   session.queue = session.queue.then(async () => {
     for (const event of events) {
       if (session.ended) return;
@@ -394,6 +438,7 @@ export async function endTakeover(id: string, input: { done: boolean; reason: st
   session.ended = true;
   sessions.delete(id);
   for (const timer of session.timers) clearTimeout(timer);
+  if (session.deadline) clearTimeout(session.deadline);
   await session.queue.catch(() => undefined);
   for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
   if (session.cdp) {

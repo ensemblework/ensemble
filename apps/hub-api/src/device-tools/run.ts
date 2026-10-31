@@ -6,6 +6,8 @@
  * output comes back in the answer (64 KB at most, the rest follows on `ROUTES.toolOutput`); one still
  * going after a minute answers at once and runs on in the background, and its end wakes the node.
  * The output is redacted for saved secret values and key shapes before it leaves this computer.
+ * A sign-in the command needs goes to the owner (device-tools/cli-logins.ts): a code it prints, on a card
+ * only they see; a page it opens in a browser, in this computer's sign-in browser for the remote view.
  */
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
@@ -14,11 +16,12 @@ import { redactText } from "../lib/redact.js";
 import { referenceSecrets, runSecretEnv } from "../lib/run-secrets.js";
 import { loadSettings as loadHubSettings } from "../lib/settings.js";
 import { sliceBytes } from "../lib/text.js";
-import { checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable } from "../workspace/guard.js";
+import { checkGit, checkProgram, childEnv, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable } from "../workspace/guard.js";
 import { killGroup, runCommand } from "../workspace/runner.js";
 import type { HostedClient } from "../remote/client.js";
 import { NODE_TOOL_FOREGROUND_MS, NODE_TOOL_INLINE_BYTES, NODE_TOOL_OUTPUT_BYTES, TERMINAL_CHUNK_BYTES, type CodeAnswer, type NodeToolRequest } from "../remote/contract.js";
 import { nodeToolDenies, type ToolFolder } from "./folders.js";
+import { commandSignIns } from "./cli-logins.js";
 
 type RunRequest = Extract<NodeToolRequest, { tool: "run" }>;
 type App = Pick<FastifyInstance, "prisma">;
@@ -27,6 +30,9 @@ const userId = () => env.ENSEMBLE_DEV_USER_ID;
 const FLUSH_MS = 300;
 /** Commands running for nodes, by run id: stopped when the remote loop ends. */
 const running = new Map<string, AbortController>();
+/** A command that signs in (`az login`, `gh auth login`, `aws sso login`, `gcloud auth login`): in the background it waits a moment for its prompt before it answers. */
+const LOGIN_COMMAND = /\b(?:login|auth|sso|signin|sign-in|device-code|device_code)\b/i;
+const LOGIN_SETTLE_MS = 8_000;
 
 /** Tests shorten the foreground minute. */
 let foregroundMs = NODE_TOOL_FOREGROUND_MS;
@@ -137,7 +143,19 @@ export type Delivered = { exitCode: number; ms: number; timedOut: boolean; backg
  */
 export async function deliverCommand(
   client: HostedClient,
-  input: { runId: string; background: boolean; timeoutSec: number; clean?: (text: string) => string; inline?: (result: { exitCode: number; output: string }) => Record<string, unknown>; stop?: () => void },
+  input: {
+    runId: string;
+    background: boolean;
+    timeoutSec: number;
+    clean?: (text: string) => string;
+    inline?: (result: { exitCode: number; output: string }) => Record<string, unknown>;
+    stop?: () => void;
+    /** Added to either answer (the sign-in codes it printed so far). */
+    extra?: () => Record<string, unknown>;
+    /** A background command waits up to this long, or until `ready` says so, before it answers (a sign-in prompt to read). */
+    settleMs?: number;
+    ready?: () => boolean;
+  },
   start: CommandStart,
   answer: (reply: CodeAnswer) => Promise<void>,
 ): Promise<Delivered> {
@@ -147,7 +165,8 @@ export async function deliverCommand(
   const stream = outputStream(client, input.runId, () => controller.abort(), clean);
   let collected = "";
   let answered = false;
-  let streaming = input.background;
+  // A background command that waits for its prompt collects it for the answer first.
+  let streaming = input.background && !input.settleMs;
   const started = Date.now();
   const done = start({
     signal: controller.signal,
@@ -163,11 +182,25 @@ export async function deliverCommand(
     // What it printed so far goes first, so the stored output is whole.
     if (collected) stream.write(collected);
     const shown = clipOutput(clean(collected));
-    await answer({ status: 202, body: { runId: input.runId, background: true, output: shown.text, startedAt: new Date(started).toISOString() } });
+    await answer({ status: 202, body: { runId: input.runId, background: true, output: shown.text, startedAt: new Date(started).toISOString(), ...(input.extra?.() ?? {}) } });
   };
-  if (input.background) await goBackground();
+  if (input.background) {
+    // A sign-in command prints its prompt within seconds: the answer waits a moment for it, unless the command ends first.
+    let over = false;
+    void done.then(
+      () => (over = true),
+      () => (over = true),
+    );
+    for (const until = Date.now() + (input.settleMs ?? 0); Date.now() < until && !over && !input.ready?.(); ) await new Promise((resolve) => setTimeout(resolve, 100));
+    await goBackground();
+  }
   const timer = input.background ? null : setTimeout(() => void goBackground().catch(() => undefined), foregroundMs);
   timer?.unref?.();
+  // A sign-in in a command run in the foreground waits for the owner: it answers as soon as the owner is asked, and goes on in the background.
+  const early = input.background || !input.ready ? null : setInterval(() => {
+    if (input.ready?.()) void goBackground().catch(() => undefined);
+  }, 500);
+  early?.unref?.();
   let exitCode = 127;
   let tail = "";
   let timedOut = false;
@@ -180,6 +213,7 @@ export async function deliverCommand(
     tail = `${error instanceof Error ? error.message : String(error)}\n`;
   } finally {
     if (timer) clearTimeout(timer);
+    if (early) clearInterval(early);
     running.delete(input.runId);
     input.stop?.();
   }
@@ -189,7 +223,7 @@ export async function deliverCommand(
     answered = true;
     const output = clean(collected + tail);
     const shown = clipOutput(output);
-    await answer({ status: 200, body: { exitCode, output: shown.text, ms, timedOut, ...(shown.clipped ? { runId: input.runId, clipped: true } : {}), ...(input.inline?.({ exitCode, output }) ?? {}) } });
+    await answer({ status: 200, body: { exitCode, output: shown.text, ms, timedOut, ...(shown.clipped ? { runId: input.runId, clipped: true } : {}), ...(input.inline?.({ exitCode, output }) ?? {}), ...(input.extra?.() ?? {}) } });
     // A long output is kept whole for computer_run_output; the node already has the result, so nothing wakes it.
     if (shown.clipped) {
       stream.write(collected);
@@ -218,7 +252,15 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
   }
   const group = `node-tool:${request.runId}`;
   const deny = await nodeToolDenies();
-  const result = await deliverCommand(client, { runId: request.runId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group) }, ({ onChunk, signal }) =>
+  const path = (await childEnv(folder.path, { useCredentials: false, who: "agent" })).PATH ?? "";
+  const signIns = await commandSignIns(client, request, path, () => killGroup(group));
+  const extra = () => {
+    const codes = signIns.codes();
+    const pages = signIns.pages();
+    return { ...(codes.length ? { deviceCodes: codes.map((item) => ({ url: item.url, code: item.code })) } : {}), ...(pages.length ? { signInPages: pages } : {}) };
+  };
+  const login = LOGIN_COMMAND.test(request.command);
+  const result = await deliverCommand(client, { runId: request.runId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group), extra, settleMs: login ? LOGIN_SETTLE_MS : 0, ready: () => signIns.codes().length > 0 || signIns.pages().length > 0 }, ({ onChunk, signal }) =>
     runCommand({
       userId: userId(),
       argv: prepared.argv,
@@ -233,9 +275,13 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
       timeoutMs: request.timeoutSec * 1000,
       signal,
       group,
-      extraEnv: saved,
-      onChunk,
+      extraEnv: { ...saved, ...signIns.env },
+      onChunk: (text) => {
+        signIns.output(text);
+        onChunk(text);
+      },
     }), answer);
+  await signIns.end(result.exitCode);
   await appendLedger({
     userId: userId(),
     actor: "agent",

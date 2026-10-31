@@ -60,6 +60,10 @@ export const ROUTES = {
   loginState: (loginId: string) => `/api/devices/self/logins/${encodeURIComponent(loginId)}/state`,
   /** A node's terminal session or watched tab ended on this computer (`capabilities.live`, `LiveEndedPost`): its live card ends. */
   liveEnded: (liveId: string) => `/api/devices/self/live/${encodeURIComponent(liveId)}/ended`,
+  /** A sign-in code a node's command printed, and later how it ended (`cliLogins`, `NodeDeviceCodePost`). */
+  nodeDeviceCodes: "/api/devices/self/nodes/device-codes",
+  /** A node's command opened a sign-in page in the browser (`cliLogins`, `NodeCliLoginPost`): the web raises the sign-in card. */
+  nodeCliLogins: "/api/devices/self/nodes/logins",
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -882,8 +886,45 @@ export const LoginRequired = z.object({
   display: z.boolean(),
   takeover: z.boolean().default(false),
   expiresAt: text(40),
+  /** `cli`: a command (`az login`, `gh auth login`) opened the sign-in page in this computer's browser (`cliLogins`). */
+  source: z.enum(["browser", "cli"]).optional(),
+  /** The command that opened it, as the node ran it (with `source: "cli"`). */
+  command: text(200).optional(),
 });
 export type LoginRequired = z.infer<typeof LoginRequired>;
+
+/**
+ * `capabilities.cliLogins`: this computer watches a node's commands for sign-ins (C2): a sign-in code
+ * they print goes to `ROUTES.nodeDeviceCodes`, and a page they open in a browser (`BROWSER`, `xdg-open`,
+ * `open`) opens in this computer's sign-in browser and goes to `ROUTES.nodeCliLogins`.
+ */
+export const CLI_LOGINS_API = 1;
+
+/**
+ * A sign-in code a node's command printed (`ROUTES.nodeDeviceCodes`): the page to enter it on and the
+ * code, for an owner-only card in the command's conversation. The same post with `status` done or
+ * expired says how it ended when the command ended. `operation`: the command's run id.
+ */
+export const NodeDeviceCodePost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  url: text(2000).min(1),
+  code: z.string().regex(/^[A-Za-z0-9-]{4,40}$/),
+  command: text(200).min(1),
+  expiresAt: text(40).optional(),
+  status: z.enum(["pending", "done", "expired"]).default("pending"),
+});
+export type NodeDeviceCodePost = z.infer<typeof NodeDeviceCodePost>;
+
+/** A sign-in page a node's command opened (`ROUTES.nodeCliLogins`): the sign-in, as a browser tool raises it, for the command's conversation. */
+export const NodeCliLoginPost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  login: LoginRequired,
+});
+export type NodeCliLoginPost = z.infer<typeof NodeCliLoginPost>;
 
 /** What a run's computer posts when its agent waits for a sign-in (`ROUTES.runLogin`). The answer: `{decisionId}` of the card, or null when the web raises none. */
 export const RunLoginPost = LoginRequired.extend({ leaseToken: text(200).min(1) });
@@ -944,13 +985,20 @@ export type LoginStatePost = z.infer<typeof LoginStatePost>;
  * session into the tab when done; its frames' headers say which site they show (`site`, `title`, `popup`,
  * `mode`); the computer ends it itself when the sign-in is done (reason `signed_in` or `passed`).
  * 3: kinds and views: a live view of a node's own tab or terminal session (`TakeoverStart.kind`,
- * `operation`, `view`), switched between watching and control with `takeover.control`.
+ * `operation`, `view`), switched between watching and control with `takeover.control`; and
+ * `takeover.extend` moves a takeover's end later (at most an hour after it started).
  */
 export const TAKEOVER_API = 3;
 /** The oldest takeover a server can use. */
 export const TAKEOVER_MIN_API = 1;
 /** `capabilities.takeover` from which a sign-in's takeover can run in a clean browser (`TakeoverStart.mode` "clean", browser/clean.ts). */
 export const TAKEOVER_CLEAN_API = 2;
+/** `capabilities.takeover` from which a computer takes `takeover.extend`. */
+export const TAKEOVER_EXTEND_API = 3;
+/** A takeover lasts at most this long after it started, however often it is extended. */
+export const TAKEOVER_LONGEST_MS = 3600_000;
+/** What one extend adds to a takeover's end. */
+export const TAKEOVER_EXTEND_MS = 15 * 60_000;
 
 /** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
 export const ChannelMessage = z.object({
@@ -994,6 +1042,10 @@ export type TakeoverStart = z.infer<typeof TakeoverStart>;
 /** `takeover.input`: input from the owner's browser, encrypted for this computer; relayed as it came, without an answer. */
 export const TakeoverInput = ChannelMessage.extend({ takeoverId: z.string().uuid() });
 export type TakeoverInput = z.infer<typeof TakeoverInput>;
+
+/** `takeover.extend` (takeover 3): the owner asked for more time; the computer ends it at `endsAt` instead (never past an hour after it started). */
+export const TakeoverExtend = z.object({ takeoverId: z.string().uuid(), endsAt: text(40) });
+export type TakeoverExtend = z.infer<typeof TakeoverExtend>;
 
 /** `takeover.end`: the owner pressed I'm done (`done`: check the sign-in and give the tab back) or Stop, or the server ended it. */
 export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });
