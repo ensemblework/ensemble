@@ -8,6 +8,7 @@
  * instead (`GET /api/decisions?surface=hub`), where Ensemble Node has a site (`nodeWebOrigin`).
  */
 import type { AgentDecision, NodeMessage, Prisma, PrismaClient } from "@prisma/client";
+import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
 import { closeEndedWork, decisionBus, WORK_ENDED } from "../lib/decisions.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
 import { truncateText } from "../lib/text.js";
@@ -78,7 +79,7 @@ export async function postRunDecisionCard(ctx: RunDecisionContext, row: AgentDec
   if (row.source !== "ensemble" || !row.sessionId) return null;
   const detail = record(row.detail);
   const jobId = text(detail.jobId) ?? row.sessionId;
-  const run = await prisma.nodeRun.findUnique({ where: { jobId }, select: { nodeId: true, roomId: true, userId: true, messageId: true, planId: true, planStep: true } });
+  const run = await prisma.nodeRun.findUnique({ where: { jobId }, select: { nodeId: true, roomId: true, userId: true, messageId: true, planId: true, planStep: true, settings: true } });
   if (!run || run.userId !== row.userId) return null;
   const existing = await prisma.nodeMessage.findFirst({ where: { roomId: run.roomId, userId: run.userId, ...waiting(row.id) } });
   if (existing) return existing;
@@ -88,6 +89,8 @@ export async function postRunDecisionCard(ctx: RunDecisionContext, row: AgentDec
   const runTitle = text(runCard?.body) ?? text(detail.taskTitle) ?? "the run";
   const event = row.event === "question" ? "question" : "permission";
   const tier = text(detail.tier);
+  // The agent that asks (GitHub Copilot, Claude Code…), as the run settled it (node/settings.ts).
+  const engine = text(record(record(run.settings).resolved).agent) ?? text(record(record(run.settings).requested).agent);
   const { message } = await postMessage(prisma, {
     roomId: run.roomId,
     userId: run.userId,
@@ -114,6 +117,7 @@ export async function postRunDecisionCard(ctx: RunDecisionContext, row: AgentDec
       answeredBy: null,
       // Beyond C3's shape: which computer asks, whether an allow is confirmed first, and whether only that computer may answer it.
       computer: text(detail.deviceName),
+      agent: engine && isCodeEngine(engine) ? ENGINE_LABELS[engine] : null,
       confirm: detail.confirm === true,
       computerOnly: tier === "run_branch_push" || tier === "high_risk",
       private: record(runCard?.data).private === true,

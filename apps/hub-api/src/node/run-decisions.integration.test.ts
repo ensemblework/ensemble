@@ -69,7 +69,7 @@ async function runningJob(env: Awaited<ReturnType<typeof setup>>, title: string,
   if (!follow) return { job, leaseToken, card: null, root: null };
   const { message: root } = await postMessage(h.prisma, { roomId: env.room.id, userId: env.mira.id, authorKind: "human", body: "fix the login bug with copilot" });
   const { message: card } = await postMessage(h.prisma, { roomId: env.room.id, userId: env.mira.id, authorKind: "node", authorNodeId: env.node.id, kind: "run", body: title, data: { jobId: job.id, status: "running", private: false }, rootMessageId: root.id });
-  await h.prisma.nodeRun.create({ data: { userId: env.mira.id, nodeId: env.node.id, roomId: env.room.id, messageId: card.id, jobId: job.id, taskId: task.id, status: "running" } });
+  await h.prisma.nodeRun.create({ data: { userId: env.mira.id, nodeId: env.node.id, roomId: env.room.id, messageId: card.id, jobId: job.id, taskId: task.id, status: "running", settings: { resolved: { agent: "copilot-cli" } } } });
   return { job, leaseToken, card, root };
 }
 
@@ -119,6 +119,7 @@ test("a node run's permission is a card in the run's thread for its owner; the H
     answeredAt: null,
     answeredBy: null,
     computer: "Mira's laptop",
+    agent: "GitHub Copilot",
     confirm: false,
     computerOnly: false,
     private: false,
