@@ -8,7 +8,7 @@
  */
 import { CleanBrowser, type CleanPage } from "./clean.js";
 import { browserLook, computerLocale } from "./launch.js";
-import { browserProfileDir } from "./paths.js";
+import { cleanReaderProfileDir } from "./paths.js";
 
 export type CleanRead = {
   url: string;
@@ -41,7 +41,7 @@ export class CleanReader {
 
   /** The clean profile beside a work profile. */
   static profileDir(profile: string, dataHome: string): string {
-    return browserProfileDir(`${profile}-clean`, dataHome);
+    return cleanReaderProfileDir(profile, dataHome);
   }
 
   private async launch(profile: string): Promise<CleanBrowser> {

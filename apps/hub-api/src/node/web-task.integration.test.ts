@@ -78,7 +78,7 @@ async function person(name: string): Promise<HttpUser> {
 async function setUp() {
   const mira = await person("Mira");
   const key = await h.asToken(mira, "device");
-  const laptop = await h.prisma.device.create({ data: { userId: mira.id, name: "Mira's laptop", platform: "linux", tokenId: key.id, lastSeenAt: new Date(), capabilities: { folders: ["app"], engines: ["claude-code"], nodeTools: 2, browser: 1, logins: 1, capture: { browser: true } } as never } });
+  const laptop = await h.prisma.device.create({ data: { userId: mira.id, name: "Mira's laptop", platform: "linux", tokenId: key.id, lastSeenAt: new Date(), capabilities: { folders: ["app"], engines: ["claude-code"], nodeTools: 2, browser: 2, logins: 2, capture: { browser: true } } as never } });
   await saveSettings(h.prisma, mira.id, { runProfiles: [RunProfile.parse({ id: "main", name: "Main", engine: "claude-code", mode: "unattended", delivery: "local", deviceId: laptop.id })], defaultRunProfileId: "main" });
   const created = await mira.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } });
   assert.equal(created.statusCode, 201, created.body);
@@ -219,13 +219,15 @@ test("a click that would delete stops for the owner's yes, even when they asked 
     device.stop();
   }
 
+  // A 0.6.0 computer: its browser tools take no `mode` (nor a sign-in's `purpose`), so it is never sent one.
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { folders: ["app"], engines: ["claude-code"], nodeTools: 2, browser: 1, logins: 1, capture: { browser: true } } as never } });
   const older = computer(laptop.id, key, { old: true });
   try {
     node = startsWebTask("usage again", { goal: "Find yesterday's usage", url: "https://portal.example.test/" });
     web = (page) => (page.includes("Yesterday 42 GB") ? '{"action":"done","answer":"42 GB."}' : '{"action":"click","ref":"e3"}');
     await say(mira, room.id, "usage again please");
     const snapshots = older.heard.filter((row) => row.name === "browser_snapshot").map((row) => "mode" in row.input);
-    assert.deepEqual(snapshots, [true, false, false], "asked once with mode, then without it");
+    assert.ok(snapshots.length > 0 && snapshots.every((sent) => !sent), "never sent mode");
     assert.match((await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!.body, /web_task done: 42 GB\./);
   } finally {
     older.stop();

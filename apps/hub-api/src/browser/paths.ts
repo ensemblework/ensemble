@@ -45,6 +45,12 @@ export function signInProfileDir(profile: string, dataHome: string = ensembleDat
   return join(browserRoot(dataHome), `${profile}-signin`);
 }
 
+/** The clean reader's own folder for a profile (`<data>/browser/<profile>-clean`, browser/clean-view.ts): read-only views of sites that refuse the broker. */
+export function cleanReaderProfileDir(profile: string, dataHome: string = ensembleDataHome()): string {
+  if (!PROFILE.test(profile) || CLEAN_SUFFIX.test(profile)) throw new Error(`"${profile}" is not a browser profile name: letters, digits, - and _ only.`);
+  return join(browserRoot(dataHome), `${profile}-clean`);
+}
+
 /** Playwright's browsers and ffmpeg as `ensemble capture setup` installs them (PLAYWRIGHT_BROWSERS_PATH). */
 export function playwrightBrowsersDir(dataHome: string = ensembleDataHome()): string {
   return join(dataHome, "playwright");

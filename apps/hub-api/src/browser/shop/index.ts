@@ -110,6 +110,43 @@ export function shopSummary(result: ShopResult): string {
   return lines.join("\n");
 }
 
+/** Where a store's page says it delivers ("Deliver to Madison 53703", "Ship to 53703"), from its text. */
+export function shownPlace(text: string): string | null {
+  // Up to the ZIP: what follows it on a page's text is the next menu item, not the city.
+  const match = /\b(Deliver(?:ing)? to|Ship(?:ping)? to|Pickup at|Delivery to|Pickup or delivery\?)\s*:?\s*((?:[A-Z][\w.'-]*(?:\s[A-Z][\w.'-]*)?,?\s*)?\d{5})\b/.exec(text);
+  return match ? `${match[1]!.replace(/\?$/, "")} ${match[2]!.trim()}` : null;
+}
+
+/** Target's guest location: the cookie its "Ship to" ZIP is kept in (`ZIP|lat|lon|state|country`). */
+export function targetLocationCookie(place: Place): { name: string; value: string; domain: string; path: string; secure: boolean; sameSite: "Lax" } | null {
+  if (place.country !== "US" || !place.zip) return null;
+  return { name: "GuestLocation", value: [place.zip, place.lat.toFixed(3), place.lon.toFixed(3), place.state ?? "", "US"].join("|"), domain: ".target.com", path: "/", secure: true, sameSite: "Lax" };
+}
+
+/** In the page: scrolls the first product card to just below any header that stays on screen (fixed or sticky). */
+function scrollToCard(card: unknown): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = globalThis as any;
+  let cover = 0;
+  for (const node of w.document.elementsFromPoint(w.innerWidth / 2, 2)) {
+    const position = w.getComputedStyle(node).position;
+    if (position === "fixed" || position === "sticky") cover = Math.max(cover, node.getBoundingClientRect().bottom);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const top = (card as any).getBoundingClientRect().top + w.scrollY;
+  w.scrollTo({ top: Math.max(0, top - Math.min(cover, 240) - 16), left: 0, behavior: "instant" });
+}
+
+/** Words a store's page uses to say why it shows no products: a picture of it tells the owner. */
+export function pageExplains(text: string): boolean {
+  return /access denied|forbidden|you have been blocked|went wrong|try again|not available|unavailable|sorry|no results|not able to find|couldn.t find|robot|human/i.test(text);
+}
+
+/** A results area that never filled in (grey placeholders, no words): its picture shows nothing. */
+export function emptyArea(text: string): boolean {
+  return text.replace(/\s+/g, " ").trim().length < 60;
+}
+
 /** Why the store's own requests (its search API) were refused in this tab (`HTTP 429`, `net::ERR_HTTP2_PROTOCOL_ERROR`), or null. */
 function blockedSearch(broker: BrowserBroker, operation: string, tab: string, pageUrl: string): string | null {
   const site = (address: string) => {
@@ -176,6 +213,9 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
     let tab: string | null = null;
     let keep = false;
     try {
+      // Target keeps its delivery ZIP in a cookie: set before its search page loads.
+      const targetCookie = recipe.location === "target" && place ? targetLocationCookie(place) : null;
+      if (targetCookie) await (await broker.browserContext(operation, { profile })).addCookies([targetCookie]).catch(() => undefined);
       const opened = await broker.open(operation, url, { profile, clean: true });
       tab = opened.tab;
       if (opened.error) {
@@ -221,17 +261,45 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
         return await readClean(store, url, refused);
       }
       const doc = parseHtml(html || (await page.content()));
+      const bodyText = textOf(querySelector(doc, "body") ?? doc).slice(0, 20_000);
+      // Where the page says it delivers, for every store: the place set (or the store's own default) is said, never guessed.
+      shown ??= shownPlace(bodyText) ?? undefined;
+      if (place?.zip && given && !recipe.location && !placeNote) placeNote = `The place cannot be set on ${recipe.name} from here: it shows ${shown ? `“${shown}”` : "its own default place"}, and these are its online prices.`;
+      else if (place?.zip && given && recipe.location === "target" && shown && !shown.includes(place.zip)) placeNote = `Target shows “${shown}”, not ${place.zip}.`;
       const found = storeOffers(doc, recipe, page.url());
       const offers = rankOffers(found.offers, query, max).map((offer) => ({ ...offer, title: hideSecrets(offer.title, rules) }));
       let blocked: string | null = null;
+      // A check that came after the page (PerimeterX's "Press & hold" once its search is refused) is a human check, not a failed search.
+      const late = offers.length ? null : await broker.humanCheck(operation, opened.tab, { status: opened.status }).catch(() => null);
+      if (late) {
+        const shot = await broker.screenshot(operation, opened.tab, { name: `${recipe.id}-${query}` }).catch(() => null);
+        keep = true;
+        return { result: { ...base, status: "human_check", note: `${recipe.name} showed ${late}. Tab ${opened.tab} is kept: the owner can pass it with browser_login_needed (purpose human_check) if they want this store.`, tab: opened.tab, ...(shot ? { screenshot: basename(shot.path) } : {}) }, file: shot ?? undefined };
+      }
       if (!offers.length) {
         const refusal = blockedSearch(broker, operation, opened.tab, page.url());
         if (refusal) blocked = `its search service refused automated browsing (${refusal})`;
         else if (/something went wrong|try again later|temporarily unavailable/i.test(textOf(querySelector(doc, "main") ?? querySelector(doc, "body") ?? doc).slice(0, 20_000))) blocked = "its search failed for this computer (it may serve only visitors in its country, or refuse automated browsing)";
       }
       let shotError = "";
-      const shot = await broker
-        .screenshot(operation, opened.tab, recipe.shotTop ? { name: `${recipe.id}-${query}` } : { focusSelector: recipe.results, focus: "search results", name: `${recipe.id}-${query}` })
+      // A grid's picture starts at its first product, below the store's header and filters, so its prices show.
+      if (!recipe.shotTop && offers.length) {
+        await page
+          .locator(recipe.card)
+          .filter({ visible: true })
+          .first()
+          .evaluate(scrollToCard, undefined, { timeout: 2_000 })
+          .catch(() => undefined);
+        await page.waitForTimeout(600);
+      }
+      // No offers and no cards: the picture is worth sending only when the page says why (denied, no results, an error).
+      const area = querySelector(doc, recipe.results);
+      const areaText = area ? textOf(area) : bodyText;
+      const unfilled = !offers.length && !pageExplains(areaText) && !(recipe.noResults?.test(bodyText) ?? false) && (emptyArea(areaText) || !querySelector(doc, recipe.card));
+      const shot = unfilled
+        ? null
+        : await broker
+        .screenshot(operation, opened.tab, recipe.shotTop || offers.length ? { name: `${recipe.id}-${query}` } : { focusSelector: recipe.results, focus: "search results", name: `${recipe.id}-${query}` })
         .catch((error: unknown) => {
           shotError = ` No screenshot: ${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 160) : String(error)}`;
           return null;

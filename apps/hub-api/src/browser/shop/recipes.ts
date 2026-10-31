@@ -27,8 +27,8 @@ export type StoreRecipe = {
   availability?: string;
   delivery?: string;
   sponsored?: string;
-  /** How the store takes a delivery place: Amazon's ZIP dialog, Best Buy's US site. */
-  location?: "amazon" | "bestbuy";
+  /** How the store takes a delivery place: Amazon's ZIP dialog, Best Buy's US site, Target's guest location cookie. */
+  location?: "amazon" | "bestbuy" | "target";
   /** Titles that are not products ("Shop on eBay"). */
   skipTitle?: RegExp;
   /** Words a page with no results says. */
@@ -86,6 +86,7 @@ export const STORE_RECIPES: readonly StoreRecipe[] = [
     link: "a[data-test='content'][href], a[data-test='product-title'][href], a[href*='/p/']",
     delivery: "[data-test='fulfillment-cell']",
     sponsored: "[data-test='sponsoredText']",
+    location: "target",
     noResults: /couldn.t find a match|no results found/i,
   },
   {

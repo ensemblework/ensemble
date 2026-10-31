@@ -15,7 +15,7 @@ import { interactiveSnapshot } from "./interactive.js";
 import { amazonHostFor, bestBuyUrl, resolveLocation, zipState } from "./location.js";
 import { priceCardOffers, rankOffers, recipeOffers, relevance, storeOffers, structuredOffers, type Offer } from "./shop/offers.js";
 import { genericRecipe, recipeFor, STORE_RECIPES } from "./shop/recipes.js";
-import { storesFor } from "./shop/index.js";
+import { emptyArea, pageExplains, shownPlace, storesFor, targetLocationCookie } from "./shop/index.js";
 import { fetchedKind, fetchedName, siteHome } from "./web.js";
 import { withEvidenceIds } from "../device-tools/capture.js";
 
@@ -352,4 +352,17 @@ test("fetched files: a name from Content-Disposition or the address; documents a
   assert.equal(linked.files, undefined, "local paths stay on the computer");
   assert.deepEqual(linked.stores.map((store) => store.screenshot), [id, undefined]);
   assert.deepEqual(withEvidenceIds({ tab: "t1" }, []), { tab: "t1" }, "other results unchanged");
+});
+
+test("browser_shop says the place each store shows, sets Target's ZIP, and sends no picture of a grid that never filled", () => {
+  assert.equal(shownPlace("Hello Deliver to Madison 53703 Search"), "Deliver to Madison 53703");
+  assert.equal(shownPlace("Ship to 57002 Brookings Target Circle"), "Ship to 57002");
+  assert.equal(shownPlace("Pickup or delivery? Sacramento, 95829 • Sacramento Supercenter"), "Pickup or delivery Sacramento, 95829");
+  assert.equal(shownPlace("PlayStation 5 Console $499.99"), null);
+  const madison = { kind: "zip" as const, country: "US", countryName: "United States", zip: "53703", city: "Madison", state: "WI", lat: 43.0747, lon: -89.3844, label: "Madison, WI 53703" };
+  assert.deepEqual(targetLocationCookie(madison), { name: "GuestLocation", value: "53703|43.075|-89.384|WI|US", domain: ".target.com", path: "/", secure: true, sameSite: "Lax" });
+  assert.equal(targetLocationCookie({ ...madison, country: "IN", zip: undefined }), null);
+  assert.equal(emptyArea("  Feedback  "), true);
+  assert.equal(emptyArea("PlayStation 5 Slim Console – 1TB $649.99 Add to cart PlayStation 5 Digital"), false);
+  assert.ok(pageExplains("Access Denied. You don't have permission") && pageExplains("We were not able to find a match") && !pageExplains("Feedback Filter Sort Brand"));
 });
