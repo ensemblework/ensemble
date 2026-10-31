@@ -4,11 +4,15 @@
  * for its key (purpose `takeover`, bound to the takeover and the tab, from a site it trusts, taken
  * once), derives one key per direction, marks the tab sensitive (no agent, model, capture, trace or live
  * view sees it) and streams it with Chromium's screencast: each frame encrypted for the owner's browser
- * and posted to the relay, which keeps only the latest for seconds. Input comes back encrypted, each
- * message with a sequence number: one not above the last accepted is refused, as is one that does not
- * open. A takeover ends on I'm done (which checks a sign-in and gives the tab back), Stop, its time
- * running out, nobody watching for a minute, the tab closing, or this computer no longer taking work
- * from the web. Typed keys and frames are never logged or kept here.
+ * and posted to the relay, which keeps only the latest for seconds. A sign-in's takeover streams a
+ * clean browser instead (logins/clean-signin.ts: Google and Cloudflare refuse the node's own browser),
+ * opened at the tab's page, following the popups a page opens; its frames say which site they show.
+ * When the clean browser cannot start here, the tab itself is streamed, and the answer says why. Input
+ * comes back encrypted, each message with a sequence number: one not above the last accepted is
+ * refused, as is one that does not open. A takeover ends on I'm done (which checks a sign-in and gives
+ * the tab back), Stop, the sign-in seen done (its session moved into the tab), its time running out,
+ * nobody watching for a minute, the tab closing, or this computer no longer taking work from the web.
+ * Typed keys and frames are never logged or kept here.
  */
 import type { CDPSession, Page } from "playwright-core";
 import { z } from "zod";
@@ -22,7 +26,8 @@ import { env } from "../config.js";
 import { remoteApiBase, type HostedClient } from "../remote/client.js";
 import { TakeoverEnd, TakeoverInput, TakeoverStart, type ChannelMessage } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
-import { resolveLogin, waitingLogin } from "../logins/requests.js";
+import type { CleanFrame, CleanSignIn } from "../logins/clean-signin.js";
+import { closeCleanSignIn, loginEvents, markLoginControlled, openCleanSignIn, resolveLogin, waitingLogin, type LoginOutcome } from "../logins/requests.js";
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, type ChannelKeys } from "./channel.js";
 
 /** Nobody sent input or a ping for this long: the takeover ends. */
@@ -47,14 +52,20 @@ type InputEvent = z.infer<typeof InputEvent>;
 
 const Payload = z.object({ k: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
 
+/** What a frame's header says beside its size: the page's address (without its query), host and title, whether it is a popup, and the mode. */
+type FrameMeta = { url: string; site: string; title: string; popup: boolean };
+
 type Session = {
   id: string;
   tab: string;
   loginId: string | null;
   keys: ChannelKeys;
   client: HostedClient;
+  /** `clean`: a sign-in in the clean browser; `tab`: the tab itself. */
+  mode: "clean" | "tab";
   page: Page;
-  cdp: CDPSession;
+  cdp: CDPSession | null;
+  clean: CleanSignIn | null;
   /** The tab was not sensitive before: it is given back when the takeover ends. */
   marked: boolean;
   inSeq: number;
@@ -64,7 +75,7 @@ type Session = {
   frames: number;
   lastInput: number;
   viewport: { width: number; height: number };
-  pending: { jpeg: Buffer; width: number; height: number } | null;
+  pending: { jpeg: Buffer; width: number; height: number; meta: FrameMeta | null } | null;
   sending: boolean;
   queue: Promise<void>;
   timers: NodeJS.Timeout[];
@@ -76,10 +87,29 @@ const sessions = new Map<string, Session>();
 const ledger = (action: string, payload: Record<string, string | number | boolean | null>) => appendLedger({ userId: env.ENSEMBLE_DEV_USER_ID, actor: "me", action, payload }).catch(() => undefined);
 
 /** What a takeover did, for tests and the computer's own checks: counts only, never what was typed or shown. */
-export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number } | null {
+export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number; mode: "clean" | "tab" } | null {
   const session = sessions.get(id);
-  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames } : null;
+  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames, mode: session.mode } : null;
 }
+
+/** The clean browser a takeover shows, for tests. */
+export function takeoverCleanSignIn(id: string): CleanSignIn | null {
+  return sessions.get(id)?.clean ?? null;
+}
+
+// A sign-in seen done (its session moved into the tab) ends the takeover showing it; so does its clean browser closing.
+loginEvents.on("finished", (outcome: LoginOutcome) => {
+  for (const session of sessions.values()) {
+    if (session.loginId !== outcome.loginId || session.ended) continue;
+    void endTakeover(session.id, { done: false, reason: outcome.status === "signed_in" || outcome.status === "passed" ? outcome.status : "ended", tell: true });
+  }
+});
+loginEvents.on("cleanClosed", (event: { loginId: string; reason: string }) => {
+  for (const session of sessions.values()) {
+    if (session.loginId !== event.loginId || session.mode !== "clean" || session.ended) continue;
+    void endTakeover(session.id, { done: false, reason: event.reason === "not_carried" ? "not_carried" : "closed", tell: true });
+  }
+});
 
 /** The secret in a start box, checked: for this computer, its key, this takeover and tab, a site it trusts, unexpired. */
 function openStartBox(frame: TakeoverStart, now = Date.now()): { secret: Buffer; nonce: string; expiresAt: string } {
@@ -112,8 +142,9 @@ async function pump(session: Session): Promise<void> {
       const next = session.pending;
       session.pending = null;
       session.outSeq += 1;
-      const url = session.page.isClosed() ? "" : session.page.url();
-      const message = sealMessage(session.keys.d2w, session.id, "d2w", session.outSeq, packMessage({ t: "frame", w: next.width, h: next.height, url: url.split(/[?#]/)[0]!.slice(0, 500) }, next.jpeg));
+      const meta = next.meta ?? tabMeta(session);
+      const header = { t: "frame", w: next.width, h: next.height, url: meta.url.split(/[?#]/)[0]!.slice(0, 500), site: meta.site.slice(0, 200), title: meta.title.slice(0, 200), popup: meta.popup, mode: session.mode };
+      const message = sealMessage(session.keys.d2w, session.id, "d2w", session.outSeq, packMessage(header, next.jpeg));
       const sent = session.client.takeoverFrame ? await session.client.takeoverFrame(session.id, message).catch(() => true) : false;
       session.frames += 1;
       if (!sent) {
@@ -124,6 +155,17 @@ async function pump(session: Session): Promise<void> {
   } finally {
     session.sending = false;
   }
+}
+
+function tabMeta(session: Session): FrameMeta {
+  const url = session.page.isClosed() ? "" : session.page.url();
+  let site = "";
+  try {
+    site = /^https?:/.test(url) ? new URL(url).hostname : "";
+  } catch {
+    site = "";
+  }
+  return { url, site, title: "", popup: false };
 }
 
 /** A key as Playwright names it, held or let go; a printable character without a modifier is typed as text. */
@@ -146,6 +188,7 @@ async function applyKey(session: Session, event: Extract<InputEvent, { t: "key" 
 const heldKeys = new WeakMap<Session, Set<string>>();
 
 async function apply(session: Session, event: InputEvent): Promise<void> {
+  if (session.clean) return session.clean.input(event);
   const page = session.page;
   const { width, height } = session.viewport;
   if (event.t === "ping") return;
@@ -200,19 +243,30 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
     return await takeOnce({ decisionId: frame.takeoverId, nonce: box.nonce, expiresAt: box.expiresAt }, async () => {
       const keys = takeoverKeys(box.secret, frame.takeoverId);
       box.secret.fill(0);
+      // A sign-in is done in the clean browser; the tab itself only when that cannot start here.
+      let clean: CleanSignIn | null = null;
+      let note: string | undefined;
+      if (frame.loginId && cleanSignInOn()) {
+        try {
+          clean = await openCleanSignIn(frame.loginId, "takeover");
+        } catch (error) {
+          note = `Ensemble's sign-in browser could not start here (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 200) : "unknown"}), so this shows the node's own browser: some sites (Google) may refuse to sign in there.`;
+        }
+      }
       const marked = !tab.sensitive;
       broker.markControlled(frame.tab, true);
       if (marked) await broker.markSensitive(frame.tab, true);
-      const cdp = await tab.context.newCDPSession(tab.page);
-      const size = tab.page.viewportSize() ?? { width: 1280, height: 800 };
+      const cdp = clean ? null : await tab.context.newCDPSession(tab.page);
       const session: Session = {
         id: frame.takeoverId,
         tab: frame.tab,
         loginId: frame.loginId ?? null,
         keys,
         client,
+        mode: clean ? "clean" : "tab",
         page: tab.page,
         cdp,
+        clean,
         marked,
         inSeq: 0,
         outSeq: 0,
@@ -220,7 +274,7 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         applied: 0,
         frames: 0,
         lastInput: Date.now(),
-        viewport: size,
+        viewport: tab.page.viewportSize() ?? { width: 1280, height: 800 },
         pending: null,
         sending: false,
         queue: Promise.resolve(),
@@ -228,15 +282,7 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         ended: false,
       };
       sessions.set(session.id, session);
-      cdp.on("Page.screencastFrame", (event: { data: string; sessionId: number; metadata: { deviceWidth?: number; deviceHeight?: number } }) => {
-        void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => undefined);
-        if (session.ended) return;
-        const width = Math.round(event.metadata.deviceWidth ?? session.viewport.width);
-        const height = Math.round(event.metadata.deviceHeight ?? session.viewport.height);
-        session.viewport = { width, height };
-        session.pending = { jpeg: Buffer.from(event.data, "base64"), width, height };
-        void pump(session);
-      });
+      if (frame.loginId && !clean) markLoginControlled(frame.loginId, true);
       tab.page.once("close", () => void endTakeover(session.id, { done: false, reason: "tab_closed", tell: true }));
       const endsAt = Math.min(Date.parse(frame.endsAt) || Infinity, Date.now() + takeoverMaxMs());
       const deadline = setTimeout(() => void endTakeover(session.id, { done: false, reason: "expired", tell: true }), Math.max(0, endsAt - Date.now()));
@@ -248,15 +294,44 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
       idle.unref();
       session.timers.push(deadline, idle);
       broker.keepTab(session.tab, TAKEOVER_IDLE_MS * 5);
-      await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: 1280, maxHeight: 1280, everyNthFrame: 1 });
-      await ledger("takeover.started", { takeoverId: session.id, tab: session.tab, login: Boolean(session.loginId) });
-      return { status: 200, body: { started: true, width: size.width, height: size.height, endsAt: new Date(endsAt).toISOString() } };
+      try {
+        if (clean) {
+          clean.on("frame", (shown: CleanFrame) => {
+            if (session.ended) return;
+            session.viewport = { width: shown.width || session.viewport.width, height: shown.height || session.viewport.height };
+            session.pending = { jpeg: shown.jpeg, width: session.viewport.width, height: session.viewport.height, meta: { url: shown.url, site: shown.site, title: shown.title, popup: shown.popup } };
+            void pump(session);
+          });
+          session.viewport = await clean.startStreaming();
+        } else {
+          cdp!.on("Page.screencastFrame", (event: { data: string; sessionId: number; metadata: { deviceWidth?: number; deviceHeight?: number } }) => {
+            void cdp!.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => undefined);
+            if (session.ended) return;
+            const width = Math.round(event.metadata.deviceWidth ?? session.viewport.width);
+            const height = Math.round(event.metadata.deviceHeight ?? session.viewport.height);
+            session.viewport = { width, height };
+            session.pending = { jpeg: Buffer.from(event.data, "base64"), width, height, meta: null };
+            void pump(session);
+          });
+          await cdp!.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: 1280, maxHeight: 1280, everyNthFrame: 1 });
+        }
+      } catch (error) {
+        await endTakeover(session.id, { done: false, reason: "failed", tell: false });
+        throw error;
+      }
+      await ledger("takeover.started", { takeoverId: session.id, tab: session.tab, login: Boolean(session.loginId), mode: session.mode });
+      return { status: 200, body: { started: true, width: session.viewport.width, height: session.viewport.height, endsAt: new Date(endsAt).toISOString(), mode: session.mode, ...(note ? { note } : {}) } };
     });
   } catch (error) {
     box.secret.fill(0);
     if (error instanceof SealError) return { status: error.statusCode, body: { error: error.message, code: `seal_${error.code}` } };
     return { status: 500, body: { error: error instanceof Error ? error.message.split("\n")[0]!.slice(0, 300) : "The takeover could not start." } };
   }
+}
+
+/** Whether a sign-in's takeover uses the clean browser (`ENSEMBLE_CLEAN_SIGNIN=off` shows the tab itself). */
+function cleanSignInOn(source: NodeJS.ProcessEnv = process.env): boolean {
+  return !/^(?:0|off|false|no)$/i.test(source.ENSEMBLE_CLEAN_SIGNIN?.trim() ?? "");
 }
 
 /** Input from the owner's browser: applied in order, once; anything replayed, out of order or changed is refused. */
@@ -306,18 +381,25 @@ export async function endTakeover(id: string, input: { done: boolean; reason: st
   for (const timer of session.timers) clearTimeout(timer);
   await session.queue.catch(() => undefined);
   for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
-  await session.cdp.send("Page.stopScreencast").catch(() => undefined);
-  await session.cdp.detach().catch(() => undefined);
+  if (session.cdp) {
+    await session.cdp.send("Page.stopScreencast").catch(() => undefined);
+    await session.cdp.detach().catch(() => undefined);
+  }
+  if (session.clean) await session.clean.stopStreaming().catch(() => undefined);
+  if (session.loginId && session.mode === "tab") markLoginControlled(session.loginId, false);
   browserBroker().markControlled(session.tab, false);
   let signedIn: boolean | null = null;
   let message: string | undefined;
   if (session.loginId && input.done) {
-    const result = await resolveLogin(session.loginId, "done");
-    signedIn = result.status === "signed_in";
+    // I'm done: the clean browser's page (or the tab) is checked; done, its session moves into the tab.
+    const result = await resolveLogin(session.loginId, "done", undefined, { via: "takeover" });
+    signedIn = result.status === "signed_in" || result.status === "passed";
     message = result.message;
-  } else if (session.marked) {
+  } else if (session.marked && !session.loginId) {
     await browserBroker().markSensitive(session.tab, false).catch(() => undefined);
   }
+  // A sign-in that still waits keeps its tab paused for its card; its clean browser closes (it stays warm for the next one).
+  if (session.loginId && session.clean) await closeCleanSignIn(session.loginId, input.reason).catch(() => undefined);
   await ledger("takeover.ended", { takeoverId: id, reason: input.reason, inputs: session.applied, refused: session.refused, signedIn });
   if (input.tell) await session.client.takeoverState?.(id, { state: "ended", reason: input.reason }).catch(() => undefined);
   return { ended: true, signedIn, ...(message ? { message } : {}) };

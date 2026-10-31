@@ -99,11 +99,12 @@ export const BROWSER_TOOLS = [
   {
     name: "browser_login_needed",
     description:
-      "Hand one of this work's tabs to the owner when a page needs a person: their account (a sign-in form, a session that ended), or a human check (a captcha, \"Robot or human?\", \"Just a moment…\", a page that blocks automated browsing; give reason \"human check\"). Never try to solve a human check yourself. The tab pauses (no reading, screenshots or actions) until they sign in or pass the check on the computer, pick the login saved there, or type it on the web for this computer only; you never see or type a password. `signedIn` says how to tell it worked: a URL glob the tab reaches, or a CSS selector the page then shows (default: no sign-in form left on the site). Ensemble asks by itself when a page of another site clearly wants a sign-in in the shared profile; a private tab or this computer's own addresses only get a hint.",
+      "Hand one of this work's tabs to the owner when a page needs a person: their account (a sign-in form, a session that ended; purpose \"sign_in\"), or a human check (a captcha, \"Robot or human?\", \"Just a moment…\", a page that blocks automated browsing; purpose \"human_check\"). Never try to solve a human check yourself. The owner gets a card in the chat and does it from their phone or computer (Google sign-in, two-step codes and approvals work there), or uses the login saved on the computer, or types it on the web for this computer only; you never see or type a password or code. The tab pauses (no reading, screenshots or actions) until it is done, which Ensemble sees by itself; then you carry on. `signedIn` says how to tell a sign-in worked: a URL glob the tab reaches, or a CSS selector the page then shows (default: no sign-in form left on the site). Ensemble asks by itself when a page of another site clearly wants a sign-in in the shared profile; a private tab or this computer's own addresses only get a hint.",
     input: z
       .object({
         tab,
         origin: z.string().min(1).max(300).optional().describe("The site to sign in to, such as https://app.example.com; default: the tab's."),
+        purpose: z.enum(["sign_in", "human_check"]).optional().describe("sign_in (default): the owner's account; human_check: a captcha or robot check a person must pass. A page Ensemble sees is a human check is handed over as one."),
         signedIn: z
           .object({ urlPattern: z.string().min(1).max(500).optional(), selector: z.string().min(1).max(500).optional() })
           .strict()
@@ -112,6 +113,12 @@ export const BROWSER_TOOLS = [
         reason: z.string().min(1).max(200).optional().describe("Why, in a few words for the owner's card."),
       })
       .strict(),
+  },
+  {
+    name: "browser_login_check",
+    description:
+      "Check now whether the owner finished signing in (or passed the human check) on a tab that waits for them, such as when they say they did. Done: the tab is yours again (take a new snapshot). Not yet: it keeps waiting and says what the page still shows. Never ask for a password or code in the chat.",
+    input: z.object({ tab }).strict(),
   },
   {
     name: "browser_download",

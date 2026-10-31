@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { CaptureError } from "../capture/media.js";
 import { BrowserError, type BrowserBroker, type LiveFrame } from "./broker.js";
-import { askForLogin, checkForLogin, waitingNote } from "../logins/requests.js";
+import { askForLogin, checkForLogin, checkLoginOfTab, waitingNote, type LoginPurpose } from "../logins/requests.js";
 import { HUMAN_CHECK_HINT } from "./human-check.js";
 import { dismissedNote } from "./hygiene.js";
 import { shopStores, shopSummary } from "./shop/index.js";
@@ -162,8 +162,12 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
         return { ok: true, summary: `Sent ${sent.file} (${sent.size} bytes).`, result: sent };
       }
       case "browser_login_needed": {
-        const login = await askForLogin(broker, context.operation, a.tab as string, { origin: a.origin as string | undefined, signedIn: a.signedIn as { urlPattern?: string; selector?: string } | undefined, reason: a.reason as string | undefined });
+        const login = await askForLogin(broker, context.operation, a.tab as string, { origin: a.origin as string | undefined, signedIn: a.signedIn as { urlPattern?: string; selector?: string } | undefined, reason: a.reason as string | undefined, purpose: a.purpose as LoginPurpose | undefined });
         return { ok: true, summary: waitingNote(login), result: { login } };
+      }
+      case "browser_login_check": {
+        const checked = await checkLoginOfTab(broker, context.operation, a.tab as string);
+        return { ok: true, summary: checked.message, result: { tab: a.tab as string, ...checked } };
       }
       case "browser_download": {
         // A tab that shows a PDF (Chromium's viewer) or another file starts no download: the file is fetched instead.

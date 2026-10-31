@@ -1,10 +1,11 @@
 /**
  * The owner's answer to a sign-in card, on this computer (`login.resolve`, protocol 8, B11). Typed
- * values come in a box sealed in the owner's browser for this computer's key (B12, credentials/seal.ts):
- * opened only here, after checking it is for this computer and its current key, this card, this
- * sign-in (its id is the box's `name`) and its site (inside the box), typed on a site this computer
- * trusts, not expired and never seen before. The values go into the page and nowhere else; the answer
- * says only how the sign-in went.
+ * values, and a one-time code the site asks for after them (`code`), come in a box sealed in the
+ * owner's browser for this computer's key (B12, credentials/seal.ts): opened only here, after checking
+ * it is for this computer and its current key, this card, this sign-in (its id is the box's `name`) and
+ * its site (inside the box), typed on a site this computer trusts, not expired and never seen before.
+ * The values go into the page and nowhere else; the answer says only how the sign-in went, in the words
+ * the server knows (`v`).
  */
 import { z } from "zod";
 import { trustedOrigins } from "../credentials/origins.js";
@@ -59,21 +60,33 @@ export function openTypedLogin(frame: Pick<LoginResolve, "loginId" | "decisionId
   }
 }
 
+/** An answer in the words a server of sign-in version `v` knows: before 2 it has no `passed` or `needs_code`. */
+export function forServer(result: LoginResolution, v: number | undefined): LoginResolution {
+  if ((v ?? 1) >= 2) return result;
+  if (result.status === "passed") return { ...result, status: "signed_in" };
+  if (result.status === "needs_code") return { ...result, status: "failed", message: `The site asks for a one-time code: ${result.message ?? "type it in the browser on the computer, or open the browser from here."}`.slice(0, 500) };
+  return result;
+}
+
 /** The answer to one `login.resolve` frame. */
 export async function loginResolution(data: unknown, now = Date.now()): Promise<LoginResolution> {
   const parsed = LoginResolve.safeParse(data);
   if (!parsed.success) return { status: "failed", message: "That answer could not be read. Update Ensemble on this computer." };
   const frame = parsed.data;
+  return forServer(await resolution(frame, now), frame.v);
+}
+
+async function resolution(frame: LoginResolve, now: number): Promise<LoginResolution> {
   const login = waitingLogin(frame.loginId);
   if (login && !bindDecision(frame.loginId, frame.decisionId)) return { status: "failed", message: "That answer is for another card.", code: "decision" };
-  if (frame.action === "check") return resolveLogin(frame.loginId, "done");
   if (frame.action !== "typed" && frame.action !== "code") return resolveLogin(frame.loginId, frame.action);
   if (!login) return resolveLogin(frame.loginId, "done");
   try {
     const box = openTypedLogin(frame, login.origin, now);
-    // Each box is taken once; a sign-in that did not work leaves the card open for another try (a new box).
+    if (frame.action === "code" && !box.values.code) throw new SealError("shape", "Type the code the site asks for.");
+    // Each box is taken once; a sign-in that did not work (or now asks for a code) leaves the card open for another box.
     return await takeOnce({ decisionId: frame.decisionId, nonce: box.nonce, expiresAt: box.expiresAt }, async () => {
-      const result = await resolveLogin(frame.loginId, "typed", { values: box.values, save: box.save });
+      const result = frame.action === "code" ? await resolveLogin(frame.loginId, "code", { values: { code: box.values.code }, save: false }) : await resolveLogin(frame.loginId, "typed", { values: box.values, save: box.save });
       if (result.status !== "signed_in") throw new NotSignedIn(result);
       return result;
     }, now);

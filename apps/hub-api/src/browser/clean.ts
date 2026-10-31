@@ -7,7 +7,8 @@
  * cookies and the DOM through the browser's own protocol; nothing runs in the page. It is for the
  * moments a person must act on a site (signing in, passing a human check) and for read-only captures
  * of sites that block automation. The pipe (`--remote-debugging-pipe`, as Playwright uses) opens no
- * port another program could reach.
+ * port another program could reach. What it reads of a page (`signs`: the address, title, visible text,
+ * form fields and frames) comes from a DOM snapshot (`DOMSnapshot.captureSnapshot`), never from a script.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -30,6 +31,8 @@ export type CleanLaunch = {
   display?: string;
   extraArgs?: string[];
   platform?: NodeJS.Platform;
+  /** The environment it starts in (default this process's): a window needs the display's variables. */
+  env?: NodeJS.ProcessEnv;
 };
 
 /** Chromium's switches for a clean browser: no automation switches, no first-run screens, no keychain prompts. */
@@ -49,7 +52,7 @@ export function cleanArgs(input: CleanLaunch): string[] {
     `--window-size=${width},${height}`,
     // As Playwright does on Linux: Ubuntu's AppArmor refuses Chromium's own sandbox to unprivileged users.
     ...(platform === "linux" ? ["--no-sandbox"] : []),
-    ...(input.headless ? ["--headless=new", "--hide-scrollbars", "--mute-audio"] : []),
+    ...(input.headless ? ["--headless=new", "--hide-scrollbars", "--mute-audio"] : platform === "linux" ? ["--ozone-platform-hint=auto"] : []),
     ...(input.userAgent ? [`--user-agent=${input.userAgent}`] : []),
     ...(input.locale ? [`--lang=${input.locale}`] : []),
     ...(input.extraArgs ?? []),
@@ -74,11 +77,17 @@ class Connection extends EventEmitter {
   private buffer = "";
   closed = false;
 
+  private readonly handles: Array<{ ref?: () => void; unref?: () => void }>;
+
   constructor(
     private readonly out: Writable,
     input: Readable,
   ) {
     super();
+    // Each tab listens for its own events here.
+    this.setMaxListeners(200);
+    this.handles = [out, input] as unknown as Array<{ ref?: () => void; unref?: () => void }>;
+    this.idle();
     input.setEncoding("utf8");
     input.on("data", (chunk: string) => this.read(chunk));
     input.on("close", () => this.shut("The browser closed."));
@@ -102,6 +111,7 @@ class Connection extends EventEmitter {
         const waiting = this.pending.get(message.id);
         if (!waiting) continue;
         this.pending.delete(message.id);
+        if (!this.pending.size) this.idle();
         if (message.error) waiting.reject(new CleanBrowserError(`${waiting.method}: ${message.error.message ?? "failed"}`));
         else waiting.resolve(message.result ?? {});
       } else if (message.method) {
@@ -114,9 +124,11 @@ class Connection extends EventEmitter {
   send(method: string, params: Record<string, unknown> = {}, sessionId?: string | null, timeoutMs = 30_000): Promise<Record<string, unknown>> {
     if (this.closed) return Promise.reject(new CleanBrowserError("The browser closed."));
     const id = this.next++;
+    if (!this.pending.size) for (const handle of this.handles) handle.ref?.();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending.delete(id)) return;
+        if (!this.pending.size) this.idle();
         reject(new CleanBrowserError(`${method}: no answer in ${Math.round(timeoutMs / 1000)} s.`));
       }, timeoutMs);
       timer.unref?.();
@@ -133,6 +145,11 @@ class Connection extends EventEmitter {
       });
       this.out.write(`${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`);
     });
+  }
+
+  /** Nothing waits for an answer: the pipes do not keep this process alive. */
+  private idle(): void {
+    for (const handle of this.handles) handle.unref?.();
   }
 
   shut(reason: string): void {
@@ -158,12 +175,87 @@ export type CleanCookie = {
 
 export type ScreencastFrame = { data: string; width: number; height: number };
 
+/**
+ * What a page shows, read from a DOM snapshot (no page script): its address and title, its visible text
+ * (at most 20,000 characters), the attributes of its visible form fields (never their values), and the
+ * addresses of its visible frames (at least 40 by 30 pixels), over its frames and shadow roots that
+ * share its process.
+ */
+export type CleanSigns = { url: string; title: string; text: string; inputs: Array<Record<string, string>>; frames: string[]; loaded: boolean };
+
+const SIGNS_TEXT = 20_000;
+const MAX_INPUTS = 200;
+
+type Snapshot = {
+  strings?: string[];
+  documents?: Array<{
+    documentURL?: number;
+    title?: number;
+    nodes?: { nodeName?: number[]; attributes?: number[][] };
+    layout?: { nodeIndex?: number[]; styles?: number[][]; bounds?: number[][]; text?: number[] };
+  }>;
+};
+
+/** Reads a `DOMSnapshot.captureSnapshot` answer (computed styles `visibility`, `display`) into signs. */
+export function signsOf(snapshot: Snapshot, fallback: { url: string; title: string; loaded: boolean }): CleanSigns {
+  const strings = snapshot.strings ?? [];
+  const at = (index: number | undefined) => (index !== undefined && index >= 0 ? (strings[index] ?? "") : "");
+  const documents = snapshot.documents ?? [];
+  const main = documents[0];
+  const inputs: Array<Record<string, string>> = [];
+  const frames: string[] = [];
+  const text: string[] = [];
+  let length = 0;
+  for (const doc of documents) {
+    const names = doc.nodes?.nodeName ?? [];
+    const attributes = doc.nodes?.attributes ?? [];
+    const layout = doc.layout ?? {};
+    const base = at(doc.documentURL) || fallback.url;
+    (layout.nodeIndex ?? []).forEach((node, row) => {
+      const [, , width = 0, height = 0] = layout.bounds?.[row] ?? [];
+      const [visibility] = (layout.styles?.[row] ?? []).map(at);
+      const shown = visibility !== "hidden" && visibility !== "collapse";
+      const words = at(layout.text?.[row]).trim();
+      if (words && shown && length < SIGNS_TEXT) {
+        text.push(words);
+        length += words.length + 1;
+      }
+      const name = at(names[node]).toUpperCase();
+      if (!shown || width <= 0 || height <= 0) return;
+      if ((name === "INPUT" || name === "TEXTAREA" || name === "SELECT") && inputs.length < MAX_INPUTS) {
+        const attrs: Record<string, string> = { tag: name.toLowerCase() };
+        const list = attributes[node] ?? [];
+        for (let index = 0; index + 1 < list.length; index += 2) {
+          const key = at(list[index]).toLowerCase();
+          if (key && key !== "value") attrs[key] = at(list[index + 1]).slice(0, 200);
+        }
+        inputs.push(attrs);
+      }
+      if ((name === "IFRAME" || name === "FRAME") && width >= 40 && height >= 30) {
+        const list = attributes[node] ?? [];
+        for (let index = 0; index + 1 < list.length; index += 2) {
+          if (at(list[index]).toLowerCase() !== "src") continue;
+          try {
+            frames.push(new URL(at(list[index + 1]), base).toString());
+          } catch {
+            // Not an address.
+          }
+        }
+      }
+    });
+  }
+  return { url: at(main?.documentURL) || fallback.url, title: at(main?.title) || fallback.title, text: text.join("\n").slice(0, SIGNS_TEXT), inputs, frames, loaded: fallback.loaded };
+}
+
 /** A tab of a clean browser. Input coordinates are CSS pixels of its viewport. */
 export class CleanPage extends EventEmitter {
   url = "about:blank";
   title = "";
   closed = false;
+  /** Its main frame finished loading since it last navigated. */
+  loaded = true;
   private casting: ((frame: ScreencastFrame) => void) | null = null;
+  private readonly unlisten: Array<() => void> = [];
 
   constructor(
     private readonly conn: Connection,
@@ -173,24 +265,42 @@ export class CleanPage extends EventEmitter {
     readonly openerId: string | null,
   ) {
     super();
-    conn.on("Page.frameNavigated", (params: { frame?: { parentId?: string; url?: string } }, session: string | null) => {
+    this.listen("Page.frameNavigated", (params: { frame?: { parentId?: string; url?: string } }, session: string | null) => {
       if (session !== this.sessionId || params.frame?.parentId) return;
       this.url = params.frame?.url ?? this.url;
+      this.loaded = false;
       this.emit("navigated", this.url);
     });
-    conn.on("Page.navigatedWithinDocument", (params: { url?: string }, session: string | null) => {
+    this.listen("Page.frameStoppedLoading", (params: { frameId?: string }, session: string | null) => {
+      if (session !== this.sessionId || params.frameId !== this.targetId || this.loaded) return;
+      this.loaded = true;
+      this.emit("load");
+    });
+    this.listen("Page.navigatedWithinDocument", (params: { url?: string }, session: string | null) => {
       if (session !== this.sessionId || !params.url) return;
       this.url = params.url;
       this.emit("navigated", this.url);
     });
-    conn.on("Page.loadEventFired", (_params: unknown, session: string | null) => {
-      if (session === this.sessionId) this.emit("load");
+    this.listen("Page.loadEventFired", (_params: unknown, session: string | null) => {
+      if (session !== this.sessionId) return;
+      this.loaded = true;
+      this.emit("load");
     });
-    conn.on("Page.screencastFrame", (params: { data: string; sessionId: number; metadata?: { deviceWidth?: number; deviceHeight?: number } }, session: string | null) => {
+    this.listen("Page.screencastFrame", (params: { data: string; sessionId: number; metadata?: { deviceWidth?: number; deviceHeight?: number } }, session: string | null) => {
       if (session !== this.sessionId) return;
       void conn.send("Page.screencastFrameAck", { sessionId: params.sessionId }, this.sessionId).catch(() => undefined);
       this.casting?.({ data: params.data, width: params.metadata?.deviceWidth ?? 0, height: params.metadata?.deviceHeight ?? 0 });
     });
+  }
+
+  private listen<T>(event: string, handler: (params: T, session: string | null) => void): void {
+    this.conn.on(event, handler);
+    this.unlisten.push(() => this.conn.off(event, handler));
+  }
+
+  /** Its listeners on the connection go when the tab does (a browser kept warm sees many tabs). */
+  detach(): void {
+    for (const off of this.unlisten.splice(0)) off();
   }
 
   private send(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<Record<string, unknown>> {
@@ -201,6 +311,12 @@ export class CleanPage extends EventEmitter {
   async init(): Promise<void> {
     await this.send("Page.enable");
     await this.send("Page.setLifecycleEventsEnabled", { enabled: true }).catch(() => undefined);
+  }
+
+  /** Starts loading `url` and returns once the browser has it (an answer or an error), without waiting for the page to load. */
+  async navigate(url: string, options: { timeoutMs?: number } = {}): Promise<void> {
+    const answer = await this.send("Page.navigate", { url }, options.timeoutMs ?? 30_000);
+    if (typeof answer.errorText === "string" && answer.errorText) throw new CleanBrowserError(`Could not open ${url}: ${answer.errorText}`);
   }
 
   async goto(url: string, options: { timeoutMs?: number } = {}): Promise<void> {
@@ -248,6 +364,40 @@ export class CleanPage extends EventEmitter {
     return String(outer.outerHTML ?? "");
   }
 
+  /** What the page shows, from a DOM snapshot: no script runs in the page. */
+  async signs(): Promise<CleanSigns> {
+    const snapshot = (await this.send("DOMSnapshot.captureSnapshot", { computedStyles: ["visibility", "display"] }, 20_000)) as Snapshot;
+    const signs = signsOf(snapshot, { url: this.url, title: this.title, loaded: this.loaded });
+    if (signs.title) this.title = signs.title;
+    return signs;
+  }
+
+  /** Where the first element matching a CSS selector is (its centre, in CSS pixels), or null when there is none or it is not shown. Through the DOM domain. */
+  async find(selector: string): Promise<{ x: number; y: number; width: number; height: number } | null> {
+    const doc = (await this.send("DOM.getDocument", { depth: 0 })) as { root?: { nodeId?: number } };
+    if (!doc.root?.nodeId) return null;
+    const found = (await this.send("DOM.querySelector", { nodeId: doc.root.nodeId, selector }).catch(() => ({}))) as { nodeId?: number };
+    if (!found.nodeId) return null;
+    const box = (await this.send("DOM.getBoxModel", { nodeId: found.nodeId }).catch(() => ({}))) as { model?: { border?: number[]; width?: number; height?: number } };
+    const quad = box.model?.border;
+    if (!quad || quad.length < 8 || !box.model?.width || !box.model.height) return null;
+    const xs = [quad[0]!, quad[2]!, quad[4]!, quad[6]!];
+    const ys = [quad[1]!, quad[3]!, quad[5]!, quad[7]!];
+    return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2, width: box.model.width, height: box.model.height };
+  }
+
+  /** The size of its viewport in CSS pixels. */
+  async viewport(): Promise<{ width: number; height: number }> {
+    const metrics = (await this.send("Page.getLayoutMetrics").catch(() => ({}))) as { cssLayoutViewport?: { clientWidth?: number; clientHeight?: number } };
+    return { width: metrics.cssLayoutViewport?.clientWidth ?? 0, height: metrics.cssLayoutViewport?.clientHeight ?? 0 };
+  }
+
+  /** A site's local storage, through the DOMStorage domain (no page script): [key, value] pairs. */
+  async localStorage(origin: string): Promise<Array<[string, string]>> {
+    const answer = (await this.send("DOMStorage.getDOMStorageItems", { storageId: { securityOrigin: origin, isLocalStorage: true } }).catch(() => ({}))) as { entries?: unknown };
+    return (Array.isArray(answer.entries) ? answer.entries : []).filter((entry): entry is [string, string] => Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string");
+  }
+
   async startScreencast(onFrame: (frame: ScreencastFrame) => void, options: { quality?: number; maxWidth?: number; maxHeight?: number } = {}): Promise<void> {
     this.casting = onFrame;
     await this.send("Page.startScreencast", { format: "jpeg", quality: options.quality ?? 60, maxWidth: options.maxWidth ?? 1280, maxHeight: options.maxHeight ?? 1280, everyNthFrame: 1 });
@@ -258,16 +408,35 @@ export class CleanPage extends EventEmitter {
     await this.send("Page.stopScreencast").catch(() => undefined);
   }
 
-  async mouse(type: "mouseMoved" | "mousePressed" | "mouseReleased", x: number, y: number, options: { button?: "left" | "right" | "middle" | "none"; clickCount?: number } = {}): Promise<void> {
-    await this.send("Input.dispatchMouseEvent", { type, x, y, button: options.button ?? (type === "mouseMoved" ? "none" : "left"), clickCount: options.clickCount ?? (type === "mouseMoved" ? 0 : 1) });
+  /** `buttons`: the buttons held, as a bit mask (1 left, 2 right, 4 middle); `modifiers`: 1 Alt, 2 Control, 4 Meta, 8 Shift. */
+  async mouse(type: "mouseMoved" | "mousePressed" | "mouseReleased", x: number, y: number, options: { button?: "left" | "right" | "middle" | "none"; clickCount?: number; buttons?: number; modifiers?: number } = {}): Promise<void> {
+    await this.send("Input.dispatchMouseEvent", {
+      type,
+      x,
+      y,
+      button: options.button ?? (type === "mouseMoved" ? "none" : "left"),
+      clickCount: options.clickCount ?? (type === "mouseMoved" ? 0 : 1),
+      ...(options.buttons !== undefined ? { buttons: options.buttons } : {}),
+      ...(options.modifiers ? { modifiers: options.modifiers } : {}),
+    });
   }
 
   async wheel(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
     await this.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
   }
 
-  async key(type: "keyDown" | "keyUp" | "rawKeyDown" | "char", key: { key: string; code?: string; keyCode?: number; text?: string; modifiers?: number }): Promise<void> {
-    await this.send("Input.dispatchKeyEvent", { type, key: key.key, ...(key.code ? { code: key.code } : {}), ...(key.keyCode ? { windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode } : {}), ...(key.text !== undefined ? { text: key.text, unmodifiedText: key.text } : {}), ...(key.modifiers ? { modifiers: key.modifiers } : {}) });
+  async key(type: "keyDown" | "keyUp" | "rawKeyDown" | "char", key: { key: string; code?: string; keyCode?: number; text?: string; modifiers?: number; location?: number; autoRepeat?: boolean; commands?: string[] }): Promise<void> {
+    await this.send("Input.dispatchKeyEvent", {
+      type,
+      key: key.key,
+      ...(key.code ? { code: key.code } : {}),
+      ...(key.keyCode ? { windowsVirtualKeyCode: key.keyCode, nativeVirtualKeyCode: key.keyCode } : {}),
+      ...(key.text !== undefined ? { text: key.text, unmodifiedText: key.text } : {}),
+      ...(key.modifiers ? { modifiers: key.modifiers } : {}),
+      ...(key.location ? { location: key.location, isKeypad: key.location === 3 } : {}),
+      ...(key.autoRepeat ? { autoRepeat: true } : {}),
+      ...(key.commands?.length ? { commands: key.commands } : {}),
+    });
   }
 
   async insertText(text: string): Promise<void> {
@@ -325,6 +494,7 @@ export class CleanBrowser extends EventEmitter {
     if (!page) return;
     this.pagesById.delete(page.targetId);
     page.closed = true;
+    page.detach();
     page.emit("closed");
     this.emit("pageClosed", page);
   }
@@ -334,6 +504,7 @@ export class CleanBrowser extends EventEmitter {
     this.closed = true;
     for (const page of this.pagesById.values()) {
       page.closed = true;
+      page.detach();
       page.emit("closed");
     }
     this.pagesById.clear();
@@ -342,7 +513,7 @@ export class CleanBrowser extends EventEmitter {
 
   static async launch(input: CleanLaunch, options: { spawnFn?: typeof spawn; timeoutMs?: number } = {}): Promise<CleanBrowser> {
     await mkdir(input.userDataDir, { recursive: true, mode: 0o700 });
-    const env = { ...process.env, ...(input.timezone ? { TZ: input.timezone } : {}), ...(input.display ? { DISPLAY: input.display } : {}) };
+    const env = { ...(input.env ?? process.env), ...(input.timezone ? { TZ: input.timezone } : {}), ...(input.display ? { DISPLAY: input.display } : {}) };
     const child = (options.spawnFn ?? spawn)(input.executablePath, cleanArgs(input), { env, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], detached: false, windowsHide: true });
     const out = child.stdio[3] as Writable | null;
     const read = child.stdio[4] as Readable | null;
@@ -350,6 +521,8 @@ export class CleanBrowser extends EventEmitter {
       child.kill("SIGKILL");
       throw new CleanBrowserError("The browser did not open its DevTools pipe.");
     }
+    // A browser kept warm for the next sign-in does not keep this process alive by itself; a command waiting for its answer does.
+    child.unref();
     const browser = new CleanBrowser(child, new Connection(out, read));
     const failed = new Promise<never>((_, reject) => {
       child.once("error", (error) => reject(new CleanBrowserError(`The browser did not start: ${error.message}`)));
@@ -409,11 +582,11 @@ export class CleanBrowser extends EventEmitter {
     if (!this.closed) await this.conn.send("Browser.close", {}, null, 5_000).catch(() => undefined);
     await new Promise<void>((resolve) => {
       if (this.child.exitCode !== null || this.child.signalCode !== null) return resolve();
+      // Not unref'd: closing waits for the browser to end (the process itself does not keep this one alive).
       const timer = setTimeout(() => {
         this.child.kill("SIGKILL");
         resolve();
       }, 5_000);
-      timer.unref?.();
       this.child.once("exit", () => {
         clearTimeout(timer);
         resolve();
