@@ -643,6 +643,9 @@ test("a 0.6.0 computer gets the browser tools' older inputs, so a focused screen
   const request = { tool: "browser", name: "browser_screenshot", input: { tab: "t1", focus: "the price chart", clean: true }, operation: "op" };
   assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, request).input, { tab: "t1" });
   assert.deepEqual(forComputer({ capabilities: { browser: 2 } }, request), request);
+  const signIn = { tool: "browser", name: "browser_login_needed", input: { tab: "t1", purpose: "human_check" } };
+  assert.deepEqual(forComputer({ capabilities: { browser: 2, logins: 1 } }, signIn).input, { tab: "t1" }, "a sign-in's purpose only for logins 2");
+  assert.equal(forComputer({ capabilities: { browser: 2, logins: 2 } }, signIn), signIn);
   const command = { tool: "run", command: "ls", mode: "x" };
   assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, command), command, "only browser calls change");
 });

@@ -20,7 +20,7 @@ import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { readAad, SealedShape, SealError } from "../credentials/seal.js";
-import { CodeAnswer, LOGIN_CHECKS_API, LoginResolution, type LoginRequired } from "../remote/contract.js";
+import { CodeAnswer, LOGIN_CHECKS_API, LoginResolution, type LoginRequired, type LoginStatePost } from "../remote/contract.js";
 import { enqueueTurn } from "./queue.js";
 import { postMessage, updateMessageDataIf } from "./store.js";
 import { finishStep, planLinkOf } from "./plans.js";
@@ -331,7 +331,8 @@ export async function answerLoginCard(app: FastifyInstance, accountId: string, m
   if (!current) throw new LoginCardError("This sign-in was already answered.", 409);
   const ours = workingBy(workingId);
   const sealed = answer.action === "typed" || answer.action === "code" ? { sealed: answer.sealed } : {};
-  const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "login.resolve", data: { loginId: data.loginId, decisionId: card.id, action, ...sealed } }, ANSWER_MS).catch(() => null);
+  // v 2: the computer may answer needs_code and passed (an older server would hear failed and signed_in).
+  const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "login.resolve", data: { loginId: data.loginId, decisionId: card.id, action, ...sealed, ...(checks ? { v: 2 } : {}) } }, ANSWER_MS).catch(() => null);
   const reply = raw ? CodeAnswer.safeParse(raw) : null;
   const parsed = reply?.success && reply.data.status < 400 ? LoginResolution.safeParse(reply.data.body) : null;
   if (!parsed?.success) {
@@ -380,6 +381,45 @@ async function afterLogin(app: FastifyInstance, node: NodeAgent, card: NodeMessa
   if (options.wake === false && !link) return;
   const queued = await enqueueTurn(app, { nodeId: node.id, roomId: card.roomId, reason: "approval", note: loginOutcomeNote(data, status), private: data.private === true, ...(link ?? {}) });
   if (!queued && status !== "signed_in" && status !== "passed" && link?.planStep) await finishStep(app, link.planId, link.planStep, { status: "blocked", result: `It needs a sign-in to ${data.origin}, and your owner did not sign in (login_required).` });
+}
+
+/** How the card says a sign-in the computer saw end by itself ended (`via`). */
+const SEEN_VIA: Record<NonNullable<LoginStatePost["via"]>, string> = { computer: "computer", window: "window", takeover: "takeover", check: "check" };
+
+/**
+ * A sign-in that changed on its computer by itself (logins 2, `ROUTES.loginState`): seen done in the
+ * node's tab, the window on the computer or the owner's remote view; its work gone; its time out; or a
+ * problem to show while it waits. Only a waiting card follows (an answer in flight settles its own), and
+ * only the computer that has the sign-in can move it. Its node is woken as for an answer, except after
+ * its own `browser_login_check` (`via: check`), whose result already told it.
+ */
+export async function loginStateFromComputer(app: FastifyInstance, device: { id: string; userId: string }, loginId: string, state: LoginStatePost): Promise<NodeMessage | null> {
+  const prisma = app.prisma;
+  const card = await prisma.nodeMessage.findFirst({
+    where: { userId: device.userId, kind: "approval", AND: [{ data: { path: ["type"], equals: LOGIN_CARD } }, { data: { path: ["loginId"], equals: loginId } }, { data: { path: ["deviceId"], equals: device.id } }] },
+    orderBy: { createdAt: "desc" },
+  });
+  const parsed = card ? LoginCard.safeParse(card.data) : null;
+  if (!card || !parsed?.success) return null;
+  const data = parsed.data;
+  if (!(LOGIN_WAITING as readonly string[]).includes(data.status)) return card;
+  const node = card.authorNodeId ? await prisma.nodeAgent.findUnique({ where: { id: card.authorNodeId } }) : null;
+  const waiting: Prisma.NodeMessageWhereInput = { data: { path: ["status"], equals: data.status } };
+  const purpose = data.purpose ?? "sign_in";
+  const now = new Date().toISOString();
+  if (state.status === "waiting") return (await updateMessageDataIf(prisma, card, waiting, { error: state.message ?? null })) ?? card;
+  const status = state.status === "signed_in" || state.status === "passed" ? (purpose === "human_check" ? "passed" : state.status) : state.status;
+  const patch: Record<string, unknown> =
+    status === "signed_in" || status === "passed"
+      ? { status, working: null, error: null, codeHint: null, note: state.message ?? null, via: SEEN_VIA[state.via ?? "computer"], resolvedAt: now }
+      : status === "ended"
+        ? { status: "ended", working: null, error: null, codeHint: null, note: state.message ?? "The work that needed this sign-in ended, or its tab closed.", resolvedAt: now }
+        : { status, working: null, error: null, codeHint: null, resolvedAt: now };
+  const updated = await updateMessageDataIf(prisma, card, waiting, patch);
+  if (!updated) return card;
+  await appendLedger({ userId: device.userId, actor: "agent", action: "node.login_answered", payload: { nodeId: node?.id ?? null, deviceId: device.id, origin: data.origin, purpose, action: "seen", via: state.via ?? "computer", status } });
+  if (node && state.via !== "check" && (status === "signed_in" || status === "passed" || status === "declined" || status === "expired")) await afterLogin(app, node, updated, status);
+  return updated;
 }
 
 /** The card was closed elsewhere (its work ended, a routine's wait ran out): its computer frees the tab. */

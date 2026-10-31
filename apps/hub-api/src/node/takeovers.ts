@@ -255,7 +255,7 @@ function checkStartBox(sealed: Sealed, record: TakeoverRecord, sealKey: SealKeyI
 }
 
 /** Starts it, once: relays the sealed secret to the computer, which starts streaming the tab. */
-export async function startTakeover(app: FastifyInstance, record: TakeoverRecord, sealed: Sealed, origin: string | undefined): Promise<{ takeover: ReturnType<typeof publicTakeover>; width?: number; height?: number }> {
+export async function startTakeover(app: FastifyInstance, record: TakeoverRecord, sealed: Sealed, origin: string | undefined): Promise<{ takeover: ReturnType<typeof publicTakeover>; width?: number; height?: number; note?: string }> {
   const current = await stillGood(app, record);
   if (current.state !== "created") throw new TakeoverError(current.state === "live" ? "This takeover has started already." : "This takeover has ended. Open the browser again.", 409, "state");
   const { device, sealKey } = await takeoverDevice(app, current.accountId, current.deviceId);
@@ -267,15 +267,17 @@ export async function startTakeover(app: FastifyInstance, record: TakeoverRecord
   const mode = current.loginId && cleanTakeover(device) ? { mode: "clean" as const } : {};
   const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "takeover.start", data: { takeoverId: current.id, tab: current.tab, ...(current.loginId ? { loginId: current.loginId } : {}), ...(current.jobId ? { jobId: current.jobId } : {}), sealed, endsAt, ...mode } }, 25_000).catch(() => null);
   const answer = raw ? CodeAnswer.safeParse(raw) : null;
-  const body = (answer?.success && answer.data.body && typeof answer.data.body === "object" ? answer.data.body : {}) as { error?: unknown; width?: unknown; height?: unknown; endsAt?: unknown };
+  const body = (answer?.success && answer.data.body && typeof answer.data.body === "object" ? answer.data.body : {}) as { error?: unknown; width?: unknown; height?: unknown; endsAt?: unknown; mode?: unknown; note?: unknown };
   if (!answer?.success || answer.data.status >= 400) {
     await markEnded(app, current, "refused");
     throw new TakeoverError(typeof body.error === "string" ? body.error : `${device.name} did not answer. Check Ensemble is running there.`, 502);
   }
-  const live: TakeoverRecord = { ...current, state: "live", endsAt: typeof body.endsAt === "string" ? body.endsAt : endsAt };
+  // The computer says which browser it shows (takeover 2): the clean one, or the tab when that could not start (`note` says why).
+  const shown = body.mode === "clean" || body.mode === "tab" ? { mode: body.mode } : {};
+  const live: TakeoverRecord = { ...current, ...shown, state: "live", endsAt: typeof body.endsAt === "string" ? body.endsAt : endsAt };
   await write(app, live);
   await appendLedger({ userId: current.accountId, actor: "me", action: "node.takeover_started", payload: { takeoverId: current.id, deviceId: device.id } });
-  return { takeover: publicTakeover(live), ...(typeof body.width === "number" ? { width: body.width } : {}), ...(typeof body.height === "number" ? { height: body.height } : {}) };
+  return { takeover: publicTakeover(live), ...(typeof body.width === "number" ? { width: body.width } : {}), ...(typeof body.height === "number" ? { height: body.height } : {}), ...(typeof body.note === "string" && body.note.trim() ? { note: body.note.slice(0, 500) } : {}) };
 }
 
 /** The latest frame after `after`, waiting up to 20 s for one; or that the takeover ended, and why. */

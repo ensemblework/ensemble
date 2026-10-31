@@ -21,7 +21,7 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
+import { BROWSER_API, LOGIN_CHECKS_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
@@ -80,6 +80,9 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
     }
     if (need.browser === "browser_login_needed" && (typeof caps.logins !== "number" || caps.logins < 1)) {
       throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to hand a sign-in to your owner.`, "Your owner updates it there (`ensemble update`, or the desktop app's update), or signs in by hand in the browser there.");
+    }
+    if (need.browser === "browser_login_check" && (typeof caps.logins !== "number" || caps.logins < LOGIN_CHECKS_API)) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name} to check a sign-in from here.`, "Their card in this chat still works: your owner presses I'm done there, and you are woken when they are signed in.");
     }
     if (caps.capture?.browser === false && need.browser !== "capture_status") {
       throw new ToolBlockedError(`${device.name} has no browser for Ensemble yet.`, "Your owner runs `ensemble capture setup` there once; it installs one. capture_status says what else that computer can capture.");
@@ -140,14 +143,16 @@ type CallOptions = {
 /** Options of the browser tools a computer before `capabilities.browser` 2 refuses: left out there, so the call still works. */
 const BROWSER_2_OPTIONS = ["focus", "clean", "mode"] as const;
 
-/** The request as this computer takes it: a 0.6.0 one gets the browser tools' older inputs. */
+/** The request as this computer takes it: a 0.6.0 one gets the browser tools' older inputs (its input checks are strict). */
 export function forComputer<T extends Record<string, unknown>>(device: Pick<Device, "capabilities">, request: T): T {
-  const browser = (device.capabilities as { browser?: unknown } | null)?.browser;
+  const caps = (device.capabilities ?? {}) as { browser?: unknown; logins?: unknown };
   const input = request.input;
-  if (request.tool !== "browser" || !input || typeof input !== "object" || (typeof browser === "number" && browser >= BROWSER_API)) return request;
+  if (request.tool !== "browser" || !input || typeof input !== "object") return request;
   const older = { ...(input as Record<string, unknown>) };
-  for (const key of BROWSER_2_OPTIONS) delete older[key];
-  return { ...request, input: older };
+  if (!(typeof caps.browser === "number" && caps.browser >= BROWSER_API)) for (const key of BROWSER_2_OPTIONS) delete older[key];
+  // A sign-in's purpose (a human check) is for logins 2; an older computer finds a human check itself.
+  if (request.name === "browser_login_needed" && !(typeof caps.logins === "number" && caps.logins >= LOGIN_CHECKS_API)) delete older.purpose;
+  return Object.keys(older).length === Object.keys(input).length ? request : { ...request, input: older };
 }
 
 async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {

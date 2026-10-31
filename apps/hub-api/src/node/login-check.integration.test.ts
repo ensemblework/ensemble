@@ -69,6 +69,7 @@ async function computerFor(name: string, capabilities: Record<string, unknown> =
   const computer = {
     user,
     laptop,
+    key,
     heard,
     respond: (_event: string, _data: Record<string, unknown>): Answer => ({ status: 404, body: { error: "not here" } }),
     stop: () => {},
@@ -263,5 +264,43 @@ test("a sign-in's takeover runs in a clean browser on a computer that can; an ol
     } finally {
       computer.stop();
     }
+  }
+});
+
+test("a sign-in the computer saw end by itself: the card follows and the node is woken, but not after its own check; only that computer moves it", async () => {
+  const computer = await computerFor("Mira");
+  try {
+    const { node, card } = await cardFor(computer, waitingTab("https://portal.azure.com"), "check my azure usage");
+    const post = (loginId: string, body: Record<string, unknown>, by = computer.key) => by.inject({ method: "POST", url: `/api/devices/self/logins/${loginId}/state`, payload: body });
+
+    // A problem to show while it still waits.
+    assert.equal((await post(card.data.loginId, { status: "waiting", message: "The site asks for an approval on your phone.", via: "takeover" })).statusCode, 200);
+    assert.deepEqual([(await cardNow(card.id)).status, (await cardNow(card.id)).error], ["pending", "The site asks for an approval on your phone."]);
+
+    // Another account's computer and an unknown sign-in move nothing.
+    const other = await computerFor("Ada");
+    assert.equal((await post(card.data.loginId, { status: "signed_in" }, other.key)).statusCode, 404);
+    other.stop();
+    assert.equal((await post(`lg_${randomBytes(16).toString("hex")}`, { status: "signed_in" })).statusCode, 404);
+    assert.equal((await cardNow(card.id)).status, "pending");
+
+    // Seen done in the remote view: signed in, and the node goes on.
+    assert.equal((await post(card.data.loginId, { status: "signed_in", via: "takeover" })).statusCode, 200);
+    await settleTurns();
+    const data = await cardNow(card.id);
+    assert.deepEqual([data.status, data.via, data.error], ["signed_in", "takeover", null]);
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id, reason: "approval" } }), 1, "the node is woken once");
+    // Late news changes nothing.
+    assert.equal((await post(card.data.loginId, { status: "expired" })).statusCode, 200);
+    assert.equal((await cardNow(card.id)).status, "signed_in");
+
+    // After the node's own browser_login_check it is not woken again: the tool already told it.
+    const second = await cardFor(computer, waitingTab("https://walmart.com", "human_check"), "find the ps5 at walmart");
+    assert.equal((await post(second.card.data.loginId, { status: "signed_in", via: "check" })).statusCode, 200);
+    await settleTurns();
+    assert.deepEqual([(await cardNow(second.card.id)).status, (await cardNow(second.card.id)).via], ["passed", "check"], "a human check passes, it is never a sign-in");
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: second.node.id, reason: "approval" } }), 0);
+  } finally {
+    computer.stop();
   }
 });
