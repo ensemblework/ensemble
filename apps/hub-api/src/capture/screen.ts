@@ -8,13 +8,14 @@
  */
 import type { IBufferCell, IBufferLine, Terminal } from "@xterm/headless";
 import { hideSecrets, type PrivacyRules } from "../browser/privacy.js";
+import type { TerminalRun } from "../remote/contract.js";
 import { escapeHtml, TERMINAL_BACKGROUND, TERMINAL_FOREGROUND, xtermColour } from "./terminal.js";
 
-/** A headless terminal of this size, without scrollback. The library loads only when a screen is captured. */
-export async function headlessTerminal(columns: number, rows: number): Promise<Terminal> {
+/** A headless terminal of this size, without scrollback unless asked. The library loads only when a screen is captured. */
+export async function headlessTerminal(columns: number, rows: number, scrollback = 0): Promise<Terminal> {
   const loaded = (await import("@xterm/headless")) as unknown as { default?: { Terminal: typeof Terminal }; Terminal?: typeof Terminal };
   const Xterm = loaded.Terminal ?? loaded.default!.Terminal;
-  return new Xterm({ cols: columns, rows, allowProposedApi: true, scrollback: 0 });
+  return new Xterm({ cols: columns, rows, allowProposedApi: true, scrollback });
 }
 
 /**
@@ -33,13 +34,20 @@ export function drawn(term: Terminal): Promise<void> {
 
 const hex = (rgb: number) => `#${(rgb & 0xffffff).toString(16).padStart(6, "0")}`;
 
-/** A cell's look as CSS; empty for the default look. Bold makes the eight basic colours bright, as most terminals draw it. */
-export function cellCss(cell: IBufferCell): string {
+/** A cell's colours (null: the default). Bold makes the eight basic colours bright, as most terminals draw it. */
+function cellColours(cell: IBufferCell): { fg: string | null; bg: string | null } {
   const bold = cell.isBold() !== 0;
   let fg: string | null = cell.isFgRGB() ? hex(cell.getFgColor()) : cell.isFgPalette() ? xtermColour(bold && cell.getFgColor() < 8 ? cell.getFgColor() + 8 : cell.getFgColor()) : null;
   let bg: string | null = cell.isBgRGB() ? hex(cell.getBgColor()) : cell.isBgPalette() ? xtermColour(cell.getBgColor()) : null;
   if (cell.isInverse()) [fg, bg] = [bg ?? TERMINAL_BACKGROUND, fg ?? TERMINAL_FOREGROUND];
   if (cell.isInvisible()) fg = bg ?? TERMINAL_BACKGROUND;
+  return { fg, bg };
+}
+
+/** A cell's look as CSS; empty for the default look. */
+export function cellCss(cell: IBufferCell): string {
+  const bold = cell.isBold() !== 0;
+  const { fg, bg } = cellColours(cell);
   const decoration = [cell.isUnderline() ? "underline" : "", cell.isStrikethrough() ? "line-through" : "", cell.isOverline() ? "overline" : ""].filter(Boolean).join(" ");
   return [fg && fg !== TERMINAL_FOREGROUND && `color:${fg}`, bg && bg !== TERMINAL_BACKGROUND && `background:${bg}`, bold && "font-weight:bold", cell.isDim() && "opacity:.6", cell.isItalic() && "font-style:italic", decoration && `text-decoration:${decoration}`].filter(Boolean).join(";");
 }
@@ -126,4 +134,94 @@ export function renderScreen(term: Terminal, input: { title?: string; rules: Pri
 /** The page's size in pixels with room to spare, for the tab that renders it (the screenshot is cropped to `#term`). */
 export function screenViewport(columns: number, rows: number): { width: number; height: number } {
   return { width: Math.min(4000, Math.ceil(columns * 9.5) + 60), height: Math.min(4000, Math.ceil(rows * 19.5) + 80) };
+}
+
+/** A cell's look as a live frame's run has it, without its text; empty for the default look. */
+function cellLook(cell: IBufferCell): Omit<TerminalRun, "t"> {
+  const { fg, bg } = cellColours(cell);
+  return {
+    ...(fg && fg !== TERMINAL_FOREGROUND ? { fg } : {}),
+    ...(bg && bg !== TERMINAL_BACKGROUND ? { bg } : {}),
+    ...(cell.isBold() ? { b: 1 as const } : {}),
+    ...(cell.isItalic() ? { i: 1 as const } : {}),
+    ...(cell.isUnderline() ? { u: 1 as const } : {}),
+    ...(cell.isDim() ? { dim: 1 as const } : {}),
+  };
+}
+
+/** One row as runs of cells that look the same; trailing blanks without a background are left out. */
+function rowRuns(line: IBufferLine, columns: number, cell: IBufferCell): TerminalRun[] {
+  const runs: TerminalRun[] = [];
+  let key = "";
+  for (let x = 0; x < columns; x += 1) {
+    const got = line.getCell(x, cell);
+    if (!got) break;
+    if (got.getWidth() === 0) continue;
+    const look = cellLook(got);
+    const lookKey = JSON.stringify(look);
+    const chars = got.getChars() || " ";
+    if (runs.length && lookKey === key) runs[runs.length - 1]!.t += chars;
+    else runs.push({ t: chars, ...look });
+    key = lookKey;
+  }
+  while (runs.length && !runs.at(-1)!.bg) {
+    const last = runs.at(-1)!;
+    last.t = last.t.trimEnd();
+    if (last.t) break;
+    runs.pop();
+  }
+  return runs;
+}
+
+/**
+ * The visible screen for a live view (docs/35 §8.17): each row as runs with their colours and style,
+ * and as text. A row group (a long line wrapped onto the next rows) that shows a saved secret or a
+ * key-shaped string is drawn as plain text with it hidden, as `renderScreen` does.
+ */
+export function screenRows(term: Terminal, rules: PrivacyRules): { rows: TerminalRun[][]; text: string; hidden: boolean } {
+  const buffer = term.buffer.active;
+  const columns = term.cols;
+  const count = term.rows;
+  const cell = buffer.getNullCell();
+  const lines = Array.from({ length: count }, (_, y) => buffer.getLine(buffer.viewportY + y));
+  const rows: TerminalRun[][] = new Array(count).fill(null).map(() => []);
+  const texts: string[] = new Array(count).fill("");
+  let hidden = false;
+  for (let start = 0; start < count; ) {
+    let end = start + 1;
+    while (end < count && lines[end]?.isWrapped) end += 1;
+    const group = lines.slice(start, end);
+    const full = group.map((line, index) => line?.translateToString(index === group.length - 1) ?? "").join("");
+    const shown = hideSecrets(full, rules);
+    for (let index = 0; index < group.length; index += 1) {
+      if (shown !== full) {
+        const part = (index === group.length - 1 ? shown.slice(index * columns) : shown.slice(index * columns, (index + 1) * columns)).trimEnd();
+        texts[start + index] = part;
+        rows[start + index] = part ? [{ t: part }] : [];
+      } else {
+        const line = group[index];
+        texts[start + index] = line?.translateToString(true) ?? "";
+        rows[start + index] = line ? rowRuns(line, columns, cell) : [];
+      }
+    }
+    if (shown !== full) hidden = true;
+    start = end;
+  }
+  const lastShown = texts.reduce((last, text, index) => (text.trim() ? index : last), -1);
+  return { rows, text: texts.slice(0, lastShown + 1).join("\n"), hidden };
+}
+
+/** The last `count` lines of the terminal, scrollback included, as text with secrets hidden; trailing empty lines dropped. */
+export function bufferLines(term: Terminal, count: number, rules: PrivacyRules): string {
+  const buffer = term.buffer.active;
+  const lines: string[] = [];
+  for (let y = 0; y < buffer.length; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    if (line.isWrapped && lines.length) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
+  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+  return hideSecrets(lines.slice(-count).join("\n"), rules);
 }

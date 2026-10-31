@@ -141,6 +141,8 @@ export type TurnRequest = {
   principals?: Record<string, unknown> | null;
   /** The first turn this one continues (a resume after a restart): it keeps that turn's operation and request. */
   originTurnId?: string | null;
+  /** The space its Hub calls act in when they name none (a task's space). Null: the node's home space. */
+  spaceId?: string | null;
 };
 
 /** Rate-limited turns try again quietly this many times, this far apart. */
@@ -224,6 +226,7 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       peerRequestId: request.peerRequestId ?? null,
       principals: (request.principals ?? {}) as Prisma.InputJsonValue,
       originTurnId: request.originTurnId ?? null,
+      spaceId: request.spaceId ?? null,
     },
   });
   coalesce(request, lane, await ownerWrote(app.prisma, request, lane, node.userId));
@@ -458,6 +461,7 @@ async function retryLater(app: FastifyInstance, turn: NodeTurn): Promise<void> {
       peerRequestId: turn.peerRequestId,
       principals: (turn.principals ?? {}) as Prisma.InputJsonValue,
       originTurnId: turn.originTurnId ?? turn.id,
+      spaceId: turn.spaceId,
       runAfter: new Date(Date.now() + retryDelays[Math.min(turn.attempt, retryDelays.length - 1)]!),
     },
   });
@@ -543,6 +547,7 @@ export async function recoverTurns(app: FastifyInstance): Promise<void> {
           peerRequestId: turn.peerRequestId,
           principals: (turn.principals ?? {}) as Record<string, unknown>,
           originTurnId: turn.originTurnId ?? turn.id,
+          spaceId: turn.spaceId,
         })
       : false;
     if (!resumed) await planTurnEnded(app, turn, "Interrupted by a server restart.").catch((error: unknown) => app.log.error({ err: error }, "Could not settle a plan turn"));

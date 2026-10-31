@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveFramePost, type LoginStatePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 
@@ -76,11 +76,19 @@ export interface HostedClient {
   takeoverState?(takeoverId: string, body: { state: "ended"; reason: string }): Promise<void>;
   /** A sign-in changed here by itself (logins 2): seen done, gone, expired. False: the server has no such route. */
   loginState?(loginId: string, body: LoginStatePost): Promise<boolean>;
+  /** A node's terminal session or watched tab ended here (`capabilities.live`): its live card ends. */
+  liveEnded?(liveId: string, body: LiveEndedPost): Promise<void>;
+  /** A sign-in code a node's command printed, or how it ended (`cliLogins`). False: the web has no such command or route. */
+  nodeDeviceCode?(body: NodeDeviceCodePost): Promise<boolean>;
+  /** A sign-in page a node's command opened (`cliLogins`): the card's id, or null when the web raised none. */
+  nodeCliLogin?(body: NodeCliLoginPost): Promise<{ decisionId: string | null }>;
   /** Protocol 5: a new lease for a run this computer still has after its lease ran out, or why not. */
   reattach?(jobId: string, body: { leaseToken: string; status: "running" | "waiting_approval" | "finished" }): Promise<{ leaseToken: string } | { refused: string }>;
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
   resume?(jobId: string, body: { leaseToken: string; reason: string }): Promise<{ jobId: string } | { refused: string }>;
   downloadAttachment?(jobId: string, leaseToken: string, fileId: string, maxBytes: number): Promise<Uint8Array>;
+  /** A file of the owner's Files a node puts on this computer (files `save`), by the download id the web gave; at most `maxBytes`. */
+  downloadNodeFile?(downloadId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
   uploadFiles(jobId: string, leaseToken: string, files: UploadedFile[]): Promise<void>;
   /** The answer to a `files.request`. */
@@ -242,6 +250,35 @@ export function hostedClient(base: string, token: string): HostedClient {
       } finally { await reader.cancel().catch(() => undefined); }
       return new Uint8Array(Buffer.concat(chunks));
     },
+    async downloadNodeFile(downloadId, maxBytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        response = await fetch(`${base}${ROUTES.nodeFile(downloadId)}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10 * 60_000), redirect: "error" });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new RemoteError(response.status, messageOf(text ? safeJson(text) : null, "The file could not be fetched."));
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new RemoteError(502, "The file came without its content.");
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) throw new RemoteError(413, "The file is larger than the web said.");
+          chunks.push(value);
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      return new Uint8Array(Buffer.concat(chunks));
+    },
     async uploadFiles(jobId, leaseToken, files) {
       const res = await call("POST", ROUTES.files(jobId), { leaseToken, files });
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The changed files were refused."));
@@ -337,11 +374,27 @@ export function hostedClient(base: string, token: string): HostedClient {
     async takeoverState(takeoverId, body) {
       await call("POST", ROUTES.takeoverState(takeoverId), body);
     },
+    async liveEnded(liveId, body) {
+      await call("POST", ROUTES.liveEnded(liveId), body);
+    },
     async loginState(loginId, body) {
       const res = await call("POST", ROUTES.loginState(loginId), body);
       if (res.status === 404 || res.status === 405 || res.status === 410) return false;
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The sign-in's state was refused."));
       return true;
+    },
+    async nodeDeviceCode(body) {
+      const res = await call("POST", ROUTES.nodeDeviceCodes, body);
+      if (res.status === 404 || res.status === 405) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The sign-in code was refused."));
+      return true;
+    },
+    async nodeCliLogin(body) {
+      const res = await call("POST", ROUTES.nodeCliLogins, body);
+      if (res.status === 404 || res.status === 405) return { decisionId: null };
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The sign-in was not raised on the web."));
+      const id = (res.body as { decisionId?: unknown } | null)?.decisionId;
+      return { decisionId: typeof id === "string" && id ? id : null };
     },
     async runLogin(jobId, body) {
       const res = await call("POST", ROUTES.runLogin(jobId), body);

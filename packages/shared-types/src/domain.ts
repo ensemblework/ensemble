@@ -89,6 +89,9 @@ export const TaskDto = z.object({
   sourceUrl: z.string().nullable(),
   excerpt: z.string().nullable(),
   owner: TaskOwner,
+  /** With owner "node": the node or the crew (room) it is with. */
+  assigneeNodeId: z.string().nullable().optional(),
+  assigneeRoomId: z.string().nullable().optional(),
   status: TaskStatus,
   priority: Priority,
   complexity: TaskComplexity,
@@ -143,6 +146,9 @@ export const CreateTask = z.object({
   owner: TaskOwner.optional(),
   /** In a shared space: the person (account id) a "me" task is with. Setting it sets owner to "me". */
   assignee: z.string().trim().min(1).max(64).nullable().optional(),
+  /** With owner "node": one of the acting person's own nodes, or (`assigneeRoomId`) one of their crews. Setting one sets owner to "node". */
+  assigneeNodeId: z.string().uuid().nullable().optional(),
+  assigneeRoomId: z.string().uuid().nullable().optional(),
   status: TaskStatus.optional(),
   priority: Priority.optional(),
   complexity: TaskComplexity.optional(),

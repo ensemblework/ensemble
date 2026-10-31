@@ -77,6 +77,8 @@ async function removeNodeRows(prisma: PrismaClient, node: Pick<NodeAgent, "id" |
   await prisma.$transaction([
     prisma.nodeRoom.deleteMany({ where: { id: { in: own } } }),
     prisma.nodeAgent.delete({ where: { id: node.id } }),
+    // Tasks given to it are with nobody again.
+    prisma.task.updateMany({ where: { owner: "node", assigneeNodeId: node.id }, data: { owner: "unassigned", assigneeNodeId: null } }),
     prisma.nodeRun.deleteMany({ where: { nodeId: node.id } }),
     // Its own captures (no run): their stored bytes go with the evidence sweep.
     prisma.jobEvidence.deleteMany({ where: { nodeId: node.id, jobId: null } }),

@@ -28,7 +28,7 @@ export const STATUS: Record<TaskStatus, { label: string; tone: Tone }> = {
   dropped: { label: "Dropped", tone: "gray" },
 };
 
-export const OWNER_LABEL: Record<string, string> = { me: "Me", agent: "Agent", unassigned: "Unassigned" };
+export const OWNER_LABEL: Record<string, string> = { me: "Me", agent: "Agent", unassigned: "Unassigned", node: "Node" };
 
 export const COMPLEXITY_LABEL: Record<string, string> = { easy: "Easy", medium: "Medium", high: "High", max: "Max" };
 

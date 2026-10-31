@@ -18,6 +18,7 @@ import { lockUserTransaction } from "./user-lock.js";
 import { actorFor, currentScope, isVisitor, nodeActingIn, type RequestScope } from "../sharing/context.js";
 import { syncFileText } from "../files/visibility.js";
 import { tidyUndoLabel } from "./undo-label.js";
+import { actingAccount, assigneeOf, taskAssignmentChanged } from "../services/task-assignee.js";
 
 export type UndoModel =
   | "partRow"
@@ -451,7 +452,14 @@ async function applyPatch(db: Db, userId: string, patch: UndoPatch, direction: "
   const decoded = decodeSnapshot(patch.model, data);
   // Content put back is a new revision, so open editors and live pages see it changed.
   if (patch.model === "taskPage" && "content" in patch.fields) decoded.revision = { increment: 1 };
+  // Putting back who has a task tells Ensemble Node, as the change itself did (docs/35 §6.6).
+  const reassigns = patch.model === "task" && ["owner", "assigneeNodeId", "assigneeRoomId"].some((key) => key in patch.fields);
+  const held = reassigns ? await db.task.findUnique({ where: { id: patch.id }, select: { owner: true, assigneeNodeId: true, assigneeRoomId: true } }) : null;
   await rowDelegate.update({ where: { id: patch.id }, data: decoded });
+  if (held) {
+    const fresh = await db.task.findUnique({ where: { id: patch.id }, select: { owner: true, assigneeNodeId: true, assigneeRoomId: true, updatedAt: true } });
+    if (fresh) taskAssignmentChanged({ taskId: patch.id, spaceId: userId, at: fresh.updatedAt, before: assigneeOf(held), after: assigneeOf(fresh), byAccountId: await actingAccount(db, userId), byNodeId: nodeActingIn(userId) });
+  }
   if (patch.model === "document" && "deletedAt" in patch.fields) await syncFileText(db, patch.id);
   const status = patch.fields.status;
   const owner = patch.fields.owner;

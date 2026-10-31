@@ -86,6 +86,31 @@ test("routing picks the playbook for the owner's example requests", () => {
   assert.ok(routed("x".repeat(10) + " diagram chart meeting email task recap").length <= 2, "at most two");
 });
 
+test("a custom board, by its name or a pasted link, routes to the boards playbook; the Ensemble board stays with tasks", () => {
+  for (const message of [
+    "work on my EnsembleWork board",
+    "can you work on my custom board EnsembleWork?",
+    "https://app.ensemblework.com/board?board=71182e17-5c4e-4b1a-9d2e-0a1b2c3d4e5f take the next card",
+    "add a Review column to the Launch board",
+    "make a new board for hiring with three columns",
+    "move the deck note to Done on my research board",
+  ]) assert.ok(routed(message).includes("boards"), `${message} → ${routed(message).join(", ")}`);
+  assert.deepEqual(routed("delete all tasks from the board"), ["tasks"]);
+  assert.deepEqual(routed("what tasks are left?", { path: "/board" }), ["tasks"]);
+  const onBoard = (message: string) => routePlaybooks({ message, path: "/board", customBoard: true }, playbooksFor(undefined)).map((playbook) => playbook.name);
+  for (const message of ["mark the onboarding task done", "move the onboarding task to in progress"]) {
+    assert.ok(onBoard(message).includes("tasks") && onBoard(message).includes("boards"), `on a custom board, task work is about its cards: ${onBoard(message).join(", ")}`);
+    assert.equal(routed(message, { path: "/board" }).includes("boards"), false, "not on the Ensemble board");
+  }
+  assert.deepEqual(onBoard("hello"), [], "the open board alone loads nothing");
+  const boards = findPlaybook("boards")!;
+  for (const name of ["hub_list_boards", "hub_read_board", "hub_move_to_board", "hub_update_task"]) assert.ok(boards.tools.includes(name), name);
+  assert.match(boards.body, /pass it as board to hub_read_board exactly as given/);
+  assert.match(boards.body, /never open a board's link in a browser and never ask the person to sign in/);
+  assert.match(findPlaybook("tasks")!.body, /A custom board .*hub_how_to boards/);
+  assert.match(getTool("hub_how_to")!.description, /\nboards: the person's own boards beside the Ensemble board/);
+});
+
 test("a message naming a connected app, or a meeting while a meeting app is connected, also loads the apps playbook", () => {
   const app = (id: string, meetings = false) => ({ names: appNames(catalogEntry(id)!), meetings });
   const route = (message: string, apps: Array<{ names: string[]; meetings?: boolean }>) => routePlaybooks({ message, apps }, playbooksFor(undefined)).map((playbook) => playbook.name);

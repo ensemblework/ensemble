@@ -20,6 +20,8 @@ export const daysOld = (t: TaskRecord, now: number) => Math.max(0, Math.floor((n
 
 export function ownerBucket(task: TaskRecord, who: OwnerContext): OwnerBucket {
   if (task.owner === "agent" || task.owner === "unassigned") return task.owner;
+  // A node or a crew is an AI teammate doing it, as the agent is.
+  if (task.owner === "node") return "agent";
   return who.me && (task.assigneeAccountId ?? who.ownerId) === who.me ? "me" : "team";
 }
 

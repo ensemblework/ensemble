@@ -58,10 +58,12 @@ import { PageDocument } from "@ensemble/shared-types";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
+import { nodeFileRoutes } from "../node/attachments.js";
 import { pinReportedSealKey, sealKeyOnPairing, sealKeyView } from "../credentials/device-key.js";
 import { liveRoutes } from "./live.js";
 import { loginDeviceRoutes } from "./logins.js";
 import { takeoverDeviceRoutes } from "./takeovers.js";
+import { liveSessionDeviceRoutes } from "./live-sessions.js";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -277,12 +279,14 @@ function taskPageMarkdown(content: unknown, notes: string): string {
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
-  // A run's evidence (evidence/routes.ts) and a node's tool runs on a computer (devices/tool-runs.ts), with these routes' device checks.
+  // A run's evidence (evidence/routes.ts), a node's tool runs on a computer (devices/tool-runs.ts) and the files it puts there (node/attachments.ts), with these routes' device checks.
   await app.register(evidenceRoutes, { ownDevice, holdLease });
   await app.register(nodeToolRoutes, { ownDevice });
+  await app.register(nodeFileRoutes, { ownDevice });
   await app.register(liveRoutes, { ownDevice, holdLease });
   await app.register(loginDeviceRoutes, { ownDevice, holdLease });
   await app.register(takeoverDeviceRoutes, { ownDevice });
+  await app.register(liveSessionDeviceRoutes, { ownDevice });
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);

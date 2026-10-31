@@ -37,6 +37,8 @@ enum TaskOwner {
   me
   agent
   unassigned
+  /// One of the acting person's Ensemble Nodes (`assigneeNodeId`) or crews (`assigneeRoomId`).
+  node
 }
 
 enum TaskStatus {
@@ -244,6 +246,9 @@ model Task {
   /// "@node for person": the person a node made this task for, and the node (set when a node acts in a space).
   createdByAccountId   String?       @map("created_by_account_id")
   createdByNodeId      String?       @map("created_by_node_id")
+  /// When owner is "node": the node (node_agents) or the crew (node_rooms, kind crew) it is with. Exactly one is set.
+  assigneeNodeId       String?       @map("assignee_node_id")
+  assigneeRoomId       String?       @map("assignee_room_id")
 
   planSteps     PlanStep[]
   runs          Run[]
@@ -272,6 +277,8 @@ model Task {
   @@index([userId, taskType], map: "tasks_user_id_task_type_idx")
   @@index([userId, orderDate], map: "tasks_user_id_order_date_idx")
   @@index([peerRequestId])
+  @@index([assigneeNodeId])
+  @@index([assigneeRoomId])
   @@map("tasks")
 }
 
@@ -2643,7 +2650,7 @@ model NodeTurn {
   userId           String    @map("user_id")
   nodeId           String    @map("node_id")
   roomId           String?   @map("room_id")
-  /// mentioned | dm | lead | run | approval | plan | request (a peer request) | answer, disclose (the owner's answer to a disclosure card)
+  /// mentioned | dm | lead | run | approval | plan | request (a peer request) | answer, disclose (the owner's answer to a disclosure card) | task (a task given or taken away, node/task-assignment.ts)
   reason           String
   /// The owner's private thread in the room rather than the shared one.
   private          Boolean   @default(false)

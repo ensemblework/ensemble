@@ -60,6 +60,14 @@ export type LoginCardData = z.infer<typeof LoginCard>;
 /** Statuses a card waits for its owner in: pending, or the site asks for a code. */
 export const LOGIN_WAITING = ["pending", "needs_code"] as const;
 
+/** A sign-in card waits at least this long, background work's too: signing in takes a while. */
+export const LOGIN_MIN_WAIT_MS = 15 * 60_000;
+
+/** How long a routine's sign-in card waits: as its other cards (`ENSEMBLE_BACKGROUND_DECISION_MINUTES`), never under 15 minutes. */
+export function routineLoginWaitMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.max(LOGIN_MIN_WAIT_MS, (Number(env.ENSEMBLE_BACKGROUND_DECISION_MINUTES ?? 30) || 30) * 60_000);
+}
+
 /** "portal.azure.com" for https://portal.azure.com, "walmart.com" for https://www.walmart.com (a port stays). */
 export function siteOf(origin: string): string {
   try {
@@ -116,6 +124,9 @@ export async function postLoginCard(app: FastifyInstance, input: PostInput): Pro
   const existing = await prisma.nodeMessage.findFirst({ where: { roomId: input.roomId, kind: "approval", AND: [{ data: { path: ["type"], equals: LOGIN_CARD } }, { data: { path: ["loginId"], equals: input.login.loginId } }] } });
   if (existing) return existing;
   const purpose = input.login.purpose ?? "sign_in";
+  // A routine's card expires sooner than the computer's wait (node/routines.ts): the card says when.
+  const routine = input.planId ? Boolean((await prisma.nodeMission.findUnique({ where: { id: input.planId }, select: { routine: true } }).catch(() => null))?.routine) : false;
+  const expiresAt = routine ? new Date(Math.min(Date.parse(input.login.expiresAt) || Infinity, Date.now() + routineLoginWaitMs())).toISOString() : input.login.expiresAt;
   const { message } = await postMessage(prisma, {
     roomId: input.roomId,
     userId: input.ownerId,
@@ -137,7 +148,9 @@ export async function postLoginCard(app: FastifyInstance, input: PostInput): Pro
       saved: input.login.saved,
       display: input.login.display,
       takeover: input.login.takeover,
-      expiresAt: input.login.expiresAt,
+      expiresAt,
+      // A command (`az login`) opened it: the card names the command, and its end tells the node (node/device-codes.ts).
+      ...(input.login.source === "cli" ? { source: "cli", command: input.login.command ?? null } : {}),
       ...(input.jobId ? { jobId: input.jobId } : { operation: input.operation ?? null }),
       ...(input.private ? { private: true } : {}),
       // The step waits for the sign-in, and a routine's card expires as its other cards do.
@@ -374,8 +387,9 @@ export function loginOutcomeNote(data: Pick<LoginCardData, "origin" | "computer"
 
 /** The node hears how its tab's sign-in ended; a run's agent hears it in its own tool call instead. */
 async function afterLogin(app: FastifyInstance, node: NodeAgent, card: NodeMessage, status: "signed_in" | "passed" | "declined" | "expired", options: LoginAnswerOptions = {}): Promise<void> {
-  const data = card.data as LoginCardData;
-  if (data.jobId) return;
+  const data = card.data as LoginCardData & { source?: unknown };
+  // A run's agent hears it in its own tool call; a command's sign-in is told by the command's end.
+  if (data.jobId || data.source === "cli") return;
   const link = planLinkOf(card.data);
   // A conversation's own turn already heard it (node/login-check.ts); a step still waits to be woken.
   if (options.wake === false && !link) return;

@@ -243,7 +243,16 @@ const qs = (params: Record<string, string | number | boolean | undefined | null>
 
 export type Priority = "critical" | "p0" | "p1" | "p2";
 export type TaskStatus = "proposed" | "todo" | "in_progress" | "waiting_approval" | "blocked" | "done" | "dropped";
-export type Owner = "me" | "agent" | "unassigned";
+export type Owner = "me" | "agent" | "unassigned" | "node";
+
+/** The node or crew a task with owner "node" is with, by its public fields (a crew's title only for its own person). */
+export type NodeAssignee = { kind: "node" | "crew"; id: string; name: string; handle: string | null; accountId: string };
+
+/** The person's own Ensemble Node nodes and crews a task's owner field offers (GET /api/node/assignable). */
+export type NodeAssignable = {
+  nodes: Array<{ id: string; slug: string; name: string; role: string }>;
+  crews: Array<{ roomId: string; title: string; lead: { id: string; slug: string; name: string } | null; members: number }>;
+};
 export type Complexity = "easy" | "medium" | "high" | "max";
 
 /** An earlier code run Assign can continue: `folder` is its path here, or its shared folder's label on a computer. */
@@ -271,6 +280,10 @@ export type TaskRecord = {
   people: string[];
   /** In a shared space: which person a "me" task is with. Null: the space's owner. */
   assigneeAccountId?: string | null;
+  /** Owner "node": the node, or the crew (its room), the task is with, and its name. */
+  assigneeNodeId?: string | null;
+  assigneeRoomId?: string | null;
+  nodeAssignee?: NodeAssignee | null;
   /** Free-form tags; imports bring labels, tags and multi-selects here. */
   labels?: string[];
   /** Set on action items a meeting-notes connector proposed. */
@@ -1433,6 +1446,8 @@ export const api = bindClient({
   approvals: () => get<{ approvals: ApprovalRecord[] }>("/api/approvals"),
   decide: (id: string, data: { decision: "approved" | "edited" | "rejected"; editedPayload?: unknown; reason?: string }) =>
     post(`/api/approvals/${id}/decide`, data),
+  /** My Ensemble Node nodes and crews a task can be given to (hosted Ensemble only). */
+  nodeAssignable: () => get<NodeAssignable>("/api/node/assignable"),
   /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
   nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
   settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),

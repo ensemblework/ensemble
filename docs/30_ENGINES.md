@@ -233,7 +233,7 @@ Tests: `subscriptions/subscriptions.test.ts` (including each agent's form for fi
 
 A coding agent reports its own result, separate from its closing words, and attaches what its owner should see (`evidence/run-tools.ts`). Ensemble Node reads the report to decide whether a step is done ([35 §8.12](35_ENSEMBLE_NODE.md#812-results-and-evidence)).
 
-**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has two tools next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools instead. Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`).
+**The tools.** A task run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) has two tools next to `ask_person`, and the browser and capture tools of the computer (below); a Chat run has the board tools instead. Its `initialize` answer carries `instructions` (`instructionsFor`): the agent acts in Ensemble through this server and its brief, and never opens Ensemble's web app to sign in or to read the person's work ([39 §4](39_ENSEMBLE_TOOLS_AUDIT.md#4-never-ensemble-in-a-browser)). Every engine loads that server, so every engine has them. They reach `POST /api/engine/tool` on loopback with the run's secret, and the judge passes them without a prompt (`ENSEMBLE_OWN_TOOLS` in `engines/judge.ts`; Copilot's `--allow-tool 'ensemble(<tool>)'`).
 
 | Tool | Input | What happens |
 | --- | --- | --- |
@@ -255,7 +255,7 @@ A coding agent reports its own result, separate from its closing words, and atta
 - never a credential file: `.env*`, key and certificate files (`*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` and the like), credential stores (`.npmrc`, `.netrc`, `.git-credentials`…), shell histories, or anything under `.ssh`, `.aws`, `.gnupg` or `.git` (`credentialPathReason` in `evidence/limits.ts`);
 - nothing in Ensemble's data folder or the browser profile folder, and nothing the outside floor refuses to read (`outsideRefusal`: keys, sign-ins and browser data in the home folder; `evidenceFloor`);
 - never a file that holds a saved run-secret value;
-- at most 20 MB, or 100 MB for `video` and `trace`, and 100 files per run;
+- at most 100 MB per file, of any kind, and 100 files per run;
 - the kind must match the type read from its bytes (a `screenshot` must be an image).
 
 What is copied is exactly what was checked, and the copy is checked again before it is sent. Folders of runs that ended 30 days ago are removed. A paired computer uploads each file to the web unless `ensemble evidence off` ([25 §4.11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#411-the-workers-report-and-evidence)).

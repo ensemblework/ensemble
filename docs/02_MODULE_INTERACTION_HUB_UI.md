@@ -44,7 +44,7 @@ Pin to Today is in the task's More menu. Open pinned tasks appear above every na
 
 ### 3.2 Board (Kanban)
 
-Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
+Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow. On hosted Ensemble the owner menu also lists the person's own Ensemble Node nodes and crews (Nodes and Crews, from `GET /api/node/assignable`, `components/task/node-owner.tsx`); a task given to one shows `@handle` or the crew's title on its card and page, the owner filter offers Nodes and crews once a task has one, and the node or the crew's lead is told and decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)).
 
 Assigned tasks move to In progress live when the agent claims the work; queued tasks stay in To do. Paired-computer claims publish task and run events so the board and task details update without reloading ([25 §1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#1-execution-and-ownership)).
 
@@ -189,7 +189,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |
 | Sharing/presence | `sharing/routes.ts`; [29](29_SHARING.md#6-routes) |
 | Device login/editor MCP | `routes/cli-auth.ts`, `routes/mcp.ts`; [26](26_CLI.md) |
-| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals and `GET /api/node/approvals` for Needs me, plans, runs, activity, events, run and capture evidence with `POST /api/node/evidence/:id/release`, a run's live view `GET /api/node/live/:jobId`) and `GET /api/bridge/node`; `node/routes.ts`, `evidence/routes.ts`, `devices/live.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
+| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals and `GET /api/node/approvals` for Needs me, `GET /api/node/assignable` for a task's owner field, plans, runs, activity, events, run and capture evidence with `POST /api/node/evidence/:id/release`, a run's live view `GET /api/node/live/:jobId`, takeovers and live views of a node's terminal or tab `/api/node/takeovers`) and `GET /api/bridge/node`; `node/routes.ts`, `evidence/routes.ts`, `devices/live.ts`, `node/takeover-routes.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
 
 Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 
@@ -231,7 +231,7 @@ The TipTap editor uses the shared page schema (`packages/shared-types/src/page-s
 
 ### Creation and properties
 
-Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning an owner does not run anything. Focus mode gives a reading-width document with save state and an exit control.
+Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning a person or the agent as owner does not run anything; giving the task to one of your nodes or crews tells that node (or the crew's lead), which decides how to do it ([35 §6.6](35_ENSEMBLE_NODE.md#66-tasks-given-to-a-node-or-a-crew)). Focus mode gives a reading-width document with save state and an exit control.
 
 Task More holds Pin to Today, Comment, Add description, diagram creation, board assignment and Trash. Convert to page remains visible. Only an in-progress property save needs a status label.
 

@@ -15,7 +15,7 @@ import { NodeToolRequest, type CodeAnswer } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
 import { toolFolderFor, type ToolFolder } from "./folders.js";
 import { checkTarget, runNodeHttp } from "./http.js";
-import { runNodeFiles } from "./files.js";
+import { runNodeFiles, runNodeSave } from "./files.js";
 import { runNodeGit } from "./git.js";
 import { decide, type PolicyInput } from "./policy.js";
 import { runNodeCommand } from "./run.js";
@@ -26,6 +26,7 @@ import { dangerousCommand, dangerousMessage, type DangerousHit } from "./dangero
 import { runNodeTerminal } from "./terminal.js";
 import { runNodeSudo, SUDO_WINDOWS } from "./sudo.js";
 import { runNodeShare } from "./share.js";
+import { runNodeLive } from "./terminal-sessions.js";
 
 type App = Pick<FastifyInstance, "prisma">;
 
@@ -52,6 +53,8 @@ function floorHit(request: NodeToolRequest): DangerousHit | null {
  */
 async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> | null } | null> {
   if (request.tool === "browser" || request.tool === "capture") return captureScope(request);
+  // A live terminal is judged once, when it opens, like a command in its folder; its lines are judged as they are typed.
+  if (request.tool === "live" && request.action !== "terminal_open") return null;
   if (request.tool === "http") {
     const { url } = await checkTarget(request.url);
     return { folder: null, input: { capability: "http", target: url.origin, label: url.origin, scope: "origin" } };
@@ -59,7 +62,7 @@ async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }
   const folder = await toolFolderFor(request);
   // A command as the administrator was approved, with its exact text, on its own card: no folder answer covers it.
   if (request.tool === "sudo") return { folder, input: null };
-  const capability = request.tool === "terminal" ? "run" : request.tool === "files" && request.action === "share" ? "read" : request.tool;
+  const capability = request.tool === "terminal" || request.tool === "live" ? "run" : request.tool === "files" && request.action === "share" ? "read" : request.tool;
   return { folder, input: { capability, target: folder.path, label: folder.label, scope: "folder", own: folder.own } };
 }
 
@@ -95,6 +98,10 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
       }
     }
     if (request.tool === "browser" || request.tool === "capture") return reply(200, (await runNodeCapture(app, client, request, where?.folder ?? null)) as Record<string, unknown>);
+    if (request.tool === "live") {
+      const done = await runNodeLive(app, client, request, where?.folder ?? null);
+      return reply(done.status, (done.body ?? {}) as Record<string, unknown>);
+    }
     const folder = where?.folder;
     if (!folder) return reply(400, { error: "That request could not be read." });
     if (request.tool === "run") return await runNodeCommand(app, client, request, folder, (out) => reply(out.status, (out.body ?? {}) as Record<string, unknown>));
@@ -103,6 +110,10 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     if (request.tool === "files" && request.action === "share") {
       if (!request.operation || !request.uploadId) return reply(400, { error: "Sharing a file needs the node's operation and upload id. Update Ensemble on the web." });
       return reply(200, (await runNodeShare(app, client, request, folder)) as Record<string, unknown>);
+    }
+    if (request.tool === "files" && request.action === "save") {
+      const saved = await runNodeSave(client, request, folder);
+      return reply(saved.status, saved.body);
     }
     const done = request.tool === "git" ? await runNodeGit(request, folder) : request.tool === "files" ? await runNodeFiles(request, folder) : await runNodeHttp(request);
     return reply(done.status, done.body);

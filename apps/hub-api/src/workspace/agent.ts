@@ -652,9 +652,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   });
   await prisma.workspaceJob.update({ where: { id: job.id }, data: { runId: run.id, startedAt: new Date(), progress: "Starting" } });
   if (job.task.status !== "in_progress") {
-    await prisma.task.update({ where: { id: job.taskId }, data: { status: "in_progress", owner: "agent" } });
+    // A task with a node stays with it while the node's run works on it (docs/35 §6.6).
+    const owner = job.task.owner === "node" ? "node" : "agent";
+    await prisma.task.update({ where: { id: job.taskId }, data: { status: "in_progress", owner } });
     await prisma.taskTransition.create({
-      data: { userId, taskId: job.taskId, fromStatus: job.task.status, toStatus: "in_progress", fromOwner: job.task.owner, toOwner: "agent", actor: "agent", reason: "Agent started", runId: run.id },
+      data: { userId, taskId: job.taskId, fromStatus: job.task.status, toStatus: "in_progress", fromOwner: job.task.owner, toOwner: owner, actor: "agent", reason: "Agent started", runId: run.id },
     });
   }
   const publish = () => {

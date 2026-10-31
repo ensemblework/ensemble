@@ -4,7 +4,7 @@ import { assistantRequest } from "../request.js";
 import { defineTool, toolOk } from "../types.js";
 
 export const surfaceTools = [defineTool({
-  name: "hub_read_surface", area: "context", description: "Read the open Ensemble surface and its current filters/selection: Today, Board, Context, pages/tasks/projects, meeting notes, Files, plots, diagrams, skills, settings (on the Connections tab: the apps connected in this space), Needs me, runs, Code, Completed, Trash, recap, spaces or sharing. Defaults to the person's open page. Returns bounded data and next tools; never screen pixels.",
+  name: "hub_read_surface", area: "context", description: "Read the open Ensemble surface and its current filters/selection: Today, Board (a custom board at /board?board=<id> too), Context, pages/tasks/projects, meeting notes, Files, plots, diagrams, skills, settings (on the Connections tab: the apps connected in this space), Needs me, runs, Code, Completed, Trash, recap, spaces or sharing. Defaults to the person's open page. Returns bounded data and next tools; never screen pixels.",
   input: z.object({ path: z.string().max(500).optional() }), isWrite: false, risk: "low",
   async run(ctx, input) {
     const url = new URL(input.path ?? (ctx.page?.taskId ? `/tasks/${ctx.page.taskId}` : ctx.page?.path) ?? "/today", "https://ensemble.invalid");
@@ -18,7 +18,12 @@ export const surfaceTools = [defineTool({
       case "pages": data = id ? await run("hub_read_page", { pageId: id }) : await run("hub_list_pages", {}); break;
       case "projects": data = id ? await assistantRequest(ctx, "GET", `/api/projects/${encodeURIComponent(id)}`) : await run("hub_list_projects", {}); break;
       case "today": case undefined: data = { due: await run("hub_list_due", { from: new Intl.DateTimeFormat("en-CA", { timeZone: ctx.settings.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()), to: new Intl.DateTimeFormat("en-CA", { timeZone: ctx.settings.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()) }), events: await run("hub_list_events", { limit: 10 }), lists: await run("hub_list_desk_items", {}), layout: await run("hub_read_layout", { surface: "today" }) }; break;
-      case "board": data = { filters: ctx.page?.surface?.filters, selected: ctx.page?.surface?.selectedIds?.length ? await run("hub_list_tasks", { ids: ctx.page.surface.selectedIds, limit: 100 }) : [], tasks: await run("hub_list_tasks", { ...(ctx.page?.surface?.visibleIds ? { ids: ctx.page.surface.visibleIds } : { query: url.searchParams.get("q") || undefined, status: url.searchParams.get("status") || undefined, owner: url.searchParams.get("owner") || undefined }), limit: 25 }), layout: await run("hub_read_layout", { surface: "board" }) }; break;
+      case "board": {
+        // A custom board (`/board?board=<id>`): its columns and cards.
+        const filters = ctx.page?.surface?.filters as Record<string, unknown> | undefined;
+        const custom = url.searchParams.get("board") ?? (!input.path && filters?.customBoard === true && typeof filters.boardId === "string" ? filters.boardId : null);
+        if (custom) { data = await run("hub_read_board", { board: custom }); break; }
+        data = { filters: ctx.page?.surface?.filters, selected: ctx.page?.surface?.selectedIds?.length ? await run("hub_list_tasks", { ids: ctx.page.surface.selectedIds, limit: 100 }) : [], tasks: await run("hub_list_tasks", { ...(ctx.page?.surface?.visibleIds ? { ids: ctx.page.surface.visibleIds } : { query: url.searchParams.get("q") || undefined, status: url.searchParams.get("status") || undefined, owner: url.searchParams.get("owner") || undefined }), limit: 25 }), layout: await run("hub_read_layout", { surface: "board" }) }; break; }
       case "context": data = { lists: await run("hub_list_desk_items", {}), layout: await run("hub_read_layout", { surface: "context" }), people: await run("hub_list_people", { query: url.searchParams.get("q") ?? "" }), projects: await run("hub_list_projects", {}) }; break;
       case "files": data = id ? { file: await assistantRequest(ctx, "GET", `/api/documents/${encodeURIComponent(id)}`), open: "Open the file itself with hub_view_file." } : await run("hub_list_files", { query: url.searchParams.get("q") ?? "" }); break;
       case "diagrams": data = id ? await run("hub_get_diagram", { diagramId: id }) : await run("hub_list_diagrams", {}); break;

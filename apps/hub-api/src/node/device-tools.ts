@@ -1,8 +1,8 @@
 /**
  * A node's own hands on its owner's paired computer (B9, docs/35 §8.9): run a command, read git, call a
  * development server on localhost, write, move or delete a file, take a screenshot of a terminal, bring
- * a file into the chat, run a command as the administrator, and browse and capture, without starting an
- * agent session. Each call goes to the computer as `node.tool.request` (devices/file-relay.ts), which
+ * a file or a folder into the chat, put a file the owner attached on the computer, run a command as the
+ * administrator, and browse and capture, without starting an agent session. Each call goes to the computer as `node.tool.request` (devices/file-relay.ts), which
  * judges it by its own policy (device-tools/policy.ts: the hard floor, the owner's answers, attended or
  * unattended) and runs it under its sandbox. A call without a folder works in the node's own folder on
  * the computer (nodeTools 2). The first use of a folder asks the owner once, on a card in this chat
@@ -21,20 +21,24 @@ import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
-import { BROWSER_API, LOGIN_CHECKS_API, CodeAnswer, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
+import { BROWSER_API, LIVE_API, LOGIN_CHECKS_API, CodeAnswer, NODE_FILE_MAX_BYTES, NODE_FILES_API, NODE_TOOL_FOREGROUND_MS, NODE_TOOL_MAX_SECONDS, NODE_TOOL_WRITE_BYTES, NODE_TOOLS_OWN_FOLDER, NodeCaptureAnswer, NodeToolAsk, NodeToolRequest, WEB_TOOLS } from "../remote/contract.js";
 import { BROWSER_TOOLS } from "../browser/tool-specs.js";
 import { CAPTURE_TOOLS } from "../capture/tool-specs.js";
 import { dangerousCommand, dangerousMessage, needsAdministrator } from "../device-tools/dangerous.js";
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
 import { postLoginCard } from "./logins.js";
-import { nodeSaveFileTool } from "../assistant/tools/save-file.js";
+import { nodeSaveFileTool, sizeText } from "../assistant/tools/save-file.js";
+import { diskName } from "../files/attached.js";
+import { findAttachment, grantDownload } from "./attachments.js";
 import { askOwner, awaitAnswer, computerCard, markGrantsUsed, noticeAsked, ownerName, pendingGrants, permissionWaitMs, placeOf, waitForOwner, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
 import { helperFolders, helperGrant } from "./helpers.js";
 import { ownerMedia, rememberCaptured, shownKinds } from "./media.js";
 import { requestPark } from "./queue.js";
 import { askSudo } from "./sudo.js";
+import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
+import { liveTools } from "./live-views.js";
 import type { NodeScope } from "./tools.js";
 
 const ASK_MS = 30_000;
@@ -45,11 +49,13 @@ const OUTPUT_READ_BYTES = 60_000;
 const MAX_ASKS = 3;
 /** What a terminal screenshot's screen gives the node as text. */
 const SCREEN_CHARS = 8_000;
+/** A file up to 100 MB (or a folder zipped first) on its way to or from the computer. */
+const SHARE_ASK_MS = 5 * 60_000;
 
 type Redisish = Parameters<typeof openToolRun>[0];
 
-/** What a call needs of the computer: the browser and capture tools (by tool name), or a nodeTools 2 feature (what it lets the node do there). */
-type Need = { browser?: string; ownFolder?: string };
+/** What a call needs of the computer: the browser and capture tools (by tool name), a nodeTools 2 feature, a nodeFiles 1 one, or live sessions (what it lets the node do there). */
+export type Need = { browser?: string; ownFolder?: string; nodeFiles?: string; live?: string };
 
 const nodeToolsOf = (device: Pick<Device, "capabilities">): number => {
   const value = (device.capabilities as { nodeTools?: unknown } | null)?.nodeTools;
@@ -57,19 +63,26 @@ const nodeToolsOf = (device: Pick<Device, "capabilities">): number => {
 };
 
 /** The owner's computer for a node tool: by name, else the one online; it must be new enough (and, for the browser and capture tools, have them). */
-async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined, need?: Need): Promise<Device> {
+export async function toolComputer(prisma: PrismaClient, ownerId: string, name: string | undefined, need?: Need): Promise<Device> {
   const devices = await prisma.device.findMany({ where: { userId: ownerId, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
   if (!devices.length) throw new ToolBlockedError("Your owner has no paired computer.", "They can pair one with `ensemble login` (the Ensemble CLI) or the Ensemble desktop app.");
   const wanted = name?.trim().toLowerCase();
   const device = wanted && wanted !== "any" ? devices.find((row) => row.name.toLowerCase() === wanted || row.id === name) : devices.find((row) => deviceOnline(row.lastSeenAt));
   if (!device) throw new ToolBlockedError(wanted && wanted !== "any" ? `There is no computer called “${name}”.` : "None of your owner's computers is online.", `Their computers: ${devices.map((row) => row.name).join(", ")}.`);
   if (!deviceOnline(device.lastSeenAt)) throw new ToolBlockedError(`${device.name} is offline.`, "Ensemble must be running there (`ensemble runner start`).");
-  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; browser?: unknown; logins?: unknown; capture?: { browser?: unknown } | null };
+  const caps = (device.capabilities ?? {}) as { nodeTools?: unknown; nodeFiles?: unknown; browser?: unknown; logins?: unknown; capture?: { browser?: unknown } | null };
   if (nodeToolsOf(device) < 1) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name}: it is too old to let a node use it directly.`, "Your owner updates it there (`ensemble update`, or the desktop app's update). Until then, have a coding agent do it (node_session_start).");
   }
+  const live = (device.capabilities as { live?: unknown } | null)?.live;
+  if (need?.live && !(typeof live === "number" && live >= LIVE_API)) {
+    throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.live}.`, "Your owner updates it there; until then use computer_run, or computer_terminal_screenshot for a picture.");
+  }
   if (need?.ownFolder && nodeToolsOf(device) < NODE_TOOLS_OWN_FOLDER) {
     throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.ownFolder}.`, "Your owner updates it there; tell them in one line if it matters now.");
+  }
+  if (need?.nodeFiles && !(typeof caps.nodeFiles === "number" && caps.nodeFiles >= NODE_FILES_API)) {
+    throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to ${need.nodeFiles}.`, "Your owner updates it there; tell them in one line if it matters now.");
   }
   if (need?.browser) {
     if (typeof caps.browser !== "number" || caps.browser < 1) {
@@ -94,7 +107,7 @@ async function toolComputer(prisma: PrismaClient, ownerId: string, name: string 
 type Mode = { attended: boolean; delivery: "local" | "commit" | "push"; network: boolean; askBeforeBrowsing: boolean };
 
 /** Attended unless the owner's run profile for this node runs unattended (and they did not ask this node to check first); whether they ask before browsing. */
-async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mode> {
+export async function modeFor(prisma: PrismaClient, node: NodeAgent): Promise<Mode> {
   const settings = await loadSettings(prisma, node.userId);
   const profile = pickRunProfile(settings, node.runProfileId);
   return { attended: computerWorkAsks(node) || profile.mode !== "unattended", delivery: profile.delivery, network: profile.network, askBeforeBrowsing: settings.node.askBeforeBrowsing };
@@ -121,7 +134,7 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
 }
 
 /** The call exactly as the node made it, for the note that has it make the call again. */
-function callText(name: string, input: unknown): string {
+export function callText(name: string, input: unknown): string {
   return truncateText(`${name} ${JSON.stringify(input ?? {})}`, 800);
 }
 
@@ -155,7 +168,7 @@ export function forComputer<T extends Record<string, unknown>>(device: Pick<Devi
   return Object.keys(older).length === Object.keys(input).length ? request : { ...request, input: older };
 }
 
-async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
+export async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
   const { prisma, node } = scope;
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
   const device = await toolComputer(prisma, node.userId, computer, options.need);
@@ -247,7 +260,19 @@ function safeOrigin(url: string): string | null {
   }
 }
 
-const isResult = (value: Called | ToolResult): value is ToolResult => !("device" in value);
+export const isResult = (value: Called | ToolResult): value is ToolResult => !("device" in value);
+
+/** A computer without nodeFiles shares files only: a folder there asks for the update instead of failing darkly. */
+async function olderShare(prisma: PrismaClient, ownerId: string, computer: string | undefined, error: unknown): Promise<never> {
+  if (error instanceof ToolBlockedError && /not a regular file|Name a file inside the folder/.test(error.message)) {
+    const device = await toolComputer(prisma, ownerId, computer).catch(() => null);
+    const caps = (device?.capabilities ?? {}) as { nodeFiles?: unknown };
+    if (device && !(typeof caps.nodeFiles === "number" && caps.nodeFiles >= NODE_FILES_API)) {
+      throw new ToolBlockedError(`Update Ensemble on ${device.name} (\`ensemble update\`, or the desktop app's update) to share a folder: it is zipped there.`, "Until then, zip it with computer_run (`zip -r results.zip results`) and share the .zip.");
+    }
+  }
+  throw error;
+}
 
 const Computer = z.string().max(120).optional().describe("The computer's name, when your owner has more than one.");
 const Folder = z
@@ -258,9 +283,27 @@ const Folder = z
   .describe("Omit it to work in your own folder on the computer. Or a folder the computer shares with Ensemble (its label, or a path node_computer_files lists), or a project folder's full path.");
 
 /** A command no answer runs (the hard floor's list, checked again on the computer): refused before anything is sent. */
-function refuseDangerous(command: string, root = false): void {
+export function refuseDangerous(command: string, root = false): void {
   const hit = dangerousCommand(command, { root });
   if (hit) throw new ToolBlockedError(dangerousMessage(hit));
+}
+
+/**
+ * Commands that sign in a command-line tool (`az login`, `gh auth login`, `aws sso login`, `wandb login`,
+ * `gcloud auth login`, `gcloud init`…: a `login` word of their own): they wait for the owner (a code on a
+ * card, or a page in the computer's sign-in browser), so they run in the background for up to 15 minutes.
+ */
+export const SIGN_IN_COMMAND = /(?:^|[\s"'(;&|])(?:login|gcloud\s+init|aws\s+configure\s+sso|claude\s+setup-token|doctl\s+auth\s+init|oci\s+session\s+authenticate|gh\s+auth\s+refresh)(?=$|[\s"');&|])/i;
+const SIGN_IN_SECONDS = 900;
+
+/** What the node hears of the sign-ins its command asked the owner for (its codes, its pages): the owner has each on a card. */
+function signInLines(body: Record<string, unknown>): string[] {
+  const codes = Array.isArray(body.deviceCodes) ? (body.deviceCodes as Array<{ url?: unknown; code?: unknown }>).filter((item) => typeof item.url === "string" && typeof item.code === "string") : [];
+  const pages = Array.isArray(body.signInPages) ? body.signInPages.filter((item): item is string => typeof item === "string") : [];
+  return [
+    ...codes.map((item) => `It printed a sign-in code for ${String(item.url)}: ${String(item.code)}. Your owner got it on a card in this chat (the code, the page, a countdown). This chat is only you and your owner, so you may say the code if they ask; never repeat it in a room with other people.`),
+    ...pages.map((site) => `It opened a sign-in page (${site}) in your owner's sign-in browser on that computer: their sign-in card in this chat opens it, even from a phone, and the command goes on when they finish.`),
+  ];
 }
 
 /** A call without a folder works in the node's own folder, which older computers do not have. */
@@ -283,6 +326,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         "Examples: download `curl -L -o app.deb https://example.com/app.deb`; read `cat notes.md` or `sed -n 1,80p build.log`; look `ls -la`, `df -h`, `git status`; test `npm test`. " +
         "One program and its arguments; for pipes, && or > use `bash -c \"…\"`. It runs in the computer's sandbox and changes files only in its folder. Omit folder to work in your own folder on the computer. " +
         "Up to 900 seconds: a long build or a server, background: true, and you are woken when it ends. Administrator rights (apt install, systemctl): computer_sudo. A screenshot of a terminal: computer_terminal_screenshot. " +
+        "A CLI sign-in (`az login`, `gh auth login`, `gcloud auth login`, `aws sso login`) runs in the background for 15 minutes by itself: a code it prints reaches your owner on a card, and a page it opens opens in their sign-in browser on that computer. " +
         "Writing or changing code in a repository is an agent session's job (node_session_start).",
       input: z
         .object({
@@ -304,13 +348,18 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         const runId = randomUUID();
         const mode = await modeFor(prisma, node);
         const where = input.folder ?? "your own folder";
+        // A sign-in waits for the owner: in the background, for 15 minutes.
+        const signIn = SIGN_IN_COMMAND.test(input.command);
+        const background = input.background || signIn;
+        const timeoutSec = signIn ? Math.max(input.timeoutSec, SIGN_IN_SECONDS) : input.timeoutSec;
         const done = await callComputer(
           ctx,
           scope,
           input.computer,
-          { tool: "run", folder: input.folder, cwd: input.cwd, command: input.command, timeoutSec: input.timeoutSec, background: input.background, secrets: input.secrets, runId, delivery: mode.delivery, network: mode.network },
+          { tool: "run", folder: input.folder, cwd: input.cwd, command: input.command, timeoutSec, background, secrets: input.secrets, runId, delivery: mode.delivery, network: mode.network },
           {
-            timeoutMs: input.background ? ASK_MS : RUN_ASK_MS,
+            // A background command answers within a few seconds; a sign-in waits a little longer for its prompt.
+            timeoutMs: background ? ASK_MS : RUN_ASK_MS,
             describe: `Run: ${input.command}`,
             again: callText("computer_run", input),
             need: ownFolder(input.folder),
@@ -332,11 +381,13 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           },
         );
         if (isResult(done)) return done;
+        const signIns = signInLines(done.body);
         if (done.status === 202) {
-          return toolOk(`\`${input.command}\` is running in the background on ${done.device.name}. You are woken when it ends; do not wait for it.`, { computer: done.device.name, run: runId, output: done.body.output ?? "" });
+          const lines = [`\`${input.command}\` is running in the background on ${done.device.name}${signIn ? ` (up to ${Math.round(timeoutSec / 60)} minutes: it waits for your owner to sign in)` : ""}. You are woken when it ends; do not wait for it.`, ...signIns];
+          return toolOk(lines.join("\n"), { computer: done.device.name, run: runId, output: done.body.output ?? "" });
         }
         const exit = typeof done.body.exitCode === "number" ? done.body.exitCode : null;
-        return toolOk(`Exit code ${exit ?? "unknown"}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, {
+        return toolOk([`Exit code ${exit ?? "unknown"}${done.body.timedOut ? " (stopped at its time limit)" : ""}.`, ...signIns].join("\n"), {
           computer: done.device.name,
           exitCode: exit,
           output: typeof done.body.output === "string" ? done.body.output : "",
@@ -493,8 +544,10 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       name: "node_share_file",
       area: "tasks",
       description:
-        "Bring a file from your owner's computer into this chat (a report .md, a log, an image, a PDF): they see it with your reply. " +
-        "path: the file inside the folder (omit folder for your own folder there, where computer_files_write puts files). caption: one line on what it is.",
+        "Send a file or a whole folder from your owner's computer into this chat: they get it with your reply (pictures show; other files open or download). " +
+        "Any kind: a report .md, code, CSV or JSON, a PDF, an image, an Office file, an archive. A folder goes as one .zip (node_modules, caches and key or .env files are left out). Up to 100 MB. " +
+        "path: the file or folder inside the folder (`.` for all of it); omit folder for your own folder there, where computer_files_write puts files. caption: one line on what it is. " +
+        'Examples: {path: "report.md", caption: "This week\'s numbers"}; a folder: {path: "results"}.',
       input: z.object({ computer: Computer, folder: Folder, path: z.string().min(1).max(1000), caption: z.string().max(300).optional() }).strict(),
       isWrite: false,
       risk: "low",
@@ -506,21 +559,64 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           input.computer,
           { tool: "files", action: "share", folder: input.folder, path: input.path, operation, uploadId: "pending", ...(input.caption ? { caption: input.caption } : {}) },
           {
-            timeoutMs: 90_000,
+            timeoutMs: SHARE_ASK_MS,
             describe: `Share ${input.path}`,
             again: callText("node_share_file", input),
             need: { ownFolder: "share files from it" },
             before: async (device) => ({ uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) }),
           },
-        );
+        ).catch((error: unknown) => olderShare(prisma, node.userId, input.computer, error));
         if (isResult(done)) return done;
         const kept = await keepCaptures(ctx, scope, done, operation, "all", "file");
         return toolOk(kept.lines.join("\n"), { computer: done.device.name, evidence: kept.evidence });
       },
     }),
+    defineTool({
+      name: "node_save_attachment",
+      area: "tasks",
+      description:
+        "Put a file your owner attached in this chat onto their computer, to work with it there (open, run or unzip it, read a spreadsheet, convert it). " +
+        "attachment: its name as attached (or its id). Omit folder for your own folder there; path: where in that folder (default: its own name; a path ending in / puts it in that subfolder). " +
+        "Up to 100 MB. A file already there is replaced only with overwrite: true. " +
+        'Example: {attachment: "sales.csv", path: "data/"}. Then read or run it with computer_run. Into Ensemble Files instead: hub_save_file with attachment.',
+      input: z
+        .object({
+          attachment: z.string().min(1).max(300).describe("The attached file's name (sales.csv) or id."),
+          computer: Computer,
+          folder: Folder,
+          path: z.string().min(1).max(1000).optional().describe("Where in the folder, e.g. data/sales.csv or data/. Default: the file's own name."),
+          overwrite: z.boolean().default(false),
+        })
+        .strict(),
+      isWrite: false,
+      risk: "medium",
+      async run(ctx, input) {
+        const file = await findAttachment(prisma, node.userId, scope.room.id, input.attachment);
+        if (file.byteSize > NODE_FILE_MAX_BYTES) throw new ToolBlockedError(`“${file.filename}” is ${sizeText(file.byteSize)}; a node puts files of at most ${NODE_FILE_MAX_BYTES / 1024 / 1024} MB on a computer.`, "Tell your owner in one line; they can copy it there themselves.");
+        const asked = input.path?.trim() ?? "";
+        const path = !asked || asked === "." ? diskName(file.filename) : /[\\/]$/.test(asked) ? `${asked}${diskName(file.filename)}` : asked;
+        const done = await callComputer(
+          ctx,
+          scope,
+          input.computer,
+          { tool: "files", action: "save", folder: input.folder, path, size: file.byteSize, sha256: file.sha256, overwrite: input.overwrite, downloadId: "pending" },
+          {
+            timeoutMs: SHARE_ASK_MS,
+            describe: `Save ${file.filename} as ${path}`,
+            again: callText("node_save_attachment", input),
+            need: { ownFolder: "put files there", nodeFiles: "put files from this chat on it" },
+            before: async (device) => ({ downloadId: await grantDownload(ctx.app.redis as never, { deviceId: device.id, ownerId: node.userId, nodeId: node.id, fileId: file.id, sha256: file.sha256, size: file.byteSize }) }),
+          },
+        );
+        if (isResult(done)) return done;
+        const saved = typeof done.body.path === "string" ? done.body.path : path;
+        return toolOk(`${done.body.replaced ? "Replaced" : "Saved"} ${saved}${input.folder ? ` in ${input.folder}` : " in your own folder"} on ${done.device.name}: “${file.filename}”, ${sizeText(file.byteSize)}.`, { computer: done.device.name, ...done.body });
+      },
+    }),
     // hub_save_file with a path too: the file is shared from the computer as evidence, then saved in Files (assistant/tools/save-file.ts).
     nodeSaveFileTool({
       computerFields: { computer: Computer, folder: Folder },
+      attachment: async (_ctx, ref) => findAttachment(prisma, node.userId, scope.room.id, ref),
       async share(ctx, input) {
         const operation = captureOperation(scope);
         const done = await callComputer(
@@ -529,13 +625,13 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
           input.computer,
           { tool: "files", action: "share", folder: input.folder, path: input.path, operation, uploadId: "pending" },
           {
-            timeoutMs: 90_000,
+            timeoutMs: SHARE_ASK_MS,
             describe: `Save ${input.path} to Ensemble Files`,
             again: callText("hub_save_file", input),
             need: { ownFolder: "share files from it" },
             before: async (device) => ({ uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) }),
           },
-        );
+        ).catch((error: unknown) => olderShare(prisma, node.userId, input.computer, error));
         if (isResult(done)) return done;
         const kept = await keepCaptures(ctx, scope, done, operation, "none");
         const file = kept.evidence.find((item) => !item.held);
@@ -548,6 +644,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
     // A helper never runs commands as the administrator.
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
+    ...liveTools(scope),
   ];
   return folders.length ? tools.map((tool) => onlyIn(tool, folders)) : tools;
 }
@@ -671,6 +768,19 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
 }
 
 /**
+ * Refuses, before anything reaches the computer, a browser or capture call that would open Ensemble's
+ * own web app (lib/ensemble-origins.ts): the node already acts there through its Ensemble tools.
+ */
+export function refuseEnsembleApp(name: string, input: Record<string, unknown>): void {
+  // browser_wait's url is a pattern the tab's address is waited for, not a page to open.
+  const targets = [name !== "browser_wait" && typeof input.url === "string" ? input.url : null, ...(name === "browser_shop" && Array.isArray(input.stores) ? input.stores : [])];
+  for (const target of targets) {
+    const origin = typeof target === "string" ? ensembleAppOrigin(target) : null;
+    if (origin) throw new ToolBlockedError(`${origin} is Ensemble itself, not a website to open or sign in to.`, ENSEMBLE_IN_BROWSER);
+  }
+}
+
+/**
  * The browser and capture tools (B10, B19) on the owner's computer, for this node: the same tools a
  * coding agent's run has, through `node.tool.request` (device-tools/capture.ts on the computer). What
  * they capture is the node's own evidence and comes with its reply; a capture the computer holds
@@ -689,6 +799,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
       risk: spec.name === "capture_app_start" || spec.name === "browser_type" || spec.name === "browser_upload" ? "medium" : "low",
       async run(ctx, raw) {
         const { computer, ...input } = raw as Record<string, unknown> & { computer?: string };
+        refuseEnsembleApp(spec.name, input);
         const tool = spec.name.startsWith("browser_") ? ("browser" as const) : ("capture" as const);
         const operation = captureOperation(scope);
         const mode = await modeFor(prisma, node);
@@ -734,7 +845,7 @@ export function captureTools(scope: NodeScope): AnyHubTool[] {
 }
 
 /** The tools that take a folder: a helper names one of its own each time. */
-const FOLDER_TOOLS = new Set(["computer_run", "computer_git", "computer_files_write", "computer_files_move", "computer_files_delete", "computer_terminal_screenshot", "node_share_file"]);
+const FOLDER_TOOLS = new Set(["computer_run", "computer_git", "computer_files_write", "computer_files_move", "computer_files_delete", "computer_terminal_screenshot", "node_share_file", "node_save_attachment", "terminal_open"]);
 
 /** A helper's tool that works only in the folders its parent named (by label, path or last part); an app it starts for capture too. */
 function onlyIn(tool: AnyHubTool, folders: readonly string[]): AnyHubTool {

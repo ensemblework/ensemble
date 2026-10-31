@@ -29,8 +29,13 @@ import { pageChallenge, playwrightProbe, Watch, type LoginPurpose } from "./watc
 
 /** How long a sign-in waits here for its owner, at most (a background card expires sooner on the web). */
 export const LOGIN_WAIT_MS = 2 * 3600_000;
-/** The tab's lease is renewed this often while its sign-in waits. */
-const KEEP_EVERY_MS = 60_000;
+/** The tab's lease is renewed this often while its sign-in waits (tests shorten it). */
+let KEEP_EVERY_MS = 60_000;
+
+/** Tests: how often a waiting sign-in renews its tab and checks it is still there. */
+export function setLoginKeepForTests(ms: number | null): void {
+  KEEP_EVERY_MS = ms ?? 60_000;
+}
 /** A waiting sign-in is looked at this often, and soon after each page load. */
 const LOOK_EVERY_MS = 2_000;
 const AFTER_LOAD_MS = 600;
@@ -96,6 +101,8 @@ type Login = {
   controlled: boolean;
   /** Raised because the page asked to sign in (the broker's heuristics), not only because the work said so. */
   pageAsked: boolean;
+  /** A command opened it (`az login`): done when its page reaches the command's own address, or the command ends well; nothing moves into the tab. */
+  cli: boolean;
   /** What the site asks for after a typed login (`needs_code`). */
   codeHint: string | null;
   /** A typed login the owner asked to save, kept until the sign-in it began is done (a code or an approval came after it). */
@@ -177,7 +184,7 @@ const what = (login: Pick<Login, "purpose" | "origin">) => (login.purpose === "h
  * Hands a tab to its owner to sign in to `origin` (or pass a human check there): sensitive at once,
  * kept open while it waits, and watched. A tab already waiting keeps its sign-in.
  */
-export async function raiseLogin(broker: BrowserBroker, input: { operation: string; tab: string; origin: string; reasons: string[]; signedIn?: SignedInCondition | null; purpose?: LoginPurpose; waitMs?: number; pageAsked?: boolean }): Promise<LoginInfo> {
+export async function raiseLogin(broker: BrowserBroker, input: { operation: string; tab: string; origin: string; reasons: string[]; signedIn?: SignedInCondition | null; purpose?: LoginPurpose; waitMs?: number; pageAsked?: boolean; cli?: boolean }): Promise<LoginInfo> {
   const existing = [...waiting.values()].find((item) => item.tab === input.tab && item.operation === input.operation);
   if (existing) return info(existing);
   const tab = broker.ownerTab(input.tab);
@@ -211,6 +218,7 @@ export async function raiseLogin(broker: BrowserBroker, input: { operation: stri
     clean: null,
     controlled: false,
     pageAsked: input.pageAsked === true,
+    cli: input.cli === true,
     codeHint: null,
     pendingSave: null,
     finishing: null,
@@ -220,6 +228,8 @@ export async function raiseLogin(broker: BrowserBroker, input: { operation: stri
   login.deadline.unref();
   login.look.unref();
   waiting.set(id, login);
+  // Held while it waits: a crash, or its window closed on the screen, opens it again rather than ending the sign-in.
+  broker.holdTab(input.tab, true);
   broker.keepTab(input.tab, KEEP_EVERY_MS * 5);
   watchLoads(login, tab.page);
   // A first look at once: what the page shows when the owner is asked is what a change is measured from.
@@ -228,13 +238,11 @@ export async function raiseLogin(broker: BrowserBroker, input: { operation: stri
   return info(login);
 }
 
+/** Renews the waiting tab's lease. Only a tab that is gone (closed by its work, or let go) ends the sign-in; one being opened again is waited for. */
 function keepAlive(login: Login): void {
-  try {
-    login.broker.ownerTab(login.tab);
-    login.broker.keepTab(login.tab, KEEP_EVERY_MS * 5);
-  } catch {
-    void finish(login, "ended", `The tab for ${login.origin} closed.`, { tell: true });
-  }
+  const state = login.broker.tabState(login.tab);
+  if (state === "gone") return void finish(login, "ended", `The tab for ${login.origin} closed.`, { tell: true });
+  login.broker.keepTab(login.tab, KEEP_EVERY_MS * 5);
 }
 
 /** Looks again soon after each page load of the node's tab (its page changes when its browser restarts). */
@@ -255,7 +263,7 @@ async function look(login: Login): Promise<void> {
     try {
       tab = login.broker.ownerTab(login.tab);
     } catch {
-      // Closed, or its browser restarting with a window: the lease keeper ends a sign-in whose tab is gone.
+      // Being opened again (its browser restarted or closed): the next look sees the new page.
       return;
     }
     watchLoads(login, tab.page);
@@ -281,6 +289,7 @@ async function finish(login: Login, status: Exclude<LoginStatus, "waiting">, mes
   if (login.watched) login.watched.page.off("load", login.watched.listener);
   login.watched = null;
   waiting.delete(login.id);
+  login.broker.holdTab(login.tab, false);
   finished.set(login.id, outcome);
   while (finished.size > FINISHED_KEPT) finished.delete(finished.keys().next().value!);
   const sites = settled.get(login.operation) ?? new Map<string, LoginStatus>();
@@ -326,6 +335,16 @@ export function bindDecision(id: string, decisionId: string): boolean {
   return login.decisionId === decisionId;
 }
 
+/**
+ * A command's sign-in ended with the command (logins/cli): it finished well (`signed_in`: it got what it
+ * waited for), or it ended without it. The web hears it as when seen done.
+ */
+export async function settleCliLogin(id: string, signedIn: boolean, message: string): Promise<void> {
+  const login = waiting.get(id);
+  if (!login?.cli) return;
+  await finish(login, signedIn ? "signed_in" : "ended", message, { tell: true, ...(signedIn ? { via: "computer" as const } : {}) });
+}
+
 /** Ends every waiting sign-in: this computer stopped taking work from the web, so nobody can answer them. */
 export async function endAllLogins(message: string): Promise<void> {
   for (const login of [...waiting.values()]) await finish(login, "ended", message);
@@ -349,6 +368,7 @@ const done = (purpose: LoginPurpose): "signed_in" | "passed" => (purpose === "hu
 
 /** Checks the node's tab now (I'm done, a check): signed in (or through the check), it ends. */
 async function checkTab(login: Login, failed: LoginResolution["status"], via: LoginVia, tellWeb: boolean): Promise<LoginResolution> {
+  await login.broker.whenTab(login.tab, 30_000);
   let tab;
   try {
     tab = login.broker.ownerTab(login.tab);
@@ -403,6 +423,17 @@ async function carryOver(login: Login, session: CleanSignIn): Promise<{ ok: bool
 /** Finishes a sign-in the clean browser saw done (or the owner said so): carried into the tab, checked there. */
 async function finishClean(login: Login, session: CleanSignIn, via: LoginVia, tellWeb: boolean): Promise<LoginResolution> {
   const status = done(login.purpose);
+  if (login.cli) {
+    // The command got its answer at its own address on this computer: done. The identity providers' cookies still come along for next time.
+    await login.broker.whenTab(login.tab, 10_000);
+    try {
+      await addCookies(login.broker.ownerTab(login.tab).context, await session.cookiesToCarry());
+    } catch {
+      // The tab went: the command has what it waited for anyway.
+    }
+    await finish(login, status, `Signed in to ${login.origin} for the command.`, { tell: tellWeb, via });
+    return { status };
+  }
   let carried: { ok: boolean; reason: string };
   try {
     carried = await carryOver(login, session);
@@ -429,6 +460,7 @@ async function finishClean(login: Login, session: CleanSignIn, via: LoginVia, te
 export async function openCleanSignIn(id: string, mode: "window" | "takeover"): Promise<CleanSignIn> {
   const login = waiting.get(id);
   if (!login) throw new BrowserError("not_found", "That sign-in is no longer waiting on this computer.");
+  await login.broker.whenTab(login.tab, 30_000);
   const tab = login.broker.ownerTab(login.tab);
   const spec = login.broker.cleanSignIn(tab.profile);
   if (!spec) throw new BrowserError("unavailable", "There is no Chromium with a window on this computer for signing in.");
@@ -571,6 +603,7 @@ export async function resolveLogin(id: string, action: LoginAction, typed?: { va
   if (login.busy) return { status: "busy", message: "Still working on the last answer." };
   login.busy = true;
   try {
+    await login.broker.whenTab(login.tab, 30_000);
     login.broker.keepTab(login.tab, KEEP_EVERY_MS * 5);
     if (action === "local") {
       if (!login.broker.hasWindow()) return { status: "no_window", message: "This computer has no screen to show the browser on." };
