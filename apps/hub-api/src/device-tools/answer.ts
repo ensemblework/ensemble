@@ -15,7 +15,7 @@ import { NodeToolRequest, type CodeAnswer } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
 import { toolFolderFor, type ToolFolder } from "./folders.js";
 import { checkTarget, runNodeHttp } from "./http.js";
-import { runNodeFiles } from "./files.js";
+import { runNodeFiles, runNodeSave } from "./files.js";
 import { runNodeGit } from "./git.js";
 import { decide, type PolicyInput } from "./policy.js";
 import { runNodeCommand } from "./run.js";
@@ -103,6 +103,10 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     if (request.tool === "files" && request.action === "share") {
       if (!request.operation || !request.uploadId) return reply(400, { error: "Sharing a file needs the node's operation and upload id. Update Ensemble on the web." });
       return reply(200, (await runNodeShare(app, client, request, folder)) as Record<string, unknown>);
+    }
+    if (request.tool === "files" && request.action === "save") {
+      const saved = await runNodeSave(client, request, folder);
+      return reply(saved.status, saved.body);
     }
     const done = request.tool === "git" ? await runNodeGit(request, folder) : request.tool === "files" ? await runNodeFiles(request, folder) : await runNodeHttp(request);
     return reply(done.status, done.body);

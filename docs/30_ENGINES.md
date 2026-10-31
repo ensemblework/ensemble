@@ -255,7 +255,7 @@ A coding agent reports its own result, separate from its closing words, and atta
 - never a credential file: `.env*`, key and certificate files (`*.pem`, `*.key`, `id_rsa*`, `id_ed25519*` and the like), credential stores (`.npmrc`, `.netrc`, `.git-credentials`…), shell histories, or anything under `.ssh`, `.aws`, `.gnupg` or `.git` (`credentialPathReason` in `evidence/limits.ts`);
 - nothing in Ensemble's data folder or the browser profile folder, and nothing the outside floor refuses to read (`outsideRefusal`: keys, sign-ins and browser data in the home folder; `evidenceFloor`);
 - never a file that holds a saved run-secret value;
-- at most 20 MB, or 100 MB for `video` and `trace`, and 100 files per run;
+- at most 100 MB per file, of any kind, and 100 files per run;
 - the kind must match the type read from its bytes (a `screenshot` must be an image).
 
 What is copied is exactly what was checked, and the copy is checked again before it is sent. Folders of runs that ended 30 days ago are removed. A paired computer uploads each file to the web unless `ensemble evidence off` ([25 §4.11](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#411-the-workers-report-and-evidence)).

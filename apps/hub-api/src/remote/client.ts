@@ -81,6 +81,8 @@ export interface HostedClient {
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
   resume?(jobId: string, body: { leaseToken: string; reason: string }): Promise<{ jobId: string } | { refused: string }>;
   downloadAttachment?(jobId: string, leaseToken: string, fileId: string, maxBytes: number): Promise<Uint8Array>;
+  /** A file of the owner's Files a node puts on this computer (files `save`), by the download id the web gave; at most `maxBytes`. */
+  downloadNodeFile?(downloadId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
   uploadFiles(jobId: string, leaseToken: string, files: UploadedFile[]): Promise<void>;
   /** The answer to a `files.request`. */
@@ -240,6 +242,35 @@ export function hostedClient(base: string, token: string): HostedClient {
           chunks.push(value);
         }
       } finally { await reader.cancel().catch(() => undefined); }
+      return new Uint8Array(Buffer.concat(chunks));
+    },
+    async downloadNodeFile(downloadId, maxBytes) {
+      channelBase(base);
+      let response: Response;
+      try {
+        response = await fetch(`${base}${ROUTES.nodeFile(downloadId)}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10 * 60_000), redirect: "error" });
+      } catch {
+        throw new RemoteError(0, "Ensemble on the web is not reachable.");
+      }
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new RemoteError(response.status, messageOf(text ? safeJson(text) : null, "The file could not be fetched."));
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new RemoteError(502, "The file came without its content.");
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) throw new RemoteError(413, "The file is larger than the web said.");
+          chunks.push(value);
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
       return new Uint8Array(Buffer.concat(chunks));
     },
     async uploadFiles(jobId, leaseToken, files) {

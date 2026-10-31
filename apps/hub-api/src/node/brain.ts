@@ -412,7 +412,9 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     const files = filesOf(row);
     if (!files.length) return "";
     const names = files.map((file) => `“${file.name}”`).join(", ");
-    return row.userId === owner && row.authorKind === "human" ? ` [attached ${names}]` : ` [attached ${names}, which you cannot open: they are in that person's Files]`;
+    // Where only the owner reads, their files can go onto their computer: said where they are, not in the persona.
+    if (row.userId === owner && row.authorKind === "human") return ` [attached ${names}${bound || fromNonOwner || work ? "" : "; onto the computer: node_save_attachment"}]`;
+    return ` [attached ${names}, which you cannot open: they are in that person's Files]`;
   };
   const board = work || fromNonOwner || bound ? "" : await workBoard(prisma, node, room.id);
   const transcript = work

@@ -11,7 +11,7 @@ import { writeFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { Page } from "playwright-core";
 import { reserveFile, slugName, stillFile, type MediaFile } from "../capture/media.js";
-import { sniffMime } from "../evidence/limits.js";
+import { EVIDENCE_MAX_BYTES, sniffMime } from "../evidence/limits.js";
 import type { EvidenceKind } from "../remote/contract.js";
 import { BrowserError, checkUrl, isLoopbackUrl, type BrowserBroker } from "./broker.js";
 import { cleanPage } from "./hygiene.js";
@@ -232,9 +232,8 @@ export async function fetchUrl(broker: BrowserBroker, operation: string, input: 
     const status = response.status();
     if (status >= 400) throw new BrowserError("failed", `The address answered ${status} ${response.statusText()}`.trim() + (status === 401 || status === 403 ? ": it may need a sign-in (open it with browser_open first) or block downloads." : "."));
     const headers = response.headers();
-    const declared = (headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
     const length = Number(headers["content-length"] ?? "0");
-    const limit = declared.startsWith("video/") ? 100 * MB : 20 * MB;
+    const limit = EVIDENCE_MAX_BYTES;
     if (length > limit) throw new BrowserError("refused", `That file is ${(length / MB).toFixed(1)} MB; files up to ${limit / MB} MB are kept.`);
     const body = await response.body();
     const final = response.url();
@@ -243,8 +242,7 @@ export async function fetchUrl(broker: BrowserBroker, operation: string, input: 
     if (mime === "text/html" || mime === "application/xhtml+xml") {
       throw new BrowserError("bad_input", "That address answered with a web page, not a file (it may need a sign-in, or the file's own link is on that page). Look at it with browser_view, or read it with browser_extract, and fetch the file's direct link.");
     }
-    const sizeLimit = mime.startsWith("video/") ? 100 * MB : 20 * MB;
-    if (body.length > sizeLimit) throw new BrowserError("refused", `That file is ${(body.length / MB).toFixed(1)} MB; files up to ${sizeLimit / MB} MB are kept.`);
+    if (body.length > limit) throw new BrowserError("refused", `That file is ${(body.length / MB).toFixed(1)} MB; files up to ${limit / MB} MB are kept.`);
     const wanted = EXTENSION[mime];
     if (wanted && extname(name).slice(1).toLowerCase() !== wanted && !(wanted === "jpg" && /^jpe?g$/i.test(extname(name).slice(1)))) name = `${name.replace(/\.[a-z0-9]{1,5}$/i, "")}.${wanted}`;
     const extension = extname(name).slice(1).replace(/[^\w]/g, "").slice(0, 10) || "bin";
