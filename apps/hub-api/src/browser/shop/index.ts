@@ -137,6 +137,19 @@ function scrollToCard(card: unknown): void {
   w.scrollTo({ top: Math.max(0, top - Math.min(cover, 240) - 16), left: 0, behavior: "instant" });
 }
 
+/** In the page: the product pictures on screen have loaded (at least one). */
+function picturesShown(): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = globalThis as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shown = [...w.document.images].filter((image: any) => {
+    const box = image.getBoundingClientRect();
+    return box.width > 60 && box.height > 60 && box.bottom > 0 && box.top < w.innerHeight;
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return shown.length > 0 && shown.every((image: any) => image.complete && image.naturalWidth > 0);
+}
+
 /** Words a store's page uses to say why it shows no products: a picture of it tells the owner. */
 export function pageExplains(text: string): boolean {
   return /access denied|forbidden|you have been blocked|went wrong|try again|not available|unavailable|sorry|no results|not able to find|couldn.t find|robot|human/i.test(text);
@@ -290,7 +303,9 @@ export async function shopStores(broker: BrowserBroker, operation: string, input
           .first()
           .evaluate(scrollToCard, undefined, { timeout: 2_000 })
           .catch(() => undefined);
-        await page.waitForTimeout(600);
+        await page.waitForTimeout(400);
+        // Lazy product pictures paint once they are on screen.
+        await page.waitForFunction(picturesShown, undefined, { timeout: 2_500 }).catch(() => undefined);
       }
       // No offers and no cards: the picture is worth sending only when the page says why (denied, no results, an error).
       const area = querySelector(doc, recipe.results);
