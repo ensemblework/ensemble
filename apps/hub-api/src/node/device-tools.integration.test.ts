@@ -25,7 +25,7 @@ const { settleTurns } = await import("./queue.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
-const { deviceTools } = await import("./device-tools.js");
+const { deviceTools, forComputer } = await import("./device-tools.js");
 const { postMessage } = await import("./store.js");
 after(() => h.close());
 
@@ -637,4 +637,12 @@ test("a node's agent run gets only the secrets it names: none by default, a save
   await say(mira, room.id, "run them again with the key");
   const second = await h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: mira.id, id: { not: first.id } }, orderBy: { createdAt: "desc" } });
   assert.deepEqual((second.context as { secrets?: unknown }).secrets, ["STRIPE_KEY"]);
+});
+
+test("a 0.6.0 computer gets the browser tools' older inputs, so a focused screenshot still works there", () => {
+  const request = { tool: "browser", name: "browser_screenshot", input: { tab: "t1", focus: "the price chart", clean: true }, operation: "op" };
+  assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, request).input, { tab: "t1" });
+  assert.deepEqual(forComputer({ capabilities: { browser: 2 } }, request), request);
+  const command = { tool: "run", command: "ls", mode: "x" };
+  assert.deepEqual(forComputer({ capabilities: { browser: 1 } }, command), command, "only browser calls change");
 });

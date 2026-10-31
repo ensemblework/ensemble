@@ -137,6 +137,19 @@ type CallOptions = {
  * card in this chat and waits for it: allowed, the same call goes again with the answer; denied, the
  * node hears no; not answered in time (or the owner wrote meanwhile), the turn parks.
  */
+/** Options of the browser tools a computer before `capabilities.browser` 2 refuses: left out there, so the call still works. */
+const BROWSER_2_OPTIONS = ["focus", "clean", "mode"] as const;
+
+/** The request as this computer takes it: a 0.6.0 one gets the browser tools' older inputs. */
+export function forComputer<T extends Record<string, unknown>>(device: Pick<Device, "capabilities">, request: T): T {
+  const browser = (device.capabilities as { browser?: unknown } | null)?.browser;
+  const input = request.input;
+  if (request.tool !== "browser" || !input || typeof input !== "object" || (typeof browser === "number" && browser >= BROWSER_API)) return request;
+  const older = { ...(input as Record<string, unknown>) };
+  for (const key of BROWSER_2_OPTIONS) delete older[key];
+  return { ...request, input: older };
+}
+
 async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string | undefined, request: ToolCall, options: CallOptions): Promise<Called | ToolResult> {
   const { prisma, node } = scope;
   if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
@@ -147,7 +160,7 @@ async function callComputer(ctx: ToolContext, scope: NodeScope, computer: string
     const grants = await pendingGrants(prisma, node.userId, node.id, device.id);
     const operationId = `${scope.turnId}:${randomUUID()}`;
     // Public web pages need no answer on the computer (device-tools/policy.ts) unless the owner asks to be asked, there or here.
-    const data = { ...request, ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
+    const data = { ...forComputer(device, request), ...extra, nodeId: node.id, nodeSlug: node.slug, mission: missionOf(scope), attended: mode.attended, grants, operationId, ...(mode.askBeforeBrowsing ? { askBeforeBrowsing: true } : {}) } as Record<string, unknown>;
     const raw = await askDeviceFor(ctx.app.redis, { deviceId: device.id, event: "node.tool.request", data }, options.timeoutMs);
     if (!raw) throw new ToolBlockedError(`${device.name} did not answer. It may be asleep or busy; try again.`);
     const answer = CodeAnswer.safeParse(raw);
