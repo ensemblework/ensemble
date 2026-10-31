@@ -158,7 +158,15 @@ test("a shell kept open between calls: commands and their output, a program that
   await resizeSession(shell, 100, 20);
   ownerType(shell, "stty size");
   assert.equal(ownerKey(shell, "Enter"), true);
-  await until(async () => /^20 100$/m.test((await live(fake.client, { action: "terminal_read", session })).body.screen!), "the new size in the shell");
+  // The size reaches the shell through its helper a moment later: asked again until it shows.
+  let polls = 0;
+  await until(async () => {
+    if (++polls % 20 === 0) {
+      ownerType(shell, "stty size");
+      ownerKey(shell, "Enter");
+    }
+    return /^20 100$/m.test((await live(fake.client, { action: "terminal_read", session })).body.screen!);
+  }, "the new size in the shell");
   assert.equal(ownerKey(shell, "NotAKey"), false);
 
   const closed = await live(fake.client, { action: "terminal_close", session });
