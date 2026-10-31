@@ -53,7 +53,7 @@ const { updateSettings } = await import("../remote/store.js");
 const { makeSealKey, saveSealKey } = await import("../credentials/seal-key.js");
 const { answerNodeToolRequest } = await import("../device-tools/answer.js");
 const { answerLoginResolve } = await import("../logins/answer.js");
-const { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverCleanSignIn, takeoverInput, takeoverStats } = await import("../takeover/session.js");
+const { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverCleanSignIn, takeoverExtend, takeoverInput, takeoverStats } = await import("../takeover/session.js");
 const { closeCleanBrowsers } = await import("../logins/clean-signin.js");
 const { takeoverKeys: deviceKeys } = await import("../takeover/channel.js");
 const { configureBrowser, browserBroker, shutdownBrowser } = await import("../browser/index.js");
@@ -205,6 +205,8 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
   await saveSettings(h.prisma, user.id, { runProfiles: [RunProfile.parse({ id: "main", name: "Main", engine: "claude-code", mode: "unattended", delivery: "local", deviceId: laptop.id })], defaultRunProfileId: "main" });
   const frames: string[] = [];
   const posted: string[] = [];
+  /** When each frame left the computer, by its number, and its size. */
+  const postedAt = new Map<number, { at: number; bytes: number }>();
   const client = {
     answerCode: async (id: string, answer: unknown) => {
       await key.inject({ method: "POST", url: `/api/devices/self/code-requests/${id}`, payload: answer as never });
@@ -213,6 +215,8 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
     toolOutput: async () => true,
     takeoverFrame: async (id: string, message: unknown) => {
       posted.push(JSON.stringify(message));
+      const sent = message as { seq: number; ct: string };
+      postedAt.set(sent.seq, { at: performance.now(), bytes: Math.floor((sent.ct.length * 3) / 4) });
       const response = await key.inject({ method: "POST", url: `/api/devices/self/takeovers/${id}/frames`, payload: message as never });
       return response.statusCode < 400;
     },
@@ -229,9 +233,10 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
     if (frame.event === "login.resolve") void answerLoginResolve(client as never, data);
     if (frame.event === "takeover.start") void answerTakeoverStart(client as never, data, () => null);
     if (frame.event === "takeover.input") takeoverInput(data);
+    if (frame.event === "takeover.extend") takeoverExtend(data);
     if (frame.event === "takeover.end") void answerTakeoverEnd(client as never, data);
   });
-  return { key, laptop, sealKey: sealed.info, frames, posted, stop };
+  return { key, laptop, sealKey: sealed.info, frames, posted, postedAt, stop };
 }
 
 /** A node in Mira's DM opens the bank's accounts page; the sign-in card is raised. */
@@ -277,6 +282,11 @@ async function ownerBrowser(user: HttpUser, cardId: string) {
       const frame = { header: opened.header, jpeg: Buffer.from(opened.payload) };
       seen.push(frame);
       return { state: body.state, frame, raw: body.frame };
+    },
+    /** An input message sealed with the next number, not sent yet (to send several at once, in any order). */
+    async seal(events: unknown[]) {
+      outSeq += 1;
+      return sealMessage(keys.w2d, takeover.id, "w2d", outSeq, new TextEncoder().encode(JSON.stringify({ events })));
     },
     /** One input message; returns it as sent, to replay. */
     async send(events: unknown[], seq?: number) {
@@ -508,5 +518,115 @@ test("a takeover ends on expiry, on sign-out and on unpairing; a computer too ol
     assert.match(json(await old.inject({ method: "POST", url: "/api/node/takeovers", headers: { origin: NODE_SITE }, payload: { loginCardId: card.id } })).error, /Update Ensemble on Mira's laptop/);
   } finally {
     oldComputer.stop();
+  }
+});
+
+test("a sign-in's tab whose browser closed opens again, and its remote view starts; +15 min moves its end on the computer too, at most an hour after it started", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira, { takeover: 3, logins: 2 });
+  try {
+    const { card } = await signInCard(mira);
+    const tab = card.data.tab as string;
+    // Its browser goes away (as a window on a computer's screen did): before, the remote view was refused ("That tab is closed.").
+    await browserBroker().ownerTab(tab).context.close();
+    const owner = await ownerBrowser(mira, card.id);
+    const started = await owner.start();
+    assert.equal(started.statusCode, 200, started.body);
+    const record = json(started).takeover as { endsAt: string; maxEndsAt: string };
+    assert.ok(record.maxEndsAt, "the page knows how long it can last");
+    assert.equal(browserBroker().ownerTab(tab).sensitive, true, "still paused for the owner");
+
+    const extend = () => mira.inject({ method: "POST", url: `/api/node/takeovers/${owner.takeover.id}/extend`, headers: owner.headers });
+    const once = await extend();
+    assert.equal(once.statusCode, 200, once.body);
+    assert.equal(Date.parse(json(once).takeover.endsAt) - Date.parse(record.endsAt), 15 * 60_000);
+    await until(() => takeoverStats(owner.takeover.id)?.endsAt === json(once).takeover.endsAt, "the computer's end moved");
+    let last = once;
+    for (let tries = 0; tries < 5 && last.statusCode === 200; tries += 1) last = await extend();
+    assert.equal(last.statusCode, 409);
+    assert.equal(json(last).code, "longest");
+    const longest = takeoverStats(owner.takeover.id)!.endsAt;
+    assert.ok(Date.parse(longest) <= Date.parse(record.maxEndsAt) + 1_000, "never past an hour after it started");
+    assert.equal((await mira.inject({ method: "POST", url: `/api/node/takeovers/${owner.takeover.id}/extend`, headers: { ...owner.headers, "x-ensemble-takeover": "not-it" } })).statusCode, 403, "only its controller");
+    assert.equal((await owner.end(false)).statusCode, 200);
+  } finally {
+    await endAllTakeovers("stopped");
+    computer.stop();
+  }
+});
+
+test("input sent several at a time, its requests overtaking each other, is applied on the computer in order, every key once; how long a key and a frame take", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira, { takeover: 3, logins: 2 });
+  try {
+    const { card } = await signInCard(mira);
+    const owner = await ownerBrowser(mira, card.id);
+    assert.equal((await owner.start()).statusCode, 200);
+    let first = await owner.frame();
+    for (let tries = 0; !first.frame && first.state === "live" && tries < 4; tries += 1) first = await owner.frame();
+    assert.ok(first.frame, "a frame came");
+    await until(() => Boolean(takeoverCleanSignIn(owner.takeover.id)?.lastJudged), "the first look");
+    const email = await spot(owner.takeover.id, 'input[name="email"]');
+    await owner.send([{ t: "mouse", type: "down", ...email }, { t: "mouse", type: "up", ...email }]);
+    await until(() => takeoverStats(owner.takeover.id)?.applied === 2, "the click");
+
+    // Frames as the page reads them, meanwhile.
+    const arrived = new Map<number, number>();
+    let reading = true;
+    const reader = (async () => {
+      while (reading) {
+        const next = await owner.frame();
+        if (next.raw) arrived.set(next.raw.seq, performance.now());
+        if (next.state === "ended") break;
+      }
+    })();
+
+    const text = "mira.chen+pipelined@example.test";
+    // Each key in its own message, as fast as it can go: a phone's text box sends text, a keyboard a key down and up.
+    const messages = [];
+    const landedAfter: number[] = [];
+    for (const [index, char] of [...text].entries()) {
+      const events = index % 2 ? [{ t: "key", type: "down", key: char }, { t: "key", type: "up", key: char }] : [{ t: "text", text: char }];
+      messages.push(await owner.seal(events));
+      landedAfter.push((landedAfter.at(-1) ?? 0) + events.length);
+    }
+    const sentAt = new Map<number, number>();
+    const appliedAt = new Map<number, number>();
+    const base = takeoverStats(owner.takeover.id)!.applied;
+    const watch = setInterval(() => {
+      const applied = (takeoverStats(owner.takeover.id)?.applied ?? base) - base;
+      for (const [index, needed] of landedAfter.entries()) if (applied >= needed && !appliedAt.has(index + 1)) appliedAt.set(index + 1, performance.now());
+    }, 1);
+    // Four in flight, as the page sends them; every third pair swapped so a later one arrives first.
+    const order = messages.map((_, index) => index);
+    for (let index = 0; index + 1 < order.length; index += 3) [order[index], order[index + 1]] = [order[index + 1]!, order[index]!];
+    const inFlight = new Set<Promise<unknown>>();
+    for (const index of order) {
+      const message = messages[index]!;
+      sentAt.set(index + 1, performance.now());
+      const request = owner.raw(message).then((response) => assert.equal(response.statusCode, 200, response.body));
+      inFlight.add(request);
+      void request.finally(() => inFlight.delete(request));
+      if (inFlight.size >= 4) await Promise.race(inFlight);
+    }
+    await Promise.all(inFlight);
+    await until(async () => (await value(owner.takeover.id, 'input[name="email"]')) === text, "every key, in order", 20_000);
+    clearInterval(watch);
+    const stats = takeoverStats(owner.takeover.id)!;
+    assert.equal(stats.refused, 0, "none refused as out of order");
+    // Applied in order, so the k-th event applied is the k-th key.
+    const keyMs = [...appliedAt.entries()].map(([index, at]) => at - sentAt.get(index)!).sort((a, b) => a - b);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    reading = false;
+    const frameMs = [...arrived.entries()].map(([seq, at]) => at - (computer.postedAt.get(seq)?.at ?? at)).sort((a, b) => a - b);
+    const sizes = [...computer.postedAt.values()].map((item) => item.bytes).sort((a, b) => a - b);
+    const pct = (list: number[], p: number) => Math.round(list[Math.min(list.length - 1, Math.floor(list.length * p))] ?? NaN);
+    console.log(`takeover latency: key→applied p50 ${pct(keyMs, 0.5)} ms, p95 ${pct(keyMs, 0.95)} ms (${keyMs.length} keys, 4 in flight); frame→page p50 ${pct(frameMs, 0.5)} ms, p95 ${pct(frameMs, 0.95)} ms (${frameMs.length} frames); frame size p50 ${Math.round(pct(sizes, 0.5) / 1024)} KB, p95 ${Math.round(pct(sizes, 0.95) / 1024)} KB`);
+    assert.ok(pct(keyMs, 0.5) < 150, "a key is applied within 150 ms");
+    assert.equal((await owner.end(false)).statusCode, 200);
+    await reader;
+  } finally {
+    await endAllTakeovers("stopped");
+    computer.stop();
   }
 });

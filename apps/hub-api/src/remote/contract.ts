@@ -876,12 +876,19 @@ export type LoginStatePost = z.infer<typeof LoginStatePost>;
  * 2: a sign-in's takeover runs in a clean browser (C0, `browser/clean.ts`) at the tab's page and moves the
  * session into the tab when done; its frames' headers say which site they show (`site`, `title`, `popup`,
  * `mode`); the computer ends it itself when the sign-in is done (reason `signed_in` or `passed`).
+ * 3: `takeover.extend` moves a takeover's end later (at most an hour after it started).
  */
-export const TAKEOVER_API = 2;
+export const TAKEOVER_API = 3;
 /** The oldest takeover a server can use. */
 export const TAKEOVER_MIN_API = 1;
 /** `capabilities.takeover` from which a sign-in's takeover can run in a clean browser (`TakeoverStart.mode` "clean", browser/clean.ts). */
 export const TAKEOVER_CLEAN_API = 2;
+/** `capabilities.takeover` from which a computer takes `takeover.extend`. */
+export const TAKEOVER_EXTEND_API = 3;
+/** A takeover lasts at most this long after it started, however often it is extended. */
+export const TAKEOVER_LONGEST_MS = 3600_000;
+/** What one extend adds to a takeover's end. */
+export const TAKEOVER_EXTEND_MS = 15 * 60_000;
 
 /** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
 export const ChannelMessage = z.object({
@@ -917,6 +924,10 @@ export type TakeoverStart = z.infer<typeof TakeoverStart>;
 /** `takeover.input`: input from the owner's browser, encrypted for this computer; relayed as it came, without an answer. */
 export const TakeoverInput = ChannelMessage.extend({ takeoverId: z.string().uuid() });
 export type TakeoverInput = z.infer<typeof TakeoverInput>;
+
+/** `takeover.extend` (takeover 3): the owner asked for more time; the computer ends it at `endsAt` instead (never past an hour after it started). */
+export const TakeoverExtend = z.object({ takeoverId: z.string().uuid(), endsAt: text(40) });
+export type TakeoverExtend = z.infer<typeof TakeoverExtend>;
 
 /** `takeover.end`: the owner pressed I'm done (`done`: check the sign-in and give the tab back) or Stop, or the server ended it. */
 export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });

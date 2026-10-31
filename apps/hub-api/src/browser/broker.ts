@@ -169,6 +169,14 @@ type Tab = {
   moving?: boolean;
   /** Its owner is controlling it from the web (takeover/): its live view says so rather than "signing in". */
   controlled?: boolean;
+  /**
+   * Held for its owner (a sign-in waits on it, logins/requests.ts): when its page or its browser closes
+   * without Ensemble closing it (a crash, its window closed on the screen), it is opened again, without a
+   * window, at the address it showed, under the same id. `revives` counts those within `since`.
+   */
+  held?: { revives: number; since: number };
+  /** Settles when a held tab that is being opened again is back (or gone). */
+  reviving?: Promise<void>;
 };
 
 type Operation = {
@@ -183,6 +191,11 @@ const LOG_LIMIT = 300;
 const FINISHED_PER_OPERATION = 20;
 const FINISHED_OPERATIONS = 200;
 const PRIVATE_IDLE_MS = 30_000;
+/** A held tab is opened again at most this often within `REVIVE_WINDOW_MS`: a page that keeps closing itself is let go. */
+const MAX_REVIVES = 3;
+const REVIVE_WINDOW_MS = 10 * 60_000;
+/** A closed page waits this long before its tab opens again, so a browser that is exiting has gone. */
+const REVIVE_AFTER_MS = 500;
 const PREVIEW_REASON = "The owner asked to see captures of this site before they are sent.";
 const EXPOSED_REASON = "A one-time code or card field was on screen.";
 const REF = /^(?:f\d+)?e\d+$/;
@@ -509,7 +522,7 @@ export class BrowserBroker {
     entry.context.on("close", () => {
       if (entry.cookieTimer) clearInterval(entry.cookieTimer);
       if (this.contexts.get(entry.key) === entry) this.contexts.delete(entry.key);
-      for (const tab of [...this.tabs.values()]) if (tab.entry === entry && !tab.moving) this.forgetTab(tab);
+      for (const tab of [...this.tabs.values()]) if (tab.entry === entry && !tab.moving) this.lost(tab, "browser");
     });
     this.startJanitor();
   }
@@ -589,8 +602,57 @@ export class BrowserBroker {
       else void popup.close().catch(() => undefined);
     });
     page.on("close", () => {
-      if (tab.page === page && !tab.moving) this.forgetTab(tab);
+      if (tab.page === page && !tab.moving) this.lost(tab, "page");
     });
+  }
+
+  /** A tab whose page or browser closed without Ensemble closing it: a held one opens again, any other is gone. */
+  private lost(tab: Tab, what: "page" | "browser"): void {
+    if (this.tabs.get(tab.id) !== tab) return;
+    if (!tab.held || this.closed) return this.forgetTab(tab);
+    const now = this.now();
+    if (now - tab.held.since > REVIVE_WINDOW_MS) tab.held = { revives: 0, since: now };
+    if (tab.held.revives >= MAX_REVIVES) {
+      this.log(`${tab.id} closed again; letting it go`);
+      return this.forgetTab(tab);
+    }
+    tab.held.revives += 1;
+    tab.moving = true;
+    const url = tab.page.url();
+    tab.reviving = this.revive(tab, url, what).finally(() => {
+      tab.reviving = undefined;
+    });
+  }
+
+  /** Opens a held tab again, without a window, at `url`: a new page under the same id, still sensitive if it was. */
+  private async revive(tab: Tab, url: string, what: "page" | "browser"): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, REVIVE_AFTER_MS));
+    try {
+      if (this.closed || this.tabs.get(tab.id) !== tab) throw new Error("gone");
+      const profile = tab.entry.profile;
+      const found = await this.contextFor(tab.operation, { profile, headed: false });
+      const context = found.entry.context;
+      const page = context.pages().find((candidate) => !this.pageTabs.has(candidate) && candidate.url() === "about:blank") ?? (await context.newPage());
+      if (this.tabs.get(tab.id) !== tab) {
+        await page.close().catch(() => undefined);
+        throw new Error("gone");
+      }
+      tab.page = page;
+      tab.entry = found.entry;
+      found.entry.idleSince = null;
+      this.pageTabs.set(page, tab);
+      this.watchPage(tab, page);
+      tab.moving = false;
+      if (this.operations.get(tab.operation)?.options.loopbackOnly) await page.route("**/*", (route) => (isLoopbackUrl(route.request().url()) ? route.continue() : route.abort("blockedbyclient")));
+      if (/^https?:/i.test(url)) await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+      this.log(`${tab.id} opened again: its ${what} closed while it was held for its owner`);
+    } catch (error) {
+      tab.moving = false;
+      if (this.tabs.get(tab.id) === tab) {
+        this.log(`${tab.id} could not open again: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+        this.forgetTab(tab);
+      }
+    }
   }
 
   private forgetTab(tab: Tab): void {
@@ -1132,6 +1194,37 @@ export class BrowserBroker {
     if (op) op.lastUsed = this.now();
   }
 
+  /**
+   * Holds a tab for its owner, or lets it go: while held, a page or browser that closes by itself (a
+   * crash, its window closed on the screen) opens the tab again instead of ending it, and its lease does
+   * not run out. Closing it through Ensemble (the work, its end) still closes it.
+   */
+  holdTab(id: string, on: boolean): void {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    if (on) tab.held ??= { revives: 0, since: this.now() };
+    else delete tab.held;
+  }
+
+  /** Whether a tab is open, being opened again (its browser restarting, or it was held and closed), or gone. */
+  tabState(id: string): "open" | "moving" | "gone" {
+    const tab = this.tabs.get(id);
+    if (!tab) return "gone";
+    if (tab.moving) return "moving";
+    return tab.page.isClosed() ? "gone" : "open";
+  }
+
+  /** Waits, up to `timeoutMs`, while a tab is being opened again or its browser restarts. */
+  async whenTab(id: string, timeoutMs = 30_000): Promise<"open" | "moving" | "gone"> {
+    const until = Date.now() + timeoutMs;
+    for (let state = this.tabState(id); state === "moving"; state = this.tabState(id)) {
+      if (Date.now() >= until) return state;
+      const reviving = this.tabs.get(id)?.reviving;
+      await Promise.race([reviving ?? new Promise((resolve) => setTimeout(resolve, 200)), new Promise((resolve) => setTimeout(resolve, Math.max(0, until - Date.now())))]);
+    }
+    return this.tabState(id);
+  }
+
   /** Whether this computer has a screen the browser can show a window on. */
   hasWindow(): boolean {
     return hasDisplay(this.options.env ?? process.env, this.options.platform ?? process.platform);
@@ -1323,7 +1416,7 @@ export class BrowserBroker {
     const closedTabs: string[] = [];
     const closedContexts: string[] = [];
     for (const tab of [...this.tabs.values()]) {
-      if (tab.expiresAt <= now) {
+      if (tab.expiresAt <= now && !tab.held && !tab.moving) {
         closedTabs.push(tab.id);
         this.log(`lease of ${tab.id} ended; closing it`);
         await this.closeTab(tab);

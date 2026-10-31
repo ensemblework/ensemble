@@ -1,7 +1,7 @@
 /**
  * The owner's side of a takeover (node/takeovers.ts, B21): open one for a sign-in card's tab or a run's
  * tab, start it with the channel's secret sealed for the computer, fetch encrypted frames, send
- * encrypted input, and end it (Stop, or I'm done). Only from a signed-in browser session, never a key or
+ * encrypted input, give it more time, and end it (Stop, or I'm done). Only from a signed-in browser session, never a key or
  * an agent; every call after the first carries the capability (`x-ensemble-takeover`).
  */
 import { z } from "zod";
@@ -10,7 +10,7 @@ import { readCookie, SESSION_COOKIE, sha256 } from "../lib/auth.js";
 import { SealedShape } from "../credentials/seal.js";
 import { ChannelMessage, type ChannelMessage as Message } from "../remote/contract.js";
 import { wireMessage } from "./store.js";
-import { createTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
+import { createTakeover, extendTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
 
 const Target = z.union([z.object({ loginCardId: z.string().min(1).max(100) }).strict(), z.object({ jobId: z.string().uuid(), tab: z.string().regex(/^t\d{1,9}$/).optional() }).strict()]);
 
@@ -73,6 +73,15 @@ export async function registerTakeoverRoutes(app: FastifyInstance, account: (req
       if (!message.success) return reply.code(400).send({ error: "That input could not be read." });
       await relayInput(app, await own(request), message.data as Message);
       return { ok: true };
+    } catch (error) {
+      return fail(error, reply);
+    }
+  });
+
+  // More time: 15 minutes later, at most an hour after it started (takeover 3 on the computer).
+  app.post("/api/node/takeovers/:id/extend", async (request, reply) => {
+    try {
+      return await extendTakeover(app, await own(request));
     } catch (error) {
       return fail(error, reply);
     }

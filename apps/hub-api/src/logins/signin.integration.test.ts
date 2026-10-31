@@ -22,7 +22,7 @@ process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
 const { BrowserBroker } = await import("../browser/broker.js");
 const { runBrowserTool } = await import("../browser/tools.js");
-const { resolveLogin, waitForLogin, openCleanSignIn, cleanSignInOf, raiseLogin, setLoginStateSink, endAllLogins } = await import("./requests.js");
+const { resolveLogin, waitForLogin, openCleanSignIn, cleanSignInOf, raiseLogin, setLoginStateSink, endAllLogins, setLoginKeepForTests, waitingLogin } = await import("./requests.js");
 const { cleanSignInOptionsForTests, closeCleanBrowsers } = await import("./clean-signin.js");
 const { loginResolution } = await import("./answer.js");
 const { signedInCheck } = await import("./fill.js");
@@ -452,6 +452,35 @@ test("a sign-in raised on a page with no sign-in form fills nothing and is never
     assert.match(typed.message ?? "", /no sign-in form/);
     assert.equal((await resolveLogin(login.loginId, "done")).status, "waiting", "a challenge page is not signed in");
   } finally {
+    await broker.shutdown();
+  }
+});
+
+test("a waiting sign-in's tab outlives its browser closing (a crash, its window closed) and its lease keeper: it opens again, still paused, and the sign-in still waits", { skip, timeout: 120_000 }, async () => {
+  setLoginKeepForTests(300);
+  const broker = newBroker("held");
+  try {
+    const opened = await open(broker, "op-held", `${SITE}/login`);
+    assert.ok(opened.login, "the sign-in form raised a sign-in");
+    const loginId = opened.login.loginId;
+    // Its browser goes away by itself, as Chromium did on a computer's screen: before, the next lease check ended the sign-in ("The tab … closed").
+    await broker.ownerTab(opened.tab).context.close();
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    assert.equal(await broker.whenTab(opened.tab, 20_000), "open");
+    assert.ok(waitingLogin(loginId), "the sign-in still waits");
+    const back = broker.ownerTab(opened.tab);
+    assert.equal(back.sensitive, true, "still paused for the owner");
+    assert.match(back.page.url(), /\/login$/, "at the page it showed");
+    // Only its page closing: the same.
+    await back.page.close();
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    assert.equal(await broker.whenTab(opened.tab, 20_000), "open");
+    assert.ok(waitingLogin(loginId), "the sign-in still waits after its page closed");
+    // Its work closing it still ends it.
+    await runBrowserTool(broker, "browser_close", { tab: opened.tab }, { operation: "op-held" });
+    await until(() => !waitingLogin(loginId), "the sign-in to end with its tab");
+  } finally {
+    setLoginKeepForTests(null);
     await broker.shutdown();
   }
 });

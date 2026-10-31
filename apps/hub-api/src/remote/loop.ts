@@ -38,7 +38,7 @@ import { setLiveSink } from "./live.js";
 import { setRunLoginSink } from "../logins/run.js";
 import { setLoginStateSink } from "../logins/requests.js";
 import { answerLoginResolve } from "../logins/answer.js";
-import { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } from "../takeover/session.js";
+import { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
@@ -147,7 +147,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     browser: BROWSER_API,
     // Sign-ins and human checks handed to the owner: the card's answers (`login.resolve`), saved logins here, seen done here (B11, protocol 8; 2: purpose, codes, checks).
     logins: LOGINS_API,
-    // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8; 2: sign-ins in a clean browser).
+    // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8; 2: sign-ins in a clean browser; 3: extend).
     takeover: TAKEOVER_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
@@ -352,6 +352,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The owner controls a tab from the web, end to end (B21, protocol 8): a run's tab is its local job's.
         if (event === "takeover.start") void answerTakeoverStart(client, data, (hostedJobId) => Object.values(held()).find((row) => row.hostedId === hostedJobId && row.phase === "active")?.localJobId ?? null).catch(() => undefined);
         if (event === "takeover.input") takeoverInput(data);
+        if (event === "takeover.extend") takeoverExtend(data);
         if (event === "takeover.end") void answerTakeoverEnd(client, data).catch(() => undefined);
         // The owner previews, releases or discards a file kept here (protocol 7).
         if (event === "evidence.request") void answerEvidenceRequest(app, client, data).catch(() => undefined);
