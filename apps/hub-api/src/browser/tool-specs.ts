@@ -143,7 +143,7 @@ export const BROWSER_TOOLS = [
   {
     name: "browser_fetch",
     description:
-      "Download a file (a PDF, an image, a CSV, a document) from its address, with this browser's sign-ins, into your evidence: for papers and documents to keep. Example: {url: \"https://openaccess.thecvf.com/content/CVPR2026/papers/Paper.pdf\"}. A web page is refused: give the file's own link (find it with browser_extract). Up to 20 MB (a video 100 MB). `tab` uses that tab's browser.",
+      "Download a file (a PDF, an image, a CSV, a document) from its address, with this browser's sign-ins, into your evidence: for papers and documents to keep. Example: {url: \"https://openaccess.thecvf.com/content/CVPR2026/papers/Paper.pdf\"}. A web page is refused: give the file's own link (find it with browser_extract). Up to 100 MB. `tab` uses that tab's browser.",
     input: z
       .object({
         url: z.string().min(1).max(4000),

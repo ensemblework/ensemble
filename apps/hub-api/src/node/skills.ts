@@ -53,6 +53,7 @@ export const NODE_SKILLS: readonly NodeSkill[] = [
       `- Into your owner's Ensemble Files: hub_save_file with url, the direct PDF link (not the paper's page).${has("browser_fetch") ? " When the site needs the browser: browser_fetch, then hub_save_file with its evidence id." : ""}`,
       "- Link only what hub_save_file returned (its ensemble://file/… link); never write a link yourself.",
       "- Into this chat instead: node_share_file (a file on the computer); it comes with your reply.",
+      ...(has("node_save_attachment") ? ["- A file your owner attached here is already in their Files: hub_save_file with attachment (its name) gives its link."] : []),
     ],
   },
   {

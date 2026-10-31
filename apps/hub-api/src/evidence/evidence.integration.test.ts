@@ -95,8 +95,9 @@ test("a computer uploads a run's evidence with its lease; the server checks it a
   // What the description says must be what arrives, within the kind's limit.
   assert.equal((await upload(meta(PNG, { size: PNG.length + 1 }), PNG)).statusCode, 400);
   assert.equal((await upload(meta(PNG, { sha256: sha(Buffer.from("other")) }), PNG)).statusCode, 400);
-  const big = Buffer.concat([PNG, Buffer.alloc(20 * 1024 * 1024 + 1 - PNG.length)]);
-  assert.equal((await upload(meta(big), big)).statusCode, 413);
+  // One cap for every kind: 100 MB (a 60 MB picture kept on the computer is listed; a larger one is refused).
+  assert.equal((await upload(meta(PNG, { name: "large.png", local: true, size: 60 * 1024 * 1024 }), Buffer.alloc(0))).statusCode, 201);
+  assert.equal((await upload(meta(PNG, { name: "huge.png", local: true, size: 100 * 1024 * 1024 + 1 }), Buffer.alloc(0))).statusCode, 413);
   const text = Buffer.from("just words\n");
   const notImage = await upload(meta(text, { name: "shot.png" }), text);
   assert.equal(notImage.statusCode, 415, "a screenshot must be an image, whatever its name");
@@ -124,9 +125,32 @@ test("a computer uploads a run's evidence with its lease; the server checks it a
   assert.match(String(htmlRead.headers["content-type"]), /^text\/html/);
   assert.match(String(htmlRead.headers["content-disposition"]), /^attachment/);
   const viewed = await mira.inject({ method: "GET", url: `/api/node/evidence/${htmlMeta.id}?view=1` });
-  assert.match(String(viewed.headers["content-disposition"]), /^inline/);
+  assert.match(String(viewed.headers["content-disposition"]), /^attachment/, "an active format downloads even when asked to open");
   assert.match(String(viewed.headers["content-security-policy"]), /sandbox/);
   assert.doesNotMatch(String(viewed.headers["content-security-policy"]), /allow-scripts/);
+  const script = Buffer.from("export const run = () => fetch('/api/node/nodes');\n");
+  const scriptMeta = meta(script, { kind: "file", name: "run.ts" });
+  assert.equal((await upload(scriptMeta, script)).statusCode, 201);
+  const scriptRead = await mira.inject({ method: "GET", url: `/api/node/evidence/${scriptMeta.id}?view=1` });
+  assert.deepEqual([String(scriptRead.headers["content-type"]), String(scriptRead.headers["content-disposition"]).split(";")[0]], ["text/javascript; charset=utf-8", "attachment"]);
+
+  // Any other kind: its own type and name; PDFs and plain text open in place only when asked, archives and Office files download.
+  const kinds: Array<[string, Buffer, string, string, string]> = [
+    ["notes.md", Buffer.from("# Notes\n"), "text/markdown; charset=utf-8", "attachment", "inline"],
+    ["data.csv", Buffer.from("a,b\n1,2\n"), "text/csv; charset=utf-8", "attachment", "inline"],
+    ["paper.pdf", Buffer.from("%PDF-1.7\n%%EOF\n"), "application/pdf", "attachment", "inline"],
+    ["results.zip", Buffer.from([0x50, 0x4b, 0x05, 0x06, ...new Array(18).fill(0)]), "application/zip", "attachment", "attachment"],
+    ["plan.docx", Buffer.from([0x50, 0x4b, 0x05, 0x06, ...new Array(18).fill(0)]), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "attachment", "attachment"],
+    ["tool.bin", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2]), "application/octet-stream", "attachment", "attachment"],
+  ];
+  for (const [name, body, type, plain, asked] of kinds) {
+    const row = meta(body, { kind: "file", name });
+    assert.equal((await upload(row, body)).statusCode, 201, name);
+    const read = await mira.inject({ method: "GET", url: `/api/node/evidence/${row.id}` });
+    assert.deepEqual([String(read.headers["content-type"]), String(read.headers["content-disposition"]).split(";")[0]], [type, plain], name);
+    assert.match(String(read.headers["content-disposition"]), new RegExp(`filename="${name.replace(".", "\\.")}"`));
+    assert.equal(String((await mira.inject({ method: "GET", url: `/api/node/evidence/${row.id}?view=1` })).headers["content-disposition"]).split(";")[0], asked, `${name} with view=1`);
+  }
 
   // Only the owner reads it.
   const tom = await h.asUser();

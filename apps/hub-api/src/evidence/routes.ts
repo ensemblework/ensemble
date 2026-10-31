@@ -1,10 +1,10 @@
 /**
  * Evidence routes (docs/25 §4.11, docs/32 §7). A paired computer uploads a file its run's worker
- * attached, with the job's lease like progress and complete; the server checks it again (size by kind,
+ * attached, with the job's lease like progress and complete; the server checks it again (its size,
  * the type sniffed from the bytes, credential names), redacts text, keeps the bytes where Files keeps
  * uploads and lists it on the run's card. Only the account whose computer ran the job reads it back:
- * images and video inline, everything else as a download, active formats (HTML, SVG, XML, JavaScript)
- * never run (a download, or `?view=1` inside a sandbox that allows nothing).
+ * pictures, video and audio inline, PDFs and plain text inline when asked (`?view=1`), everything else
+ * as a download; active formats (HTML, SVG, XML, JavaScript) always download, inside a sandbox CSP.
  */
 import { mediaReadable } from "../node/media.js";
 import type { Device, Prisma } from "@prisma/client";
@@ -30,7 +30,7 @@ export type DeviceGate = {
   holdLease: (app: FastifyInstance, device: Device, jobId: string, leaseToken: string) => Promise<Held>;
 };
 
-/** Room for a 100 MB video and the request around it. */
+/** Room for a 100 MB file and the request around it. */
 const UPLOAD_BODY_LIMIT = EVIDENCE_MAX_BYTES + 64 * 1024;
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode, expose: true });
@@ -58,6 +58,20 @@ function disposition(kind: "inline" | "attachment", filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   const encoded = encodeURIComponent(filename).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
   return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/** Types `?view=1` opens in place besides pictures, video and audio: none of them runs anything. */
+const VIEWABLE = new Set(["application/pdf", "text/plain", "text/markdown", "text/csv", "application/json"]);
+
+/**
+ * Whether a file opens in the browser or downloads: pictures (never SVG), video and audio open; with
+ * `?view=1` PDFs and plain text, Markdown, CSV and JSON too. Active formats (HTML, SVG, XML, scripts),
+ * archives, programs and everything else always download, whatever is asked.
+ */
+export function opensInPlace(mime: string, view: boolean): boolean {
+  if (isActiveMime(mime)) return false;
+  if (mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")) return true;
+  return view && VIEWABLE.has(mime);
 }
 
 type Checked = { ok: true; bytes: Buffer | null; mime: string; size: number; sha256: string } | { ok: false; status: number; error: string };
@@ -287,7 +301,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
     return { released: settled.released, discarded: settled.discarded };
   });
 
-  // One file's bytes. Images and video show inline; anything else downloads; active formats never run.
+  // One file's bytes: pictures, video and audio inline; PDFs and plain text inline with ?view=1; everything else, and every active format, downloads.
   app.get("/api/node/evidence/:id", async (request, reply) => {
     const accountId = reader(request);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
@@ -320,7 +334,6 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       if (!stored) return reply.code(404).send({ error: "That evidence is not available." });
       bytes = await evidenceContent(stored);
     }
-    const media = mime.startsWith("image/") && !isActiveMime(mime) ? true : mime.startsWith("video/");
     if (etag) reply.header("ETag", etag);
     reply
       // A held file's preview is never kept by a browser or a proxy.
@@ -331,7 +344,7 @@ export async function evidenceRoutes(app: FastifyInstance, gate: DeviceGate): Pr
       .header("Referrer-Policy", "no-referrer")
       .header("Accept-Ranges", "bytes")
       .header("Content-Type", mime.startsWith("text/") || mime === "application/json" || mime === "application/xml" || mime === "image/svg+xml" ? `${mime}; charset=utf-8` : mime)
-      .header("Content-Disposition", disposition(media || (view === "1" && !mime.startsWith("application/octet")) ? "inline" : "attachment", head.name));
+      .header("Content-Disposition", disposition(opensInPlace(mime, view === "1") ? "inline" : "attachment", head.name));
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(request.headers.range ?? "").trim());
     if (range && (range[1] || range[2])) {
       const total = bytes.byteLength;

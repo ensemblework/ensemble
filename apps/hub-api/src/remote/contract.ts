@@ -46,6 +46,8 @@ export const ROUTES = {
   toolOutput: (runId: string) => `/api/devices/self/tool-runs/${encodeURIComponent(runId)}/output`,
   /** A file the web asked for by an upload id (protocol 7): a node's capture, or a held file released or previewed. */
   evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
+  /** A file of the owner's Ensemble Files a node puts on this computer (files `save`, `capabilities.nodeFiles`), by its download id. */
+  nodeFile: (downloadId: string) => `/api/devices/self/node-files/${encodeURIComponent(downloadId)}`,
   /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
   liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
   /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
@@ -578,6 +580,14 @@ export const NODE_TOOL_MAX_SECONDS = 900;
 export const NODE_TOOL_OUTPUT_BYTES = 1024 * 1024;
 /** A file a node may write in one call. */
 export const NODE_TOOL_WRITE_BYTES = 1024 * 1024;
+/**
+ * `capabilities.nodeFiles`: 1: files `share` takes a folder (zipped here into one `.zip`) and any file up
+ * to `NODE_FILE_MAX_BYTES`, and files `save` puts a file of the owner's Ensemble Files (a chat attachment)
+ * into a folder, fetched from `ROUTES.nodeFile`.
+ */
+export const NODE_FILES_API = 1;
+/** The largest file a node shares from this computer (a zipped folder too) or saves on it. */
+export const NODE_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
 /** An answer the owner gave in Needs me for a node's tools: once, for this mission, or always for the folder or address. */
 export const NodeToolGrant = z.object({ id: text(100).min(1), scope: z.enum(["once", "mission", "always"]), target: text(4096).min(1) }).strict();
@@ -656,8 +666,11 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   }),
   NodeToolBase.extend({
     tool: z.literal("files"),
-    /** share (nodeTools 2): the file becomes evidence the node can show its owner (answered as a `NodeCaptureAnswer`). */
-    action: z.enum(["write", "move", "delete", "share"]),
+    /**
+     * share (nodeTools 2): the file becomes evidence the node can show its owner (answered as a `NodeCaptureAnswer`);
+     * with nodeFiles 1 a folder too, zipped. save (nodeFiles 1): a file of the owner's Files written at `path`.
+     */
+    action: z.enum(["write", "move", "delete", "share", "save"]),
     folder: OptionalFolder,
     path: text(1000).min(1),
     /** move: the new path, inside the same folder. */
@@ -669,6 +682,12 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
     uploadId: text(100).min(1).optional(),
     /** share: one line for the owner, what the file is. */
     caption: text(300).optional(),
+    /** save: where its bytes come from (`ROUTES.nodeFile`), how many there are and their SHA-256. */
+    downloadId: text(100).min(1).optional(),
+    size: z.number().int().min(0).max(NODE_FILE_MAX_BYTES).optional(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    /** save: replace a file already at `path` (never a link or a file with a second name). */
+    overwrite: z.boolean().optional(),
   }),
   /**
    * nodeTools 2: a command in a pseudo-terminal of `columns` × `rows`; after `seconds` (or when it ends,

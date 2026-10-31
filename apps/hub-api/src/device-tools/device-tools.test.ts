@@ -8,7 +8,9 @@
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { inflateRawSync } from "node:zlib";
 import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +45,8 @@ const { runNodeCommand, setForegroundMsForTests } = await import("./run.js");
 const { nodeToolAnswerFor } = await import("./answer.js");
 const { nodeToolDenies, ownToolFolder, resolveToolFolder } = await import("./folders.js");
 const { shareKind } = await import("./share.js");
+const { archiveProblem, crc32, zipEntries, ZipWriter } = await import("./zip.js");
+const { sniffMime } = await import("../evidence/limits.js");
 const { updateSettings } = await import("../remote/store.js");
 const { encrypt } = await import("../lib/secrets.js");
 const { setLocalPort } = await import("../workspace/engines/registry.js");
@@ -92,20 +96,28 @@ function memoryDb(secrets: Record<string, string> = {}) {
   };
 }
 
-/** A computer's client that records what it sends back. */
-function fakeClient() {
+/** A computer's client that records what it sends back; `files` are what the web hands out by download id. */
+function fakeClient(files: Record<string, Uint8Array> = {}) {
   const answers: Array<{ status: number; body: Record<string, unknown> }> = [];
   const chunks: Array<{ seq: number; text: string; done: boolean; exitCode: number | null; wake?: boolean }> = [];
   const uploads: Array<{ uploadId: string; meta: Record<string, unknown>; bytes: Uint8Array }> = [];
+  const downloads: string[] = [];
   return {
     answers,
     chunks,
     uploads,
+    downloads,
     output: () => chunks.map((chunk) => chunk.text).join(""),
     client: {
       async uploadEvidenceFile(uploadId: string, meta: Record<string, unknown>, bytes: Uint8Array) {
         uploads.push({ uploadId, meta, bytes });
         return { result: "stored" as const };
+      },
+      async downloadNodeFile(downloadId: string) {
+        downloads.push(downloadId);
+        const bytes = files[downloadId];
+        if (!bytes) throw new Error("Nobody asked this computer for that file.");
+        return bytes;
       },
       async toolOutput(_runId: string, chunk: (typeof chunks)[number]) {
         chunks.push(chunk);
@@ -342,10 +354,10 @@ test("under the OS sandbox a node's command cannot read keys, Ensemble's data or
 
 const NODE = "0d0e0f10-1112-4314-8516-171819202122";
 /** One call as the server sends it, answered by this computer. */
-async function ask(db: ReturnType<typeof memoryDb>, request: Record<string, unknown>) {
-  const fake = fakeClient();
+async function ask(db: ReturnType<typeof memoryDb>, request: Record<string, unknown>, files: Record<string, Uint8Array> = {}) {
+  const fake = fakeClient(files);
   await nodeToolAnswerFor({ prisma: db } as never, fake.client as never, { id: randomUUID(), nodeId: NODE, mission: "m1", attended: true, grants: [], ...request } as never, (reply) => fake.client.answerCode("x", reply));
-  return { ...fake.answers[0]!, uploads: fake.uploads };
+  return { ...fake.answers[0]!, uploads: fake.uploads, downloads: fake.downloads };
 }
 
 test("a call that names no folder works in the node's own folder: made on first use, for this account only, never asked about", async () => {
@@ -486,4 +498,148 @@ test("a file shared from a folder becomes the node's evidence: kept by kind, wit
   assert.equal(other.status, 428);
   assert.equal((other.body.ask as Record<string, unknown>).capability, "read");
   assert.deepEqual(["notes.md", "a.CSV", "x.pdf", "shot.png", "clip.mov", "data.bin", "photo.jpeg"].map(shareKind), ["report", "report", "report", "image", "video", "file", "image"]);
+});
+
+/** What a ZIP holds, read back with its own directory: each entry's name and bytes, its CRC checked. */
+function unzip(bytes: Uint8Array): Map<string, string> {
+  const buffer = Buffer.from(bytes);
+  const out = new Map<string, string>();
+  for (const entry of zipEntries(buffer) ?? assert.fail("not a zip")) {
+    const start = entry.offset + 30 + buffer.readUInt16LE(entry.offset + 26) + buffer.readUInt16LE(entry.offset + 28);
+    const data = buffer.subarray(start, start + entry.compressed);
+    const plain = entry.method === 8 ? inflateRawSync(data) : data;
+    assert.equal(crc32(plain), buffer.readUInt32LE(entry.offset + 14), `${entry.name}: its CRC`);
+    out.set(entry.name, plain.toString("utf8"));
+  }
+  return out;
+}
+
+test("a folder is shared as one zip: every file checked, text redacted, keys, links, dependencies and secrets left out", async () => {
+  updateSettings({ acceptWebApprovals: true, folders: [{ label: "app", path: work, kind: "folder", access: "read-write" }] });
+  const db = memoryDb({ STRIPE_KEY: "sk_live_zippedsecretvalue1" });
+  const own = await ownToolFolder({ nodeId: NODE, nodeSlug: "helper" });
+  const results = join(own.path, "results");
+  mkdirSync(join(results, "charts"), { recursive: true });
+  mkdirSync(join(results, "node_modules", "left-pad"), { recursive: true });
+  mkdirSync(join(results, ".git"), { recursive: true });
+  writeFileSync(join(results, "summary.md"), "# Results\n\nAPI_KEY=supersecretvalue123\nall green\n");
+  writeFileSync(join(results, "charts", "plot.py"), "import matplotlib\nprint('ok')\n");
+  writeFileSync(join(results, "charts", "chart.png"), Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"));
+  writeFileSync(join(results, ".env"), "TOKEN=1\n");
+  writeFileSync(join(results, "leak.txt"), "the key is sk_live_zippedsecretvalue1\n");
+  writeFileSync(join(results, "node_modules", "left-pad", "index.js"), "module.exports = 1;\n");
+  writeFileSync(join(results, ".git", "config"), "[core]\n");
+  symlinkSync(join(home, ".ssh", "id_ed25519"), join(results, "key-link"));
+  const share = { tool: "files", action: "share", operation: `node:${NODE}:conversation:share`, uploadId: "upload-zip", nodeSlug: "helper" };
+
+  const shared = await ask(db, { ...share, path: "results", caption: "The run's results" });
+  assert.equal(shared.status, 200, JSON.stringify(shared.body));
+  const upload = shared.uploads[0]!;
+  assert.deepEqual([upload.meta.name, upload.meta.kind, upload.meta.mime, upload.meta.caption], ["results.zip", "file", "application/zip", "The run's results"]);
+  const inside = unzip(upload.bytes);
+  assert.deepEqual([...inside.keys()].sort(), ["results/charts/chart.png", "results/charts/plot.py", "results/summary.md"]);
+  assert.match(inside.get("results/summary.md")!, /API_KEY=\[redacted\]\nall green/, "text is redacted as a shared text file is");
+  assert.equal(inside.get("results/charts/plot.py"), "import matplotlib\nprint('ok')\n");
+  const summary = String(shared.body.summary);
+  assert.match(summary, /Shared results from @helper's folder as results\.zip \(3 files, /);
+  for (const left of [".env", ".git", "key-link", "leak.txt", "node_modules"]) assert.ok(summary.includes(left), `${left} is named as left out: ${summary}`);
+  assert.doesNotMatch(summary, new RegExp(own.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "no full paths in what the node reads");
+
+  // The whole folder: `.`, named after it.
+  const whole = await ask(db, { ...share, path: "." });
+  assert.equal(whole.status, 200, JSON.stringify(whole.body));
+  assert.equal(whole.uploads[0]!.meta.name, "helper.zip");
+  assert.ok(unzip(whole.uploads[0]!.bytes).has("helper/results/summary.md"));
+
+  // Nothing left to share, and a folder of keys, are refused.
+  mkdirSync(join(own.path, "only-keys"), { recursive: true });
+  writeFileSync(join(own.path, "only-keys", "server.pem"), "-----BEGIN PRIVATE KEY-----\n");
+  assert.match(String((await ask(db, { ...share, path: "only-keys" })).body.error), /Nothing in it could be shared: server\.pem/);
+  mkdirSync(join(own.path, ".ssh"), { recursive: true });
+  assert.equal((await ask(db, { ...share, path: ".ssh" })).status, 403);
+  // Another folder asks once before it is read, as a file there does.
+  mkdirSync(join(work, "out"), { recursive: true });
+  writeFileSync(join(work, "out", "a.txt"), "a\n");
+  assert.equal((await ask(db, { ...share, folder: "app", path: "out" })).status, 428);
+});
+
+test("an archive already on disk is shared by what it holds: keys or a saved secret inside refuse it; Office files keep their type; 100 MB per file", async () => {
+  const db = memoryDb({ STRIPE_KEY: "sk_live_archivedsecretvalue" });
+  const own = await ownToolFolder({ nodeId: NODE, nodeSlug: "helper" });
+  const share = { tool: "files", action: "share", operation: `node:${NODE}:conversation:share`, uploadId: "upload-archive", nodeSlug: "helper" };
+  const make = async (name: string, entries: Record<string, string>) => {
+    const zip = await ZipWriter.create(join(own.path, name), 1024 * 1024);
+    for (const [entry, text] of Object.entries(entries)) await zip.add(entry, Buffer.from(text), new Date());
+    await zip.finish();
+  };
+  await make("site.zip", { "site/index.html": "<p>hi</p>", "site/.env": "X=1" });
+  assert.match(String((await ask(db, { ...share, path: "site.zip" })).body.error), /site\.zip is not shared\. It holds site\/\.env/);
+  await make("logs.zip", { "logs/run.log": "used sk_live_archivedsecretvalue here\n".repeat(40) });
+  assert.match(String((await ask(db, { ...share, path: "logs.zip" })).body.error), /saved secret \(in logs\/run\.log\)/);
+  await make("report.docx", { "[Content_Types].xml": "<Types/>", "word/document.xml": "<w:document/>" });
+  const docx = await ask(db, { ...share, path: "report.docx" });
+  assert.equal(docx.status, 200, JSON.stringify(docx.body));
+  assert.deepEqual([docx.uploads[0]!.meta.kind, docx.uploads[0]!.meta.mime], ["file", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]);
+  // A tar with a key in it, read by its headers.
+  const header = Buffer.alloc(512);
+  header.write("backup/id_ed25519", 0);
+  header.write("0000644\0", 100);
+  header.write("00000000004\0", 124);
+  header.write("ustar\u000000", 257, "latin1");
+  const tar = Buffer.concat([header, Buffer.from("KEY!"), Buffer.alloc(508), Buffer.alloc(1024)]);
+  assert.equal(sniffMime(tar, "backup.tar"), "application/x-tar");
+  assert.match(archiveProblem(tar, "application/x-tar", []) ?? "", /It holds backup\/id_ed25519/);
+
+  // Any kind up to 100 MB (a 25 MB data file goes); past that, refused before it is read.
+  writeFileSync(join(own.path, "data.bin"), Buffer.alloc(25 * 1024 * 1024, 7));
+  const big = await ask(db, { ...share, path: "data.bin" });
+  assert.equal(big.status, 200, JSON.stringify(big.body));
+  assert.equal(big.uploads[0]!.bytes.length, 25 * 1024 * 1024);
+  writeFileSync(join(own.path, "huge.bin"), "x");
+  truncateSync(join(own.path, "huge.bin"), 100 * 1024 * 1024 + 1);
+  assert.match(String((await ask(db, { ...share, path: "huge.bin" })).body.error), /at most 100 MB/);
+  rmSync(join(own.path, "huge.bin"));
+  rmSync(join(own.path, "data.bin"));
+});
+
+test("a file the owner attached is saved into a folder: fetched by its download id, never over a file unasked, never as a key", async () => {
+  updateSettings({ acceptWebApprovals: true, folders: [{ label: "app", path: work, kind: "folder", access: "read-write" }] });
+  const db = memoryDb();
+  const own = await ownToolFolder({ nodeId: NODE, nodeSlug: "helper" });
+  const csv = Buffer.from("region,sales\nnorth,10\n");
+  const sha256 = createHash("sha256").update(csv).digest("hex");
+  const files = { "dl-1": csv };
+  const save = { tool: "files", action: "save", nodeSlug: "helper", downloadId: "dl-1", size: csv.length, sha256 };
+
+  const saved = await ask(db, { ...save, path: "data/sales.csv" }, files);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual([saved.body.path, saved.body.bytes, saved.body.created], ["data/sales.csv", csv.length, true]);
+  assert.equal(readFileSync(join(own.path, "data", "sales.csv"), "utf8"), csv.toString());
+  assert.deepEqual(saved.downloads, ["dl-1"]);
+
+  // Already there: not replaced unless asked, and nothing is fetched to find that out.
+  const again = await ask(db, { ...save, path: "data/sales.csv" }, files);
+  assert.equal(again.status, 409);
+  assert.match(String(again.body.error), /already exists\. To replace it, call again with overwrite: true/);
+  assert.deepEqual(again.downloads, []);
+  writeFileSync(join(own.path, "data", "sales.csv"), "old\n");
+  const replaced = await ask(db, { ...save, path: "data/sales.csv", overwrite: true }, files);
+  assert.equal(replaced.body.replaced, true);
+  assert.equal(readFileSync(join(own.path, "data", "sales.csv"), "utf8"), csv.toString());
+  assert.equal((await ask(db, { ...save, path: "data" }, files)).status, 409, "a folder is not a file's path");
+
+  // What arrives must be what was named; keys, git's files, links and other folders' outsides are refused.
+  assert.match(String((await ask(db, { ...save, path: "short.csv", size: csv.length + 1 }, files)).body.error), /did not arrive whole/);
+  assert.match(String((await ask(db, { ...save, path: "other.csv", sha256: "0".repeat(64) }, files)).body.error), /changed on the way/);
+  assert.equal(existsSync(join(own.path, "other.csv")), false);
+  assert.equal((await ask(db, { ...save, path: ".env" }, files)).status, 403);
+  assert.equal((await ask(db, { ...save, path: ".git/hooks/pre-commit" }, files)).status, 403);
+  assert.equal((await ask(db, { ...save, path: "../../../.ssh/authorized_keys" }, files)).status, 403);
+  symlinkSync(join(home, ".ssh", "id_ed25519"), join(own.path, "linked.csv"));
+  assert.equal((await ask(db, { ...save, path: "linked.csv", overwrite: true }, files)).status, 403);
+  assert.equal(readFileSync(join(home, ".ssh", "id_ed25519"), "utf8"), "FAKE-KEY-FOR-THE-TEST\n");
+  // Another folder: writing there asks once, as computer_files_write does.
+  const other = await ask(db, { ...save, folder: "app", path: "sales.csv" }, files);
+  assert.equal(other.status, 428);
+  assert.equal((other.body.ask as Record<string, unknown>).capability, "files");
 });

@@ -43,7 +43,7 @@ import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -135,6 +135,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     runAnswers: 1,
     // A node's own tool calls run here (`node.tool.request`, protocol 6), judged here; `sandbox` says how strong the floor is.
     nodeTools: NODE_TOOLS_API,
+    // A node shares a folder (zipped here) and files up to 100 MB, and puts its owner's files (chat attachments) here.
+    nodeFiles: NODE_FILES_API,
     // Files a run's worker attaches go to the web, unless the person turned it off here (`ensemble evidence off`).
     evidenceUpload: settings.evidenceUpload,
     // A run from Ensemble Node gets only the saved secrets it names (the claim's `secrets`).
