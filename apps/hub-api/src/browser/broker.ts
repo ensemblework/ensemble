@@ -171,8 +171,9 @@ type Tab = {
   controlled?: boolean;
   /**
    * Held for its owner (a sign-in waits on it, logins/requests.ts): when its page or its browser closes
-   * without Ensemble closing it (a crash, its window closed on the screen), it is opened again, without a
-   * window, at the address it showed, under the same id. `revives` counts those within `since`.
+   * without Ensemble closing it (a crash, its window closed on the screen), it is opened again at the
+   * address it showed, under the same id (in a browser without a window when its own went). `revives`
+   * counts those within `since`.
    */
   held?: { revives: number; since: number };
   /** Settles when a held tab that is being opened again is back (or gone). */
@@ -624,7 +625,7 @@ export class BrowserBroker {
     });
   }
 
-  /** Opens a held tab again, without a window, at `url`: a new page under the same id, still sensitive if it was. */
+  /** Opens a held tab again at `url` (its browser, else one without a window): a new page under the same id, still sensitive if it was. */
   private async revive(tab: Tab, url: string, what: "page" | "browser"): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, REVIVE_AFTER_MS));
     try {
@@ -1220,7 +1221,10 @@ export class BrowserBroker {
     for (let state = this.tabState(id); state === "moving"; state = this.tabState(id)) {
       if (Date.now() >= until) return state;
       const reviving = this.tabs.get(id)?.reviving;
-      await Promise.race([reviving ?? new Promise((resolve) => setTimeout(resolve, 200)), new Promise((resolve) => setTimeout(resolve, Math.max(0, until - Date.now())))]);
+      let timer: NodeJS.Timeout | undefined;
+      const tick = new Promise((resolve) => (timer = setTimeout(resolve, Math.min(200, Math.max(0, until - Date.now())))));
+      await Promise.race(reviving ? [reviving, tick] : [tick]);
+      clearTimeout(timer);
     }
     return this.tabState(id);
   }

@@ -9,7 +9,9 @@
  * takeover, and the node carries on.
  * Also: a second browser cannot take control, a replayed or changed input is refused, the relay holds
  * no readable frame, key or keystroke, no model sees a frame or a credential, and expiry, sign-out and
- * unpairing end it. Browser parts skip without a Chromium.
+ * unpairing end it; a tab whose browser closed opens again for the remote view, which takes more time
+ * and input sent several at once in order; and a command-line tool's sign-in page reaches the owner's
+ * card and its callback lands on the computer. Browser parts skip without a Chromium.
  */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";

@@ -96,7 +96,8 @@ async function write(app: FastifyInstance, record: TakeoverRecord): Promise<void
 /** What the page is given about a takeover: never the token's hash or the session. */
 export function publicTakeover(record: TakeoverRecord, sealKey?: SealKeyInfo) {
   const longest = record.startedAt ? new Date(Date.parse(record.startedAt) + TAKEOVER_LONGEST_MS).toISOString() : null;
-  return { id: record.id, computer: { id: record.deviceId, name: record.computer }, tab: record.tab, origin: record.origin, state: record.state, startBy: record.startBy, endsAt: record.endsAt, ...(longest ? { maxEndsAt: longest } : {}), loginCardId: record.loginCardId, mode: record.mode ?? "tab", ...(sealKey ? { sealKey } : {}), ...(record.reason ? { reason: record.reason } : {}) };
+  const browser = record.mode ?? "tab";
+  return { id: record.id, computer: { id: record.deviceId, name: record.computer }, tab: record.tab, origin: record.origin, state: record.state, startBy: record.startBy, endsAt: record.endsAt, ...(longest ? { maxEndsAt: longest } : {}), loginCardId: record.loginCardId, mode: browser, browser, ...(sealKey ? { sealKey } : {}), ...(record.reason ? { reason: record.reason } : {}) };
 }
 
 /** Ends a takeover here: no more frames or input; the tab is free for another controller. */

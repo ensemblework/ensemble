@@ -111,6 +111,8 @@ export async function commandSignIns(client: HostedClient, request: RunRequest, 
   const found: DeviceCode[] = [];
   const logins = new Set<string>();
   const sites: string[] = [];
+  /** The node's tabs this command's pages opened in: closed when it ends. */
+  const tabs: string[] = [];
   const post = (code: DeviceCode, status: "pending" | "done" | "expired") =>
     client.nodeDeviceCode?.({ nodeId: request.nodeId, operation: request.runId, ...(request.operationId ? { operationId: request.operationId } : {}), url: code.url, code: code.code, command, ...(code.expiresInMs ? { expiresAt: new Date(Date.now() + code.expiresInMs).toISOString() } : {}), status }).catch(() => false) ?? Promise.resolve(false);
 
@@ -188,7 +190,9 @@ export async function commandSignIns(client: HostedClient, request: RunRequest, 
     const broker = browserBroker();
     broker.operation(operation, { evidenceDir: operationEvidenceDir(operation) });
     const tab = await broker.open(operation, url, { profile: "default" }).catch(() => null);
-    if (!tab || tab.error) return;
+    if (!tab) return;
+    tabs.push(tab.tab);
+    if (tab.error) return;
     const now = broker.ownerTab(tab.tab).page.url();
     const back = loopbackReturn(url);
     // Signed in already (the browser's own session answered at once): the command has its answer.
@@ -227,6 +231,7 @@ export async function commandSignIns(client: HostedClient, request: RunRequest, 
       }
       for (const code of found) await post(code, exitCode === 0 ? "done" : "expired");
       for (const id of logins) await settleCliLogin(id, exitCode === 0, exitCode === 0 ? `\`${command}\` finished: signed in.` : `\`${command}\` ended (exit code ${exitCode}).`).catch(() => undefined);
+      for (const tab of tabs) await browserBroker().close(`node:${request.nodeId}:own`, tab).catch(() => undefined);
       if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
     },
   };
