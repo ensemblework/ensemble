@@ -40,6 +40,8 @@ const { checkTarget, fetchLoopback, loopbackAddress, publicAddress, publicWebAdd
 const { gitArgv } = await import("./git.js");
 const { runNodeFiles } = await import("./files.js");
 const { runNodeCommand, setForegroundMsForTests } = await import("./run.js");
+const { deviceCodesIn, DeviceCodeWatch } = await import("./device-codes.js");
+const { loopbackReturn, setCliPageOpenerForTests } = await import("./cli-logins.js");
 const { nodeToolAnswerFor } = await import("./answer.js");
 const { nodeToolDenies, ownToolFolder, resolveToolFolder } = await import("./folders.js");
 const { shareKind } = await import("./share.js");
@@ -97,6 +99,7 @@ function fakeClient() {
   const answers: Array<{ status: number; body: Record<string, unknown> }> = [];
   const chunks: Array<{ seq: number; text: string; done: boolean; exitCode: number | null; wake?: boolean }> = [];
   const uploads: Array<{ uploadId: string; meta: Record<string, unknown>; bytes: Uint8Array }> = [];
+  const codes: Array<Record<string, unknown>> = [];
   return {
     answers,
     chunks,
@@ -114,7 +117,12 @@ function fakeClient() {
       async answerCode(_id: string, answer: { status: number; body?: unknown }) {
         answers.push({ status: answer.status, body: (answer.body ?? {}) as Record<string, unknown> });
       },
+      async nodeDeviceCode(body: Record<string, unknown>) {
+        codes.push(body);
+        return true;
+      },
     },
+    codes,
   };
 }
 
@@ -486,4 +494,69 @@ test("a file shared from a folder becomes the node's evidence: kept by kind, wit
   assert.equal(other.status, 428);
   assert.equal((other.body.ask as Record<string, unknown>).capability, "read");
   assert.deepEqual(["notes.md", "a.CSV", "x.pdf", "shot.png", "clip.mov", "data.bin", "photo.jpeg"].map(shareKind), ["report", "report", "report", "image", "video", "file", "image"]);
+});
+
+test("sign-in codes in a command's output: Microsoft, GitHub, AWS SSO, Google and any “open … and enter the code”; prose and pages without a code are not codes", () => {
+  const found = (text: string) => deviceCodesIn(text).map((item) => [item.url, item.code]);
+  assert.deepEqual(found("To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code FWQZ8N3XP to authenticate."), [["https://microsoft.com/devicelogin", "FWQZ8N3XP"]]);
+  assert.deepEqual(found("WARNING: To sign in, use a web browser to open the page https://login.microsoft.com/device and enter the code A1B2C3D4E to authenticate."), [["https://login.microsoft.com/device", "A1B2C3D4E"]]);
+  assert.deepEqual(found("\u001b[0;33m!\u001b[0m First copy your one-time code: \u001b[1m3F2A-9C1B\u001b[0m\nPress Enter to open https://github.com/login/device in your browser..."), [["https://github.com/login/device", "3F2A-9C1B"]]);
+  assert.deepEqual(found("If the browser does not open, open the following URL:\n\nhttps://device.sso.us-east-1.amazonaws.com/\n\nThen enter the code:\n\nWDDD-HLQF\n"), [["https://device.sso.us-east-1.amazonaws.com/", "WDDD-HLQF"]]);
+  assert.deepEqual(found("https://device.sso.eu-west-1.amazonaws.com/?user_code=QWER-TYUI"), [["https://device.sso.eu-west-1.amazonaws.com/?user_code=QWER-TYUI", "QWER-TYUI"]]);
+  assert.deepEqual(found("Go to https://www.google.com/device and enter code ABCD-EFGH-IJKL"), [["https://www.google.com/device", "ABCD-EFGH-IJKL"]]);
+  const generic = deviceCodesIn("Please visit https://auth.example.com/activate and enter the code: XK9P-2LMQ to continue. The code expires in 10 minutes.");
+  assert.deepEqual([generic[0]?.code, generic[0]?.expiresInMs], ["XK9P-2LMQ", 600_000]);
+  for (const prose of ["Enter the code from your authenticator app.", "Open https://example.com/docs to read more, then enter the code below.", "Opening https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=04b07795&redirect_uri=http%3A%2F%2Flocalhost%3A8400", "run `npm test` and enter the code review", "open the page http://localhost:3000/device and enter the code ABCD1234"]) assert.deepEqual(deviceCodesIn(prose), [], prose);
+  // Split across the output's pieces, each code once.
+  const watch = new DeviceCodeWatch();
+  assert.deepEqual(watch.feed("First copy your one-time code: 3F2A-9C1B\n"), []);
+  assert.equal(watch.feed("Open this URL to continue in your web browser: https://github.com/login/device\n")[0]?.code, "3F2A-9C1B");
+  assert.deepEqual(watch.feed("one-time code: 3F2A-9C1B https://github.com/login/device"), []);
+  assert.equal(loopbackReturn("https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=x&redirect_uri=http%3A%2F%2Flocalhost%3A8400&state=s"), "http://localhost:8400/**");
+  assert.equal(loopbackReturn("https://idp.example.com/authorize?redirect_uri=https%3A%2F%2Fapp.example.com%2Fcb"), null);
+});
+
+test("a command's sign-in: its code goes to the owner's card at once and the answer says so, the card follows its end; a page it opens is handed to Ensemble through BROWSER and the openers", async () => {
+  const folder = { path: work, label: "app" };
+  const db = memoryDb();
+  const run = async (command: string, extra: Record<string, unknown> = {}) => {
+    const fake = fakeClient();
+    const runId = randomUUID();
+    const started = Date.now();
+    await runNodeCommand({ prisma: db } as never, fake.client as never, { id: randomUUID(), tool: "run", folder: "app", command, timeoutSec: 60, background: false, secrets: [], runId, delivery: "local", network: false, nodeId: "n1", mission: "m", attended: false, grants: [], operationId: "turn:1", ...extra } as never, folder, (answer) => fake.client.answerCode("x", answer));
+    return { ...fake, runId, ms: Date.now() - started };
+  };
+  const prompt = "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code FWQZ8N3XP to authenticate.";
+  // In the foreground: it waits for the owner, so it answers as soon as the code is out and goes on in the background.
+  const foreground = await run(`node -e "console.log('${prompt}'); setTimeout(() => process.exit(0), 2500)"`);
+  assert.equal(foreground.answers[0]!.status, 202, "answered once the code was out");
+  assert.deepEqual(foreground.answers[0]!.body.deviceCodes, [{ url: "https://microsoft.com/devicelogin", code: "FWQZ8N3XP" }]);
+  assert.match(String(foreground.answers[0]!.body.output), /FWQZ8N3XP/, "the owner's code is not hidden from them");
+  assert.deepEqual(
+    foreground.codes.map((post) => [post.status, post.nodeId, post.operation, post.url, post.code, post.command, post.operationId]),
+    [
+      ["pending", "n1", foreground.runId, "https://microsoft.com/devicelogin", "FWQZ8N3XP", `node -e "console.log('${prompt}'); setTimeout(() => process.exit(0), 2500)"`.slice(0, 200), "turn:1"],
+      ["done", "n1", foreground.runId, "https://microsoft.com/devicelogin", "FWQZ8N3XP", `node -e "console.log('${prompt}'); setTimeout(() => process.exit(0), 2500)"`.slice(0, 200), "turn:1"],
+    ],
+  );
+  // In the background, a sign-in command waits a moment for its prompt; one that fails leaves its code expired.
+  const background = await run(`node -e "/* aws sso login */ setTimeout(() => console.log('Then enter the code: WDDD-HLQF at https://device.sso.us-east-1.amazonaws.com/'), 300); setTimeout(() => process.exit(3), 900)"`, { background: true });
+  assert.equal(background.answers[0]!.status, 202);
+  assert.deepEqual(background.answers[0]!.body.deviceCodes, [{ url: "https://device.sso.us-east-1.amazonaws.com/", code: "WDDD-HLQF" }]);
+  assert.deepEqual(background.codes.map((post) => post.status), ["pending", "expired"]);
+
+  // A page the command opens goes to Ensemble, through $BROWSER or xdg-open; other arguments go to the real program.
+  const pages: string[] = [];
+  setCliPageOpenerForTests(async (url) => void pages.push(url));
+  try {
+    const opener = process.platform === "darwin" ? "open" : "xdg-open";
+    const opened = await run(`node -e "const { execFileSync } = require('node:child_process'); execFileSync(process.env.BROWSER, ['https://login.example.test/authorize?redirect_uri=http://localhost:8400/']); execFileSync('${opener}', ['https://github.com/login/device']); console.log('opened')"`);
+    assert.equal(opened.answers[0]!.status, 200, JSON.stringify(opened.answers[0]));
+    assert.match(String(opened.answers[0]!.body.output), /opened/);
+    assert.deepEqual(pages, ["https://login.example.test/authorize?redirect_uri=http://localhost:8400/", "https://github.com/login/device"]);
+  } finally {
+    setCliPageOpenerForTests(null);
+  }
+  const plain = await run(`node -e "console.log(Boolean(process.env.BROWSER))"`);
+  assert.equal(plain.answers[0]!.body.output, process.platform === "win32" ? "false\n" : "true\n");
 });

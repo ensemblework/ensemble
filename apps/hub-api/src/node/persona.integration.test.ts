@@ -120,7 +120,9 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /Prices, “compare” stores, “where to buy”: browser_shop \(product, stores, location\) in one call; reply with a Markdown table/,
     /“Screenshot of” or “show me” a page: browser_view \(url; focus: what was asked[^\n]*\), one call per screenshot/,
     /Steps on a site \(a dashboard, “log in to my Azure portal and check …”\): web_task with the goal; sign-ins go to your owner's card, not Connections\./,
-    /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even from their phone; never ask for passwords or codes\)\. They say done: browser_login_check/,
+    /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even from their phone\)\. They say done: browser_login_check/,
+    // A command's sign-in code is the owner's: in a chat with only them, the node may say it.
+    /`az login` and other CLI sign-ins: computer_run \(15 minutes, in the background\); a code it prints reaches your owner's card, and here you may say it\./,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
     /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
@@ -139,6 +141,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   assert.ok(direct.tools.includes("node_crew_add"));
 
   assert.match(lead.persona, /node_plan, with this crew's members only/);
+  assert.doesNotMatch(lead.persona, /here you may say it/, "a sign-in code is said only in a chat with the owner alone");
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
   assert.ok(lead.persona.length < 8_000 && persona.length < 6_800, `as short as before (6,479 and 7,892 characters before the web routing rows; now ${persona.length} and ${lead.persona.length})`);
 });

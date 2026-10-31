@@ -149,6 +149,8 @@ export async function postLoginCard(app: FastifyInstance, input: PostInput): Pro
       display: input.login.display,
       takeover: input.login.takeover,
       expiresAt,
+      // A command (`az login`) opened it: the card names the command, and its end tells the node (node/device-codes.ts).
+      ...(input.login.source === "cli" ? { source: "cli", command: input.login.command ?? null } : {}),
       ...(input.jobId ? { jobId: input.jobId } : { operation: input.operation ?? null }),
       ...(input.private ? { private: true } : {}),
       // The step waits for the sign-in, and a routine's card expires as its other cards do.
@@ -385,8 +387,9 @@ export function loginOutcomeNote(data: Pick<LoginCardData, "origin" | "computer"
 
 /** The node hears how its tab's sign-in ended; a run's agent hears it in its own tool call instead. */
 async function afterLogin(app: FastifyInstance, node: NodeAgent, card: NodeMessage, status: "signed_in" | "passed" | "declined" | "expired", options: LoginAnswerOptions = {}): Promise<void> {
-  const data = card.data as LoginCardData;
-  if (data.jobId) return;
+  const data = card.data as LoginCardData & { source?: unknown };
+  // A run's agent hears it in its own tool call; a command's sign-in is told by the command's end.
+  if (data.jobId || data.source === "cli") return;
   const link = planLinkOf(card.data);
   // A conversation's own turn already heard it (node/login-check.ts); a step still waits to be woken.
   if (options.wake === false && !link) return;

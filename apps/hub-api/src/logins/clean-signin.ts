@@ -302,7 +302,17 @@ export class CleanSignIn extends EventEmitter {
 
   /** The owner's input, on the page shown. */
   async input(event: OwnerInput): Promise<void> {
+    await this.knowSize();
     await Promise.all(this.dispatch(event));
+  }
+
+  /** The page shown's size, for where a tap lands: from its frames, else asked once. */
+  private async knowSize(): Promise<void> {
+    const page = this.current;
+    if (page && !page.closed && !this.sizes.has(page.targetId)) {
+      const size = await page.viewport().catch(() => null);
+      if (size?.width && size.height) this.sizes.set(page.targetId, size);
+    }
   }
 
   /**
@@ -310,6 +320,9 @@ export class CleanSignIn extends EventEmitter {
    * Chromium applies them in the order they were sent, so a burst of keys costs one round trip, not one each.
    */
   async inputs(events: readonly OwnerInput[]): Promise<void> {
+    // Sent before this returns when the page's size is known (a takeover's always is): input that comes next goes after it.
+    const page = this.current;
+    if (page && !this.sizes.has(page.targetId) && events.some((event) => event.t === "mouse" || event.t === "wheel")) await this.knowSize();
     const sent = events.flatMap((event) => this.dispatch(event));
     const results = await Promise.allSettled(sent);
     const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");

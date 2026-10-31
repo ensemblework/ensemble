@@ -25,6 +25,8 @@ import type { RuntimeTurn } from "../lib/model-turn.js";
 
 const scratch = mkdtempSync(join(homedir(), ".ensemble-takeover-"));
 process.env.ENSEMBLE_REMOTE_STATE_DIR = join(scratch, "computer");
+// A node's commands work in its own folder here, never in the computer's real workspace.
+process.env.ENSEMBLE_WORKSPACE_ROOT = join(scratch, "workspace");
 process.env.ENSEMBLE_SECRET_KEY = randomBytes(32).toString("base64");
 
 const logged: string[] = [];
@@ -57,6 +59,9 @@ const { answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverCleanSi
 const { closeCleanBrowsers } = await import("../logins/clean-signin.js");
 const { takeoverKeys: deviceKeys } = await import("../takeover/channel.js");
 const { configureBrowser, browserBroker, shutdownBrowser } = await import("../browser/index.js");
+const { setLoginStateSink } = await import("../logins/requests.js");
+const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
+const osSandbox = (await prepareSandbox()).osSandbox;
 const { sha256, SESSION_COOKIE } = await import("../lib/auth.js");
 
 const SITE_HOST = "bank.example.test";
@@ -107,6 +112,18 @@ const site = createServer((request, response) => {
     return;
   }
   if (url.pathname === "/login/code") return void response.end(page("Code", `<h1>Enter the code from your phone</h1><form method="post" action="/login/code"><input name="code" autocomplete="one-time-code" inputmode="numeric" aria-label="Code" autofocus><button>Verify</button></form>`));
+  // An identity provider a command-line tool signs in with: it sends the browser back to the tool's own address on this computer.
+  if (url.pathname === "/oauth/authorize" && request.method === "POST") {
+    void form(request).then((fields) => {
+      const back = new URL(fields.get("redirect_uri") ?? "http://127.0.0.1:1/");
+      back.searchParams.set("code", "granted");
+      back.searchParams.set("state", fields.get("state") ?? "");
+      response.writeHead(303, { location: back.toString() });
+      response.end();
+    });
+    return;
+  }
+  if (url.pathname === "/oauth/authorize") return void response.end(page("Sign in - ID", `<h1>Sign in to ID</h1><form method="post" action="/oauth/authorize"><input type="hidden" name="redirect_uri" value="${url.searchParams.get("redirect_uri") ?? ""}"><input type="hidden" name="state" value="${url.searchParams.get("state") ?? ""}"><input name="email" type="email" autocomplete="username" aria-label="Email"><input name="password" type="password" aria-label="Password"><button id="allow">Sign in</button></form>`));
   if (url.pathname === "/accounts") {
     if (!session || !sessions.has(session)) {
       response.writeHead(302, { location: "/login" });
@@ -212,7 +229,7 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
       await key.inject({ method: "POST", url: `/api/devices/self/code-requests/${id}`, payload: answer as never });
     },
     uploadEvidenceFile: async () => ({ result: "stored" as const }),
-    toolOutput: async () => true,
+    toolOutput: async (runId: string, chunk: unknown) => (await key.inject({ method: "POST", url: `/api/devices/self/tool-runs/${runId}/output`, payload: chunk as never })).statusCode < 400,
     takeoverFrame: async (id: string, message: unknown) => {
       posted.push(JSON.stringify(message));
       const sent = message as { seq: number; ct: string };
@@ -222,6 +239,11 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
     },
     takeoverState: async (id: string, body: unknown) => {
       await key.inject({ method: "POST", url: `/api/devices/self/takeovers/${id}/state`, payload: body as never });
+    },
+    nodeDeviceCode: async (body: unknown) => (await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: body as never })).statusCode < 400,
+    nodeCliLogin: async (body: unknown) => {
+      const response = await key.inject({ method: "POST", url: "/api/devices/self/nodes/logins", payload: body as never });
+      return { decisionId: response.statusCode < 400 ? (json(response).decisionId as string) : null };
     },
   };
   const db = { jobEvidence: { findMany: async () => [], count: async () => 0 }, decisionRule: { findFirst: async () => null, findMany: async () => [] }, runSecret: { findMany: async () => [] } };
@@ -236,7 +258,9 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
     if (frame.event === "takeover.extend") takeoverExtend(data);
     if (frame.event === "takeover.end") void answerTakeoverEnd(client as never, data);
   });
-  return { key, laptop, sealKey: sealed.info, frames, posted, postedAt, stop };
+  /** The computer tells the web when a sign-in ends by itself (logins 2), as the remote loop does. */
+  const tellsLoginStates = () => setLoginStateSink(async (loginId, state) => key.inject({ method: "POST", url: `/api/devices/self/logins/${loginId}/state`, payload: state as never }));
+  return { key, laptop, sealKey: sealed.info, frames, posted, postedAt, stop, tellsLoginStates };
 }
 
 /** A node in Mira's DM opens the bank's accounts page; the sign-in card is raised. */
@@ -627,6 +651,64 @@ test("input sent several at a time, its requests overtaking each other, is appli
     await reader;
   } finally {
     await endAllTakeovers("stopped");
+    computer.stop();
+  }
+});
+
+test("a command-line sign-in: the page the command opens goes to the owner's sign-in card; they sign in from the remote view, the command's own callback lands on the computer, and the command and the card end signed in", { skip: noBrowser || (osSandbox ? false : "no OS sandbox for a node's command here"), timeout: 240_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira, { takeover: 3, logins: 2, nodeTools: 2, cliLogins: 1 });
+  const idp = `http://127.0.0.1:${(site.address() as { port: number }).port}`;
+  // A command-line tool as `az login` is: a server on this computer for the answer, the sign-in page through $BROWSER.
+  const cli = [
+    "const http = require('node:http'); const { execFile } = require('node:child_process');",
+    "const server = http.createServer((q, r) => { const u = new URL(q.url, 'http://x'); if (u.pathname !== '/callback') { r.statusCode = 404; return r.end(); } r.end('Signed in. You can close this window.'); console.log('Signed in, code ' + u.searchParams.get('code')); setTimeout(() => process.exit(0), 100); });",
+    `server.listen(0, '127.0.0.1', () => { const back = 'http://127.0.0.1:' + server.address().port + '/callback'; const page = '${idp}/oauth/authorize?redirect_uri=' + encodeURIComponent(back) + '&state=s1'; console.log('A web browser has been opened. Continue the login in the web browser.'); execFile(process.env.BROWSER, [page], () => undefined); });`,
+    "setTimeout(() => { console.log('timed out'); process.exit(2); }, 120000);",
+  ].join(" ");
+  const command = `node -e "${cli}"`;
+  computer.tellsLoginStates();
+  const heardBefore = transcripts.length;
+  const node = json(await mira.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "assistant" } })) as { node: { id: string }; room: { id: string } };
+  script = (transcript) => (transcript.includes("sign in the tool") ? { calls: [{ name: "computer_run", arguments: { command } }], then: "Sign in on the card." } : transcript.includes("exit code 0") ? { text: "Signed in." } : { text: "ok" });
+  try {
+    assert.equal((await mira.inject({ method: "POST", url: `/api/node/rooms/${node.room.id}/messages`, payload: { body: "sign in the tool" } })).statusCode, 201);
+    let card: { id: string; kind: string; data: Record<string, any> } | undefined;
+    await until(async () => {
+      const messages = json(await mira.inject({ method: "GET", url: `/api/node/rooms/${node.room.id}/messages` })).messages as Array<{ id: string; kind: string; data: Record<string, any> }>;
+      card = messages.find((row) => row.kind === "approval" && row.data.type === "login");
+      return Boolean(card);
+    }, "the sign-in card", 30_000);
+    assert.equal(card!.data.source, "cli");
+    assert.equal(card!.data.command, command.slice(0, 200));
+    assert.equal(card!.data.origin, idp);
+    assert.equal(card!.data.takeover, true);
+    await settleTurns();
+    const summary = (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${node.room.id}/messages` })).messages as Array<{ authorNodeId: string | null; kind: string; data: Record<string, any> }>).filter((row) => row.authorNodeId && row.kind === "text").at(-1)!.data.tools[0].summary as string;
+    assert.match(summary, /opened a sign-in page \(http:\/\/127\.0\.0\.1:\d+\) in your owner's sign-in browser/);
+
+    // The owner signs in from the remote view, in the clean browser on the computer.
+    const owner = await ownerBrowser(mira, card!.id);
+    assert.equal((await owner.start()).statusCode, 200);
+    let first = await owner.frame();
+    for (let tries = 0; !first.frame && first.state === "live" && tries < 4; tries += 1) first = await owner.frame();
+    assert.match(String(first.frame?.header.url), /\/oauth\/authorize$/);
+    await until(() => Boolean(takeoverCleanSignIn(owner.takeover.id)?.lastJudged), "the first look");
+    const allow = await spot(owner.takeover.id, "#allow");
+    await owner.send([{ t: "mouse", type: "down", ...allow }, { t: "mouse", type: "up", ...allow }]);
+    // The answer lands at the command's own address on the computer: the sign-in is done, the remote view ends, the command ends well.
+    let ended = await owner.frame();
+    for (let tries = 0; ended.state !== "ended" && tries < 20; tries += 1) ended = await owner.frame();
+    assert.deepEqual([ended.state, ended.reason], ["ended", "signed_in"]);
+    await until(async () => (json(await mira.inject({ method: "GET", url: `/api/node/rooms/${node.room.id}/messages` })).messages as Array<{ id: string; data: Record<string, any> }>).find((row) => row.id === card!.id)?.data.status === "signed_in", "the card signed in", 20_000);
+    await until(async () => {
+      await settleTurns();
+      return transcripts.some((text) => /ended after .*exit code 0/.test(text));
+    }, "the node woken by the command's end", 30_000);
+    assert.ok(!transcripts.slice(heardBefore).some((text) => /Your owner signed in to/.test(text)), "the command's end tells the node, not the card");
+  } finally {
+    await endAllTakeovers("stopped");
+    setLoginStateSink(null);
     computer.stop();
   }
 });

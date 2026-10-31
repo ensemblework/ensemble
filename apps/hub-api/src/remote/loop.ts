@@ -43,7 +43,7 @@ import { parseReport } from "../node/report.js";
 import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { BROWSER_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -149,6 +149,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     logins: LOGINS_API,
     // The owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8; 2: sign-ins in a clean browser; 3: extend).
     takeover: TAKEOVER_API,
+    // A node's command that needs a sign-in: its code goes to the owner's card, a page it opens to this computer's sign-in browser (C2).
+    cliLogins: CLI_LOGINS_API,
     capture: await (await import("../capture/runtime.js")).captureSummary().catch(() => null),
   };
 }

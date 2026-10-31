@@ -56,6 +56,10 @@ export const ROUTES = {
   takeoverState: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/state`,
   /** A sign-in ended on this computer by itself (`logins: 2`): seen done, its tab closed, its time ran out (`LoginStatePost`). */
   loginState: (loginId: string) => `/api/devices/self/logins/${encodeURIComponent(loginId)}/state`,
+  /** A sign-in code a node's command printed, and later how it ended (`cliLogins`, `NodeDeviceCodePost`). */
+  nodeDeviceCodes: "/api/devices/self/nodes/device-codes",
+  /** A node's command opened a sign-in page in the browser (`cliLogins`, `NodeCliLoginPost`): the web raises the sign-in card. */
+  nodeCliLogins: "/api/devices/self/nodes/logins",
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -815,8 +819,45 @@ export const LoginRequired = z.object({
   display: z.boolean(),
   takeover: z.boolean().default(false),
   expiresAt: text(40),
+  /** `cli`: a command (`az login`, `gh auth login`) opened the sign-in page in this computer's browser (`cliLogins`). */
+  source: z.enum(["browser", "cli"]).optional(),
+  /** The command that opened it, as the node ran it (with `source: "cli"`). */
+  command: text(200).optional(),
 });
 export type LoginRequired = z.infer<typeof LoginRequired>;
+
+/**
+ * `capabilities.cliLogins`: this computer watches a node's commands for sign-ins (C2): a sign-in code
+ * they print goes to `ROUTES.nodeDeviceCodes`, and a page they open in a browser (`BROWSER`, `xdg-open`,
+ * `open`) opens in this computer's sign-in browser and goes to `ROUTES.nodeCliLogins`.
+ */
+export const CLI_LOGINS_API = 1;
+
+/**
+ * A sign-in code a node's command printed (`ROUTES.nodeDeviceCodes`): the page to enter it on and the
+ * code, for an owner-only card in the command's conversation. The same post with `status` done or
+ * expired says how it ended when the command ended. `operation`: the command's run id.
+ */
+export const NodeDeviceCodePost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  url: text(2000).min(1),
+  code: z.string().regex(/^[A-Za-z0-9-]{4,40}$/),
+  command: text(200).min(1),
+  expiresAt: text(40).optional(),
+  status: z.enum(["pending", "done", "expired"]).default("pending"),
+});
+export type NodeDeviceCodePost = z.infer<typeof NodeDeviceCodePost>;
+
+/** A sign-in page a node's command opened (`ROUTES.nodeCliLogins`): the sign-in, as a browser tool raises it, for the command's conversation. */
+export const NodeCliLoginPost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  login: LoginRequired,
+});
+export type NodeCliLoginPost = z.infer<typeof NodeCliLoginPost>;
 
 /** What a run's computer posts when its agent waits for a sign-in (`ROUTES.runLogin`). The answer: `{decisionId}` of the card, or null when the web raises none. */
 export const RunLoginPost = LoginRequired.extend({ leaseToken: text(200).min(1) });
