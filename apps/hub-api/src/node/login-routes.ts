@@ -1,7 +1,7 @@
 /**
  * The owner's side of a sign-in card (node/logins.ts, B11): where typed values go (the computer and
- * its pinned key), and the answer, relayed to the computer. Never a password in the clear: a typed
- * answer is a box sealed in the browser for the computer.
+ * its pinned key), and the answer, relayed to the computer. Never a password or a code in the clear: a
+ * typed answer (`typed`, `code`) is a box sealed in the browser for the computer.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { accountIdOf } from "../lib/auth.js";
@@ -20,7 +20,7 @@ export async function registerLoginRoutes(app: FastifyInstance, account: (reques
 
   app.post("/api/node/logins/:messageId", async (request, reply) => {
     const parsed = LoginAnswer.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: "Answer with saved, local, done or decline, or what you typed sealed for the computer (typed)." });
+    if (!parsed.success) return reply.code(400).send({ error: "Answer with saved, local, done, check or decline, or what you typed sealed for the computer (typed, or code for the code the site asks for)." });
     const origin = typeof request.headers.origin === "string" ? request.headers.origin : undefined;
     try {
       const done = await answerLoginCard(app, account(request), (request.params as { messageId: string }).messageId, parsed.data, origin);

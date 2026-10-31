@@ -15,6 +15,7 @@ import { taskTools } from "./tools/tasks.js";
 import { projectTools } from "./tools/projects.js";
 import { contextTools } from "./tools/context.js";
 import { fileTools } from "./tools/files.js";
+import { saveFileTools } from "./tools/save-file.js";
 import { skillTools } from "./tools/skills.js";
 import { reminderTools } from "./tools/reminders.js";
 import { fetchTools } from "./tools/fetch.js";
@@ -66,6 +67,7 @@ const ALL: readonly AnyHubTool[] = [
   ...projectTools,
   ...contextTools,
   ...fileTools,
+  ...saveFileTools,
   ...skillTools,
   ...reminderTools,
   ...fetchTools,

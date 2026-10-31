@@ -6,7 +6,7 @@ import { ArrowUpRight, Check, KeyRound, LogIn, Monitor, X } from "lucide-react";
 import { useToast } from "@/components/toast";
 import { api, type NodeApprovalCard } from "@/lib/api";
 import { keptText, parseAllow, routeText, secretAnswer, targetFingerprint } from "@/lib/node-secret";
-import { loginFingerprint, loginRouteText, typedLoginAnswer } from "@/lib/node-login";
+import { codeAnswer, loginFingerprint, loginRouteText, typedLoginAnswer } from "@/lib/node-login";
 import { relative } from "@/lib/format";
 
 const WANTS: Record<string, string> = {
@@ -27,6 +27,8 @@ function wants(card: NodeApprovalCard): string {
   if (card.data.type === "post" && card.data.request) return `drafted a request to ${card.data.request.to.handle ? `@${card.data.request.to.handle}` : card.data.request.to.name} for you to send`;
   const count = Array.isArray(card.data.evidence) ? card.data.evidence.length : 0;
   if (card.data.type === "media_preview" && count > 1) return `has ${count} captures for you to check first`;
+  if (card.data.type === "login" && card.data.purpose === "human_check") return "needs you to pass a human check on your computer";
+  if (card.data.type === "login" && card.data.status === "needs_code") return "needs the code the site asks for";
   return WANTS[card.data.type ?? "tools"] ?? WANTS.tools;
 }
 
@@ -87,9 +89,10 @@ function SecretForm({ card, onDone }: { card: NodeApprovalCard; onDone: () => vo
 }
 
 /**
- * A tab on the person's computer waits for them to sign in (B11). The saved login there, signing in on
- * the computer itself, or a login typed here: encrypted in this browser for that computer (lib/node-login.ts),
- * filled into the page by the computer. Nothing typed is kept in this page after sending.
+ * A tab on the person's computer waits for them to sign in (B11), or to pass a human check there. The
+ * saved login there, signing in on the computer itself, a login typed here, or the code the site asks
+ * for: encrypted in this browser for that computer (lib/node-login.ts), filled into the page by the
+ * computer. Nothing typed is kept in this page after sending.
  */
 function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl: string | null; onDone: () => void }) {
   const toast = useToast();
@@ -105,16 +108,24 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
   const fingerprint = useQuery({ queryKey: ["node-login-key", card.id, target.data?.route.mode === "sealed" ? target.data.route.sealKey.kid : null], queryFn: () => loginFingerprint(target.data!), enabled: Boolean(target.data) });
   const computer = target.data?.computer.name ?? card.data.computer ?? "your computer";
   const site = card.data.origin ?? target.data?.origin ?? "the site";
+  const check = card.data.purpose === "human_check";
+  const asksCode = card.data.status === "needs_code";
   const send = (action: string, answer: Parameters<typeof api.answerNodeLogin>[1] | Promise<Parameters<typeof api.answerNodeLogin>[1]>) => {
     setBusy(action);
     setMessage(null);
     Promise.resolve(answer)
       .then((body) => api.answerNodeLogin(card.id, body))
       .then((done) => {
-        if (done.result.status === "signed_in") {
+        if (done.result.status === "signed_in" || done.result.status === "passed") {
           setPassword("");
           setCode("");
-          toast(`Signed in to ${site} on ${computer}. @${card.node?.slug ?? "the node"} goes on.`);
+          toast(`${done.result.status === "passed" ? `Passed the check on ${site}` : `Signed in to ${site}`} on ${computer}. @${card.node?.slug ?? "the node"} goes on.`);
+          onDone();
+        } else if (done.result.status === "needs_code") {
+          // The card comes back asking for the code, with what the site asks.
+          setPassword("");
+          setCode("");
+          setTyping(false);
           onDone();
         } else if (done.result.status === "declined") {
           toast("Not now. The work goes on without it.");
@@ -134,15 +145,32 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
   const open = nodeUrl ? `${nodeUrl}/r/${card.roomId}#m-${card.id}` : null;
   return (
     <div className="mt-3 space-y-2">
+      {asksCode ? (
+        <form
+          className="space-y-2"
+          autoComplete="off"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!target.data || !code) return;
+            send("code", codeAnswer(target.data, card, code, window.location.origin));
+          }}
+        >
+          <div className="text-[13px]">{card.data.codeHint ?? `${site} asks for a code.`}</div>
+          <input value={code} onChange={(event) => setCode(event.target.value.replace(/\s/g, ""))} inputMode="numeric" autoComplete="one-time-code" aria-label={`Code for ${site}`} placeholder="Code" className="field w-full font-mono" disabled={Boolean(busy)} />
+          <button type="submit" className="btn-primary" disabled={!code || Boolean(busy) || target.data?.route.mode !== "sealed"}>
+            <Check size={13} /> Send the code to {computer}
+          </button>
+        </form>
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        {card.data.saved ? (
+        {card.data.saved && !check && !asksCode ? (
           <button type="button" className="btn-primary" disabled={Boolean(busy)} onClick={() => send("saved", { action: "saved" })}>
             <KeyRound size={13} /> Use saved login
           </button>
         ) : null}
         {card.data.display ? (
           <button type="button" className="btn" disabled={Boolean(busy)} onClick={() => send("local", { action: "local" })}>
-            <Monitor size={13} /> Sign in on {computer}
+            <Monitor size={13} /> {check ? `Open it on ${computer}` : `Sign in on ${computer}`}
           </button>
         ) : null}
         {card.data.display || shown ? (
@@ -150,17 +178,19 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
             <Check size={13} /> I&apos;m done
           </button>
         ) : null}
-        <button type="button" className="btn" disabled={Boolean(busy)} onClick={() => setTyping((value) => !value)} aria-expanded={typing}>
-          <LogIn size={13} /> Type it here
-        </button>
+        {check || asksCode ? null : (
+          <button type="button" className="btn" disabled={Boolean(busy)} onClick={() => setTyping((value) => !value)} aria-expanded={typing}>
+            <LogIn size={13} /> Type it here
+          </button>
+        )}
         {open && card.data.takeover ? (
           <a className="btn" href={open} target="_blank" rel="noreferrer">
             Open the browser in Node <ArrowUpRight size={13} />
           </a>
         ) : null}
       </div>
-      {!card.data.display ? <div className="text-[12px] text-muted">{computer} has no screen to sign in on{card.data.takeover ? "; open the browser in Node to use it from here." : "."}</div> : null}
-      {typing ? (
+      {!card.data.display ? <div className="text-[12px] text-muted">{computer} has no screen to {check ? "show the check on" : "sign in on"}{card.data.takeover ? "; open the browser in Node to use it from here." : "."}</div> : null}
+      {typing && !check && !asksCode ? (
         <form
           className="space-y-2"
           autoComplete="off"

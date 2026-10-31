@@ -30,6 +30,7 @@ import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js"
 import { commandGate, type AccessMode, type GateAction, type OutsideZone, type SandboxStrength } from "./trust.js";
 import { busyWith, copyFor, holdFolder, releaseFolder } from "./folder-claims.js";
 import { evidenceDir } from "../evidence/files.js";
+import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 export interface JobContext {
   prisma: PrismaClient;
   job: WorkspaceJob;
@@ -282,8 +283,10 @@ export async function askPerson(
       expiresAt: new Date(Date.now() + 24 * 3600_000),
     },
   });
+  // A node's run on this server asks in its node's chat too (node/run-decisions.ts); elsewhere there is none.
+  const card = await postRunDecisionCard({ prisma: ctx.prisma }, row).catch(() => null);
   await ctx.prisma.notification.create({
-    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, urgent: true, url: "/needs-me" },
+    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, urgent: true, url: (card && cardUrl(card)) ?? "/needs-me" },
   });
   sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "pending", title: input.title, source: "ensemble" } });
   await ctx.event("needs_me", { decisionId: row.id, title: input.title });

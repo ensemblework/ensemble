@@ -66,7 +66,8 @@ export async function loginResolution(data: unknown, now = Date.now()): Promise<
   const frame = parsed.data;
   const login = waitingLogin(frame.loginId);
   if (login && !bindDecision(frame.loginId, frame.decisionId)) return { status: "failed", message: "That answer is for another card.", code: "decision" };
-  if (frame.action !== "typed") return resolveLogin(frame.loginId, frame.action);
+  if (frame.action === "check") return resolveLogin(frame.loginId, "done");
+  if (frame.action !== "typed" && frame.action !== "code") return resolveLogin(frame.loginId, frame.action);
   if (!login) return resolveLogin(frame.loginId, "done");
   try {
     const box = openTypedLogin(frame, login.origin, now);

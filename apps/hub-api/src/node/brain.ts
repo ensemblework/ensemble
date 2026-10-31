@@ -33,6 +33,7 @@ import { actsOnTheWorld, workBoard } from "./work-board.js";
 import { nodeSpaceGateway } from "./spaces.js";
 import { missionMedia, takeTurnMedia, type Media } from "./media.js";
 import { draftDisclosure, draftingTools, roomBoundTurn } from "./audience.js";
+import { checkLoginOnDone } from "./login-check.js";
 
 /** Whether this turn already made a plan (then it is not run again from the start). */
 async function madePlan(prisma: FastifyInstance["prisma"], nodeId: string, turnId: string): Promise<boolean> {
@@ -303,6 +304,8 @@ function filesOf(row: NodeMessage): Array<{ id: string; name: string }> {
 }
 
 export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps): Promise<TurnOutcome> {
+  // The owner said they finished a sign-in this node waits for: its computer checks it first (node/login-check.ts).
+  turn = await checkLoginOnDone(app, turn);
   const prisma = app.prisma;
   const node = await prisma.nodeAgent.findUnique({ where: { id: turn.nodeId } });
   if (!node || node.status !== "active" || !turn.roomId) return { status: "skipped" };

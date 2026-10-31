@@ -11,6 +11,9 @@ import { sealFingerprint, sealFor, type SealKeyInfo, type Sealed } from "@ensemb
 export type LoginTarget = {
   id: string;
   status: string;
+  purpose?: "sign_in" | "human_check";
+  /** With status `needs_code`: what the site asks for. */
+  codeHint?: string | null;
   origin: string;
   loginId: string;
   computer: { id: string; name: string; online: boolean };
@@ -21,7 +24,7 @@ export type LoginTarget = {
   ttlMs: number;
 };
 
-export type LoginAnswer = { action: "saved" | "local" | "done" | "decline" } | { action: "typed"; sealed: Sealed };
+export type LoginAnswer = { action: "saved" | "local" | "done" | "check" | "decline" } | { action: "typed" | "code"; sealed: Sealed };
 
 export type TypedLogin = { username: string; password: string; code?: string; save: boolean };
 
@@ -46,6 +49,13 @@ export async function typedLoginAnswer(target: LoginTarget, card: { id: string }
   return { action: "typed", sealed: made.sealed };
 }
 
+/** The body for `POST /api/node/logins/:id` with the code the site asks for: sealed like a typed login. */
+export async function codeAnswer(target: LoginTarget, card: { id: string }, code: string, origin: string): Promise<LoginAnswer> {
+  if (target.route.mode !== "sealed") throw new Error(loginRouteText(target, null));
+  const made = await sealFor(target.route.sealKey, { purpose: "login", deviceId: target.computer.id, decisionId: card.id, name: target.loginId, origin }, { origin: target.origin, code: code.trim() }, { ttlMs: target.ttlMs });
+  return { action: "code", sealed: made.sealed };
+}
+
 /** What a settled sign-in card says. */
 export function loginOutcomeText(data: { status?: string; origin?: string; computer?: string | null; via?: string; savedNow?: boolean; note?: string | null }): string {
   const where = `${data.origin ?? "the site"} on ${data.computer ?? "your computer"}`;
@@ -53,6 +63,7 @@ export function loginOutcomeText(data: { status?: string; origin?: string; compu
     const how = data.via === "saved" ? "with the saved login" : data.via === "typed" ? "with what you typed (encrypted for the computer)" : "on the computer";
     return `Signed in to ${where} ${how}.${data.savedNow ? " The login is saved there for next time." : ""}${data.note ? ` ${data.note}` : ""}`;
   }
+  if (data.status === "passed") return `You passed the human check on ${where}.`;
   if (data.status === "declined") return `You chose not to sign in to ${where} now.`;
   if (data.status === "expired") return `Nobody signed in to ${where} in time.`;
   if (data.status === "ended") return data.note ?? "The work that needed this sign-in ended.";

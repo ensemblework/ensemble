@@ -18,6 +18,7 @@ import { defaultSpaceName } from "../spaces/store.js";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { hubApprovalCount } from "../node/routes.js";
+import { nodeChatDecisions } from "../node/run-decisions.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -25,6 +26,12 @@ async function countOrZero(query: Promise<number>): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/** Requests the Hub's Needs me lists: the ones waiting on a card in a Node chat are answered there (node/run-decisions.ts). */
+async function hubDecisionCount(prisma: FastifyInstance["prisma"], userId: string): Promise<number> {
+  const chat = await nodeChatDecisions(prisma, userId);
+  return prisma.agentDecision.count({ where: { userId, status: "pending", ...(chat.ids.size ? { id: { notIn: [...chat.ids] } } : {}) } });
 }
 
 export async function viewRoutes(app: FastifyInstance): Promise<void> {
@@ -36,7 +43,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
     const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
-      countOrZero(prisma.agentDecision.count({ where: { userId, status: "pending" } })),
+      countOrZero(hubDecisionCount(prisma, userId)),
       loadSettings(prisma, userId),
       prisma.syncState.findMany({ where: { userId } }),
       undoState(prisma, userId).catch(() => ({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null })),
