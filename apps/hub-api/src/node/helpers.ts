@@ -272,7 +272,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
     defineTool({
       name: "node_create_group",
       area: "tasks",
-      description: "Make a crew (a group chat of your owner and some of their nodes, one of them its lead), when your owner asks for one. Include yourself if you should be in it.",
+      description: "Make a crew (a group chat of your owner and some of their nodes, one of them its lead), when your owner asks for one. Include yourself if you should be in it. Every member must exist already: propose the missing ones with node_create first.",
       input: NewCrew,
       isWrite: false,
       risk: "low",
@@ -318,7 +318,12 @@ async function crewMembers(prisma: PrismaClient, owner: string, input: z.infer<t
   if (await roomTitleTaken(prisma, owner, title)) throw new ToolBlockedError(`Your owner already has a crew or room called “${title}”.`, "Pick another name.");
   const nodes = await prisma.nodeAgent.findMany({ where: { userId: owner, parentNodeId: null, slug: { in: [...new Set(input.members)] } } });
   const missing = [...new Set(input.members)].filter((slug) => !nodes.some((row) => row.slug === slug));
-  if (missing.length) throw new ToolBlockedError(`Your owner has no node ${missing.map((slug) => `@${slug}`).join(", ")}.`, "Use their nodes' handles, or make the node first (node_create).");
+  if (missing.length) {
+    throw new ToolBlockedError(
+      `Your owner has no node ${missing.map((slug) => `@${slug}`).join(", ")} yet.`,
+      `Propose ${missing.length === 1 ? "it" : "each of them"} first with node_create (one call per node, with a role and a charter); once your owner has made ${missing.length === 1 ? "it" : "them"} (you are told), call node_create_group again.`,
+    );
+  }
   const lead = nodes.find((row) => row.slug === input.lead) ?? nodes.find((row) => row.role === "manager") ?? nodes[0]!;
   return { nodes, lead };
 }

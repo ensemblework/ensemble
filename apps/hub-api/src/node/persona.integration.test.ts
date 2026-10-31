@@ -116,24 +116,31 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   assert.match(persona, /Simple work you do yourself: look things up, browse and take screenshots/, "an unedited template charter reads as the template's current one");
   assert.match(persona, /your own hands on their paired computer \(a browser, a terminal, files, administrator commands with their approval\)/);
   for (const row of [
-    /Facts, prices, news, “look up”, “compare”: hub_web_search first/,
-    /“Screenshot of” or “show me” a site or page: browser_open, then browser_screenshot \(the viewport; for “the table”/,
+    /Facts, news, “look up”: hub_web_search first/,
+    /Prices, “compare” stores, “where to buy”: browser_shop \(product, stores, location\) in one call; reply with a Markdown table/,
+    /“Screenshot of” or “show me” a page: browser_view \(url; focus: what was asked[^\n]*\), one call per screenshot/,
+    /Several steps on a site \(a dashboard, a console, a form\): web_task with the goal/,
+    /A sign-in or a human check[^\n]*: browser_login_needed \(your owner does it on a card, from their phone too; never ask for passwords or codes\)\. They say they did it: browser_login_check/,
+    /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /terminal, htop or a command's output: computer_terminal_screenshot/,
-    /write a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file from the computer into this chat: node_share_file/,
+    /a report \(\.md\): computer_run or computer_files_write yourself, in your own folder unless your owner names one\. A file into this chat: node_share_file/,
     /administrator rights: computer_sudo \(your owner types their password on a card in this chat; you never see it\)/,
     /Writing or changing code in a repository[^\n]*whenever your owner names an agent[^\n]*: an agent session/,
-    /Screenshots and files you capture appear with your reply by themselves\. Never say something is attached unless a tool said it will appear/,
+    /What you capture shows with your reply by itself: never say something is attached unless a tool said it will appear/,
     /When a tool says it is waiting for your owner \(a card in this chat\), stop and say nothing about it/,
-    /human check[^\n]*browser_login_needed \(reason: human check\)[^\n]*US stores: United States/,
     /Asked for a table: write a Markdown table/,
+    /Lasting preferences and facts your owner tells you \(“only use the MAI model”, “always …”\): node_remember at once/,
+    /node_crew_add asks them on a card \(another node, or you to a crew they name\)/,
+    /A node or crew they ask for: node_create \(each new node\), then node_create_group/,
   ]) assert.match(persona, row);
+  assert.doesNotMatch(persona, /Skills for this request/, "no skill for a hello");
   assert.match(persona, /It runs GitHub Copilot · gpt-6\.1-sol · medium thinking · 1M context \(the run profile “Copilot”\) unless your owner names an agent, model, thinking level or context\./, "it can say which model its agent runs will use");
   assert.match(persona, /Your owner's other nodes, not in a crew with you \(node_crew_add asks your owner\): @builder \(engineer\), @manager \(manager\), @researcher \(researcher\), @tester \(tester\)\./);
   assert.ok(direct.tools.includes("node_crew_add"));
 
   assert.match(lead.persona, /node_plan, with this crew's members only/);
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
-  assert.ok(lead.persona.length < 8_000 && persona.length < 7_000, "shorter than before (6,806 and 8,897 characters)");
+  assert.ok(lead.persona.length < 8_000 && persona.length < 6_800, "as short as before (6,479 and 7,892 characters before the web routing rows)");
 });
 
 test("a node's own run profile is what its sessions use and what it says they use; the run card names the agent, model, thinking and context", async () => {
@@ -155,4 +162,33 @@ test("a node's own run profile is what its sessions use and what it says they us
   assert.deepEqual([job.provider, job.model, job.reasoningEffort], ["claude-code", "claude-opus-4.8", "high"], "not the default profile's Copilot");
   const card = json(await mira.inject({ method: "GET", url: `/api/node/rooms/${room.id}/messages` })).messages.find((row: { kind: string }) => row.kind === "run");
   assert.deepEqual([card.data.engine, card.data.model, card.data.effort, card.data.context], ["claude-code", "claude-opus-4.8", "high", "default"]);
+});
+
+test("a conversation turn offers the advanced browser and capture tools only for app or video work, and the skills its words call for", async (t) => {
+  const { ADVANCED_TOOLS } = await import("./skills.js");
+  const akash = await person("Akash");
+  await laptopFor(akash);
+  const { room } = await createNode(akash, "assistant");
+  await say(akash, room.id, "hello");
+  const plain = seen.at(-1)!;
+  await say(akash, room.id, "test the sign-up page of my web app and record a video of it");
+  const testing = seen.at(-1)!;
+  t.diagnostic(`tools: a DM turn ${plain.tools.length} (${plain.tools.length + ADVANCED_TOOLS.size} with the advanced ones), a DM turn about testing a web app ${testing.tools.length}`);
+  for (const name of ADVANCED_TOOLS) {
+    assert.ok(!plain.tools.includes(name), `${name} only for app or video work`);
+    assert.ok(testing.tools.includes(name), `${name} when testing a web app`);
+  }
+  for (const name of ["browser_open", "browser_snapshot", "browser_screenshot", "browser_login_needed", "web_task", "computer_run", "computer_terminal_screenshot"]) assert.ok(plain.tools.includes(name), `${name} always`);
+
+  // A question about what it did keeps the tools its last reply used.
+  script = (turn) => (turn.transcript.includes("open the dev tools console") ? [{ name: "browser_console", arguments: { tab: "t1" } }] : []);
+  await say(akash, room.id, "open the dev tools console");
+  await say(akash, room.id, "and what did it say?");
+  assert.ok(seen.at(-1)!.tools.includes("browser_console"), "the conversation's last tools stay");
+
+  await say(akash, room.id, "log in to my Azure console and check yesterday's resource usage");
+  const azure = seen.at(-1)!.persona;
+  assert.match(azure, /Skills for this request:\nMulti-step web work:\n- Dashboards, consoles and forms: web_task/);
+  assert.match(azure, /Sign-in and human checks:\n- A page that needs your owner's account: browser_login_needed/);
+  assert.doesNotMatch(azure, /Research and facts:/, "at most two skills");
 });

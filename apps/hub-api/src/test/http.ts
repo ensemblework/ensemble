@@ -24,6 +24,8 @@ export async function createHttpHarness(options: BuildAppOptions = {}) {
   process.env.REDIS_URL = "memory://http-tests";
   process.env.ENSEMBLE_INTERNAL_TOKEN = "http-test-internal-token-not-for-production";
   process.env.ENSEMBLE_LOG_LEVEL = "silent";
+  // A node turn's checklist call to the model (node/deliverables.ts) is off unless a test turns it on: scripted models answer every call.
+  process.env.ENSEMBLE_NODE_CHECKLIST_MODEL ??= "off";
   for (const bucket of ["LOGIN", "SIGNUP", "EMAIL", "MODEL", "TOKEN", "DEVICE", "CLI_START", "CLI_TOKEN", "MCP", "LINK_READ", "LINK_WRITE"]) {
     process.env[`ENSEMBLE_RATE_${bucket}_LIMIT`] = "0";
   }

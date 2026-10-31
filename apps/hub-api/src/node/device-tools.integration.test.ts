@@ -461,7 +461,7 @@ test("what the node captures comes with its reply by itself; its own choice with
     return { status: 200, body: { ok: true, summary: "Captured.", evidence: [{ id, name: `shot-${shots.length}.png`, kind: "screenshot", held: false, local: false }], refused: [] } };
   });
   try {
-    const shoot = { name: "capture_screenshot", arguments: { target: "web", url: "https://example.com/" } };
+    const shoot = { name: "browser_screenshot", arguments: { tab: "t1" } };
     script = (turn) => (turn.transcript.includes("screenshot of example") ? { calls: [shoot, shoot], then: "Here is example.com." } : { text: "ok" });
     await say(mira, room.id, "send me a screenshot of example.com");
     const reply = (await replies(mira, room.id, node.id)).at(-1)!;

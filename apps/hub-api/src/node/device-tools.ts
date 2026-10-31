@@ -609,7 +609,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
  * they capture is the node's own evidence and comes with its reply; a capture the computer holds
  * waits for the owner's preview card.
  */
-function captureTools(scope: NodeScope): AnyHubTool[] {
+export function captureTools(scope: NodeScope): AnyHubTool[] {
   const { prisma, node } = scope;
   const specs = [...BROWSER_TOOLS, ...CAPTURE_TOOLS] as ReadonlyArray<{ name: string; description: string; input: z.ZodTypeAny }>;
   return specs.map((spec) =>
