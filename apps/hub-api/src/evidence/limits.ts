@@ -1,21 +1,21 @@
 /**
  * The rules every attached file meets, on the computer and again on the server (docs/32 §7): which
- * names are never attached (keys, certificates, `.env` files, shell histories), how large each kind
- * may be, and what a file really is, sniffed from its bytes rather than taken from its name. Active
- * formats (HTML, SVG, XML, JavaScript) are served only as downloads or inside a sandbox.
+ * names are never attached (keys, certificates, `.env` files, shell histories), how large a file may
+ * be, and what a file really is, sniffed from its bytes rather than taken from its name. Active formats
+ * (HTML, SVG, XML, JavaScript) are served only as downloads, inside a sandbox.
  */
 import { createHash } from "node:crypto";
 import type { EvidenceKind } from "../remote/contract.js";
 
 const MB = 1024 * 1024;
 
-/** Images and other files up to 20 MB; videos and traces up to 100 MB. */
-export function evidenceLimit(kind: EvidenceKind): number {
-  return kind === "video" || kind === "trace" ? 100 * MB : 20 * MB;
-}
-
-/** The largest file of any kind. */
+/** The largest file of any kind: what a node shares (a zipped folder too) and what a run attaches. */
 export const EVIDENCE_MAX_BYTES = 100 * MB;
+
+/** One cap for every kind: a picture, a report, a video, an archive. */
+export function evidenceLimit(_kind: EvidenceKind): number {
+  return EVIDENCE_MAX_BYTES;
+}
 
 /** The most files one run attaches: a brake on a looping agent, not on real work. */
 export const MAX_EVIDENCE_PER_JOB = 100;
@@ -105,9 +105,27 @@ function parsesAsJson(bytes: Uint8Array): boolean {
   }
 }
 
+const extensionOf = (name: string) => /\.([a-z0-9]{1,8})$/i.exec(name)?.[1]?.toLowerCase() ?? "";
+
+/** Formats that are ZIP files inside: their own type by name, else `application/zip`. */
+const ZIPPED_FORMATS: Record<string, string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  odt: "application/vnd.oasis.opendocument.text",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
+  odp: "application/vnd.oasis.opendocument.presentation",
+  epub: "application/epub+zip",
+  jar: "application/java-archive",
+};
+
+/** The older Office formats (one compound file each), by name. */
+const COMPOUND_FORMATS: Record<string, string> = { doc: "application/msword", xls: "application/vnd.ms-excel", ppt: "application/vnd.ms-powerpoint", msg: "application/vnd.ms-outlook" };
+
 /**
  * What a file is, from its first bytes. Text is told apart by its first markup (HTML, SVG, XML) or by
- * parsing as JSON; a name only chooses among plain text types, and a `.js` name makes it active.
+ * parsing as JSON; a name only chooses among plain text types (a `.js` name makes it active), among
+ * the formats that are ZIP files inside (`.docx`, `.xlsx`, `.pptx`, …) and among the older Office ones.
  */
 export function sniffMime(bytes: Uint8Array, name = ""): string {
   if (startsWith(bytes, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "image/png";
@@ -120,12 +138,25 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
     if (brand === "avif" || brand === "avis") return "image/avif";
     if (brand === "heic" || brand === "heix" || brand === "mif1") return "image/heic";
     if (brand === "qt  ") return "video/quicktime";
+    if (brand === "m4a " || brand === "m4b ") return "audio/mp4";
     return "video/mp4";
   }
   if (startsWith(bytes, 0x1a, 0x45, 0xdf, 0xa3)) return ascii(bytes, 0, 64).includes("webm") ? "video/webm" : "video/x-matroska";
   if (ascii(bytes, 0, 5) === "%PDF-") return "application/pdf";
-  if (startsWith(bytes, 0x50, 0x4b, 0x03, 0x04) || startsWith(bytes, 0x50, 0x4b, 0x05, 0x06)) return "application/zip";
+  if (startsWith(bytes, 0x50, 0x4b, 0x03, 0x04) || startsWith(bytes, 0x50, 0x4b, 0x05, 0x06)) return ZIPPED_FORMATS[extensionOf(name)] ?? "application/zip";
+  if (startsWith(bytes, 0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1)) return COMPOUND_FORMATS[extensionOf(name)] ?? "application/octet-stream";
   if (startsWith(bytes, 0x1f, 0x8b)) return "application/gzip";
+  if (startsWith(bytes, 0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c)) return "application/x-7z-compressed";
+  if (ascii(bytes, 0, 6) === "Rar!\x1a\x07") return "application/vnd.rar";
+  if (startsWith(bytes, 0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00)) return "application/x-xz";
+  if (startsWith(bytes, 0x28, 0xb5, 0x2f, 0xfd)) return "application/zstd";
+  if (ascii(bytes, 0, 3) === "BZh" && bytes.length > 4 && bytes[3]! >= 0x31 && bytes[3]! <= 0x39) return "application/x-bzip2";
+  if (bytes.length >= 512 && ascii(bytes, 257, 262) === "ustar") return "application/x-tar";
+  if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 12) === "WAVE") return "audio/wav";
+  if (ascii(bytes, 0, 4) === "OggS") return "audio/ogg";
+  if (ascii(bytes, 0, 4) === "fLaC") return "audio/flac";
+  // An MP3 starts with its tags, or (untagged) with a frame's sync bits, which only its name tells from other bytes.
+  if (ascii(bytes, 0, 3) === "ID3" || (extensionOf(name) === "mp3" && bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)) return "audio/mpeg";
   if (!looksLikeText(bytes)) return "application/octet-stream";
   const text = Buffer.from(bytes.subarray(0, 4096)).toString("utf8").replace(/^\uFEFF/, "");
   const start = text.trimStart().slice(0, 1024).toLowerCase();

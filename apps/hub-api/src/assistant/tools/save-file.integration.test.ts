@@ -26,7 +26,7 @@ const { runAssistantTurn } = await import("../agent.js");
 const { getTool } = await import("../registry.js");
 const { makePdf } = await import("../../files/testing.js");
 const { maxFileBytes } = await import("../../files/store.js");
-const { fetchPublicFile, privateAddress, setSaveFileNetworkForTests, sizeText } = await import("./save-file.js");
+const { fetchPublicFile, privateAddress, saveFromAttachment, setSaveFileNetworkForTests, sizeText } = await import("./save-file.js");
 
 const PAPER = makePdf(["Attention is all you need"]);
 const OTHER_PAPER = makePdf(["Deep residual learning"]);
@@ -209,6 +209,26 @@ test("evidence the account owns is saved once; another account's, a held one and
   await assert.rejects(save(mira, { evidence: held }), /held on the computer for your owner to preview first/);
   const local = await evidence(mira.id, "local.pdf", PAPER, "application/pdf", { local: true, bytes: null });
   await assert.rejects(save(mira, { evidence: local }), /stayed on the computer/);
+});
+
+test("a file the owner attached is the same file in their own Files, and copied once into another space", async () => {
+  const mira = await person("Mira");
+  const ada = await person("Ada");
+  const upload = await mira.inject({ method: "POST", url: "/api/documents", payload: { filename: "Q3 notes.pdf", mediaType: "application/pdf", dataBase64: PAPER.toString("base64"), summarize: false } });
+  assert.equal(upload.statusCode, 201, upload.body);
+  const fileId = json(upload).file.id as string;
+  const same = await saveFromAttachment(h.prisma, mira.id, mira.id, { file: fileId });
+  assert.deepEqual([same.file.id, same.existing], [fileId, true]);
+  const created = await mira.inject({ method: "POST", url: "/api/spaces", payload: { name: "Lab", templateId: "semester-desk", settings: { mode: "fresh" } } });
+  assert.equal(created.statusCode, 201, created.body);
+  const space = json(created).space.id as string;
+  const copied = await saveFromAttachment(h.prisma, space, mira.id, { file: fileId });
+  assert.equal(copied.existing, false);
+  assert.notEqual(copied.file.id, fileId);
+  const row = await h.prisma.document.findUniqueOrThrow({ where: { id: copied.file.id } });
+  assert.deepEqual([row.userId, row.filename, row.sha256, (row.source as { externalId?: string }).externalId], [space, "Q3 notes.pdf", same.file.sha256, `attachment:${fileId}`]);
+  assert.equal((await saveFromAttachment(h.prisma, space, mira.id, { file: fileId })).file.id, copied.file.id, "copied once");
+  await assert.rejects(saveFromAttachment(h.prisma, ada.id, ada.id, { file: fileId }), /no longer in your owner's Files/);
 });
 
 test("in the Hub it follows the write policy: held for Apply under preview, saved at once when immediate", async () => {

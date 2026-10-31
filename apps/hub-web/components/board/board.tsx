@@ -153,6 +153,8 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   // Most urgent first by default; "manual" keeps the order cards were dragged into.
   const [order, setOrder] = usePersistentState<"priority" | "manual">("ensemble.board.order", "priority");
   const people = useSpacePeople();
+  // Filtering by nodes and crews is offered once the board has a task with one.
+  const withNodes = owner === "node" || (tasks.data?.tasks ?? []).some((task) => task.owner === "node");
   const [columns, setColumns] = useState<Record<ColumnId, string[]>>({
     proposed: [],
     todo: [],
@@ -489,6 +491,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           <option value="me">Me</option>
           <option value="agent">Agent</option>
           <option value="unassigned">Unassigned</option>
+          {withNodes ? <option value="node">Nodes and crews</option> : null}
         </select>
         <select
           value={priority}

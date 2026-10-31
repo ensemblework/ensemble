@@ -22,6 +22,9 @@
  * /api/engine/tools and answered by /api/engine/tool too: what they capture
  * is the run's evidence (hub-api src/evidence/capture-tools.ts, docs/25 §10).
  *
+ * Its `initialize` answer carries `instructions` (`instructionsFor`): Ensemble is reached through
+ * these tools and the brief, never by signing in to Ensemble's web app in a browser.
+ *
  * In both it offers secret_http: a web request made by this computer's Ensemble with one of the
  * person's saved secrets put in where {{NAME}} appears, only to the destinations they allowed for it,
  * the answer coming back with the value hidden (hub-api src/credentials/secret-http.ts, docs/35 §8.7).
@@ -187,6 +190,17 @@ const SECRET_HTTP_TOOL = {
   },
 };
 
+/**
+ * What the agent is told about this server when it starts (MCP `instructions`): Ensemble is reached
+ * through these tools and the brief, never by signing in to Ensemble's web app in a browser.
+ */
+export function instructionsFor(env = process.env) {
+  const never = "You already act in Ensemble through this server: never open Ensemble's web app (app.ensemblework.com, test.ensemblework.com or a board, task or page link) in a browser to sign in or to read the person's work, and never ask the person to sign in to it.";
+  if (env.ENSEMBLE_ASSISTANT_TURN) return `This server's tools are the person's Ensemble: their tasks, boards, pages, files and settings, in the space this chat works in. ${never}`;
+  if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search. ${never}`;
+  return `Ensemble gave you the work in your brief: ask the person with ask_person, report with report_result and attach_evidence. What you need from their Ensemble (tasks, boards, pages) is in the brief, or ask for it with ask_person. ${never}`;
+}
+
 export function toolsFor(env = process.env) {
   return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, SECRET_HTTP_TOOL];
 }
@@ -281,7 +295,7 @@ async function assistantTools() {
 
 async function handleAssistant(message) {
   if (message.method === "initialize") {
-    send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "ensemble", version: "1" } } });
+    send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "ensemble", version: "1" }, instructions: instructionsFor() } });
   } else if (message.method === "tools/list") {
     send({ id: message.id, result: { tools: await assistantTools() } });
   } else if (message.method === "tools/call") {
@@ -331,7 +345,7 @@ export function heartbeat(message, write = send, every = HEARTBEAT_MS) {
 
 async function handle(message) {
   if (message.method === "initialize") {
-    send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" } } });
+    send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" }, instructions: instructionsFor() } });
   } else if (message.method === "tools/list") {
     send({ id: message.id, result: { tools: [...toolsFor(), ...(await runCaptureTools())] } });
   } else if (message.method === "tools/call") {

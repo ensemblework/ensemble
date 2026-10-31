@@ -11,9 +11,10 @@ import { PriorityTag, cx } from "../ui";
 import { LabelChips } from "../task/labels";
 import { colorFor } from "@/lib/presence";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
+import { NodeOwnerMark } from "../task/node-owner";
 
 /**
- * Who does it, as a small pill: "Me", "Agent", or someone's initials in a shared space. "Me" is
+ * Who does it, as a small pill: "Me", "Agent", a node ("@tester") or crew, or someone's initials in a shared space. "Me" is
  * relative: whoever is looking sees their own tasks as Me and everyone else's as initials.
  */
 function OwnerMark({ task }: { task: TaskRecord }) {
@@ -25,6 +26,7 @@ function OwnerMark({ task }: { task: TaskRecord }) {
       </span>
     );
   }
+  if (task.owner === "node") return <NodeOwnerMark task={task} />;
   if (task.owner === "unassigned") {
     return <span title="Nobody yet" className="inline-flex h-[18px] items-center rounded-full border border-dashed border-line-strong px-1.5 text-[11px] leading-none text-faint">Unassigned</span>;
   }

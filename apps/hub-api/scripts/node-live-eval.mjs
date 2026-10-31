@@ -52,6 +52,9 @@ const CASES = [
   { ask: "can you run htop on my computer's terminal and send screenshot ?", tools: [["computer_terminal_screenshot"]], media: 1, look: "A terminal showing htop (CPU bars, memory, a process list)." },
   { ask: "what is the current price of a Nintendo Switch 2 at Best Buy and Target in the US? short answer with links", tools: [["browser_shop", "hub_web_search", "browser_view", "browser_extract"]], says: /\$\d/ },
   { ask: "can you login in my azure console and browse it to see my last day resource usage ?", tools: [["browser_login_needed", "web_task"]], card: "login" },
+  // Round 3: a live terminal the owner watches, and a CLI sign-in whose page or code reaches the owner on a card.
+  { ask: "open a terminal on my computer that I can watch live, and start htop in it", tools: [["terminal_open"], ["live_view"]], card: "live" },
+  { ask: "sign in to the Azure CLI on my computer (az login), I will do the sign in", tools: [["computer_run"]], card: /^(login|device_code)/ },
 ];
 
 /**
@@ -212,7 +215,8 @@ async function runCase(cookie, room, node, item, index) {
   const chips = replies.flatMap((row) => (Array.isArray(row.data?.tools) ? row.data.tools : []));
   const used = new Set(chips.filter((tool) => !["failed", "blocked", "error"].includes(String(tool.state))).map((tool) => tool.name));
   const media = fresh.filter((row) => row.authorKind === "node").flatMap((row) => (Array.isArray(row.data?.media) ? row.data.media.map((item) => ({ ...item, messageId: row.id })) : []));
-  const cards = fresh.filter((row) => row.kind === "approval").map((row) => `${row.data?.type}:${row.data?.status}`);
+  // Owner-only cards: approvals, and the live and device-code cards (posted as text with a type).
+  const cards = fresh.filter((row) => row.kind === "approval" || ["live", "device_code"].includes(row.data?.type)).map((row) => `${row.data?.type}:${row.data?.status}`);
   // Every picture and file, to look at.
   const saved = [];
   for (const [n, item] of media.entries()) {
@@ -232,12 +236,22 @@ async function runCase(cookie, room, node, item, index) {
   if (item.table && !/^\s*\|.*\|\s*$/m.test(text)) problems.push("no table");
   if (item.says && !item.says.test(text)) problems.push(`reply lacks ${item.says}`);
   if (item.file && !files.some((row) => item.file.test(row.filename ?? row.name ?? ""))) problems.push("no file in Ensemble Files");
-  if (item.card && !cards.some((card) => card.startsWith(item.card))) problems.push(`no ${item.card} card`);
+  if (item.card && !cards.some((card) => (item.card instanceof RegExp ? item.card.test(card) : card.startsWith(item.card)))) problems.push(`no ${item.card} card`);
   const failedLooks = looks.filter((look) => look.pass === false);
   if (failedLooks.length) problems.push(`pictures wrong ${failedLooks.length}/${looks.length}: ${failedLooks.map((look) => `${look.path.split("/").at(-1)} (${look.why})`).join("; ")}`);
   if (CHATTER.test(text)) problems.push("asks for a password or approval in words");
   // A broken Ensemble link in the reply.
   for (const match of text.matchAll(/ensemble:\/\/file\/([0-9a-f-]{36})/g)) if (!files.some((row) => row.id === match[1])) problems.push(`broken link ${match[0]}`);
+  // A sign-in waits for its owner: with NODE_EVAL_HOLD_SIGNIN_MS its card must still wait after that long (a closed tab once ended it at 60 s).
+  const holdMs = Number(process.env.NODE_EVAL_HOLD_SIGNIN_MS ?? 0);
+  const waiting = fresh.filter((row) => row.kind === "approval" && row.data?.type === "login" && row.data?.status === "pending");
+  if (holdMs > 0 && waiting.length) {
+    await sleep(holdMs);
+    for (const card of waiting) {
+      const now = (await messages(cookie, room.id)).find((row) => row.id === card.id);
+      if (now?.data?.status !== "pending") problems.push(`sign-in card ${now?.data?.status ?? "gone"} after ${Math.round(holdMs / 1000)} s${now?.data?.note ? ` (${now.data.note})` : ""}`);
+    }
+  }
   // Sign-in cards are left waiting for no one: decline them.
   for (const card of fresh.filter((row) => row.kind === "approval" && row.data?.type === "login" && row.data?.status === "pending")) {
     await call(`/api/node/approvals/${card.id}`, { method: "POST", cookie, body: { decision: "discard" } }).catch(() => undefined);

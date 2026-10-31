@@ -3,6 +3,7 @@
 import { api } from "@/lib/api";
 import { taskDoc } from "@/lib/export/items";
 import { OWNER_LABEL } from "@/lib/format";
+import { nodeOwnerText } from "@/lib/node-owner";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { ExportMenu, type ExportExtra } from "../export-menu";
 
@@ -17,7 +18,7 @@ export function TaskExportMenu({ taskId, extra }: { taskId: string; extra?: Expo
         const [task, page] = await Promise.all([api.task(taskId), api.page(taskId).catch(() => null)]);
         const record = task.task;
         const personId = taskPersonId(record, space.ownerId) ?? space.me;
-        const owner = record.owner !== "me" ? (OWNER_LABEL[record.owner] ?? record.owner) : (space.byId.get(personId ?? "")?.name ?? "Me");
+        const owner = record.owner === "node" ? nodeOwnerText(record) : record.owner !== "me" ? (OWNER_LABEL[record.owner] ?? record.owner) : (space.byId.get(personId ?? "")?.name ?? "Me");
         return taskDoc(record, page, owner);
       }}
     />

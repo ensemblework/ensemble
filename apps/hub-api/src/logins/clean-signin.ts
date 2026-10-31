@@ -302,43 +302,76 @@ export class CleanSignIn extends EventEmitter {
 
   /** The owner's input, on the page shown. */
   async input(event: OwnerInput): Promise<void> {
+    await this.knowSize();
+    await Promise.all(this.dispatch(event));
+  }
+
+  /** The page shown's size, for where a tap lands: from its frames, else asked once. */
+  private async knowSize(): Promise<void> {
     const page = this.current;
-    if (!page || page.closed || event.t === "ping") return;
-    if (event.t === "text") return page.insertText(event.text);
+    if (page && !page.closed && !this.sizes.has(page.targetId)) {
+      const size = await page.viewport().catch(() => null);
+      if (size?.width && size.height) this.sizes.set(page.targetId, size);
+    }
+  }
+
+  /**
+   * Several inputs at once: every DevTools command is sent at once, in order, and then waited for.
+   * Chromium applies them in the order they were sent, so a burst of keys costs one round trip, not one each.
+   */
+  async inputs(events: readonly OwnerInput[]): Promise<void> {
+    // Sent before this returns when the page's size is known (a takeover's always is): input that comes next goes after it.
+    const page = this.current;
+    if (page && !this.sizes.has(page.targetId) && events.some((event) => event.t === "mouse" || event.t === "wheel")) await this.knowSize();
+    const sent = events.flatMap((event) => this.dispatch(event));
+    const results = await Promise.allSettled(sent);
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+  }
+
+  /** Sends one input's commands now, in order, without waiting for them; their answers. */
+  private dispatch(event: OwnerInput): Array<Promise<unknown>> {
+    const page = this.current;
+    if (!page || page.closed || event.t === "ping") return [];
+    if (event.t === "text") return [page.insertText(event.text)];
     let keyboard = this.keyboards.get(page.targetId);
     if (!keyboard) {
       keyboard = new CleanKeyboard(this.setup.spec.platform);
       this.keyboards.set(page.targetId, keyboard);
     }
     if (event.t === "key") {
-      await keyboard.press(page, event.type, event.key);
+      const { events, insert } = keyboard.events(event.type, event.key);
+      const sent: Array<Promise<unknown>> = [];
+      if (insert) sent.push(page.insertText(insert));
+      for (const item of events) sent.push(page.key(item.type, item));
       if (event.key === "Enter") this.soon(1_500);
-      return;
+      return sent;
     }
-    const size = this.sizes.get(page.targetId) ?? (await page.viewport());
+    const size = this.sizes.get(page.targetId) ?? { width: 1280, height: 800 };
     const x = Math.round(event.x * (size.width || 1280));
     const y = Math.round(event.y * (size.height || 800));
     const modifiers = keyboard.modifiersHeld();
     if (event.t === "wheel") {
-      await page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers });
       this.pointer = { x, y };
-      return page.wheel(x, y, event.dx, event.dy);
+      return [page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers }), page.wheel(x, y, event.dx, event.dy)];
     }
     const bit = event.button === "right" ? 2 : event.button === "middle" ? 4 : 1;
     if (event.type === "move") {
       this.pointer = { x, y };
-      return page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers });
+      return [page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers })];
     }
-    if (!this.pointer || this.pointer.x !== x || this.pointer.y !== y) await page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers });
+    const sent: Array<Promise<unknown>> = [];
+    if (!this.pointer || this.pointer.x !== x || this.pointer.y !== y) sent.push(page.mouse("mouseMoved", x, y, { buttons: this.buttons, modifiers }));
     this.pointer = { x, y };
     if (event.type === "down") {
       this.buttons |= bit;
-      await page.mouse("mousePressed", x, y, { button: event.button, clickCount: event.clicks, buttons: this.buttons, modifiers });
+      sent.push(page.mouse("mousePressed", x, y, { button: event.button, clickCount: event.clicks, buttons: this.buttons, modifiers }));
     } else {
       this.buttons &= ~bit;
-      await page.mouse("mouseReleased", x, y, { button: event.button, clickCount: event.clicks, buttons: this.buttons, modifiers });
+      sent.push(page.mouse("mouseReleased", x, y, { button: event.button, clickCount: event.clicks, buttons: this.buttons, modifiers }));
       this.soon(1_500);
     }
+    return sent;
   }
 
   /** Looks in `ms`, or sooner when a look is already due sooner. */

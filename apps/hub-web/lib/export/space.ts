@@ -10,6 +10,7 @@ import { parseDiagram } from "@ensemble/block-diagrams";
 
 import { api, type TaskRecord } from "../api";
 import { OWNER_LABEL, PRIORITY, STATUS, plural } from "../format";
+import { nodeOwnerText } from "../node-owner";
 import { toMarkdown } from "./document";
 import { fileSlug } from "./formats";
 import { meetingDoc, pageDoc, skillDoc, taskDoc, type WriteTime } from "./items";
@@ -105,6 +106,7 @@ export async function exportSpace(options: {
     report("tasks", 0, 1, "Reading tasks");
     const { tasks } = await api.tasks();
     const ownerText = (task: TaskRecord) => {
+      if (task.owner === "node") return nodeOwnerText(task);
       if (task.owner !== "me") return OWNER_LABEL[task.owner] ?? task.owner;
       const id = task.assigneeAccountId ?? options.people?.ownerId;
       return (id && options.people?.names.get(id)) || "Me";

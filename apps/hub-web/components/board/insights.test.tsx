@@ -38,6 +38,7 @@ test("Me follows the viewer and assignment, including legacy shared tasks", () =
   assert.equal(ownerBucket(task({ assigneeAccountId: "member" }), who), "me");
   assert.equal(ownerBucket(task({ owner: "agent", assigneeAccountId: "member" }), who), "agent");
   assert.equal(ownerBucket(task({ owner: "unassigned" }), who), "unassigned");
+  assert.equal(ownerBucket(task({ owner: "node", assigneeNodeId: "tester" }), who), "agent", "a node or crew counts with the agent");
   assert.equal(ownerBucket(task(), { me: null, ownerId: null }), "team");
   assert.equal(matchesFocus(task({ status: "done", assigneeAccountId: "member" }), { kind: "owner", value: "me" }, who, now), false);
 });

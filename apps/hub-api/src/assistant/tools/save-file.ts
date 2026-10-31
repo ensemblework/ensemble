@@ -3,8 +3,10 @@
  * guarded like plots/ssrf.ts: http(s) only, every address and every redirect checked against private
  * networks, the Files size cap, documents, images and media only, never a web page), from evidence the
  * account owns (a capture, a download a node's browser made), or, for a node, from a path on its owner's
- * computer (shared as evidence first, node/device-tools.ts). The file is saved like an upload
- * (files/store.ts `saveFile`), with where it came from, and its link is `ensemble://file/<id>`.
+ * computer (shared as evidence first, node/device-tools.ts) or a file its owner attached in the chat
+ * (already in the owner's Files: found, tagged with the project, or copied into another space). The file
+ * is saved like an upload (files/store.ts `saveFile`), with where it came from, and its link is
+ * `ensemble://file/<id>`.
  * The Hub's assistant follows the person's write policy; a node's owner-started turn saves at once.
  */
 import { createHash } from "node:crypto";
@@ -17,6 +19,7 @@ import { z } from "zod";
 import { FILE_FORMATS, fileExtension, fileFormat, fileTypeProblem, type FileRecord } from "@ensemble/shared-types";
 import type { PrismaClient } from "@prisma/client";
 import { evidenceContent } from "../../evidence/store.js";
+import { ORIGINAL_SELECT, originalBytes } from "../../files/originals.js";
 import { assertNewFile, FILE_SELECT, fileRecord, maxFileBytes, safeFilename, saveFile } from "../../files/store.js";
 import { requireVerifiedUser } from "../../lib/hosted-access.js";
 import { HostedLimitError } from "../../lib/hosted-limits.js";
@@ -319,6 +322,31 @@ export async function saveFromEvidence(prisma: PrismaClient, userId: string, acc
   return { file: await keep(prisma, userId, { filename, mediaType: row.mime, bytes, source: { app: "evidence", label, externalId } }, input.projectId), existing: false };
 }
 
+/**
+ * A file the owner attached in the chat, which is already in their own Files: in that space it is the
+ * same file (tagged with the project when one is named); in another space it is copied there once.
+ */
+export async function saveFromAttachment(prisma: PrismaClient, userId: string, accountId: string, input: { file: string; name?: string; projectId?: string }): Promise<Saved> {
+  const row = await prisma.document.findFirst({ where: { id: input.file, userId: accountId, deletedAt: null }, select: { ...FILE_SELECT, ...ORIGINAL_SELECT, projectIds: true, manualTags: true } });
+  if (!row) throw new SaveFileError("That attachment is no longer in your owner's Files.");
+  if (userId === accountId) {
+    const tags = await projectTags(prisma, userId, input.projectId);
+    if (tags && !row.projectIds.includes(tags.projectIds[0]!)) {
+      const projectIds = [...row.projectIds, ...tags.projectIds];
+      const manual = row.manualTags && typeof row.manualTags === "object" && !Array.isArray(row.manualTags) ? (row.manualTags as Record<string, unknown>) : {};
+      await prisma.document.updateMany({ where: { id: row.id, userId }, data: { projectIds, manualTags: { ...manual, projectIds } } });
+    }
+    return { file: fileRecord(row), existing: true };
+  }
+  const externalId = `attachment:${row.id}`;
+  const kept = await prisma.document.findFirst({ where: { userId, deletedAt: null, source: { path: ["externalId"], equals: externalId } }, select: FILE_SELECT });
+  if (kept) return { file: fileRecord(kept), existing: true };
+  const bytes = await originalBytes(row);
+  const filename = safeFilename(input.name?.trim() || row.filename);
+  assertNewFile(filename, bytes.byteLength);
+  return { file: await keep(prisma, userId, { filename, mediaType: row.mediaType, bytes, source: { app: "node", label: "Ensemble Node chat", externalId } }, input.projectId), existing: false };
+}
+
 const Url = z.string().trim().min(1).max(2000).describe("A public http(s) link straight to the file (a PDF, a document, an image). Not a web page.");
 const Evidence = z.string().uuid().describe("An evidence id a tool returned (browser_fetch, a screenshot, node_share_file).");
 const Name = z.string().trim().min(1).max(200).describe("The file's name in Files, e.g. “Smith et al. 2024 - CVPR.pdf”. Default: the name it came with.");
@@ -383,11 +411,14 @@ export function nodeSaveFileTool(options: {
   computerFields: { computer: z.ZodTypeAny; folder: z.ZodTypeAny };
   /** Brings the file in as evidence; or the result to give the node instead (it waits for its owner, or is held). `input` is the whole call, to make again. */
   share: (ctx: ToolContext, input: { path: string; folder?: string; computer?: string; name?: string; projectId?: string }) => Promise<{ evidence: string } | ToolResult>;
+  /** The owner's file an attachment names (node/attachments.ts `findAttachment`). */
+  attachment: (ctx: ToolContext, ref: string) => Promise<{ id: string }>;
 }): AnyHubTool {
   const NodeInput = z
     .object({
       url: Url.optional(),
       evidence: Evidence.optional(),
+      attachment: z.string().trim().min(1).max(300).optional().describe("A file your owner attached in this chat: its name (q3.pdf) or id."),
       path: z.string().min(1).max(1000).optional().describe("A file on your owner's computer (with folder; omit folder for your own folder there), e.g. report.pdf."),
       folder: options.computerFields.folder,
       computer: options.computerFields.computer,
@@ -396,13 +427,13 @@ export function nodeSaveFileTool(options: {
     })
     .strict()
     .superRefine((input, ctx) => {
-      one(input, ["url", "evidence", "path"], ctx);
+      one(input, ["url", "evidence", "path", "attachment"], ctx);
       if ((input.folder !== undefined || input.computer !== undefined) && input.path === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "folder and computer go with path." });
     });
   return defineTool({
     name: "hub_save_file",
     area: "context",
-    description: `${DESCRIPTION} Or path: a file on your owner's computer (after computer_run downloaded it, say); it is brought in and saved.`,
+    description: `${DESCRIPTION} Or path: a file on your owner's computer (after computer_run downloaded it, say); it is brought in and saved. Or attachment: a file your owner attached in this chat (its name, {attachment: "q3.pdf"}); it is already in their Files, so this gives its link, tags it with projectId, or copies it into another space.`,
     input: NodeInput,
     isWrite: true,
     immediate: true,
@@ -410,6 +441,11 @@ export function nodeSaveFileTool(options: {
     outsideTransaction: true,
     async run(ctx, input) {
       const values = input as z.infer<typeof NodeInput>;
+      if (values.attachment !== undefined) {
+        await requireVerifiedUser(ctx.userId);
+        const found = await options.attachment(ctx, values.attachment);
+        return savedResult(await saveFromAttachment(ctx.prisma, ctx.userId, account(ctx), { file: found.id, name: values.name, projectId: values.projectId }));
+      }
       if (values.path === undefined) return runSave(ctx, values);
       const { url: _url, evidence: _evidence, ...call } = values;
       const shared = await options.share(ctx, { ...call, path: values.path, folder: values.folder as string | undefined, computer: values.computer as string | undefined });

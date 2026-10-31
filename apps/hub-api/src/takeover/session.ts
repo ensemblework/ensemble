@@ -24,11 +24,12 @@ import { loadSealKey } from "../credentials/seal-key.js";
 import { appendLedger } from "../lib/ledger.js";
 import { env } from "../config.js";
 import { remoteApiBase, type HostedClient } from "../remote/client.js";
-import { TakeoverEnd, TakeoverInput, TakeoverStart, type ChannelMessage } from "../remote/contract.js";
+import { TAKEOVER_LONGEST_MS, TakeoverControl, TakeoverEnd, TakeoverExtend, TakeoverInput, TakeoverStart, type ChannelMessage } from "../remote/contract.js";
 import { loadSettings } from "../remote/store.js";
 import type { CleanFrame, CleanSignIn } from "../logins/clean-signin.js";
 import { closeCleanSignIn, loginEvents, markLoginControlled, openCleanSignIn, resolveLogin, waitingLogin, type LoginOutcome } from "../logins/requests.js";
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, type ChannelKeys } from "./channel.js";
+import { controlTerminalView, endAllTerminalViews, endTerminalView, extendTerminalView, isTerminalView, startTerminalView, terminalViewInput } from "./terminal-view.js";
 
 /** Nobody sent input or a ping for this long: the takeover ends. */
 export const TAKEOVER_IDLE_MS = 60_000;
@@ -68,6 +69,9 @@ type Session = {
   clean: CleanSignIn | null;
   /** The tab was not sensitive before: it is given back when the takeover ends. */
   marked: boolean;
+  /** A live view of a node's tab (`capabilities.live`): `watch` shows it while the node works and ignores input; `control` pauses the node on it. */
+  live: boolean;
+  view: "watch" | "control";
   inSeq: number;
   outSeq: number;
   refused: number;
@@ -79,6 +83,10 @@ type Session = {
   sending: boolean;
   queue: Promise<void>;
   timers: NodeJS.Timeout[];
+  /** When it started, and its end (`takeover.extend` moves it, never past an hour after the start). */
+  startedAt: number;
+  endsAt: number;
+  deadline: NodeJS.Timeout | null;
   ended: boolean;
 };
 
@@ -87,9 +95,9 @@ const sessions = new Map<string, Session>();
 const ledger = (action: string, payload: Record<string, string | number | boolean | null>) => appendLedger({ userId: env.ENSEMBLE_DEV_USER_ID, actor: "me", action, payload }).catch(() => undefined);
 
 /** What a takeover did, for tests and the computer's own checks: counts only, never what was typed or shown. */
-export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number; mode: "clean" | "tab" } | null {
+export function takeoverStats(id: string): { inSeq: number; outSeq: number; refused: number; applied: number; frames: number; mode: "clean" | "tab"; endsAt: string } | null {
   const session = sessions.get(id);
-  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames, mode: session.mode } : null;
+  return session ? { inSeq: session.inSeq, outSeq: session.outSeq, refused: session.refused, applied: session.applied, frames: session.frames, mode: session.mode, endsAt: new Date(session.endsAt).toISOString() } : null;
 }
 
 /** The clean browser a takeover shows, for tests. */
@@ -112,7 +120,7 @@ loginEvents.on("cleanClosed", (event: { loginId: string; reason: string }) => {
 });
 
 /** The secret in a start box, checked: for this computer, its key, this takeover and tab, a site it trusts, unexpired. */
-function openStartBox(frame: TakeoverStart, now = Date.now()): { secret: Buffer; nonce: string; expiresAt: string } {
+export function openStartBox(frame: TakeoverStart, now = Date.now()): { secret: Buffer; nonce: string; expiresAt: string } {
   const key = loadSealKey();
   if (!key) throw new SealError("key", "This computer has no key for the takeover. Update Ensemble here, or pair it again.");
   const settings = loadSettings();
@@ -188,6 +196,8 @@ async function applyKey(session: Session, event: Extract<InputEvent, { t: "key" 
 const heldKeys = new WeakMap<Session, Set<string>>();
 
 async function apply(session: Session, event: InputEvent): Promise<void> {
+  // Watching: the node keeps the tab; only control takes the owner's input.
+  if (session.view === "watch") return;
   if (session.clean) return session.clean.input(event);
   const page = session.page;
   const { width, height } = session.viewport;
@@ -214,9 +224,15 @@ async function apply(session: Session, event: InputEvent): Promise<void> {
  * job, which owns the tab). Returns the answer for the web.
  */
 export async function startTakeover(client: HostedClient, frame: TakeoverStart, runOperation: (hostedJobId: string) => string | null): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (frame.kind === "terminal") return startTerminalView(client, frame, openStartBox, takeoverMaxMs());
   if (sessions.has(frame.takeoverId)) return { status: 409, body: { error: "That takeover has started already." } };
+  // The owner watching the tab live makes way for its sign-in: they sign in in its remote view instead.
+  const watching = frame.loginId ? [...sessions.values()].find((session) => session.tab === frame.tab && session.live && session.view === "watch" && !session.ended) : undefined;
+  if (watching) await endTakeover(watching.id, { done: false, reason: "sign_in", tell: true });
   if ([...sessions.values()].some((session) => session.tab === frame.tab)) return { status: 409, body: { error: "Someone already controls that tab." } };
   const broker = browserBroker();
+  // A tab whose browser is restarting, or that is being opened again after its browser closed, is waited for.
+  await broker.whenTab(frame.tab, 20_000);
   let tab;
   try {
     tab = broker.ownerTab(frame.tab);
@@ -229,9 +245,12 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
   } else if (frame.jobId) {
     const operation = runOperation(frame.jobId);
     if (!operation || tab.operation !== operation) return { status: 404, body: { error: "That tab is not this run's." } };
+  } else if (frame.operation) {
+    if (tab.operation !== frame.operation) return { status: 404, body: { error: "That tab is not the node's." } };
   } else {
     return { status: 400, body: { error: "Name the sign-in or the run whose tab to open." } };
   }
+  const watch = frame.view === "watch" && !frame.loginId;
   let box;
   try {
     box = openStartBox(frame);
@@ -253,8 +272,9 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
           note = `Ensemble's sign-in browser could not start here (${error instanceof Error ? error.message.split("\n")[0]!.slice(0, 200) : "unknown"}), so this shows the node's own browser: some sites (Google) may refuse to sign in there.`;
         }
       }
-      const marked = !tab.sensitive;
-      broker.markControlled(frame.tab, true);
+      // Watching leaves the tab to the node; control pauses it for the node, as a sign-in does.
+      const marked = !watch && !tab.sensitive;
+      if (!watch) broker.markControlled(frame.tab, true);
       if (marked) await broker.markSensitive(frame.tab, true);
       const cdp = clean ? null : await tab.context.newCDPSession(tab.page);
       const session: Session = {
@@ -268,6 +288,8 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         cdp,
         clean,
         marked,
+        live: !frame.loginId && !frame.jobId,
+        view: watch ? "watch" : "control",
         inSeq: 0,
         outSeq: 0,
         refused: 0,
@@ -279,20 +301,22 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         sending: false,
         queue: Promise.resolve(),
         timers: [],
+        startedAt: Date.now(),
+        endsAt: 0,
+        deadline: null,
         ended: false,
       };
       sessions.set(session.id, session);
       if (frame.loginId && !clean) markLoginControlled(frame.loginId, true);
       tab.page.once("close", () => void endTakeover(session.id, { done: false, reason: "tab_closed", tell: true }));
       const endsAt = Math.min(Date.parse(frame.endsAt) || Infinity, Date.now() + takeoverMaxMs());
-      const deadline = setTimeout(() => void endTakeover(session.id, { done: false, reason: "expired", tell: true }), Math.max(0, endsAt - Date.now()));
+      endAt(session, endsAt);
       const idle = setInterval(() => {
         if (Date.now() - session.lastInput > TAKEOVER_IDLE_MS) void endTakeover(session.id, { done: false, reason: "idle", tell: true });
         else broker.keepTab(session.tab, TAKEOVER_IDLE_MS * 5);
       }, Math.min(10_000, TAKEOVER_IDLE_MS / 2));
-      deadline.unref();
       idle.unref();
-      session.timers.push(deadline, idle);
+      session.timers.push(idle);
       broker.keepTab(session.tab, TAKEOVER_IDLE_MS * 5);
       try {
         if (clean) {
@@ -319,14 +343,38 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         await endTakeover(session.id, { done: false, reason: "failed", tell: false });
         throw error;
       }
-      await ledger("takeover.started", { takeoverId: session.id, tab: session.tab, login: Boolean(session.loginId), mode: session.mode });
-      return { status: 200, body: { started: true, width: session.viewport.width, height: session.viewport.height, endsAt: new Date(endsAt).toISOString(), mode: session.mode, ...(note ? { note } : {}) } };
+      await ledger("takeover.started", { takeoverId: session.id, tab: session.tab, login: Boolean(session.loginId), mode: session.mode, view: session.view });
+      return { status: 200, body: { started: true, width: session.viewport.width, height: session.viewport.height, endsAt: new Date(endsAt).toISOString(), mode: session.mode, view: session.view, ...(note ? { note } : {}) } };
     });
   } catch (error) {
     box.secret.fill(0);
     if (error instanceof SealError) return { status: error.statusCode, body: { error: error.message, code: `seal_${error.code}` } };
     return { status: 500, body: { error: error instanceof Error ? error.message.split("\n")[0]!.slice(0, 300) : "The takeover could not start." } };
   }
+}
+
+/** Sets when a takeover ends on its time. */
+function endAt(session: Session, endsAt: number): void {
+  if (session.deadline) clearTimeout(session.deadline);
+  session.endsAt = endsAt;
+  session.deadline = setTimeout(() => void endTakeover(session.id, { done: false, reason: "expired", tell: true }), Math.max(0, endsAt - Date.now()));
+  session.deadline.unref();
+}
+
+/** `takeover.extend` (takeover 3): the owner asked for more time; never past an hour after it started. A terminal view too. */
+export function takeoverExtend(data: unknown): { endsAt: string } | null {
+  const parsed = TakeoverExtend.safeParse(data);
+  if (!parsed.success) return null;
+  if (extendTerminalView(parsed.data.takeoverId, parsed.data.endsAt)) return { endsAt: parsed.data.endsAt };
+  const session = sessions.get(parsed.data.takeoverId);
+  const wanted = Date.parse(parsed.data.endsAt);
+  if (!session || session.ended || !Number.isFinite(wanted)) return null;
+  const endsAt = Math.min(wanted, session.startedAt + TAKEOVER_LONGEST_MS);
+  if (endsAt > session.endsAt) {
+    endAt(session, endsAt);
+    void ledger("takeover.extended", { takeoverId: session.id, endsAt: new Date(endsAt).toISOString() });
+  }
+  return { endsAt: new Date(session.endsAt).toISOString() };
 }
 
 /** Whether a sign-in's takeover uses the clean browser (`ENSEMBLE_CLEAN_SIGNIN=off` shows the tab itself). */
@@ -338,6 +386,7 @@ function cleanSignInOn(source: NodeJS.ProcessEnv = process.env): boolean {
 export function takeoverInput(data: unknown): void {
   const parsed = TakeoverInput.safeParse(data);
   if (!parsed.success) return;
+  if (terminalViewInput(parsed.data)) return;
   const session = sessions.get(parsed.data.takeoverId);
   if (!session || session.ended) return;
   const message: ChannelMessage = { seq: parsed.data.seq, iv: parsed.data.iv, ct: parsed.data.ct };
@@ -359,6 +408,15 @@ export function takeoverInput(data: unknown): void {
   }
   session.inSeq = message.seq;
   session.lastInput = Date.now();
+  if (session.clean) {
+    // The clean browser takes them at once, in order (one round trip for a burst of keys); they are counted as they land.
+    const landed = session.clean.inputs(events).catch(() => undefined);
+    session.queue = session.queue.then(async () => {
+      await landed;
+      session.applied += events.length;
+    });
+    return;
+  }
   session.queue = session.queue.then(async () => {
     for (const event of events) {
       if (session.ended) return;
@@ -374,11 +432,13 @@ export function takeoverInput(data: unknown): void {
  * is. `tell`: this computer ended it itself, so the relay hears why.
  */
 export async function endTakeover(id: string, input: { done: boolean; reason: string; tell: boolean }): Promise<{ ended: boolean; signedIn: boolean | null; message?: string }> {
+  if (isTerminalView(id)) return endTerminalView(id, input);
   const session = sessions.get(id);
   if (!session || session.ended) return { ended: false, signedIn: null };
   session.ended = true;
   sessions.delete(id);
   for (const timer of session.timers) clearTimeout(timer);
+  if (session.deadline) clearTimeout(session.deadline);
   await session.queue.catch(() => undefined);
   for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
   if (session.cdp) {
@@ -408,6 +468,58 @@ export async function endTakeover(id: string, input: { done: boolean; reason: st
 /** Ends every takeover: this computer stopped taking work from the web. */
 export async function endAllTakeovers(reason: string): Promise<void> {
   for (const id of [...sessions.keys()]) await endTakeover(id, { done: false, reason, tell: true });
+  await endAllTerminalViews(reason);
+}
+
+/**
+ * The owner of a live view takes control of the node's tab (it is paused for the node, as in a
+ * sign-in's takeover, and their input is applied) or hands it back. Null when there is no such view.
+ */
+export async function controlTakeover(id: string, on: boolean): Promise<"watch" | "control" | null> {
+  const terminal = controlTerminalView(id, on);
+  if (terminal) return terminal;
+  const session = sessions.get(id);
+  if (!session || session.ended) return null;
+  // A sign-in or a run's takeover is always in control.
+  if (!session.live) return "control";
+  await session.queue.catch(() => undefined);
+  const broker = browserBroker();
+  if (on && session.view === "watch") {
+    broker.markControlled(session.tab, true);
+    let sensitive = true;
+    try {
+      sensitive = broker.ownerTab(session.tab).sensitive;
+    } catch {
+      sensitive = true;
+    }
+    if (!sensitive) {
+      await broker.markSensitive(session.tab, true);
+      session.marked = true;
+    }
+    session.view = "control";
+  } else if (!on && session.view === "control") {
+    for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
+    heldKeys.delete(session);
+    broker.markControlled(session.tab, false);
+    if (session.marked) await broker.markSensitive(session.tab, false).catch(() => undefined);
+    session.marked = false;
+    session.view = "watch";
+  }
+  session.lastInput = Date.now();
+  await ledger("takeover.control", { takeoverId: id, on });
+  return session.view;
+}
+
+/** `takeover.control` from the event stream (takeover 3): answered with the view now. */
+export async function answerTakeoverControl(client: HostedClient, data: unknown): Promise<void> {
+  const parsed = TakeoverControl.safeParse(data);
+  if (!parsed.success) {
+    const id = (data as { id?: unknown } | null)?.id;
+    if (typeof id === "string" && id) await client.answerCode(id, { status: 400, body: { error: "That could not be read. Update Ensemble on this computer." } });
+    return;
+  }
+  const view = await controlTakeover(parsed.data.takeoverId, parsed.data.on);
+  await client.answerCode(parsed.data.id, view ? { status: 200, body: { view } } : { status: 410, body: { error: "That live view has ended." } });
 }
 
 /** `takeover.start` from the event stream: answered once. */

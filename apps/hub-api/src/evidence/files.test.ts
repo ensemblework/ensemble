@@ -105,7 +105,7 @@ test("a file holding a saved secret, a file past its size and a kind that does n
 
   writeFileSync(join(work, "big.png"), PNG);
   truncateSync(join(work, "big.png"), evidenceLimit("screenshot") + 1);
-  await assert.rejects(read(join(work, "big.png")), /at most 20 MB/);
+  await assert.rejects(read(join(work, "big.png")), /at most 100 MB/);
 
   writeFileSync(join(work, "notes.png"), "just text\n");
   await assert.rejects(read(join(work, "notes.png")), /must be an image/);
@@ -145,6 +145,13 @@ test("types come from the bytes, and active formats are marked", () => {
   assert.equal(sniffMime(Buffer.from("console.log(1)"), "app.js"), "text/javascript");
   assert.equal(sniffMime(Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42")])), "video/mp4");
   assert.equal(sniffMime(Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2])), "application/zip");
+  // ZIP and compound files inside: the name picks among their own types; other archives and audio by their bytes.
+  assert.equal(sniffMime(Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2]), "Budget.XLSX"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.equal(sniffMime(Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2]), "notes.txt"), "application/zip");
+  assert.equal(sniffMime(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0]), "old.doc"), "application/msword");
+  assert.equal(sniffMime(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4])), "application/x-7z-compressed");
+  assert.equal(sniffMime(Buffer.concat([Buffer.from("ID3"), Buffer.from([4, 0, 0, 0])]), "song.mp3"), "audio/mpeg");
+  assert.equal(sniffMime(Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypM4A ")])), "audio/mp4");
   for (const mime of ["text/html", "image/svg+xml", "application/xml", "text/javascript"]) assert.equal(isActiveMime(mime), true, mime);
   for (const mime of ["image/png", "text/plain", "application/json", "video/mp4"]) assert.equal(isActiveMime(mime), false, mime);
 });

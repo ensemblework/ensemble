@@ -1,5 +1,5 @@
 Map of Ensemble:
-- Today /today: tasks, reminders, calendar, brief and profile lists. Board /board: todos. Recap /recap.
+- Today /today: tasks, reminders, calendar, brief and profile lists. Board /board: todos; custom boards /board?board=<id> (hub_how_to boards). Recap /recap.
 - Documents: /pages/<id>, /tasks/<id>, meeting notes /meetings. Files /files/<id>.
 - Context /context: People, Projects and profile lists. Projects /projects/<id>.
 - Diagrams /diagrams; charts/datasets /plots; personal instructions /skills.

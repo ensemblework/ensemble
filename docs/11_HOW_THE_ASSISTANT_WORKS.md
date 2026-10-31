@@ -64,6 +64,7 @@ App content (MCP tools included) is read only when the person asks for that app'
 ### Playbook routing
 
 - `routePlaybooks` (`skills/index.ts`) scores playbooks by `match` words (2–3) and mention kinds (2); the open path adds 1, which only breaks ties: a page alone loads nothing. At most **two** are preloaded, as guides in the message's context. The instructions name every playbook; `hub_how_to`'s description says what each covers, and `hub_how_to` with `map` returns `map.md`.
+- On a custom board (the surface's `customBoard` filter), a message that loads `tasks` also loads `boards`, so "move this to Done" moves the board's card.
 - A message naming an app connected in this space also loads `apps` as a third. Names come from that turn's connections (`appNames`: catalog name, id, vendor, parts of a combined name like "Jira & Confluence"); everyday-word names ("Box", "Close", "Front") count only capitalised. A meeting-notes request with a meeting-notes app connected loads it too.
 - `hub_how_to` loads another playbook and adds its tools for the rest of the loop.
 - A simple todo request gets a one-line recipe and five tools (`hub_how_to`, `hub_create_tasks`, `hub_list_tasks`, `hub_list_people`, `hub_list_projects`). Otherwise the turn shows the nine `CORE_TOOLS` (`skills/index.ts`) plus the loaded playbooks' tools. Ensemble Code uses the same routing plus its own tools.
@@ -123,7 +124,7 @@ Tool names per request: [34](34_ASSISTANT_ACTIONS.md).
 
 ### 8.1 Pages, records, files and skills
 
-Writes use real IDs, revisions and schema validation; record tools cover implemented fields only, and arrays documented as complete lists replace rather than append. Original-file edits are format-specific and hash-guarded ([32](32_FILES.md)). Profile layouts differ from the widgets view ([34 §3](34_ASSISTANT_ACTIONS.md#3-tiles-and-layouts)). Personal skills use versioned routes ([04](04_MODULE_SKILL_FORGE.md)).
+Writes use real IDs, revisions and schema validation; record tools cover implemented fields only, and arrays documented as complete lists replace rather than append. Custom boards (`tools/boards.ts`) share `pages/boards.ts` with `routes/page-boards.ts`, so a tool checks and changes a board exactly as the Board screen does; a board is named by id, pasted link or title, and its changes have no Undo (deleting one always waits for Apply). Original-file edits are format-specific and hash-guarded ([32](32_FILES.md)). Profile layouts differ from the widgets view ([34 §3](34_ASSISTANT_ACTIONS.md#3-tiles-and-layouts)). Personal skills use versioned routes ([04](04_MODULE_SKILL_FORGE.md)).
 
 ### 8.2 Connected apps
 
@@ -164,6 +165,6 @@ Add one only for a distinct request area, keep the recipe small, and let `hub_ho
 
 ## 11. Limits and evaluation
 
-The assistant acts only through offered tools. It cannot see pixels or other applications, run arbitrary recurring routines, understand scanned, audio or video input, edit every original format, or change security settings.
+The assistant acts only through offered tools. It cannot see pixels or other applications, run arbitrary recurring routines, understand scanned, audio or video input, edit every original format, or change security settings. What it, a node and a node's agent runs can and cannot do in each area of Ensemble: [39](39_ENSEMBLE_TOOLS_AUDIT.md).
 
 `apps/hub-api/scripts/assistant-eval.ts` is an opt-in real-model evaluation over synthetic workspaces: it reports input, output and cached tokens and applies held changes in its isolated database. Keep live-provider evidence in PRs.

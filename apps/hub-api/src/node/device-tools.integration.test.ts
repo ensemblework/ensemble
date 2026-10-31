@@ -11,7 +11,7 @@
  * The computer is simulated: it hears frames on its event stream and answers with its device key.
  */
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
@@ -542,6 +542,92 @@ test("a terminal screenshot and a shared file: their requests, the screen as tex
   }
 });
 
+test("a file the owner attached goes onto the computer (node_save_attachment) and into Files (hub_save_file with attachment); a folder is shared zipped", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 2, nodeFiles: 1 });
+  const { node, room } = await createNode(mira);
+  const csv = Buffer.from("region,sales\nnorth,10\nsouth,12\n");
+  const uploadedFile = await mira.inject({ method: "POST", url: "/api/documents", payload: { filename: "sales.csv", mediaType: "text/csv", dataBase64: csv.toString("base64"), summarize: false } });
+  assert.equal(uploadedFile.statusCode, 201, uploadedFile.body);
+  const fileId = json(uploadedFile).file.id as string;
+  const tom = await person("Tom");
+  const tomKey = (await laptopFor(tom, "unattended", { nodeTools: 2, nodeFiles: 1 })).key;
+  const fetched: Array<{ status: number; bytes: Buffer }> = [];
+  const device = computer(laptop.id, key, async (data) => {
+    if (data.tool === "files" && data.action === "save") {
+      const url = `/api/devices/self/node-files/${data.downloadId}`;
+      fetched.push({ status: (await tomKey.inject({ method: "GET", url })).statusCode, bytes: Buffer.alloc(0) });
+      const got = await key.inject({ method: "GET", url });
+      fetched.push({ status: got.statusCode, bytes: got.rawPayload });
+      fetched.push({ status: (await key.inject({ method: "GET", url })).statusCode, bytes: Buffer.alloc(0) });
+      return { status: 200, body: { path: data.path, bytes: got.rawPayload.length, created: true } };
+    }
+    if (data.tool === "files" && data.action === "share") {
+      const id = await uploaded(mira.id, node.id, laptop.id, "file", "results.zip", "application/zip");
+      return { status: 200, body: { ok: true, summary: "Shared results as results.zip (3 files, 2 KB). Left out: node_modules (dependencies or caches).", evidence: [{ id, name: "results.zip", kind: "file", held: false, local: false }], refused: [] } };
+    }
+    return { status: 200, body: { exitCode: 0, output: "ok\n" } };
+  });
+  try {
+    script = (turn) => (turn.transcript.includes("put it on my computer") ? { calls: [{ name: "node_save_attachment", arguments: { attachment: "Sales.CSV", path: "data/" } }], then: "It is in data/sales.csv." } : { text: "ok" });
+    const sent = await mira.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "here are the numbers, put it on my computer", files: [fileId] } });
+    assert.equal(sent.statusCode, 201, sent.body);
+    await settleTurns();
+    assert.match(seen[0]!.transcript, /put it on my computer \[attached “sales\.csv”; onto the computer: node_save_attachment\]/, "said where the file is, not in the persona");
+    assert.ok(seen[0]!.tools.includes("node_save_attachment"));
+    const asked = device.heard[0]!;
+    assert.deepEqual([asked.tool, asked.action, asked.folder, asked.path, asked.size, asked.overwrite], ["files", "save", undefined, "data/sales.csv", csv.length, false]);
+    assert.equal(asked.sha256, createHash("sha256").update(csv).digest("hex"));
+    assert.deepEqual(fetched.map((row) => row.status), [410, 200, 410], "only that computer, only once");
+    assert.deepEqual(fetched[1]!.bytes, csv);
+    let tools = (await replies(mira, room.id, node.id)).at(-1)!.data.tools as Array<{ summary: string }>;
+    assert.match(tools[0]!.summary, /Saved data\/sales\.csv in your own folder on Mira's laptop: “sales\.csv”/);
+    assert.ok(await h.prisma.auditLedger.findFirst({ where: { userId: mira.id, action: "node.file_download" } }));
+
+    // A name that was not attached here: told which were.
+    script = (turn) => (turn.transcript.includes("the budget") ? { calls: [{ name: "node_save_attachment", arguments: { attachment: "budget.xlsx" } }], then: "Not attached." } : { text: "ok" });
+    await say(mira, room.id, "and the budget");
+    tools = (await replies(mira, room.id, node.id)).at(-1)!.data.tools as Array<{ summary: string }>;
+    assert.match(tools[0]!.summary, /No file called “budget\.xlsx” is attached in this chat[\s\S]*Attached here: “sales\.csv”/);
+
+    // Into Ensemble Files: it is already there; a project tags it.
+    const project = await h.prisma.project.create({ data: { userId: mira.id, name: "Q3 review" } });
+    script = (turn) => (turn.transcript.includes("my files") ? { calls: [{ name: "hub_save_file", arguments: { attachment: "sales.csv", projectId: project.id } }], then: "It is in your Files." } : { text: "ok" });
+    await say(mira, room.id, "save the attachment to my files under the Q3 project");
+    tools = (await replies(mira, room.id, node.id)).at(-1)!.data.tools as Array<{ summary: string }>;
+    assert.match(tools[0]!.summary, /“sales\.csv” \(\d+ bytes\) is already in Ensemble Files/);
+    assert.deepEqual((await h.prisma.document.findUniqueOrThrow({ where: { id: fileId } })).projectIds, [project.id]);
+    assert.equal(await h.prisma.document.count({ where: { userId: mira.id, deletedAt: null } }), 1, "no copy in the same space");
+
+    // A folder: shared as one zip, which comes with the reply as a file.
+    script = (turn) => (turn.transcript.includes("results folder") ? { calls: [{ name: "node_share_file", arguments: { path: "results" } }], then: "Here it is." } : { text: "ok" });
+    await say(mira, room.id, "send me the results folder");
+    const reply = (await replies(mira, room.id, node.id)).at(-1)!;
+    assert.deepEqual(reply.data.media.map((item: Record<string, unknown>) => [item.kind, item.name, item.mime]), [["file", "results.zip", "application/zip"]]);
+    assert.match(reply.data.tools[0].summary, /Left out: node_modules/);
+
+    // An older computer: asked to update before anything is sent; a folder there gets the same hint.
+    const heard = device.heard.length;
+    await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { folders: ["app"], engines: ["claude-code"], nodeTools: 2 } } });
+    script = (turn) => (turn.transcript.includes("once more") ? { calls: [{ name: "node_save_attachment", arguments: { attachment: "sales.csv" } }], then: "Could not." } : { text: "ok" });
+    await say(mira, room.id, "once more");
+    tools = (await replies(mira, room.id, node.id)).at(-1)!.data.tools as Array<{ summary: string }>;
+    assert.match(tools[0]!.summary, /Update Ensemble on Mira's laptop \(`ensemble update`, or the desktop app's update\) to put files from this chat on it/);
+    assert.equal(device.heard.length, heard);
+  } finally {
+    device.stop();
+  }
+  const old = computer(laptop.id, key, () => ({ status: 403, body: { error: "/home/mira/ensemble/nodes/x/results is not a regular file." } }));
+  try {
+    script = (turn) => (turn.transcript.includes("folder again") ? { calls: [{ name: "node_share_file", arguments: { path: "results" } }], then: "Could not." } : { text: "ok" });
+    await say(mira, room.id, "the folder again");
+    const tools = (await replies(mira, room.id, node.id)).at(-1)!.data.tools as Array<{ summary: string }>;
+    assert.match(tools[0]!.summary, /Update Ensemble on Mira's laptop .* to share a folder: it is zipped there[\s\S]*zip -r results\.zip results/);
+  } finally {
+    old.stop();
+  }
+});
+
 test("unattended calls say so; the computer's refusal is the node's answer; an older computer is asked to update", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira, "unattended");
@@ -616,6 +702,66 @@ test("a long command runs on in the background and wakes its node once when it e
     const tomKey = await h.asToken(other, "device");
     await h.prisma.device.create({ data: { userId: other.id, name: "Tom's PC", platform: "linux", tokenId: tomKey.id, lastSeenAt: new Date() } });
     assert.equal((await tomKey.inject({ method: "POST", url: `/api/devices/self/tool-runs/${runId}/output`, payload: { seq: 3, text: "x" } })).statusCode, 410);
+  } finally {
+    device.stop();
+  }
+});
+
+test("a CLI sign-in runs 15 minutes in the background; the code it prints is on one owner-only card in the chat (the node may say it here), which follows the command's end; no other computer posts there, and no code in the ledger", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 2, cliLogins: 1 });
+  const { node, room } = await createNode(mira);
+  const url = "https://microsoft.com/devicelogin";
+  const code = "FWQZ8N3XP";
+  let runId = "";
+  const posts: number[] = [];
+  const device = computer(laptop.id, key, async (data) => {
+    runId = String(data.runId);
+    // The computer posts the code it found as it answers.
+    const posted = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, operationId: String(data.operationId), url, code, command: String(data.command) } });
+    posts.push(posted.statusCode);
+    return { status: 202, body: { runId, background: true, output: `To sign in, use a web browser to open the page ${url} and enter the code ${code} to authenticate.\n`, deviceCodes: [{ url, code }] } };
+  });
+  try {
+    script = (turn) => (turn.transcript.includes("sign in to azure") ? { calls: [{ name: "computer_run", arguments: { command: "az login --use-device-code" } }], then: "The code is on the card." } : { text: "ok" });
+    await say(mira, room.id, "sign in to azure on my computer");
+    assert.equal(device.heard[0]!.background, true, "a sign-in runs in the background");
+    assert.equal(device.heard[0]!.timeoutSec, 900, "for 15 minutes");
+    assert.deepEqual(posts, [200]);
+    const summary = (await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!;
+    assert.match(summary, /up to 15 minutes/);
+    assert.match(summary, new RegExp(`sign-in code for ${url}: ${code}\\. Your owner got it on a card in this chat`));
+    assert.match(summary, /you may say the code if they ask; never repeat it in a room with other people/);
+    const cards = (await rows(mira, room.id)).filter((row) => row.data.type === "device_code");
+    assert.equal(cards.length, 1);
+    const card = cards[0]!;
+    assert.equal(card.kind, "text");
+    assert.equal(card.authorNodeId, node.id);
+    assert.deepEqual(
+      { ...card.data, expiresAt: typeof card.data.expiresAt },
+      { type: "device_code", status: "pending", url, code, command: "az login --use-device-code", computer: "Mira's laptop", deviceId: laptop.id, operation: runId, expiresAt: "string" },
+    );
+    assert.ok(Math.abs(Date.parse(card.data.expiresAt) - Date.now() - 15 * 60_000) < 60_000, "good for 15 minutes");
+    assert.match(card.body, new RegExp(`open ${url} and enter the code ${code}`));
+    const stored = await h.prisma.nodeMessage.findUniqueOrThrow({ where: { id: card.id } });
+    assert.deepEqual(stored.visibleTo, [mira.id], "only the owner sees it");
+
+    // The same code again is the same card; the command's end settles it.
+    const again = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code, command: "az login --use-device-code" } });
+    assert.equal(json(again).messageId, card.id);
+    const ended = await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code, command: "az login --use-device-code", status: "done" } });
+    assert.equal(ended.statusCode, 200);
+    assert.equal((await rows(mira, room.id)).find((row) => row.id === card.id)!.data.status, "done");
+
+    // Another account's computer, or another node's name, posts nothing here.
+    const tom = await person("Tom");
+    const tomKey = await h.asToken(tom, "device");
+    await h.prisma.device.create({ data: { userId: tom.id, name: "Tom's PC", platform: "linux", tokenId: tomKey.id, lastSeenAt: new Date() } });
+    assert.equal((await tomKey.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: runId, url, code: "ABCD1234", command: "x" } })).statusCode, 404);
+    assert.equal((await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: randomUUID(), operation: runId, url, code: "ABCD1234", command: "x" } })).statusCode, 404);
+    const ledger = await h.prisma.auditLedger.findMany({ where: { userId: mira.id, action: "node.device_code" } });
+    assert.deepEqual(ledger.map((row) => (row.payload as { status: string }).status), ["pending", "done"]);
+    assert.ok(!JSON.stringify(ledger).includes(code), "the code is never in the ledger");
   } finally {
     device.stop();
   }

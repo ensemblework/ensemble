@@ -46,6 +46,8 @@ export const ROUTES = {
   toolOutput: (runId: string) => `/api/devices/self/tool-runs/${encodeURIComponent(runId)}/output`,
   /** A file the web asked for by an upload id (protocol 7): a node's capture, or a held file released or previewed. */
   evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
+  /** A file of the owner's Ensemble Files a node puts on this computer (files `save`, `capabilities.nodeFiles`), by its download id. */
+  nodeFile: (downloadId: string) => `/api/devices/self/node-files/${encodeURIComponent(downloadId)}`,
   /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
   liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
   /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
@@ -56,6 +58,12 @@ export const ROUTES = {
   takeoverState: (takeoverId: string) => `/api/devices/self/takeovers/${encodeURIComponent(takeoverId)}/state`,
   /** A sign-in ended on this computer by itself (`logins: 2`): seen done, its tab closed, its time ran out (`LoginStatePost`). */
   loginState: (loginId: string) => `/api/devices/self/logins/${encodeURIComponent(loginId)}/state`,
+  /** A node's terminal session or watched tab ended on this computer (`capabilities.live`, `LiveEndedPost`): its live card ends. */
+  liveEnded: (liveId: string) => `/api/devices/self/live/${encodeURIComponent(liveId)}/ended`,
+  /** A sign-in code a node's command printed, and later how it ended (`cliLogins`, `NodeDeviceCodePost`). */
+  nodeDeviceCodes: "/api/devices/self/nodes/device-codes",
+  /** A node's command opened a sign-in page in the browser (`cliLogins`, `NodeCliLoginPost`): the web raises the sign-in card. */
+  nodeCliLogins: "/api/devices/self/nodes/logins",
   /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
   assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
   /** A file attached to the turn's message (`assistantTurns` 2). */
@@ -578,6 +586,14 @@ export const NODE_TOOL_MAX_SECONDS = 900;
 export const NODE_TOOL_OUTPUT_BYTES = 1024 * 1024;
 /** A file a node may write in one call. */
 export const NODE_TOOL_WRITE_BYTES = 1024 * 1024;
+/**
+ * `capabilities.nodeFiles`: 1: files `share` takes a folder (zipped here into one `.zip`) and any file up
+ * to `NODE_FILE_MAX_BYTES`, and files `save` puts a file of the owner's Ensemble Files (a chat attachment)
+ * into a folder, fetched from `ROUTES.nodeFile`.
+ */
+export const NODE_FILES_API = 1;
+/** The largest file a node shares from this computer (a zipped folder too) or saves on it. */
+export const NODE_FILE_MAX_BYTES = 100 * 1024 * 1024;
 
 /** An answer the owner gave in Needs me for a node's tools: once, for this mission, or always for the folder or address. */
 export const NodeToolGrant = z.object({ id: text(100).min(1), scope: z.enum(["once", "mission", "always"]), target: text(4096).min(1) }).strict();
@@ -614,6 +630,51 @@ const CaptureCall = {
   /** Where the files it writes go (`ROUTES.evidenceUpload`). */
   uploadId: text(100).min(1),
   /** Whether it may use the internet (the node's run profile): without, only this computer's own addresses. */
+  network: z.boolean().default(true),
+};
+
+/**
+ * `capabilities.live`: this computer keeps a node's terminals open between calls (`node.tool.request`
+ * with `tool: "live"`, device-tools/terminal-sessions.ts) and shows them, and a node's own browser tabs,
+ * to the owner live through the takeover channel (`TakeoverStart.kind`, `view`; `takeover.control`).
+ */
+export const LIVE_API = 1;
+/** A terminal session nobody typed in or watched for this long ends. */
+export const LIVE_IDLE_MS = 30 * 60_000;
+/** A terminal session ends this long after it started, whatever happens. */
+export const LIVE_MAX_MS = 4 * 3600_000;
+/** Terminal sessions one node keeps open on one computer. */
+export const LIVE_MAX_PER_NODE = 3;
+/** A terminal session's id on its computer. */
+export const LiveSessionId = z.string().regex(/^ts[0-9a-f]{12}$/);
+/** A live card's id: a terminal session's id, or `lv` and 16 hex digits for a watched tab. */
+export const LiveId = z.string().regex(/^(?:ts[0-9a-f]{12}|lv[0-9a-f]{16})$/);
+
+/**
+ * A node's live terminal session (`capabilities.live`): `terminal_open` starts a shell in a pseudo-terminal
+ * in the folder (judged and sandboxed like `run`), kept until `terminal_close`, its shell ending, 30
+ * minutes without use or 4 hours; `terminal_send` types `text` then `keys` (named: Enter, Up, Ctrl+C) and
+ * answers the screen after `waitMs` or when the shell's prompt is back, each line the node submits judged
+ * by the hard floor first; `terminal_read` answers the screen (with `lines`: the last lines, scrollback
+ * too). `browser_tab`: the node's tab `tab`, checked to be its own, watched for a live card (`liveId`):
+ * its closing is posted to `ROUTES.liveEnded`. Answered with a `LiveAnswer`.
+ */
+const LiveCall = {
+  tool: z.literal("live"),
+  action: z.enum(["terminal_open", "terminal_send", "terminal_read", "terminal_close", "browser_tab"]),
+  folder: OptionalFolder,
+  session: LiveSessionId.optional(),
+  title: text(200).optional(),
+  text: z.string().max(8000).optional(),
+  keys: z.array(text(40)).max(40).default([]),
+  waitMs: z.number().int().min(0).max(60_000).optional(),
+  lines: z.number().int().min(1).max(500).optional(),
+  columns: z.number().int().min(20).max(300).default(120),
+  rows: z.number().int().min(5).max(100).default(32),
+  tab: text(20).regex(/^t\d{1,9}$/).optional(),
+  liveId: LiveId.optional(),
+  /** The node's tool operation (`node:<nodeId>:own`): its sessions and tabs. */
+  operation: CaptureCall.operation,
   network: z.boolean().default(true),
 };
 
@@ -656,8 +717,11 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   }),
   NodeToolBase.extend({
     tool: z.literal("files"),
-    /** share (nodeTools 2): the file becomes evidence the node can show its owner (answered as a `NodeCaptureAnswer`). */
-    action: z.enum(["write", "move", "delete", "share"]),
+    /**
+     * share (nodeTools 2): the file becomes evidence the node can show its owner (answered as a `NodeCaptureAnswer`);
+     * with nodeFiles 1 a folder too, zipped. save (nodeFiles 1): a file of the owner's Files written at `path`.
+     */
+    action: z.enum(["write", "move", "delete", "share", "save"]),
     folder: OptionalFolder,
     path: text(1000).min(1),
     /** move: the new path, inside the same folder. */
@@ -669,6 +733,12 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
     uploadId: text(100).min(1).optional(),
     /** share: one line for the owner, what the file is. */
     caption: text(300).optional(),
+    /** save: where its bytes come from (`ROUTES.nodeFile`), how many there are and their SHA-256. */
+    downloadId: text(100).min(1).optional(),
+    size: z.number().int().min(0).max(NODE_FILE_MAX_BYTES).optional(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    /** save: replace a file already at `path` (never a link or a file with a second name). */
+    overwrite: z.boolean().optional(),
   }),
   /**
    * nodeTools 2: a command in a pseudo-terminal of `columns` × `rows`; after `seconds` (or when it ends,
@@ -724,6 +794,7 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
   }),
   NodeToolBase.extend({ tool: z.literal("browser"), ...CaptureCall }),
   NodeToolBase.extend({ tool: z.literal("capture"), ...CaptureCall }),
+  NodeToolBase.extend(LiveCall),
 ]);
 export type NodeToolRequest = z.infer<typeof NodeToolRequest>;
 
@@ -815,8 +886,45 @@ export const LoginRequired = z.object({
   display: z.boolean(),
   takeover: z.boolean().default(false),
   expiresAt: text(40),
+  /** `cli`: a command (`az login`, `gh auth login`) opened the sign-in page in this computer's browser (`cliLogins`). */
+  source: z.enum(["browser", "cli"]).optional(),
+  /** The command that opened it, as the node ran it (with `source: "cli"`). */
+  command: text(200).optional(),
 });
 export type LoginRequired = z.infer<typeof LoginRequired>;
+
+/**
+ * `capabilities.cliLogins`: this computer watches a node's commands for sign-ins (C2): a sign-in code
+ * they print goes to `ROUTES.nodeDeviceCodes`, and a page they open in a browser (`BROWSER`, `xdg-open`,
+ * `open`) opens in this computer's sign-in browser and goes to `ROUTES.nodeCliLogins`.
+ */
+export const CLI_LOGINS_API = 1;
+
+/**
+ * A sign-in code a node's command printed (`ROUTES.nodeDeviceCodes`): the page to enter it on and the
+ * code, for an owner-only card in the command's conversation. The same post with `status` done or
+ * expired says how it ended when the command ended. `operation`: the command's run id.
+ */
+export const NodeDeviceCodePost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  url: text(2000).min(1),
+  code: z.string().regex(/^[A-Za-z0-9-]{4,40}$/),
+  command: text(200).min(1),
+  expiresAt: text(40).optional(),
+  status: z.enum(["pending", "done", "expired"]).default("pending"),
+});
+export type NodeDeviceCodePost = z.infer<typeof NodeDeviceCodePost>;
+
+/** A sign-in page a node's command opened (`ROUTES.nodeCliLogins`): the sign-in, as a browser tool raises it, for the command's conversation. */
+export const NodeCliLoginPost = z.object({
+  nodeId: text(100).min(1),
+  operation: text(100).min(1),
+  operationId: text(200).optional(),
+  login: LoginRequired,
+});
+export type NodeCliLoginPost = z.infer<typeof NodeCliLoginPost>;
 
 /** What a run's computer posts when its agent waits for a sign-in (`ROUTES.runLogin`). The answer: `{decisionId}` of the card, or null when the web raises none. */
 export const RunLoginPost = LoginRequired.extend({ leaseToken: text(200).min(1) });
@@ -876,12 +984,21 @@ export type LoginStatePost = z.infer<typeof LoginStatePost>;
  * 2: a sign-in's takeover runs in a clean browser (C0, `browser/clean.ts`) at the tab's page and moves the
  * session into the tab when done; its frames' headers say which site they show (`site`, `title`, `popup`,
  * `mode`); the computer ends it itself when the sign-in is done (reason `signed_in` or `passed`).
+ * 3: kinds and views: a live view of a node's own tab or terminal session (`TakeoverStart.kind`,
+ * `operation`, `view`), switched between watching and control with `takeover.control`; and
+ * `takeover.extend` moves a takeover's end later (at most an hour after it started).
  */
-export const TAKEOVER_API = 2;
+export const TAKEOVER_API = 3;
 /** The oldest takeover a server can use. */
 export const TAKEOVER_MIN_API = 1;
 /** `capabilities.takeover` from which a sign-in's takeover can run in a clean browser (`TakeoverStart.mode` "clean", browser/clean.ts). */
 export const TAKEOVER_CLEAN_API = 2;
+/** `capabilities.takeover` from which a computer takes `takeover.extend`. */
+export const TAKEOVER_EXTEND_API = 3;
+/** A takeover lasts at most this long after it started, however often it is extended. */
+export const TAKEOVER_LONGEST_MS = 3600_000;
+/** What one extend adds to a takeover's end. */
+export const TAKEOVER_EXTEND_MS = 15 * 60_000;
 
 /** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
 export const ChannelMessage = z.object({
@@ -901,16 +1018,24 @@ export type ChannelMessage = z.infer<typeof ChannelMessage>;
  * mode}, jpeg)`: `url` without its query, `site` its host, `popup` a window the page opened (a "Sign in
  * with Google" popup), all inside the encrypted message.
  * The server may ask for `mode` "clean" (a sign-in, on a computer with `TAKEOVER_CLEAN_API`) or "tab".
+ * A live view (`capabilities.live`) names `kind` ("browser": the node's own tab; "terminal": its
+ * terminal session, whose id is `tab`), the node's `operation` that must own it, and `view` ("watch":
+ * the owner sees it while the node works, browser input ignored until `takeover.control` turns control
+ * on; "control"). A terminal's frames are `packMessage(TerminalFrameHeader, utf8 JSON TerminalScreen)`,
+ * and its input `TerminalInputEvent`s.
  */
 export const TakeoverStart = z.object({
   id: text(100).min(1),
   takeoverId: z.string().uuid(),
-  tab: text(20).regex(/^t\d{1,9}$/),
+  tab: text(20).regex(/^(?:t\d{1,9}|ts[0-9a-f]{12})$/),
   loginId: z.string().regex(/^lg_[0-9a-f]{32}$/).optional(),
   jobId: z.string().uuid().optional(),
   sealed: SealedShape,
   endsAt: text(40),
   mode: z.enum(["tab", "clean"]).optional(),
+  kind: z.enum(["browser", "terminal"]).optional(),
+  operation: CaptureCall.operation.optional(),
+  view: z.enum(["watch", "control"]).optional(),
 });
 export type TakeoverStart = z.infer<typeof TakeoverStart>;
 
@@ -918,9 +1043,63 @@ export type TakeoverStart = z.infer<typeof TakeoverStart>;
 export const TakeoverInput = ChannelMessage.extend({ takeoverId: z.string().uuid() });
 export type TakeoverInput = z.infer<typeof TakeoverInput>;
 
+/** `takeover.extend` (takeover 3): the owner asked for more time; the computer ends it at `endsAt` instead (never past an hour after it started). */
+export const TakeoverExtend = z.object({ takeoverId: z.string().uuid(), endsAt: text(40) });
+export type TakeoverExtend = z.infer<typeof TakeoverExtend>;
+
 /** `takeover.end`: the owner pressed I'm done (`done`: check the sign-in and give the tab back) or Stop, or the server ended it. */
 export const TakeoverEnd = z.object({ id: text(100).optional(), takeoverId: z.string().uuid(), done: z.boolean().default(false), reason: text(40).optional() });
 export type TakeoverEnd = z.infer<typeof TakeoverEnd>;
+
+/**
+ * `takeover.control` (takeover 3): the owner of a live view takes control (`on`) or hands it back. A
+ * tab under control is paused for the node, as in a sign-in's takeover; a terminal under control refuses
+ * the node's typing. The answer is a `CodeAnswer` whose body is `{view: "watch" | "control"}`.
+ */
+export const TakeoverControl = z.object({ id: text(100).min(1), takeoverId: z.string().uuid(), on: z.boolean() });
+export type TakeoverControl = z.infer<typeof TakeoverControl>;
+
+/** One run of terminal cells that look the same: its text, colours as `#rrggbb` (absent: the default), bold, italic, underline, dim. */
+export type TerminalRun = { t: string; fg?: string; bg?: string; b?: 1; i?: 1; u?: 1; dim?: 1 };
+/** A terminal frame's payload, as UTF-8 JSON: each row of the screen as runs (secrets hidden, drawn plain). */
+export type TerminalScreen = { rows: TerminalRun[][] };
+/** A terminal frame's header: its size, where the cursor is (0-based) and its title. */
+export type TerminalFrameHeader = { t: "frame"; kind: "terminal"; cols: number; rows: number; cursor: { x: number; y: number }; title: string };
+
+/** The owner's input to a live terminal: characters as typed, a named key (Enter, Up, Ctrl+C, F5), the size it is shown at, or a ping. */
+export const TerminalInputEvent = z.discriminatedUnion("t", [
+  z.object({ t: z.literal("tty"), text: z.string().min(1).max(4000) }),
+  z.object({ t: z.literal("tty-key"), key: z.string().min(1).max(24) }),
+  z.object({ t: z.literal("tty-size"), cols: z.number().int().min(20).max(300), rows: z.number().int().min(5).max(100) }),
+  z.object({ t: z.literal("ping") }),
+]);
+export type TerminalInputEvent = z.infer<typeof TerminalInputEvent>;
+
+/** What a `live` tool call answers: the terminal session and its screen as text (secrets hidden), or the tab checked for a live card. */
+export const LiveAnswer = z.object({
+  session: LiveSessionId.optional(),
+  title: text(300).optional(),
+  folder: text(300).optional(),
+  screen: z.string().max(200_000).optional(),
+  cursor: z.object({ x: z.number().int(), y: z.number().int() }).optional(),
+  columns: z.number().int().optional(),
+  rows: z.number().int().optional(),
+  /** The shell waits at its prompt (nothing runs in the foreground). */
+  atPrompt: z.boolean().optional(),
+  /** A secret was on the screen and is hidden in `screen`. */
+  hidden: z.boolean().optional(),
+  ended: z.boolean().optional(),
+  exitCode: z.number().int().nullable().optional(),
+  /** The owner controls the terminal from the web: the node's typing waits. */
+  controlled: z.boolean().optional(),
+  tab: text(20).optional(),
+  url: text(4000).optional(),
+});
+export type LiveAnswer = z.infer<typeof LiveAnswer>;
+
+/** What a computer posts at `ROUTES.liveEnded` when a terminal session or a watched tab ends: `closed`, `exited`, `idle`, `max`, `tab_closed`, `stopped`. */
+export const LiveEndedPost = z.object({ reason: text(40), exitCode: z.number().int().nullable().optional() });
+export type LiveEndedPost = z.infer<typeof LiveEndedPost>;
 
 /**
  * What a computer posts when it ends a takeover itself. `reason`: `expired`, `idle`, `tab_closed`, `stopped`,

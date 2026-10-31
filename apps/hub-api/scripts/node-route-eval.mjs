@@ -49,6 +49,11 @@ const CASES = [
   { ask: "fetch the BMD-45 CVPR paper from CVF and add it to my Ensemble files", want: [["hub_save_file"]], avoid: AGENT, links: true },
   { ask: "log in to my Azure console and check yesterday's resource usage", want: [["browser_login_needed", "web_task"]], avoid: AGENT, card: "login", noPassword: true },
   { ask: "add yourself to the SWE crew", want: [["node_crew_add"]], avoid: AGENT, card: "crew_add", setup: "crew" },
+  // Round 3: Ensemble's own boards (never a browser sign-in), a live terminal, a folder sent zipped, a CLI sign-in.
+  { ask: (ctx) => `what's on my EnsembleWork board? ${ctx.boardUrl}`, want: [["hub_read_board", "hub_list_boards"]], avoid: [...AGENT, "browser_open", "browser_view", "browser_login_needed", "web_task"], setup: "board" },
+  { ask: "open a terminal on my computer that I can watch live, and start htop in it", want: [["terminal_open"]], avoid: AGENT, liveCard: true },
+  { ask: "zip the reports folder on my computer and send it to me here", want: [["node_share_file"]], avoid: AGENT, share: /reports/ },
+  { ask: "sign in to the Azure CLI on my computer (az login)", want: [["computer_run"]], avoid: AGENT, run: /\baz\s+login\b/, noPassword: true },
 ];
 
 /** Asking the owner for a password or a code in the chat (they sign in on a card). */
@@ -69,7 +74,7 @@ async function call(path, { method = "GET", cookie, token, body } = {}) {
   return parsed;
 }
 
-/** A 0.6.1 computer: the web tools (browser 2) and sign-in v2 (logins 2). */
+/** A 0.6.2 computer: the web tools (browser 2), sign-in v2 (logins 2), live terminals and views (live 1, takeover 3), files both ways (nodeFiles 1). */
 const CAPABILITIES = {
   folders: ["app"],
   engines: ["copilot-cli", "codex", "claude-code"],
@@ -77,6 +82,9 @@ const CAPABILITIES = {
   nodeTools: 2,
   browser: 2,
   logins: 2,
+  live: 1,
+  takeover: 3,
+  nodeFiles: 1,
   secrets: 2,
   capture: { browser: true, targets: { web: { screenshot: true, video: true }, terminal: { screenshot: true, tui: true } } },
 };
@@ -139,6 +147,8 @@ async function answerFor(request, token) {
     const command = String(request.command ?? "");
     // Nothing the owner asks to install is there yet.
     if (/\b(which|command -v|type|dpkg(-query)? (-s|-l|--status|-W)|apt(-cache)? (list|policy|show)|snap list|flatpak list)\b/.test(command)) return { status: 200, body: { exitCode: 1, output: "", ms: 40 } };
+    // The owner's reports folder is there, with three files.
+    if (/\breports\b/.test(command) && /\b(ls|find|test|stat|du|tree)\b|\[ -d/.test(command)) return { status: 200, body: { exitCode: 0, output: "reports/summary.md\nreports/q3.csv\nreports/chart.png\n", ms: 30 } };
     const output = /df\b/.test(command)
       ? "Filesystem      Size  Used Avail Use% Mounted on\n/dev/nvme0n1p2  915G  402G  467G  47% /\n"
       : /ifconfig|ipify|icanhazip|ip\.me|curl/.test(command)
@@ -152,7 +162,15 @@ async function answerFor(request, token) {
   if (tool === "terminal") return capture("Captured the terminal's screen.", { screen: "  1  [|||||     23.1%]   Tasks: 211, 1043 thr; 2 running\n  Mem[||||||||  6.12G/31.2G]   Load average: 0.42 0.51 0.48\n  PID USER  PRI  NI  VIRT   RES  CPU% MEM%  Command\n 1201 akash  20   0 4.1G  612M   8.0  1.9  node", exitCode: null, ended: false }, shot("terminal-htop.png"));
   if (tool === "git") return { status: 200, body: { exitCode: 0, output: "On branch main\nnothing to commit, working tree clean\n" } };
   if (tool === "http") return { status: 200, body: { status: 200, body: "ok" } };
+  if (tool === "live") {
+    const htop = "  1  [|||||     23.1%]   Tasks: 211, 1043 thr; 2 running\n  Mem[||||||||  6.12G/31.2G]   Load average: 0.42 0.51 0.48\n  PID USER  PRI  NI  VIRT   RES  CPU% MEM%  Command";
+    if (request.action === "terminal_open") return { status: 200, body: { session: "ts0000000000a1", title: request.title ?? "Terminal", folder: "app", screen: "akash@home:~/app$ ", atPrompt: true, columns: 120, rows: 32 } };
+    if (request.action === "terminal_close") return { status: 200, body: { session: "ts0000000000a1", ended: true, exitCode: 0 } };
+    if (request.action === "browser_tab") return { status: 200, body: { title: "Live" } };
+    return { status: 200, body: { session: "ts0000000000a1", screen: /htop/.test(String(request.text ?? "")) ? htop : "akash@home:~/app$ ", atPrompt: !/htop/.test(String(request.text ?? "")), columns: 120, rows: 32 } };
+  }
   if (tool === "files") {
+    if (request.action === "share" && !/\.[a-z0-9]{1,5}$/i.test(String(request.path))) return capture(`Zipped ${request.path} into ${String(request.path).split("/").at(-1)}.zip (3 files).`, null, [`${String(request.path).split("/").at(-1)}.zip`, "file", Buffer.from("PK\u0005\u0006" + "\u0000".repeat(18)), "application/zip"]);
     if (request.action === "share") return capture(`Shared ${request.path}.`, null, [String(request.path).split("/").at(-1), "report", Buffer.from("# Capabilities\n\n- Browse\n- Screenshots\n"), "text/markdown"]);
     return { status: 200, body: { created: true, path: request.path } };
   }
@@ -209,7 +227,7 @@ async function answerFor(request, token) {
 /** A paired computer that stays online and answers every node tool call. */
 async function fakeComputer(cookie, signal) {
   const paired = await call("/api/devices/pair", { method: "POST", cookie, body: {} });
-  const registered = await call("/api/devices/register", { method: "POST", body: { code: paired.code, name: "Eval laptop", platform: "linux", appVersion: "0.6.1", capabilities: CAPABILITIES } });
+  const registered = await call("/api/devices/register", { method: "POST", body: { code: paired.code, name: "Eval laptop", platform: "linux", appVersion: "0.6.2", capabilities: CAPABILITIES } });
   const token = registered.token;
   const calls = [];
   const heartbeat = () => call("/api/devices/self/heartbeat", { method: "POST", token, body: { capabilities: CAPABILITIES } }).catch(() => undefined);
@@ -279,6 +297,14 @@ async function runModel({ model, effort }) {
   for (const [index, item] of CASES.entries()) {
     if (ONLY && !ONLY.has(index + 1)) continue;
     browsed.signIn = false;
+    const ctx = {};
+    if (item.setup === "board") {
+      // The owner's custom board, as they paste its link.
+      const column = () => ({ id: randomUUID(), name: "", color: "gray" });
+      const columns = [{ ...column(), name: "To do" }, { ...column(), name: "In progress", color: "blue" }, { ...column(), name: "Done", color: "green" }];
+      const { board } = await call("/api/boards", { method: "POST", cookie, body: { title: "EnsembleWork", columns } });
+      ctx.boardUrl = `https://app.ensemblework.com/board?board=${board.id}`;
+    }
     if (item.setup === "crew") {
       // A crew called SWE the node is not in.
       const { node: engineer } = await call("/api/node/nodes", { method: "POST", cookie, body: { templateId: "feature-engineer" } });
@@ -287,7 +313,8 @@ async function runModel({ model, effort }) {
     const seen = new Set((await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.map((row) => row.id));
     const callsBefore = computer.calls.length;
     const started = Date.now();
-    await call(`/api/node/rooms/${room.id}/messages`, { method: "POST", cookie, body: { body: item.ask } });
+    const ask = typeof item.ask === "function" ? item.ask(ctx) : item.ask;
+    await call(`/api/node/rooms/${room.id}/messages`, { method: "POST", cookie, body: { body: ask } });
     let fresh = [];
     let quiet = 0;
     while (Date.now() - started < 240_000) {
@@ -301,15 +328,19 @@ async function runModel({ model, effort }) {
     // Cards the node posted (sudo, permissions): approve a sudo card so the work can go on.
     for (const card of fresh.filter((row) => row.kind === "approval" && row.data?.type === "sudo" && row.data?.status === "pending")) {
       await call(`/api/node/sudo/${card.id}`, { method: "POST", cookie, body: { action: "run" } }).catch(() => undefined);
-      await sleep(15_000);
-      fresh = (await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.filter((row) => !seen.has(row.id));
+      // The node goes on once the command ran: wait for its reply after the card, up to a minute.
+      for (const until = Date.now() + 60_000; Date.now() < until; ) {
+        await sleep(5_000);
+        fresh = (await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.filter((row) => !seen.has(row.id));
+        if (fresh.some((row) => row.authorKind === "node" && row.kind === "text" && row.seq > card.seq)) break;
+      }
     }
     const replies = fresh.filter((row) => row.authorKind === "node" && row.kind === "text");
     const allChips = replies.flatMap((row) => (Array.isArray(row.data?.tools) ? row.data.tools : []));
     // A tool counts when it worked (a refused or failed call is not the route taken).
     const chips = allChips.filter((tool) => !["failed", "blocked", "error"].includes(String(tool.state))).map((tool) => tool.name);
     const failedTools = allChips.filter((tool) => ["failed", "blocked", "error"].includes(String(tool.state))).map((tool) => `${tool.name}: ${String(tool.summary ?? "").slice(0, 120)}`);
-    const deviceTools = computer.calls.slice(callsBefore).map((request) => (request.tool === "browser" || request.tool === "capture" ? request.name : request.tool === "files" && request.action === "share" ? "node_share_file" : request.tool === "terminal" ? "computer_terminal_screenshot" : request.tool === "sudo" ? "computer_sudo" : `computer_${request.tool === "files" ? "files_write" : request.tool}`));
+    const deviceTools = computer.calls.slice(callsBefore).map((request) => (request.tool === "live" ? (request.action === "browser_tab" ? "live_view" : request.action) : request.tool === "browser" || request.tool === "capture" ? request.name : request.tool === "files" && request.action === "share" ? "node_share_file" : request.tool === "terminal" ? "computer_terminal_screenshot" : request.tool === "sudo" ? "computer_sudo" : `computer_${request.tool === "files" ? "files_write" : request.tool}`));
     const cards = fresh.filter((row) => row.kind === "approval").map((row) => row.data?.type);
     const runs = fresh.filter((row) => row.kind === "run");
     // A turn that waits on a card posts no reply: the card says which tool asked for it.
@@ -326,6 +357,9 @@ async function runModel({ model, effort }) {
     if (item.says && !item.says.test(text)) problems.push(`reply lacks ${item.says}`);
     if (item.input && !computer.calls.slice(callsBefore).some((request) => request.name === item.input.tool && item.input.pattern.test(JSON.stringify(request.input ?? {})))) problems.push(`${item.input.tool} without ${item.input.pattern}`);
     if (item.card && !cards.includes(item.card)) problems.push(`no ${item.card} card`);
+    if (item.liveCard && !fresh.some((row) => row.data?.type === "live")) problems.push("no live card for the owner");
+    if (item.share && !computer.calls.slice(callsBefore).some((request) => request.tool === "files" && request.action === "share" && item.share.test(String(request.path)))) problems.push(`node_share_file without ${item.share}`);
+    if (item.run && !computer.calls.slice(callsBefore).some((request) => request.tool === "run" && item.run.test(String(request.command)))) problems.push(`computer_run without ${item.run}`);
     if (item.noPassword && PASSWORD_ASK.test(text)) problems.push("asked for a password in chat");
     if (item.links) {
       const saved = allChips.some((tool) => tool.name === "hub_save_file" && !["failed", "blocked", "error"].includes(String(tool.state)));
@@ -333,7 +367,7 @@ async function runModel({ model, effort }) {
     }
     if (CHATTER.test(text)) problems.push("approval chatter");
     if (!replies.length && !(item.card && cards.includes(item.card))) problems.push("no reply");
-    rows.push({ index: index + 1, ask: item.ask, used: [...used], failedTools, cards, ok: problems.length === 0, problems, seconds: Math.round((Date.now() - started) / 1000), reply: text.replace(/\s+/g, " ").slice(0, 300) });
+    rows.push({ index: index + 1, ask, used: [...used], failedTools, cards, ok: problems.length === 0, problems, seconds: Math.round((Date.now() - started) / 1000), reply: text.replace(/\s+/g, " ").slice(0, 300) });
     console.log(`${model}:${effort} #${index + 1} ${problems.length ? "FAIL " + problems.join("; ") : "ok"} [${[...used].join(", ")}] ${Math.round((Date.now() - started) / 1000)}s`);
   }
   stop.abort();

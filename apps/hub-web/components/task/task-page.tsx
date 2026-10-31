@@ -49,6 +49,8 @@ import { PageLoadFailure, inTrash } from "../pages/page-load";
 import { TrashedTask } from "../pages/trashed-page";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
+import { NodeOwnerItems, useNodeAssignable } from "./node-owner";
+import { nodeOwnerText } from "@/lib/node-owner";
 import { DueDateField } from "./due-date-field";
 import { FromMeeting } from "../meetings/from-meeting";
 import { AttachedItems } from "../app-items/attached-items";
@@ -162,6 +164,8 @@ export function TaskPage({
   // Who it is with, relative to you: "Me", or another person in a shared space.
   const space = useSpacePeople();
   const others = space.people.filter((person) => person.id !== space.me);
+  // My own nodes and crews, offered in the owner field (hosted Ensemble only).
+  const mine = useNodeAssignable(whole);
   const othersHere = onResource(usePresence(), "task", taskId).length > 0;
   const watching = Boolean(shared) || othersHere;
   const watchingRef = useRef(watching);
@@ -330,7 +334,7 @@ export function TaskPage({
   const pinned = record.todayFocus === "keep";
   const personId = taskPersonId(record, space.ownerId) ?? space.me;
   const ownerText =
-    record.owner !== "me" ? OWNER_LABEL[record.owner] : personId === space.me ? "Me" : (space.byId.get(personId ?? "")?.name ?? "Someone");
+    record.owner === "node" ? nodeOwnerText(record, mine) : record.owner !== "me" ? OWNER_LABEL[record.owner] : personId === space.me ? "Me" : (space.byId.get(personId ?? "")?.name ?? "Someone");
   const source = page.data?.sourceFile ?? null;
   const pageNow = () => ({ title: record.title || "Untitled", doc: sync.latest() ?? page.data?.content ?? textToDoc(page.data?.notes ?? "") });
 
@@ -468,6 +472,14 @@ export function TaskPage({
                     {person.name}
                   </MenuItem>
                 ))}
+                <NodeOwnerItems
+                  mine={mine}
+                  task={record}
+                  onPick={(pick) => {
+                    close();
+                    update.mutate(pick);
+                  }}
+                />
               </>
             )}
           </Popover>

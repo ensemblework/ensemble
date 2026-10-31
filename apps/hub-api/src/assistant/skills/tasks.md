@@ -2,7 +2,7 @@
 name: tasks
 title: Tasks, todos, projects and deliverables
 when: create, change, move, finish, delete or restore tasks, todos, projects and deliverables; what is due or overdue
-tools: hub_list_tasks, hub_get_task, hub_create_tasks, hub_update_task, hub_delete_task, hub_delete_tasks, hub_assign_to_agent, hub_list_agent_options, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher, hub_update_project, hub_run_workflow, hub_manage_record, hub_read_record_details
+tools: hub_list_tasks, hub_get_task, hub_create_tasks, hub_update_task, hub_delete_task, hub_delete_tasks, hub_assign_to_agent, hub_list_agent_options, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher, hub_list_watchers, hub_cancel_watcher, hub_update_project, hub_run_workflow, hub_manage_record, hub_read_record_details
 match: \b(tasks?|todos?|to-dos?|deliverables?|projects?|board|backlog|kanban|clear (it|everything|all)|due|overdue|priorit(y|ies)|assign(ed)?|mark(ed)? .{0,30}(done|complete)|move .{0,40} to|in progress|blocked)\b
 paths: /board, /tasks, /projects, /completed, /today
 mentions: task, project, deliverable
@@ -26,7 +26,8 @@ Do the request
 - Deliverables: hub_create_deliverable (projectId or projectName, due), hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable.
 - What is due, overdue or this week: hub_list_due with from/to. Overdue = from a past date to yesterday among open tasks.
 - Link a GitHub repo to a project: hub_link_repo with owner/name.
-- "Tell me when every task under X is done": hub_create_watcher.
+- "Tell me when every task under X is done": hub_create_watcher. Their watchers: hub_list_watchers; stop one: hub_cancel_watcher.
+- A custom board ("my EnsembleWork board", a /board?board=<id> link): hub_how_to boards.
 
 Rules
 - Text you write about a task always goes on its page. The short description under the title and the notes field are the person's: never fill them in.

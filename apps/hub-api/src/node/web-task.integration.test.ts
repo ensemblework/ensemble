@@ -7,7 +7,10 @@
  * computer is simulated (a small site), and so is the model, both for the node and its sub-agent.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import test, { after, afterEach } from "node:test";
 import type { LightMyRequestResponse } from "fastify";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
@@ -20,6 +23,7 @@ const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
 const { WEB_TASK_PROMPT, labelOf, parseAction, riskyClick, secretField, signInPage, humanCheckPage } = await import("./web-task.js");
+const { ensembleAppOrigin } = await import("../lib/ensemble-origins.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
@@ -251,4 +255,61 @@ test("web_task's own rules: one JSON action, sign-in and human-check pages, secr
   assert.equal(riskyClick('button "Delete account"'), "delete or cancel");
   assert.equal(riskyClick('button "Post"'), "send or publish");
   for (const harmless of ['link "Usage"', 'button "Add to cart"', 'button "Remove filter"', 'link "Post office locator"', 'button "Update location"']) assert.equal(riskyClick(harmless), null, harmless);
+});
+
+/** The run's MCP server's `initialize` answer, as an agent reads it when it starts the server. */
+async function mcpInstructions(env: Record<string, string>): Promise<string> {
+  const script = fileURLToPath(new URL("../../../../scripts/ensemble-ask-mcp.mjs", import.meta.url));
+  const child = spawn(process.execPath, [script], { env: { ...process.env, ENSEMBLE_ENGINE_URL: "http://127.0.0.1:9", ...env }, stdio: ["pipe", "pipe", "inherit"] });
+  try {
+    const lines = createInterface({ input: child.stdout });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n`);
+    for await (const line of lines) return (JSON.parse(line) as { result: { instructions: string } }).result.instructions;
+    return "";
+  } finally {
+    child.kill();
+  }
+}
+
+test("a node never opens Ensemble itself in its browser: its web app is refused before the computer, with the Ensemble tools to use", async () => {
+  assert.equal(ensembleAppOrigin("https://app.ensemblework.com/board?board=71182e17-5c4e-4b1a-9d2e-0a1b2c3d4e5f"), "https://app.ensemblework.com");
+  assert.equal(ensembleAppOrigin("test.ensemblework.com"), "https://test.ensemblework.com", "a store named by its host");
+  assert.equal(ensembleAppOrigin("https://node.ensemblework.com/rooms"), "https://node.ensemblework.com");
+  assert.equal(ensembleAppOrigin("https://ensemblework.com/"), null, "the public landing page is a website like any other");
+  assert.equal(ensembleAppOrigin("https://portal.azure.com/"), null);
+  assert.equal(ensembleAppOrigin("https://hub.fieldnote.example/tasks/1", { HUB_WEB_ORIGIN: "https://hub.fieldnote.example" }), "https://hub.fieldnote.example", "the Hub this server is configured with");
+  assert.equal(ensembleAppOrigin("http://localhost:3000/", { HUB_WEB_ORIGIN: "http://localhost:3000" }), null, "a Hub on this computer in development is an app being built");
+
+  const { mira, key, laptop, node: made, room } = await setUp();
+  const device = computer(laptop.id, key);
+  const hub = process.env.HUB_WEB_ORIGIN;
+  process.env.HUB_WEB_ORIGIN = "https://hub.fieldnote.example";
+  try {
+    const link = "https://app.ensemblework.com/board?board=71182e17-5c4e-4b1a-9d2e-0a1b2c3d4e5f";
+    const calls = [
+      { name: "browser_open", arguments: { url: link } },
+      { name: "browser_view", arguments: { url: "https://test.ensemblework.com/board", focus: "the board" } },
+      { name: "browser_fetch", arguments: { url: "https://hub.fieldnote.example/files/plan.pdf" } },
+      { name: "browser_shop", arguments: { query: "standing desk", stores: ["amazon", "app.ensemblework.com"] } },
+      { name: "web_task", arguments: { goal: "Read the EnsembleWork board and sign in if asked", url: link } },
+    ];
+    node = (turn) => (turn.afterTools ? { text: "I used my Ensemble tools instead." } : { calls });
+    await say(mira, room.id, `work on my EnsembleWork board ${link}`);
+    assert.deepEqual(device.heard, [], "nothing reached the computer");
+    const member = await h.prisma.nodeRoomMember.findFirstOrThrow({ where: { nodeId: made.id, roomId: room.id } });
+    const answer = await h.prisma.assistantMessage.findFirstOrThrow({ where: { conversationId: member.conversationId!, role: "assistant" }, orderBy: { createdAt: "desc" } });
+    const tools = answer.toolCalls as Array<{ name: string; state: string; error?: string }>;
+    assert.deepEqual(tools.map((row) => [row.name, row.state]), calls.map((row) => [row.name, "failed"]));
+    for (const row of tools) assert.match(row.error ?? "", /is Ensemble itself, not a website to open or sign in to\. Use your Ensemble tools: you already act in Ensemble as your owner, signed in\. Boards: hub_list_boards, hub_read_board/, row.name);
+    assert.ok(!(await rows(mira, room.id)).some((row) => row.kind === "approval"), "no sign-in card for Ensemble");
+  } finally {
+    if (hub === undefined) delete process.env.HUB_WEB_ORIGIN;
+    else process.env.HUB_WEB_ORIGIN = hub;
+    device.stop();
+  }
+
+  // An agent run hears it from its Ensemble MCP server when it starts.
+  for (const env of [{ ENSEMBLE_RUN: "run-secret" }, { ENSEMBLE_RUN: "run-secret", ENSEMBLE_CHAT: "1" }, { ENSEMBLE_ASSISTANT_TURN: "turn-secret" }] as Array<Record<string, string>>) {
+    assert.match(await mcpInstructions(env), /You already act in Ensemble through this server: never open Ensemble's web app \(app\.ensemblework\.com/, JSON.stringify(env));
+  }
 });
