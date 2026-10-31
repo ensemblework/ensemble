@@ -28,6 +28,7 @@ import { dangerousCommand, dangerousMessage, needsAdministrator } from "../devic
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
 import { postLoginCard } from "./logins.js";
+import { nodeSaveFileTool } from "../assistant/tools/save-file.js";
 import { askOwner, awaitAnswer, computerCard, markGrantsUsed, noticeAsked, ownerName, pendingGrants, permissionWaitMs, placeOf, waitForOwner, watchDecision } from "./device-tool-decisions.js";
 import { computerWorkAsks } from "./sessions.js";
 import { helperFolders, helperGrant } from "./helpers.js";
@@ -496,6 +497,33 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         return toolOk(kept.lines.join("\n"), { computer: done.device.name, evidence: kept.evidence });
       },
     }),
+    // hub_save_file with a path too: the file is shared from the computer as evidence, then saved in Files (assistant/tools/save-file.ts).
+    nodeSaveFileTool({
+      computerFields: { computer: Computer, folder: Folder },
+      async share(ctx, input) {
+        const operation = captureOperation(scope);
+        const done = await callComputer(
+          ctx,
+          scope,
+          input.computer,
+          { tool: "files", action: "share", folder: input.folder, path: input.path, operation, uploadId: "pending" },
+          {
+            timeoutMs: 90_000,
+            describe: `Save ${input.path} to Ensemble Files`,
+            again: callText("hub_save_file", input),
+            need: { ownFolder: "share files from it" },
+            before: async (device) => ({ uploadId: await grantUpload(ctx.app.redis as never, { mode: "new", deviceId: device.id, ownerId: node.userId, nodeId: node.id, operation }) }),
+          },
+        );
+        if (isResult(done)) return done;
+        const kept = await keepCaptures(ctx, scope, done, operation, "none");
+        const file = kept.evidence.find((item) => !item.held);
+        if (file) return { evidence: file.id };
+        const held = kept.evidence[0];
+        if (!held) throw new ToolBlockedError(`${done.device.name} shared nothing for ${input.path}.`);
+        return toolOk(`${kept.lines.join("\n")}\nOnce your owner releases it, save it with hub_save_file {evidence: "${held.id}"}.`, { computer: done.device.name, evidence: kept.evidence, saved: false });
+      },
+    }),
     // A helper never runs commands as the administrator.
     ...(node.parentNodeId ? [] : [sudoTool(scope)]),
     ...captureTools(scope),
@@ -566,7 +594,7 @@ const EXPECTS: Record<string, string> = { browser_screenshot: "screenshot", capt
  * to share) comes with the node's reply by itself.
  */
 /** `expects`: what the call was meant to bring back (a screenshot, a file), so the node hears plainly when nothing will show. */
-async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all", expects?: string) {
+async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, operation: string, show: "pictures" | "all" | "none", expects?: string) {
   const { prisma, node } = scope;
   const parsed = NodeCaptureAnswer.safeParse(done.body);
   if (!parsed.success) throw new ToolBlockedError(`${done.device.name} sent an answer that could not be read.`);
@@ -588,7 +616,7 @@ async function keepCaptures(ctx: ToolContext, scope: NodeScope, done: Called, op
       private: Boolean(scope.privateTo),
     });
   }
-  const showable = (show === "all" ? kept : shownKinds(kept)).filter((item) => !item.local);
+  const showable = show === "none" ? [] : (show === "all" ? kept : shownKinds(kept)).filter((item) => !item.local);
   const { media } = showable.length ? await ownerMedia(prisma, node.userId, showable.map((item) => item.id)) : { media: [] };
   if (media.length) rememberCaptured(scope.turnId, media);
   const lines = [

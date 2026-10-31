@@ -384,6 +384,10 @@ export type NodeApprovalCard = {
     display?: boolean;
     takeover?: boolean;
     note?: string | null;
+    /** A sign-in, or a human check the person passes on the page. */
+    purpose?: "sign_in" | "human_check";
+    /** With status `needs_code`: what the site asks for ("Enter the 6-digit code from your authenticator app"). */
+    codeHint?: string | null;
     calls?: Array<{ callId: string; name: string; summary: string }>;
   };
   node: { id: string; slug: string; name: string; role: string } | null;
@@ -1229,6 +1233,9 @@ export type AgentDecisionRecord = {
   runnerAccountId?: string | null;
 };
 
+/** Requests a node's runs and a node's own tools ask in Ensemble Node chats, answered there: how many wait, and where to open them. */
+export type NodeChatWaiting = { count: number; url: string | null };
+
 export type DecisionRuleRecord = {
   id: string;
   source: string;
@@ -1392,9 +1399,9 @@ export const api = bindClient({
   approveCliAuth: (body: { userCode: string; scopes: CliAuthScope[]; decision: CliAuthDecision }) =>
     post<{ ok: true; scopes: CliAuthScope[] }>("/api/cli/auth/approve", body),
 
-  // editor decisions (Needs me router)
+  // editor decisions (Needs me router). The Hub's list: requests waiting in a Node chat are counted in `nodeChat` instead.
   decisions: (status: "pending" | "recent" = "pending") =>
-    get<{ decisions: AgentDecisionRecord[] }>(`/api/decisions${qs({ status })}`),
+    get<{ decisions: AgentDecisionRecord[]; nodeChat?: NodeChatWaiting }>(`/api/decisions${qs({ status, surface: "hub" })}`),
   decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string; confirmed?: boolean }) =>
     post<{ decision: AgentDecisionRecord }>(`/api/decisions/${id}/decide`, data),
   decisionRules: () => get<{ rules: DecisionRuleRecord[] }>("/api/decision-rules"),

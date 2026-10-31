@@ -771,13 +771,16 @@ export type LiveFramePost = z.infer<typeof LiveFramePost>;
 
 /** `capabilities.logins`: this computer hands sign-ins to its owner (B11, protocol 8): `login.resolve`, `ROUTES.runLogin`, saved logins. */
 export const LOGINS_API = 1;
+/** `capabilities.logins` from which a computer takes `code` and `check` answers and may answer `needs_code` or `passed` (sign-in v2). */
+export const LOGIN_CHECKS_API = 2;
 
 const LoginId = z.string().regex(/^lg_[0-9a-f]{32}$/);
 
 /**
  * A tab waiting for its owner to sign in (B11), as a browser tool's answer carries it (`login`) and a
  * run reports it (`ROUTES.runLogin`): which site and tab, why, and how the owner can answer. Never a
- * value; `saved` says only whether a login is saved here for this one site.
+ * value; `saved` says only whether a login is saved here for this one site. `purpose`: a sign-in, or a
+ * human check (a captcha, "Robot or human?") the owner passes.
  */
 export const LoginRequired = z.object({
   loginId: LoginId,
@@ -789,6 +792,8 @@ export const LoginRequired = z.object({
   display: z.boolean(),
   takeover: z.boolean().default(false),
   expiresAt: text(40),
+  /** Absent: a sign-in. */
+  purpose: z.enum(["sign_in", "human_check"]).optional(),
 });
 export type LoginRequired = z.infer<typeof LoginRequired>;
 
@@ -800,20 +805,23 @@ export type RunLoginPost = z.infer<typeof RunLoginPost>;
  * `login.resolve` on the event stream (protocol 8): the owner's answer to a sign-in card. `saved`: fill
  * the login saved here; `local`: show the tab on this computer's screen; `done`: check they signed in;
  * `typed`: fill what they typed, sealed in their browser for this computer (purpose `login`, the card as
- * `decisionId`, the sign-in's id as `name`); `decline` (not now) and `expire` end it. The answer is a
- * `CodeAnswer` whose body is a `LoginResolution`.
+ * `decisionId`, the sign-in's id as `name`); `decline` (not now) and `expire` end it. From
+ * `LOGIN_CHECKS_API`: `code` fills the code the site asks for (sealed `{code}`, bound as `typed` is) and
+ * `check` checks it now because the owner said in the chat they finished. The answer is a `CodeAnswer`
+ * whose body is a `LoginResolution`: `needs_code` (its `message` says what the site asks) or `passed` (a
+ * human check) from `LOGIN_CHECKS_API` too.
  */
 export const LoginResolve = z.object({
   id: text(100).min(1),
   loginId: LoginId,
   decisionId: text(100).min(1),
-  action: z.enum(["saved", "local", "typed", "done", "decline", "expire"]),
+  action: z.enum(["saved", "local", "typed", "done", "decline", "expire", "code", "check"]),
   sealed: SealedShape.optional(),
 });
 export type LoginResolve = z.infer<typeof LoginResolve>;
 
 export const LoginResolution = z.object({
-  status: z.enum(["signed_in", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy"]),
+  status: z.enum(["signed_in", "waiting", "failed", "shown", "no_window", "declined", "expired", "gone", "busy", "needs_code", "passed"]),
   message: text(500).optional(),
   /** The typed login was saved on this computer, as the owner asked. */
   savedNow: z.boolean().optional(),
@@ -823,6 +831,8 @@ export type LoginResolution = z.infer<typeof LoginResolution>;
 
 /** `capabilities.takeover`: the owner can control a tab of this computer's browser from the web, end to end (B21, protocol 8). */
 export const TAKEOVER_API = 1;
+/** `capabilities.takeover` from which a sign-in's takeover can run in a clean browser (`TakeoverStart.mode` "clean", browser/clean.ts). */
+export const TAKEOVER_CLEAN_API = 2;
 
 /** One message of a takeover's channel as the relay carries it: a sequence number, an IV and ciphertext, base64url (takeover/channel.ts). */
 export const ChannelMessage = z.object({
@@ -836,7 +846,9 @@ export type ChannelMessage = z.infer<typeof ChannelMessage>;
  * `takeover.start` on the event stream: the owner opens a tab of this computer from the web. `sealed`
  * holds the channel's secret, sealed in their browser for this computer (purpose `takeover`, the
  * takeover's id as `decisionId`, the tab as `name`). The tab is a sign-in's (`loginId`) or a run's
- * (`jobId`, the hosted job). The answer is a `CodeAnswer`.
+ * (`jobId`, the hosted job). `mode` "clean" (a sign-in, on a computer with `TAKEOVER_CLEAN_API`): the
+ * owner signs in in a clean browser at the tab's page, and the session moves into the tab when done;
+ * absent or "tab": the tab itself. The answer is a `CodeAnswer`.
  */
 export const TakeoverStart = z.object({
   id: text(100).min(1),
@@ -846,6 +858,7 @@ export const TakeoverStart = z.object({
   jobId: z.string().uuid().optional(),
   sealed: SealedShape,
   endsAt: text(40),
+  mode: z.enum(["tab", "clean"]).optional(),
 });
 export type TakeoverStart = z.infer<typeof TakeoverStart>;
 

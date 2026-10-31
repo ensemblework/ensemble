@@ -234,25 +234,27 @@ async function pendingApprovals(prisma: PrismaClient, accountId: string) {
       kind: "approval",
       userId: accountId,
       visibleTo: { equals: [accountId] },
-      // A secret card a restart left saving can be answered again (node-secrets.ts); a sign-in card stays while its computer works on it.
+      // A secret card a restart left saving can be answered again (node-secrets.ts); a sign-in card stays while its computer works on it or its site asks for a code.
       OR: [
         { data: { path: ["status"], equals: "pending" } },
         { AND: [{ data: { path: ["type"], equals: "secret" } }, { data: { path: ["status"], equals: "saving" } }] },
         { AND: [{ data: { path: ["type"], equals: "login" } }, { data: { path: ["status"], equals: "working" } }] },
+        { AND: [{ data: { path: ["type"], equals: "login" } }, { data: { path: ["status"], equals: "needs_code" } }] },
       ],
     },
     orderBy: { createdAt: "desc" },
     take: 50,
   });
-  return rows.filter((row) => { const data = row.data as { status?: unknown; type?: unknown }; return data.status === "pending" || secretStuck(row.data) || (data.type === "login" && data.status === "working"); }).map(wireMessage);
+  return rows.filter((row) => { const data = row.data as { status?: unknown; type?: unknown }; return data.status === "pending" || secretStuck(row.data) || (data.type === "login" && (data.status === "working" || data.status === "needs_code")); }).map(wireMessage);
 }
 
 /**
- * Cards the Hub's Needs me and the CLI do not list: a computer card (its Ensemble decision is listed
- * there already, answerable) and a sudo card (its password box is only in the Node chat). Node's own
+ * Cards the Hub's Needs me and the CLI do not list: a computer card and a run's question or permission
+ * (their Ensemble decision is listed by the CLI and, where there is no Node site, the Hub, answerable;
+ * node/run-decisions.ts), and a sudo card (its password box is only in the Node chat). Node's own
  * activity keeps them.
  */
-const NODE_CHAT_ONLY = new Set(["computer", "sudo"]);
+const NODE_CHAT_ONLY = new Set(["computer", "sudo", "run_decision"]);
 
 /** Whether a node's card is listed in the Hub's Needs me and by the CLI. */
 export function listedOutsideNode(row: { data: unknown }): boolean {
@@ -262,7 +264,12 @@ export function listedOutsideNode(row: { data: unknown }): boolean {
 /** How many of a person's node cards wait for them in the Hub's Needs me (`/api/shell`). */
 export async function hubApprovalCount(prisma: PrismaClient, accountId: string): Promise<number> {
   const rows = await prisma.nodeMessage.findMany({
-    where: { kind: "approval", userId: accountId, visibleTo: { equals: [accountId] }, data: { path: ["status"], equals: "pending" } },
+    where: {
+      kind: "approval",
+      userId: accountId,
+      visibleTo: { equals: [accountId] },
+      OR: [{ data: { path: ["status"], equals: "pending" } }, { AND: [{ data: { path: ["type"], equals: "login" } }, { data: { path: ["status"], equals: "needs_code" } }] }],
+    },
     select: { data: true },
     take: 1000,
   });

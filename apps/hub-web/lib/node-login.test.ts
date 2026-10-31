@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createDecipheriv, createHash, createPublicKey, diffieHellman, generateKeyPairSync, hkdfSync } from "node:crypto";
 import test from "node:test";
-import { loginFingerprint, loginOutcomeText, loginRouteText, typedLoginAnswer, type LoginTarget } from "./node-login";
+import { codeAnswer, loginFingerprint, loginOutcomeText, loginRouteText, typedLoginAnswer, type LoginTarget } from "./node-login";
 
 function computerKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -50,4 +50,15 @@ test("nothing typed goes to a computer that cannot open it, and the card says wh
   assert.equal(loginOutcomeText({ status: "signed_in", origin: "https://ledger.example.com", computer: "Mira's laptop", via: "saved" }), "Signed in to https://ledger.example.com on Mira's laptop with the saved login.");
   assert.equal(loginOutcomeText({ status: "signed_in", origin: "https://x.example", computer: "Studio", via: "typed", savedNow: true }), "Signed in to https://x.example on Studio with what you typed (encrypted for the computer). The login is saved there for next time.");
   assert.equal(loginOutcomeText({ status: "declined", origin: "https://x.example", computer: "Studio" }), "You chose not to sign in to https://x.example on Studio now.");
+});
+
+test("the code a site asks for is sealed like a typed login, with only the code and the site inside; a passed check says so", async () => {
+  const key = computerKey();
+  const answer = await codeAnswer({ ...target({ mode: "sealed", sealKey: key.info }), status: "needs_code", codeHint: "Enter the 6-digit code" }, { id: "card-1" }, " 424242 ", "https://app.ensemblework.com");
+  assert.equal(answer.action, "code");
+  assert.ok(answer.action === "code" && !JSON.stringify(answer).includes("424242"), "nothing in clear");
+  const aad = JSON.parse(Buffer.from(answer.sealed.aad, "base64url").toString("utf8"));
+  assert.deepEqual([aad.purpose, aad.decisionId, aad.name], ["login", "card-1", "lg_0123456789abcdef0123456789abcdef"]);
+  await assert.rejects(codeAnswer(target({ mode: "pair_again" }), { id: "card-1" }, "1", "https://app.ensemblework.com"), /Pair it again/);
+  assert.equal(loginOutcomeText({ status: "passed", origin: "https://www.walmart.com", computer: "Studio" }), "You passed the human check on https://www.walmart.com on Studio.");
 });

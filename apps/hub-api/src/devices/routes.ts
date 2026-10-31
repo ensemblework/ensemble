@@ -5,6 +5,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  * and only the device that token belongs to.
  */
 import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
+import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -650,6 +651,11 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         expiresAt: new Date(Date.now() + ((await backgroundJob(prisma, held.job.id)) ? backgroundWaitMs() : 24 * 3600_000)),
       },
     });
+    // A node's run asks in its chat, where the run's card is (node/run-decisions.ts); the notification opens it there.
+    const card = await postRunDecisionCard(app, row).catch((error: unknown) => {
+      app.log.warn({ err: error, decisionId: row.id }, "could not put a run's question in its node's chat");
+      return null;
+    });
     await prisma.notification.create({
       data: {
         userId: device.userId,
@@ -657,7 +663,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         title: `Agent needs you: ${title}`.slice(0, 200),
         body: held.job.task.title,
         urgent: true,
-        url: held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`,
+        url: (card && cardUrl(card)) ?? (held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`),
       },
     });
     await prisma.workspaceEvent.create({ data: { jobId: held.job.id, kind: "needs_me", data: { decisionId: row.id, title, tier: body.tier } } });
