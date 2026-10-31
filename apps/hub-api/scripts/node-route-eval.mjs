@@ -69,13 +69,14 @@ async function call(path, { method = "GET", cookie, token, body } = {}) {
   return parsed;
 }
 
+/** A 0.6.1 computer: the web tools (browser 2) and sign-in v2 (logins 2). */
 const CAPABILITIES = {
   folders: ["app"],
   engines: ["copilot-cli", "codex", "claude-code"],
   sessions: 2,
   nodeTools: 2,
-  browser: 1,
-  logins: 1,
+  browser: 2,
+  logins: 2,
   secrets: 2,
   capture: { browser: true, targets: { web: { screenshot: true, video: true }, terminal: { screenshot: true, tui: true } } },
 };
@@ -208,7 +209,7 @@ async function answerFor(request, token) {
 /** A paired computer that stays online and answers every node tool call. */
 async function fakeComputer(cookie, signal) {
   const paired = await call("/api/devices/pair", { method: "POST", cookie, body: {} });
-  const registered = await call("/api/devices/register", { method: "POST", body: { code: paired.code, name: "Eval laptop", platform: "linux", appVersion: "0.6.0", capabilities: CAPABILITIES } });
+  const registered = await call("/api/devices/register", { method: "POST", body: { code: paired.code, name: "Eval laptop", platform: "linux", appVersion: "0.6.1", capabilities: CAPABILITIES } });
   const token = registered.token;
   const calls = [];
   const heartbeat = () => call("/api/devices/self/heartbeat", { method: "POST", token, body: { capabilities: CAPABILITIES } }).catch(() => undefined);
