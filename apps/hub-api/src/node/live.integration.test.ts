@@ -36,7 +36,8 @@ const { updateSettings } = await import("../remote/store.js");
 const { makeSealKey, saveSealKey } = await import("../credentials/seal-key.js");
 const { answerNodeToolRequest } = await import("../device-tools/answer.js");
 const { closeAllSessions } = await import("../device-tools/terminal-sessions.js");
-const { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverInput } = await import("../takeover/session.js");
+const { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput, takeoverStats } = await import("../takeover/session.js");
+const { answerLoginResolve } = await import("../logins/answer.js");
 const { configureBrowser, browserBroker, shutdownBrowser } = await import("../browser/index.js");
 const { prepareSandbox } = await import("../workspace/sandbox/spawn.js");
 const { findOnPath } = await import("../capture/system.js");
@@ -142,6 +143,8 @@ async function computerFor(user: HttpUser, extra: Record<string, unknown> = {}) 
     if (frame.event === "takeover.input") takeoverInput(data);
     if (frame.event === "takeover.end") void answerTakeoverEnd(client as never, data);
     if (frame.event === "takeover.control") void answerTakeoverControl(client as never, data);
+    if (frame.event === "takeover.extend") takeoverExtend(data);
+    if (frame.event === "login.resolve") void answerLoginResolve(client as never, data);
   });
   return { key, laptop, posted, stop };
 }
@@ -165,9 +168,9 @@ async function nodeOf(user: HttpUser) {
   };
 }
 
-/** The owner's browser, as the Node page runs it: opens the live card's view, seals the secret, reads frames, sends input, switches control. */
-async function ownerBrowser(user: HttpUser, liveCardId: string) {
-  const created = await user.inject({ method: "POST", url: "/api/node/takeovers", headers: { origin: NODE_SITE }, payload: { liveCardId } });
+/** The owner's browser, as the Node page runs it: opens the live card's view (or a sign-in card's), seals the secret, reads frames, sends input, switches control. */
+async function ownerBrowser(user: HttpUser, liveCardId: string, target: Record<string, string> = { liveCardId }) {
+  const created = await user.inject({ method: "POST", url: "/api/node/takeovers", headers: { origin: NODE_SITE }, payload: target });
   assert.equal(created.statusCode, 200, created.body);
   const { takeover, controller } = json(created) as { takeover: Record<string, any> & { id: string; tab: string; computer: { id: string }; sealKey: { kid: string; spki: string } }; controller: string };
   const headers = { origin: NODE_SITE, "x-ensemble-takeover": controller };
@@ -198,6 +201,9 @@ async function ownerBrowser(user: HttpUser, liveCardId: string) {
     },
     control(on: boolean) {
       return user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/control`, headers, payload: { on } });
+    },
+    extend() {
+      return user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/extend`, headers });
     },
     end() {
       return user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/end`, headers, payload: { done: false } });
@@ -250,6 +256,10 @@ test("a live terminal: the node opens it, the owner watches and types from the w
     assert.ok(first.frame, "a frame came");
     assert.deepEqual([first.frame.header.t, first.frame.header.kind, first.frame.header.cols, first.frame.header.rows, first.frame.header.title], ["frame", "terminal", 120, 32, "Deploy"]);
     assert.deepEqual(Object.keys(first.frame.header.cursor as object).sort(), ["x", "y"]);
+    // More time works for a terminal view too.
+    const longer = await owner.extend();
+    assert.equal(longer.statusCode, 200, longer.body);
+    assert.equal(Date.parse(json(longer).takeover.endsAt) - Date.parse(json(started).takeover.endsAt), 15 * 60_000);
 
     // The owner types while watching: it is their shell.
     assert.equal((await owner.send([{ t: "tty", text: "echo owner-$((6*7))" }, { t: "tty-key", key: "Enter" }])).statusCode, 200);
@@ -355,6 +365,26 @@ test("a live view of the node's tab: watching shows it while the node works and 
     assert.equal(json(await owner.control(false)).takeover.mode, "watch");
     assert.equal(browserBroker().ownerTab(tab).sensitive, false, "handed back");
     assert.equal((await node.say("read it"))[0]?.state, "ok");
+
+    // More time, as for any takeover: its end moves on the computer too.
+    const extended = await owner.extend();
+    assert.equal(extended.statusCode, 200, extended.body);
+    assert.ok(json(extended).takeover.maxEndsAt);
+    await until(() => takeoverStats(owner.takeover.id)?.endsAt === json(extended).takeover.endsAt, "the view's end moved on the computer");
+
+    // A sign-in on the tab the owner watches: the watch makes way for the sign-in's remote view.
+    script = (transcript) => (transcript.includes("sign in there") ? { calls: [{ name: "browser_login_needed", arguments: { tab, reason: "the counter needs an account" } }], then: "Waiting." } : { text: "ok" });
+    await node.say("sign in there");
+    const login = (await node.messages()).find((row) => row.kind === "approval" && row.data.type === "login")!;
+    assert.ok(login, "the sign-in card");
+    const signIn = await ownerBrowser(mira, card.id, { loginCardId: login.id });
+    assert.equal((await signIn.start()).statusCode, 200);
+    let made = await owner.frame();
+    for (let tries = 0; made.state !== "ended" && tries < 10; tries += 1) made = await owner.frame();
+    assert.deepEqual([made.state, made.reason], ["ended", "sign_in"]);
+    assert.equal((await signIn.end()).statusCode, 200);
+    assert.equal((await mira.inject({ method: "POST", url: `/api/node/logins/${login.id}`, headers: { origin: NODE_SITE }, payload: { action: "decline" } })).statusCode, 200);
+    await settleTurns();
 
     // The node closes its tab: the view and the card end.
     script = (transcript) => (transcript.includes("close the tab") ? { calls: [{ name: "browser_close", arguments: { tab } }], then: "Closed." } : { text: "ok" });
