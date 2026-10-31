@@ -428,7 +428,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
       description:
         "Take a screenshot of a terminal on your owner's computer: it runs a command in a real terminal and captures the screen as a picture, which appears with your reply by itself. " +
         "Use it whenever your owner asks for a screenshot of their terminal, shell, htop, top or any command's output (`htop`, `top`, `df -h`, `ls -la`, `git log --oneline`). " +
-        "seconds: how long it runs before the picture (3 by default; htop and top keep running until then). keys: what to type once it started ({Enter}, {F10}, q). You also get the screen as text.",
+        "seconds: how long it runs before the picture (3 by default; htop and top keep running until then, and are stopped for you after it). keys: only to change what it shows once it started ({Down}, {F6}, a search); never a key that quits it (q, {F10}, {Ctrl+C}). You also get the screen as text.",
       input: z
         .object({
           computer: Computer,

@@ -58,7 +58,7 @@ import { INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ens
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
-import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
+import { cutOffReply, historyEntries, replyAfterStreamFailure, withoutEcho } from "./cutoff.js";
 import { assistantInstructions, buildHubState, loadOpenPage, turnContext } from "./state.js";
 import { ToolBlockedError, type AnyHubTool, type CallSpace, type CodeSession, type SpaceGateway, type ToolContext } from "./types.js";
 import { codePreamble, codeTools } from "./tools/code.js";
@@ -554,7 +554,8 @@ async function drive(
     if (turn.cutOff) {
       text = cutOffReply(turn.text, turn.finishReason ?? null);
     } else if (turn.toolCalls.length === 0 && turn.text.trim()) {
-      text = turn.text.trim();
+      // A small model copies the history's "(You did: …)" note; that note is never part of a reply.
+      text = withoutEcho(turn.text).trim();
     }
     try {
       await recordMetric(app.prisma, {
