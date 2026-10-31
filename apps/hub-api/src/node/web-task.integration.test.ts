@@ -192,7 +192,7 @@ test("a sign-in goes to the owner's card and the turn parks; nothing is typed", 
   }
 });
 
-test("a click that would delete needs the owner's words; a human check stops it; an older computer is asked again without new inputs", async () => {
+test("a click that would delete stops for the owner's yes, even when they asked for it; a human check stops it; an older computer is asked again without new inputs", async () => {
   const { mira, key, laptop, node: made, room } = await setUp();
   const device = computer(laptop.id, key);
   try {
@@ -201,13 +201,13 @@ test("a click that would delete needs the owner's words; a human check stops it;
     await say(mira, room.id, "look at my portal's resources");
     assert.ok(!device.heard.some((row) => row.name === "browser_click"), "nothing deleted");
     const reply = (await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!;
-    assert.equal(reply.body, "Result: web_task blocked: Stopped before “Delete resource group”: that would delete or cancel, and your owner's words do not ask for it. Ask them first.");
+    assert.equal(reply.body, "Result: web_task blocked: Stopped before “Delete resource group” on tab t1: that would delete or cancel, which web_task never does by itself. Ask your owner in the chat first (say what, where and any price); only after they say yes, click it yourself: browser_click with tab t1 and ref e5.");
 
     device.heard.length = 0;
     node = startsWebTask("delete the old resource group", { goal: "Delete the old resource group", url: "https://portal.example.test/" });
     web = (page) => (page.includes("Resource group deleted") ? '{"action":"done","answer":"Deleted."}' : '{"action":"click","ref":"e5"}');
     await say(mira, room.id, "delete the old resource group on my portal");
-    assert.deepEqual(device.heard.find((row) => row.name === "browser_click")?.input, { tab: "t1", ref: "e5" }, "the owner asked for it");
+    assert.ok(!device.heard.some((row) => row.name === "browser_click"), "even when asked, the node makes that click itself after its owner's yes");
 
     device.heard.length = 0;
     asked.length = 0;
@@ -243,7 +243,10 @@ test("web_task's own rules: one JSON action, sign-in and human-check pages, secr
   assert.ok(!humanCheckPage("- text: This site is protected by reCAPTCHA"));
   assert.equal(labelOf('- textbox "Verification code" [ref=e8]\n- button "Verify" [ref=e9]', "e8"), 'textbox "Verification code"');
   assert.ok(secretField('textbox "Verification code"') && secretField('textbox "Card number"') && !secretField('textbox "ZIP code"'));
-  assert.equal(riskyClick('button "Place order"', "check my cart total"), "buy or pay");
-  assert.equal(riskyClick('button "Place order"', "order the PS5 for me"), null);
-  assert.equal(riskyClick('link "Usage"', ""), null);
+  assert.equal(riskyClick('button "Place your order"'), "buy, pay or subscribe");
+  assert.equal(riskyClick('link "Buy now"'), "buy, pay or subscribe");
+  assert.equal(riskyClick('button "Start your free trial"'), "buy, pay or subscribe");
+  assert.equal(riskyClick('button "Delete account"'), "delete or cancel");
+  assert.equal(riskyClick('button "Post"'), "send or publish");
+  for (const harmless of ['link "Usage"', 'button "Add to cart"', 'button "Remove filter"', 'link "Post office locator"', 'button "Update location"']) assert.equal(riskyClick(harmless), null, harmless);
 });

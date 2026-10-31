@@ -5,8 +5,8 @@
  * thinking for one action as JSON, and does it with the node's own browser tools on its owner's
  * computer (node/device-tools.ts), so their rules, cards and evidence apply. Its own rules: it never
  * types a password or a code (a sign-in goes to the owner's card and the turn parks, as other waits
- * do), never buys, pays, deletes or sends anything the owner's words did not ask for, and stops at a
- * human check. Each model call is metered like the turn's own.
+ * do), never itself clicks to buy, pay, subscribe, delete, send or post (it stops and hands that
+ * click to the node, which asks its owner in the chat first), and stops at a human check. Each model call is metered like the turn's own.
  */
 import { z } from "zod";
 import { isSubscriptionProvider } from "@ensemble/shared-types";
@@ -58,7 +58,7 @@ export const WEB_TASK_PROMPT = [
   '{"action":"screenshot","focus":"the chart"} (a picture your owner sees)',
   '{"action":"done","answer":"what you found, with the numbers and where"}',
   '{"action":"stop","reason":"why it cannot be done"}',
-  "Rules: never type a password, a one-time code or card details: on a sign-in page stop with reason \"sign in\". Never buy, pay, delete, send or submit anything the goal does not ask for. A captcha or \"Robot or human?\": stop with reason \"human check\".",
+  "Rules: never type a password, a one-time code or card details: on a sign-in page stop with reason \"sign in\". Never click to buy, pay, subscribe, delete, send or post: that click is your owner's to approve. A captcha or \"Robot or human?\": stop with reason \"human check\".",
   "Use only refs from the page now. Answer done as soon as the goal is met.",
 ].join("\n");
 
@@ -69,12 +69,15 @@ const HUMAN_CHECK = /\b(?:robot or human|verify (?:that )?you(?: are|'re|’re) 
 const BLOCKED = /\b(?:could not load the page|ERR_[A-Z_]+|access denied|403 forbidden|\(403\)|you have been blocked|request blocked)\b/i;
 /** Fields nothing types into: the owner signs in on their card. */
 const SECRET_FIELD = /\b(?:password|passcode|one[- ]time|otp|verification code|security code|2fa|two[- ]factor|authenticator|pin|cvv|cvc|card number|credit card)\b/i;
-/** What a click must not do without the owner's words, by the words that allow it. */
-const RISKY: Array<{ label: RegExp; allowed: RegExp; what: string }> = [
-  { label: /\b(?:buy|purchase|place (?:your |my )?order|order now|pay(?: now)?|checkout|check out|complete (?:purchase|order)|confirm (?:order|payment|purchase))\b/i, allowed: /\b(?:buy|purchase|order|pay|checkout|check out)\b/i, what: "buy or pay" },
-  { label: /\b(?:delete|remove|erase|destroy|terminate|deactivate|close (?:my |the )?account|cancel (?:my |the )?(?:subscription|account|plan|order))\b/i, allowed: /\b(?:delete|remove|erase|destroy|terminate|deactivate|cancel|close)\b/i, what: "delete or cancel" },
-  { label: /\b(?:send|transfer|donate|wire|publish|post)\b/i, allowed: /\b(?:send|transfer|donate|wire|publish|post|reply|email|message)\b/i, what: "send or publish" },
-  { label: /\b(?:subscribe|upgrade|start (?:my |a )?(?:free )?trial)\b/i, allowed: /\b(?:subscribe|upgrade|trial|sign up)\b/i, what: "subscribe" },
+/**
+ * Clicks web_task never makes by itself, whatever the owner wrote: words like "order it in the US" or
+ * "send me screenshots" do not ask for a purchase or a post. It stops and hands the click to the node,
+ * which asks its owner in the chat and clicks only after a yes. A link only stops it when it buys.
+ */
+const RISKY: Array<{ label: RegExp; what: string; links?: boolean }> = [
+  { label: /\b(?:buy|purchase|place (?:your |my |the )?order|order now|pay(?: now)?|checkout|check out|complete (?:purchase|order)|confirm (?:order|payment|purchase)|subscribe|upgrade|start (?:my |a |your )?(?:free )?trial)\b/i, what: "buy, pay or subscribe", links: true },
+  { label: /\b(?:delete|erase|destroy|terminate|deactivate|close (?:my |the |your )?account|cancel (?:my |the |your )?(?:subscription|account|plan|order|membership))\b/i, what: "delete or cancel" },
+  { label: /\b(?:send|transfer|donate|wire|publish|post)\b/i, what: "send or publish" },
 ];
 
 /** The line of a snapshot that names `ref`, without the ref itself. */
@@ -102,9 +105,10 @@ export function secretField(label: string): boolean {
   return SECRET_FIELD.test(label);
 }
 
-/** Why the owner's words do not cover this click, or null when they do (or it is harmless). */
-export function riskyClick(label: string, ownerWords: string): string | null {
-  for (const risk of RISKY) if (risk.label.test(label) && !risk.allowed.test(ownerWords)) return risk.what;
+/** What this click would do that web_task leaves to the node and its owner, or null when it is harmless. */
+export function riskyClick(label: string): string | null {
+  const link = /^link\b/i.test(label.trim());
+  for (const risk of RISKY) if ((!link || risk.links) && risk.label.test(label)) return risk.what;
   return null;
 }
 
@@ -155,7 +159,7 @@ export function webTaskTool(scope: NodeScope): AnyHubTool {
     description:
       "Do a multi-step task on a website in your owner's browser on their computer: a value behind clicks on a dashboard or console, a setting to read, a form to fill. " +
       "Give the goal (and url to start, or the tab). It reads the page, clicks and types step by step (at most 8 steps) and returns status (done, sign_in_needed, human_check, blocked, gave_up), the answer, the steps and any screenshots. " +
-      "It never types passwords or codes: a sign-in goes to your owner on a card in this chat, and you go on (call it again with the same tab) when they are done. It never buys, pays, deletes or sends anything your owner did not ask for. " +
+      "It never types passwords or codes: a sign-in goes to your owner on a card in this chat, and you go on (call it again with the same tab) when they are done. It never clicks to buy, pay, subscribe, delete, send or post: it stops there and tells you the button, for you to ask your owner and click after their yes. " +
       "For a screenshot of a page use browser_view; for prices browser_shop; for facts hub_web_search.",
     input: Input,
     isWrite: false,
@@ -171,7 +175,6 @@ export function webTaskTool(scope: NodeScope): AnyHubTool {
 async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typeof Input>): Promise<ToolResult> {
   const tools = new Map(captureTools(scope).map((tool) => [tool.name, tool]));
   const model = await webModel(scope);
-  const ownerWords = scope.ownerWords ?? "";
   const steps: Step[] = [];
   const evidence: string[] = [];
   /** Inputs this computer's Ensemble does not take yet (an older version): not sent again. */
@@ -281,8 +284,11 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
     }
     if (action.action === "click") {
       const label = labelOf(page, action.ref);
-      const risk = riskyClick(label, ownerWords);
-      if (risk) return finish({ status: "blocked", answer: `Stopped before “${truncateText(/"([^"]+)"/.exec(label)?.[1] ?? label, 80)}”: that would ${risk}, and your owner's words do not ask for it. Ask them first.` });
+      const risk = riskyClick(label);
+      if (risk) {
+        const name = truncateText(/"([^"]+)"/.exec(label)?.[1] ?? label, 80);
+        return finish({ status: "blocked", answer: `Stopped before “${name}” on tab ${tab}: that would ${risk}, which web_task never does by itself. Ask your owner in the chat first (say what, where and any price); only after they say yes, click it yourself: browser_click with tab ${tab} and ref ${action.ref}.` });
+      }
     }
 
     const done =
