@@ -21,8 +21,9 @@ import { findChromium, type ChromiumChoice } from "./chromium.js";
 import { humanCheck } from "./human-check.js";
 import { browserLook, HIDE_WEBDRIVER, IGNORED_DEFAULT_ARGS, LAUNCH_ARGS } from "./launch.js";
 import { readableSnapshot, scanPage, sensitiveMasks } from "./page-scan.js";
-import { browserProfileDir, ensembleDataHome, isProfileName } from "./paths.js";
+import { browserProfileDir, ensembleDataHome, isProfileName, signInProfileDir } from "./paths.js";
 import { hasSecrets, hideSecrets, holdReason, SECRET_MIN_LENGTH, siteRule, type PrivacyRules } from "./privacy.js";
+import { restoreSessionCookies, saveSessionCookies, SESSION_COOKIES_EVERY_MS } from "./session-cookies.js";
 
 export type BrowserErrorCode = "not_found" | "not_yours" | "sensitive" | "refused" | "bad_input" | "unavailable" | "busy" | "timeout" | "failed";
 
@@ -124,6 +125,8 @@ type ContextEntry = {
   headless: boolean;
   idleSince: number | null;
   tracing: { operation: string; tab: string; held: string | null; timer: NodeJS.Timeout } | null;
+  /** A profile's session cookies are written this often (browser/session-cookies.ts). */
+  cookieTimer?: NodeJS.Timeout;
 };
 
 type Recording = { kind: "video"; video: RealtimeRecording; watch: { held: string | null; never: boolean; rules: PrivacyRules } } | { kind: "trace" };
@@ -441,9 +444,14 @@ export class BrowserBroker {
       throw new BrowserError("unavailable", /ProcessSingleton|SingletonLock|profile.*in use/i.test(message) ? `The browser profile "${profile}" is open in another Chromium. Close it first.` : `The browser did not start: ${message}`);
     }
     await context.addInitScript(HIDE_WEBDRIVER).catch(() => undefined);
+    // Sign-ins for the session only survive a restart: their cookies come back, and are kept as they change.
+    const profileDir = browserProfileDir(profile, this.dataHome());
+    const restored = await restoreSessionCookies(context, profileDir);
     const entry: ContextEntry = { key, profile, owner: null, context, headless, idleSince: this.now(), tracing: null };
+    entry.cookieTimer = setInterval(() => void saveSessionCookies(entry.context, profileDir), SESSION_COOKIES_EVERY_MS);
+    entry.cookieTimer.unref();
     this.watchContext(entry);
-    this.log(`started profile ${profile} (${headless ? "headless" : "with a window"})`);
+    this.log(`started profile ${profile} (${headless ? "headless" : "with a window"})${restored ? `; ${restored} session cookie(s) restored` : ""}`);
     return entry;
   }
 
@@ -476,6 +484,7 @@ export class BrowserBroker {
   private watchContext(entry: ContextEntry): void {
     this.contexts.set(entry.key, entry);
     entry.context.on("close", () => {
+      if (entry.cookieTimer) clearInterval(entry.cookieTimer);
       if (this.contexts.get(entry.key) === entry) this.contexts.delete(entry.key);
       for (const tab of [...this.tabs.values()]) if (tab.entry === entry && !tab.moving) this.forgetTab(tab);
     });
@@ -484,9 +493,17 @@ export class BrowserBroker {
 
   private async closeContext(entry: ContextEntry): Promise<void> {
     this.contexts.delete(entry.key);
+    // Before its pages close: Chromium drops session cookies as its last page goes.
+    await this.keepSessionCookies(entry);
     for (const tab of [...this.tabs.values()]) if (tab.entry === entry) await this.closeTab(tab);
     if (entry.tracing) await this.discardTrace(entry, "its browser closed");
     await entry.context.close().catch(() => undefined);
+  }
+
+  /** Writes a profile's session cookies before its browser closes or restarts (`stop`), or its last page closes (browser/session-cookies.ts). */
+  private async keepSessionCookies(entry: ContextEntry, stop = true): Promise<void> {
+    if (stop && entry.cookieTimer) clearInterval(entry.cookieTimer);
+    if (entry.profile !== null) await saveSessionCookies(entry.context, browserProfileDir(entry.profile, this.dataHome()));
   }
 
   // ── tabs ──────────────────────────────────────────────────────────────────
@@ -578,6 +595,8 @@ export class BrowserBroker {
     if (tab.entry.tracing?.tab === tab.id) await this.discardTrace(tab.entry, "its tab closed");
     tab.recording = null;
     this.forgetTab(tab);
+    // The profile's last page: Chromium ends its session as it closes, so its session cookies are kept first.
+    if (tab.entry.profile !== null && tab.entry.context.pages().every((page) => page === tab.page)) await this.keepSessionCookies(tab.entry, false);
     await tab.page.close().catch(() => undefined);
   }
 
@@ -597,8 +616,11 @@ export class BrowserBroker {
       if (this.tabsOf(operation).length >= this.options.maxTabsPerOperation) throw new BrowserError("busy", `This work already has ${this.options.maxTabsPerOperation} tabs open. Close some first.`);
       const found = await this.contextFor(operation, { profile, headed: Boolean(input.headed), device: input.device, viewport: input.viewport });
       note = found.note;
+      const ended = found.entry.profile !== null && found.entry.context.pages().length === 0;
       const blank = found.entry.context.pages().find((page) => !this.pageTabs.has(page) && page.url() === "about:blank");
       tab = this.register(blank ?? (await found.entry.context.newPage()), operation, found.entry);
+      // Its last page had closed, which ended the session's cookies in Chromium: they come back (browser/session-cookies.ts).
+      if (ended) await restoreSessionCookies(found.entry.context, browserProfileDir(found.entry.profile!, this.dataHome()));
       if (input.viewport && profile !== null) await tab.page.setViewportSize(input.viewport);
       if (loopbackOnly) await tab.page.route("**/*", (route) => (isLoopbackUrl(route.request().url()) ? route.continue() : route.abort("blockedbyclient")));
     }
@@ -1046,6 +1068,34 @@ export class BrowserBroker {
   }
 
   /**
+   * What the clean sign-in browser (logins/clean-signin.ts) needs for a tab's profile: a Chromium that can
+   * show a window (never the headless shell), its own folder beside the profile (null for a private
+   * tab), the look of this computer's Chrome as the profile has it (so a session moved between them
+   * stays the same browser to a site), this broker's extra switches, and the environment for a window.
+   */
+  cleanSignIn(profile: string | null): { executablePath: string; userDataDir: string | null; userAgent?: string; locale: string; timezone?: string; args: string[]; env: NodeJS.ProcessEnv; platform: NodeJS.Platform } | null {
+    const choice = this.chromium(false);
+    if (!choice) return null;
+    const platform = (this.options.platform ?? process.platform) as NodeJS.Platform;
+    const look = browserLook({ executablePath: choice.executablePath, platform });
+    return {
+      executablePath: choice.executablePath,
+      userDataDir: profile === null ? null : signInProfileDir(profile, this.dataHome()),
+      ...(look.userAgent ? { userAgent: look.userAgent } : {}),
+      locale: look.locale,
+      ...(look.timezoneId ? { timezone: look.timezoneId } : {}),
+      args: [...(this.options.args ?? [])],
+      env: this.options.env ?? process.env,
+      platform,
+    };
+  }
+
+  /** Where the broker keeps its files: a private tab's clean sign-in browser gets a folder for the session there. */
+  dataFolder(): string {
+    return this.dataHome();
+  }
+
+  /**
    * Shows a tab on this computer's screen for its owner to sign in: brought to the front of its window,
    * after restarting its profile's browser with a window when it ran without one. Refused while other
    * work uses that browser or it records, and for a private tab (always without a window).
@@ -1087,6 +1137,7 @@ export class BrowserBroker {
     for (const tab of moving) tab.moving = true;
     const pending = (async () => {
       this.contexts.delete(entry.key);
+      await this.keepSessionCookies(entry);
       await entry.context.close().catch(() => undefined);
       return this.launchProfile(entry.key, profile, headless);
     })();

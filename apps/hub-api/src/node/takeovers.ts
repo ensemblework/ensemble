@@ -17,7 +17,7 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { fileAnswers, publishDeviceFrame, publishFileAnswer } from "../devices/revoke-notify.js";
 import { appendLedger } from "../lib/ledger.js";
 import { readAad, SealError } from "../credentials/seal.js";
-import { CodeAnswer, TAKEOVER_API, type ChannelMessage } from "../remote/contract.js";
+import { CodeAnswer, TAKEOVER_MIN_API, type ChannelMessage } from "../remote/contract.js";
 import { secretRouteFor } from "./node-secrets.js";
 import { loginTakeoverEnded } from "./logins.js";
 
@@ -112,7 +112,7 @@ async function takeoverDevice(app: FastifyInstance, accountId: string, deviceId:
   const device = await app.prisma.device.findFirst({ where: { id: deviceId, userId: accountId, revokedAt: null } });
   if (!device) throw new TakeoverError("That computer is no longer paired.", 409);
   const caps = (device.capabilities ?? {}) as { takeover?: unknown };
-  if (typeof caps.takeover !== "number" || caps.takeover < TAKEOVER_API) throw new TakeoverError(`Update Ensemble on ${device.name}: it is too old to show its browser here.`, 409, "update");
+  if (typeof caps.takeover !== "number" || caps.takeover < TAKEOVER_MIN_API) throw new TakeoverError(`Update Ensemble on ${device.name}: it is too old to show its browser here.`, 409, "update");
   const route = secretRouteFor(device);
   if (route.mode === "pair_again") throw new TakeoverError(`${device.name} now reports a different key from the one it was paired with. Pair it again first.`, 409, "pair_again");
   if (route.mode !== "sealed") throw new TakeoverError(`Update Ensemble on ${device.name}: it cannot encrypt its browser for this page yet.`, 409, "update");

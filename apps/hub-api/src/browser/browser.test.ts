@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { BrowserBroker, hasDisplay } from "./broker.js";
 import { browserSearchRoots, findChromium, listBrowserBuilds, playwrightCacheDir, playwrightRevisions, type FileProbe, type Host } from "./chromium.js";
-import { browserDeniedPaths, browserProfileDir, browserRoot, ensembleDataHome, isProfileName, playwrightBrowsersDir } from "./paths.js";
+import { browserDeniedPaths, browserProfileDir, browserRoot, ensembleDataHome, isProfileName, playwrightBrowsersDir, signInProfileDir } from "./paths.js";
 import { findSecrets, hideSecrets, matchesSite, normalizeSite, redactSnapshot, siteLists, siteRule, valueFieldRefs } from "./privacy.js";
 import { humanCheck } from "./human-check.js";
 import { browserLook, chromiumVersion, computerLocale, HIDE_WEBDRIVER, IGNORED_DEFAULT_ARGS, LAUNCH_ARGS, userAgentFor } from "./launch.js";
@@ -141,6 +141,10 @@ test("paths: profiles, Playwright's downloads and capture state live in the data
   assert.throws(() => browserProfileDir("../escape", "/d"), /not a browser profile name/);
   assert.equal(isProfileName("work-2"), true);
   assert.equal(isProfileName(".hidden"), false);
+  // The clean browsers' own folders beside a profile are never a profile an agent opens.
+  assert.equal(signInProfileDir("default", "/d"), "/d/browser/default-signin");
+  assert.equal(isProfileName("default-signin"), false);
+  assert.equal(isProfileName("default-clean"), false);
 });
 
 test("a display for a window: always on macOS and Windows, on Linux only with X11 or Wayland", () => {
@@ -154,7 +158,7 @@ test("the tool sets: typed inputs as JSON Schema, and no evaluate or raw CDP too
   const browser = browserToolDefinitions();
   assert.deepEqual(
     browser.map((tool) => tool.name),
-    ["browser_open", "browser_tabs", "browser_close", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_wait", "browser_screenshot", "browser_console", "browser_network_errors", "browser_record", "browser_upload", "browser_login_needed", "browser_download"],
+    ["browser_open", "browser_tabs", "browser_close", "browser_snapshot", "browser_click", "browser_type", "browser_press", "browser_wait", "browser_screenshot", "browser_console", "browser_network_errors", "browser_record", "browser_upload", "browser_login_needed", "browser_login_check", "browser_download"],
   );
   const capture = captureToolDefinitions();
   assert.deepEqual(capture.map((tool) => tool.name), ["capture_screenshot", "capture_video", "capture_app_start", "capture_app_stop", "capture_apps", "capture_check", "capture_status"]);
@@ -165,7 +169,7 @@ test("the tool sets: typed inputs as JSON Schema, and no evaluate or raw CDP too
     assert.doesNotMatch(tool.name, /eval|script|cdp|devtools/i);
   }
   assert.deepEqual((browser.find((tool) => tool.name === "browser_click")!.inputSchema.required as string[]).sort(), ["ref", "tab"]);
-  assert.equal(BROWSER_TOOLS.length + CAPTURE_TOOLS.length, 22);
+  assert.equal(BROWSER_TOOLS.length + CAPTURE_TOOLS.length, 23);
 });
 
 test("tool calls are validated before anything runs, and fail as results, not exceptions", async () => {

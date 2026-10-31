@@ -18,9 +18,11 @@ export function ensembleDataHome(env: NodeJS.ProcessEnv = process.env, platform:
 }
 
 const PROFILE = /^[a-z0-9][a-z0-9_-]{0,47}$/i;
+/** Suffixes of the clean browsers' own folders beside a profile (`browser/clean.ts`): never a profile an agent opens. */
+const CLEAN_SUFFIX = /-(?:signin|clean)$/i;
 
 export function isProfileName(name: string): boolean {
-  return PROFILE.test(name);
+  return PROFILE.test(name) && !CLEAN_SUFFIX.test(name);
 }
 
 /** The broker's profiles: `<data>/browser/<profile>`, one persistent Chromium profile each. */
@@ -31,6 +33,16 @@ export function browserRoot(dataHome: string = ensembleDataHome()): string {
 export function browserProfileDir(profile: string, dataHome: string = ensembleDataHome()): string {
   if (!isProfileName(profile)) throw new Error(`"${profile}" is not a browser profile name: letters, digits, - and _ only.`);
   return join(browserRoot(dataHome), profile);
+}
+
+/**
+ * The clean browser's own folder for a profile's sign-ins (`<data>/browser/<profile>-signin`), kept apart
+ * from the profile itself and from every agent: it stays signed in to identity providers for the next
+ * sign-in, and only the owner drives it.
+ */
+export function signInProfileDir(profile: string, dataHome: string = ensembleDataHome()): string {
+  if (!PROFILE.test(profile) || CLEAN_SUFFIX.test(profile)) throw new Error(`"${profile}" is not a browser profile name: letters, digits, - and _ only.`);
+  return join(browserRoot(dataHome), `${profile}-signin`);
 }
 
 /** Playwright's browsers and ffmpeg as `ensemble capture setup` installs them (PLAYWRIGHT_BROWSERS_PATH). */
