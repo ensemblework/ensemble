@@ -165,13 +165,18 @@ export function riskOf(row: Pick<LocalDecision, "toolName">): "ordinary" | "high
 export type AnswerVerdict =
   | { kind: "wait" }
   | { kind: "stop"; why: string }
-  | { kind: "apply"; decision: "allow" | "deny"; reason: string | null }
+  | { kind: "apply"; decision: "allow" | "deny"; reason: string | null; scope?: "session" }
   | { kind: "refuse"; why: string };
+
+/** A permission the web may answer "for this run": it becomes a rule of that run here. A push is confirmed each time. */
+export function takesRunAnswer(local: Pick<LocalDecision, "event" | "toolName">): boolean {
+  return local.event !== "question" && local.toolName !== "git push";
+}
 
 /**
  * A hosted answer is applied only to the question the Mac asked: the same
- * hosted id, the same action, still pending here, scope once, and a tier a
- * phone may answer. First answer wins, on the Mac or the phone.
+ * hosted id, the same action, still pending here, once or (a permission) for
+ * this run, and a tier a phone may answer. First answer wins, on the Mac or the phone.
  */
 export function judgeAnswer(input: { askedId: string; hash: string; risk: "ordinary" | "high"; local: LocalDecision | null; answer: HostedAnswer; acceptWeb?: boolean }): AnswerVerdict {
   const { answer, local } = input;
@@ -181,10 +186,12 @@ export function judgeAnswer(input: { askedId: string; hash: string; risk: "ordin
   if (answer.status === "expired") return { kind: "stop", why: "expired on the web" };
   if (!answer.decision) return { kind: "refuse", why: "The answer had no allow or deny." };
   if (answer.actionHash && answer.actionHash !== input.hash) return { kind: "refuse", why: "The answer was for a different action." };
-  if (answer.scope && answer.scope !== "once") return { kind: "refuse", why: `A remote answer is for this question only, not “${answer.scope}”.` };
-  if (answer.decision === "deny") return { kind: "apply", decision: "deny", reason: null };
+  const forRun = answer.scope === "session" && takesRunAnswer(local);
+  if (answer.scope && answer.scope !== "once" && !forRun) return { kind: "refuse", why: `A remote answer is for this question only, not “${answer.scope}”.` };
+  const scope = forRun ? { scope: "session" as const } : {};
+  if (answer.decision === "deny") return { kind: "apply", decision: "deny", reason: null, ...scope };
   if (input.risk === "high" && !input.acceptWeb) return { kind: "refuse", why: "This computer accepts this answer only on the computer." };
-  if (local.event !== "question") return { kind: "apply", decision: "allow", reason: null };
+  if (local.event !== "question") return { kind: "apply", decision: "allow", reason: null, ...scope };
   const options = decisionOptions(local);
   const custom = detailOf(local).allowCustom === true;
   const reason = answer.reason?.slice(0, 500) ?? null;

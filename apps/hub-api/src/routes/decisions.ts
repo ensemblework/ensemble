@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
@@ -18,6 +18,7 @@ import { handoffFor } from "../workspace/handoff.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
+import { takesRunAnswer } from "../remote/policy.js";
 
 // In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
 const HOOK_SCRIPT = hookScriptPath();
@@ -75,13 +76,19 @@ export async function applyAnswer(
     if (detail.confirm === true && body.decision === "allow" && actor === "me" && body.confirmed !== true) {
       throw new AnswerError(400, "Confirm this before allowing it.");
     }
-    if (body.scope !== "once") throw new AnswerError(400, "A phone answer is once only. Change trust on your computer.");
+    // "For this run" on a permission becomes a rule of that run on the computer (remote/policy.ts `judgeAnswer`), when its Ensemble takes one.
+    const forRun = body.scope === "session" && takesRunAnswer(row) && (await takesRunAnswers(prisma, deviceId));
+    if (body.scope === "session" && takesRunAnswer(row) && !forRun) {
+      const name = typeof detail.deviceName === "string" && detail.deviceName.trim() ? detail.deviceName.trim() : "that computer";
+      throw new AnswerError(400, `Update Ensemble on ${name} to allow this for the whole run from here. Allow once works now.`);
+    }
+    if (body.scope !== "once" && !forRun) throw new AnswerError(400, "A phone answer is once only. Change trust on your computer.");
     const offered = offeredOptions(detail.options);
     const picked = typeof body.reason === "string" && body.reason.length > 0 ? body.reason : null;
     if (row.event !== "question" && picked) throw new AnswerError(400, "A permission answer cannot include a note.");
     if (picked !== null && !offered.includes(picked) && !(row.event === "question" && detail.allowCustom === true)) throw new AnswerError(400, "Pick one of the offered answers.");
     if (body.decision === "allow" && offered.length > 0 && picked === null) throw new AnswerError(400, "Pick one of the offered answers.");
-    scope = "once";
+    scope = forRun ? "session" : "once";
     reason = picked ?? undefined;
   }
   // Checked before the answer is taken; saved only by the answer that wins.
@@ -383,6 +390,13 @@ async function connectedTargets(): Promise<string[]> {
 /** Strings the computer offered. A device answer has to be one of these, exactly. */
 function offeredOptions(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** Whether the computer's Ensemble keeps a permission answered "for this run" as a rule of the run (capabilities `runAnswers`). */
+async function takesRunAnswers(prisma: PrismaClient, deviceId: string): Promise<boolean> {
+  const device = await prisma.device.findUnique({ where: { id: deviceId }, select: { capabilities: true } });
+  const runAnswers = (device?.capabilities as { runAnswers?: unknown } | null)?.runAnswers;
+  return typeof runAnswers === "number" && runAnswers >= 1;
 }
 
 function label(source: string): string {

@@ -30,6 +30,8 @@ type Live = {
   picked: boolean;
   seq: number;
   heard: number;
+  /** Tool calls running now: a long one (a browser task, a sign-in) is work, not silence. */
+  busy: number;
   stopped: boolean;
   settle: (outcome: { result: AgentTurnResult } | { error: Error }) => void;
 };
@@ -43,6 +45,11 @@ export function liveTurn(id: string, deviceId: string): Live | null {
 
 export function heard(turn: Live): void {
   turn.heard = Date.now();
+}
+
+/** The computer stopped talking about the turn: nothing heard for a while, and no tool call of it running here. */
+export function quiet(turn: Pick<Live, "picked" | "busy" | "heard">, now = Date.now()): boolean {
+  return turn.picked && turn.busy === 0 && now - turn.heard > QUIET_MS;
 }
 
 /** The computer's answer, as `done` carries it. */
@@ -86,12 +93,21 @@ export function runOnComputer(input: {
       id,
       deviceId: input.device.id,
       spec: input.spec,
-      call,
+      call: async (name, args) => {
+        turn.busy += 1;
+        try {
+          return await call(name, args);
+        } finally {
+          turn.busy -= 1;
+          heard(turn);
+        }
+      },
       read,
       onDelta: input.onDelta,
       picked: false,
       seq: 0,
       heard: Date.now(),
+      busy: 0,
       stopped: false,
       settle: (outcome) => {
         if (!live.has(id)) return;
@@ -124,7 +140,7 @@ export function runOnComputer(input: {
       setTimeout(() => turn.settle({ error: new RuntimeError(`${input.device.name} took longer than ${LONGEST_MS / 60_000} minutes, so the turn was stopped.`, 504) }), LONGEST_MS),
     );
     const watch = setInterval(() => {
-      if (turn.picked && Date.now() - turn.heard > QUIET_MS) {
+      if (quiet(turn)) {
         publishDeviceFrame(input.device.id, "assistant.stop", { id });
         turn.settle({ error: new RuntimeError(`${input.device.name} stopped answering. Try again.`, 504) });
       }

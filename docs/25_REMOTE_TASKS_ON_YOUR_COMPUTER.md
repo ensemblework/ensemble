@@ -109,6 +109,8 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 Agent sessions: a computer with `capabilities.sessions` 1 runs a job that continues another in the agent's own session (Claude `--resume`, Codex thread resume, ACP `session/load`) and takes the claim's `steer`. Ensemble Node continues sessions only on such a computer, or one reporting 0.4.18 or later ([35 §8.2](35_ENSEMBLE_NODE.md#82-which-session)).
 
+Answers for the run: a computer with `capabilities.runAnswers` 1 takes a permission answered on the web or in the Node chat *for this run* (`scope: "session"`): it keeps the answer as a rule of its run, which covers the same command with other arguments, edits in the run's folder and the same site ([30 §5](30_ENGINES.md#5-prompts-from-the-tools-and-answering-in-either-place)). The web refuses that answer for an older computer with "Update Ensemble on <computer> …"; a question or a push is always answered once.
+
 Secrets for runs ([35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)): a computer takes `secret.save` frames on its event stream, keeps the value encrypted in its own `run_secrets` with where it may be sent (`allow`), and answers on `/api/devices/self/code-requests/:id` with only whether it saved it (`{saved, name, sealed, allow}`). Whatever the computer sends back has every saved value hidden (`hideSecretsDeep`). Ensemble Node's secure box sends them; `ensemble secrets` manages them on the computer.
 
 | Capability | Frame | Meaning |

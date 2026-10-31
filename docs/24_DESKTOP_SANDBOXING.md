@@ -46,6 +46,8 @@ A path outside the run's folder falls in one of three zones (`zoneOf`, `outsideP
 
 "Asks once for that folder" names the folder, not the file (`grantFolder`): a workspace project (`runs/<id>`, `files/<id>` or a top-level folder), else the repository the path is in, else its own folder. A folder too broad to hand over (the home folder, a disk, Desktop) or one that holds keys, Ensemble's data, its git helper or its code (`holdsProtected`, e.g. `~/.codex` or the workspace root) narrows to the path and is allowed that once only. Once allowed, the run works there freely for the rest of the run, the grant is kept as a run rule (`RUN_RULE_SOURCE`, tool `outside`) and a task that continues this one inherits it. A read the person allowed where reading asks (`none`) is kept apart (tool `outside-read`) and never lets the run write there. A command that changes the folder asks one question naming the command and the folder; Needs me answers it with **Allow for this run** or **Deny**. Nothing a mode covers is refused: a folder question the person answers no is the only refusal.
 
+The coding agents' own skill folders (`~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, `~/.copilot/skills`, their plugin folders and the others in [30 §10](30_ENGINES.md#10-support-matrix)) are read in every mode, `none` included, and running a skill's script there (`python3 ~/.agents/skills/x/scripts/search.py …`, or from that folder) is a read of it, not a change. Writing there is a change like any other folder's.
+
 `outsideAccess` (Settings → Assistant, or per run under Assign → More options) covers folders beyond the workspace:
 
 | Value | Behaviour |

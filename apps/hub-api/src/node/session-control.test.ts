@@ -232,3 +232,18 @@ test("a request closed with its work refuses a late answer with that reason", ()
   assert.equal(closedRefusal({ status: "decided", reason: "yes" }), "Already answered.");
   assert.equal(closedRefusal({ status: "settled", reason: null }), "Already answered in the tool.");
 });
+
+test("a node's sandboxed run goes to an agent that has a sandbox on that computer; one without is refused before the run", async () => {
+  const { agentOn, refuseUnsandboxable } = await import("./sessions.js");
+  const agent = (id: string): SubscriptionAgent => ({ id: id as SubscriptionAgent["id"], via: "cli", version: "1", signedIn: true, models: [], checkedAt: "2026-10-31T00:00:00Z" });
+  const device = { platform: "linux", name: "Box", capabilities: { assistantTurns: 3, agents: [agent("opencode"), agent("codex")] } };
+  const prisma = { device: { findUnique: async () => device } } as never;
+  assert.equal(await agentOn(prisma, "d1", ["opencode", "codex"], true), "codex", "OpenCode has no sandbox Ensemble can turn on");
+  assert.equal(await agentOn(prisma, "d1", ["opencode", "codex"], false), "opencode", "without the sandbox, the first signed-in agent as before");
+  await assert.rejects(refuseUnsandboxable(prisma, "d1", "opencode", true), /OpenCode has no OS sandbox Ensemble can turn on on Box/);
+  await refuseUnsandboxable(prisma, "d1", "opencode", false);
+  await refuseUnsandboxable(prisma, "d1", "codex", true);
+  await assert.rejects(refuseUnsandboxable(prisma, "d1", "gemini-cli", true), /Gemini CLI/);
+  device.platform = "macos";
+  await refuseUnsandboxable(prisma, "d1", "gemini-cli", true);
+});

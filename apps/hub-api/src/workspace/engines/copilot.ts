@@ -23,7 +23,8 @@ import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
 import type { JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
-import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
+import { ACP_CLIENT_CAPABILITIES, answerElicitation } from "./elicitation.js";
+import { ENSEMBLE_OWN_TOOLS, judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
 import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { windowTier } from "./observed.js";
 import { RpcConnection } from "./rpc.js";
@@ -148,6 +149,31 @@ async function setOption(rpc: RpcConnection, sessionId: string, configId: string
   return Array.isArray(answer.configOptions) ? answer.configOptions : [];
 }
 
+/** Copilot's agent mode: it asks before acting, unlike autopilot (allow-all) or plan (no changes at all). */
+export const COPILOT_AGENT_MODE = "https://agentclientprotocol.com/protocol/session-modes#agent";
+
+/**
+ * The session as Ensemble runs it: Copilot's `allow_all` off and its agent mode on. Either may be on from
+ * the person's own Copilot (`/allow-all`, autopilot); left on, Copilot would ask nothing and the judge would
+ * see no call. A session that cannot be set to ask is not run. (The option names are as paseo's Copilot
+ * provider reads them, packages/server/src/server/agent/providers/copilot-acp-agent.ts, Apache-2.0.)
+ */
+export async function askingCopilot(rpc: Pick<RpcConnection, "request">, sessionId: string, config: ConfigOption[]): Promise<ConfigOption[]> {
+  let now = config;
+  const value = (id: string) => now.find((option) => option.id === id)?.currentValue ?? null;
+  const set = async (id: string, wanted: string) => {
+    const after = await setOption(rpc as RpcConnection, sessionId, id, wanted).catch(() => null);
+    now = after?.length ? after : after ? now.map((option) => (option.id === id ? { ...option, currentValue: wanted } : option)) : now;
+  };
+  if (value("allow_all") === "on") await set("allow_all", "off");
+  const mode = value("mode");
+  if (mode && mode !== COPILOT_AGENT_MODE && now.find((option) => option.id === "mode")?.options?.some((option) => option.value === COPILOT_AGENT_MODE)) await set("mode", COPILOT_AGENT_MODE);
+  if (value("allow_all") === "on" || (value("mode") ?? COPILOT_AGENT_MODE) !== COPILOT_AGENT_MODE) {
+    throw new Error("GitHub Copilot is set to act without asking (allow-all or autopilot) and could not be set back to ask, so Ensemble did not start it. Turn it off in Copilot (/allow-all off) and Run again.");
+  }
+  return now;
+}
+
 export async function runCopilot(
   ctx: JobContext,
   options: {
@@ -200,8 +226,8 @@ export async function runCopilot(
     "--no-ask-user",
     "--additional-mcp-config",
     `@${mcpFile}`,
-    "--allow-tool",
-    "ensemble",
+    // Ensemble's own tools run without asking; its browser and capture tools are asked about and judged like any MCP tool.
+    ...ENSEMBLE_OWN_TOOLS.flatMap((name) => ["--allow-tool", `ensemble(${name})`]),
     // The temp folder is outside the work folder: reads there are judged like any other.
     "--disallow-temp-dir",
     ...(ctx.sandboxed ? ["--sandbox"] : []),
@@ -238,6 +264,7 @@ export async function runCopilot(
   const refusals: Refusal[] = [];
   rpc.onRequest = async (method, params) => {
     if (method === "session/request_permission") return answerCopilot(ctx, params, announced, refusals);
+    if (method === "elicitation/create") return answerElicitation(ctx, params);
     throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
   };
   rpc.onNotification = (method, params) => {
@@ -316,7 +343,7 @@ export async function runCopilot(
     throw new Error("GitHub Copilot CLI is not signed in on this computer. Run `copilot login` there (or press Sign in under Settings → Models), then Run again.");
   };
   try {
-    await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" } });
+    await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: ACP_CLIENT_CAPABILITIES, clientInfo: { name: "ensemble", version: "1" } });
     let session: Record<string, unknown>;
     if (options.resume) {
       // The same Copilot session (a chat's next message, or a run carrying on), so it remembers the conversation.
@@ -336,7 +363,8 @@ export async function runCopilot(
     }
     sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
     if (!sessionId) throw new Error("GitHub Copilot did not start a session.");
-    let config = Array.isArray(session.configOptions) ? (session.configOptions as ConfigOption[]) : [];
+    // Copilot's own approve-everything switches would keep every call from the judge: back to asking, or not started.
+    let config = await askingCopilot(rpc, sessionId, Array.isArray(session.configOptions) ? (session.configOptions as ConfigOption[]) : []);
     const current = config.find((option) => option.id === "model")?.currentValue ?? null;
     if (model && model !== current) {
       const offered = config.find((option) => option.id === "model")?.options?.some((option) => option.value === model);

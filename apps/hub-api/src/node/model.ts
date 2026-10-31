@@ -134,9 +134,10 @@ const MAX_PER_PROVIDER = 40;
 /**
  * Every model the owner can give a node, grouped. Own-key lists come from Ensemble's stored model
  * catalog (refreshed weekly, as in Settings → Models); AI plans from the paired computers that are
- * online, signed in and new enough to run assistant turns.
+ * online, signed in and new enough to run assistant turns. `perProvider` caps each provider's list for
+ * the picker (OpenRouter lists hundreds); a check of one model looks through all of them.
  */
-export async function nodeModelOptions(prisma: PrismaClient, accountId: string): Promise<{ options: NodeModelOption[]; problems: string[] }> {
+export async function nodeModelOptions(prisma: PrismaClient, accountId: string, perProvider = MAX_PER_PROVIDER): Promise<{ options: NodeModelOption[]; problems: string[] }> {
   const options = includedOptions();
   const problems: string[] = [];
   const seen = new Set(options.map((row) => `${row.provider}\n${row.model}`));
@@ -153,7 +154,7 @@ export async function nodeModelOptions(prisma: PrismaClient, accountId: string):
     for (const entry of catalog.providers) {
       const provider = String(entry.provider ?? "");
       if (!provider || provider === INCLUDED_PROVIDER || isSubscriptionProvider(provider) || entry.error) continue;
-      const models = Array.isArray(entry.models) ? entry.models.map(String).slice(0, MAX_PER_PROVIDER) : [];
+      const models = Array.isArray(entry.models) ? entry.models.map(String).slice(0, perProvider) : [];
       for (const model of models) add({ provider, model, label: model, group: "keys", vendor: provider, default: false });
     }
   } catch {
@@ -167,7 +168,7 @@ export async function nodeModelOptions(prisma: PrismaClient, accountId: string):
     if (caps.turns < ASSISTANT_TURNS_MIN) continue;
     for (const agent of caps.agents) {
       if (agent.signedIn === false) continue;
-      for (const model of agent.models.slice(0, MAX_PER_PROVIDER)) {
+      for (const model of agent.models.slice(0, perProvider)) {
         add({ provider: agent.id, model: model.id, label: model.label, group: "plans", vendor: SUBSCRIPTION_INFO[agent.id].label, computer: device.name, default: false });
       }
     }
@@ -181,7 +182,7 @@ export async function modelProblem(prisma: PrismaClient, accountId: string, prov
   if (!provider || provider === INCLUDED_PROVIDER) {
     return includedModelOn(model) ? null : `“${model}” is not one of the models included with Ensemble on this server.`;
   }
-  const { options } = await nodeModelOptions(prisma, accountId);
+  const { options } = await nodeModelOptions(prisma, accountId, Number.POSITIVE_INFINITY);
   if (options.some((row) => row.provider === provider && row.model === model)) return null;
   return isSubscriptionProvider(provider)
     ? `${SUBSCRIPTION_INFO[provider].label} with “${model}” is not available: open Ensemble on a paired computer where it is signed in.`
