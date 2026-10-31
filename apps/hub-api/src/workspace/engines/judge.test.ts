@@ -463,7 +463,15 @@ test("a command's kind is the program and what it does, never inline code, a var
   assert.equal(commandKind("npx playwright test --headed", "/r"), "npx playwright test");
   assert.equal(commandKind("docker compose up -d", "/r"), "docker compose up");
   assert.equal(commandKind("python3 -m pytest -x", "/r"), "python3 -m pytest");
-  for (const command of ["git -C /x commit", "rm -rf build", "node -e 'x()'", "ssh host uptime", "npm run $TARGET", "FOO=1 npm test", "python3 missing.py"]) {
+  assert.equal(commandKind("./scripts/deploy.sh staging", "/r"), "/r/scripts/deploy.sh staging", "a program named by its path is that file");
+  assert.equal(commandKind("uv run python -m pytest -q", "/r"), "uv run python -m pytest");
+  assert.equal(commandKind("docker build -t app .", "/r"), "docker build");
+  for (const command of [
+    "git -C /x commit", "rm -rf build", "node -e 'x()'", "ssh host uptime", "npm run $TARGET", "FOO=1 npm test", "python3 missing.py",
+    // What a wrapper, a runner's inline code or a container runs is never covered by a kind.
+    "sudo bash x.sh", "env python3 x.py", "xargs rm", "timeout 10 node x.js", "uv run python -c 'x()'", "npx cross-env A=1 node x.js",
+    "docker exec app ls", "docker compose exec web sh", "kubectl exec pod -- ls", "find . -name '*.log' -delete", "find . -exec rm {} ;",
+  ]) {
     assert.equal(commandKind(command, "/r"), null, command);
   }
 });

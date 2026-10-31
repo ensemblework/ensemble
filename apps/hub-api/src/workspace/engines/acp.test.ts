@@ -55,6 +55,7 @@ test("an agent's form question (elicitation) reaches the person field by field; 
   const unattended = ctx(true) as { decisions: unknown[] };
   assert.deepEqual(await answerElicitation(unattended as never, { mode: "form", message: "How should I refactor?", requestedSchema: strategy }, answering()), { action: "accept", content: { strategy: "safe" } });
   assert.equal(unattended.decisions.length, 1, "an unattended run takes the first choice and lists it");
+  assert.deepEqual(await answerElicitation(ctx(), { message: "How should I refactor?", requestedSchema: strategy }, answering("Aggressive")), { action: "accept", content: { strategy: "fast" } }, "a form without a mode is a form");
   const before = asked.length;
   const secret = { type: "object", properties: { token: { type: "string", title: "GitHub token" } } };
   assert.deepEqual(await answerElicitation(ctx(), { mode: "form", message: "Paste it", requestedSchema: secret }, answering("x")), { action: "decline" });

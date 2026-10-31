@@ -115,6 +115,7 @@ export const ACP_CLIENT_CAPABILITIES = { fs: { readTextFile: false, writeTextFil
 
 /** An agent's `elicitation/create`: a form is asked field by field; a link to open (URL mode, not offered) is declined. */
 export async function answerElicitation(ctx: JobContext, params: Record<string, unknown>, ask: typeof askPerson = askPerson): Promise<FormAnswer> {
-  if (params.mode !== "form") return { action: "decline" };
+  // A form when the mode is left out, as MCP's elicitation defaults to it.
+  if (params.mode !== undefined && params.mode !== "form") return { action: "decline" };
   return answerForm(ctx, { message: text(params.message) ?? "", requestedSchema: params.requestedSchema }, ask);
 }
