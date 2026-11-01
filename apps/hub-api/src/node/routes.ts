@@ -1173,11 +1173,14 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const words = query.q.split(/\s+/).filter(Boolean).slice(0, 6);
     const rows = await prisma.nodeMessage.findMany({
       where: {
-        OR: memberships.map((row) => ({ roomId: row.roomId, ...(row.room.kind === "room" ? { createdAt: { gte: row.joinedAt } } : {}) })),
+        // Both are OR filters: side by side in one object the second would replace the first.
+        AND: [
+          { OR: memberships.map((row) => ({ roomId: row.roomId, ...(row.room.kind === "room" ? { createdAt: { gte: row.joinedAt } } : {}) })) },
+          visibleWhere(accountId),
+          ...words.map((word) => ({ body: { contains: word, mode: "insensitive" as const } })),
+        ],
         kind: { in: ["text", "run"] },
-        ...visibleWhere(accountId),
         ...(query.author === "people" ? { authorKind: "human" } : query.author === "nodes" ? { authorKind: "node" } : {}),
-        AND: words.map((word) => ({ body: { contains: word, mode: "insensitive" as const } })),
       },
       orderBy: { createdAt: "desc" },
       take: query.limit,

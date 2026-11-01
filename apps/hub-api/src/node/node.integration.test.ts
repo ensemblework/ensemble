@@ -749,6 +749,9 @@ test("search, the people-only view, pins, reactions, replies and deleting stay w
   script = () => ({ text: "(no reply)" });
   const open = await say(ivy, room.id, "@tom the launch checklist is ready");
   const secret = await say(ivy, room.id, "my launch notes stay mine", { private: true });
+  // Someone else's chat, which Tom is not in.
+  const una = await person("Una");
+  await say(una, (await createNode(una, "assistant")).room.id, "our launch date is May 2");
 
   const tomSearch = json(await tom.inject({ method: "GET", url: "/api/node/search?q=launch" })).results.map((row: any) => row.message.id);
   assert.deepEqual(tomSearch, [open.id], "search finds only what the person may read");
