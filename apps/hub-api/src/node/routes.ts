@@ -405,8 +405,11 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       invites,
       // People in a room I make, counting open requests: my own limit (Settings › Sharing › Limits, lib/limits.ts).
       limits: { roomPeople: (await accountLimits(prisma, accountId)).roomPeople, nodesPerPerson: MAX_NODES_PER_PERSON, crewNodes: MAX_CREW_NODES, pins: MAX_PINS, reactions: REACTIONS, declineBlockDays: DECLINE_BLOCK_MS / 86_400_000 },
-      // Suggestions for a new crew: the person picks, renames, adds or drops nodes before it is made.
-      templates: { nodes: NODE_TEMPLATES, crews: CREW_TEMPLATES },
+      // Starting points for a new node or crew (retired templates are not listed): the person edits them before anything is made.
+      templates: {
+        nodes: NODE_TEMPLATES.map(({ id, name, slug, role, summary, avatar, charter }) => ({ id, name, slug, role, summary, avatar, charter })),
+        crews: CREW_TEMPLATES,
+      },
     };
   });
 
@@ -445,6 +448,9 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     const provider = body.model ? (body.provider ?? INCLUDED_PROVIDER) : null;
     await checkModel(prisma, accountId, provider, body.model);
     if (body.name?.trim() && (await nodeNameTaken(prisma, accountId, body.name))) throw fail(409, `You already have a node called “${body.name.trim()}”. Pick another name.`);
+    // A handle the person chose is kept or refused, never numbered; one made from the name is numbered when taken.
+    if (body.slug && (SPECIAL_MENTIONS as readonly string[]).includes(body.slug)) throw fail(400, `@${body.slug} mentions every node. Pick another handle.`);
+    if (body.slug && (await prisma.nodeAgent.findFirst({ where: { userId: accountId, slug: body.slug }, select: { id: true } }))) throw fail(409, `Another of your nodes is already @${body.slug}. Pick another handle.`);
     if ((await prisma.nodeAgent.count({ where: { userId: accountId, parentNodeId: null } })) >= MAX_NODES) throw fail(409, `You have ${MAX_NODES} nodes, the most one account can have.`);
     const { node, room } = await createNode(prisma, accountId, { ...body, provider });
     publishTo([accountId], "node.room", { roomId: room.id });
