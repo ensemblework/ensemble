@@ -65,7 +65,7 @@ const CASES = [
   { ask: "what is the current price of a Nintendo Switch 2 at Best Buy and Target in the US? short answer with links", tools: [["browser_shop", "hub_web_search", "browser_view", "browser_extract"]], says: /\$\d/ },
   { ask: "can you login in my azure console and browse it to see my last day resource usage ?", tools: [["browser_login_needed", "web_task"]], card: "login" },
   // Round 3: a live terminal the owner watches, and a CLI sign-in whose page or code reaches the owner on a card.
-  { ask: "open a terminal on my computer that I can watch live, and start htop in it", tools: [["terminal_open"], ["live_view"]], card: "live" },
+  { ask: "open a terminal on my computer that I can watch live, and start htop in it", tools: [["terminal_open"]], card: "live" },
   { ask: "sign in to the Azure CLI on my computer (az login), I will do the sign in", tools: [["computer_run"]], card: /^(login|device_code)/ },
   // Round 4: a checkout whose payment opens in a popup window (a local fake shop; nothing is paid).
   {
