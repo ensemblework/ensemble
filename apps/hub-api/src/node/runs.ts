@@ -10,8 +10,11 @@
 import type { FastifyInstance } from "fastify";
 import type { NodeRun, Prisma } from "@prisma/client";
 import { truncateText } from "../lib/text.js";
+import { closeEndedWork, decisionBus } from "../lib/decisions.js";
+import { sseHub } from "../lib/sse.js";
 import { abortAllTurns, enqueueTurn, recoverTurns } from "./queue.js";
-import { updateMessageData } from "./store.js";
+import { updateMessageData, updateMessageDataIf } from "./store.js";
+import { LOGIN_CARD, loginCardClosed } from "./logins.js";
 import { sweepHelpers } from "./helpers.js";
 import { finishStep, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
 import { askForReport } from "./dispatch.js";
@@ -88,8 +91,9 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   if (status !== run.status || ended) {
     await prisma.nodeRun.update({ where: { id: run.id }, data: { status, ...(ended ? { reportedAt: new Date() } : {}) } });
   }
-  // Its questions in the chat close with it (node/run-decisions.ts).
+  // Its questions in the chat close with it (node/run-decisions.ts), and so do its sign-ins; Needs me hears it.
   if (ended) await closeRunDecisions(app, run.jobId).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not close a run's questions in the chat"));
+  if (ended) await closeRunRequests(app, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not close a run's requests"));
   // The card's settings (as asked, sent and reported by the agent) and its session's queue follow the job.
   if (status !== run.status || ended || shown.progress !== progress) await refreshRunCard(prisma, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not refresh a run card"));
   if (!ended) return;
@@ -150,6 +154,32 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   // Its node was paused or removed meanwhile: the step ends with what the run reported, or unverified.
   if (step && !queuedTurn) {
     await finishStep(app, step.planId, step.planStep, report ? { status: "done", result: report.summary, report } : { status: status === "succeeded" ? "done" : "stopped", result: job?.summary ?? job?.error ?? `The run ${words}.` });
+  }
+}
+
+/**
+ * A node run ended: what it asked for ends with it. Its questions and permissions closed with the job
+ * (the database trigger, `closeEndedWork` for older ones), and its sign-in cards close here; the owner's
+ * Needs me hears each at once, wherever it is open.
+ */
+async function closeRunRequests(app: FastifyInstance, run: Pick<NodeRun, "jobId" | "userId" | "roomId">): Promise<void> {
+  const prisma = app.prisma;
+  await closeEndedWork(prisma, [run.jobId]);
+  const closed = await prisma.agentDecision.findMany({ where: { sessionId: run.jobId, userId: run.userId, source: "ensemble", status: "expired" }, select: { id: true }, take: 100 });
+  for (const row of closed) {
+    decisionBus.emit(row.id);
+    sseHub.publish(run.userId, { event: "decision", data: { id: row.id, status: "expired" } });
+  }
+  // A sign-in waits on its owner while `pending`, or `needs_code` when its site asks for a code.
+  const waiting = ["pending", "needs_code"];
+  const cards = await prisma.nodeMessage.findMany({
+    where: { roomId: run.roomId, userId: run.userId, kind: "approval", AND: [{ data: { path: ["type"], equals: LOGIN_CARD } }, { data: { path: ["jobId"], equals: run.jobId } }, { OR: waiting.map((status) => ({ data: { path: ["status"], equals: status } })) }] },
+  });
+  for (const card of cards) {
+    const status = String((card.data as { status?: unknown }).status);
+    if (!waiting.includes(status)) continue;
+    const ended = await updateMessageDataIf(prisma, card, { data: { path: ["status"], equals: status } }, { status: "ended", working: null, codeHint: null, note: "The work that needed this sign-in ended.", resolvedAt: new Date().toISOString() });
+    if (ended) void loginCardClosed(app, ended).catch(() => undefined);
   }
 }
 

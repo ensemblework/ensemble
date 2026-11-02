@@ -1,13 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Lock, ShieldCheck, X } from "lucide-react";
+import { ArrowUpRight, Check, Lock, ShieldCheck, X } from "lucide-react";
 import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, Tag } from "@/components/ui";
-import { api, type AgentDecisionRecord } from "@/lib/api";
+import { api, type AgentDecisionRecord, type SessionOrigin } from "@/lib/api";
 import { confirmCopy, deviceDecisionView } from "@/lib/device-copy";
 import { relative, untilLabel } from "@/lib/format";
 
@@ -18,6 +18,26 @@ const SOURCE: Record<string, { label: string; tone: "blue" | "purple" | "orange"
   codex: { label: "Codex", tone: "gray" },
   ensemble: { label: "Ensemble agent", tone: "purple" },
 };
+
+/**
+ * Where a run's request comes from: the session (its folder and computer) and, for a run an Ensemble
+ * Node node started, that node, secondary, with a link to the run in its Node chat.
+ */
+export function SessionLine({ origin }: { origin: SessionOrigin | null | undefined }) {
+  if (!origin) return null;
+  const where = [origin.folder ? `in ${origin.folder}` : null, origin.computer ? `on ${origin.computer}` : null].filter(Boolean).join(" ");
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[12px] text-muted" data-testid="session-origin">
+      <span>{`${origin.agent ?? "Ensemble agent"} session${where ? ` ${where}` : ""}`}</span>
+      {origin.node ? <span>· via @{origin.node.slug}{origin.node.room ? ` in ${origin.node.room}` : ""}</span> : null}
+      {origin.node?.url ? (
+        <a className="inline-flex items-center gap-0.5 text-accent hover:underline" href={origin.node.url} target="_blank" rel="noreferrer">
+          Open in Node <ArrowUpRight size={12} />
+        </a>
+      ) : null}
+    </span>
+  );
+}
 
 /** A question or a commit/push approval from a task Ensemble itself is running. */
 function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
@@ -59,7 +79,7 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
   return (
     <div className="tile rounded-lg bg-panel p-4" data-testid="ensemble-decision">
       <div className="flex flex-wrap items-center gap-2">
-        <Tag tone="purple">Ensemble agent</Tag>
+        <Tag tone="purple">{decision.origin?.agent ?? "Ensemble agent"}</Tag>
         <span className="text-[12px] text-muted">{question ? "has a question" : `wants to ${decision.toolName}`}</span>
         <span className="text-[12px] text-muted">· {relative(decision.requestedAt)}</span>
         {decision.detail.taskId ? (
@@ -68,6 +88,7 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
           </Link>
         ) : null}
       </div>
+      <SessionLine origin={decision.origin} />
       <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
       {!question && decision.detail.command ? (
         <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-2.5 font-mono text-[12.5px]">{decision.detail.command}</pre>
@@ -187,10 +208,11 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   return (
     <div className="tile rounded-lg bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Tag tone="purple">{computer}</Tag>
+        <Tag tone="purple">{decision.origin?.agent ?? computer}</Tag>
         <span className="text-[12px] text-muted">{decision.event === "question" ? "has a question" : decision.toolName}</span>
         <span className="text-[12px] text-muted">· {relative(decision.requestedAt)}</span>
       </div>
+      <SessionLine origin={decision.origin} />
       <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
       {decision.detail.command ? <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-2.5 font-mono text-[12.5px]">{decision.detail.command}</pre> : null}
       {confirming !== undefined ? (

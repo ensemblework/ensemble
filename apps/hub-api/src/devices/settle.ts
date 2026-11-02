@@ -3,16 +3,33 @@
  * must not leave its Needs me card pending, its task in progress, or its run open.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { decisionBus } from "../lib/decisions.js";
+import { sseHub } from "../lib/sse.js";
 import { publishDevice } from "./publish.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export async function expireDeviceDecisions(db: Db, jobIds: string[]): Promise<void> {
+/**
+ * Closes the stopped jobs' requests still pending (the database's trigger closes most with the job) and,
+ * unless `announce` is false (inside a transaction: the caller announces after it), tells Needs me.
+ */
+export async function expireDeviceDecisions(db: Db, jobIds: string[], announce = true): Promise<void> {
   if (!jobIds.length) return;
   await db.agentDecision.updateMany({
     where: { sessionId: { in: jobIds }, status: "pending" },
     data: { status: "expired" },
   });
+  if (announce) await announceClosedDecisions(db, jobIds);
+}
+
+/** Every open Needs me (the Hub, Node, a phone) drops the closed requests of these jobs at once. */
+export async function announceClosedDecisions(db: Db, jobIds: string[]): Promise<void> {
+  if (!jobIds.length) return;
+  const closed = await db.agentDecision.findMany({ where: { sessionId: { in: jobIds }, status: "expired" }, select: { id: true, userId: true, source: true }, take: 200 });
+  for (const row of closed) {
+    decisionBus.emit(row.id);
+    sseHub.publish(row.userId, { event: "decision", data: { id: row.id, status: "expired" }, ownerOnly: row.source !== "ensemble" });
+  }
 }
 
 /** Same task move as the lease sweep: an agent task still in progress becomes blocked. */

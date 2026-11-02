@@ -373,7 +373,19 @@ export type ApprovalRecord = {
   requestedAt: string;
 };
 
-/** An approval card one of the person's Ensemble Node nodes is waiting on (GET /api/node/approvals). */
+/**
+ * The session a Needs me request comes from (hub-api `node/needs-me.ts`): its agent, folder and computer,
+ * its task, and the Ensemble Node node that follows it, if one does (with where its run card is on Node).
+ */
+export type SessionOrigin = {
+  agent: string | null;
+  folder: string | null;
+  computer: string | null;
+  task: { id: string; title: string } | null;
+  node: { slug: string; name: string; roomId: string; room: string | null; url: string | null } | null;
+};
+
+/** A card one of the person's Ensemble Node runs raised for its agent: a sign-in, captures to check (GET /api/node/approvals). */
 export type NodeApprovalCard = {
   id: string;
   roomId: string;
@@ -404,9 +416,12 @@ export type NodeApprovalCard = {
     /** With status `needs_code`: what the site asks for ("Enter the 6-digit code from your authenticator app"). */
     codeHint?: string | null;
     calls?: Array<{ callId: string; name: string; summary: string }>;
+    /** The run the card is for. */
+    jobId?: string;
   };
   node: { id: string; slug: string; name: string; role: string } | null;
   room: { id: string; title: string; kind: string } | null;
+  origin?: SessionOrigin | null;
 };
 
 export type DeliverableRecord = {
@@ -1246,10 +1261,9 @@ export type AgentDecisionRecord = {
   /** In a shared space: false when only someone else (the runner, or the owner) may answer. */
   canAnswer?: boolean;
   runnerAccountId?: string | null;
+  /** A run's request, for the space's owner: the session that asks. */
+  origin?: SessionOrigin | null;
 };
-
-/** Requests a node's runs and a node's own tools ask in Ensemble Node chats, answered there: how many wait, and where to open them. */
-export type NodeChatWaiting = { count: number; url: string | null };
 
 export type DecisionRuleRecord = {
   id: string;
@@ -1415,9 +1429,9 @@ export const api = bindClient({
   approveCliAuth: (body: { userCode: string; scopes: CliAuthScope[]; decision: CliAuthDecision }) =>
     post<{ ok: true; scopes: CliAuthScope[] }>("/api/cli/auth/approve", body),
 
-  // editor decisions (Needs me router). The Hub's list: requests waiting in a Node chat are counted in `nodeChat` instead.
+  // editor decisions (Needs me router). The Hub's list: a node's own requests stay on Node (hub-api node/needs-me.ts).
   decisions: (status: "pending" | "recent" = "pending") =>
-    get<{ decisions: AgentDecisionRecord[]; nodeChat?: NodeChatWaiting }>(`/api/decisions${qs({ status, surface: "hub" })}`),
+    get<{ decisions: AgentDecisionRecord[] }>(`/api/decisions${qs({ status, surface: "hub" })}`),
   decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string; confirmed?: boolean }) =>
     post<{ decision: AgentDecisionRecord }>(`/api/decisions/${id}/decide`, data),
   decisionRules: () => get<{ rules: DecisionRuleRecord[] }>("/api/decision-rules"),

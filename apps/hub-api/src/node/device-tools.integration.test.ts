@@ -207,13 +207,16 @@ test("the first use of a folder asks on a card in the chat; the call waits, and 
     assert.equal(notice.url, `https://node.example.test/r/${room.id}#m-${card.id}`, "the notification opens the card in the Node chat");
     assert.ok(statuses.some((row) => row.state === "waiting" && row.cardId === card.id && row.roomId === room.id), "the node shows as waiting for its owner");
 
-    // Its decision is the Hub's and the CLI's Needs me entry; the card itself is only in the Node chat.
+    // Its decision is Needs me's entry on Node, the CLI and the phone; the card itself is only in the Node chat.
     const needs = json(await mira.inject({ method: "GET", url: "/api/decisions" })).decisions as Array<{ id: string; canAnswer: boolean }>;
-    assert.ok(needs.some((row) => row.id === decisions[0]!.id && row.canAnswer), "answerable in the Hub, the CLI and the phone");
-    assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "not listed twice in the Hub");
+    assert.ok(needs.some((row) => row.id === decisions[0]!.id && row.canAnswer), "answerable on Node's Needs me, the CLI and the phone");
+    // A node's own request: not in the Hub's Needs me (node/needs-me.ts), as a decision or a card, nor in its count.
+    assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/decisions?surface=hub" })).decisions as Array<{ id: string }>).some((row) => row.id === decisions[0]!.id));
+    assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).decisions, 0);
+    assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "not listed in the Hub");
     assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 0);
     const bridge = await h.asToken(mira, "bridge");
-    assert.deepEqual(json(await bridge.inject({ method: "GET", url: "/api/bridge/node" })).approvals, [], "nor by the CLI");
+    assert.deepEqual(json(await bridge.inject({ method: "GET", url: "/api/bridge/node" })).approvals, [], "nor by the CLI's Node tab");
     assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "Node's own activity keeps it");
 
     // The owner answers on the card (as the Node chat sends it): the waiting call goes again with the answer and returns.

@@ -18,7 +18,7 @@ import { defaultSpaceName } from "../spaces/store.js";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { hubApprovalCount } from "../node/routes.js";
-import { nodeChatDecisions } from "../node/run-decisions.js";
+import { hubDecisionsWhere } from "../node/needs-me.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -28,11 +28,10 @@ async function countOrZero(query: Promise<number>): Promise<number> {
   }
 }
 
-/** Requests the Hub's Needs me lists: the ones waiting on a card in a Node chat are answered there (node/run-decisions.ts). */
+/** Requests the Hub's Needs me lists (`GET /api/decisions?surface=hub`): a node's own requests stay on Node (node/needs-me.ts). */
 async function hubDecisionCount(prisma: FastifyInstance["prisma"], userId: string): Promise<number> {
-  const chat = await nodeChatDecisions(prisma, userId);
   // A request past its time is closed on the next sweep: it no longer counts.
-  return prisma.agentDecision.count({ where: { userId, status: "pending", expiresAt: { gt: new Date() }, ...(chat.ids.size ? { id: { notIn: [...chat.ids] } } : {}) } });
+  return prisma.agentDecision.count({ where: { userId, status: "pending", expiresAt: { gt: new Date() }, ...hubDecisionsWhere() } });
 }
 
 export async function viewRoutes(app: FastifyInstance): Promise<void> {
@@ -52,8 +51,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
       // The same check as `requireHostAccess` in front of `/api/code/*`.
       canUseHostCredentials(userId).catch(() => false),
-      // Ensemble Node's approval cards are the account's own: they count in its own space only (not the
-      // ones answered only in the Node chat, or listed here as decisions already).
+      // Ensemble Node's cards are the account's own: they count in its own space only, and only those its
+      // sessions raise, as `GET /api/node/approvals` lists them (node/needs-me.ts).
       accountId === userId ? countOrZero(hubApprovalCount(prisma, accountId)) : 0,
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
@@ -101,7 +100,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       verificationRequired: isHosted() && !account?.emailVerifiedAt,
       approvals,
       decisions,
-      /** Ensemble Node approval cards waiting for this account (GET /api/node/approvals). */
+      /** Ensemble Node cards its sessions raise, waiting for this account (GET /api/node/approvals). */
       nodeApprovals,
       attention: owner ? flags.filter(Boolean).length : 0,
       canUndo: undo.canUndo,

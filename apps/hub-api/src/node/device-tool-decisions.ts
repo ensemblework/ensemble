@@ -4,8 +4,8 @@
  * browsing), one question asks, with Once, This mission and Always for this folder; another call for
  * the same folder in the same conversation or plan while it waits does not ask again. The question is
  * an inline card in the chat where the node is talking (`data.type: "computer"`, owner only), and an
- * Ensemble decision behind it, so the Hub, the phone and `ensemble needs` can answer it too; any answer
- * updates the card.
+ * Ensemble decision behind it, so the phone and `ensemble needs` can answer it too (the Hub's Needs me
+ * leaves it out, as the node's own request: node/needs-me.ts); any answer updates the card.
  *
  * The node's tool call waits in its turn for the answer (`awaitAnswer`), then makes the call again with
  * it. When the owner does not answer in time, the turn parks on the question, and the answer wakes each

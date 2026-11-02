@@ -1,8 +1,8 @@
 /**
  * Secrets a node needs for work on its owner's computer (docs/35 §8.7): an API key, a token. The node
- * asks by name with `node_secret_request`; its owner types the value into a box on the card (on Node or
- * in the Hub's Needs me). The browser encrypts it for the computer's own key (B12, sealed box:
- * credentials/seal.ts), and this server only relays the ciphertext to the computer (`secret.save`),
+ * asks by name with `node_secret_request`; its owner types the value into a box on the card in the Node
+ * chat (a node's own request is not in the Hub's Needs me, node/needs-me.ts). The browser encrypts it
+ * for the computer's own key (B12, sealed box: credentials/seal.ts), and this server only relays the ciphertext to the computer (`secret.save`),
  * which opens and keeps it. A computer too old to have a key gets the value over TLS through this
  * server instead, which passes it on without keeping it; the card says so. Either way the value is
  * never in a message, a model's input, a log or the database here; the card keeps only the name, why,

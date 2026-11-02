@@ -19,7 +19,8 @@ import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { takesRunAnswer } from "../remote/policy.js";
-import { nodeChatDecisions, nodeChatLine, ownerAnswering, recoverRunDecisions, settleRunDecisionCards } from "../node/run-decisions.js";
+import { ownerAnswering, recoverRunDecisions, settleRunDecisionCards } from "../node/run-decisions.js";
+import { decisionOrigins, hubDecisionsWhere } from "../node/needs-me.js";
 
 // In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
 const HOOK_SCRIPT = hookScriptPath();
@@ -268,7 +269,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     if (!owned) return reply.code(404).send({ error: "Decision not found." });
     const row = await waitFor(id, timeout * 1000);
     if (row && row.status === "pending" && row.expiresAt < new Date()) {
-      await prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+      const closed = await prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+      if (closed.count) sseHub.publish(request.userId, { event: "decision", data: { id, status: "expired" }, ownerOnly: row.source !== "ensemble" });
       return publicDecision((await prisma.agentDecision.findUnique({ where: { id } }))!);
     }
     return publicDecision(row!);
@@ -285,27 +287,28 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * Requests waiting for this person. `surface=hub` (the Hub's Needs me): requests a node's runs and a
-   * node's own tools ask in a Node chat are left out, and `nodeChat` says how many wait there and where
-   * to open them (only where Ensemble Node has a site; elsewhere the Hub lists them all).
+   * Requests waiting for this person. `surface=hub` (the Hub's Needs me): a node's own computer-tool
+   * questions are left out, and each run's request names its session (`origin`, node/needs-me.ts).
    */
   app.get("/api/decisions", async (request) => {
     const { status, surface } = z.object({ status: z.enum(["pending", "recent"]).default("pending"), surface: z.enum(["hub"]).optional() }).parse(request.query);
     await expireStale(request.userId);
+    const hub = surface === "hub";
     const rows = await prisma.agentDecision.findMany({
       where: {
         userId: request.userId,
         // People a space is shared with see its runs' questions, not the owner's own editors.
         ...(ownsOpenSpace(request) ? {} : { source: "ensemble" }),
         ...(status === "pending" ? { status: "pending" } : { requestedAt: { gte: new Date(Date.now() - 7 * 86_400_000) } }),
+        // The Hub's Needs me: a node's own requests stay on Node (node/needs-me.ts).
+        ...(hub ? hubDecisionsWhere() : {}),
       },
       orderBy: { requestedAt: status === "pending" ? "asc" : "desc" },
       take: 100,
     });
-    if (surface !== "hub") return { decisions: rows.map(publicDecision) };
-    const chat = await nodeChatDecisions(prisma, request.userId);
-    const inChat = rows.filter((row) => row.status === "pending" && chat.ids.has(row.id)).map((row) => row.id);
-    return { decisions: rows.filter((row) => !(row.status === "pending" && chat.ids.has(row.id))).map(publicDecision), nodeChat: nodeChatLine(inChat, chat) };
+    // The Hub names the session that asks: its agent, folder and computer, and the node it works for.
+    const origins = hub && ownsOpenSpace(request) ? await decisionOrigins(prisma, request.userId, rows) : null;
+    return { decisions: rows.map((row) => ({ ...publicDecision(row), ...(origins ? { origin: origins.get(row.id) ?? null } : {}) })) };
   });
 
   app.post("/api/decisions/:id/decide", async (request) => {
