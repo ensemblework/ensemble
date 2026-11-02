@@ -858,7 +858,7 @@ export async function shareMessage(app: FastifyInstance, accountId: string, mess
   if (!mine || original.kind !== "text" || (original.data as { deleted?: unknown } | null)?.deleted) throw fail("You can share only your own private messages and your own nodes' private replies.", 403);
   const lead = as === "lead" ? await leadOf(prisma, room.id, accountId) : null;
   if (as === "lead" && !lead?.nodeId) throw fail("You have no lead in this room.", 409);
-  const source = (original.data ?? {}) as { refs?: unknown; files?: unknown; media?: unknown };
+  const source = (original.data ?? {}) as { refs?: unknown; files?: unknown; media?: unknown; fileQuotes?: unknown };
   const { message } = await postMessage(prisma, {
     roomId: room.id,
     userId: accountId,
@@ -870,6 +870,7 @@ export async function shareMessage(app: FastifyInstance, accountId: string, mess
       ...(as === "lead" ? { sharedBy: accountId } : {}),
       ...(Array.isArray(source.refs) ? { refs: source.refs } : {}),
       ...(Array.isArray(source.files) ? { files: source.files } : {}),
+      ...(Array.isArray(source.fileQuotes) ? { fileQuotes: (await import("./file-workspace.js")).sharedFileQuotes(source.fileQuotes) } : {}),
       // The media this message showed its owner: sharing the message is their choice to show it here too (node/media.ts mediaReadable).
       ...(Array.isArray(source.media) && source.media.length ? { media: source.media } : {}),
     },

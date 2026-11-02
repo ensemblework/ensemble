@@ -25,7 +25,7 @@ This page maps what works today and its limits; each row links to the guide that
 | Quick capture | Tauri tray app with a global shortcut; needs a running local API and capture authentication | [20_QUICK_CAPTURE](20_QUICK_CAPTURE.md) |
 
 - Pairing a desktop or CLI with a hosted account does not replicate the hosted database. The paired computer claims jobs, answers Code and terminal requests and runs subscription calls; its included-model calls go through the hosted account ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
-- The hosted site stores no code from people's computers: the Code tab and a run's files are read from the computer when opened and relayed without being kept ([16](16_CODE_TAB.md), [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)).
+- Original source files are read from the computer and relayed without being kept as cloud originals. Code/Node editor buffers stay in browser memory; file lines a person explicitly quotes and sends are part of their chat history ([16](16_CODE_TAB.md), [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace)).
 - Root `release.json` sets the version of every surface. Desktop updates are signed; OS code signing is not configured.
 
 ## 2. How work flows
@@ -62,6 +62,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Context and projects | People and identities, projects created like pages (untitled, names may repeat) with a block-editor body and in-place tasks, deliverables and meeting notes, shared by full pages and peeks; repositories, preferences, graph, profession records | The graph shows saved data only | [03](03_MODULE_CONTEXT_ENGINE.md), [02 §3.5](02_MODULE_INTERACTION_HUB_UI.md#35-context) |
 | Meeting notes | Manual and imported notes, source links, requested summaries and action-item tasks | Imported notes are read-only; no recording or transcription | [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) |
 | Files | Private originals, previews, text extraction, hash-checked text/Office/sheet edits, conversion to pages, page export into Files | Edits are format-specific | [32](32_FILES.md) |
+| Node original files | Chat-side editor, independent file list, direct-change cards, all owned agent-session changes, autosave with hash conflicts, shared editor themes and selected-line quotes | Online Code API 3 runtime; text editor up to 1 MB; safe downloads up to 100 MB; original-file access remains owner-only | [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) |
 | Images in pages | `/image`, drop and paste (screenshots, HTML with `data:` images) with upload progress; resize handles with a keyboard slider, alignment, width presets, alt text, remove; kept as Files and shown on shared pages and public links; read by agents and kept through Markdown rewrites | 2 MB (2,097,152 bytes) per image, PNG, JPEG, GIF or WebP; no SVG; nothing is compressed; left out of Download | [32 §6](32_FILES.md#images-in-pages) |
 | Diagrams | Source language, layout, visual editing, Mermaid import, SVG export | Editing needs a 1024 × 640 CSS-pixel window; smaller windows get a read-only preview | [21](21_BLOCK_DIAGRAMS_DSL.md) |
 | Plots | Datasets, figure specs, code, exports; browser runtime on the web, server/native worker elsewhere | Uploads up to 20 MB | [20](20_PLOTS_DESIGN.md) |

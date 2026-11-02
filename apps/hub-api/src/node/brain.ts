@@ -7,6 +7,7 @@
  * coding agents, in sessions the node controls (node/sessions.ts).
  */
 import { MESSAGE_FILES_MAX } from "../assistant/attachments.js";
+import { fileQuoteContext } from "./file-workspace.js";
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, NodeTurn, PrismaClient } from "@prisma/client";
 import { asksForIds, INCLUDED_PROVIDER, isSubscriptionProvider, pickRunProfile, type AssistantRef, type AssistantToolCall } from "@ensemble/shared-types";
@@ -428,7 +429,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     ? (turn.note ?? "Continue your step, then report it with node_step_report.")
     : [
         `Room “${room.title}”. New messages since your last turn:`,
-        ...(bound?.rows ?? transcriptRows).map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}`),
+        ...(bound?.rows ?? transcriptRows).map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}${fileNote(row)}${fileQuoteContext(row.data)}`),
         turn.note ? `\nUpdate for you: ${turn.note}` : "",
         board ? `\nYour work board (live, for answering questions about work in progress):\n${board}` : "",
       ].filter(Boolean).join("\n");

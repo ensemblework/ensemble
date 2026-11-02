@@ -156,8 +156,8 @@ export function listedChanges(evidence: unknown): string[] {
  * the run's own evidence lists that exact path, the outside floor allows reading it (no keys,
  * sign-ins or another account) and it passes the same file rules as a file in the folder.
  */
-export async function readChangedFile(root: string, listed: string[], path: string, max = FILE_VIEW_BYTES, home = homedir()): Promise<FolderFile> {
-  if (!outsideListing(path)) return readFolderFile(root, path, max);
+export async function changedFileLocation(root: string, listed: string[], path: string, home = homedir()): Promise<{ root: string; path: string }> {
+  if (!outsideListing(path)) return { root, path };
   if (!listed.includes(path)) throw new GuardError("That file is outside the task's folder and is not one this run changed.");
   if (path.split(/[\\/]/).some((part) => part === "..")) throw new GuardError("That is outside the task's folder.");
   const full = path.startsWith("~/") ? join(home, path.slice(2)) : path;
@@ -165,6 +165,11 @@ export async function readChangedFile(root: string, listed: string[], path: stri
   const named = within(home, real, false) ? relative(home, real).split(sep).join("/") : basename(real);
   const refused = refusedPath(named) ?? outsideRefusal(real, false, home);
   if (refused) throw new GuardError(refused);
-  const read = await readFolderFile(dirname(real), basename(real), max);
+  return { root: dirname(real), path: basename(real) };
+}
+
+export async function readChangedFile(root: string, listed: string[], path: string, max = FILE_VIEW_BYTES, home = homedir()): Promise<FolderFile> {
+  const location = await changedFileLocation(root, listed, path, home);
+  const read = await readFolderFile(location.root, location.path, max);
   return { ...read, path };
 }
