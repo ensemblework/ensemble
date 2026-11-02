@@ -6,6 +6,7 @@ import { includedCatalogEntry } from "../included/catalog.js";
 import { deviceCredits, INCLUDED_STATUS_ROUTE, INCLUDED_TURN_ROUTE, onDevice } from "../included/device.js";
 import { IncludedLimitError } from "../included/errors.js";
 import { includedTurn } from "../runtime/included.js";
+import { MODEL_CALL_TIMEOUT_MAX_MS, modelCallTimeoutMs, RUNTIME_GRACE_MS } from "../lib/model-timeout.js";
 import { assertInternal } from "./internal.js";
 
 const Message = z.record(z.string(), z.unknown());
@@ -20,6 +21,8 @@ const DeviceTurn = z.object({
   chatTools: z.array(Message).max(400).nullish(),
   responsesTools: z.array(Message).max(400).nullish(),
   purpose: z.string().max(80).nullish(),
+  /** How long the computer waits for this call: the server waits as long, within its own setting. */
+  timeoutMs: z.number().int().min(1_000).max(MODEL_CALL_TIMEOUT_MAX_MS + RUNTIME_GRACE_MS).optional(),
 });
 
 /**
@@ -87,7 +90,7 @@ export async function includedRoutes(app: FastifyInstance): Promise<void> {
         { userId: device.userId, reasoningEffort: body.reasoningEffort ?? null, chatTools: body.chatTools ?? null, responsesTools: body.responsesTools ?? null, purpose: body.purpose ?? null },
         body.model,
         body.messages,
-        { items: body.items ?? null, jsonMode: body.jsonMode, signal: stop.signal, timeoutMs: body.jsonMode ? 120_000 : 300_000 },
+        { items: body.items ?? null, jsonMode: body.jsonMode, signal: stop.signal, timeoutMs: Math.min(body.timeoutMs ?? (body.jsonMode ? 120_000 : modelCallTimeoutMs()), modelCallTimeoutMs() + RUNTIME_GRACE_MS) },
       );
       return { turn };
     } catch (error) {

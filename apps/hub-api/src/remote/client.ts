@@ -60,7 +60,7 @@ export interface HostedClient {
    */
   uploadEvidence?(jobId: string, leaseToken: string, meta: EvidenceMeta, bytes: Uint8Array): Promise<{ result: "stored" | "refused" | "unsupported"; error?: string }>;
   /** Output of a node tool command, in order (protocol 6). False: nobody reads it any more. */
-  toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean }): Promise<boolean>;
+  toolOutput(runId: string, chunk: TerminalChunk & { wake?: boolean; timedOut?: boolean }): Promise<boolean>;
   /**
    * A file the web asked for by its upload id (protocol 7): a node's capture, or a held file the owner
    * released or previews. "gone": nobody waits for it any more.

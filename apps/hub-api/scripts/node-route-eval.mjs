@@ -53,7 +53,10 @@ const CASES = [
   { ask: (ctx) => `what's on my EnsembleWork board? ${ctx.boardUrl}`, want: [["hub_read_board", "hub_list_boards"]], avoid: [...AGENT, "browser_open", "browser_view", "browser_login_needed", "web_task"], setup: "board" },
   { ask: "open a terminal on my computer that I can watch live, and start htop in it", want: [["terminal_open"]], avoid: AGENT, liveCard: true },
   { ask: "zip the reports folder on my computer and send it to me here", want: [["node_share_file"]], avoid: AGENT, share: /reports/ },
-  { ask: "sign in to the Azure CLI on my computer (az login)", want: [["computer_run"]], avoid: AGENT, run: /\baz\s+login\b/, noPassword: true },
+  { ask: "sign in to the Azure CLI on my computer (az login)", want: [["computer_run"]], avoid: AGENT, run: /\baz\s+login\b(?![^\n]*--use-device-code)/, noPassword: true },
+  // Round 4: a checkout's payment popup, and closing a tab when asked.
+  { ask: "open https://shop.example.com/checkout in the browser on my computer and click Continue to payment, then show me the payment page (don't pay)", want: [["browser_open", "browser_view", "web_task"]], avoid: AGENT, popup: true },
+  { ask: "open https://example.com in the browser on my computer, then close that tab", want: [["browser_open", "browser_view"], ["browser_close"]], avoid: AGENT },
 ];
 
 /** Asking the owner for a password or a code in the chat (they sign in on a card). */
@@ -218,7 +221,17 @@ async function answerFor(request, token) {
       return { status: 200, body: { ok: true, summary: "The tab waits for the owner to sign in.", result: { login }, login, evidence: [], refused: [] } };
     }
     if (name === "browser_login_check") return capture("Not signed in yet.", { status: "waiting", message: "The sign-in page is still open." });
-    if (name === "browser_screenshot" || name === "capture_screenshot") return capture("Saved the screenshot.", null, shot("screenshot.png"));
+    if (name === "browser_screenshot" || name === "capture_screenshot") {
+      if (String(input.tab ?? "") === "t9") browsed.popupShot = true;
+      return capture("Saved the screenshot.", null, shot("screenshot.png"));
+    }
+    // A checkout whose payment opens in a popup (the broker names it in the action's result).
+    if (name === "browser_click" || name === "web_task") {
+      browsed.popupOpened = true;
+      return capture(`${name === "web_task" ? "web_task done: clicked Continue to payment." : "Clicked e3; the tab shows Checkout."} It opened a new window t9 (Payment, pay.example.com): use tab t9.`, { tab: "t1", url: "https://shop.example.com/checkout", title: "Checkout", opened: [{ tab: "t9", url: "https://pay.example.com/session/1", title: "Payment", popup: true, openedBy: "t1" }] });
+    }
+    if (name === "browser_tabs") return capture("t1 Checkout https://shop.example.com/checkout\nt9 Payment https://pay.example.com/session/1 (popup, opened by t1)", { tabs: [{ tab: "t1", url: "https://shop.example.com/checkout", title: "Checkout" }, { tab: "t9", url: "https://pay.example.com/session/1", title: "Payment", popup: true, openedBy: "t1" }] });
+    if (name === "browser_close") return capture(`Closed ${input.tab ?? "t1"}.`, { closed: true });
     return capture("Done.", null);
   }
   return { status: 200, body: {} };
@@ -312,6 +325,7 @@ async function runModel({ model, effort }) {
     }
     const seen = new Set((await call(`/api/node/rooms/${room.id}/messages`, { cookie })).messages.map((row) => row.id));
     const callsBefore = computer.calls.length;
+    browsed.popupOpened = false;
     const started = Date.now();
     const ask = typeof item.ask === "function" ? item.ask(ctx) : item.ask;
     await call(`/api/node/rooms/${room.id}/messages`, { method: "POST", cookie, body: { body: ask } });
@@ -359,6 +373,7 @@ async function runModel({ model, effort }) {
     if (item.card && !cards.includes(item.card)) problems.push(`no ${item.card} card`);
     if (item.liveCard && !fresh.some((row) => row.data?.type === "live")) problems.push("no live card for the owner");
     if (item.share && !computer.calls.slice(callsBefore).some((request) => request.tool === "files" && request.action === "share" && item.share.test(String(request.path)))) problems.push(`node_share_file without ${item.share}`);
+    if (item.popup && browsed.popupOpened && !computer.calls.slice(callsBefore).some((request) => request.tool === "browser" && String(request.input?.tab ?? "") === "t9")) problems.push("never used the payment popup t9");
     if (item.run && !computer.calls.slice(callsBefore).some((request) => request.tool === "run" && item.run.test(String(request.command)))) problems.push(`computer_run without ${item.run}`);
     if (item.noPassword && PASSWORD_ASK.test(text)) problems.push("asked for a password in chat");
     if (item.links) {

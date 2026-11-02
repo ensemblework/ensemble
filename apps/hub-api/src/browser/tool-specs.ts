@@ -30,8 +30,12 @@ export const BROWSER_TOOLS = [
       })
       .strict(),
   },
-  { name: "browser_tabs", description: "List this work's open tabs: id, URL, title, and whether one is recording or paused for a sign-in.", input: z.object({}).strict() },
-  { name: "browser_close", description: "Close one of this work's tabs. A recording running in it is finished and saved first.", input: z.object({ tab }).strict() },
+  {
+    name: "browser_tabs",
+    description: "List this work's open tabs: id, URL, title, the windows its pages opened (a payment or sign-in popup: popup, openedBy), and whether one is recording or paused for a sign-in.",
+    input: z.object({}).strict(),
+  },
+  { name: "browser_close", description: "Close one of this work's tabs (a popup too). A recording running in it is finished and saved first; a live view of it ends.", input: z.object({ tab }).strict() },
   {
     name: "browser_snapshot",
     description:
@@ -40,7 +44,7 @@ export const BROWSER_TOOLS = [
   },
   {
     name: "browser_click",
-    description: "Click an element by its ref from the latest snapshot. Take a new snapshot after the page changes.",
+    description: "Click an element by its ref from the latest snapshot. Take a new snapshot after the page changes. A click that opens a new window (a payment or sign-in popup) says which tab it is: go on there.",
     input: z.object({ tab, ref, button: z.enum(["left", "right", "middle"]).optional(), double: z.boolean().optional() }).strict(),
   },
   {

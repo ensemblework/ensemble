@@ -196,7 +196,7 @@ async function decisionsPage(app: FastifyInstance, room: NodeRoom, spaceId: stri
       await lockRoom(tx, room.id);
       const marked = await tx.nodeRoomPage.findFirst({ where: { roomId: room.id, spaceId, role: "decisions" } });
       if (marked && (await tx.taskPage.findFirst({ where: { id: marked.pageId, userId: spaceId, deletedAt: null }, select: { id: true } }))) return { id: marked.pageId, created: false };
-      const page = await createStandalonePage(tx, spaceId, { title: `Decisions — ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null });
+      const page = await createStandalonePage(tx, spaceId, { title: `Decisions: ${room.title}`, content: markdownPage("Decisions this room confirmed, newest last."), sourceFileId: null });
       await tx.nodeRoomPage.updateMany({ where: { roomId: room.id, role: "decisions" }, data: { role: "watched" } });
       await tx.nodeRoomPage.upsert({
         where: { roomId_pageId: { roomId: room.id, pageId: page.id } },
@@ -249,7 +249,7 @@ export async function confirmDecision(app: FastifyInstance, message: NodeMessage
   const name = (id: string) => nameOf(users.find((row) => row.id === id));
   const day = new Date().toISOString().slice(0, 10);
   const entry =
-    `- **${day}** — ${text} (${name(message.userId)} in “${room.title}”, #${message.seq}; confirmed by ${name(accountId)})` +
+    `- **${day}**: ${text} (${name(message.userId)} in “${room.title}”, #${message.seq}; confirmed by ${name(accountId)})` +
     (old ? `. Replaces the decision of ${old.createdAt.toISOString().slice(0, 10)}: “${truncateText(old.text, 200)}”` : "");
   const decision = await prisma.nodeRoomDecision
     .create({ data: { roomId: room.id, spaceId, pageId, messageId: message.id, text, saidBy: message.userId, loggedBy: accountId, supersedesId: old?.id ?? null } })

@@ -973,7 +973,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           if (!stalled && !passingFailure(failure)) throw failure;
           const said = failure instanceof EngineTransientError ? failure.message : failure instanceof Error ? failure.message.slice(0, 300) : String(failure);
           if (retry >= ENGINE_RETRIES) {
-            if (stalled) throw new Error(`${engineName} stopped responding and did not recover after ${ENGINE_RETRIES} tries. The work so far is kept — Run again to continue.`);
+            if (stalled) throw new Error(`${engineName} stopped responding and did not recover after ${ENGINE_RETRIES} tries. The work so far is kept. Run again to continue.`);
             throw failure instanceof EngineTransientError ? new Error(failure.finalMessage) : failure;
           }
           const reason = stalled ? `${engineName} went quiet for ${Math.round(STALL_MS / 60_000)} minutes with nothing running` : said;
@@ -1211,9 +1211,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         parsed.kind === "quota"
           ? "The model provider refused the call: this key is out of quota. The work already done in the folder is kept."
           : parsed.kind === "rate_limit"
-            ? "The model is rate-limiting this key. The work already done in the folder is kept — run the task again to continue."
+            ? "The model is rate-limiting this key. The work already done in the folder is kept. Run the task again to continue."
             : parsed.kind === "unavailable"
-              ? "The model was unavailable. The work already done in the folder is kept — run the task again to continue."
+              ? "The model was unavailable. The work already done in the folder is kept. Run the task again to continue."
               : raw.slice(0, 500);
     }
   }
@@ -1278,7 +1278,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           for (const hit of hits) if (!planted.some((known) => known.path === hit.path)) planted.push(hit);
         }
         if (planted.length) {
-          changes += `\n\nFlagged — these can run later, outside the sandbox, when the folder is opened:\n${planted.map((hit) => `- ${hit.path}: ${hit.reason}`).join("\n")}`;
+          changes += `\n\nFlagged: these can run later, outside the sandbox, when the folder is opened:\n${planted.map((hit) => `- ${hit.path}: ${hit.reason}`).join("\n")}`;
         }
         if (!risky) {
           const review = await prisma.codeReview.create({

@@ -6,7 +6,7 @@ import type { NodeAgent, NodeMessage, NodeRoom, NodeRoomMember, Prisma, PrismaCl
 import { sseHub } from "../lib/sse.js";
 import { publishTo } from "./events.js";
 import { handleFrom, resolveMentions, uniqueHandle, type DirectoryEntry, type Mention } from "./mentions.js";
-import { nodeTemplate, type NodeAvatar } from "./templates.js";
+import { nodeTemplate, paletteAvatar, type NodeAvatar } from "./templates.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -209,15 +209,18 @@ export type NodeInput = {
 
 /**
  * Creates a node and its DM room. Names are unique per account (case-insensitive): a name the caller
- * chose must be checked first (`nodeNameTaken`); a template's default name gets a number. A slug
- * already used by this account gets a number too.
+ * chose must be checked first (`nodeNameTaken`); a template's default name gets a number. The handle is
+ * the given slug (a slug the person chose must be checked first, as names are), else the template's
+ * while the node has the template's name, else one from the name; one already used gets a number.
+ * Without a template the charter is only what was given, and the look a pick from the palette.
  */
 export async function createNode(prisma: PrismaClient, accountId: string, input: NodeInput): Promise<{ node: NodeAgent; room: NodeRoom }> {
   const template = input.templateId ? nodeTemplate(input.templateId) : undefined;
   const wanted = (input.name ?? template?.name ?? "Assistant").trim().slice(0, 60) || "Assistant";
   const existing = await prisma.nodeAgent.findMany({ where: { userId: accountId }, select: { slug: true, name: true } });
   const name = numbered(wanted, new Set(existing.map((row) => row.name.trim().toLowerCase())), 60);
-  const slug = uniqueHandle(input.slug ?? template?.slug ?? handleFrom(name), new Set(existing.map((row) => row.slug)));
+  const base = input.slug ?? (template && wanted.toLowerCase() === template.name.toLowerCase() ? template.slug : handleFrom(wanted));
+  const slug = uniqueHandle(base, new Set(existing.map((row) => row.slug)));
   return prisma.$transaction(async (tx) => {
     const node = await tx.nodeAgent.create({
       data: {
@@ -226,7 +229,7 @@ export async function createNode(prisma: PrismaClient, accountId: string, input:
         name,
         role: (input.role ?? template?.role ?? "assistant").slice(0, 40),
         charter: (input.charter ?? template?.charter ?? "").slice(0, 8000),
-        avatar: (input.avatar ?? template?.avatar ?? { shape: "orb", color: "#D7B56F", eyes: "dot" }) as Prisma.InputJsonValue,
+        avatar: (input.avatar ?? template?.avatar ?? paletteAvatar(existing.length)) as Prisma.InputJsonValue,
         provider: input.provider ?? null,
         model: input.model ?? null,
         templateId: template?.id ?? null,
@@ -254,7 +257,8 @@ export function wireNode(node: NodeAgent) {
     runProfileId: node.runProfileId,
     autonomy: node.autonomy,
     status: node.status,
-    templateId: node.templateId,
+    // A retired template's id reads as the template that replaced it.
+    templateId: node.templateId ? (nodeTemplate(node.templateId)?.id ?? node.templateId) : null,
     effort: node.effort ?? "low",
     parentNodeId: node.parentNodeId,
     createdAt: node.createdAt.toISOString(),

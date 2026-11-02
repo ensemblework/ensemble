@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import sys
 from typing import Any, Callable
 
 import httpx
@@ -103,6 +104,53 @@ class _Server:
         return [call for call, name in zip(self.calls, self.kinds()) if name == kind]
 
 
+def sse(*events: Any) -> httpx.Response:
+    lines = "".join(f"data: {event if isinstance(event, str) else json.dumps(event)}\n\n" for event in events)
+    return httpx.Response(200, content=lines.encode(), headers={"content-type": "text/event-stream"})
+
+
+def _as_stream(response: httpx.Response) -> httpx.Response:
+    """A whole reply as Azure streams it: a Responses reply's text deltas then ``response.completed``; a chat completion's chunks then its usage."""
+    data = response.json()
+    if isinstance(data.get("choices"), list):
+        choice = data["choices"][0]
+        message = choice.get("message") or {}
+        delta: dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
+        if message.get("reasoning_content"):
+            delta["reasoning_content"] = message["reasoning_content"]
+        if message.get("tool_calls"):
+            delta["tool_calls"] = [{"index": index, **call} for index, call in enumerate(message["tool_calls"])]
+        return sse(
+            {"model": data.get("model"), "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+            {"model": data.get("model"), "choices": [{"index": 0, "delta": {}, "finish_reason": choice.get("finish_reason")}]},
+            {"model": data.get("model"), "choices": [], "usage": data.get("usage")},
+            "[DONE]",
+        )
+    texts = [str(part.get("text") or "") for item in data.get("output") or [] if item.get("type") == "message" for part in item.get("content") or []]
+    return sse(
+        {"type": "response.created", "response": {**data, "status": "in_progress", "output": []}},
+        *({"type": "response.output_text.delta", "delta": text} for text in texts),
+        {"type": "response.completed", "response": data},
+    )
+
+
+class _Stream:
+    """``client.stream(...)``: the fake's answer, as a stream when the request asked for one."""
+
+    def __init__(self, answer: Any, streamed: bool) -> None:
+        self.answer = answer
+        self.streamed = streamed
+
+    async def __aenter__(self) -> httpx.Response:
+        response = await self.answer
+        if self.streamed and response.is_success and response.headers.get("content-type", "").startswith("application/json"):
+            return _as_stream(response)
+        return response
+
+    async def __aexit__(self, *args: Any) -> bool:
+        return False
+
+
 @pytest.fixture
 def server(monkeypatch: pytest.MonkeyPatch) -> _Server:
     fake = _Server()
@@ -120,6 +168,10 @@ def server(monkeypatch: pytest.MonkeyPatch) -> _Server:
         async def post(self, url: str, headers: dict[str, str] | None = None, json: dict[str, Any] | None = None, **kwargs: Any) -> httpx.Response:
             del kwargs
             return await fake.post(url, headers, json or {})
+
+        def stream(self, method: str, url: str, headers: dict[str, str] | None = None, json: dict[str, Any] | None = None, **kwargs: Any) -> "_Stream":
+            del method, kwargs
+            return _Stream(fake.post(url, headers, json or {}), bool((json or {}).get("stream")))
 
     async def no_pace(*args: Any) -> float:
         del args
@@ -343,6 +395,59 @@ def test_a_streamed_included_turn_sends_deltas_then_the_turn(server: _Server) ->
     assert "".join(data["text"] for event, data in frames if event == "delta") == "Hello there."
     turns = [data for event, data in frames if event == "turn"]
     assert turns and turns[0]["credits"] == 1.25
+
+
+def test_an_included_call_streams_from_azure_and_builds_the_same_turn(server: _Server) -> None:
+    done = {
+        "status": "completed",
+        "model": "gpt-6.1-sol-2026-09-29",
+        "output": [
+            {"type": "reasoning", "id": "rs_1", "summary": []},
+            {"type": "message", "id": "msg_1", "role": "assistant", "content": [{"type": "output_text", "text": "Looking at your tasks."}]},
+            {"type": "function_call", "id": "fc_1", "call_id": "call_7", "name": "hub_list_tasks", "arguments": '{"limit":5}'},
+        ],
+        "usage": {"input_tokens": 1300, "input_tokens_details": {"cached_tokens": 1024}, "output_tokens": 44},
+    }
+    server.azure = [
+        lambda body: sse(
+            {"type": "response.created", "response": {**done, "status": "in_progress", "output": [], "usage": None}},
+            {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "Looking at "},
+            {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "your tasks."},
+            {"type": "response.function_call_arguments.delta", "item_id": "fc_1", "delta": '{"limit":'},
+            {"type": "response.completed", "response": done},
+        )
+    ]
+    turn = asyncio.run(complete_with_tools({"provider": "ensemble", "model": "gpt-6.1-sol", "userId": "u1", "messages": [{"role": "user", "content": "My tasks?"}], "chatTools": TOOLS}))
+    assert server.of("azure")[0]["json"]["stream"] is True
+    assert turn["text"] == "Looking at your tasks."
+    assert turn["toolCalls"] == [{"id": "call_7", "name": "hub_list_tasks", "arguments": '{"limit":5}'}]
+    assert (turn["model"], turn["finishReason"], turn["cutOff"], turn["tokensIn"], turn["tokensOut"], turn["credits"]) == ("gpt-6.1-sol-2026-09-29", "tool_calls", False, 1300, 44, 1.25)
+    assert server.of("settle")[0]["json"]["usage"] == {"inputTokens": 1300, "cacheReadTokens": 1024, "cacheWriteTokens": 0, "outputTokens": 44}
+    server.azure = [lambda body: httpx.Response(200, json=DEEPSEEK_REPLY)]
+    asyncio.run(complete_with_tools({"provider": "ensemble", "model": "deepseek-v4-flash", "userId": "u1", "messages": [{"role": "user", "content": "Hi"}]}))
+    chat = server.of("azure")[-1]["json"]
+    assert (chat["stream"], chat["stream_options"]) == (True, {"include_usage": True}), "Chat Completions streams too, with its usage"
+
+
+def test_a_stream_cut_before_it_completed_keeps_its_text_and_settles_without_usage(server: _Server) -> None:
+    server.azure = [lambda body: sse({"type": "response.output_text.delta", "delta": "Half an ans"})]
+    turn = asyncio.run(complete_with_tools({"provider": "ensemble", "model": "gpt-6-luna", "userId": "u1", "messages": [{"role": "user", "content": "Hi"}]}))
+    assert (turn["text"], turn["cutOff"]) == ("Half an ans", True)
+    assert server.of("settle")[0]["json"] == {"id": "res-1", "usage": None, "answeredBy": "gpt-6-luna"}, "hub-api charges the reservation"
+
+
+def test_a_failed_stream_settles_with_the_usage_azure_reports(server: _Server) -> None:
+    failed = {"status": "failed", "error": {"code": "server_error", "message": "The server had an error."}, "usage": {"input_tokens": 700, "output_tokens": 3}}
+    server.azure = [lambda body: sse({"type": "response.failed", "response": failed})]
+    with pytest.raises(ProviderError, match="server had an error"):
+        asyncio.run(complete_with_tools({"provider": "ensemble", "model": "gpt-6-luna", "userId": "u1", "messages": [{"role": "user", "content": "Hi"}]}))
+    assert server.of("settle")[0]["json"] == {"id": "res-1", "usage": {"inputTokens": 700, "cacheReadTokens": 0, "cacheWriteTokens": 0, "outputTokens": 3}}
+
+
+def test_a_whole_reply_to_a_streamed_request_is_read_whole(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "_as_stream", lambda response: response)
+    turn = asyncio.run(complete_with_tools({"provider": "ensemble", "model": "gpt-6-luna", "userId": "u1", "messages": [{"role": "user", "content": "Hi"}]}))
+    assert (turn["text"], turn["tokensIn"], turn["credits"]) == ('{"ok": true}', 5000, 1.25)
 
 
 def test_a_refused_reservation_never_reaches_azure(server: _Server) -> None:

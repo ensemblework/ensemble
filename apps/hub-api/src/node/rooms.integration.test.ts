@@ -1478,7 +1478,7 @@ test("C7: a decision enters the room's log only when a person confirms it; a lat
   assert.deepEqual([first.text, first.saidBy, first.loggedBy, first.spaceId], ["the API returns cents, not decimals", akash.id, ben.id, spaceId]);
   const log = await h.prisma.taskPage.findUniqueOrThrow({ where: { id: first.pageId } });
   assert.equal(log.userId, spaceId);
-  assert.match(log.title ?? "", /^Decisions — Room /);
+  assert.match(log.title ?? "", /^Decisions: Room /);
   assert.match(JSON.stringify(log.content), /the API returns cents, not decimals \(Akash in “Room [^”]+”, #\d+; confirmed by Ben\)/);
   assert.equal(log.editorAccountId, ben.id, "written in Ben's own role");
   assert.match((await read(akash, room.id)).find((row) => row.data?.type === "decision_logged")!.body, /^Ben logged a decision: “the API returns cents, not decimals”/);
@@ -1977,7 +1977,7 @@ test("review C6–C7 #8: two confirmations at once make one decisions log", asyn
   await Promise.all([confirmDecision(h.app, await message(first.id), ben.id), confirmDecision(h.app, await message(second.id), akash.id)]);
   await settleTurns();
   assert.equal(await h.prisma.nodeRoomPage.count({ where: { roomId: room.id, role: "decisions" } }), 1);
-  assert.equal(await h.prisma.taskPage.count({ where: { userId: spaceId, title: { startsWith: "Decisions — " }, deletedAt: null } }), 1);
+  assert.equal(await h.prisma.taskPage.count({ where: { userId: spaceId, title: { startsWith: "Decisions: " }, deletedAt: null } }), 1);
   const decisions = await h.prisma.nodeRoomDecision.findMany({ where: { roomId: room.id } });
   assert.equal(decisions.length, 2);
   assert.equal(new Set(decisions.map((row) => row.pageId)).size, 1, "both in the one log");

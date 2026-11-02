@@ -2,7 +2,7 @@
  * Tasks given to a node or a crew (docs/35 §6.6), against an in-memory database with the model scripted:
  * the migration, the owner field's API (only the person's own nodes and crews), the one turn a node or a
  * crew's lead gets when a task becomes theirs or is taken away, and a node and a lead that answer once and
- * start the work (an agent session with the owner's profile; a plan that gives a testing task to the tester).
+ * start the work (an agent session with the owner's profile; a plan that gives a testing task to a tester).
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -215,7 +215,7 @@ test("a node hears once in its DM, a crew's lead in the crew's room; taking the 
   assert.match(off.note!, /no longer yours: your owner gave it to the crew “Software team”/);
   assert.deepEqual([on.nodeId, on.roomId], [ids[0], crew.id], "the crew's lead hears in the crew's room");
   assert.match(on.note!, /Your owner gave your crew “Software team” an Ensemble task/);
-  assert.match(on.note!, /a testing task to the tester/);
+  assert.match(on.note!, /a testing task to a tester/);
 
   await patch(akash, task.id, { owner: "me" });
   await settleTurns();

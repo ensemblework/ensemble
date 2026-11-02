@@ -53,6 +53,7 @@ A dash means nothing in that column reaches the area. "Same" means the assistant
 | Custom boards could not be read or changed by any tool, so a node did not find a board by its name or link | The seven board tools (§2) share `pages/boards.ts` with `routes/page-boards.ts`: the same checks, spaces and sharing as the Board screen. The `boards` playbook routes "my EnsembleWork board", "custom board" and a pasted `/board?board=<id>` link. A node reaches a board in any space its owner can open |
 | Watchers could be made but not listed or stopped | `hub_list_watchers`, `hub_cancel_watcher` (with Undo) |
 | A node asked its owner to sign in to Ensemble's web app | Refused before the computer, with the tools to use (§4) |
+| A click opened a payment in a popup and the node did not know it (it asked its owner for the popup's address), and "close it" after a live view found no tool | Every acting browser tool and `web_task` say which tab a window opened, and `web_task` goes on there; `browser_tabs` lists popups (`popup`, `openedBy`) and, with `browser_close`, is always offered with the browser tools; `live_view {stop: true}` ends a view and keeps the tab ([35 §8.17](35_ENSEMBLE_NODE.md#817-live-terminal-and-browser)) |
 
 Not offered, and why:
 
@@ -86,3 +87,4 @@ A node and its runs act in Ensemble as their owner already. Opening Ensemble's w
 | `assistant/skills/skills.test.ts` | Board requests and pasted links route to the `boards` playbook |
 | `node/web-task.integration.test.ts` | Ensemble's web app refused before the computer; the run's MCP instructions |
 | `node/persona.integration.test.ts` | The routing row, within the persona's length budget |
+| `browser/broker.integration.test.ts`, `node/web-task.integration.test.ts`, `node/live.integration.test.ts`, `node/skills.test.ts` | A popup reported by the click that opened it, listed, captured, closed and sharing its opener's lease; `web_task` going on in it; a live view following it, ended by `live_view {stop: true}` or by `browser_close`; `browser_tabs` and `browser_close` in every turn with the browser tools |

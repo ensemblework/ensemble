@@ -70,6 +70,7 @@ import {
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
 import { safePublicError, truncateText } from "../lib/text.js";
+import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
 import { formatEntityText, linkedRefs, refLink, refsInText, type AssistantRef } from "@ensemble/shared-types";
@@ -536,6 +537,11 @@ async function drive(
         args.emit({ type: "status", text: stage === 1 ? "The model's provider refused an attachment. Trying again without the ones it may not take." : "The model's provider refused the attachments. Going on without them." });
         step -= 1;
         continue;
+      }
+      // Ran out of time after it had started answering: what it wrote stays, with why it ends there.
+      if (error instanceof ModelTimeoutError && streamed.trim()) {
+        text = `${streamed.trim()}\n\n${error.message}`;
+        break;
       }
       const settled = replyAfterStreamFailure(streamed, error, false);
       if (settled.kind === "error") {

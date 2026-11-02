@@ -333,7 +333,7 @@ export function nodeTools(scope: NodeScope): AnyHubTool[] {
       name: "node_delegate",
       area: "tasks",
       description:
-        "Add a step for a member of your crew (for example @builder) to your plan, or brief your own helper. Call it once per piece of work, in order; pass after for what must finish first (testing after building, docs last). A node outside the crew joins only when your owner agrees (node_crew_add). " +
+        "Add a step for a member of your crew (for example @developer) to your plan, or brief your own helper. Call it once per piece of work, in order; pass after for what must finish first (testing after building, docs last). A node outside the crew joins only when your owner agrees (node_crew_add). " +
         "Nothing is posted: when your turn ends your reply opens the plan as one card, its steps run in order as quiet work of those nodes, and you hear back once, with every result, when the plan ends. " +
         "The brief must stand alone: the task or page, where to work, what done looks like, and any model, agent or folder your owner named.",
       input: z.object({

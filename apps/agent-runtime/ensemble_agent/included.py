@@ -4,6 +4,8 @@ hub-api keeps the credits ledger. Every call here reserves its worst case there 
 it and settles the reservation with the real usage after (docs/33). Each model answers on the
 OpenAI v1 endpoint of the Foundry host it is documented at, on the Responses or the Chat Completions
 API; Foundry's Anthropic Messages endpoint is supported too, though no model in the catalog uses it.
+Responses and Chat Completions calls stream, so a call that is cancelled (hub-api's Stop, its time
+limit, its request closed) closes the stream and Azure stops generating.
 The Azure key is read from the environment here only: it is never a credential, never listed, and
 never returned. apps/hub-api/src/runtime/included.ts is the same transport for the in-process runtime.
 """
@@ -26,6 +28,7 @@ import httpx
 
 from ensemble_agent import models, responses_api
 from ensemble_agent.config import get_settings
+from ensemble_agent.model_timeout import runtime_seconds
 from ensemble_agent.provider_error import INCLUDED_NOT_SET_UP as NOT_SET_UP, ProviderError
 from ensemble_agent.rate_limit import pace
 from ensemble_agent.reach import ModelUnreachable
@@ -262,31 +265,40 @@ def _settle_task(user_id: str, reservation: str, usage: dict[str, int] | None, a
     return task
 
 
+Usage = dict[str, int]
+
+
+class _StreamFailed(Exception):
+    """Azure ended a stream with a failure: the error, and the usage it reported (None when it said none)."""
+
+    def __init__(self, error: ProviderError, usage: Usage | None) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.usage = usage
+
+
 async def _settled(
     user_id: str,
     reservation: str,
-    send: Callable[[], Awaitable[httpx.Response]],
-    read: Callable[[httpx.Response], tuple[dict[str, Any], dict[str, int]]],
+    call: Callable[[], Awaitable[tuple[dict[str, Any], Usage | None]]],
 ) -> dict[str, Any]:
     """Run one call under its reservation and settle it exactly once.
 
     A request Azure refused (or never received) is not billed, so it settles at zero. Anything that
-    may have been billed without a usage report settles with no usage: hub-api charges the reservation.
-    The settlement outlives a cancelled call.
+    may have been billed without a usage report (a stream cut short, a failure that says no usage)
+    settles with no usage: hub-api charges the reservation. The settlement outlives a cancelled call.
     """
     try:
-        response = await send()
+        turn, usage = await call()
     except asyncio.CancelledError:
         _settle_task(user_id, reservation, None)
         raise
+    except _StreamFailed as exc:
+        await asyncio.shield(_settle_task(user_id, reservation, exc.usage))
+        raise exc.error from None
     except (ProviderError, ModelUnreachable):
         await asyncio.shield(_settle_task(user_id, reservation, dict(_NO_USAGE)))
         raise
-    except Exception:
-        await asyncio.shield(_settle_task(user_id, reservation, None))
-        raise
-    try:
-        turn, usage = read(response)
     except Exception:
         await asyncio.shield(_settle_task(user_id, reservation, None))
         raise
@@ -461,8 +473,9 @@ def claude_payload(
 
 
 def chat_payload(model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, json_mode: bool, max_tokens: int) -> dict[str, Any]:
-    """No temperature, top_p or reasoning_effort: the chat model takes no thinking level."""
-    payload = models.build_chat_payload(model, PROVIDER, messages, tools=tools)
+    """No temperature, top_p or reasoning_effort: the chat model takes no thinking level. Streamed, with the usage at the end."""
+    payload = models.build_chat_payload(model, PROVIDER, messages, tools=tools, stream=True)
+    payload["stream_options"] = {"include_usage": True}
     payload["max_completion_tokens"] = max_tokens
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -478,8 +491,9 @@ def responses_payload(
     json_mode: bool,
     max_tokens: int,
 ) -> dict[str, Any]:
+    """Streamed: a call that is stopped closes its stream, and Azure stops generating."""
     history = responses_api.clean_items(items) if items else responses_api.items_from_chat(messages)
-    payload = responses_api.build_payload(model, history, tools=responses_api.tools_for(tools) if tools else None, effort=effort, json_mode=json_mode)
+    payload = responses_api.build_payload(model, history, tools=responses_api.tools_for(tools) if tools else None, effort=effort, json_mode=json_mode, stream=True)
     payload["max_output_tokens"] = max_tokens
     return payload
 
@@ -508,6 +522,82 @@ async def _post(url: str, headers: dict[str, str], payload: dict[str, Any], time
     return await models.post_with_retry(send, payload)
 
 
+def _usage_of(response: dict[str, Any] | None, read: Callable[[Any], Usage]) -> Usage | None:
+    usage = response.get("usage") if isinstance(response, dict) else None
+    return read(usage) if isinstance(usage, dict) else None
+
+
+async def _read_responses(lines: Any, model: str) -> tuple[dict[str, Any], Usage | None]:
+    """A Responses stream → the turn and its usage (from ``response.completed``; none when the stream was cut)."""
+    final: list[dict[str, Any]] = []
+    turn: dict[str, Any] | None = None
+    try:
+        async for kind, data in responses_api.turn_from_stream(lines, model, final.append):
+            if kind == "done":
+                turn = data
+    except ProviderError as exc:
+        raise _StreamFailed(exc, _usage_of(final[-1] if final else None, responses_usage)) from exc
+    if turn is None:
+        raise ProviderError(502, "other", "The model stream ended without a completion.")
+    return turn, _usage_of(final[-1] if final else None, responses_usage)
+
+
+async def _read_chat(lines: Any, model: str) -> tuple[dict[str, Any], Usage | None]:
+    """A Chat Completions stream → the turn and its usage (the last chunk's, with ``include_usage``)."""
+    data: dict[str, Any] | None = None
+    async for kind, item in models.consume_sse_lines(lines, model):
+        if kind == "done":
+            data = item
+    if data is None:
+        raise ProviderError(502, "other", "The model stream ended without a completion.")
+    usage = data.get("usage")
+    return models._from_openai(data, model), chat_usage(usage) if isinstance(usage, dict) and isinstance(usage.get("prompt_tokens"), int) else None
+
+
+def _read_whole(data: Any, model: str) -> tuple[dict[str, Any], Usage | None]:
+    if not isinstance(data, dict):
+        raise ProviderError(502, "other", "The model provider returned a non-JSON response.")
+    if isinstance(data.get("choices"), list):
+        return models._from_openai(data, model), chat_usage(data.get("usage"))
+    return responses_api.turn_from_response(data, model), responses_usage(data.get("usage"))
+
+
+async def _stream(
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: float,
+    read: Callable[[Any, str], Awaitable[tuple[dict[str, Any], Usage | None]]],
+) -> tuple[dict[str, Any], Usage | None]:
+    """POST a streamed request, retried as ``post_with_retry`` does while Azure refuses it, and read its stream.
+
+    Cancelling the call closes the stream, and Azure stops generating.
+    """
+    model = str(payload.get("model") or "")
+    attempt = 0
+    while True:
+        failure: ProviderError | None = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    if response.is_success and "application/json" in response.headers.get("content-type", ""):
+                        # Not a stream (a proxy that ignores ``stream``): read whole.
+                        return _read_whole(json.loads(await response.aread()), model)
+                    if response.is_success:
+                        return await read(response.aiter_lines(), model)
+                    raw = await response.aread()
+                    failure = models.parse_provider_error(response.status_code, raw.decode("utf-8", errors="replace"), response.headers)
+        except (asyncio.CancelledError, ProviderError, _StreamFailed, models.ConnectionDropped, ModelUnreachable):
+            raise
+        except Exception as exc:
+            models._reraise_transport(exc, provider=PROVIDER, model=model, url=url)
+        delay = models.retry_plan(failure, attempt)
+        if delay is None:
+            raise failure
+        await asyncio.sleep(delay)
+        attempt += 1
+
+
 async def complete(
     body: dict[str, Any],
     model: str,
@@ -515,9 +605,13 @@ async def complete(
     *,
     items: list[Any] | None = None,
     json_mode: bool = False,
-    timeout: float = 300.0,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
-    """One turn on an included model, in the runtime's turn shape, with ``credits`` from the ledger."""
+    """One turn on an included model, in the runtime's turn shape, with ``credits`` from the ledger.
+
+    ``timeout``: seconds to wait for Azure; hub-api's limit and a margin when it is not given.
+    """
+    seconds = timeout if timeout is not None else runtime_seconds(body)
     config = _configured(model)
     user_id = body.get("userId")
     if not isinstance(user_id, str) or not user_id:
@@ -540,26 +634,26 @@ async def complete(
         url = f"{openai_base(config.resource, entry.host)}/responses"
         headers = {"api-key": config.api_key}
 
-    async def send() -> httpx.Response:
+    async def claude() -> tuple[dict[str, Any], Usage | None]:
         try:
-            return await _post(url, headers, payload, timeout)
+            response = await _post(url, headers, payload, seconds)
         except ProviderError as exc:
-            if entry.api != "anthropic" or not _thinking_refused(exc):
+            if not _thinking_refused(exc):
                 raise
-            return await _post(url, headers, without_thinking(payload), timeout)
-
-    def read(response: httpx.Response) -> tuple[dict[str, Any], dict[str, int]]:
+            response = await _post(url, headers, without_thinking(payload), seconds)
         data = _json_object(response)
+        remember_turn(user_id, data.get("content"))
+        return models._anthropic_result(data, model), anthropic_usage(data.get("usage"))
+
+    async def call() -> tuple[dict[str, Any], Usage | None]:
         if entry.api == "anthropic":
-            remember_turn(user_id, data.get("content"))
-            turn, usage = models._anthropic_result(data, model), anthropic_usage(data.get("usage"))
-        elif entry.api == "chat":
-            turn, usage = models._from_openai(data, model), chat_usage(data.get("usage"))
+            turn, usage = await claude()
         else:
-            turn, usage = responses_api.turn_from_response(data, model), responses_usage(data.get("usage"))
-        turn["tokensIn"], turn["tokensOut"] = usage["inputTokens"], usage["outputTokens"]
+            turn, usage = await _stream(url, headers, payload, seconds, _read_chat if entry.api == "chat" else _read_responses)
+        if usage is not None:
+            turn["tokensIn"], turn["tokensOut"] = usage["inputTokens"], usage["outputTokens"]
         return turn, usage
 
     await pace(user_id, PROVIDER)
     reservation = await reserve(user_id, model, estimate_input_tokens(payload), config.max_output_tokens, purpose)
-    return await _settled(user_id, reservation, send, read)
+    return await _settled(user_id, reservation, call)

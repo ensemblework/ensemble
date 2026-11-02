@@ -568,10 +568,13 @@ export type EvidenceMeta = z.infer<typeof EvidenceMeta>;
  * 2: also `terminal` (a command's screen as an image), `sudo` (one command as the administrator, with the
  * owner's password sealed for this computer), files `share` (a file as evidence), and calls without a
  * folder, which run in the node's own folder on this computer.
+ * 3: also `run_stop` (stop a node's command running in the background, and what it started).
  */
-export const NODE_TOOLS_API = 2;
+export const NODE_TOOLS_API = 3;
 /** The first `nodeTools` version with terminal screenshots, sudo, file sharing and the node's own folder. */
 export const NODE_TOOLS_OWN_FOLDER = 2;
+/** The first `nodeTools` version that stops a node's background command (`run_stop`). */
+export const NODE_TOOLS_RUN_STOP = 3;
 /** A `sudo` answer's `error` when sudo did not take the owner's password: the card waits for another try. */
 export const SUDO_PASSWORD_REFUSED = "The password was not accepted.";
 /** A `sudo` answer's `error` when the command needs a password and none came. */
@@ -781,6 +784,14 @@ export const NodeToolRequest = z.discriminatedUnion("tool", [
     sealed: SealedShape.optional(),
     timeoutSec: z.number().int().min(1).max(1800).default(600),
     /** Where its output goes when it does not fit the answer, or runs on. */
+    runId: text(100).min(1),
+  }),
+  /**
+   * nodeTools 3: stop the node's command `runId` (its `run` or `sudo` still running here) and the processes
+   * it started. Answered 200 `{ stopped }`: false when it is not running here (it ended, or this computer restarted).
+   */
+  NodeToolBase.extend({
+    tool: z.literal("run_stop"),
     runId: text(100).min(1),
   }),
   /** A request with a saved secret put in where {{ref}} appears (B12, `capabilities.secretHttp`; credentials/secret-http.ts). */

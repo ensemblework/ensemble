@@ -98,7 +98,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   await laptopFor(akash);
   const { node, room: dm } = await createNode(akash, "assistant");
   const ids: string[] = [];
-  for (const template of ["manager", "feature-engineer", "tester"]) ids.push((await createNode(akash, template)).node.id);
+  for (const template of ["manager", "developer", "tester"]) ids.push((await createNode(akash, template)).node.id);
   await createNode(akash, "researcher");
   const crew = json(await akash.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Software team", nodeIds: ids, leadNodeId: ids[0] } })).room as { id: string };
   // A node made from the assistant template before: its charter still says to send computer work to an agent.
@@ -121,8 +121,8 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /“Screenshot of” or “show me” a page: browser_view \(url; focus: what was asked[^\n]*\), one call per screenshot/,
     /Steps on a site \(a dashboard, “log in to my Azure portal and check …”\): web_task with the goal; sign-ins go to your owner's card, not Connections\./,
     /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even by phone\)\. They say done: browser_login_check/,
-    // A command's sign-in code is the owner's: in a chat with only them, the node may say it.
-    /CLI sign-ins \(`az login`\): computer_run; here you may tell your owner its code\./,
+    // The browser flow first: a device code only when the owner asks for one, or the browser flow failed.
+    /CLI sign-in: computer_run plain `az login` \(card opens\); device code if asked\./,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
     /A shell that stays open \(a REPL, a prompt\): terminal_open \(live: true to show it\), then terminal_send\. Tab live: live_view/,
@@ -138,11 +138,13 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   ]) assert.match(persona, row);
   assert.doesNotMatch(persona, /Skills for this request/, "no skill for a hello");
   assert.match(persona, /It runs GitHub Copilot · gpt-6\.1-sol · medium thinking · 1M context \(the run profile “Copilot”\) unless your owner names an agent, model, thinking level or context\./, "it can say which model its agent runs will use");
-  assert.match(persona, /Your owner's other nodes, not in a crew with you \(node_crew_add asks your owner\): @builder \(engineer\), @manager \(manager\), @researcher \(researcher\), @tester \(tester\)\./);
+  assert.match(persona, /Your owner's other nodes, not in a crew with you \(node_crew_add asks your owner\): @developer \(developer\), @manager \(manager\), @researcher \(researcher\), @tester \(tester\)\./);
   assert.ok(direct.tools.includes("node_crew_add"));
 
   assert.match(lead.persona, /node_plan, with this crew's members only/);
-  assert.doesNotMatch(lead.persona, /here you may tell your owner its code/, "a sign-in code is said only in a chat with the owner alone");
+  assert.match(lead.persona, /Match each piece to the member whose role fits: code to a developer/);
+  assert.match(lead.persona, /- @developer: your owner's node “Software developer” \(developer\)/, "the roster gives each member's role, which the manager's charter matches work to");
+  assert.doesNotMatch(lead.persona, /CLI sign-in/, "CLI sign-ins happen in a chat with the owner alone");
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
   assert.match(persona, /Your owner's work \(tasks, boards, Ensemble links\) and apps: your tools; you are in Ensemble already, never sign in to it in a browser\./);
   // 6,582 and 7,995 before the Ensemble row (about 80 characters each).
@@ -159,7 +161,7 @@ test("a node's own run profile is what its sessions use and what it says they us
     ],
     defaultRunProfileId: "copilot",
   });
-  const { node, room } = await createNode(mira, "feature-engineer");
+  const { node, room } = await createNode(mira, "developer");
   assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { runProfileId: "claude" } })).statusCode, 200);
   script = (turn) => (turn.transcript.includes("fix the build") ? [{ name: "node_session_start", arguments: { title: "Fix the build", prompt: "Fix the build.", folder: "ensemble" } }] : []);
   await say(mira, room.id, "fix the build");

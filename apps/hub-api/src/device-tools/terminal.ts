@@ -307,7 +307,7 @@ export async function runNodeTerminal(app: App, client: HostedClient, request: T
   const evidenceDir = operationEvidenceDir(request.operation);
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   const rules: PrivacyRules = { secretValues: await savedSecretValues(app.prisma, userId).catch(() => [] as string[]) };
-  const title = request.title?.trim() || `${program} — ${folder.label}`;
+  const title = request.title?.trim() || `${program}: ${folder.label}`;
   const name = slugName(request.title ?? `terminal ${program}`, "terminal");
   const capture = { operation: request.operation, evidenceDir, network: request.network, loopbackOnly: !request.network };
   let ran: Ran;

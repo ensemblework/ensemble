@@ -1,6 +1,7 @@
 /**
  * The takeover channel on the computer (B21): node:crypto makes the same fixed vectors as the browser's
- * WebCrypto module, byte for byte, and each side opens what the other made with a fresh secret.
+ * WebCrypto module, byte for byte, and each side opens what the other made with a fresh secret. And how
+ * a live view's pictures follow the link (takeover/quality.ts).
  */
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -9,6 +10,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { takeoverKeys as browserKeys, openMessage as browserOpen, sealMessage as browserSeal } from "@ensemble/shared-types";
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, unpackMessage, type TakeoverDirection } from "./channel.js";
+import { CONTROL_LEVELS, FAST_MS, FrameQuality, linkStep, SLOW_MS, WATCH_LEVELS } from "./quality.js";
 import { takeoverMaxMs } from "./session.js";
 
 const require = createRequire(import.meta.url);
@@ -94,4 +96,34 @@ test("keys for the clean browser, as a person's keyboard sends them: printable k
   const mac = new CleanKeyboard("darwin");
   mac.events("down", "Meta");
   assert.deepEqual(mac.events("down", "a").events[0]?.commands, ["selectAll"]);
+});
+
+test("a live view's pictures: 1024 px at 45 to watch, 1280 at 55 in control; slow sends make them smaller a step at a time, quick ones better again, more slowly", () => {
+  let clock = 0;
+  const quality = new FrameQuality(WATCH_LEVELS, () => clock);
+  assert.deepEqual(quality.level, { maxWidth: 1024, quality: 45 });
+  assert.deepEqual(CONTROL_LEVELS[0], { maxWidth: 1280, quality: 55 });
+  assert.equal(quality.sent(SLOW_MS * 2), null, "not at once: a moment's hiccup is not a slow link");
+  clock = 1_600;
+  assert.deepEqual(quality.sent(SLOW_MS * 2), WATCH_LEVELS[1], "slow for a while: a step down");
+  clock = 2_100;
+  assert.equal(quality.sent(SLOW_MS * 4), null, "one step at a time");
+  clock = 3_200;
+  assert.deepEqual(quality.sent(SLOW_MS * 2), WATCH_LEVELS[2]);
+  for (clock = 3_450; clock < 8_200; clock += 250) assert.equal(quality.sent(FAST_MS / 2), null, "better again only after a longer wait");
+  assert.deepEqual(quality.sent(FAST_MS / 2), WATCH_LEVELS[1]);
+  for (let step = 0; step < 10; step += 1) {
+    clock += 1_600;
+    quality.sent(SLOW_MS * 4);
+  }
+  assert.deepEqual(quality.level, WATCH_LEVELS.at(-1), "never below the last step");
+  for (let send = 0; send < 20; send += 1) {
+    clock += 1_000;
+    assert.equal(quality.sent((SLOW_MS + FAST_MS) / 2 + 40), null, "in between: it stays");
+  }
+  assert.deepEqual(quality.use(CONTROL_LEVELS), CONTROL_LEVELS.at(-1), "taking control on a slow link starts as far down control's steps");
+  assert.equal(linkStep(clock), 1, "what the link needed is kept for the next view");
+  assert.deepEqual(new FrameQuality(WATCH_LEVELS, () => clock, linkStep(clock)).level, WATCH_LEVELS.at(-1));
+  assert.equal(linkStep(clock + 11 * 60_000), 0, "for ten minutes");
+  assert.deepEqual(new FrameQuality(CONTROL_LEVELS, () => 0).use(WATCH_LEVELS), { maxWidth: 1024, quality: 45 }, "a quick link watches at the best");
 });

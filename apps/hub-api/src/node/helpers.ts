@@ -15,11 +15,11 @@ import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeRoom, Prisma, PrismaClient } from "@prisma/client";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool } from "../assistant/types.js";
 import { publishTo } from "./events.js";
-import { handleFrom, uniqueHandle } from "./mentions.js";
+import { handleFrom, SPECIAL_MENTIONS, uniqueHandle } from "./mentions.js";
 import { stopTurns } from "./queue.js";
 import { addStep, planVisibility, stopPlans } from "./plans.js";
 import { addNode, addPerson, createNode, freeRoomTitle, nodeNameTaken, numbered, postMessage, roomTitleTaken } from "./store.js";
-import { NODE_TEMPLATES } from "./templates.js";
+import { AVATAR_COLORS, NODE_TEMPLATES } from "./templates.js";
 import type { SessionToolScope } from "./sessions.js";
 
 export const HELPER_IDLE_MS = 3 * 86_400_000;
@@ -266,7 +266,7 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
       async run(_ctx, input) {
         if (!scope.ownerOnly) throw new ToolBlockedError("Only in a chat with just your owner can you make them a node.");
         await checkNewNode(prisma, owner, input);
-        if (!createsWithoutAsking(node)) return propose(scope, { action: "node", input }, `Make a node: ${input.name.trim()} (${input.role.trim()})\n\n${input.charter.trim()}`);
+        if (!createsWithoutAsking(node)) return propose(scope, { action: "node", input }, `Make a node: ${input.name.trim()} (${input.slug ? `@${input.slug}, ` : ""}${input.role.trim()})\n\n${input.charter.trim()}`);
         const made = await makeNode(prisma, node, input);
         return toolOk(`Made @${made.slug} (${made.name}); its chat is in your owner's sidebar. Hand it work with node_delegate.`, { handle: made.slug, name: made.name });
       },
@@ -296,11 +296,26 @@ export function helperTools(scope: HelperScope): AnyHubTool[] {
 export const NewNode = z
   .object({
     name: z.string().min(1).max(60),
+    slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .regex(/^@?[a-z0-9][a-z0-9-]{0,23}$/, "Lowercase letters, digits and dashes, at most 24.")
+      .transform((value) => value.replace(/^@/, ""))
+      .optional()
+      .describe("Its @handle, only when your owner chose one; otherwise it follows the name."),
     role: z.string().min(1).max(40).describe("A word or two, for example researcher."),
     charter: z.string().min(1).max(8000).describe("Its standing instructions: what it is for, how it works, what it reports."),
-    templateId: z.enum(NODE_TEMPLATES.map((row) => row.id) as [string, ...string[]]).optional().describe("A template to start from: its look and handle."),
+    templateId: z.enum(NODE_TEMPLATES.map((row) => row.id) as [string, ...string[]]).optional().describe("A template to start from: its look, and its handle when the name is the template's."),
+    avatar: z
+      .object({ shape: z.enum(["orb", "square", "spark", "hex", "leaf", "compass"]), color: z.enum(AVATAR_COLORS), eyes: z.enum(["dot", "line", "wide"]) })
+      .strict()
+      .optional()
+      .describe("Its look, only when your owner asked for one."),
   })
   .strict();
+/** A proposal card's input as stored: a card made before a template was retired names it by its old id. */
+export const StoredNewNode = NewNode.extend({ templateId: z.string().max(40).optional() });
 export const NewCrew = z
   .object({
     title: z.string().min(1).max(80),
@@ -308,10 +323,14 @@ export const NewCrew = z
     lead: Handle.optional().describe("The handle of the node that answers when nobody is mentioned."),
   })
   .strict();
-export type Proposal = { action: "node"; input: z.infer<typeof NewNode> } | { action: "crew"; input: z.infer<typeof NewCrew> };
+export type Proposal = { action: "node"; input: z.infer<typeof StoredNewNode> } | { action: "crew"; input: z.infer<typeof NewCrew> };
 
-async function checkNewNode(prisma: PrismaClient, owner: string, input: z.infer<typeof NewNode>): Promise<void> {
+async function checkNewNode(prisma: PrismaClient, owner: string, input: z.infer<typeof StoredNewNode>): Promise<void> {
   if (await nodeNameTaken(prisma, owner, input.name)) throw new ToolBlockedError(`Your owner already has a node called “${input.name.trim()}”.`, "Pick another name.");
+  if (input.slug && (SPECIAL_MENTIONS as readonly string[]).includes(input.slug)) throw new ToolBlockedError(`@${input.slug} mentions every node.`, "Pick another handle, or leave it out to follow the name.");
+  if (input.slug && (await prisma.nodeAgent.findFirst({ where: { userId: owner, slug: input.slug }, select: { id: true } }))) {
+    throw new ToolBlockedError(`Your owner already has a node @${input.slug}.`, "Pick another handle, or leave it out to follow the name.");
+  }
   if ((await prisma.nodeAgent.count({ where: { userId: owner, parentNodeId: null } })) >= MAX_NODES) throw new ToolBlockedError(`Your owner has ${MAX_NODES} nodes, the most one account can have.`);
 }
 
@@ -331,9 +350,18 @@ async function crewMembers(prisma: PrismaClient, owner: string, input: z.infer<t
 }
 
 /** A lasting node, as the website makes it, on the proposing node's model. */
-export async function makeNode(prisma: PrismaClient, by: Pick<NodeAgent, "userId" | "provider" | "model">, input: z.infer<typeof NewNode>): Promise<NodeAgent> {
+export async function makeNode(prisma: PrismaClient, by: Pick<NodeAgent, "userId" | "provider" | "model">, input: z.infer<typeof StoredNewNode>): Promise<NodeAgent> {
   await checkNewNode(prisma, by.userId, input);
-  const { node: made, room } = await createNode(prisma, by.userId, { templateId: input.templateId, name: input.name.trim(), slug: handleFrom(input.name.trim()), role: input.role.trim(), charter: input.charter, provider: by.provider, model: by.model });
+  const { node: made, room } = await createNode(prisma, by.userId, {
+    templateId: input.templateId,
+    name: input.name.trim(),
+    slug: input.slug,
+    role: input.role.trim(),
+    charter: input.charter,
+    avatar: input.avatar,
+    provider: by.provider,
+    model: by.model,
+  });
   publishTo([by.userId], "node.room", { roomId: room.id });
   return made;
 }
