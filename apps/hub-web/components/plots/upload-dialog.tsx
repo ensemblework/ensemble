@@ -18,7 +18,7 @@ type Dataset = {
 
 const TYPES = ["number", "date", "category", "text"] as const;
 const FORMATS = ["CSV", "TSV", "JSON", "Excel", "Numbers", "Parquet", "Feather"];
-const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.xlsx,.xls,.xlsm,.ods,.numbers,.parquet,.feather,.arrow,.pkl,.pickle";
+const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.ndjson,.xlsx,.xls,.xlsm,.ods,.numbers,.parquet,.feather,.arrow";
 
 async function readBytes(file: File, onProgress: (percent: number, label: string) => void): Promise<Uint8Array> {
   const reader = file.stream().getReader();

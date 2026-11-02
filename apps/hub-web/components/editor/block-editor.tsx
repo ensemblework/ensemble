@@ -17,6 +17,8 @@ import { acceptsDocument, replaceDocument, type EditorControl } from "./replace-
 import { RemoteCarets } from "./remote-carets";
 import { CollabSync, type CollabBinding } from "./collab";
 import { useModuleState } from "@/lib/use-module";
+import { usePeek } from "../shell/peek";
+import { markFreshPage } from "../pages/fresh-page";
 import { useToast } from "../toast";
 
 const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod) => mod.CommentLayer), { ssr: false });
@@ -81,6 +83,9 @@ export function BlockEditor({
   const baseline = useRef<string | null>(null);
   pageRef.current = page;
   const [live, setLive] = useState<Editor | null>(null);
+  const peek = usePeek();
+  const peekRef = useRef(peek);
+  peekRef.current = peek;
   changeRef.current = onChange;
   clickRef.current = onMentionClick;
 
@@ -91,6 +96,11 @@ export function BlockEditor({
       ...editorExtensions(entities, placeholder, () => diagramsStateRef.current, () => plotsStateRef.current, {
         client: () => clientRef.current,
         choose: (_editor, pos) => setChooser(pos),
+      }, {
+        client: () => clientRef.current,
+        // `/page`: a page inside this page or task (from a project or meeting notes, a page of its own),
+        // linked where the caret was and opened beside it.
+        create: page && !currentLink() ? (instance, pos) => void createNestedPage(instance, pos) : null,
       }),
       ...(collab ? [CollabSync.configure({ version: collab.version, clientID: collab.clientID })] : []),
     ],
@@ -131,6 +141,22 @@ export function BlockEditor({
       syncDiagramLinks(doc);
     },
   });
+
+  async function createNestedPage(instance: Editor, pos: number) {
+    const current = pageRef.current;
+    const parent = current?.kind === "page" ? { parentId: current.id } : current?.kind === "task" ? { parentTaskId: current.id } : {};
+    try {
+      const { page: child } = await api.createPage(parent);
+      if (instance.isDestroyed) return;
+      const at = Math.min(pos, instance.state.doc.content.size);
+      instance.chain().focus().insertContentAt(at, { type: "pageLink", attrs: { pageId: child.id, label: child.title || "Untitled" } }).run();
+      markFreshPage(child.id);
+      void clientRef.current.invalidateQueries({ queryKey: ["pages"] });
+      peekRef.current.open(child.id, "page");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "The page could not be made.", { tone: "error" });
+    }
+  }
 
   function syncDiagramLinks(doc: PageDocument) {
     const current = pageRef.current;

@@ -2,7 +2,7 @@
 
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Code2, FileText, GitBranch, GitPullRequest, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Code2, FileText, GitBranch, GitPullRequest, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
 import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -15,7 +15,7 @@ import { useToast } from "../toast";
 import { RunMark } from "@/components/motion/slot";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
-import { PriorityTag, Spinner, Tag, cx } from "../ui";
+import { PriorityTag, Tag, cx } from "../ui";
 import { MarkdownText } from "../markdown-text";
 import { LinkifiedText } from "../linkified-text";
 import { sameModel, usd } from "@/lib/run-trace";
@@ -214,27 +214,6 @@ export function JobCard({ job }: { job: AgentJob }) {
   );
 }
 
-const EVENT_LABEL: Record<string, string> = {
-  tool: "Tool",
-  command: "Command",
-  needs_me: "Needs you",
-  prepared: "Folder ready",
-  pull_request: "Pull request",
-  pull_request_branch: "Branch",
-  not_sandboxed: "Not sandboxed",
-  trust_revoked: "Trust removed",
-  interrupted: "Interrupted",
-  reconnected: "Reconnected",
-  resumed: "Resumed",
-  resumed_as: "Carried on",
-  engine_retry: "Restarted",
-};
-
-function minutesText(seconds: unknown): string {
-  const value = typeof seconds === "number" && seconds > 0 ? seconds : 0;
-  return value < 90 ? `${Math.round(value)} s` : value < 5400 ? `${Math.round(value / 60)} min` : `${Math.round(value / 360) / 10} h`;
-}
-
 /** The latest agent attempt for a task, live, on the task page. */
 export function TaskAgentPanel({ taskId }: { taskId: string }) {
   const workspaceOn = useModuleOn("workspace");
@@ -245,10 +224,8 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
     refetchInterval: (query) => (query.state.data?.jobs.some((job) => ["queued", "claimed", "running", "stopping", "waiting_approval"].includes(job.status)) ? 3000 : false),
   });
   const job = jobs.data?.jobs[0];
-  const [open, setOpen] = useState(false);
   const live = job ? ["claimed", "running", "stopping", "waiting_approval"].includes(job.status) : false;
-  const detail = useQuery({ queryKey: ["job", job?.id], queryFn: () => api.job(job!.id), enabled: (open || live) && Boolean(job), refetchInterval: job && live ? 2000 : false });
-  const logs = useQuery({ queryKey: ["job-logs", job?.id], queryFn: () => api.jobLogs(job!.id), enabled: open && Boolean(job), refetchInterval: open && job && ["claimed", "running", "waiting_approval"].includes(job.status) ? 2500 : false });
+  const detail = useQuery({ queryKey: ["job", job?.id], queryFn: () => api.job(job!.id), enabled: live && Boolean(job), refetchInterval: job && live ? 2000 : false });
   const showProgress = useDelayedFlag(Boolean(live && job?.progress));
   const elapsed = useElapsed(job?.startedAt ?? null, live, job?.finishedAt ?? null);
   if (!job) return null;
@@ -267,11 +244,6 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
         {elapsed ? <span className="text-faint">{live ? elapsed : `took ${elapsed}`}</span> : null}
         {job.costUsd != null ? <span className="text-faint">{usd(job.costUsd)}</span> : null}
         <div className="flex-1" />
-        {job.runId ? (
-          <Link href={`/runs?run=${job.runId}`} className="text-accent hover:underline" title="Every step and tool call, with timings">
-            View run
-          </Link>
-        ) : null}
         {job.reviewId ? (
           <Link href={`/code/review?review=${job.reviewId}`} className="text-accent hover:underline">
             Review changes
@@ -304,54 +276,10 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
       ) : null}
       <JobResults job={job} events={detail.data?.events} />
       {job.status === "interrupted" && job.deviceId && !job.deviceRevoked ? <RunAgain job={job} /> : null}
-      <button type="button" onClick={() => setOpen(!open)} className="mt-1.5 flex items-center gap-1 text-[12px] text-muted hover:text-ink">
-        <ChevronRight size={12} className={cx("transition-transform", open && "rotate-90")} /> What it did
-      </button>
-      {open ? (
-        <div className="mt-1.5 max-h-72 space-y-1 overflow-y-auto border-l border-line pl-3">
-          {detail.isLoading ? <Spinner size={12} /> : null}
-          {(detail.data?.events ?? []).map((event) => {
-            const data = event.data as Record<string, unknown>;
-            const text =
-              event.kind === "command"
-                ? `$ ${String(data.command)} → exit ${String(data.exitCode)}`
-                : event.kind === "tool"
-                  ? String(data.summary ?? data.name)
-                  : event.kind === "prepared"
-                    ? `${String(data.root)}${data.branch ? ` · ${String(data.branch)}` : ""}${data.sandboxed ? " · sandboxed" : " · not sandboxed"}`
-                    : event.kind === "pull_request"
-                      ? `#${String(data.number)} ${data.state === "merged" ? "merged into" : "opened into"} ${String(data.base)} · ${String(data.url)}`
-                    : event.kind === "pull_request_branch"
-                      ? `${String(data.branch)} from ${String(data.base)}`
-                    : event.kind === "not_sandboxed"
-                      ? String(data.reason)
-                      : event.kind === "trust_revoked"
-                        ? `Trust for ${String(data.root)} was removed. Paused on Needs me.`
-                      : event.kind === "interrupted"
-                        ? data.reason === "computer_restarted" ? "The computer restarted while this ran." : "The computer stopped answering."
-                      : event.kind === "reconnected"
-                        ? `Back after ${minutesText(data.offlineSeconds)} offline. The run went on there${data.finished ? " and finished" : ""}; nothing ran twice.`
-                      : event.kind === "resumed_as"
-                        ? `Carried on in a new run (${String(data.attempt)} of ${String(data.of)}) in the same folder.`
-                      : event.kind === "resumed"
-                        ? `Carrying on: ${String(data.reason)}${data.session ? " (same agent session)." : " (a new agent session)."}`
-                      : event.kind === "engine_retry"
-                        ? `${String(data.reason)} — continuing (${String(data.attempt)} of ${String(data.of)}).`
-                        : String(data.title ?? event.kind);
-            return (
-              <div key={event.id} className="flex gap-2">
-                <span className="w-[62px] shrink-0 text-faint">{EVENT_LABEL[event.kind] ?? event.kind}</span>
-                <span className={cx("min-w-0 flex-1 break-words", event.kind === "command" && "font-mono text-[11.5px]", data.ok === false && "text-danger")}><LinkifiedText text={text} /></span>
-              </div>
-            );
-          })}
-          {detail.data && !detail.data.events.length && !logs.data?.chunks.length ? <div className="text-muted">Nothing yet.</div> : null}
-          {(logs.data?.chunks ?? []).map((chunk) => (
-            <pre key={chunk.seqFrom} className="whitespace-pre-wrap break-words font-mono text-[11.5px] text-muted">
-              <LinkifiedText text={chunk.text} />
-            </pre>
-          ))}
-        </div>
+      {job.runId ? (
+        <Link href={`/runs?run=${job.runId}`} className="mt-1.5 inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink" title="Every step and tool call, with timings" data-job-trace>
+          What it did <ArrowUpRight size={12} />
+        </Link>
       ) : null}
     </div>
   );

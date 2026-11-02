@@ -8,42 +8,25 @@ import {
   inboxCount,
   initialClear,
   initialToday,
-  needsCount,
   stepClear,
   stepToday,
   type TaskSnap,
 } from "@/lib/motion/celebrate";
 
-type ShellSnap = { approvals: number; decisions: number };
-type RowSnap = { approvals?: unknown[]; decisions?: { status?: string }[]; tasks?: TaskSnap[] };
+type RowSnap = { tasks?: TaskSnap[] };
 
-function readLine(client: ReturnType<typeof useQueryClient>, needs: ReturnType<typeof initialClear>, inbox: ReturnType<typeof initialClear>, today: ReturnType<typeof initialToday>) {
-  const shell = client.getQueryData<ShellSnap>(["shell"]) ?? null;
-  const approvals = client.getQueryData<RowSnap>(["approvals"]);
-  const decisions = client.getQueryData<RowSnap>(["decisions"]);
+function readLine(client: ReturnType<typeof useQueryClient>, inbox: ReturnType<typeof initialClear>, today: ReturnType<typeof initialToday>) {
   const tasks = client.getQueryData<RowSnap>(["tasks"]);
   const rows = tasks?.tasks ?? null;
-  const blocked = rows ? rows.filter((task) => task.status === "blocked" || task.status === "waiting_approval").length : null;
-  const pending = decisions?.decisions ? decisions.decisions.filter((row) => !row.status || row.status === "pending").length : null;
-  const needsStep = stepClear(
-    needs,
-    needsCount({
-      shell,
-      approvals: approvals?.approvals ? approvals.approvals.length : null,
-      decisions: pending,
-      blocked,
-    }),
-  );
   const inboxStep = stepClear(inbox, rows ? inboxCount(rows) : null);
   const todayStep = stepToday(today, rows);
-  const line = todayStep.fire ? "Today is done." : needsStep.fire ? "Nothing needs you." : inboxStep.fire ? "Inbox clear." : null;
-  return { needs: needsStep.watch, inbox: inboxStep.watch, today: todayStep.watch, line };
+  const line = todayStep.fire ? "Today is done." : inboxStep.fire ? "Inbox clear." : null;
+  return { inbox: inboxStep.watch, today: todayStep.watch, line };
 }
 
-/** Inbox clear, Needs me clear, or every Today task marked done. Once per event. */
+/** Inbox clear, or every Today task marked done. Once per event. (Needs me emptying on its own is not a moment.) */
 export function CelebrateHost() {
   const client = useQueryClient();
-  const needs = useRef(initialClear());
   const inbox = useRef(initialClear());
   const today = useRef(initialToday());
   const token = useRef(0);
@@ -52,8 +35,7 @@ export function CelebrateHost() {
 
   useEffect(() => {
     const apply = () => {
-      const next = readLine(client, needs.current, inbox.current, today.current);
-      needs.current = next.needs;
+      const next = readLine(client, inbox.current, today.current);
       inbox.current = next.inbox;
       today.current = next.today;
       if (!next.line) return;

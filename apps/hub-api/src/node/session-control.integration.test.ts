@@ -807,3 +807,88 @@ test("a run's end closes its Needs me requests in the same transaction; a late a
   assert.equal(json(refused).error, "This request ended with its work.");
   assert.deepEqual(await h.prisma.agentDecision.findUniqueOrThrow({ where: { id: stale.id }, select: { status: true, reason: true } }), { status: "expired", reason: WORK_ENDED });
 });
+
+test("the owner's reply in the chat answers what its session waits on, and every Needs me drops it at once", async () => {
+  const { sseHub } = await import("../lib/sse.js");
+  const { pollRuns } = await import("./runs.js");
+  const ada = await person("Ada");
+  const { key } = await laptopFor(ada, "Ada's laptop");
+  const { node, room } = await createNode(ada, "feature-engineer");
+  script = () => startCall("Fix the login redirect", "Fix the login redirect in the ensemble folder.");
+  await say(ada, room.id, "Fix the login redirect in ensemble.");
+  script = () => ({ text: "(no reply)" });
+  const job = await newestJob(ada);
+  const spec = (await claim(key))!;
+  const hubList = async () => json(await ada.inject({ method: "GET", url: "/api/decisions?surface=hub" })).decisions as Array<{ id: string; origin: { agent: string | null; folder: string | null; computer: string | null; node: { slug: string; roomId: string } | null } | null }>;
+  const state = async (id: string) => {
+    const row = await h.prisma.agentDecision.findUniqueOrThrow({ where: { id } });
+    return [row.status, row.decision, row.reason];
+  };
+
+  // The Hub lists the session's question as the session's: its agent, folder and computer, via its node.
+  const branch = await ask(key, spec, "Which branch should I use?", { allowCustom: true });
+  const listed = (await hubList()).find((row) => row.id === branch)!;
+  assert.deepEqual(listed.origin, { ...listed.origin, agent: "Claude Code", folder: "ensemble", computer: "Ada's laptop" });
+  assert.deepEqual([listed.origin!.node!.slug, listed.origin!.node!.roomId], [node.slug, room.id]);
+  assert.equal(json(await ada.inject({ method: "GET", url: "/api/shell" })).decisions, 1);
+
+  // A typed reply in the chat is the answer: the computer's agent gets the words, and the Hub and Node hear it at once.
+  const frames: Array<{ to: string; event: string; data: { id?: string; status?: string } }> = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => frames.push({ to: userId, event: frame.event, data: frame.data as { id?: string; status?: string } }));
+  try {
+    await say(ada, room.id, "Use the develop branch, please.");
+  } finally {
+    stop();
+  }
+  assert.deepEqual(await state(branch), ["decided", "allow", "Use the develop branch, please."]);
+  assert.ok(frames.some((row) => row.to === ada.id && row.event === "decision" && row.data.id === branch && row.data.status === "decided"), "the Hub's Needs me hears it");
+  assert.ok(frames.some((row) => row.to === `node:${ada.id}` && row.event === "node.needs"), "and so does Node's");
+  const fromComputer = json(await key.inject({ method: "GET", url: `/api/devices/self/decisions/${branch}?timeout=1` }));
+  assert.deepEqual([fromComputer.status, fromComputer.reason], ["decided", "Use the develop branch, please."]);
+  assert.ok(!(await hubList()).some((row) => row.id === branch));
+  assert.equal(json(await ada.inject({ method: "GET", url: "/api/shell" })).decisions, 0);
+  const said = (await read(ada, room.id)).find((row) => row.kind === "status" && row.data?.answeredFromChat?.decisionId === branch);
+  assert.equal(said?.body, "Sent your reply to Claude Code as its answer to “Which branch should I use?”.");
+  assert.ok((await sessionEvents(h.prisma, node.id, { sessionId: job.id })).some((row) => row.action === "answer" && row.actor === "owner" && row.via === "chat"), "the node's work board says so");
+  assert.ok(seen.some((turn) => turn.transcript.includes("Use the develop branch, please.")), "the node still reads the reply");
+
+  // A question with options takes the one the reply names; a permission takes an explicit yes or no and waits on anything else.
+  const database = await ask(key, spec, "Which database?", { options: ["Postgres", "MySQL"] });
+  await say(ada, room.id, "let's go with postgres");
+  assert.deepEqual(await state(database), ["decided", "allow", "Postgres"]);
+  const install = await ask(key, spec, "Run `npm install`?", { event: "permission", command: "npm install" });
+  await say(ada, room.id, "No thanks");
+  assert.deepEqual(await state(install), ["decided", "deny", null]);
+  const lint = await ask(key, spec, "Run `npm run lint`?", { event: "permission", command: "npm run lint" });
+  await say(ada, room.id, "skip linting, just run the unit tests");
+  assert.deepEqual((await state(lint))[0], "pending", "a message that is not a yes or a no never refuses what the agent asked");
+  assert.equal((await read(ada, room.id)).find((row) => row.data?.answeredFromChat?.decisionId === lint), undefined);
+  const pick = await ask(key, spec, "Which runner?", { options: ["Vitest", "Jest"] });
+  await say(ada, room.id, "hmm, let me think about it");
+  assert.deepEqual((await state(pick))[0], "pending", "nor closes a question it does not answer");
+  assert.equal((await ada.inject({ method: "POST", url: `/api/decisions/${lint}/decide`, payload: { decision: "allow" } })).statusCode, 200);
+  assert.equal((await ada.inject({ method: "POST", url: `/api/decisions/${pick}/decide`, payload: { decision: "allow", reason: "Vitest" } })).statusCode, 200);
+
+  // Two waiting at once: a reply that answers neither in particular leaves both on their cards; with one left, it answers that one.
+  const port = await ask(key, spec, "Which port?", { allowCustom: true });
+  const tests = await ask(key, spec, "Run the end-to-end tests too?", { event: "permission", command: "pnpm e2e" });
+  await say(ada, room.id, "3000");
+  assert.deepEqual([(await state(port))[0], (await state(tests))[0]], ["pending", "pending"]);
+  assert.equal((await ada.inject({ method: "POST", url: `/api/decisions/${tests}/decide`, payload: { decision: "allow" } })).statusCode, 200);
+  await say(ada, room.id, "3000");
+  assert.deepEqual(await state(port), ["decided", "allow", "3000"]);
+
+  // The run ends: its requests close with it, and every Needs me hears it.
+  const later = await ask(key, spec, "Anything else?", { allowCustom: true });
+  frames.length = 0;
+  const heard = sseHub.onFrame(({ userId, frame }) => frames.push({ to: userId, event: frame.event, data: frame.data as { id?: string; status?: string } }));
+  try {
+    await complete(key, spec, "failed");
+    await pollRuns(h.app);
+  } finally {
+    heard();
+  }
+  assert.equal((await state(later))[0], "expired");
+  assert.ok(frames.some((row) => row.to === ada.id && row.event === "decision" && row.data.id === later && row.data.status === "expired"), "announced when its run ended");
+  assert.equal(json(await ada.inject({ method: "GET", url: "/api/shell" })).decisions, 0);
+});

@@ -6,6 +6,7 @@ import type { Editor } from "@tiptap/core";
 import { Check, Copy, GripVertical, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { deleteBlock, duplicateBlock, moveBlock } from "./block-move";
+import { BlockDrag } from "./block-drag";
 import { BLOCK_COMMANDS, blockKind, turnBlockInto, turnIntoChoices, type BlockCommandId } from "./editor-commands";
 
 type Block = { pos: number; element: HTMLElement; top: number };
@@ -81,11 +82,11 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
       const next = find(event.target);
       if (next) show(next);
     };
-    let target: { block: Block; after: boolean } | null = null;
+    let drag: BlockDrag | null = null;
     const clear = () => {
+      drag?.cancel();
+      drag = null;
       dragged.current = null;
-      target = null;
-      root.querySelectorAll(".block-drop-before, .block-drop-after").forEach((el) => el.classList.remove("block-drop-before", "block-drop-after"));
     };
     const move = (event: PointerEvent) => {
       pointer = { x: event.clientX, y: event.clientY };
@@ -94,28 +95,33 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
         const origin = pressedAt.current;
         if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < DRAG_SLOP) return;
         moved.current = true;
+        const frame = host.current?.parentElement;
+        drag = frame ? BlockDrag.start(editor, dragged.current, origin?.y ?? event.clientY, frame) : null;
+        if (!drag) {
+          dragged.current = null;
+          return;
+        }
       }
-      const block = find(document.elementFromPoint(event.clientX, event.clientY));
-      root.querySelectorAll(".block-drop-before, .block-drop-after").forEach((el) => el.classList.remove("block-drop-before", "block-drop-after"));
-      target = null;
-      if (!block || editor.state.doc.resolve(block.pos).parent !== editor.state.doc.resolve(dragged.current).parent) return;
-      const rect = block.element.getBoundingClientRect();
-      const after = event.clientY > rect.top + rect.height / 2;
-      target = { block, after };
-      block.element.classList.add(after ? "block-drop-after" : "block-drop-before");
-      if (event.clientY < 60) block.element.scrollIntoView({ block: "nearest" });
+      drag?.move(event.clientY);
     };
     const drop = () => {
-      const from = dragged.current;
-      const to = target;
-      clear();
-      if (from === null || !to) return;
-      const tr = moveBlock(editor.state, from, to.block.pos, to.after);
-      if (tr) editor.view.dispatch(tr);
+      const current = drag;
+      drag = null;
+      dragged.current = null;
+      if (!current) return;
+      current.drop();
       setBlock(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && drag) {
+        event.preventDefault();
+        clear();
+        setBlock(null);
+      }
     };
     const transaction = ({ transaction }: { transaction: import("@tiptap/pm/state").Transaction }) => {
       if (!transaction.docChanged) return;
+      // Someone else's edit while a block is carried: it goes back rather than land on a changed page.
       clear();
       setBlock(null);
       setMenu(null);
@@ -126,6 +132,7 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", drop);
     document.addEventListener("pointercancel", clear);
+    document.addEventListener("keydown", escape, true);
     window.addEventListener("scroll", rescan, true);
     window.addEventListener("resize", rescan);
     editor.on("transaction", transaction);
@@ -136,11 +143,46 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", drop);
       document.removeEventListener("pointercancel", clear);
+      document.removeEventListener("keydown", escape, true);
       window.removeEventListener("scroll", rescan, true);
+      clear();
       window.removeEventListener("resize", rescan);
       editor.off("transaction", transaction);
     };
   }, [editor]);
+
+  // Room beside the page for the controls. Where the view is narrow (a side peek, a small window) the
+  // + goes, and the handle and the comment button sit just inside the page's edges instead of being cut off.
+  useEffect(() => {
+    const body = host.current?.parentElement;
+    if (!body) return;
+    const clipOf = (): HTMLElement | null => {
+      for (let node = body.parentElement; node && node !== document.body; node = node.parentElement) {
+        if (getComputedStyle(node).overflowX !== "visible") return node;
+      }
+      return null;
+    };
+    const clip = clipOf();
+    const measure = () => {
+      const box = body.getBoundingClientRect();
+      const edge = clip ? clip.getBoundingClientRect() : { left: 0, right: document.documentElement.clientWidth };
+      const left = box.left - edge.left < 54 ? "tight" : "";
+      const right = edge.right - box.right < 34 ? "tight" : "";
+      if ((body.dataset.gutterLeft ?? "") !== left) body.dataset.gutterLeft = left;
+      if ((body.dataset.gutterRight ?? "") !== right) body.dataset.gutterRight = right;
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(body);
+    if (clip) observer?.observe(clip);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      delete body.dataset.gutterLeft;
+      delete body.dataset.gutterRight;
+    };
+  }, []);
 
   const add = () => {
     if (block) {

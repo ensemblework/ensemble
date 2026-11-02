@@ -186,7 +186,6 @@ await page.screenshot({ path: `${SHOTS}/assign-flow.png` });
 
 await page.goto(`${WEB}/tasks/${taskId}`, { waitUntil: "load" });
 await page.getByText("Continue and write the greeting?").waitFor({ timeout: 20_000 });
-await page.getByRole("button", { name: "What it did" }).click();
 await page.getByText("hello from the paired computer").waitFor();
 await page.screenshot({ path: `${SHOTS}/live-remote-run.png` });
 

@@ -7,7 +7,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
 import { sseHub } from "../lib/sse.js";
 import { LIVE_DEVICE_STATUSES } from "./constants.js";
-import { expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
+import { announceClosedDecisions, expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
@@ -101,7 +101,7 @@ export async function finishDeviceJob(
       runId = run.id;
       await tx.workspaceJob.update({ where: { id: job.id }, data: { runId } });
     }
-    await expireDeviceDecisions(tx, [job.id]);
+    await expireDeviceDecisions(tx, [job.id], false);
     await tx.run.update({
       where: { id: runId },
       data: {
@@ -149,6 +149,7 @@ export async function finishDeviceJob(
     return runId;
   });
   if (!won) return false;
+  await announceClosedDecisions(prisma, [job.id]).catch(() => undefined);
   await appendLedger({
     userId: job.userId,
     actor: "agent",

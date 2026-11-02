@@ -1,11 +1,11 @@
 /**
  * Sign-in cards (B11, docs/35 §8.16): a tab on the owner's computer waits for them to sign in to a
  * site, or to pass a human check there (`purpose`: a captcha, "Robot or human?"). The card (owner
- * only; in the node's conversation, Node's Needs me and the Hub's Needs me) says which site and
- * computer, and offers: sign in here (the page live on the owner's phone or computer, node/takeovers.ts),
- * use the login saved there, the window on the computer, type it here (sealed in the browser for that
- * computer's key, as B12 secrets are: this server relays a box it cannot open), the code the site asks
- * for (sealed the same way), or not now. "I'm done" (or the owner saying so in the chat,
+ * only; in the node's conversation and Node's Needs me, and for a run's sign-in the Hub's Needs me
+ * too) says which site and computer, and offers: sign in here (the page live on the owner's phone or
+ * computer, node/takeovers.ts), use the login saved there, the window on the computer, type it here
+ * (sealed in the browser for that computer's key, as B12 secrets are: this server relays a box it
+ * cannot open), the code the site asks for (sealed the same way), or not now. "I'm done" (or the owner saying so in the chat,
  * node/login-check.ts) has the computer check it. This server only relays the answer
  * (`login.resolve`) and records how it went; it never sees, keeps or logs a password or a code, and the
  * node only hears whether its tab is signed in. A node's tab wakes the node when it ends; a run's agent

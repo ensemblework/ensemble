@@ -245,7 +245,7 @@ Gallery entries, not a second chart engine:
 
 A training curve wants a step, a measure and an optional seed: per-seed rows are averaged and the sample standard deviation shaded. An ablation wants a mean and an error column.
 
-An empty space starts with **Upload a table**; there is no sample-data action. Image grids are not a tile type (the importers do not carry images).
+An empty space starts with **Upload a table**; there is no sample-data action. With a table and no tiles it offers **Add your first chart**. Add tile and Export figure wait until there is something to add or export. The space switcher is a menu beside the title (each space, then New space). In Add tile each slot names the column chosen for it, the columns list marks which slot each fills, and the slot rules are behind the information icon. On a phone (narrower than 640 CSS pixels) tiles stack at full width in reading order; their saved places do not change. An empty cell is left out of a box or violin plot rather than counted as zero, and a scatter always draws its points. The default major grid is light (opacity 0.25); a minor grid, when on, keeps its contrast. Image grids are not a tile type (the importers do not carry images).
 
 Export of one tile draws that tile's script. **Export figure** for the canvas (`components/plots/export-dialog.tsx`) shows a large preview and offers width and height in inches (default 7 × at least 4.2), DPI (default 150; the preview uses at most 150), font size, 1–3 columns, a shared legend, panel order, and PDF, SVG, PNG or EPS. The script plots each tile's table, including a join, so the file matches the canvas; box, violin and confusion-matrix tiles are drawn as such. Panel labels `(a)`, `(b)`, … sit outside the top-left of each axes.
 

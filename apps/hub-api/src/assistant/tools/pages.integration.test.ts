@@ -409,3 +409,38 @@ test("automatic task creation keeps context on the page and cannot replace a hum
   await assert.rejects(db.$transaction((tx) => updateTask(tx, person.id, task.id, { description: "Automated replacement" }, "agent")), /short description is for people/);
   assert.equal((await db.task.findUniqueOrThrow({ where: { id: task.id } })).description, "Written by a person.");
 });
+
+test("pages nest inside a page or a task, from /page and from the assistant, and never inside another space's page", async () => {
+  const mira = await harness.asUser();
+  const outsider = await harness.asUser();
+  const parent = await mira.inject({ method: "POST", url: "/api/pages", payload: {} });
+  assert.equal(parent.statusCode, 201);
+  const parentId = parent.json().page.id as string;
+  const child = await mira.inject({ method: "POST", url: "/api/pages", payload: { parentId } });
+  assert.equal(child.statusCode, 201);
+  assert.equal(child.json().page.parentId, parentId);
+
+  const task = await db.task.create({ data: { userId: mira.id, title: "Spec the importer" } });
+  const inTask = await mira.inject({ method: "POST", url: "/api/pages", payload: { parentTaskId: task.id } });
+  assert.equal(inTask.statusCode, 201);
+  const taskPage = await db.taskPage.findUniqueOrThrow({ where: { taskId: task.id } });
+  assert.equal(inTask.json().page.parentId, taskPage.id);
+  const listed = (await mira.inject({ method: "GET", url: "/api/pages" })).json().pages as Array<{ id: string; parentTaskId?: string }>;
+  assert.equal(listed.find((page) => page.id === inTask.json().page.id)?.parentTaskId, task.id);
+
+  const foreign = await outsider.inject({ method: "POST", url: "/api/pages", payload: { parentId } });
+  assert.equal(foreign.statusCode, 404);
+  const foreignTask = await outsider.inject({ method: "POST", url: "/api/pages", payload: { parentTaskId: task.id } });
+  assert.equal(foreignTask.statusCode, 404);
+
+  const made = await apply(mira.id, "hub_create_page", { title: "Notes for the task", markdown: "- one", parentTaskId: task.id });
+  const row = await db.taskPage.findUniqueOrThrow({ where: { id: (made.result.data as { id: string }).id } });
+  assert.equal(row.parentId, taskPage.id);
+  const sub = await apply(mira.id, "hub_create_page", { title: "Sub-page", parentPageId: parentId });
+  assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id: (sub.result.data as { id: string }).id } })).parentId, parentId);
+  await apply(mira.id, "hub_move_page", { pageId: parentId, parentId: null, parentTaskId: task.id });
+  assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id: parentId } })).parentId, taskPage.id);
+  // Under a page that is itself inside a task: the ancestor walk passes the task's page.
+  await apply(mira.id, "hub_move_page", { pageId: row.id, parentId });
+  assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id: row.id } })).parentId, parentId);
+});

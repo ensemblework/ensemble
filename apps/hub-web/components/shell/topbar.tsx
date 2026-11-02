@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, RefreshCw, Undo2 } from "lucide-react";
+import { Menu, MoreHorizontal, Redo2, RefreshCw, Undo2 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -16,7 +16,6 @@ import { ActivityControls } from "./activity-panel";
 import { AccountMenu } from "./account-menu";
 import { AskBar } from "./ask-bar";
 import { NotificationBell } from "./notification-bell";
-import { usePeek } from "./peek";
 import { SharedBadge, SpacePeople } from "../sharing/people";
 
 const TITLES: Array<[string, string]> = [
@@ -99,7 +98,6 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
   const client = useQueryClient();
   const toast = useToast();
   const { connected, serverError } = useLive();
-  const { mode, setMode } = usePeek();
   const sidebarExpanded = useSidebarExpanded(drawerOpen);
   const { undo, redo } = useUndoRedo();
   const mod = useModKey();
@@ -147,12 +145,6 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo]);
 
-  const toggleMode = () => {
-    const next = mode === "side" ? "page" : "side";
-    setMode(next);
-    toast(next === "side" ? "Tasks will open in a side peek." : "Tasks will open as a full page.");
-  };
-
   return (
     <header className="topbar relative grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-2">
@@ -189,16 +181,6 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
         <RefreshCw className={fetchNow.isPending ? "animate-spin" : undefined} size={15} />
       </button>
       <ActivityControls connected={connected} serverError={serverError} />
-      <button
-        type="button"
-        className="icon-btn hidden lg:inline-flex"
-        aria-label={mode === "side" ? "Tasks open in a side peek. Switch to a full page." : "Tasks open as a full page. Switch to a side peek."}
-        aria-pressed={mode === "side"}
-        title={mode === "side" ? "Tasks open in a side peek. Click for a full page." : "Tasks open as a full page. Click for a side peek."}
-        onClick={toggleMode}
-      >
-        {mode === "side" ? <PanelRight size={15} /> : <PanelRightDashed size={15} />}
-      </button>
       <Popover
         align="right"
         className="lg:hidden"
@@ -213,7 +195,6 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
             <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> <span className="min-w-0 truncate">{canUndo ? undoName : "Undo"}</span></MenuItem>
             <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> <span className="min-w-0 truncate">{canRedo ? redoName : "Redo"}</span></MenuItem>
             {guest ? null : <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><RefreshCw size={14} /> Fetch now</MenuItem>}
-            <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
           </>
         )}
       </Popover>
