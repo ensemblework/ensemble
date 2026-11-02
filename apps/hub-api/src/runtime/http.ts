@@ -1,13 +1,15 @@
 /** How the in-process runtime sends a request to a model vendor: one fetch hook, timeouts, and retries. */
+import { longFetch } from "../lib/long-fetch.js";
 import { normalizeTransportError } from "../lib/stream-drop.js";
 import { ProviderError, parseProviderError } from "./errors.js";
 import { runtimeSleep } from "./pace.js";
 import { retryPlan, type Json } from "./payload.js";
 
-let fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis);
+// A model call may run for 15 minutes: no 300-second header or body limit of Node's fetch (lib/long-fetch.ts).
+let fetchImpl: typeof fetch = longFetch as typeof fetch;
 
 export function setRuntimeFetchForTests(fetchFn: typeof fetch | null): void {
-  fetchImpl = fetchFn ?? globalThis.fetch.bind(globalThis);
+  fetchImpl = fetchFn ?? (longFetch as typeof fetch);
 }
 
 function combineSignals(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
@@ -68,4 +70,27 @@ export async function readJsonObject(response: Response): Promise<Json> {
     if (error instanceof ProviderError) throw error;
     throw new ProviderError(502, "other", "The model provider returned a non-JSON response.");
   }
+}
+
+/** A streamed reply's lines, as they come. A reader that stops early closes the connection, so the provider stops too. */
+export async function* readLines(response: Response): AsyncGenerator<string> {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished = false;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) yield line;
+    }
+    finished = true;
+  } finally {
+    if (!finished) await reader.cancel().catch(() => undefined);
+  }
+  if (buffer) yield buffer;
 }

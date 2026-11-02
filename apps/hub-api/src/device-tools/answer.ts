@@ -18,7 +18,7 @@ import { checkTarget, runNodeHttp } from "./http.js";
 import { runNodeFiles, runNodeSave } from "./files.js";
 import { runNodeGit } from "./git.js";
 import { decide, type PolicyInput } from "./policy.js";
-import { runNodeCommand } from "./run.js";
+import { runNodeCommand, stopNodeCommand } from "./run.js";
 import { nodeSecretHttp } from "../credentials/node-tool.js";
 import { captureScope, runNodeCapture } from "./capture.js";
 import { BrowserError } from "../browser/broker.js";
@@ -51,7 +51,7 @@ function floorHit(request: NodeToolRequest): DangerousHit | null {
  * Where the call acts, for the policy: a folder's real path, or a web address's origin (`input` null
  * when the policy has nothing to judge); null for a call on the operation's own tabs, apps and files.
  */
-async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> | null } | null> {
+async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" | "run_stop" }>): Promise<{ folder: ToolFolder | null; input: Omit<PolicyInput, "mission" | "attended" | "grants"> | null } | null> {
   if (request.tool === "browser" || request.tool === "capture") return captureScope(request);
   // A live terminal is judged once, when it opens, like a command in its folder; its lines are judged as they are typed.
   if (request.tool === "live" && request.action !== "terminal_open") return null;
@@ -74,6 +74,12 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
   let grantsUsed: string[] = [];
   const reply = (status: number, body: Record<string, unknown>) => send(answer(status, { ...body, ...(grantsUsed.length ? { grantsUsed } : {}) }));
   try {
+    // Stopping the node's own command needs no answer from anyone: only that node's run is stopped.
+    if (request.tool === "run_stop") {
+      const stopped = stopNodeCommand(request.runId, request.nodeId);
+      await appendLedger({ userId: userId(), actor: "agent", action: "node.tool.run_stop", payload: { nodeId: request.nodeId, stopped, operationId: request.operationId ?? null } }).catch(() => undefined);
+      return reply(200, { stopped });
+    }
     // A saved secret used by reference: its allowed destinations are the owner's answer (credentials/node-tool.ts).
     if (request.tool === "secret_http") {
       const done = await nodeSecretHttp(app, request);

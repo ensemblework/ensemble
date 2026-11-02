@@ -17,7 +17,7 @@ import { pickRunProfile } from "@ensemble/shared-types";
 import { defineTool, toolOk, ToolBlockedError, type AnyHubTool, type ToolContext, type ToolResult } from "../assistant/types.js";
 import { deviceOnline } from "../devices/constants.js";
 import { askDeviceFor } from "../devices/file-relay.js";
-import { openToolRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
+import { openToolRun, quietRun, stopRunOnComputer, swapSignInRun, toolRunOf, toolRunOutput } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
@@ -28,6 +28,7 @@ import { dangerousCommand, dangerousMessage, needsAdministrator } from "../devic
 import { grantUpload } from "../evidence/grants.js";
 import { postPreviewCard } from "../evidence/held.js";
 import { postLoginCard } from "./logins.js";
+import { replaceSignInRun } from "./device-codes.js";
 import { nodeSaveFileTool, sizeText } from "../assistant/tools/save-file.js";
 import { diskName } from "../files/attached.js";
 import { findAttachment, grantDownload } from "./attachments.js";
@@ -130,6 +131,7 @@ function ledgerOf(call: ToolCall): Record<string, string | null> {
   if (call.tool === "http" || call.tool === "secret_http") return { origin: safeOrigin(call.url) };
   if (call.tool === "run" || call.tool === "terminal" || call.tool === "sudo") return { folder: call.folder ?? null, program: call.command.trim().split(/\s+/)[0]?.slice(0, 60) ?? "", ...(call.tool === "sudo" ? { sudo: "yes" } : {}) };
   if (call.tool === "git") return { folder: call.folder ?? null, op: call.op };
+  if (call.tool === "run_stop") return { run: call.runId };
   return { folder: call.folder ?? null, action: call.action };
 }
 
@@ -296,6 +298,21 @@ export function refuseDangerous(command: string, root = false): void {
 export const SIGN_IN_COMMAND = /(?:^|[\s"'(;&|])(?:login|gcloud\s+init|aws\s+configure\s+sso|claude\s+setup-token|doctl\s+auth\s+init|oci\s+session\s+authenticate|gh\s+auth\s+refresh)(?=$|[\s"');&|])/i;
 const SIGN_IN_SECONDS = 900;
 
+/**
+ * Which sign-in a command is: its program and subcommand, without options (`az login` for
+ * `az login --use-device-code`, `gh auth login` for `gh auth login --web`). One attempt at a time per
+ * node and computer: a newer one replaces the older.
+ */
+export function signInWhich(command: string): string | null {
+  const match = SIGN_IN_COMMAND.exec(command);
+  if (!match) return null;
+  const phrase = match[0].replace(/^[\s"'(;&|]/, "");
+  const before = command.slice(0, match.index + match[0].length - phrase.length);
+  const segment = before.slice(Math.max(...[";", "&", "|", "(", '"', "'", "`"].map((mark) => before.lastIndexOf(mark))) + 1);
+  const words = segment.split(/\s+/).filter((word) => word && !word.startsWith("-") && !word.includes("="));
+  return [...words.slice(-3), phrase.replace(/\s+/g, " ")].join(" ").toLowerCase();
+}
+
 /** What the node hears of the sign-ins its command asked the owner for (its codes, its pages): the owner has each on a card. */
 function signInLines(body: Record<string, unknown>): string[] {
   const codes = Array.isArray(body.deviceCodes) ? (body.deviceCodes as Array<{ url?: unknown; code?: unknown }>).filter((item) => typeof item.url === "string" && typeof item.code === "string") : [];
@@ -326,7 +343,7 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         "Examples: download `curl -L -o app.deb https://example.com/app.deb`; read `cat notes.md` or `sed -n 1,80p build.log`; look `ls -la`, `df -h`, `git status`; test `npm test`. " +
         "One program and its arguments; for pipes, && or > use `bash -c \"…\"`. It runs in the computer's sandbox and changes files only in its folder. Omit folder to work in your own folder on the computer. " +
         "Up to 900 seconds: a long build or a server, background: true, and you are woken when it ends. Administrator rights (apt install, systemctl): computer_sudo. A screenshot of a terminal: computer_terminal_screenshot. " +
-        "A CLI sign-in (`az login`, `gh auth login`, `gcloud auth login`, `aws sso login`) runs in the background for 15 minutes by itself: a code it prints reaches your owner on a card, and a page it opens opens in their sign-in browser on that computer. " +
+        "A CLI sign-in runs in the background for 15 minutes by itself. Use the browser flow: plain `az login`, `gh auth login --web`, `gcloud auth login`, `aws sso login`: its page opens in your owner's sign-in browser on that computer and they finish it on a card. A device code (`--use-device-code`) only when your owner asks for one or the browser flow failed: the code reaches them on a card. A new attempt replaces the older one; computer_run_stop stops a run. " +
         "Writing or changing code in a repository is an agent session's job (node_session_start).",
       input: z
         .object({
@@ -348,10 +365,12 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         const runId = randomUUID();
         const mode = await modeFor(prisma, node);
         const where = input.folder ?? "your own folder";
-        // A sign-in waits for the owner: in the background, for 15 minutes.
+        // A sign-in waits for the owner: in the background, for 15 minutes, one attempt at a time.
         const signIn = SIGN_IN_COMMAND.test(input.command);
+        const which = signIn ? signInWhich(input.command) : null;
         const background = input.background || signIn;
         const timeoutSec = signIn ? Math.max(input.timeoutSec, SIGN_IN_SECONDS) : input.timeoutSec;
+        let replaced = false;
         const done = await callComputer(
           ctx,
           scope,
@@ -363,9 +382,9 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
             describe: `Run: ${input.command}`,
             again: callText("computer_run", input),
             need: ownFolder(input.folder),
-            // Its output has somewhere to go before the computer starts it.
-            before: (device) =>
-              openToolRun(redis(ctx), runId, {
+            // Its output has somewhere to go before the computer starts it; an older attempt at the same sign-in there ends.
+            before: async (device) => {
+              await openToolRun(redis(ctx), runId, {
                 deviceId: device.id,
                 deviceName: device.name,
                 ownerId: node.userId,
@@ -377,7 +396,13 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
                 command: input.command.slice(0, 200),
                 folder: where,
                 startedAt: new Date().toISOString(),
-              }),
+                ...(which ? { signIn: which, timeoutSec } : {}),
+              });
+              if (!which || replaced) return;
+              replaced = true;
+              const older = await swapSignInRun(redis(ctx), node.id, device.id, which, runId);
+              if (older) await replaceSignInRun(ctx.app, device, node.id, older);
+            },
           },
         );
         if (isResult(done)) return done;
@@ -410,6 +435,33 @@ export function deviceTools(scope: NodeScope): AnyHubTool[] {
         const out = await toolRunOutput(redis(ctx), input.run, { from: input.from, maxBytes: OUTPUT_READ_BYTES });
         if (!out) throw new ToolBlockedError("That run's output is gone.");
         return toolOk(out.done ? `Ended with exit code ${out.exitCode ?? "unknown"}.` : "Still running.", { output: out.text, next: out.next, more: out.more, done: out.done, exitCode: out.exitCode });
+      },
+    }),
+    defineTool({
+      name: "computer_run_stop",
+      area: "tasks",
+      description: "Stop a command of yours still running in the background on your owner's computer (its run id from computer_run), and what it started: when your owner says stop, cancel or never mind. You are not woken when it ends.",
+      input: z.object({ computer: Computer, run: z.string().uuid() }).strict(),
+      isWrite: false,
+      risk: "low",
+      async run(ctx, input) {
+        if (!scope.ownerOnly || scope.lineage.fromNonOwner) throw new ToolBlockedError("Your owner's computer is used only in a chat with just your owner, started by them.");
+        const run = await toolRunOf(redis(ctx), input.run);
+        if (!run || run.nodeId !== node.id || run.ownerId !== node.userId) throw new ToolBlockedError("That run is not one of yours, or it is gone (runs are kept for a few hours).");
+        const device = await prisma.device.findFirst({ where: { id: run.deviceId, userId: node.userId, revokedAt: null } });
+        if (!device) throw new ToolBlockedError(`${run.deviceName} is no longer paired with Ensemble.`);
+        const named = input.computer?.trim().toLowerCase();
+        if (named && named !== "any" && named !== device.name.toLowerCase() && input.computer !== device.id) throw new ToolBlockedError(`That run is on ${device.name}.`);
+        const what = `\`${run.command}\``;
+        if (run.done) return toolOk(`${what} already ended, exit code ${run.exitCode ?? "unknown"}.`, { stopped: false, ended: true, exitCode: run.exitCode });
+        await quietRun(redis(ctx), input.run, "stopped");
+        const outcome = await stopRunOnComputer(ctx.app, device, node.id, input.run);
+        await appendLedger({ userId: node.userId, actor: "agent", action: "node.device_tool.run_stop", payload: { nodeId: node.id, deviceId: device.id, outcome } });
+        const later = "It ends by itself at its time limit, and you are not woken for it.";
+        if (outcome === "stopped") return toolOk(`Stopped ${what} on ${device.name}, and what it started. You are not woken for it.`, { stopped: true });
+        if (outcome === "not_running") return toolOk(`${what} is not running on ${device.name} any more.`, { stopped: false });
+        if (outcome === "older") return toolOk(`Ensemble on ${device.name} is too old to stop a command from here. ${later} Your owner can update it there (\`ensemble update\`, or the desktop app's update).`, { stopped: false });
+        return toolOk(`${device.name} ${outcome === "offline" ? "is offline" : "did not answer"}, so it could not be stopped now. ${later}`, { stopped: false });
       },
     }),
     defineTool({

@@ -43,6 +43,8 @@ const PAGES: Record<string, string> = {
     <p>Shown: ${QUOTED_SECRET.replace(/</g, "&lt;")}</p>
     <iframe srcdoc="<input autocomplete='cc-number' value='4242 4242 4242 4242' style='width:300px;height:40px;font-size:24px'>" style="position:absolute;left:0;top:200px;width:400px;height:100px;border:0"></iframe>`,
   "/opener": `<!doctype html><title>Opener</title><button onclick="window.open('/next')">Sign in with a popup</button>`,
+  "/cart": `<!doctype html><title>Your cart</title><button onclick="window.open('/pay', 'pay', 'width=520,height=640')">Continue</button>`,
+  "/pay": `<!doctype html><title>Komoju: Payment</title><h1>Pay with UPI</h1><p>Total 4,999 INR</p>`,
   "/whoami": `<!doctype html><title>Who</title><p id="who"></p><script>document.title = [navigator.webdriver, navigator.userAgent, navigator.language].join("|");</script>`,
   "/robot": `<!doctype html><title>Robot or human?</title><p>Activate and hold the button to confirm that you're human.</p>`,
 };
@@ -322,6 +324,64 @@ test("a tab belongs to one operation: others can neither see nor drive it", { sk
     assert.equal((await mine.tabs()).length, 1);
     await theirs.release();
     assert.equal((await mine.tabs()).length, 1, "releasing one operation leaves the other's tabs");
+  } finally {
+    await broker.shutdown();
+  }
+});
+
+test("a window a click opens is a tab of the same work: the click says so, browser_tabs lists it, it is captured and closed like any tab, and it shares its opener's lease", { skip, timeout: 60_000 }, async () => {
+  let clock = Date.now();
+  const broker = newBroker({ now: () => clock, leaseMs: 60_000 });
+  const closed: unknown[] = [];
+  broker.events.on("tabClosed", (event) => closed.push(event));
+  const context = { operation: "node-popup", evidenceDir: evidence("popup") };
+  const run = async (name: string, input: Record<string, unknown>) => {
+    const done = await runBrowserTool(broker, name, input, context);
+    assert.ok(done.ok, JSON.stringify(done));
+    return done as { ok: true; summary: string; result: any };
+  };
+  try {
+    const cart = (await run("browser_open", { url: `${base}/cart`, private: true })).result.tab as string;
+    const ref = refOf((await run("browser_snapshot", { tab: cart })).summary, /button "Continue" \[ref=(\w+)\]/);
+    const clicked = await run("browser_click", { tab: cart, ref });
+    const site = new URL(base).host;
+    const popup = /It opened a new window (t\d+) \(Komoju: Payment, ([^)]+)\): use tab \1\./.exec(clicked.summary);
+    assert.ok(popup, clicked.summary);
+    assert.equal(popup[2], site);
+    const pay = popup[1]!;
+    assert.deepEqual(clicked.result.opened, [{ tab: pay, title: "Komoju: Payment", url: `${base}/pay`, site, openedBy: cart }]);
+    assert.equal(clicked.result.tab, cart, "the click's own tab is still the one it acted on");
+
+    const tabs = await run("browser_tabs", {});
+    assert.match(tabs.summary, new RegExp(`^${pay}: Komoju: Payment \\(${site.replace(/\./g, "\\.")}\\), a window ${cart} opened$`, "m"));
+    const listed = (tabs.result.tabs as Array<Record<string, unknown>>).find((tab) => tab.tab === pay)!;
+    assert.deepEqual([listed.popup, listed.openedBy], [true, cart]);
+    assert.equal((tabs.result.tabs as Array<Record<string, unknown>>).find((tab) => tab.tab === cart)!.popup, undefined);
+
+    const shot = await run("browser_screenshot", { tab: pay });
+    assert.ok(existsSync(shot.result.path), "a popup is captured like any tab");
+    assert.match((await run("browser_snapshot", { tab: pay })).summary, /Pay with UPI/);
+
+    // A second window, closed by the agent: the broker says who closed it.
+    const again = await run("browser_click", { tab: cart, ref });
+    assert.equal(again.result.opened, undefined, "the same named window is not a new tab");
+    await run("browser_close", { tab: pay });
+    assert.deepEqual(closed, [{ tab: pay, operation: "node-popup", by: "agent" }]);
+    const reopened = await run("browser_click", { tab: cart, ref });
+    const next = reopened.result.opened[0].tab as string;
+
+    // One lease: using the popup keeps its opener, and the other way round.
+    clock += 50_000;
+    await run("browser_snapshot", { tab: next });
+    clock += 50_000;
+    assert.deepEqual((await broker.sweep()).closedTabs, [], "the opener was kept by its popup's use");
+    // Never closed while its opener is held for the owner.
+    broker.holdTab(cart, true);
+    clock += 61_000;
+    assert.deepEqual((await broker.sweep()).closedTabs, []);
+    broker.holdTab(cart, false);
+    assert.deepEqual((await broker.sweep()).closedTabs.sort(), [cart, next].sort());
+    assert.deepEqual(closed.slice(1).map((event) => (event as { by: string }).by), ["lease", "lease"]);
   } finally {
     await broker.shutdown();
   }

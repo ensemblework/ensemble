@@ -3,7 +3,7 @@ import test from "node:test";
 import { handleFrom, parseMentions, resolveMentions, uniqueHandle } from "./mentions.js";
 import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, leadsStatus, whoSpeaks, type RouteDecision, type RouteMessage, type RouteNode } from "./router.js";
 import { cleanReply } from "./reply.js";
-import { CREW_TEMPLATES, NODE_TEMPLATES } from "./templates.js";
+import { CREW_TEMPLATES, NODE_TEMPLATES, charterOf, nodeTemplate, paletteAvatar } from "./templates.js";
 import { mirrorNeedsMe, nodeChannel } from "./events.js";
 import { sseHub, type Frame } from "../lib/sse.js";
 
@@ -132,6 +132,25 @@ test("templates name real nodes, and every crew has its lead", () => {
     assert.ok(crew.nodes.every((id) => ids.has(id)), crew.id);
     assert.ok(crew.nodes.includes(crew.lead), crew.id);
   }
+  assert.equal(new Set(NODE_TEMPLATES.map((row) => JSON.stringify(row.avatar))).size, NODE_TEMPLATES.length, "every template looks different");
+  for (const row of NODE_TEMPLATES) assert.ok(row.charter.split("\n").length >= 4 && row.charter.split("\n").length <= 6, row.id);
+});
+
+test("a retired template resolves to the one that replaced it, and its unedited charter reads as the new one", () => {
+  const developer = nodeTemplate("developer")!;
+  const retired = nodeTemplate("feature-engineer")!;
+  assert.deepEqual([retired.id, retired.slug, retired.name, retired.charter], ["developer", "builder", "Feature engineer", developer.charter]);
+  assert.equal(nodeTemplate("docs-writer")?.id, "writer");
+  const old = [
+    "You implement features and fixes on your owner's computer, through their own coding agent.",
+    "- Run the work in an agent session: node_session_start for new work, node_session_send to build on a session that already worked on the same repository. Give the agent a precise brief: the repository or folder, the change, how to check it.",
+    "- When a run is going the wrong way or your owner changes their mind, steer it (delivery steer) rather than starting over.",
+    "- When the run ends, report the result, the branch or commit, and anything that needs a decision.",
+  ].join("\n");
+  assert.equal(charterOf({ charter: old, templateId: "feature-engineer" }), developer.charter);
+  assert.equal(charterOf({ charter: `${old}\n- Use pnpm.`, templateId: "feature-engineer" }), `${old}\n- Use pnpm.`, "an edited charter stays its owner's");
+  assert.doesNotMatch(nodeTemplate("manager")!.charter, /@|feature engineer|docs writer/, "the manager names roles, not nodes");
+  assert.notDeepEqual(paletteAvatar(0), paletteAvatar(1));
 });
 
 test("a posted reply drops the outcome lines that its tool chips already show, never the whole reply", async () => {

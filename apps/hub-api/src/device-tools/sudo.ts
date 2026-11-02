@@ -225,6 +225,7 @@ export async function runNodeSudo(app: App, client: HostedClient, request: SudoR
     client,
     {
       runId: request.runId,
+      nodeId: request.nodeId,
       background: false,
       timeoutSec: request.timeoutSec,
       clean: scrub,

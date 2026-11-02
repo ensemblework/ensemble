@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from ensemble_agent.content_parts import has_attachment_parts, responses_user_content
 from ensemble_agent.provider_error import ProviderError
@@ -274,10 +274,13 @@ def _failure_message(error: Any) -> str:
     return str(error or "The model reply failed.")
 
 
-async def turn_from_stream(lines: AsyncIterator[str], model: str) -> AsyncIterator[tuple[str, Any]]:
+async def turn_from_stream(
+    lines: AsyncIterator[str], model: str, on_final: Callable[[dict[str, Any]], None] | None = None
+) -> AsyncIterator[tuple[str, Any]]:
     """SSE lines of a Responses stream → ("delta", text) … then ("done", turn).
 
     A stream that ends without ``response.completed`` keeps what arrived and is marked cut off.
+    ``on_final`` gets the response the stream ended with (completed, incomplete or failed), with its usage.
     """
     pieces: list[str] = []
     final: dict[str, Any] | None = None
@@ -304,8 +307,12 @@ async def turn_from_stream(lines: AsyncIterator[str], model: str) -> AsyncIterat
             response = event.get("response")
             if isinstance(response, dict):
                 final = response
+                if on_final:
+                    on_final(response)
         elif kind == "response.failed":
             response = event.get("response") if isinstance(event.get("response"), dict) else {}
+            if on_final:
+                on_final(response)
             raise ProviderError(502, "other", _failure_message(response.get("error")))
         elif kind == "error":
             raise ProviderError(int(event.get("status") or 502), "other", _failure_message(event.get("error") or event))

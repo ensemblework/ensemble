@@ -397,6 +397,56 @@ test("a node's handle and name change everywhere it is, and stay unique", async 
   assert.equal(dm.members.find((row: { kind: string }) => row.kind === "node").handle, "helper");
 });
 
+test("a new node's handle, charter and look: a chosen handle is kept or refused, a template's only with its name, nothing from a template it was not made from", async () => {
+  const { NODE_TEMPLATES, CREW_TEMPLATES } = await import("./templates.js");
+  const { makeNode } = await import("./helpers.js");
+  const { ToolBlockedError } = await import("../assistant/types.js");
+  const ana = await person("Ana");
+  const post = (payload: Record<string, unknown>) => ana.inject({ method: "POST", url: "/api/node/nodes", payload });
+
+  const boot = json(await ana.inject({ method: "GET", url: "/api/node/bootstrap" })).templates;
+  assert.deepEqual(boot.nodes.map((row: { id: string }) => row.id), ["assistant", "manager", "developer", "tester", "writer", "researcher", "research-writer", "designer", "devops", "analyst"], "retired templates are not offered");
+  assert.deepEqual(Object.keys(boot.nodes[0]).sort(), ["avatar", "charter", "id", "name", "role", "slug", "summary"]);
+  assert.deepEqual(boot.crews.map((row: { nodes: string[]; lead: string }) => [row.nodes, row.lead]), [[["manager", "developer", "tester", "writer"], "manager"], [["manager", "researcher", "research-writer"], "manager"]]);
+
+  // The owner's case: a template picked, then another name and role typed.
+  const typed = json(await post({ templateId: "assistant", name: "TEST-E1", role: "TEST-E!", charter: "Watch the release." })).node;
+  assert.deepEqual([typed.slug, typed.role, typed.charter], ["test-e1", "TEST-E!", "Watch the release."], "the handle follows the name, not the template");
+  const assistant = json(await post({ templateId: "assistant" })).node;
+  assert.equal(assistant.slug, "assistant", "a template's handle while it keeps the template's name");
+  assert.equal(json(await post({ templateId: "assistant" })).node.slug, "assistant-2");
+
+  const scratch = json(await post({ name: "Scout" })).node;
+  assert.deepEqual([scratch.slug, scratch.role, scratch.charter, scratch.templateId], ["scout", "assistant", "", null], "from scratch: no template's charter");
+  const other = json(await post({ name: "Second scout" })).node;
+  assert.notDeepEqual(other.avatar, scratch.avatar, "each node from scratch gets its own look");
+
+  const clash = await post({ name: "Watcher", slug: "assistant" });
+  assert.equal(clash.statusCode, 409);
+  assert.equal(json(clash).error, "Another of your nodes is already @assistant. Pick another handle.");
+  assert.equal((await post({ name: "Watcher", slug: "everyone" })).statusCode, 400);
+  const chosen = json(await post({ name: "Watcher", slug: "watch", avatar: { shape: "leaf", color: "#E8A3B5", eyes: "wide" } })).node;
+  assert.deepEqual([chosen.slug, chosen.avatar], ["watch", { shape: "leaf", color: "#E8A3B5", eyes: "wide" }]);
+
+  // An old client's retired template: the old name and handle, the replacement's charter.
+  const builder = json(await post({ templateId: "feature-engineer" })).node;
+  assert.deepEqual([builder.slug, builder.templateId, builder.charter], ["builder", "developer", NODE_TEMPLATES.find((row) => row.id === "developer")!.charter]);
+
+  // A crew as the website makes it from a crew template.
+  const team = CREW_TEMPLATES.find((row) => row.id === "software-team")!;
+  const ids: string[] = [];
+  for (const id of team.nodes) ids.push(json(await post({ templateId: id })).node.id);
+  const crew = json(await ana.inject({ method: "POST", url: "/api/node/crews", payload: { title: team.title, nodeIds: ids } })).room;
+  assert.deepEqual(crew.members.filter((row: { kind: string }) => row.kind === "node").map((row: { handle: string }) => row.handle), ["manager", "developer", "tester", "writer"]);
+  assert.deepEqual(crew.leadNodeIds, [ids[0]], "the manager leads");
+
+  // node_create: a handle the node proposes is refused when taken; one from the name gets a number.
+  const by = { userId: ana.id, provider: null, model: null };
+  await assert.rejects(makeNode(h.prisma, by, { name: "Release watcher", slug: "watch", role: "researcher", charter: "Track releases." }), (error: unknown) => error instanceof ToolBlockedError && /already has a node @watch/.test(error.message));
+  assert.equal((await makeNode(h.prisma, by, { name: "Researcher", role: "researcher", charter: "Dig.", templateId: "researcher" })).slug, "researcher");
+  assert.equal((await makeNode(h.prisma, by, { name: "Watch", role: "researcher", charter: "Track releases." })).slug, "watch-2");
+});
+
 test("in a room, a node speaks for its owner only after approval, and private threads stay private", async () => {
   const mira = await person("Mira");
   const ben = await person("Ben");
@@ -699,6 +749,9 @@ test("search, the people-only view, pins, reactions, replies and deleting stay w
   script = () => ({ text: "(no reply)" });
   const open = await say(ivy, room.id, "@tom the launch checklist is ready");
   const secret = await say(ivy, room.id, "my launch notes stay mine", { private: true });
+  // Someone else's chat, which Tom is not in.
+  const una = await person("Una");
+  await say(una, (await createNode(una, "assistant")).room.id, "our launch date is May 2");
 
   const tomSearch = json(await tom.inject({ method: "GET", url: "/api/node/search?q=launch" })).results.map((row: any) => row.message.id);
   assert.deepEqual(tomSearch, [open.id], "search finds only what the person may read");

@@ -15,7 +15,7 @@ import { HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, typ
 import { declineSecret } from "./node-secrets.js";
 import { answerLoginCard, LOGIN_CARD } from "./logins.js";
 import { finishStep, planLinkOf } from "./plans.js";
-import { makeCrew, makeNode, NewCrew, NewNode } from "./helpers.js";
+import { makeCrew, makeNode, NewCrew, StoredNewNode } from "./helpers.js";
 import { CREW_ADD_CARD, joinCrew } from "./crew.js";
 import { noteTold } from "./dispatch.js";
 import { ToolBlockedError } from "../assistant/types.js";
@@ -275,7 +275,7 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
 }
 
 const ProposalCard = z.union([
-  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("node"), input: NewNode, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("node"), input: StoredNewNode, private: z.boolean().optional() }).passthrough(),
   z.object({ type: z.literal("node_proposal"), status: z.string(), action: z.literal("crew"), input: NewCrew, private: z.boolean().optional() }).passthrough(),
 ]);
 

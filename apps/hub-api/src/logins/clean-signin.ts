@@ -166,6 +166,8 @@ export class CleanSignIn extends EventEmitter {
   closed = false;
   private shown: CleanPage | null = null;
   private casting = false;
+  /** How large and how good its pictures are (takeover/quality.ts). */
+  private castLevel: { quality: number; maxWidth: number } = { quality: 55, maxWidth: 1280 };
   private readonly keyboards = new Map<string, CleanKeyboard>();
   private readonly sizes = new Map<string, { width: number; height: number }>();
   /** Its listeners on each page, taken off when it ends (a kept page serves the next sign-in). */
@@ -268,7 +270,7 @@ export class CleanSignIn extends EventEmitter {
     if (this.casting) {
       if (previous && !previous.closed) await previous.stopScreencast().catch(() => undefined);
       await page.bringToFront();
-      await page.startScreencast((frame) => this.frame(page, frame)).catch(() => undefined);
+      await page.startScreencast((frame) => this.frame(page, frame), this.cast()).catch(() => undefined);
     } else if (!this.host.headless) {
       await page.bringToFront();
     }
@@ -282,17 +284,31 @@ export class CleanSignIn extends EventEmitter {
     this.emit("frame", { jpeg: Buffer.from(raw.data, "base64"), width, height, url: page.url, title: page.title, site: hostOf(page.url) ?? "", popup: page !== this.pages[0] } satisfies CleanFrame);
   }
 
-  /** Starts streaming the page shown (`frame` events); its size in CSS pixels. */
-  async startStreaming(): Promise<{ width: number; height: number }> {
+  private cast(): { quality: number; maxWidth: number; maxHeight: number } {
+    return { ...this.castLevel, maxHeight: this.castLevel.maxWidth };
+  }
+
+  /** Starts streaming the page shown (`frame` events) at a size and quality; its size in CSS pixels. */
+  async startStreaming(level?: { quality: number; maxWidth: number }): Promise<{ width: number; height: number }> {
     const page = this.current;
     if (!page) throw new Error("The sign-in's page closed.");
+    if (level) this.castLevel = { quality: level.quality, maxWidth: level.maxWidth };
     this.casting = true;
     this.shown = page;
     await page.bringToFront();
     const size = await page.viewport();
     if (size.width && size.height) this.sizes.set(page.targetId, size);
-    await page.startScreencast((frame) => this.frame(page, frame));
+    await page.startScreencast((frame) => this.frame(page, frame), this.cast());
     return size.width && size.height ? size : { width: 1280, height: 800 };
+  }
+
+  /** Streams at another size and quality (a slow link): the page shown starts its screencast again. */
+  async setQuality(level: { quality: number; maxWidth: number }): Promise<void> {
+    this.castLevel = { quality: level.quality, maxWidth: level.maxWidth };
+    const page = this.shown;
+    if (!this.casting || !page || page.closed) return;
+    await page.stopScreencast().catch(() => undefined);
+    if (this.casting && this.shown === page) await page.startScreencast((frame) => this.frame(page, frame), this.cast());
   }
 
   async stopStreaming(): Promise<void> {

@@ -226,9 +226,14 @@ function failureMessage(error: unknown): string {
 
 /**
  * SSE lines of a Responses stream → `{kind: "delta"}` … then `{kind: "done"}` with the turn. A
- * stream that ends without `response.completed` keeps what arrived and is marked cut off.
+ * stream that ends without `response.completed` keeps what arrived and is marked cut off. `onFinal`
+ * gets the response the stream ended with (completed, incomplete or failed), with its usage.
  */
-export async function* turnFromStream(lines: AsyncIterable<string>, model: string): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; turn: Json }> {
+export async function* turnFromStream(
+  lines: AsyncIterable<string>,
+  model: string,
+  onFinal?: (response: Json) => void,
+): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; turn: Json }> {
   const pieces: string[] = [];
   let final: Json | null = null;
   for await (const raw of lines) {
@@ -252,9 +257,13 @@ export async function* turnFromStream(lines: AsyncIterable<string>, model: strin
         yield { kind: "delta", text: delta };
       }
     } else if (kind === "response.completed" || kind === "response.incomplete") {
-      if (event.response && typeof event.response === "object") final = event.response as Json;
+      if (event.response && typeof event.response === "object") {
+        final = event.response as Json;
+        onFinal?.(final);
+      }
     } else if (kind === "response.failed") {
       const response = (event.response && typeof event.response === "object" ? event.response : {}) as Json;
+      onFinal?.(response);
       throw new ProviderError(502, "other", failureMessage(response.error));
     } else if (kind === "error") {
       throw new ProviderError(Number(event.status) || 502, "other", failureMessage(event.error ?? event));

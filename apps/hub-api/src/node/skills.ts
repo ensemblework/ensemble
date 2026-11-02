@@ -117,16 +117,16 @@ export function skillsBlock(skills: readonly NodeSkill[], has: (tool: string) =>
 /**
  * Tool tiers (docs/35 §6.1): the browser and capture tools for building or testing a web app or making a
  * video. A conversation turn offers them only when its words are about that work, or the conversation's
- * last tools were; web screenshots are browser_view and browser_screenshot. Plan steps and turns that
- * carry on work (an answered card, a run that ended) keep every tool.
+ * last tools were; web screenshots are browser_view and browser_screenshot. browser_tabs and
+ * browser_close are not among them: a click can open a popup (a payment window) and the owner can ask
+ * to close a tab at any time. Plan steps and turns that carry on work (an answered card, a run that
+ * ended) keep every tool.
  */
 export const ADVANCED_TOOLS: ReadonlySet<string> = new Set([
   "browser_console",
   "browser_network_errors",
   "browser_record",
   "browser_upload",
-  "browser_tabs",
-  "browser_close",
   "capture_app_start",
   "capture_app_stop",
   "capture_apps",
@@ -137,7 +137,7 @@ export const ADVANCED_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 const ADVANCED_INTENT =
-  /\b(?:videos?|record(?:ing)?|screencast|gif|(?:browser|js|javascript|dev ?tools) console|console (?:logs?|errors?|messages?|output)|network (?:errors?|requests?|tab)|devtools|upload|tabs?|dev server|localhost|127\.0\.0\.1|web ?app|desktop app|electron|tauri|app window|e2e|end[- ]to[- ]end|playwright|(?:test|testing|tested|debug|debugging|qa|build|building|check|checking)\b[^.?!\n]{0,40}\b(?:app|apps|site|website|web ?page|page|ui|frontend|front[- ]end|sign-?up|log-?in|form|flow|feature|endpoint|game|build))\b/i;
+  /\b(?:videos?|record(?:ing)?|screencast|gif|(?:browser|js|javascript|dev ?tools) console|console (?:logs?|errors?|messages?|output)|network (?:errors?|requests?|tab)|devtools|upload|dev server|localhost|127\.0\.0\.1|web ?app|desktop app|electron|tauri|app window|e2e|end[- ]to[- ]end|playwright|(?:test|testing|tested|debug|debugging|qa|build|building|check|checking)\b[^.?!\n]{0,40}\b(?:app|apps|site|website|web ?page|page|ui|frontend|front[- ]end|sign-?up|log-?in|form|flow|feature|endpoint|game|build))\b/i;
 
 /** Whether a turn's words (or its conversation's last tools) are about building or testing a web app or a video. */
 export function wantsAdvancedTools(words: string, recentTools: readonly string[] = []): boolean {

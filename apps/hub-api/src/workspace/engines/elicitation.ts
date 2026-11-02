@@ -71,7 +71,7 @@ export async function answerForm(
   const asked: Field[] = fields.length ? fields : [{ key: "", title: message, named: false, required: true, choices: [{ label: "Yes", value: true }, { label: "No", value: false }], typed: null, many: false, fallback: true }];
   const content: Record<string, unknown> = {};
   for (const field of asked) {
-    const question = fields.length > 1 ? `${message} — ${field.title}` : field.named && fields.length === 1 && !message.includes(field.title) ? `${message} (${field.title})` : message;
+    const question = fields.length > 1 ? `${message}: ${field.title}` : field.named && fields.length === 1 && !message.includes(field.title) ? `${message} (${field.title})` : message;
     const fallback = field.choices.find((choice) => choice.value === field.fallback) ?? (field.fallback === undefined ? field.choices[0] : undefined);
     let value: unknown;
     if (ctx.job.unattended) {

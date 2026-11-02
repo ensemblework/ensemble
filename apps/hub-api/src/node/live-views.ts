@@ -5,8 +5,10 @@
  * of one of its browser tabs (`live_view`): one owner-only card in the chat per session or tab, which
  * the owner opens through the sealed takeover channel (`POST /api/node/takeovers {liveCardId}`,
  * node/takeovers.ts) to watch, type and take control while the node keeps working. The card ends when
- * the session or tab does (`POST /api/devices/self/live/:liveId/ended`). Only in turns only the owner
- * reads and started, like every computer tool; nothing typed or shown is kept here.
+ * the session or tab does (`POST /api/devices/self/live/:liveId/ended`), or when the node ends the view
+ * itself (`live_view {stop: true}`, the tab or terminal staying open); a view open on it ends with it,
+ * and a card the node ended says so (`endedBy`). Only in turns only the owner reads and started, like
+ * every computer tool; nothing typed or shown is kept here.
  */
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -36,8 +38,14 @@ export const LiveCardData = z.object({
   tab: z.string().optional(),
   startedAt: z.string(),
   endedAt: z.string().optional(),
+  /** The node ended it: it closed the tab (browser_close, `closed`) or ended the view (live_view stop, `stopped`). */
+  endedBy: z.literal("node").optional(),
+  endReason: z.enum(["closed", "stopped"]).optional(),
 });
 export type LiveCardData = z.infer<typeof LiveCardData>;
+
+/** Why a card ended, as the computer or the node says it: the node closed its tab, or ended the view. */
+const BY_NODE: Record<string, "closed" | "stopped"> = { closed_by_node: "closed", stopped_by_node: "stopped" };
 
 type Redisish = {
   get(key: string): Promise<string | null>;
@@ -106,14 +114,29 @@ export async function postLiveCard(
   return { card: message, again: false };
 }
 
-/** The session or tab ended: its card says so. False when there is no open card for it. */
-export async function endLiveCard(app: FastifyInstance, ownerId: string, liveId: string, reason: string): Promise<boolean> {
-  if (/^ts/.test(liveId)) await redisOf(app).del(sessionKey(liveId));
+/**
+ * The session or tab ended, or the node ended its view: its card says so, and a view open on it ends
+ * (node/takeovers.ts). False when there is no open card for it. A terminal session that goes on keeps
+ * its record (`keepSession`).
+ */
+export async function endLiveCard(app: FastifyInstance, ownerId: string, liveId: string, reason: string, options: { keepSession?: boolean } = {}): Promise<boolean> {
+  if (/^ts/.test(liveId) && !options.keepSession) await redisOf(app).del(sessionKey(liveId));
   const card = await liveCard(app, liveId, ownerId);
   if (!card || (card.data as { status?: unknown }).status !== "open") return false;
-  await updateMessageData(app.prisma, card, { status: "ended", endedAt: new Date().toISOString() });
+  await updateMessageData(app.prisma, card, { status: "ended", endedAt: new Date().toISOString(), ...(BY_NODE[reason] ? { endedBy: "node", endReason: BY_NODE[reason] } : {}) });
   await appendLedger({ userId: ownerId, actor: "agent", action: "node.live_ended", payload: { liveId, reason: reason.slice(0, 40) } }).catch(() => undefined);
+  const { endCardViews } = await import("./takeovers.js");
+  await endCardViews(app, card, reason === "stopped_by_node" ? "live_stopped" : reason === "closed_by_node" ? "closed_by_node" : "live_ended").catch(() => undefined);
   return true;
+}
+
+/** The node's open live cards for its tab (a tab id is per computer: one on each, at most). */
+async function openTabCards(app: FastifyInstance, nodeId: string, ownerId: string, tab: string): Promise<NodeMessage[]> {
+  return app.prisma.nodeMessage.findMany({
+    where: { userId: ownerId, authorNodeId: nodeId, kind: "text", AND: [{ data: { path: ["type"], equals: LIVE_CARD } }, { data: { path: ["kind"], equals: "browser" } }, { data: { path: ["tab"], equals: tab } }, { data: { path: ["status"], equals: "open" } }] },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
 }
 
 /** An open live card the owner may open a live view of: its computer, what it shows, and the node's operation that owns it. */
@@ -182,7 +205,7 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
       area: "tasks",
       description:
         "Open a terminal on your owner's computer that stays open between your calls: a shell in your own folder (or folder), sandboxed like computer_run. " +
-        "For interactive or long-lived work: a REPL, a program that asks questions, a login that waits, watching a server. Then terminal_send to type and terminal_read to look; terminal_close when done. " +
+        "For interactive or long-lived work: a REPL, a program that asks questions, watching a server. Not a CLI sign-in (`az login`, `gh auth login`): computer_run runs it and gives your owner its page or code on a card. Then terminal_send to type and terminal_read to look; terminal_close when done. " +
         "At most 3 open; one unused for 30 minutes closes. A one-off command: computer_run. live: true when your owner wants to watch it (their live card is posted at once).",
       input: z
         .object({
@@ -282,18 +305,39 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
       area: "tasks",
       description:
         "Let your owner watch your terminal (session) or your browser tab (tab) live in this chat: a card they open to watch, type or take control while you keep working. " +
-        "Use it when they ask to watch, see it live, or take over. One card per terminal or tab; the card shows by itself, so say only that it is there.",
+        "Use it when they ask to watch, see it live, or take over. One card per terminal or tab; the card shows by itself, so say only that it is there. " +
+        "stop: true ends the live view (the tab or terminal stays open); to close the tab itself, browser_close (its view ends too).",
       input: z
         .object({
           kind: z.enum(["terminal", "browser"]),
           session: Session.optional(),
           tab: z.string().regex(/^t\d{1,9}$/).optional().describe("Your tab (t1, t2…) from browser_open or browser_tabs."),
           computer: Computer,
+          stop: z.boolean().optional().describe("true: end your owner's live view of it; the tab or terminal stays open."),
         })
         .strict(),
       isWrite: false,
       risk: "low",
       async run(ctx, input) {
+        if (input.stop) {
+          if (input.kind === "terminal") {
+            if (!input.session) throw new ToolBlockedError("Name the terminal (session) whose live view to end.");
+            const record = await ownRecord(ctx, scope, input.session);
+            const ended = await endLiveCard(ctx.app, node.userId, record.session, "stopped_by_node", { keepSession: true });
+            return toolOk(ended ? `Ended the live view of terminal ${record.session}; the terminal stays open.` : `Terminal ${record.session} has no live view open.`, { session: record.session, stopped: ended });
+          }
+          if (!input.tab) throw new ToolBlockedError("Name your tab (t1, t2…) whose live view to end.");
+          const wanted = input.computer?.trim().toLowerCase();
+          const cards = (await openTabCards(ctx.app, node.id, node.userId, input.tab)).filter((row) => !wanted || String((row.data as { computer?: unknown }).computer ?? "").trim().toLowerCase() === wanted);
+          if (cards.length > 1) throw new ToolBlockedError(`Tab ${input.tab} is live on more than one computer.`, "Name the computer (computer).");
+          const card = cards[0];
+          const data = card ? LiveCardData.safeParse(card.data) : null;
+          if (!card || !data?.success) return toolOk(`Tab ${input.tab} has no live view open${input.computer ? ` on ${input.computer}` : ""}.`, { tab: input.tab, stopped: false });
+          // The next live view of this tab is a new card.
+          if ((await redisOf(ctx.app).get(tabKey(data.data.deviceId, input.tab, node.id))) === data.data.liveId) await redisOf(ctx.app).del(tabKey(data.data.deviceId, input.tab, node.id));
+          await endLiveCard(ctx.app, node.userId, data.data.liveId, "stopped_by_node");
+          return toolOk(`Ended the live view of tab ${input.tab}; the tab stays open (browser_close closes it).`, { tab: input.tab, stopped: true });
+        }
         if (input.kind === "terminal") {
           if (!input.session) throw new ToolBlockedError("Name the terminal (session) from terminal_open.");
           const record = await ownRecord(ctx, scope, input.session);

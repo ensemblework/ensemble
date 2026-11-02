@@ -6,7 +6,9 @@
  * while watching, takes control (the node's typing waits) and hands it back, while the computer's real
  * terminal sessions run a shell in its sandbox; the card ends with the session. The same for a node's
  * browser tab: watching shows the tab while the node keeps using it and ignores the owner's clicks,
- * control pauses the node on it and applies them. A computer too old for it is told to update.
+ * control pauses the node on it and applies them. The view follows a window the tab opens (a payment
+ * popup) and comes back when it closes; the node ends a view itself, or closes the tab, and the card
+ * says the node did; frames come as a stream too. A computer too old for it is told to update.
  * Terminal parts skip without an OS sandbox or `script`; browser parts without a Chromium.
  */
 import assert from "node:assert/strict";
@@ -51,6 +53,8 @@ const noTerminal = !sandbox.osSandbox ? `no OS sandbox here: ${sandbox.reason}` 
 let clicks = 0;
 const site = createServer((request, response) => {
   response.setHeader("content-type", "text/html");
+  if (request.url === "/cart") return void response.end(`<!doctype html><html><head><title>Your cart</title></head><body><button onclick="window.open('/pay', 'pay', 'width=500,height=600')">Continue</button></body></html>`);
+  if (request.url === "/pay") return void response.end(`<!doctype html><html><head><title>Payment</title></head><body style="background:#123"><h1 style="color:#fff">Pay with UPI</h1></body></html>`);
   if (request.url === "/click") clicks += 1;
   response.end(`<!doctype html><html><head><title>Counter</title></head><body style="margin:0"><a href="/click" style="display:block;width:100vw;height:100vh;font:40px sans-serif">Clicks: ${clicks}</a></body></html>`);
 });
@@ -207,6 +211,30 @@ async function ownerBrowser(user: HttpUser, liveCardId: string, target: Record<s
     },
     end() {
       return user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/end`, headers, payload: { done: false } });
+    },
+    /** The frames as a stream: its events, as they come, opened here. */
+    async stream(after = 0) {
+      const response = await user.inject({ method: "GET", url: `/api/node/takeovers/${takeover.id}/stream?after=${after}`, headers: { ...headers, "accept-encoding": "identity" }, payloadAsStream: true });
+      const events: Array<{ event: string; data: string; header?: Record<string, unknown> }> = [];
+      let buffer = "";
+      const done = (async () => {
+        for await (const chunk of response.stream()) {
+          buffer += String(chunk);
+          for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+            const block = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            const event = /^event: (\S+)/m.exec(block)?.[1] ?? "comment";
+            const data = /^data: (.*)$/m.exec(block)?.[1] ?? "";
+            const row: (typeof events)[number] = { event, data };
+            if (event === "frame") row.header = unpackMessage(await openMessage(keys.d2w, takeover.id, "d2w", JSON.parse(data))).header;
+            events.push(row);
+          }
+        }
+      })();
+      return { response, events, done };
+    },
+    seen(seq: number) {
+      return user.inject({ method: "POST", url: `/api/node/takeovers/${takeover.id}/seen`, headers, payload: { seq } });
     },
   };
 }
@@ -393,6 +421,91 @@ test("a live view of the node's tab: watching shows it while the node works and 
     for (let tries = 0; ended.state !== "ended" && tries < 10; tries += 1) ended = await owner.frame();
     assert.equal(ended.state, "ended");
     await until(async () => (await node.cards())[0]!.data.status === "ended", "the card ended", 20_000);
+  } finally {
+    computer.stop();
+  }
+});
+
+test("a live view follows a window the tab opens and comes back when it closes; the node ends the view itself or closes the tab, and the card says so; frames come as a stream", { skip: noBrowser, timeout: 180_000 }, async () => {
+  const mira = await person("Mira");
+  const computer = await computerFor(mira);
+  try {
+    const node = await nodeOf(mira);
+    const operation = `node:${node.node.id}:own`;
+    script = (transcript) => (transcript.includes("open the cart") ? { calls: [{ name: "browser_open", arguments: { url: `${SITE}/cart` } }], then: "Open." } : { text: "ok" });
+    await node.say("open the cart");
+    const cart = (await browserBroker().list(operation)).find((tab) => tab.title === "Your cart")!.tab;
+    script = (transcript) => (transcript.includes("show me live") ? { calls: [{ name: "live_view", arguments: { kind: "browser", tab: cart } }], then: "There." } : { text: "ok" });
+    await node.say("show me live");
+    const card = (await node.cards()).at(-1)!;
+    const owner = await ownerBrowser(mira, card.id);
+    assert.equal((await owner.start()).statusCode, 200);
+
+    // The stream sends what /frames would, a frame at a time while the page keeps up, and says when it ends.
+    // Only for the browser that opened the view, as /frames.
+    const foreign = await mira.inject({ method: "GET", url: `/api/node/takeovers/${owner.takeover.id}/stream`, headers: { origin: NODE_SITE } });
+    assert.deepEqual([foreign.statusCode, foreign.json().code], [403, "controller"]);
+    const stream = await owner.stream();
+    assert.equal(stream.response.headers["content-type"], "text/event-stream; charset=utf-8");
+    assert.equal(stream.response.headers["cache-control"], "no-store, no-transform");
+    assert.equal(stream.response.headers["x-accel-buffering"], "no");
+    await until(() => stream.events.some((row) => row.event === "frame"), "a frame on the stream");
+    assert.equal(stream.events[0]!.event, "comment", "a first comment opens it through proxies");
+    assert.equal(stream.events.find((row) => row.event === "frame")!.header!.popup, false);
+
+    // The node's click opens a payment window: it hears which tab, and the owner's view shows it.
+    const ref = /button "Continue" \[ref=(\w+)\]/.exec((await browserBroker().snapshot(operation, cart)).snapshot)![1]!;
+    script = (transcript) => (transcript.includes("continue") ? { calls: [{ name: "browser_click", arguments: { tab: cart, ref } }], then: "It opened." } : { text: "ok" });
+    const clicked = await node.say("continue");
+    const pay = /It opened a new window (t\d+) \(Payment, [^)]+\): use tab \1\./.exec(clicked[0]?.summary ?? "")?.[1];
+    assert.ok(pay, clicked[0]?.summary ?? "no summary");
+    await owner.seen(Number.MAX_SAFE_INTEGER);
+    let shown = await owner.frame();
+    for (let tries = 0; !(shown.frame?.header.popup === true) && tries < 20; tries += 1) shown = await owner.frame();
+    assert.deepEqual([shown.frame?.header.popup, shown.frame?.header.title, shown.frame?.header.site], [true, "Payment", SITE_HOST]);
+    // Its owner takes control: the popup is paused for the node too, and given back after.
+    assert.equal(json(await owner.control(true)).takeover.mode, "control");
+    await until(() => browserBroker().ownerTab(pay).sensitive, "the popup paused for the node");
+    assert.equal(json(await owner.control(false)).takeover.mode, "watch");
+    await until(() => !browserBroker().ownerTab(pay).sensitive, "the popup given back");
+
+    // The window closes: the view shows its opener again.
+    script = (transcript) => (transcript.includes("close the payment") ? { calls: [{ name: "browser_close", arguments: { tab: pay } }], then: "Closed." } : { text: "ok" });
+    await node.say("close the payment");
+    shown = await owner.frame();
+    for (let tries = 0; !(shown.frame && shown.frame.header.popup === false) && tries < 20; tries += 1) shown = await owner.frame();
+    assert.deepEqual([shown.frame?.header.popup, shown.frame?.header.title], [false, "Your cart"]);
+    assert.equal((await node.cards()).at(-1)!.data.status, "open", "closing the popup leaves the view of its opener");
+
+    // The node ends the view itself: the card says so, the view and the stream end, the tab stays.
+    script = (transcript) => (transcript.includes("stop showing") ? { calls: [{ name: "live_view", arguments: { kind: "browser", tab: cart, stop: true } }], then: "Stopped." } : { text: "ok" });
+    const stopped = await node.say("stop showing it");
+    assert.match(stopped[0]?.summary ?? "", new RegExp(`Ended the live view of tab ${cart}; the tab stays open`));
+    const ended = (await node.cards()).at(-1)!;
+    assert.deepEqual([ended.data.status, ended.data.endedBy, ended.data.endReason], ["ended", "node", "stopped"]);
+    let after = await owner.frame();
+    for (let tries = 0; after.state !== "ended" && tries < 10; tries += 1) after = await owner.frame();
+    assert.deepEqual([after.state, after.reason], ["ended", "live_stopped"]);
+    await stream.done;
+    assert.deepEqual(JSON.parse(stream.events.at(-1)!.data), { state: "ended", reason: "live_stopped" });
+    assert.equal(stream.events.at(-1)!.event, "end");
+    assert.equal(browserBroker().ownerTab(cart).sensitive, false, "the tab stays the node's");
+
+    // A new view of it, then the node closes the tab: the view ends and the card says the node closed it.
+    script = (transcript) => (transcript.includes("show me again") ? { calls: [{ name: "live_view", arguments: { kind: "browser", tab: cart } }], then: "There." } : { text: "ok" });
+    await node.say("show me again");
+    const again = (await node.cards()).at(-1)!;
+    assert.notEqual(again.id, card.id);
+    assert.notEqual(again.data.liveId, card.data.liveId, "a new live id after the node ended the last view");
+    const viewer = await ownerBrowser(mira, again.id);
+    assert.equal((await viewer.start()).statusCode, 200);
+    script = (transcript) => (transcript.includes("close it") ? { calls: [{ name: "browser_close", arguments: { tab: cart } }], then: "Closed." } : { text: "ok" });
+    await node.say("okay, close it");
+    let closed = await viewer.frame();
+    for (let tries = 0; closed.state !== "ended" && tries < 10; tries += 1) closed = await viewer.frame();
+    assert.deepEqual([closed.state, closed.reason], ["ended", "closed_by_node"]);
+    await until(async () => (await node.cards()).at(-1)!.data.endReason === "closed", "the card says the node closed it");
+    assert.equal((await node.cards()).at(-1)!.data.endedBy, "node");
   } finally {
     computer.stop();
   }

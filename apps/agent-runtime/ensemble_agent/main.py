@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 from typing import NoReturn
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from ensemble_agent import credentials, __version__
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, require_host_access, require_verified_user
 from ensemble_agent.config import get_settings
+from ensemble_agent.disconnect import frames_until_closed, until_closed
+from ensemble_agent.model_timeout import ModelTimeout, runtime_seconds
 from ensemble_agent.production import format_production_problems, production_problems
 from ensemble_agent.redact import install_secret_redaction
 from ensemble_agent.models import (
@@ -22,6 +24,8 @@ from ensemble_agent.models import (
     catalog,
     clear_catalog_cache,
     complete_text,
+    _public_failure,
+    _sse,
     complete_with_tools,
     list_models,
     stream_with_tools,
@@ -120,23 +124,30 @@ def health() -> dict[str, bool | str]:
 
 
 @app.post("/api/chat/tools")
-async def chat_tools(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> JSONResponse:
-    """One model turn. Nothing more — hub-api owns the tool loop (docs/11)."""
+async def chat_tools(request: Request, body: dict, x_ensemble_internal: str | None = Header(default=None)) -> Response:
+    """One model turn. Nothing more — hub-api owns the tool loop (docs/11). hub-api closing the request stops the call."""
     _guard(x_ensemble_internal)
     try:
-        result = await complete_with_tools(body)
+        finished, result = await until_closed(request.receive, complete_with_tools(body))
     except Exception as exc:
         _fail(exc)
+    if not finished:
+        return Response(status_code=499)
     return JSONResponse(result)
 
 
 @app.post("/api/chat/tools/stream")
-async def chat_tools_stream(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> StreamingResponse:
-    """Text deltas, then one turn event. Failures before any byte are an error event."""
+async def chat_tools_stream(request: Request, body: dict, x_ensemble_internal: str | None = Header(default=None)) -> StreamingResponse:
+    """Text deltas, then one turn event. Failures before any byte are an error event.
+
+    hub-api closing the request stops the call; so does its limit and a margin (model_timeout.py).
+    """
     _guard(x_ensemble_internal)
     require_verified_user(body.get("userId"))
+    seconds = runtime_seconds(body)
+    model = str(body.get("model") or "")
     return StreamingResponse(
-        stream_with_tools(body),
+        frames_until_closed(request.receive, stream_with_tools(body), seconds=seconds, on_timeout=lambda: _sse("error", _public_failure(ModelTimeout(model, seconds)))),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
     )

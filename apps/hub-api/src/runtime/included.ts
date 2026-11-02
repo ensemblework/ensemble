@@ -4,9 +4,11 @@
  * sees it and settles the reservation with the real usage after (docs/33). Each model answers on
  * the OpenAI v1 endpoint of the Foundry host it is documented at, on the Responses or the Chat
  * Completions API; Foundry's Anthropic Messages endpoint is supported too, though no model in the
- * catalog uses it. The Azure key comes from the environment only: it is never a credential, never
- * listed, and never returned. Hosted Ensemble also runs here the included calls of the desktop
- * apps and CLIs connected to an account (routes/included.ts).
+ * catalog uses it. Responses and Chat Completions calls stream, so a call that is stopped (Stop, its
+ * time limit, its caller gone) closes the stream and Azure stops generating. The Azure key comes from
+ * the environment only: it is never a credential, never listed, and never returned. Hosted Ensemble
+ * also runs here the included calls of the desktop apps and CLIs connected to an account
+ * (routes/included.ts).
  */
 import { INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE, includedModelName, type IncludedEffort, type IncludedModel } from "@ensemble/shared-types";
 import { reserveIncluded, settleIncluded } from "../included/budget.js";
@@ -17,10 +19,10 @@ import type { IncludedTokens } from "../included/pricing.js";
 import { ModelUnreachableError } from "../lib/model-reach.js";
 import { isAbortError } from "../lib/stream-drop.js";
 import { ProviderError } from "./errors.js";
-import { postWithRetry, readJsonObject, sendJson } from "./http.js";
+import { postWithRetry, readJsonObject, readLines, sendJson } from "./http.js";
 import { pace } from "./pace.js";
-import { anthropicTools, buildChatPayload, effortFor, fromAnthropic, fromOpenAi, toAnthropic, type Json } from "./payload.js";
-import { buildResponsesPayload, cleanItems, itemsFromChat, toolsFor, turnFromResponse } from "./responses-api.js";
+import { anthropicTools, buildChatPayload, effortFor, fromAnthropic, fromOpenAi, readSseStream, toAnthropic, type Json } from "./payload.js";
+import { buildResponsesPayload, cleanItems, itemsFromChat, toolsFor, turnFromResponse, turnFromStream } from "./responses-api.js";
 
 
 /** How a Claude model answers without thinking, at effort high or below. */
@@ -167,19 +169,64 @@ function claudePayload(userId: string, model: string, messages: Json[], tools: J
   return payload;
 }
 
-/** No temperature, top_p or reasoning_effort: the chat model takes no thinking level. */
+/** No temperature, top_p or reasoning_effort: the chat model takes no thinking level. Streamed, with the usage at the end. */
 function chatPayload(model: string, messages: Json[], tools: Json[] | null, jsonMode: boolean, maxTokens: number): Json {
-  const payload = buildChatPayload(model, INCLUDED_PROVIDER, messages, { tools });
+  const payload = buildChatPayload(model, INCLUDED_PROVIDER, messages, { tools, stream: true });
+  payload.stream_options = { include_usage: true };
   payload.max_completion_tokens = maxTokens;
   if (jsonMode) payload.response_format = { type: "json_object" };
   return payload;
 }
 
+/** Streamed: a call that is stopped closes its stream, and Azure stops generating. */
 function responsesPayload(model: string, messages: Json[], items: unknown[] | null, tools: Json[] | null, effort: string | null, jsonMode: boolean, maxTokens: number): Json {
   const history = items?.length ? cleanItems(items) : itemsFromChat(messages);
-  const payload = buildResponsesPayload(model, history, { tools: tools?.length ? toolsFor(tools) : null, effort, jsonMode });
+  const payload = buildResponsesPayload(model, history, { tools: tools?.length ? toolsFor(tools) : null, effort, jsonMode, stream: true });
   payload.max_output_tokens = maxTokens;
   return payload;
+}
+
+type Read = { turn: Json; usage: IncludedTokens | null };
+/** A stream Azure ended with a failure: what it reported using, if it said. */
+type StreamFailure = Error & { includedUsage?: IncludedTokens | null };
+
+/** A reply that is not a stream (a proxy that ignores `stream`) is read whole. */
+const whole = (response: Response) => /application\/json/i.test(response.headers.get("content-type") ?? "");
+
+/** A Responses stream → the turn and its usage (from `response.completed`; none when the stream was cut). */
+async function readResponsesStream(response: Response, model: string): Promise<Read> {
+  if (whole(response)) {
+    const data = await readJsonObject(response);
+    return { turn: turnFromResponse(data, model), usage: responsesUsage(data.usage) };
+  }
+  let final: Json | null = null;
+  let turn: Json | null = null;
+  try {
+    for await (const event of turnFromStream(readLines(response), model, (done) => (final = done))) if (event.kind === "done") turn = event.turn;
+  } catch (error) {
+    if (error instanceof ProviderError) (error as StreamFailure).includedUsage = usageOf(final, responsesUsage);
+    throw error;
+  }
+  if (!turn) throw new ProviderError(502, "other", "The model stream ended without a completion.");
+  return { turn, usage: usageOf(final, responsesUsage) };
+}
+
+/** A Chat Completions stream → the turn and its usage (the last chunk's, with `include_usage`). */
+async function readChatStream(response: Response, model: string, signal?: AbortSignal): Promise<Read> {
+  if (whole(response)) {
+    const reply = await readJsonObject(response);
+    return { turn: fromOpenAi(reply, model), usage: chatUsage(reply.usage) };
+  }
+  let data: Json | null = null;
+  for await (const event of readSseStream(readLines(response), model, signal)) if (event.kind === "done") data = event.data;
+  if (!data) throw new ProviderError(502, "other", "The model stream ended without a completion.");
+  const usage = data.usage && typeof data.usage === "object" && typeof (data.usage as Json).prompt_tokens === "number" ? chatUsage(data.usage) : null;
+  return { turn: fromOpenAi(data, model), usage };
+}
+
+function usageOf(response: Json | null, read: (usage: unknown) => IncludedTokens): IncludedTokens | null {
+  const usage = response?.usage;
+  return usage && typeof usage === "object" ? read(usage) : null;
 }
 
 /** The credits the call cost, or null when the ledger could not be told (it charges the reservation later). */
@@ -195,13 +242,13 @@ async function settleQuietly(id: string, usage: IncludedTokens | null, answeredB
 /**
  * Runs one call under its reservation and settles it exactly once. A request Azure refused (or never
  * received) is not billed, so it settles at zero. Anything that may have been billed without a usage
- * report settles with no usage, and the ledger charges the reservation. A cancelled call does not
- * wait for its settlement.
+ * report (a stream cut short, a failure that says no usage) settles with no usage, and the ledger
+ * charges the reservation. A cancelled call does not wait for its settlement.
  */
 async function settled(
   id: string,
   send: () => Promise<Response>,
-  read: (response: Response) => Promise<{ turn: Json; usage: IncludedTokens }>,
+  read: (response: Response) => Promise<Read>,
   signal?: AbortSignal,
 ): Promise<Json> {
   const failed = async (error: unknown, usage: IncludedTokens | null): Promise<never> => {
@@ -215,11 +262,11 @@ async function settled(
   } catch (error) {
     return failed(error, error instanceof ProviderError || error instanceof ModelUnreachableError ? { ...NO_USAGE } : null);
   }
-  let result: { turn: Json; usage: IncludedTokens };
+  let result: Read;
   try {
     result = await read(response);
   } catch (error) {
-    return failed(error, null);
+    return failed(error, (error as StreamFailure).includedUsage ?? null);
   }
   result.turn.credits = await settleQuietly(id, result.usage, String(result.turn.model ?? ""));
   return result.turn;
@@ -267,12 +314,15 @@ export async function includedTurn(
       return post(withoutThinking(request));
     }
   };
-  const read = async (response: Response) => {
-    const data = await readJsonObject(response);
-    if (entry.api === "anthropic") rememberTurn(userId, data.content);
-    const usage = entry.api === "anthropic" ? anthropicUsage(data.usage) : entry.api === "chat" ? chatUsage(data.usage) : responsesUsage(data.usage);
-    const turn = entry.api === "anthropic" ? fromAnthropic(data, model) : entry.api === "chat" ? fromOpenAi(data, model) : turnFromResponse(data, model);
-    return { turn: { ...turn, tokensIn: usage.inputTokens, tokensOut: usage.outputTokens }, usage };
+  const read = async (response: Response): Promise<Read> => {
+    let result: Read;
+    if (entry.api === "anthropic") {
+      const data = await readJsonObject(response);
+      rememberTurn(userId, data.content);
+      result = { turn: fromAnthropic(data, model), usage: anthropicUsage(data.usage) };
+    } else result = entry.api === "chat" ? await readChatStream(response, model, options.signal) : await readResponsesStream(response, model);
+    const { turn, usage } = result;
+    return { turn: { ...turn, tokensIn: usage?.inputTokens ?? turn.tokensIn ?? null, tokensOut: usage?.outputTokens ?? turn.tokensOut ?? null }, usage };
   };
   await pace(userId, INCLUDED_PROVIDER);
   const reservation = await reserveIncluded({
