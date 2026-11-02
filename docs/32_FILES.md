@@ -27,6 +27,7 @@ Every file, previewable or not, can be attached to pages and downloaded.
 **Present and Full screen** (on a file's own screen, `components/files/file-screen.tsx`):
 
 - Slides have **Present** (`components/files/viewers/present.tsx`): one slide at a time, fitted to the screen on black. It starts at the slide in view, skips slides hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters browser fullscreen; Esc stops. Controls and cursor hide after 2 seconds without mouse movement.
+- Pictures sit on a backdrop drawn from their own colours (a blurred copy behind them), so the room a different shape leaves around a picture looks like part of it; a picture with see-through parts sits on the plain surface with a soft shadow that follows its shape (`components/files/viewers/image-viewer.tsx`). The zoom shows the scale the picture is drawn at.
 - PDFs, Word files, spreadsheets, images, video, text and code have **Full screen**: the same viewer, with its zoom (− / + and Fit width for PDFs and Word files) and unsaved edits, under a bar with the file name and an × that leaves; Esc leaves too.
 - Both ask the browser for fullscreen and fall back to an in-page layer when it is refused ([02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
 

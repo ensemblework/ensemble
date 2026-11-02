@@ -15,7 +15,7 @@ import { diagramSources } from "../../pages/agent-context.js";
 import { filesOnPage } from "../../files/attached.js";
 import { assertNewPageImages } from "../../files/page-image.js";
 import { markdownToNodes, pageMarkdown } from "../../pages/markdown.js";
-import { createStandalonePage, editablePage, trashStandalonePage, trashStandalonePages, writePageContent, type PageTarget } from "../../pages/store.js";
+import { createStandalonePage, editablePage, resolvePageParent, trashStandalonePage, trashStandalonePages, writePageContent, type PageTarget } from "../../pages/store.js";
 import { titlesMatch } from "../../services/tasks.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 
@@ -191,23 +191,26 @@ export const pageTools = [
     name: "hub_create_page",
     area: "projects",
     description:
-      "Create a page (standalone note) from a title and Markdown: headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id and link.",
+      "Create a page (standalone note) from a title and Markdown, at the top level or nested inside a page (parentPageId) or a task (parentTaskId): headings, lists, - [ ] checklists, tables and fenced code become real blocks. Attach things with links like [@report.pdf](ensemble://file/<fileId>) or [@Mira](ensemble://people/<personId>); they become cards. Show an image from Files (PNG, JPEG, GIF or WebP up to 2 MB) with ![description](ensemble://file/<fileId>) on its own line. Returns the page id and link.",
     input: z.object({
       title: z.string().trim().min(1).max(200),
       markdown: z.string().max(MAX_MARKDOWN).default("").describe("The page body in Markdown."),
+      parentPageId: z.string().uuid().optional().describe("Nest the new page inside this page (a sub-page). Leave out for a top-level page."),
+      parentTaskId: z.string().uuid().optional().describe("Nest the new page inside this task's page, e.g. notes or a spec for the task."),
     }),
     isWrite: true,
     risk: "low",
     undoable: true,
     preview(_ctx, input) {
       const blocks = input.markdown.trim() ? markdownPage(input.markdown).content.length : 0;
-      return `Create page “${input.title}”${blocks ? ` (${blocks} block${blocks === 1 ? "" : "s"})` : ""}`;
+      return `Create page “${input.title}”${blocks ? ` (${blocks} block${blocks === 1 ? "" : "s"})` : ""}${input.parentPageId || input.parentTaskId ? " inside another page" : ""}`;
     },
     async run(ctx, input) {
       const created = await inTransaction(ctx, async (tx) => {
         const { doc, dropped } = await keepOwnMentions(tx, ctx.userId, markdownPage(input.markdown));
         await assertNewPageImages(tx, ctx.userId, doc, null);
-        const page = await createStandalonePage(tx, ctx.userId, { title: input.title, content: doc, sourceFileId: null });
+        const parentId = await resolvePageParent(tx, ctx.userId, { parentPageId: input.parentPageId, parentTaskId: input.parentTaskId });
+        const page = await createStandalonePage(tx, ctx.userId, { title: input.title, content: doc, sourceFileId: null }, { parentId });
         const op = { op: "create" as const, model: "taskPage" as const, id: page.id, data: { updatedAt: page.updatedAt } };
         await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Created “${page.title}”`, kind: "create", actor: "agent", subject: "page", href: `/pages/${page.id}`, inverse: op, forward: op });
         return { page, dropped, undoEntryId: lastUndoId(tx) };

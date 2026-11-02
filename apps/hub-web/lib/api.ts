@@ -340,6 +340,8 @@ export type PageRecord = {
 
 export type StandalonePageSummary = {
   parentId?: string | null;
+  /** Set when the page nests inside a task's page. */
+  parentTaskId?: string | null;
   id: string;
   title: string;
   updatedAt: string;
@@ -1347,7 +1349,8 @@ export const api = bindClient({
   /** Pages whose title or text contains `query`, each with a snippet. */
   searchPages: (query: string) => get<{ pages: StandalonePageSummary[] }>(`/api/pages${qs({ q: query })}`),
   deletePages: (pageIds: string[]) => post<{ deleted: number; undoEntryId: string | null }>("/api/pages/delete-many", { pageIds }),
-  createPage: () => post<{ page: StandalonePageSummary }>("/api/pages", {}),
+  /** A new page; with a parent page or task it nests inside it (`/page`). */
+  createPage: (body: { parentId?: string; parentTaskId?: string; title?: string } = {}) => post<{ page: StandalonePageSummary }>("/api/pages", body),
   convertPage: (kind: "page" | "task", id: string, revision: number) =>
     post<{ kind: "page" | "task"; id: string; pageId: string }>(`/api/pages/${kind}/${id}/convert`, { revision }),
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),

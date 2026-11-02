@@ -293,10 +293,10 @@ test("max ticks set an interval, a notch stays out of the legend, and minor grid
   const yAxis = (grid.yAxis as Array<{ splitLine?: { lineStyle?: { color?: string; width?: number; opacity?: number } }; minorSplitLine?: { lineStyle?: { color?: string; width?: number; opacity?: number } } }>)[0];
   const minor = yAxis?.minorSplitLine?.lineStyle;
   const major = yAxis?.splitLine?.lineStyle;
-  assert.equal(minor?.color, "rgba(243, 238, 230, 0.33)");
+  assert.equal(minor?.color, "rgba(243, 238, 230, 0.55)");
   assert.equal(minor?.width, 0.65);
   assert.equal(minor?.opacity, 1);
-  assert.equal(major?.color, "rgba(243, 238, 230, 0.4)");
+  assert.equal(major?.color, "rgba(243, 238, 230, 0.55)");
   assert.equal(major?.width, 1);
   assert.ok((major?.width ?? 0) >= (minor?.width ?? 0));
   const majorAlpha = Number(major?.color?.match(/[\d.]+\)/)?.[0]?.replace(")", ""));

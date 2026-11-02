@@ -10,6 +10,7 @@ import {
   getStandalonePage,
   listStandalonePages,
   renameStandalonePage,
+  resolvePageParent,
   saveStandalonePage,
   TaskPageError,
 } from "../pages/store.js";
@@ -49,9 +50,19 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/pages", async (request, reply) => {
-    const page = await createStandalonePage(prisma, request.userId);
-    sseHub.publish(request.userId, { event: "page", data: { id: page.id, action: "create" } });
-    return reply.code(201).send({ page });
+    // `/page` in a page or a task makes the new page inside it.
+    const body = z.object({ parentId: z.string().uuid().optional(), parentTaskId: z.string().uuid().optional(), title: z.string().trim().max(200).optional() }).parse(request.body ?? {});
+    try {
+      const page = await prisma.$transaction(async (tx) => {
+        const parentId = await resolvePageParent(tx, request.userId, { parentPageId: body.parentId, parentTaskId: body.parentTaskId });
+        return createStandalonePage(tx, request.userId, body.title ? { title: body.title, content: { type: "doc", content: [{ type: "paragraph" }] }, sourceFileId: null } : null, { parentId });
+      });
+      sseHub.publish(request.userId, { event: "page", data: { id: page.id, action: "create" } });
+      return reply.code(201).send({ page: { ...page, ...(body.parentTaskId ? { parentTaskId: body.parentTaskId } : {}) } });
+    } catch (error) {
+      if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message, code: error.code });
+      throw error;
+    }
   });
 
   app.post("/api/pages/delete-many", async (request) => {

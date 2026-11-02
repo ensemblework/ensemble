@@ -168,7 +168,7 @@ export const plotConfigSchema = z.object({
   gridAlpha: z.number().min(0).max(1).default(0.25),
   minorGridStyle: z.enum(LINE_STYLES).default("dotted"),
   minorGridWidth: z.number().min(0.02).max(2).default(0.65),
-  minorGridAlpha: z.number().min(0).max(1).default(0.18),
+  minorGridAlpha: z.number().min(0).max(1).default(0.4),
   xTicks: z.enum(["auto", "step", "max"]).default("auto"),
   xTickStep: z.number().positive().nullable().default(null),
   xTickMax: z.number().int().min(2).max(40).default(6),

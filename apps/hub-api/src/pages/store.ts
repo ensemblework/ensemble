@@ -165,6 +165,8 @@ export async function saveTaskPage(
 
 export type StandalonePageSummary = {
   parentId: string | null;
+  /** Set when the page nests inside a task's page. */
+  parentTaskId?: string | null;
   id: string;
   title: string;
   updatedAt: string;
@@ -227,12 +229,13 @@ export async function listStandalonePages(prisma: PrismaClient, userId: string, 
   const rows = await prisma.taskPage.findMany({
     where: { userId, taskId: null, deletedAt: null, ...(words ? { searchText: { contains: words, mode: "insensitive" as const } } : {}) },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    select: { id: true, title: true, updatedAt: true, createdAt: true, parentId: true, ...(words ? { searchText: true } : {}) },
+    select: { id: true, title: true, updatedAt: true, createdAt: true, parentId: true, parent: { select: { taskId: true } }, ...(words ? { searchText: true } : {}) },
     ...(words ? { take: 200 } : {}),
   });
   return rows.map((row) => ({
     id: row.id,
     parentId: row.parentId,
+    ...(row.parent?.taskId ? { parentTaskId: row.parent.taskId } : {}),
     title: row.title || "Untitled",
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -255,10 +258,35 @@ export function searchSnippet(text: string, title: string, query: string): strin
 }
 
 /** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
+/** Where a nested page goes: inside a page, or inside a task's page. */
+export type PageParent = { parentPageId?: string | null; parentTaskId?: string | null };
+
+/**
+ * The page a new page nests under: a page of this space, or a task's own page (made now if the
+ * task has none yet). Null for none. Throws when the parent is not there.
+ */
+export async function resolvePageParent(db: Db, userId: string, parent: PageParent): Promise<string | null> {
+  if (parent.parentTaskId) {
+    const task = await db.task.findFirst({ where: { id: parent.parentTaskId, userId, deletedAt: null }, select: { id: true, title: true, notes: true } });
+    if (!task) throw new TaskPageError("PARENT_NOT_FOUND", "That task is not in this space.", 404);
+    const page = await db.taskPage.findUnique({ where: { taskId: task.id }, select: { id: true } });
+    if (page) return page.id;
+    const made = await db.taskPage.create({ data: { userId, taskId: task.id, notesSnapshot: task.notes, searchText: pageSearchText(task.title, null, task.notes) }, select: { id: true } });
+    return made.id;
+  }
+  if (parent.parentPageId) {
+    const page = await db.taskPage.findFirst({ where: { id: parent.parentPageId, userId, deletedAt: null }, select: { id: true } });
+    if (!page) throw new TaskPageError("PARENT_NOT_FOUND", "That page is not in this space.", 404);
+    return page.id;
+  }
+  return null;
+}
+
 export async function createStandalonePage(
   prisma: Db,
   userId: string,
   from: { title: string; content: PageDocument; sourceFileId: string | null; externalSource?: string; externalId?: string } | null = null,
+  options: { parentId?: string | null } = {},
 ): Promise<StandalonePageSummary> {
   const title = from?.title.trim() || "Untitled";
   const content = from ? storable(restoreMentionLinks(PageDocument.parse(from.content))) : EMPTY_PAGE;
@@ -275,6 +303,7 @@ export async function createStandalonePage(
       notesSnapshot: "",
       searchText: pageSearchText(title, content, ""),
       sourceFileId: from?.sourceFileId ?? null,
+      ...(options.parentId ? { parentId: options.parentId } : {}),
       ...(from?.externalSource && from.externalId ? { externalSource: from.externalSource, externalId: from.externalId } : {}),
       ...(mentions.length ? { mentions: { createMany: { data: mentions.map((mention) => ({ kind: mention.kind, entityId: mention.entityId, label: mention.label })) } } } : {}),
     },
