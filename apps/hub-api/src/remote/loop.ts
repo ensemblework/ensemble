@@ -27,6 +27,7 @@ import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { credentialCapabilities } from "../credentials/capabilities.js";
+import { flushFileChanges } from "./node-files.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
@@ -428,6 +429,7 @@ async function beat(app: FastifyInstance, client: HostedClient, signal: AbortSig
     capabilities: await deviceCapabilities(app),
   });
   lastHeartbeatAt = Date.now();
+  void flushFileChanges(client).catch(error => app.log.warn({ err: error }, "original-file metadata remains queued"));
   if (loadSettings().unreachable) updateSettings({ unreachable: null });
   for (const id of reply.cancel) {
     const local = held()[id]?.localJobId;

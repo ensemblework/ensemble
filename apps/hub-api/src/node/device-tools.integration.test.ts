@@ -123,6 +123,22 @@ function computer(laptopId: string, key: { inject: HttpUser["inject"] }, answer:
 
 const gitStatus = { calls: [{ name: "computer_git", arguments: { folder: "app", op: "status" } }], then: "Checked." };
 
+test("file tracking failures are visible without rejecting an otherwise successful command", async () => {
+  const user = await person("File tracking owner");
+  const { laptop, key } = await laptopFor(user, "unattended", { nodeTools: 3 });
+  const { node, room } = await createNode(user);
+  script = () => ({ calls: [{ name: "computer_run", arguments: { folder: "app", command: "pwd" } }], then: "Command ran." });
+  const device = computer(laptop.id, key, () => ({ status: 200, body: { stdout: "/project\n", exitCode: 0, fileTrackingError: "Edited-file tracking is unavailable (EACCES)." } }));
+  try {
+    await say(user, room.id, "Show the working folder");
+    const messages = await rows(user, room.id);
+    const warning = messages.find(message => message.data?.type === "file_tracking");
+    assert.ok(warning?.private);
+    assert.match(warning!.body, /unavailable/);
+    assert.equal((await lastReply(user, room.id, node.id)).body, "Command ran.");
+  } finally { device.stop(); }
+});
+
 /** Posts a message without waiting for the turns it starts (one may wait for its owner). */
 async function post(user: HttpUser, roomId: string, body: string) {
   const response = await user.inject({ method: "POST", url: `/api/node/rooms/${roomId}/messages`, payload: { body } });

@@ -68,6 +68,7 @@ import { followPresence } from "./status-cards.js";
 import { assignable, registerTaskAssignment } from "./task-assignment.js";
 import { sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
 import { answerFromChat } from "./chat-answers.js";
+import { FileQuote, registerFileWorkspace, validateFileQuotes } from "./file-workspace.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -361,6 +362,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
   registerOutbox();
   registerRoutineRoutes(app);
   const prisma = app.prisma;
+  await registerFileWorkspace(app, nodeAccount);
   // Rooms with other people: trust, status cards, peer requests, Share to room (node/peer-routes.ts).
   await registerPeerRoutes(app);
   // Sign-in cards: the computer's pinned key for typed answers, and the answers (node/logins.ts, B11).
@@ -971,11 +973,13 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       private: z.boolean().optional(),
       replyToId: z.string().uuid().optional(),
       files: z.array(z.string().uuid()).max(MESSAGE_FILES_MAX).optional(),
+      fileQuotes: z.array(FileQuote).max(4).optional(),
     }).strict().parse(request.body);
     const text = stripLoneSurrogates(body.body).trim();
     // Files ride on a message by reference: they stay in the sender's Files (src/files).
     const files = await messageFiles(prisma, accountId, body.files ?? []);
-    if (!text && !files.length) throw fail(400, "That message is empty.");
+    const fileQuotes = await validateFileQuotes(prisma, accountId, body.fileQuotes ?? [], room.kind !== "room" || Boolean(body.private));
+    if (!text && !files.length && !fileQuotes.length) throw fail(400, "That message is empty.");
     if (room.kind === "task") throw fail(403, "This is a helper's room: you read along, and talk to the node that made it in your chat with it.");
     // Nodes spend model credits on the account's behalf: same rule as the assistant.
     await requireVerifiedUser(accountId);
@@ -995,13 +999,13 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       userId: accountId,
       authorKind: "human",
       body: text,
-      ...(replyTo || files.length ? { data: { ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}) } } : {}),
+      ...(replyTo || files.length || fileQuotes.length ? { data: { ...(replyTo ? { replyTo } : {}), ...(files.length ? { files } : {}), ...(fileQuotes.length ? { fileQuotes } : {}) } } : {}),
       visibleTo,
       mentions: mentionsFor(text, members, visibleTo),
       clientId: body.clientId ?? null,
     });
     // "stop" / "stop all" from a person with nodes here stops their work at once, without a model (node/stop.ts).
-    const command = !duplicate && !files.length ? stopCommand(text) : null;
+    const command = !duplicate && !files.length && !fileQuotes.length ? stopCommand(text) : null;
     if (command && members.some((row) => row.nodeId && row.userId === accountId)) {
       const stopped = await stopWork(app, room, accountId, command);
       await postMessage(prisma, { roomId: room.id, userId: accountId, authorKind: "system", kind: "status", body: stoppedLine(stopped), data: { stopped } as Prisma.InputJsonObject, visibleTo: [accountId] });
@@ -1206,7 +1210,12 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     };
     const lines = [`# ${room.title}`, "", `Exported from Ensemble Node on ${new Date().toISOString()}.`, ""];
     for (const row of rows) {
-      const text = messageDeleted(row) ? "_Deleted message_" : row.body;
+      const data = row.data as { fileQuotes?: unknown };
+      const quotes = !messageDeleted(row) && Array.isArray(data.fileQuotes) ? data.fileQuotes.map(value => {
+        const quote = FileQuote.parse(value);
+        return `> **${quote.source.path} · lines ${quote.from}-${quote.to}${quote.draft ? " · unsaved selection" : ""}**\n>\n${quote.text.split("\n").map(line => `> ${line}`).join("\n")}`;
+      }).join("\n\n") : "";
+      const text = messageDeleted(row) ? "_Deleted message_" : [quotes, row.body].filter(Boolean).join("\n\n");
       lines.push(`**${label(row)}** · ${row.createdAt.toISOString()}${row.visibleTo.length ? " · private" : ""}`, "", text, "");
     }
     const file = `${room.title.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "room"}.md`;

@@ -27,8 +27,10 @@ import { runNodeTerminal } from "./terminal.js";
 import { runNodeSudo, SUDO_WINDOWS } from "./sudo.js";
 import { runNodeShare } from "./share.js";
 import { runNodeLive } from "./terminal-sessions.js";
+import { fileWatchFailure, trackFileChanges } from "./file-changes.js";
+import { reportChangedPaths } from "../remote/node-files.js";
 
-type App = Pick<FastifyInstance, "prisma">;
+type App = Pick<FastifyInstance, "prisma"> & Partial<Pick<FastifyInstance, "log">>;
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
 const answer = (status: number, body: Record<string, unknown>): CodeAnswer => ({ status, body });
@@ -72,7 +74,21 @@ async function scopeOf(request: Exclude<NodeToolRequest, { tool: "secret_http" |
  */
 export async function nodeToolAnswerFor(app: App, client: HostedClient, request: NodeToolRequest, send: (reply: CodeAnswer) => Promise<void>): Promise<void> {
   let grantsUsed: string[] = [];
-  const reply = (status: number, body: Record<string, unknown>) => send(answer(status, { ...body, ...(grantsUsed.length ? { grantsUsed } : {}) }));
+  let stopTracking: (() => Promise<void>) | undefined;
+  let fileFolder: ToolFolder | null = null;
+  const changed: string[] = [];
+  let trackingWarning: string | null = null;
+  const warn = (error: unknown) => {
+    if (app.log) app.log.warn({ err: error, nodeId: request.nodeId }, "original-file tracking or reporting needs attention");
+    else console.warn("Original-file metadata could not be reported:", error);
+  };
+  const reply = (status: number, body: Record<string, unknown>) => {
+    if (status < 300 && request.tool === "files") {
+      changed.push(typeof body.path === "string" ? body.path : request.path);
+      if ("to" in request && typeof request.to === "string") changed.push(request.to);
+    }
+    return send(answer(status, { ...body, ...(grantsUsed.length ? { grantsUsed } : {}), ...(trackingWarning ? { fileTrackingError: trackingWarning } : {}) }));
+  };
   try {
     // Stopping the node's own command needs no answer from anyone: only that node's run is stopped.
     if (request.tool === "run_stop") {
@@ -110,6 +126,11 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     }
     const folder = where?.folder;
     if (!folder) return reply(400, { error: "That request could not be read." });
+    fileFolder = folder;
+    if (["run", "sudo", "terminal"].includes(request.tool) && request.operationId) {
+      try { stopTracking = await trackFileChanges(client, request, folder, warn); }
+      catch (error) { trackingWarning = fileWatchFailure(error); if (!trackingWarning) throw error; warn(error); }
+    }
     if (request.tool === "run") return await runNodeCommand(app, client, request, folder, (out) => reply(out.status, (out.body ?? {}) as Record<string, unknown>));
     if (request.tool === "sudo") return await runNodeSudo(app, client, request, folder, (out) => reply(out.status, (out.body ?? {}) as Record<string, unknown>));
     if (request.tool === "terminal") return reply(200, (await runNodeTerminal(app, client, request, folder)) as Record<string, unknown>);
@@ -130,6 +151,9 @@ export async function nodeToolAnswerFor(app: App, client: HostedClient, request:
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ENOENT") return reply(404, { error: "That folder or file is not there." });
     return reply(500, { error: error instanceof Error ? error.message.slice(0, 300) : "This computer could not do that." });
+  } finally {
+    await stopTracking?.();
+    if (fileFolder && changed.length) await reportChangedPaths(client, request, fileFolder, changed).catch(warn);
   }
 }
 

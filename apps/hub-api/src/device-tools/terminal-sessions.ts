@@ -37,6 +37,7 @@ import { dangerousCommand, dangerousMessage } from "./dangerous.js";
 import { nodeToolDenies, type ToolFolder } from "./folders.js";
 import { stopWithCommands } from "./run.js";
 import { keyBytes, namedKey, terminalEnv } from "./terminal.js";
+import { fileWatchFailure, trackFileChanges } from "./file-changes.js";
 
 export type LiveRequest = Extract<NodeToolRequest, { tool: "live" }>;
 type App = Pick<FastifyInstance, "prisma">;
@@ -89,6 +90,9 @@ export type TerminalSession = {
   client: HostedClient;
   timers: NodeJS.Timeout[];
   forget: () => void;
+  stopFileTracking?: () => Promise<void>;
+  fileTrackingRequest?: { nodeId: string; operationId?: string };
+  fileTrackingError?: string;
 };
 
 const sessions = new Map<string, TerminalSession>();
@@ -348,6 +352,11 @@ async function openSession(app: App, client: HostedClient, request: LiveRequest,
     forget: () => undefined,
   };
   await refreshRules(app, session);
+  if (request.operationId) {
+    session.fileTrackingRequest = { nodeId: request.nodeId, operationId: request.operationId };
+    try { session.stopFileTracking = await trackFileChanges(client, session.fileTrackingRequest, folder, error => console.warn("Live terminal original-file tracking:", error)); }
+    catch (error) { const warning = fileWatchFailure(error); if (!warning) throw error; session.fileTrackingError = warning; console.warn(warning); }
+  }
   // Shell integration marks: where a prompt ends and typing starts (B), and where a command starts (C).
   term.parser.registerOscHandler(133, (data) => {
     const mark = data.split(";")[0];
@@ -420,7 +429,7 @@ async function openSession(app: App, client: HostedClient, request: LiveRequest,
   await settle(session, 60, 500);
   if (session.ended) return answer(500, { error: `The shell ended at once (exit code ${session.ended.exitCode ?? "unknown"}).`, ...(await sessionView(session)) });
   await ledger("node.tool.terminal_session", { nodeId: request.nodeId, session: id, action: "open", shell, folder: folder.label, operationId: request.operationId ?? null });
-  return answer(200, { ...(await sessionView(session)) });
+  return answer(200, { ...(await sessionView(session)), ...(session.fileTrackingError ? { fileTrackingError: session.fileTrackingError } : {}) });
 }
 
 /** The node's own session, or why not: one that ended (or never was here) answers so, and its card ends. */
@@ -479,6 +488,7 @@ function track(session: TerminalSession, token: Token): void {
 
 /** Types what the node sends, judging each line before its Enter; answers the screen after. */
 async function sendTo(app: App, request: LiveRequest, session: TerminalSession): Promise<CodeAnswer> {
+  if (session.fileTrackingRequest && request.operationId) session.fileTrackingRequest.operationId = request.operationId;
   if (session.ended) return answer(200, { ...(await sessionView(session)) });
   if (session.controlledBy) return answer(409, { error: "Your owner has taken control of this terminal from the web. terminal_read shows what they do; try again once they hand it back.", ...(await sessionView(session)) });
   const tokens = tokensOf(request);
@@ -536,6 +546,7 @@ export async function closeSession(id: string, reason: string, exitCode: number 
   killGroup(`node-live:${id}`);
   session.events.emit("ended", "ended" satisfies SessionChange);
   await Promise.race([session.done, sleep(2_000)]);
+  await session.stopFileTracking?.();
   session.forget();
   sessions.delete(id);
   await rm(join(session.fifo, ".."), { recursive: true, force: true }).catch(() => undefined);

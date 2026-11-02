@@ -10,7 +10,7 @@ import { nodeTemplate, paletteAvatar, type NodeAvatar } from "./templates.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type MessageKind = "text" | "approval" | "run" | "status" | "error" | "plan";
+export type MessageKind = "text" | "approval" | "run" | "status" | "error" | "plan" | "files";
 
 export const visibleWhere = (accountId: string): Prisma.NodeMessageWhereInput => ({
   OR: [{ visibleTo: { isEmpty: true } }, { visibleTo: { has: accountId } }],
