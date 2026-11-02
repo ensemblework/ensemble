@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Lock, ShieldCheck, X } from "lucide-react";
 import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, Tag } from "@/components/ui";
 import { api, type AgentDecisionRecord } from "@/lib/api";
@@ -462,9 +462,38 @@ function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
   );
 }
 
+/** Longest a browser timer can wait (about 24 days). */
+const MAX_TIMER = 2 ** 31 - 1;
+
+/**
+ * Pending questions, without the ones whose time ran out: an expired question leaves at its
+ * deadline, not on the next poll, and the list (and the sidebar's count) is read again then.
+ */
+export function usePendingDecisions() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000, refetchOnWindowFocus: true });
+  const rows = query.data?.decisions;
+  const [now, setNow] = useState(() => Date.now());
+  const next = useMemo(() => {
+    const ahead = (rows ?? []).map((row) => Date.parse(row.expiresAt)).filter((at) => Number.isFinite(at) && at > now);
+    return ahead.length ? Math.min(...ahead) : null;
+  }, [rows, now]);
+  useEffect(() => {
+    if (next === null) return;
+    const timer = window.setTimeout(() => {
+      setNow(Date.now());
+      void client.invalidateQueries({ queryKey: ["decisions"] });
+      void client.invalidateQueries({ queryKey: ["shell"] });
+    }, Math.min(MAX_TIMER, Math.max(0, next - Date.now()) + 250));
+    return () => window.clearTimeout(timer);
+  }, [next, client]);
+  const decisions = useMemo(() => (rows ?? []).filter((row) => !(Date.parse(row.expiresAt) <= now)), [rows, now]);
+  return { ...query, decisions };
+}
+
 export function EditorDecisions({ hideEmpty = false }: { hideEmpty?: boolean }) {
-  const pending = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000 });
-  const all = pending.data?.decisions ?? [];
+  const pending = usePendingDecisions();
+  const all = pending.decisions;
   const mine = all.filter((row) => row.source === "ensemble");
   const rows = all.filter((row) => row.source !== "ensemble");
   return (

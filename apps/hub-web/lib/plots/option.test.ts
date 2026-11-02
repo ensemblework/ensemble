@@ -293,10 +293,10 @@ test("max ticks set an interval, a notch stays out of the legend, and minor grid
   const yAxis = (grid.yAxis as Array<{ splitLine?: { lineStyle?: { color?: string; width?: number; opacity?: number } }; minorSplitLine?: { lineStyle?: { color?: string; width?: number; opacity?: number } } }>)[0];
   const minor = yAxis?.minorSplitLine?.lineStyle;
   const major = yAxis?.splitLine?.lineStyle;
-  assert.equal(minor?.color, "rgba(243, 238, 230, 0.55)");
+  assert.equal(minor?.color, "rgba(243, 238, 230, 0.33)");
   assert.equal(minor?.width, 0.65);
   assert.equal(minor?.opacity, 1);
-  assert.equal(major?.color, "rgba(243, 238, 230, 0.65)");
+  assert.equal(major?.color, "rgba(243, 238, 230, 0.4)");
   assert.equal(major?.width, 1);
   assert.ok((major?.width ?? 0) >= (minor?.width ?? 0));
   const majorAlpha = Number(major?.color?.match(/[\d.]+\)/)?.[0]?.replace(")", ""));
@@ -315,7 +315,7 @@ test("max ticks set an interval, a notch stays out of the legend, and minor grid
     { ink: "#1c1915", muted: "#6d675e", line: "rgba(28,25,21,0.08)", panel: "#fffcf7", accent: "#5346d6", dark: false },
   );
   const lightMajor = (light.yAxis as Array<{ splitLine?: { lineStyle?: { color?: string; width?: number } } }>)[0]?.splitLine?.lineStyle;
-  assert.equal(lightMajor?.color, "rgba(28, 25, 21, 0.5)");
+  assert.equal(lightMajor?.color, "rgba(28, 25, 21, 0.25)");
   assert.equal(lightMajor?.width, 1);
 });
 
@@ -344,4 +344,45 @@ test("a confusion matrix keeps class order with the first class at the top", () 
   assert.deepEqual(x.data, ["cat", "dog", "bird", "deer"]);
   assert.deepEqual(y.data, ["cat", "dog", "bird", "deer"]);
   assert.equal(y.inverse, true);
+});
+
+test("a scatter with many points draws its markers, a dense line hides them", () => {
+  const theme = { ink: "#111", muted: "#666", line: "#ddd", panel: "#fff", accent: "#f0a0b8", dark: false };
+  const frame = {
+    columns: [
+      { name: "x", type: "number" as const },
+      { name: "y", type: "number" as const },
+    ],
+    rows: Array.from({ length: 200 }, (_, index) => [index, (index * 7) % 13]),
+  };
+  const config = defaultPlotConfig();
+  config.x = "x";
+  config.series = [{ y: "y", axis: "left" }];
+  config.chart = "scatter";
+  const scatter = (chartOption(frame, config, theme).series as Array<{ type: string; symbol: string }>)[0];
+  assert.equal(scatter?.type, "scatter");
+  assert.equal(scatter?.symbol, "circle");
+  config.chart = "line";
+  const line = (chartOption(frame, config, theme).series as Array<{ symbol: string }>)[0];
+  assert.equal(line?.symbol, "none");
+});
+
+test("a box plot leaves empty cells out instead of counting them as zero", () => {
+  const theme = { ink: "#111", muted: "#666", line: "#ddd", panel: "#fff", accent: "#f0a0b8", dark: false };
+  const config = defaultPlotConfig();
+  config.chart = "box";
+  config.x = "group";
+  config.series = [{ y: "mass", axis: "left" }];
+  const frame = {
+    columns: [
+      { name: "group", type: "category" as const },
+      { name: "mass", type: "number" as const },
+    ],
+    rows: [["a", 3700], ["a", 3800], ["a", null], ["a", ""], ["a", 3900], ["a", 4000]],
+  };
+  const option = chartOption(frame, config, theme);
+  const box = (option.series as Array<{ type: string; data: number[][] }>).find((series) => series.type === "boxplot");
+  assert.equal(box?.data[0]?.[0], 3700);
+  const outliers = (option.series as Array<{ name?: string }>).find((series) => series.name === "Outliers");
+  assert.equal(outliers, undefined);
 });

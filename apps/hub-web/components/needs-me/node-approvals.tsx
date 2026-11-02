@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ArrowUpRight, Check, KeyRound, LogIn, Monitor, X } from "lucide-react";
 import { useToast } from "@/components/toast";
-import { api, type NodeApprovalCard } from "@/lib/api";
+import { api, ApiError, type NodeApprovalCard } from "@/lib/api";
 import { keptText, parseAllow, routeText, secretAnswer, targetFingerprint } from "@/lib/node-secret";
 import { codeAnswer, loginFingerprint, loginRouteText, typedLoginAnswer } from "@/lib/node-login";
 import { relative } from "@/lib/format";
@@ -222,7 +222,8 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
 
 /** The person's Ensemble Node approval cards. Ensemble on a computer has no Node, so a refusal there is an empty list. */
 export function useNodeApprovals() {
-  return useQuery({ queryKey: ["node-approvals"], queryFn: api.nodeApprovals, retry: false, staleTime: 15_000 });
+  // Cards answered or closed on Node leave here too: the live stream says so, and this poll is the fallback.
+  return useQuery({ queryKey: ["node-approvals"], queryFn: api.nodeApprovals, retry: false, staleTime: 15_000, refetchInterval: 30_000, refetchOnWindowFocus: true });
 }
 
 function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string | null }) {
@@ -238,6 +239,8 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
     },
     onSuccess: (_result, decision) => toast(decision === "approve" ? `Approved. @${card.node?.slug ?? "the node"} goes on.` : card.data.type === "login" ? "Not now. The work goes on without it." : "Discarded. Nothing was done."),
     onError: (error, _decision, context) => {
+      // Already answered or closed on Node: the card stays gone.
+      if (error instanceof ApiError && error.status === 409) return toast("This was already settled.");
       if (context?.previous) client.setQueryData(["node-approvals"], context.previous);
       toast((error as Error).message, { tone: "error" });
     },

@@ -446,7 +446,8 @@ export function watchDecision(app: FastifyInstance, id: string): void {
           return await answered(app, row, null);
         }
         if (row.expiresAt < new Date()) {
-          await app.prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+          const closed = await app.prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+          if (closed.count) sseHub.publish(row.userId, { event: "decision", data: { id, status: "expired" } });
           continue;
         }
         await changed(id, RECHECK_MS);

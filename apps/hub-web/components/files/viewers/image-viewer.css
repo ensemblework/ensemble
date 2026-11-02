@@ -1,0 +1,92 @@
+/* Files: a picture on a backdrop drawn from its own colours (no transparency grid). */
+.image-stage {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 45%, color-mix(in srgb, var(--image-tone, var(--panel)) 22%, transparent), transparent 70%),
+    var(--panel);
+  transition: background-color 200ms ease;
+}
+
+.image-stage[data-ambient="true"] {
+  background-color: color-mix(in srgb, var(--image-tone) 55%, var(--bg));
+}
+
+.image-stage-glow {
+  position: absolute;
+  inset: -12%;
+  z-index: -1;
+  width: 124%;
+  height: 124%;
+  max-width: none;
+  object-fit: cover;
+  filter: blur(48px) saturate(1.35);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+  animation: image-stage-in 260ms ease-out both;
+}
+
+/* Keeps the backdrop quiet next to the app's own surfaces. */
+.image-stage[data-ambient="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(120% 100% at 50% 50%, transparent 35%, color-mix(in srgb, var(--bg) 55%, transparent));
+  pointer-events: none;
+}
+
+.image-stage-frame {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(12px, 3vw, 32px);
+}
+
+.image-stage[data-compact="true"] .image-stage-frame {
+  padding: 10px;
+}
+
+.image-stage-scroll {
+  display: block;
+  overflow: auto;
+}
+
+.image-stage-scroll > .image-stage-picture {
+  display: block;
+  margin: auto;
+}
+
+.image-stage-picture {
+  border-radius: 6px;
+}
+
+.image-stage[data-ambient="true"] .image-stage-picture {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent),
+    0 18px 48px -12px rgb(0 0 0 / 0.45);
+}
+
+/* See-through pictures (logos, icons): a shadow that follows their shape. */
+.image-stage[data-ambient="false"] .image-stage-picture {
+  border-radius: 0;
+  filter: drop-shadow(0 10px 24px rgb(0 0 0 / 0.22));
+}
+
+@keyframes image-stage-in {
+  from { opacity: 0; }
+  to { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-stage-glow { animation: none; }
+}

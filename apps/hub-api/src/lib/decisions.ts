@@ -8,6 +8,7 @@
 import { EventEmitter } from "node:events";
 import type { AgentDecision, Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma.js";
+import { sseHub } from "./sse.js";
 import { actorFor } from "../sharing/context.js";
 
 export const decisionBus = new EventEmitter();
@@ -207,10 +208,15 @@ export async function waitFor(id: string, timeoutMs: number): Promise<AgentDecis
   });
 }
 
+/** Closes pending requests whose time ran out, and tells each person's open Needs me so the cards leave. */
 export async function expireStale(userId?: string): Promise<number> {
-  const result = await prisma.agentDecision.updateMany({
-    where: { status: "pending", expiresAt: { lt: new Date() }, ...(userId ? { userId } : {}) },
-    data: { status: "expired" },
-  });
+  const where = { status: "pending", expiresAt: { lt: new Date() }, ...(userId ? { userId } : {}) };
+  const stale = await prisma.agentDecision.findMany({ where, select: { id: true, userId: true }, take: 500 });
+  if (!stale.length) return 0;
+  const result = await prisma.agentDecision.updateMany({ where: { ...where, id: { in: stale.map((row) => row.id) } }, data: { status: "expired" } });
+  for (const row of stale) {
+    decisionBus.emit(row.id);
+    sseHub.publish(row.userId, { event: "decision", data: { id: row.id, status: "expired" } });
+  }
   return result.count;
 }

@@ -31,7 +31,8 @@ async function countOrZero(query: Promise<number>): Promise<number> {
 /** Requests the Hub's Needs me lists: the ones waiting on a card in a Node chat are answered there (node/run-decisions.ts). */
 async function hubDecisionCount(prisma: FastifyInstance["prisma"], userId: string): Promise<number> {
   const chat = await nodeChatDecisions(prisma, userId);
-  return prisma.agentDecision.count({ where: { userId, status: "pending", ...(chat.ids.size ? { id: { notIn: [...chat.ids] } } : {}) } });
+  // A request past its time is closed on the next sweep: it no longer counts.
+  return prisma.agentDecision.count({ where: { userId, status: "pending", expiresAt: { gt: new Date() }, ...(chat.ids.size ? { id: { notIn: [...chat.ids] } } : {}) } });
 }
 
 export async function viewRoutes(app: FastifyInstance): Promise<void> {

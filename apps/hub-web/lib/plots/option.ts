@@ -305,6 +305,8 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
     if (yIndex >= 0) {
       for (const row of applyFilter(frame, config.filter).rows) {
         const raw = row[yIndex];
+        // An empty cell is missing, not zero.
+        if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) continue;
         const value = typeof raw === "number" ? raw : Number(raw);
         if (!Number.isFinite(value)) continue;
         if (config.yLogLeft && value <= 0) continue;
@@ -527,7 +529,8 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
       progressive: heavy ? 8000 : 0,
       progressiveThreshold: 4000,
       large: type === "scatter" && heavy,
-      symbol: (encoding?.marker ?? "auto") === "none" ? "none" : encoding?.marker === "auto" || !encoding?.marker ? (sampled.length > 24 ? "none" : "circle") : encoding.marker,
+      // "auto" hides markers on a dense line; a scatter's markers are the data, so it always draws them.
+      symbol: (encoding?.marker ?? "auto") === "none" ? "none" : encoding?.marker === "auto" || !encoding?.marker ? (type !== "scatter" && sampled.length > 24 ? "none" : "circle") : encoding.marker,
       symbolSize: mark === "bubble" ? (value: number[]) => Math.max(6, Math.min(36, (value[2] ?? 8) / 2)) : 6,
       lineStyle: { width: encoding?.width ?? 1.5, type: DASH[encoding?.lineStyle ?? "solid"], color },
       itemStyle: { color, opacity: encoding?.opacity ?? (area ? 0.9 : 1) },

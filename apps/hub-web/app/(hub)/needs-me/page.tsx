@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Bot, Check, CheckCheck, CircleHelp, Clock3, Lock, MessagesSquare, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
-import { EditorDecisions } from "@/components/needs-me/editor-decisions";
+import { EditorDecisions, usePendingDecisions } from "@/components/needs-me/editor-decisions";
 import { NodeApprovals, useNodeApprovals } from "@/components/needs-me/node-approvals";
 import { usePeek } from "@/components/shell/peek";
 import { useToast } from "@/components/toast";
@@ -159,9 +159,9 @@ function NodeChatLine({ count, url }: { count: number; url: string | null }) {
 
 export default function NeedsMePage() {
   const client = useQueryClient();
-  const approvals = useQuery({ queryKey: ["approvals"], queryFn: api.approvals });
+  const approvals = useQuery({ queryKey: ["approvals"], queryFn: api.approvals, refetchInterval: 30_000, refetchOnWindowFocus: true });
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
-  const decisions = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000 });
+  const decisions = usePendingDecisions();
   // Ensemble Node's cards; where there is no Node (Ensemble on a computer) the list is empty.
   const nodes = useNodeApprovals();
   const nodeCards = nodes.data?.approvals ?? [];
@@ -169,7 +169,7 @@ export default function NeedsMePage() {
   useWarmEditors("peek");
   const blocked = (tasks.data?.tasks ?? []).filter((task) => task.status === "blocked" || task.status === "waiting_approval").sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
   const pendingApprovals = approvals.data?.approvals ?? [];
-  const requests = decisions.data?.decisions ?? [];
+  const requests = decisions.decisions;
   // Requests a node's runs and tools ask are answered in their Node chat; here they are only counted.
   const nodeChat = decisions.data?.nodeChat ?? null;
   const inNodeChats = nodeChat?.count ?? 0;

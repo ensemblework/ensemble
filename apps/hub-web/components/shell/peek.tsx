@@ -19,7 +19,6 @@ import { usePersistentState } from "@/lib/prefs";
 
 /** `page`: a standalone page, as on custom boards. */
 export type PeekKind = "task" | "deliverable" | "project" | "page";
-type PeekMode = "side" | "page";
 
 type PeekState = {
   peekId: string | null;
@@ -28,8 +27,6 @@ type PeekState = {
   close: () => void;
   fullscreen: boolean;
   setFullscreen: (value: boolean) => void;
-  mode: PeekMode;
-  setMode: (mode: PeekMode) => void;
 };
 
 const PeekContext = createContext<PeekState>({
@@ -39,8 +36,6 @@ const PeekContext = createContext<PeekState>({
   close: () => {},
   fullscreen: false,
   setFullscreen: () => {},
-  mode: "side",
-  setMode: () => {},
 });
 
 export const usePeek = () => useContext(PeekContext);
@@ -61,12 +56,11 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
   const peekId = params.get("peek");
   const kind = asKind(params.get("kind"));
   const [fullscreen, setFullscreen] = usePersistentState("ensemble.peek.fullscreen", false);
-  const [mode, setMode] = usePersistentState<PeekMode>("ensemble.peek.mode", "side");
   const peeked = useRef<string | null>(null);
   useEffect(() => {
-    if (peekId && peekId !== peeked.current) track("peek.open", { kind, mode });
+    if (peekId && peekId !== peeked.current) track("peek.open", { kind });
     peeked.current = peekId;
-  }, [peekId, kind, mode]);
+  }, [peekId, kind]);
 
   const withPeek = useCallback(
     (id: string | null, nextKind: PeekKind = "task") => {
@@ -91,12 +85,9 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
     (id: string, nextKind: PeekKind = "task") => {
       opening.current = true;
       window.setTimeout(() => { opening.current = false; }, 0);
-      if (mode === "page" && nextKind === "task") router.push(`/tasks/${id}`);
-      else if (mode === "page" && nextKind === "project") router.push(`/projects/${id}`);
-      else if (mode === "page" && nextKind === "page") router.push(`/pages/${id}`);
-      else router.push(withPeek(id, nextKind), { scroll: false });
+      router.push(withPeek(id, nextKind), { scroll: false });
     },
-    [mode, router, withPeek],
+    [router, withPeek],
   );
   const close = useCallback(() => router.push(withPeek(null), { scroll: false }), [router, withPeek]);
 
@@ -144,7 +135,7 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
   }, [peekId, close]);
 
   return (
-    <PeekContext.Provider value={{ peekId, kind, open, close, fullscreen, setFullscreen, mode, setMode }}>
+    <PeekContext.Provider value={{ peekId, kind, open, close, fullscreen, setFullscreen }}>
       {children}
     </PeekContext.Provider>
   );

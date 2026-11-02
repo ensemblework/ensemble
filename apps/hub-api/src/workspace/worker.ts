@@ -183,7 +183,8 @@ async function markInterrupted(app: FastifyInstance, job: { id: string; taskId: 
     data: { status: "interrupted", finishedAt: new Date(), error: message, progress: "Interrupted" },
   });
   await app.prisma.task.updateMany({ where: { id: job.taskId, status: "in_progress", owner: "agent" }, data: { status: "blocked" } });
-  await app.prisma.agentDecision.updateMany({ where: { sessionId: job.id, status: "pending" }, data: { status: "expired" } });
+  const closed = await app.prisma.agentDecision.updateMany({ where: { sessionId: job.id, status: "pending" }, data: { status: "expired" } });
+  if (closed.count) sseHub.publish(job.userId, { event: "decision", data: { status: "expired" } });
   await endOpenRuns(app.prisma, [job.id], message);
 }
 
