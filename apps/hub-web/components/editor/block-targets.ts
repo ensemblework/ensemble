@@ -21,18 +21,18 @@ export type BlockTarget = {
 };
 
 /** The block measured against the editor: top, bottom, the middle of its own line and its left edge. */
-export type MeasuredTarget = BlockTarget & { top: number; bottom: number; middle: number; left: number };
+export type MeasuredTarget = BlockTarget & { top: number; bottom: number; middle: number; left: number; headTop: number; headBottom: number };
 
 export const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"]);
 export const ITEM_TYPES = new Set(["listItem", "taskItem"]);
 const NESTING = new Set([...ITEM_TYPES, "toggleBlock"]);
 
-export function blockTargets(view: EditorView): BlockTarget[] {
-  const out: BlockTarget[] = [];
-  const element = (pos: number): HTMLElement | null => {
-    const dom = view.nodeDOM(pos);
-    return dom instanceof HTMLElement ? dom : null;
-  };
+/** A block in the document alone (no DOM): where it starts, where its siblings start, and how deep it is. */
+export type BlockPosition = { pos: number; node: PMNode; parent: number; depth: number };
+
+/** The page's blocks in document order, a block before the blocks nested in it (see `BlockTarget`). */
+export function blockPositions(doc: PMNode): BlockPosition[] {
+  const out: BlockPosition[] = [];
   const visit = (parent: PMNode, start: number, depth: number, skipFirst: boolean) => {
     parent.forEach((child, offset, index) => {
       const pos = start + offset;
@@ -41,15 +41,36 @@ export function blockTargets(view: EditorView): BlockTarget[] {
         return;
       }
       if (skipFirst && index === 0) return;
-      const dom = element(pos);
-      if (dom) {
-        const first = NESTING.has(child.type.name) && child.firstChild?.isBlock ? element(pos + 1) : null;
-        out.push({ pos, node: child, element: dom, head: first ?? dom, parent: start, depth, marker: child.type.name === "listItem" });
-      }
+      out.push({ pos, node: child, parent: start, depth });
       if (NESTING.has(child.type.name)) visit(child, pos + 1, depth + 1, true);
     });
   };
-  visit(view.state.doc, 0, 0, false);
+  visit(doc, 0, 0, false);
+  return out;
+}
+
+/** The innermost block a position is in, or null between top-level blocks. */
+export function blockAround(blocks: readonly BlockPosition[], pos: number): BlockPosition | null {
+  let found: BlockPosition | null = null;
+  for (const block of blocks) {
+    if (block.pos >= pos) break;
+    if (pos < block.pos + block.node.nodeSize) found = block;
+  }
+  return found;
+}
+
+export function blockTargets(view: EditorView): BlockTarget[] {
+  const out: BlockTarget[] = [];
+  const element = (pos: number): HTMLElement | null => {
+    const dom = view.nodeDOM(pos);
+    return dom instanceof HTMLElement ? dom : null;
+  };
+  for (const block of blockPositions(view.state.doc)) {
+    const dom = element(block.pos);
+    if (!dom) continue;
+    const first = NESTING.has(block.node.type.name) && block.node.firstChild?.isBlock ? element(block.pos + 1) : null;
+    out.push({ ...block, element: dom, head: first ?? dom, marker: block.node.type.name === "listItem" });
+  }
   return out;
 }
 
@@ -68,6 +89,8 @@ export function measureTargets(root: HTMLElement, targets: readonly BlockTarget[
       bottom: rect.bottom - box.top,
       middle: (head.top + head.bottom) / 2 - box.top,
       left: rect.left - box.left,
+      headTop: head.top - box.top,
+      headBottom: head.bottom - box.top,
     });
   }
   return out;

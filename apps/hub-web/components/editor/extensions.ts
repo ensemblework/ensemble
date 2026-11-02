@@ -26,6 +26,7 @@ import {
 } from "./editor-commands";
 import { PageLink, Underline, NotionColor } from "./imported-blocks";
 import { TrailingBlock } from "./trailing-block";
+import { BlockEscape, BlockSelectionExtension } from "./block-selection";
 import { canNestPages, livePageLink, NestedPage, type NestedPageOptions } from "./nested-page";
 import { PageImage } from "./page-image";
 import { ToggleBlock } from "./toggle-block";
@@ -260,6 +261,8 @@ export function editorExtensions(
     PageClipboard,
     CodeIndent,
     TrailingBlock,
+    BlockSelectionExtension,
+    BlockEscape,
     FileAttach.configure(files),
     EntityMention.configure({
       diagramsOn,

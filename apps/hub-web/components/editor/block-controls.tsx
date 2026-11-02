@@ -7,11 +7,13 @@ import { Check, Copy, GripVertical, MessageSquare, Plus, Trash2 } from "lucide-r
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { deleteBlock, duplicateBlock, moveBlock } from "./block-move";
 import { BlockDrag } from "./block-drag";
+import { BlockSelection, duplicateBlocks, selectedBlocks } from "./block-selection";
 import { blockTargets, measureTargets, targetAt, targetIndent, type BlockTarget } from "./block-targets";
 import { BLOCK_COMMANDS, blockKind, turnBlockInto, turnIntoChoices, type BlockCommandId } from "./editor-commands";
 
 type Block = { pos: number; element: HTMLElement; top: number; indent: number };
-type Menu = { pos: number; kind: BlockCommandId | null };
+/** `count` above 1: the menu acts on every selected block (Delete, Duplicate); Turn into is for one. */
+type Menu = { pos: number; kind: BlockCommandId | null; count: number };
 
 /** Pointer travel (px) after pressing the handle before it counts as a drag rather than a click. */
 const DRAG_SLOP = 4;
@@ -214,7 +216,15 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
     }
   };
   const openMenu = () => {
-    if (block) setMenu({ pos: block.pos, kind: blockKind(editor.state.doc, block.pos) });
+    if (!block) return;
+    // As in Notion: the block whose handle is clicked is selected, or the selection it is part of stays.
+    const { state } = editor;
+    const current = state.selection;
+    const within = current instanceof BlockSelection && selectedBlocks(state.doc, current.from, current.to).some((row) => row.pos === block.pos);
+    const selection = within ? current : BlockSelection.create(state.doc, block.pos, block.pos);
+    if (selection && !within) editor.view.dispatch(state.tr.setSelection(selection));
+    const count = selection instanceof BlockSelection ? selectedBlocks(editor.state.doc, selection.from, selection.to).length : 1;
+    setMenu({ pos: block.pos, kind: blockKind(editor.state.doc, block.pos), count });
   };
   const closeMenu = (refocus: boolean) => {
     setMenu(null);
@@ -261,15 +271,16 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
     }}><GripVertical size={15} /></button> : null}
     {menu && block && handle.current ? <BlockMenu
       anchor={handle.current}
-      kind={menu.kind}
+      kind={menu.count > 1 ? null : menu.kind}
+      count={menu.count}
       onClose={closeMenu}
       onDelete={() => run(() => {
-        const tr = deleteBlock(editor.state, menu.pos);
+        const tr = menu.count > 1 && editor.state.selection instanceof BlockSelection ? editor.state.tr.deleteSelection().scrollIntoView() : deleteBlock(editor.state, menu.pos);
         if (tr) editor.view.dispatch(tr);
         editor.view.focus();
       })}
       onDuplicate={() => run(() => {
-        const tr = duplicateBlock(editor.state, menu.pos);
+        const tr = (menu.count > 1 ? duplicateBlocks(editor.state) : null) ?? duplicateBlock(editor.state, menu.pos);
         if (tr) editor.view.dispatch(tr);
         editor.view.focus();
       })}
@@ -285,9 +296,10 @@ const MENU_WIDTH = 232;
 const ITEM = "row-tile flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] outline-none focus:bg-hover";
 
 /** The drag handle's menu: Delete, Duplicate and Turn into. Arrow keys move between items; Esc returns to the handle. */
-function BlockMenu({ anchor, kind, onClose, onDelete, onDuplicate, onTurn }: {
+function BlockMenu({ anchor, kind, count = 1, onClose, onDelete, onDuplicate, onTurn }: {
   anchor: HTMLElement;
   kind: BlockCommandId | null;
+  count?: number;
   onClose: (refocus: boolean) => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -298,7 +310,7 @@ function BlockMenu({ anchor, kind, onClose, onDelete, onDuplicate, onTurn }: {
   const [box, setBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const close = useRef(onClose);
   close.current = onClose;
-  const choices = turnIntoChoices(kind);
+  const choices = count > 1 ? [] : turnIntoChoices(kind);
 
   useLayoutEffect(() => {
     const element = panel.current;
@@ -365,11 +377,11 @@ function BlockMenu({ anchor, kind, onClose, onDelete, onDuplicate, onTurn }: {
     >
       <button type="button" role="menuitem" className={ITEM} onClick={onDelete}>
         <Trash2 size={14} className="text-muted" />
-        <span className="flex-1">Delete</span>
+        <span className="flex-1">{count > 1 ? `Delete ${count} blocks` : "Delete"}</span>
       </button>
       <button type="button" role="menuitem" className={ITEM} onClick={onDuplicate}>
         <Copy size={14} className="text-muted" />
-        <span className="flex-1">Duplicate</span>
+        <span className="flex-1">{count > 1 ? `Duplicate ${count} blocks` : "Duplicate"}</span>
       </button>
       {choices.length ? (
         <div role="group" aria-labelledby={headingId}>

@@ -18,6 +18,7 @@ import { COMMENT_BLOCK_EVENT } from "../editor/block-controls";
 import { ModalScope, useLayerZ } from "../ui";
 import { useModalFocus } from "@/lib/modal-focus";
 import { relative } from "@/lib/format";
+import { marked } from "../editor/block-selection";
 
 function clampBox(top: number, left: number, width: number, height: number) {
   if (typeof window === "undefined") return { top, left };
@@ -113,7 +114,8 @@ export function CommentLayer({
     if (!editor) return;
     const refresh = () => {
       const { from, to } = editor.state.selection;
-      if (from === to) {
+      // Selected blocks are for moving, copying and deleting; a comment goes on selected text.
+      if (from === to || marked(editor.state)) {
         setSelection((current) => (activeRef.current === "new" ? current : null));
         return;
       }
