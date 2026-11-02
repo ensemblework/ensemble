@@ -122,7 +122,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
     /Steps on a site \(a dashboard, “log in to my Azure portal and check …”\): web_task with the goal; sign-ins go to your owner's card, not Connections\./,
     /A sign-in or human check[^\n]*: browser_login_needed \(your owner does it on a card, even by phone\)\. They say done: browser_login_check/,
     // The browser flow first: a device code only when the owner asks for one, or the browser flow failed.
-    /CLI sign-in: plain `az login` \(card opens\); device code only if asked or failed\./,
+    /CLI sign-in: computer_run plain `az login` \(card opens\); device code if asked\./,
     /A paper or PDF into your owner's Ensemble Files: hub_save_file \(url: the direct file link\); link only what it returns/,
     /A terminal screenshot \(htop, a command's output\): computer_terminal_screenshot/,
     /A shell that stays open \(a REPL, a prompt\): terminal_open \(live: true to show it\), then terminal_send\. Tab live: live_view/,

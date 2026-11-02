@@ -205,7 +205,7 @@ export function liveTools(scope: NodeScope): AnyHubTool[] {
       area: "tasks",
       description:
         "Open a terminal on your owner's computer that stays open between your calls: a shell in your own folder (or folder), sandboxed like computer_run. " +
-        "For interactive or long-lived work: a REPL, a program that asks questions, a login that waits, watching a server. Then terminal_send to type and terminal_read to look; terminal_close when done. " +
+        "For interactive or long-lived work: a REPL, a program that asks questions, watching a server. Not a CLI sign-in (`az login`, `gh auth login`): computer_run runs it and gives your owner its page or code on a card. Then terminal_send to type and terminal_read to look; terminal_close when done. " +
         "At most 3 open; one unused for 30 minutes closes. A one-off command: computer_run. live: true when your owner wants to watch it (their live card is posted at once).",
       input: z
         .object({
