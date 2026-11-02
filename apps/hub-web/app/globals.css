@@ -579,6 +579,17 @@ select:focus-visible {
 @keyframes block-lift { from { box-shadow: 0 0 0 1px transparent, 0 0 0 0 transparent; } }
 body.block-dragging, body.block-dragging * { cursor: grabbing !important; user-select: none !important; }
 body.block-dragging .block-controls, body.block-dragging .block-comment-action { opacity: 0; pointer-events: none; }
+/* Selected blocks (block-selection.ts): each one, bullet included, under one soft wash. */
+.ProseMirror .block-selected { position: relative; }
+.ProseMirror .block-selected::after { content: ""; position: absolute; inset: -1px -6px; border-radius: 4px; background: var(--accent-soft); pointer-events: none; }
+.ProseMirror li.block-selected::after { left: -1.7em; }
+.ProseMirror ul[data-type="taskList"] li.block-selected::after { left: -6px; }
+.ProseMirror.has-block-selection, .ProseMirror.is-selecting-blocks { caret-color: transparent; }
+.ProseMirror.is-selecting-blocks ::selection, .ProseMirror.has-block-selection ::selection { background: transparent; }
+/* The rectangle a drag beside the text draws. */
+.block-marquee { position: fixed; z-index: 70; border: 1px solid rgb(var(--accent-rgb) / 0.55); border-radius: 4px; background: rgb(var(--accent-rgb) / 0.1); pointer-events: none; }
+body.block-marquee-active, body.block-marquee-active * { user-select: none !important; }
+body.block-marquee-active .block-controls, body.block-marquee-active .block-comment-action { opacity: 0; pointer-events: none; }
 /* Where a block carried into another container (a list, a nested item, out of a list) will land. */
 .block-drop-line { position: absolute; z-index: 41; height: 3px; margin-top: -1.5px; border-radius: 2px; background: rgb(var(--accent-rgb)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent); pointer-events: none; transition: top 90ms ease, left 90ms ease, width 90ms ease; }
 .block-drop-line[hidden] { display: none; }
@@ -2994,6 +3005,7 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
   [data-theme-canvas] { background: #fff !important; }
   .page-focus { position: static !important; overflow: visible !important; }
   #main-content *:has(> [data-focus-keep]) > :not([data-focus-keep]) { display: none !important; }
+  .ProseMirror .block-selected::after, .block-marquee,
   .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .comment-overlay, .toggle-block-trigger, .embed-resize, .page-image-toolbar, .page-image-handle { display: none !important; }
   .ProseMirror { min-height: 0; }
   .mention { color: #111 !important; background: none !important; box-shadow: inset 0 0 0 1px #bbb !important; }

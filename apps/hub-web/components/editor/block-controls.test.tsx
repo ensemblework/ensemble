@@ -6,12 +6,14 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Editor } from "@tiptap/core";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import TaskList from "@tiptap/extension-task-list";
 import { ToggleBlock } from "./toggle-block";
 import { ChecklistItem } from "./check-item";
 import { BlockControls } from "./block-controls";
 import { moveBlockTo } from "./block-move";
+import { BlockEscape, BlockSelection, BlockSelectionExtension, duplicateBlocks, selectedBlocks } from "./block-selection";
 
 // block-controls.tsx uses the classic JSX runtime.
 (globalThis as { React?: typeof React }).React = React;
@@ -326,5 +328,99 @@ test("dragging an item's handle reorders the items of its list", async () => {
   } finally {
     pointTarget = null;
     await done();
+  }
+});
+
+/** An editor with block selection, its view in the page so keys and clicks reach it. */
+function selectable(content: object[]) {
+  const editor = new Editor({ extensions: [StarterKit, BlockSelectionExtension, BlockEscape], content: { type: "doc", content } });
+  document.body.appendChild(editor.view.dom);
+  return editor;
+}
+const press = (editor: Editor, key: string, init: KeyboardEventInit = {}) => editor.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+const picked = (editor: Editor) => {
+  const selection = editor.state.selection;
+  return selection instanceof BlockSelection ? selectedBlocks(editor.state.doc, selection.from, selection.to).map((block) => block.node.firstChild?.isTextblock ? block.node.firstChild.textContent : block.node.textContent) : null;
+};
+
+test("selected blocks are whole blocks: nested items go with their item, Delete removes them in one step and Undo brings them back", () => {
+  const editor = selectable([p("Intro"), bullets(li("One"), li("Two", bullets(li("Two a"))), li("Three")), p("After")]);
+  try {
+    const selection = BlockSelection.create(editor.state.doc, at(editor, "Two"), at(editor, "After"))!;
+    editor.view.dispatch(editor.state.tr.setSelection(selection));
+    assert.deepEqual(picked(editor), ["Two", "Three", "After"], "Two a is inside Two");
+    assert.equal(editor.state.selection.content().openStart, 1, "copying takes the items inside their list");
+    press(editor, "x");
+    assert.deepEqual(outline(editor), ["Intro", { bulletList: ["One", ["Two", { bulletList: ["Two a"] }], "Three"] }, "After"], "typing does not write over them");
+    press(editor, "Backspace");
+    assert.deepEqual(outline(editor), ["Intro", { bulletList: ["One"] }]);
+    editor.commands.undo();
+    assert.deepEqual(outline(editor), ["Intro", { bulletList: ["One", ["Two", { bulletList: ["Two a"] }], "Three"] }, "After"]);
+    assert.deepEqual(picked(editor), ["Two", "Three", "After"], "and selects them again");
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("Esc selects the block the caret is in; arrows move, Shift extends, Mod+D copies, Enter writes, Esc lets go", () => {
+  const editor = selectable([p("First"), p("Second"), bullets(li("Item")), p("Last")]);
+  try {
+    editor.commands.setTextSelection(at(editor, "Second") + 3);
+    press(editor, "Escape");
+    assert.deepEqual(picked(editor), ["Second"]);
+    press(editor, "ArrowDown");
+    assert.deepEqual(picked(editor), ["Item"]);
+    press(editor, "ArrowUp", { shiftKey: true });
+    assert.deepEqual(picked(editor), ["Second", "Item"]);
+    press(editor, "ArrowUp");
+    assert.deepEqual(picked(editor), ["First"]);
+    press(editor, "ArrowDown", { shiftKey: true });
+    const tr = duplicateBlocks(editor.state);
+    assert.ok(tr);
+    editor.view.dispatch(tr);
+    assert.deepEqual(outline(editor), ["First", "Second", "First", "Second", { bulletList: ["Item"] }, "Last"]);
+    assert.deepEqual(picked(editor), ["First", "Second"], "the copies are selected");
+    press(editor, "Enter");
+    assert.equal(editor.state.selection instanceof BlockSelection, false);
+    assert.equal(editor.state.selection.$head.parent.textContent, "Second");
+    press(editor, "Escape");
+    press(editor, "Escape");
+    assert.equal(editor.state.selection instanceof BlockSelection, false, "the second Esc lets go");
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("Mod+A selects the line's text, then every block", () => {
+  const editor = selectable([p("First"), bullets(li("Item")), p("Last")]);
+  try {
+    editor.commands.setTextSelection(at(editor, "Last") + 2);
+    press(editor, "a", { ctrlKey: true });
+    assert.equal(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to), "Last");
+    press(editor, "a", { ctrlKey: true });
+    assert.deepEqual(picked(editor), ["First", "Item", "Last"]);
+  } finally {
+    editor.destroy();
+  }
+});
+
+test("one click and a drag through text that reaches another block ends as those blocks; a double-click drag stays text", async () => {
+  const editor = selectable([p("Alpha"), p("Beta"), p("Gamma")]);
+  try {
+    const across = () => editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, at(editor, "Alpha") + 3, at(editor, "Beta") + 3)));
+    editor.view.dom.querySelector("p")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, detail: 1 }));
+    across();
+    assert.ok(editor.view.dom.querySelectorAll(".block-selected").length === 2, "marked as blocks while dragging");
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(picked(editor), ["Alpha", "Beta"]);
+    editor.view.dom.querySelector("p")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, detail: 2 }));
+    across();
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(picked(editor), null);
+    assert.equal(editor.view.dom.querySelectorAll(".block-selected").length, 0);
+  } finally {
+    editor.destroy();
   }
 });

@@ -27,7 +27,7 @@ export function moveBlock(state: EditorState, from: number, target: number, afte
 }
 
 /** The range that removes a block: its parents too while they would be left empty and cannot be (the only item of a list). */
-function removalRange(doc: PMNode, pos: number, size: number): [number, number] {
+export function removalRange(doc: PMNode, pos: number, size: number): [number, number] {
   const $pos = doc.resolve(pos);
   let from = pos;
   let to = pos + size;
@@ -41,7 +41,7 @@ function removalRange(doc: PMNode, pos: number, size: number): [number, number] 
 }
 
 /** Two lists of one kind that end up next to each other become one, as they read. */
-function joinLists(tr: Transaction, pos: number): boolean {
+export function joinLists(tr: Transaction, pos: number): boolean {
   if (pos <= 0 || pos >= tr.doc.content.size) return false;
   const $pos = tr.doc.resolve(pos);
   const before = $pos.nodeBefore;
