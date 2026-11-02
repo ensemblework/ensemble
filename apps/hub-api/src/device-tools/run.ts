@@ -28,8 +28,8 @@ type App = Pick<FastifyInstance, "prisma">;
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
 const FLUSH_MS = 300;
-/** Commands running for nodes, by run id: stopped when the remote loop ends. */
-const running = new Map<string, AbortController>();
+/** Commands running for nodes, by run id: stopped when the remote loop ends, or one by one (`run_stop`). */
+const running = new Map<string, { controller: AbortController; nodeId: string | null }>();
 /** A command that signs in (`az login`, `gh auth login`, `aws sso login`, `gcloud auth login`): in the background it waits a moment for its prompt before it answers. */
 const LOGIN_COMMAND = /\b(?:login|auth|sso|signin|sign-in|device-code|device_code)\b/i;
 const LOGIN_SETTLE_MS = 8_000;
@@ -67,8 +67,8 @@ function outputStream(client: HostedClient, runId: string, onStop: () => void, c
   let cut = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<unknown> = Promise.resolve();
-  const post = (text: string, done = false, exitCode: number | null = null, wake = false) => {
-    const chunk = { seq: seq++, text, done, exitCode, wake };
+  const post = (text: string, done = false, exitCode: number | null = null, wake = false, timedOut = false) => {
+    const chunk = { seq: seq++, text, done, exitCode, wake, ...(timedOut ? { timedOut } : {}) };
     chain = chain.then(async () => {
       const listening = await client.toolOutput(runId, chunk).catch(() => true);
       if (!listening) onStop();
@@ -106,9 +106,9 @@ function outputStream(client: HostedClient, runId: string, onStop: () => void, c
       if (Buffer.byteLength(pending) >= TERMINAL_CHUNK_BYTES / 2) flush();
       else if (!timer) timer = setTimeout(() => flush(), FLUSH_MS);
     },
-    async finish(tail: string, exitCode: number, wake: boolean) {
+    async finish(tail: string, exitCode: number, wake: boolean, timedOut = false) {
       flush(true);
-      await post(clean(tail), true, exitCode, wake);
+      await post(clean(tail), true, exitCode, wake, timedOut);
       await chain;
     },
   };
@@ -145,6 +145,8 @@ export async function deliverCommand(
   client: HostedClient,
   input: {
     runId: string;
+    /** The node it runs for: only that node stops it. */
+    nodeId?: string;
     background: boolean;
     timeoutSec: number;
     clean?: (text: string) => string;
@@ -161,7 +163,7 @@ export async function deliverCommand(
 ): Promise<Delivered> {
   const clean = input.clean ?? cleanOutput;
   const controller = new AbortController();
-  running.set(input.runId, controller);
+  running.set(input.runId, { controller, nodeId: input.nodeId ?? null });
   const stream = outputStream(client, input.runId, () => controller.abort(), clean);
   let collected = "";
   let answered = false;
@@ -230,7 +232,7 @@ export async function deliverCommand(
       await stream.finish(tail, exitCode, false);
     }
   } else {
-    await stream.finish(tail, exitCode, true);
+    await stream.finish(tail, exitCode, true, timedOut);
   }
   return { exitCode, ms, timedOut, background, output: collected + tail };
 }
@@ -260,7 +262,7 @@ export async function runNodeCommand(app: App, client: HostedClient, request: Ru
     return { ...(codes.length ? { deviceCodes: codes.map((item) => ({ url: item.url, code: item.code })) } : {}), ...(pages.length ? { signInPages: pages } : {}) };
   };
   const login = LOGIN_COMMAND.test(request.command);
-  const result = await deliverCommand(client, { runId: request.runId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group), extra, settleMs: login ? LOGIN_SETTLE_MS : 0, ready: () => signIns.codes().length > 0 || signIns.pages().length > 0 }, ({ onChunk, signal }) =>
+  const result = await deliverCommand(client, { runId: request.runId, nodeId: request.nodeId, background: request.background, timeoutSec: request.timeoutSec, stop: () => killGroup(group), extra, settleMs: login ? LOGIN_SETTLE_MS : 0, ready: () => signIns.codes().length > 0 || signIns.pages().length > 0 }, ({ onChunk, signal }) =>
     runCommand({
       userId: userId(),
       argv: prepared.argv,
@@ -301,9 +303,18 @@ export function stopWithCommands(id: string, stop: () => void): () => void {
   };
 }
 
+/** Stops one node's command still running here, and what it started (`run_stop`). False when it is not running here. */
+export function stopNodeCommand(runId: string, nodeId: string): boolean {
+  const entry = running.get(runId);
+  if (!entry || (entry.nodeId && entry.nodeId !== nodeId)) return false;
+  entry.controller.abort();
+  killGroup(`node-tool:${runId}`);
+  return true;
+}
+
 /** Stops every command run for a node here (the remote loop is ending). */
 export function stopNodeCommands(): void {
-  for (const [id, controller] of running) {
+  for (const [id, { controller }] of running) {
     controller.abort();
     killGroup(`node-tool:${id}`);
   }

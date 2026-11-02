@@ -167,7 +167,7 @@ async function persona(
     ...(hands ? HANDS : []),
     // Only in a DM: the crew lead's persona has no room left in its budget (persona.integration.test.ts).
     hands && room.kind === "dm" ? LIVE_ROW : "",
-    hands && room.kind === "dm" ? "- CLI sign-ins (`az login`): computer_run; here you may tell your owner its code." : "",
+    hands && room.kind === "dm" ? "- CLI sign-in: plain `az login` (card opens); device code only if asked or failed." : "",
     fromNonOwner ? "" : "- A paper or PDF into your owner's Ensemble Files: hub_save_file (url: the direct file link); link only what it returns.",
     `- Writing or changing code in a repository (a feature, a bug fix, a refactor, a test-and-fix loop), or whenever your owner names an agent (Copilot, Claude Code, Codex, Cursor…): an agent session (node_session_start / node_session_send). It runs ${agentDefaults(pickRunProfile(settings, node.runProfileId))} unless your owner names an agent, model, thinking level or context.`,
     ...(step || fromNonOwner

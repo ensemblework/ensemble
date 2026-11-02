@@ -69,3 +69,26 @@ export async function readJsonObject(response: Response): Promise<Json> {
     throw new ProviderError(502, "other", "The model provider returned a non-JSON response.");
   }
 }
+
+/** A streamed reply's lines, as they come. A reader that stops early closes the connection, so the provider stops too. */
+export async function* readLines(response: Response): AsyncGenerator<string> {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished = false;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) yield line;
+    }
+    finished = true;
+  } finally {
+    if (!finished) await reader.cancel().catch(() => undefined);
+  }
+  if (buffer) yield buffer;
+}

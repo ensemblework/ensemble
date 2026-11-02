@@ -33,6 +33,7 @@ from ensemble_agent.content_parts import anthropic_user_content, has_image_parts
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
 from ensemble_agent import credentials, included, responses_api
+from ensemble_agent.model_timeout import ModelTimeout, runtime_seconds
 from ensemble_agent.provider_error import COPILOT_CLASSIC_TOKEN, ProviderError, no_key_message, parse_provider_error
 from ensemble_agent.rate_limit import pace, take_token
 from ensemble_agent.reach import ModelUnreachable, classify_connect, is_unreachable_notice, transport_failure
@@ -1658,24 +1659,36 @@ async def _openai_turn(
 
 
 async def complete_with_tools(body: dict[str, Any]) -> dict[str, Any]:
-    """One assistant turn. Agent-runtime owns the credential; hub-api owns the tools."""
+    """One assistant turn. Agent-runtime owns the credential; hub-api owns the tools.
+
+    It ends at hub-api's limit and a margin (model_timeout.py) with ``ModelTimeout``.
+    """
     await asyncio.to_thread(require_verified_user, body.get("userId"))
     model = str(body.get("model") or spec_for("coder")["model"])
+    seconds = runtime_seconds(body)
+    try:
+        async with asyncio.timeout(seconds):
+            return await _complete_turn(body, model, seconds)
+    except TimeoutError as exc:
+        raise ModelTimeout(model, seconds) from exc
+
+
+async def _complete_turn(body: dict[str, Any], model: str, seconds: float) -> dict[str, Any]:
     provider = provider_for_call(body.get("provider"), model)
     if provider == "mock":
         return _mock_turn(body, model)
     if provider == "cursor":
         raise _cursor_chat_error()
     if provider == included.PROVIDER:
-        return await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None)
+        return await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None, timeout=seconds)
     if provider == "anthropic":
-        return await _anthropic_chat(body, model, body.get("userId"), 300)
+        return await _anthropic_chat(body, model, body.get("userId"), seconds)
     return await _openai_turn(
         body,
         model,
         provider,
         body.get("messages") or [],
-        300,
+        seconds,
         tools=body.get("chatTools") or None,
         stream=bool(body.get("stream")),
         responses_items=body.get("responsesMessages") or None,
@@ -1992,13 +2005,13 @@ async def _chat_frames(body: dict[str, Any]):
     if provider == "cursor":
         raise _cursor_chat_error()
     if provider == included.PROVIDER:
-        result = await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None)
+        result = await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None, timeout=runtime_seconds(body))
         for piece in text_chunks(str(result.get("text") or "")):
             yield _sse("delta", {"text": piece})
         yield _sse("turn", result)
         return
     if provider == "anthropic":
-        result = await _anthropic_chat(body, model, body.get("userId"), 300)
+        result = await _anthropic_chat(body, model, body.get("userId"), runtime_seconds(body))
         for piece in text_chunks(str(result.get("text") or "")):
             yield _sse("delta", {"text": piece})
         yield _sse("turn", result)
@@ -2054,7 +2067,7 @@ async def _yield_openai_frames(
     if delay > 0:
         yield _sse("status", {"text": "Waiting for the rate limit…"})
         await asyncio.sleep(delay)
-    async for kind, data in _openai_stream_events(provider, payload, body.get("userId"), body.get("ollamaUrl"), 300, retry=retry):
+    async for kind, data in _openai_stream_events(provider, payload, body.get("userId"), body.get("ollamaUrl"), runtime_seconds(body), retry=retry):
         if kind == "delta":
             yield _sse("delta", {"text": data})
         elif kind == "done":
@@ -2081,7 +2094,7 @@ async def _yield_responses_frames(provider: str, body: dict[str, Any], model: st
     if delay > 0:
         yield _sse("status", {"text": "Waiting for the rate limit…"})
         await asyncio.sleep(delay)
-    async for kind, data in _responses_events(provider, payload, body.get("userId"), body.get("ollamaUrl"), 300, retry=True):
+    async for kind, data in _responses_events(provider, payload, body.get("userId"), body.get("ollamaUrl"), runtime_seconds(body), retry=True):
         if kind == "delta":
             yield _sse("delta", {"text": data})
         elif kind == "done":

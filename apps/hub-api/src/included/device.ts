@@ -202,6 +202,7 @@ export async function deviceIncludedTurn(
     chatTools: Array.isArray(body.chatTools) ? body.chatTools : null,
     responsesTools: Array.isArray(body.responsesTools) ? body.responsesTools : null,
     purpose: typeof body.purpose === "string" ? body.purpose : null,
+    timeoutMs: Math.round(options.timeoutMs),
   };
   try {
     const res = await call(link, "POST", INCLUDED_TURN_ROUTE, request, signal);

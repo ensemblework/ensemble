@@ -20,6 +20,7 @@ import type { Json } from "../runtime/payload.js";
 import { effortToSend } from "./model-meta.js";
 import { keysFor } from "../sharing/context.js";
 import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
+import { callLimitMs, isTimeoutError, ModelTimeoutError } from "./model-timeout.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -182,6 +183,7 @@ function chatBody(args: {
   fallbackModel?: string;
   stream?: boolean;
   purpose?: string;
+  timeoutMs: number;
 }): Json {
   const { chat, responses } = encodeMessages(args.messages);
   return {
@@ -199,6 +201,8 @@ function chatBody(args: {
     fallbackModel: args.fallbackModel,
     stream: args.stream,
     purpose: args.purpose,
+    // What hub-api allows this call: the runtime waits a little longer, so the cut is made here.
+    timeoutMs: args.timeoutMs,
   };
 }
 
@@ -303,20 +307,17 @@ export async function askRuntime(args: {
   /** Recorded with an included call's credits: "Hub chat", "Agent research"… */
   purpose?: string;
 }): Promise<RuntimeTurn> {
-  const limit = args.timeoutMs ?? 300_000;
+  const limit = callLimitMs(args.timeoutMs);
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
-  const body = chatBody({ ...args, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort) });
+  const timedOut = (error: unknown) => !args.signal?.aborted && (timeout.aborted || isTimeoutError(error));
+  const body = chatBody({ ...args, timeoutMs: limit, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort) });
   if (useInProcessRuntime()) {
     try {
       return RuntimeTurn.parse(await completeWithTools(body, { signal }));
     } catch (error) {
       if (args.signal?.aborted) throw args.signal.reason ?? error;
-      if (timeout.aborted) {
-        throw new Error(
-          `The model request timed out after ${Math.round(limit / 60_000) || 1} minute${limit >= 120_000 ? "s" : ""}.`,
-        );
-      }
+      if (timedOut(error)) throw new ModelTimeoutError(args.model, limit);
       throw inProcessChatError(error, args.model, args.provider);
     }
   }
@@ -330,18 +331,19 @@ export async function askRuntime(args: {
     });
   } catch (error) {
     if (args.signal?.aborted) throw args.signal.reason;
-    if (timeout.aborted) {
-      throw new Error(
-        `The model request timed out after ${Math.round(limit / 60_000) || 1} minute${limit >= 120_000 ? "s" : ""}.`,
-      );
-    }
+    if (timedOut(error)) throw new ModelTimeoutError(args.model, limit);
     throw new RuntimeError(
       ASSISTANT_UNAVAILABLE,
       503,
     );
   }
   if (!response.ok) throw await runtimeFailure(response, args.model, args.provider);
-  return RuntimeTurn.parse(await response.json());
+  try {
+    return RuntimeTurn.parse(await response.json());
+  } catch (error) {
+    if (timedOut(error)) throw new ModelTimeoutError(args.model, limit);
+    throw error;
+  }
 }
 
 export async function runtimeFailure(response: Response, model = "that model", provider?: string | null): Promise<RuntimeError> {
@@ -381,10 +383,14 @@ export function setAskRuntimeStreamForTests(
 
 export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & StreamTurnHandlers & { fallbackModel?: string }): Promise<RuntimeTurn> {
   if (streamForTests) return streamForTests(args);
-  const limit = args.timeoutMs ?? 300_000;
+  const limit = callLimitMs(args.timeoutMs);
+  const started = Date.now();
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
-  const body = chatBody({ ...args, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort), stream: true });
+  const timedOut = (error?: unknown) => !args.signal?.aborted && (timeout.aborted || isTimeoutError(error));
+  // Without a stream the same call is made whole, in the time that is left.
+  const whole = () => askRuntime({ ...args, timeoutMs: Math.max(1_000, limit - (Date.now() - started)) });
+  const body = chatBody({ ...args, timeoutMs: limit, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort), stream: true });
   let response: Response;
   try {
     if (useInProcessRuntime()) {
@@ -399,11 +405,12 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
     }
   } catch (error) {
     if (args.signal?.aborted) throw args.signal.reason ?? error;
-    return askRuntime(args);
+    if (timedOut(error)) throw new ModelTimeoutError(args.model, limit);
+    return whole();
   }
   if (!response.ok || !response.body) {
     if (!response.ok) throw await runtimeFailure(response, args.model, args.provider);
-    return askRuntime(args);
+    return whole();
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -424,12 +431,13 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
       const data = JSON.parse(dataLine) as { text?: string; message?: string; kind?: string; status?: number; retryAfterSeconds?: number; quotaId?: string };
       if (event === "delta" && data.text) args.onDelta?.(data.text);
       if (event === "status" && data.text) args.onStatus?.(data.text);
-      if (event === "error") streamError = errorFromStreamFrame(data, args.model, new Date(), args.provider);
+      if (event === "error") streamError = data.kind === "timeout" || timedOut() ? new ModelTimeoutError(args.model, limit) : errorFromStreamFrame(data, args.model, new Date(), args.provider);
       if (event === "turn") turn = RuntimeTurn.parse(data);
     }
   }
   } catch (error) {
     if (turn && (args.signal?.aborted || (error instanceof Error && error.name === "AbortError"))) return turn;
+    if (timedOut(error)) throw new ModelTimeoutError(args.model, limit);
     throw error;
   }
   if (streamError && !turn) throw streamError;

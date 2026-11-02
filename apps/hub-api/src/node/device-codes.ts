@@ -7,15 +7,16 @@
  * computer's sign-in browser, and the usual sign-in card is raised (`source: "cli"`): the owner signs in
  * from the remote view, and the command's own callback lands on that computer. The code is the owner's:
  * the command they asked for printed it on their computer. It is in the card and the command's output,
- * never in the ledger.
+ * never in the ledger. One attempt at a time: a newer run of the same sign-in on the same computer
+ * replaces the older one (`replaceSignInRun`).
  */
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import type { NodeMessage } from "@prisma/client";
-import { toolRunOf } from "../devices/tool-runs.js";
+import type { Device as DeviceRow, NodeMessage } from "@prisma/client";
+import { quietRun, stopRunOnComputer, toolRunOf } from "../devices/tool-runs.js";
 import { appendLedger } from "../lib/ledger.js";
 import type { NodeCliLoginPost, NodeDeviceCodePost } from "../remote/contract.js";
-import { postLoginCard } from "./logins.js";
+import { LOGIN_CARD, LOGIN_WAITING, loginCardClosed, postLoginCard } from "./logins.js";
 import { postMessage, updateMessageDataIf } from "./store.js";
 
 export const DEVICE_CODE_CARD = "device_code";
@@ -100,8 +101,36 @@ export async function cliLoginFromComputer(app: FastifyInstance, device: Device,
     device,
     login: { ...body.login, source: "cli", command: body.login.command ?? run.command.slice(0, 200) },
     operation: `node:${node.id}:own`,
+    run: body.operation,
     planId: run.planId,
     planStep: run.planStep,
     private: run.private,
   });
+}
+
+export const REPLACED_NOTE = "Replaced by a newer sign-in.";
+
+/**
+ * A node started the same sign-in again (`az login` after `az login --use-device-code`) on the same
+ * computer: the older run is stopped there, its end wakes no one, and its cards say it was replaced.
+ */
+export async function replaceSignInRun(app: FastifyInstance, device: DeviceRow, nodeId: string, runId: string): Promise<void> {
+  const redis = app.redis as unknown as Redisish & Parameters<typeof quietRun>[0];
+  const run = await toolRunOf(redis, runId);
+  if (!run || run.done || run.nodeId !== nodeId || run.deviceId !== device.id) return;
+  await quietRun(redis, runId, "replaced");
+  const prisma = app.prisma;
+  const now = new Date().toISOString();
+  const codes = await prisma.nodeMessage.findMany({ where: { roomId: run.roomId, AND: [{ data: { path: ["type"], equals: DEVICE_CODE_CARD } }, { data: { path: ["operation"], equals: runId } }, { data: { path: ["status"], equals: "pending" } }] } });
+  for (const card of codes) await updateMessageDataIf(prisma, card, { data: { path: ["status"], equals: "pending" } }, { status: "replaced", note: REPLACED_NOTE, endedAt: now });
+  const logins = await prisma.nodeMessage.findMany({ where: { roomId: run.roomId, kind: "approval", AND: [{ data: { path: ["type"], equals: LOGIN_CARD } }, { data: { path: ["run"], equals: runId } }] } });
+  for (const card of logins) {
+    const status = (card.data as { status?: unknown }).status;
+    if (typeof status !== "string" || !(LOGIN_WAITING as readonly string[]).includes(status)) continue;
+    const updated = await updateMessageDataIf(prisma, card, { data: { path: ["status"], equals: status } }, { status: "ended", replaced: true, note: REPLACED_NOTE, working: null, error: null, codeHint: null, resolvedAt: now });
+    // Its tab on the computer is freed; a computer that cannot stop runs ends the command this way.
+    if (updated) void loginCardClosed(app, updated).catch(() => undefined);
+  }
+  await stopRunOnComputer(app, device, nodeId, runId);
+  await appendLedger({ userId: device.userId, actor: "agent", action: "node.sign_in_replaced", payload: { nodeId, deviceId: device.id, program: run.signIn ?? null } }).catch(() => undefined);
 }

@@ -101,7 +101,7 @@ function memoryDb(secrets: Record<string, string> = {}) {
 /** A computer's client that records what it sends back; `files` are what the web hands out by download id. */
 function fakeClient(files: Record<string, Uint8Array> = {}) {
   const answers: Array<{ status: number; body: Record<string, unknown> }> = [];
-  const chunks: Array<{ seq: number; text: string; done: boolean; exitCode: number | null; wake?: boolean }> = [];
+  const chunks: Array<{ seq: number; text: string; done: boolean; exitCode: number | null; wake?: boolean; timedOut?: boolean }> = [];
   const uploads: Array<{ uploadId: string; meta: Record<string, unknown>; bytes: Uint8Array }> = [];
   const downloads: string[] = [];
   const codes: Array<Record<string, unknown>> = [];
@@ -313,6 +313,47 @@ test("a command answers inline, streams long output, goes on in the background a
   await assert.rejects(run("sudo ls"), /not run by agents/);
   await assert.rejects(run("git push"), /may not push/, "the git ceiling of the node's run profile");
   await assert.rejects(run("git push", { delivery: "push" }), /sign-in/);
+});
+
+test("a node stops its background command (run_stop): it and what it started end, only that node may; one killed at its limit says so", async () => {
+  const folder = { path: work, label: "app" };
+  const db = memoryDb();
+  const fake = fakeClient();
+  const runId = randomUUID();
+  const pidFile = join(work, `child-${runId}.pid`);
+  // A command that starts a process of its own and waits: both must end.
+  const script = `const { spawn } = require("node:child_process"); const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); console.log("waiting"); setInterval(() => {}, 1000);`;
+  const request = { id: randomUUID(), tool: "run", folder: "app", command: `node -e ${JSON.stringify(script)}`, timeoutSec: 600, background: true, secrets: [], runId, delivery: "local", network: false, nodeId: "n1", mission: "m", attended: false, grants: [] };
+  const running = runNodeCommand({ prisma: db } as never, fake.client as never, request as never, folder, (answer) => fake.client.answerCode("x", answer));
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  const child = Number(readFileSync(pidFile, "utf8"));
+  const stop = (nodeId: string) => {
+    const answers: Array<{ status: number; body?: unknown }> = [];
+    return nodeToolAnswerFor({ prisma: db } as never, fake.client as never, { id: randomUUID(), tool: "run_stop", runId, nodeId, mission: "m", attended: true, grants: [] } as never, async (answer) => void answers.push(answer)).then(() => answers[0]!);
+  };
+  assert.deepEqual(await stop("someone-else"), { status: 200, body: { stopped: false } }, "another node's run is not its to stop");
+  const started = Date.now();
+  assert.deepEqual(await stop("n1"), { status: 200, body: { stopped: true } });
+  await running;
+  assert.ok(Date.now() - started < 5_000, "it ends at once");
+  const last = fake.chunks.at(-1)!;
+  assert.deepEqual([last.done, last.wake, last.timedOut ?? false], [true, true, false]);
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (let wait = 0; wait < 40 && alive(child); wait += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(alive(child), false, "what it started ended too");
+  assert.deepEqual(await stop("n1"), { status: 200, body: { stopped: false } }, "it is not running any more");
+
+  const limited = fakeClient();
+  await runNodeCommand({ prisma: db } as never, limited.client as never, { ...request, id: randomUUID(), runId: randomUUID(), command: `node -e "setInterval(() => {}, 1000)"`, timeoutSec: 1 } as never, folder, (answer) => limited.client.answerCode("x", answer));
+  assert.deepEqual([limited.chunks.at(-1)!.done, limited.chunks.at(-1)!.timedOut], [true, true], "the end says it ran out of time");
 });
 
 test("the policy is applied on the computer: asks first in attended mode, then runs with the owner's answer", async () => {
