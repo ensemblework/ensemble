@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/hub-api",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "type": "module",
   "scripts": {
@@ -36,6 +36,7 @@
     "@simplewebauthn/server": "^13.3.3",
     "@xterm/headless": "6.0.0",
     "cross-spawn": "7.0.6",
+    "chokidar": "^4.0.3",
     "docx": "~9.8.1",
     "dotenv": "^16.6.1",
     "exceljs": "^4.4.0",

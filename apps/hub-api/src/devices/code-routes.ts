@@ -96,7 +96,7 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const entry = codeCall(body.method, body.path);
     if (!entry) return reply.code(403).send({ error: "That is not a Code call the web may make." });
-    if (entry.since && codeCapable(device).codeApi < entry.since) return reply.code(409).send({ error: `Update Ensemble on ${device.name} to use the full editor from here (the CLI 0.3.9 or the desktop app 0.3.6).` });
+    if (entry.since && codeCapable(device).codeApi < entry.since) return reply.code(409).send({ error: `Update Ensemble on ${device.name} to use the full editor from here (${entry.since >= 3 ? "CLI or desktop 0.6.4" : "the CLI 0.3.9 or the desktop app 0.3.6"}).` });
     if (entry.write && !codeCapable(device).webEdit) return reply.code(409).send({ error: `Changing code from the web is turned off on ${device.name}. Turn it on there with \`ensemble web edit on\`.` });
     const result = await relay(reply, device, "code.request", { method: body.method, path: body.path, query: body.query, ...(body.body === undefined ? {} : { body: body.body }) }, entry.slow ? SLOW_MS : ASK_MS);
     if (entry.write && result.answered && result.answer.status < 400) {

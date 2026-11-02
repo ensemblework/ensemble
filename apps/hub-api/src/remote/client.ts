@@ -5,6 +5,7 @@
 import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
+import type { FileChangeReport } from "./node-files.js";
 
 function channelBase(base: string): string {
   const channel = process.env.ENSEMBLE_CLI_CHANNEL;
@@ -45,6 +46,7 @@ export function checkApiBase(value: string): string {
 }
 
 export interface HostedClient {
+  reportFileChanges?(body: FileChangeReport): Promise<void>;
   unpairSelf(): Promise<void>;
   heartbeat(body: { runningJobIds: string[]; appVersion: string; capabilities: unknown }): Promise<{ cancel: string[] }>;
   claim(): Promise<{ status: number; body: unknown }>;
@@ -282,6 +284,10 @@ export function hostedClient(base: string, token: string): HostedClient {
     async uploadFiles(jobId, leaseToken, files) {
       const res = await call("POST", ROUTES.files(jobId), { leaseToken, files });
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The changed files were refused."));
+    },
+    async reportFileChanges(body) {
+      const res = await call("POST", ROUTES.nodeFileChanges, body);
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The original file references could not be reported."));
     },
     async answerFiles(requestId, answer) {
       const res = await call("POST", ROUTES.fileAnswer(requestId), answer);

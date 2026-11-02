@@ -15,8 +15,9 @@ import { refusedPath } from "../workspace/folder-read.js";
 import type { HostedClient } from "./client.js";
 import { CODE_ANSWER_BYTES, CODE_EDIT_BYTES, CodeRequest, codeCall, type CodeAnswer } from "./contract.js";
 import { loadSettings } from "./store.js";
+import { nodeFileAnswer } from "./node-files.js";
 
-type Injector = Pick<FastifyInstance, "inject">;
+type Injector = Pick<FastifyInstance, "inject"> & Partial<Pick<FastifyInstance, "prisma">>;
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
 
@@ -134,6 +135,10 @@ function outgoing(request: CodeRequest, body: unknown): unknown {
 export async function codeAnswerFor(app: Injector, request: CodeRequest): Promise<CodeAnswer> {
   const entry = codeCall(request.method, request.path);
   if (!entry) return refuse(403, "Ensemble on the web may not make that call on this computer.");
+  if (request.path === "/api/code/node-file") {
+    if (!app.prisma) return refuse(500, "This runtime has no file database. Restart Ensemble and try again.");
+    return nodeFileAnswer({ prisma: app.prisma }, request);
+  }
   const settings = loadSettings();
   if (!settings.browseFiles) return refuse(409, "Showing code on the web is turned off on this computer. Turn it on there with `ensemble browse on`.");
   if (entry.write && !settings.webEdit) return refuse(409, "Changing code from the web is turned off on this computer. Turn it on there with `ensemble web edit on`.");

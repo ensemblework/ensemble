@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { DiskThemeCache, loadOpenVsxTheme, searchThemes } from "../themes/openvsx.js";
 import { declareModule } from "../lib/module-gate.js";
 
@@ -20,14 +20,20 @@ const LoadQuery = z.object({
 
 export async function themeRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "code");
+  registerThemeEndpoints(app, "/api/themes");
+}
+
+export function registerThemeEndpoints(app: FastifyInstance, prefix: string, authorize?: (request: FastifyRequest) => unknown): void {
   const cache = new DiskThemeCache(path.resolve(process.cwd(), ".theme-cache"));
 
-  app.get("/api/themes/search", async (request) => {
+  app.get(`${prefix}/search`, async (request) => {
+    authorize?.(request);
     const query = SearchQuery.parse(request.query);
     return searchThemes(query.q, { cache });
   });
 
-  app.get("/api/themes/openvsx", async (request) => {
+  app.get(`${prefix}/openvsx`, async (request) => {
+    authorize?.(request);
     const query = LoadQuery.parse(request.query);
     return loadOpenVsxTheme(query, { cache });
   });

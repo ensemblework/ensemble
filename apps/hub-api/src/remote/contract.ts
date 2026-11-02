@@ -48,6 +48,7 @@ export const ROUTES = {
   evidenceUpload: (uploadId: string) => `/api/devices/self/evidence-uploads/${encodeURIComponent(uploadId)}`,
   /** A file of the owner's Ensemble Files a node puts on this computer (files `save`, `capabilities.nodeFiles`), by its download id. */
   nodeFile: (downloadId: string) => `/api/devices/self/node-files/${encodeURIComponent(downloadId)}`,
+  nodeFileChanges: "/api/devices/self/node-file-changes",
   /** The latest small picture of a run's browser tab, for its live view (protocol 7). */
   liveFrame: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/live`,
   /** A run's agent needs the owner to sign in (protocol 8, B11): the server raises the card where the run is followed. */
@@ -433,6 +434,8 @@ export type ResultLink = { kind: "pr" | "commit" | "branch"; url: string; sha?: 
  * folders Code can use) stay on the computer.
  */
 export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean; since?: number }> = [
+  { method: "GET", path: /^\/api\/code\/node-file$/, write: false, since: 3 },
+  { method: "PUT", path: /^\/api\/code\/node-file$/, write: true, since: 3 },
   { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm)$/, write: false },
   { method: "GET", path: /^\/api\/code\/(versions|tree|files|progress|commit-plan)$/, write: false, since: 2 },
   { method: "GET", path: /^\/api\/code\/actions$/, write: false, slow: true },
@@ -452,7 +455,7 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
  * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
  * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request).
  */
-export const CODE_API = 2;
+export const CODE_API = 3;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

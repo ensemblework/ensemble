@@ -7,6 +7,8 @@ Type `ensemble` in a project folder and Ensemble opens full-screen in the termin
 
 `ensemble` starts this computer's runtime in the background if it is not running, so tasks assigned from [app.ensemblework.com](https://app.ensemblework.com) or a phone run here, in shared folders, with the model keys saved on the account (or added here). It keeps running after you leave the app. `ensemble mcp` is a read-only MCP server over your hosted Ensemble context; editors start it themselves. For editor context only, the **hosted MCP URL** needs no install (§5).
 
+The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.6.4+): direct node changes are reported as private file cards, and text edits in the website save back here with version checks. `ensemble browse on` allows reading and `ensemble web edit on` allows saving; no new permission bypass or terminal unlock is introduced. [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) describes the file and quote contract.
+
 | What | Where |
 |---|---|
 | CLI (npm name `ensemblework`, command `ensemble`) | `apps/cli`; the app is `apps/cli/src/tui` (Ink and React, bundled into the same file) |

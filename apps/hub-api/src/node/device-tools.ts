@@ -41,6 +41,7 @@ import { askSudo } from "./sudo.js";
 import { ENSEMBLE_IN_BROWSER, ensembleAppOrigin } from "../lib/ensemble-origins.js";
 import { liveTools } from "./live-views.js";
 import type { NodeScope } from "./tools.js";
+import { postMessage } from "./store.js";
 
 const ASK_MS = 30_000;
 /** A command's answer comes within its foreground minute, plus the way there and back. */
@@ -201,6 +202,7 @@ export async function callComputer(ctx: ToolContext, scope: NodeScope, computer:
       throw new ToolBlockedError(`${device.name} refused: ${why}`, answer.data.status === 403 ? "That is the computer's hard floor (keys, Ensemble's own data, system folders, dangerous commands), not a setting to work around." : undefined);
     }
     await appendLedger({ userId: node.userId, actor: "agent", action: `node.device_tool.${request.tool}`, payload: { nodeId: node.id, deviceId: device.id, ...ledgerOf(request), operationId } });
+    if (typeof body.fileTrackingError === "string") await postMessage(prisma, { roomId: scope.room.id, userId: node.userId, authorKind: "node", authorNodeId: node.id, kind: "error", body: body.fileTrackingError.slice(0, 1000), data: { type: "file_tracking" }, visibleTo: [node.userId], clientId: `files-warning:${scope.turnId}` });
     return { device, status: answer.data.status, body };
   }
 }

@@ -292,6 +292,9 @@ importers:
       '@xterm/headless':
         specifier: 6.0.0
         version: 6.0.0
+      chokidar:
+        specifier: ^4.0.3
+        version: 4.0.3
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
