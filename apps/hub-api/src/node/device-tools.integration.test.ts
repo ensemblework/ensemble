@@ -852,6 +852,30 @@ test("a newer attempt at a sign-in replaces the older one: stopped on the comput
   }
 });
 
+test("Not now on a command's sign-in: the command's end wakes no one, so the node does not try again unasked", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 3, cliLogins: 1 });
+  const { node, room } = await createNode(mira);
+  const device = backgroundComputer(laptop.id, key);
+  try {
+    script = (turn) => (turn.transcript.includes("sign in to azure") ? { calls: [{ name: "computer_run", arguments: { command: "az login" } }], then: "The sign-in is on the card." } : { text: "ok" });
+    await say(mira, room.id, "sign in to azure");
+    const loginId = `lg_${randomBytes(16).toString("hex")}`;
+    const login = { loginId, origin: "https://login.microsoftonline.com", tab: "t3", profile: null, saved: false, display: false, expiresAt: new Date(Date.now() + 900_000).toISOString(), source: "cli", command: "az login" };
+    assert.equal((await key.inject({ method: "POST", url: "/api/devices/self/nodes/logins", payload: { nodeId: node.id, operation: device.runs[0], login } })).statusCode, 200);
+    const page = (await rows(mira, room.id)).find((row) => row.data.type === "login" && row.data.loginId === loginId)!;
+    // The computer is away: Not now settles the card here, and its sign-in ends there by itself.
+    await h.prisma.device.update({ where: { id: laptop.id }, data: { lastSeenAt: new Date(Date.now() - 3_600_000) } });
+    assert.equal((await mira.inject({ method: "POST", url: `/api/node/approvals/${page.id}`, payload: { decision: "discard" } })).statusCode, 200);
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    assert.equal((await endRun(key, device.runs[0]!, { exitCode: 137 })).statusCode, 200);
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns, "the declined card already says so");
+  } finally {
+    device.stop();
+  }
+});
+
 test("a sign-in that ran out of time wakes no one; one that failed early does, with what to do instead", async () => {
   const mira = await person("Mira");
   const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 3 });

@@ -110,8 +110,8 @@ async function recentOutput(redis: Redisish, runId: string, run: ToolRunState): 
 
 const tailOf = (text: string, bytes = 3000) => (text.length > bytes ? `…${text.slice(-bytes)}` : text);
 
-/** A run whose end must not wake its node: one it stopped, or a sign-in a newer attempt replaced. */
-export async function quietRun(redis: Pick<Redisish, "set">, runId: string, why: "stopped" | "replaced"): Promise<void> {
+/** A run whose end must not wake its node: one it stopped, a sign-in a newer attempt replaced, or one its owner declined or let expire on its card. */
+export async function quietRun(redis: Pick<Redisish, "set">, runId: string, why: "stopped" | "replaced" | "declined" | "expired"): Promise<void> {
   await redis.set(quietKey(runId), why, "EX", TOOL_RUN_TTL_SECONDS);
 }
 

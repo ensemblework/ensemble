@@ -21,6 +21,7 @@ import { askDeviceFor } from "../devices/file-relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { readAad, SealedShape, SealError } from "../credentials/seal.js";
 import { CodeAnswer, LOGIN_CHECKS_API, LoginResolution, type LoginRequired, type LoginStatePost } from "../remote/contract.js";
+import { quietRun } from "../devices/tool-runs.js";
 import { enqueueTurn } from "./queue.js";
 import { postMessage, updateMessageDataIf } from "./store.js";
 import { finishStep, planLinkOf } from "./plans.js";
@@ -319,6 +320,8 @@ export async function answerLoginCard(app: FastifyInstance, accountId: string, m
   const waiting = waitingStatus(data);
   if (answer.action === "code" && waiting !== "needs_code") throw new LoginCardError(`${siteOf(data.origin)} is not asking for a code.`, 409, "no_code");
   if (answer.action === "typed" && purpose === "human_check") throw new LoginCardError("A human check is passed on the page itself. Open it here, or on the computer.", 409, "human_check");
+  // Not now on a command's sign-in ends the command; its end wakes no one before the computer even hears it.
+  if (answer.action === "decline") await quietCommand(app, data as { source?: unknown; run?: unknown }, "declined");
   const device = await prisma.device.findFirst({ where: { id: data.deviceId, userId: accountId, revokedAt: null } });
   const computer = device?.name ?? data.computer ?? "the computer";
   if (answer.action === "decline" && (!device || !deviceOnline(device.lastSeenAt))) {
@@ -390,13 +393,20 @@ export function loginOutcomeNote(data: Pick<LoginCardData, "origin" | "computer"
 /** The node hears how its tab's sign-in ended; a run's agent hears it in its own tool call instead. */
 async function afterLogin(app: FastifyInstance, node: NodeAgent, card: NodeMessage, status: "signed_in" | "passed" | "declined" | "expired", options: LoginAnswerOptions = {}): Promise<void> {
   const data = card.data as LoginCardData & { source?: unknown };
-  // A run's agent hears it in its own tool call; a command's sign-in is told by the command's end.
+  // A command's sign-in is told by the command's end, except one its owner declined or let expire: the card says so.
+  if (data.source === "cli" && (status === "declined" || status === "expired")) await quietCommand(app, data, status);
+  // A run's agent hears it in its own tool call.
   if (data.jobId || data.source === "cli") return;
   const link = planLinkOf(card.data);
   // A conversation's own turn already heard it (node/login-check.ts); a step still waits to be woken.
   if (options.wake === false && !link) return;
   const queued = await enqueueTurn(app, { nodeId: node.id, roomId: card.roomId, reason: "approval", note: loginOutcomeNote(data, status), private: data.private === true, ...(link ?? {}) });
   if (!queued && status !== "signed_in" && status !== "passed" && link?.planStep) await finishStep(app, link.planId, link.planStep, { status: "blocked", result: `It needs a sign-in to ${data.origin}, and your owner did not sign in (login_required).` });
+}
+
+/** A command's sign-in (`source: "cli"`) the owner said no to: the command's end wakes no one, so its node does not try again unasked. */
+async function quietCommand(app: FastifyInstance, data: { source?: unknown; run?: unknown }, why: "declined" | "expired"): Promise<void> {
+  if (data.source === "cli" && typeof data.run === "string" && data.run) await quietRun(app.redis as unknown as Parameters<typeof quietRun>[0], data.run, why);
 }
 
 /** How the card says a sign-in the computer saw end by itself ended (`via`). */
