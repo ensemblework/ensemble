@@ -15,6 +15,7 @@
  * and declined at the end of its case (no one types passwords here).
  */
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,6 +34,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const stamp = Date.now().toString(36);
 
 /** The owner's requests, as they wrote them (31 October), and what a good answer has. */
+/** A local fake shop whose "Continue to payment" opens the payment in a popup window, as Steam's checkout does. */
+const SHOP_PORT = Number(process.env.NODE_EVAL_SHOP_PORT ?? 35480);
+const SHOP = `http://127.0.0.1:${SHOP_PORT}`;
+const shop = createServer((request, response) => {
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  if (request.url?.startsWith("/pay")) return response.end('<!doctype html><title>FAKEPAY payment</title><body style="font:20px sans-serif;padding:40px"><h1>FAKEPAY</h1><p>Scan to pay ₹279</p><div style="width:220px;height:220px;background:repeating-conic-gradient(#000 0 25%,#fff 0 50%) 0 0/40px 40px;border:8px solid #000"></div><p>Test page: there is nothing to pay.</p></body>');
+  response.end('<!doctype html><title>Checkout</title><body style="font:20px sans-serif;padding:40px"><h1>Checkout</h1><p>Inscryption ₹279</p><button onclick="window.open(\'/pay\', \'payment\', \'popup,width=520,height=640\'); this.textContent=\'Working…\'">Continue to payment</button></body>');
+});
+shop.listen(SHOP_PORT, "127.0.0.1");
+shop.unref();
+
 const CASES = [
   {
     ask: "can you search and compare PS5 pricing across 4/5 different shopping website, I want to order it in USA: Wisconsin. Maybe search at Amazon and similar top 4/5 website ? send me screenshot of each website and a separate table in the chat of price comparision",
@@ -55,6 +67,13 @@ const CASES = [
   // Round 3: a live terminal the owner watches, and a CLI sign-in whose page or code reaches the owner on a card.
   { ask: "open a terminal on my computer that I can watch live, and start htop in it", tools: [["terminal_open"], ["live_view"]], card: "live" },
   { ask: "sign in to the Azure CLI on my computer (az login), I will do the sign in", tools: [["computer_run"]], card: /^(login|device_code)/ },
+  // Round 4: a checkout whose payment opens in a popup window (a local fake shop; nothing is paid).
+  {
+    ask: `open ${SHOP}/checkout in the browser on my computer, click "Continue to payment" and send me a screenshot of the payment window it opens. Do not pay.`,
+    tools: [["browser_open", "browser_view", "web_task"]],
+    media: 1,
+    look: "A payment page headed FAKEPAY with a square QR code placeholder and the amount 279, not the checkout page with a Continue to payment button.",
+  },
 ];
 
 /**

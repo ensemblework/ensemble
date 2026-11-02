@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { longFetch, untimedDispatcher } from "./long-fetch.js";
 import { callLimitMs, durationWords, modelCallTimeoutMs, modelTimeoutMessage, runtimeCallTimeoutMs } from "./model-timeout.js";
 
 test("ENSEMBLE_MODEL_CALL_TIMEOUT_MS is 15 minutes by default, between 30 seconds and 30 minutes", () => {
@@ -70,6 +71,26 @@ test("hub-api sends the Python runtime its limit and closes the request when it 
     await Promise.race([requestClosed, new Promise((_, reject) => setTimeout(() => reject(new Error("the request stayed open")), 2_000))]);
   } finally {
     server.closeAllConnections();
+    server.close();
+  }
+});
+
+test("model calls go through an agent of fetch's own build without its 300-second header and body limits", async () => {
+  const fallback = (globalThis as unknown as Record<symbol, object>)[Symbol.for("undici.globalDispatcher.1")];
+  const dispatcher = untimedDispatcher();
+  assert.ok(dispatcher && fallback, "Node's fetch has a global dispatcher to copy");
+  assert.notEqual(dispatcher, fallback);
+  assert.equal(dispatcher.constructor, fallback.constructor, "the same undici as this Node's fetch");
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.write("thinking");
+    setTimeout(() => response.end(", done"), 300);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await longFetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`, { signal: AbortSignal.timeout(5_000) });
+    assert.equal(await response.text(), "thinking, done");
+  } finally {
     server.close();
   }
 });

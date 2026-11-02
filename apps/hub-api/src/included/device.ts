@@ -11,6 +11,7 @@ import { IncludedLimitError, includedErrorFrom } from "./errors.js";
 import { ProviderError } from "../runtime/errors.js";
 import { loadSettings, readDeviceToken } from "../remote/store.js";
 import { checkApiBase } from "../remote/client.js";
+import { longFetch } from "../lib/long-fetch.js";
 
 type Json = Record<string, unknown>;
 export type DeviceLink = { base: string; token: string };
@@ -53,7 +54,7 @@ async function call(link: DeviceLink, method: string, path: string, body: unknow
   checkApiBase(link.base);
   let response: Response;
   try {
-    response = await fetch(`${link.base}${path}`, {
+    response = await longFetch(`${link.base}${path}`, {
       method,
       headers: { authorization: `Bearer ${link.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),

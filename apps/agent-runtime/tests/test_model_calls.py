@@ -163,3 +163,22 @@ def test_the_timeout_setting_and_the_margin() -> None:
     assert model_timeout.runtime_seconds({"timeoutMs": 120_000}, {}) == 130.0, "hub-api's limit and a margin: hub-api cuts first"
     assert model_timeout.runtime_seconds({}, {"ENSEMBLE_MODEL_CALL_TIMEOUT_MS": "600000"}) == 600.0
     assert model_timeout.timeout_message("gpt-6.1-sol", 900_000) == "GPT-6.1 Sol did not answer within 15 minutes, so I stopped waiting. Ask again, or try a narrower question."
+
+
+def test_a_quiet_model_keeps_the_stream_alive_until_its_first_frame() -> None:
+    from ensemble_agent.disconnect import frames_until_closed
+
+    async def never_disconnects() -> dict[str, Any]:
+        await asyncio.Event().wait()
+        return {}
+
+    async def thinks_then_answers() -> Any:
+        await asyncio.sleep(0.25)
+        yield "event: turn\ndata: {}\n\n"
+
+    async def collect() -> list[str]:
+        return [frame async for frame in frames_until_closed(never_disconnects, thinks_then_answers(), seconds=5, on_timeout=lambda: "timeout", keep_alive=0.05)]
+
+    frames = asyncio.run(collect())
+    assert frames[-1] == "event: turn\ndata: {}\n\n"
+    assert frames.count(": keep-alive\n\n") >= 2, frames

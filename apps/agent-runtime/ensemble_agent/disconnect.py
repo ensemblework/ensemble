@@ -26,8 +26,23 @@ async def _closed(receive: Receive) -> None:
             return
 
 
-async def frames_until_closed(receive: Receive, frames: AsyncIterator[str], *, seconds: float, on_timeout: Callable[[], str]) -> AsyncIterator[str]:
-    """The frames as they come, until they end, the client goes, or ``seconds`` pass (then ``on_timeout()``)."""
+KEEP_ALIVE_SECONDS = 15.0
+
+
+async def frames_until_closed(
+    receive: Receive,
+    frames: AsyncIterator[str],
+    *,
+    seconds: float,
+    on_timeout: Callable[[], str],
+    keep_alive: float = KEEP_ALIVE_SECONDS,
+) -> AsyncIterator[str]:
+    """The frames as they come, until they end, the client goes, or ``seconds`` pass (then ``on_timeout()``).
+
+    A comment frame every ``keep_alive`` seconds while nothing else comes: a model that thinks for minutes
+    before its first word must not look like a dead connection to the caller (Node's fetch gives up after
+    300 s without a byte).
+    """
     queue: asyncio.Queue[object] = asyncio.Queue()
 
     async def produce() -> None:
@@ -42,19 +57,26 @@ async def frames_until_closed(receive: Receive, frames: AsyncIterator[str], *, s
 
     producer = asyncio.create_task(produce())
     watcher = asyncio.create_task(_closed(receive))
+    getter: asyncio.Future[object] | None = None
     try:
         while True:
-            getter = asyncio.ensure_future(queue.get())
-            done, _ = await asyncio.wait({getter, watcher}, return_when=asyncio.FIRST_COMPLETED)
+            if getter is None:
+                getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({getter, watcher}, timeout=keep_alive, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                yield ": keep-alive\n\n"
+                continue
             if getter not in done:
-                getter.cancel()
                 return
             item = getter.result()
+            getter = None
             if item is _END:
                 return
             yield str(item)
     finally:
         # Not awaited: the response may be cancelled itself, and the call must stop either way.
+        if getter is not None:
+            getter.cancel()
         producer.cancel()
         watcher.cancel()
 

@@ -21,6 +21,7 @@ import { effortToSend } from "./model-meta.js";
 import { keysFor } from "../sharing/context.js";
 import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
 import { callLimitMs, isTimeoutError, ModelTimeoutError } from "./model-timeout.js";
+import { longFetch } from "./long-fetch.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -323,7 +324,7 @@ export async function askRuntime(args: {
   }
   let response: Response;
   try {
-    response = await fetch(`${env.AGENT_RUNTIME_URL}/api/chat/tools`, {
+    response = await longFetch(`${env.AGENT_RUNTIME_URL}/api/chat/tools`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN },
       body: JSON.stringify(body),
@@ -396,7 +397,7 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
     if (useInProcessRuntime()) {
       response = await inProcessStream(body, signal);
     } else {
-      response = await fetch(`${env.AGENT_RUNTIME_URL}/api/chat/tools/stream`, {
+      response = await longFetch(`${env.AGENT_RUNTIME_URL}/api/chat/tools/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN, Accept: "text/event-stream" },
         body: JSON.stringify(body),

@@ -1,13 +1,15 @@
 /** How the in-process runtime sends a request to a model vendor: one fetch hook, timeouts, and retries. */
+import { longFetch } from "../lib/long-fetch.js";
 import { normalizeTransportError } from "../lib/stream-drop.js";
 import { ProviderError, parseProviderError } from "./errors.js";
 import { runtimeSleep } from "./pace.js";
 import { retryPlan, type Json } from "./payload.js";
 
-let fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis);
+// A model call may run for 15 minutes: no 300-second header or body limit of Node's fetch (lib/long-fetch.ts).
+let fetchImpl: typeof fetch = longFetch as typeof fetch;
 
 export function setRuntimeFetchForTests(fetchFn: typeof fetch | null): void {
-  fetchImpl = fetchFn ?? globalThis.fetch.bind(globalThis);
+  fetchImpl = fetchFn ?? (longFetch as typeof fetch);
 }
 
 function combineSignals(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
