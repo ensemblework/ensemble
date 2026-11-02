@@ -159,6 +159,7 @@ export function webTaskTool(scope: NodeScope): AnyHubTool {
     description:
       "Do a multi-step task on a website in your owner's browser on their computer: a value behind clicks on a dashboard or console, a setting to read, a form to fill. " +
       "Give the goal (and url to start, or the tab). It reads the page, clicks and types step by step (at most 8 steps) and returns status (done, sign_in_needed, human_check, blocked, gave_up), the answer, the steps and any screenshots. " +
+      "When a click opens a new window (a payment or sign-in popup) it goes on there, and the result names that tab. " +
       "It never types passwords or codes: a sign-in goes to your owner on a card in this chat, and you go on (call it again with the same tab) when they are done. It never clicks to buy, pay, subscribe, delete, send or post: it stops there and tells you the button, for you to ask your owner and click after their yes. " +
       "For a screenshot of a page use browser_view; for prices browser_shop; for facts hub_web_search.",
     input: Input,
@@ -185,6 +186,8 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
   let title = "";
   let last = "";
   let calls = 0;
+  /** Windows its own actions opened, newest last: it goes on in the newest, as a person would. */
+  const popups: Array<{ tab: string; openedBy: string | null; title: string; site: string }> = [];
 
   type Called = { ok: true; summary: string; data: unknown } | { ok: false; error: string };
   const call = async (name: string, args: Record<string, unknown>, optional: readonly string[] = []): Promise<Called> => {
@@ -199,6 +202,15 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
       if (typeof keyOf(result, "tab") === "string") tab = keyOf(result, "tab") as string;
       if (typeof keyOf(result, "url") === "string") url = keyOf(result, "url") as string;
       if (typeof keyOf(result, "title") === "string") title = keyOf(result, "title") as string;
+      const opened = (keyOf(result, "opened") as Array<Record<string, unknown>> | undefined)?.filter((item) => typeof item?.tab === "string") ?? [];
+      const popup = opened.at(-1);
+      if (popup) {
+        const from = tab;
+        tab = popup.tab as string;
+        url = typeof popup.url === "string" ? popup.url : "";
+        title = typeof popup.title === "string" ? popup.title : "";
+        popups.push({ tab, openedBy: typeof popup.openedBy === "string" ? popup.openedBy : from, title, site: typeof popup.site === "string" ? popup.site : "" });
+      }
       return { ok: true, summary: done.summary, data: done.data };
     } catch (error) {
       const message = error instanceof ToolBlockedError ? [error.message, error.remedy].filter(Boolean).join(" ") : error instanceof Error ? error.message : String(error);
@@ -217,9 +229,12 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
   /** The computer itself saw a sign-in page and the owner has its card. */
   const signingIn = (done: Called) => done.ok && Boolean(keyOf(done.data, "signIn"));
   const finish = (outcome: Outcome): ToolResult => {
-    const data = { status: outcome.status, answer: outcome.answer, steps, evidence, ...(tab ? { tab } : {}), ...(url ? { url } : {}), ...(title ? { title } : {}), ...(outcome.waiting ? { waitingForOwner: true } : {}) };
+    const popup = popups.at(-1);
+    const data = { status: outcome.status, answer: outcome.answer, steps, evidence, ...(tab ? { tab } : {}), ...(url ? { url } : {}), ...(title ? { title } : {}), ...(popup ? { popup } : {}), ...(outcome.waiting ? { waitingForOwner: true } : {}) };
+    const about = popup ? [popup.title, popup.site].filter(Boolean).join(", ") : "";
     const lines = [
       `web_task ${outcome.status.replace(/_/g, " ")}: ${outcome.answer}`,
+      popup ? `A click opened a new window, tab ${popup.tab}${about ? ` (${about})` : ""}, and it went on there${popup.openedBy ? `; tab ${popup.openedBy} is still open` : ""}. Use tab ${popup.tab} for this page.` : "",
       evidence.length ? `${evidence.length === 1 ? "Its screenshot appears" : "Its screenshots appear"} with your reply by themselves.` : "",
       outcome.waiting ? "End your turn now without a reply: you continue when your owner answers the card." : "",
     ].filter(Boolean);
@@ -248,6 +263,17 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
   for (let index = 0; index < input.maxSteps; index += 1) {
     if (stopping()) return finish({ status: "gave_up", answer: "Stopped before the task was done.", waiting: parkedFor(scope.turnId).length > 0 });
     const seen = await call("browser_snapshot", { tab, mode: "interactive", maxChars: PAGE_CHARS - 2_000 }, ["mode"]);
+    // A window it went on in closed by itself (a payment or sign-in popup that finished): back to the tab that opened it.
+    const closedPopup = !seen.ok && /There is no tab/i.test(seen.error) ? popups.at(-1) : undefined;
+    if (closedPopup && closedPopup.tab === tab && closedPopup.openedBy) {
+      popups.pop();
+      tab = closedPopup.openedBy;
+      url = "";
+      title = "";
+      steps.push({ action: `back to tab ${tab}`, result: `The new window, tab ${closedPopup.tab}, closed by itself.` });
+      last = `The new window (tab ${closedPopup.tab}) closed by itself: this is tab ${tab} again.`;
+      continue;
+    }
     if (!seen.ok) return finish({ status: BLOCKED.test(seen.error) ? "blocked" : "gave_up", answer: `Could not read the page: ${seen.error}` });
     if (waits(seen)) return finish({ status: signingIn(seen) ? "sign_in_needed" : "blocked", answer: "Your owner has a card to answer first (in this chat).", waiting: true });
     const page = truncateText(seen.summary, PAGE_CHARS);
@@ -292,6 +318,7 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
       }
     }
 
+    const popupsBefore = popups.length;
     const done =
       action.action === "click" ? await call("browser_click", { tab, ref: action.ref })
       : action.action === "type" ? await call("browser_type", { tab, ref: action.ref, text: action.text, submit: action.submit })
@@ -305,7 +332,8 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
           : await call("browser_snapshot", { tab, maxChars: EXTRACT_CHARS * 2 })
         : await call("browser_screenshot", { tab, focus: action.focus }, ["focus"]);
     const described = `${action.action}${"ref" in action ? ` ${action.ref}` : ""}${"url" in action ? ` ${action.url}` : ""}${"key" in action ? ` ${action.key}` : ""}${"focus" in action && action.focus ? ` (${action.focus})` : ""}`;
-    steps.push({ action: described, result: truncateText(done.ok ? done.summary.split("\n")[0]! : `failed: ${done.error}`, 200) });
+    const moved = popups.length > popupsBefore ? ` It opened a new window, tab ${tab}: going on there.` : "";
+    steps.push({ action: described, result: truncateText(done.ok ? `${done.summary.split("\n")[0]!}${moved}` : `failed: ${done.error}`, 200) });
     if (waits(done)) return finish({ status: signingIn(done) ? "sign_in_needed" : "blocked", answer: signingIn(done) ? "The site asks to sign in: your owner is asked on a card in this chat." : "Your owner has a card to answer first (in this chat).", waiting: true });
     // What browser_extract read is in its result; a snapshot's is in its summary.
     const markdown = keyOf(keyOf(done.ok ? done.data : null, "result"), "markdown");

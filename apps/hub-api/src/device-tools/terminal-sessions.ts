@@ -22,6 +22,7 @@ import type { IMarker, Terminal } from "@xterm/headless";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { browserBroker } from "../browser/index.js";
+import type { TabClosed } from "../browser/broker.js";
 import type { PrivacyRules } from "../browser/privacy.js";
 import { bufferLines, drawn, headlessTerminal, screenRows } from "../capture/screen.js";
 import { findOnPath } from "../capture/system.js";
@@ -591,19 +592,33 @@ export function controlSession(session: TerminalSession, takeoverId: string, on:
 }
 
 /** Watched tabs with a live card: their end is told to the web. */
-const watchedTabs = new Map<string, { tab: string; operation: string; timer: NodeJS.Timeout }>();
+const watchedTabs = new Map<string, { tab: string; operation: string; timer: NodeJS.Timeout; client: HostedClient }>();
+/** Brokers whose closed tabs end their live cards at once. */
+const heard = new WeakSet<object>();
 
-/** Checks the node's tab is its own, and tells the web when it closes (the live card ends). */
+/** Checks the node's tab is its own, and tells the web when it closes (the live card ends; "closed_by_node" when the node closed it). */
 async function watchTab(client: HostedClient, request: LiveRequest): Promise<CodeAnswer> {
   if (!request.tab || !request.liveId) return answer(400, { error: "Name the tab and the live view." });
+  const broker = browserBroker();
   let tab;
   try {
-    tab = browserBroker().ownerTab(request.tab);
+    tab = broker.ownerTab(request.tab);
   } catch {
     return answer(404, { error: `There is no tab ${request.tab}: open one with browser_open first.` });
   }
   if (tab.operation !== request.operation) return answer(404, { error: `Tab ${request.tab} is not yours.` });
   const liveId = request.liveId;
+  if (!heard.has(broker)) {
+    heard.add(broker);
+    broker.events.on("tabClosed", (event: TabClosed) => {
+      for (const [id, watched] of watchedTabs) {
+        if (watched.tab !== event.tab || watched.operation !== event.operation) continue;
+        clearInterval(watched.timer);
+        watchedTabs.delete(id);
+        void watched.client.liveEnded?.(id, { reason: event.by === "agent" ? "closed_by_node" : "tab_closed" }).catch(() => undefined);
+      }
+    });
+  }
   if (!watchedTabs.has(liveId)) {
     const check = () => {
       let open = false;
@@ -620,7 +635,7 @@ async function watchTab(client: HostedClient, request: LiveRequest): Promise<Cod
     };
     const timer = setInterval(check, 5_000);
     timer.unref();
-    watchedTabs.set(liveId, { tab: request.tab, operation: request.operation, timer });
+    watchedTabs.set(liveId, { tab: request.tab, operation: request.operation, timer, client });
   }
   const url = tab.sensitive ? "" : tab.page.url().split(/[?#]/)[0]!.slice(0, 2000);
   const title = tab.sensitive ? "" : await tab.page.title().catch(() => "");

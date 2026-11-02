@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import { CaptureError } from "../capture/media.js";
-import { BrowserError, type BrowserBroker, type LiveFrame } from "./broker.js";
+import { BrowserError, type BrowserBroker, type LiveFrame, type TabInfo } from "./broker.js";
 import { askForLogin, checkForLogin, checkLoginOfTab, waitingNote, type LoginPurpose } from "../logins/requests.js";
 import { HUMAN_CHECK_HINT } from "./human-check.js";
 import { dismissedNote } from "./hygiene.js";
@@ -75,8 +75,42 @@ function fetchSummary(file: FetchResult): string {
   return `Downloaded ${file.name} (${file.mime}, ${size(file.size)}) from ${file.url}.`;
 }
 
+/** Tools that act on a page: a window one of its pages opens meanwhile is reported. */
+const OPENS = new Set(["browser_open", "browser_click", "browser_type", "browser_press", "browser_wait", "browser_view", "browser_extract", "browser_download", "browser_upload"]);
+/** Actions after which a new window may take a moment to show up. */
+const STARTS_WINDOWS = new Set(["browser_click", "browser_press", "browser_type"]);
+
+const siteOf = (url: string): string => {
+  try {
+    return /^https?:/i.test(url) ? new URL(url).host : "";
+  } catch {
+    return "";
+  }
+};
+
+/** "It opened a new window t16 (Komoju: Payment, komoju.com): use tab t16." */
+export function openedNote(tabs: readonly Pick<TabInfo, "tab" | "title" | "url">[]): string {
+  return tabs
+    .map((tab) => {
+      const about = [tab.title.trim(), siteOf(tab.url)].filter(Boolean).join(", ");
+      return `It opened a new window ${tab.tab}${about ? ` (${about})` : ""}: use tab ${tab.tab}.`;
+    })
+    .join("\n");
+}
+
 /** Validates and runs one browser tool call for an operation. Never throws. */
 export async function runBrowserTool(broker: BrowserBroker, name: string, input: unknown, context: BrowserToolContext): Promise<ToolCallResult> {
+  const mark = broker.tabMark();
+  const done = await runOne(broker, name, input, context);
+  if (!done.ok || !OPENS.has(name)) return done;
+  // A click that opened a payment or sign-in window: the agent is told which tab it is.
+  const opened = await broker.openedSince(context.operation, mark, { wait: STARTS_WINDOWS.has(name) }).catch(() => []);
+  if (!opened.length) return done;
+  const result = done.result && typeof done.result === "object" && !Array.isArray(done.result) ? (done.result as Record<string, unknown>) : { value: done.result };
+  return { ok: true, summary: `${done.summary}\n${openedNote(opened)}`, result: { ...result, opened: opened.map((tab) => ({ tab: tab.tab, title: tab.title, url: tab.url, site: siteOf(tab.url), openedBy: tab.openedBy })) } };
+}
+
+async function runOne(broker: BrowserBroker, name: string, input: unknown, context: BrowserToolContext): Promise<ToolCallResult> {
   const spec = BROWSER_TOOLS.find((item) => item.name === name);
   if (!spec) return { ok: false, error: { code: "bad_input", message: `Unknown browser tool ${name}.` } };
   try {
@@ -111,7 +145,11 @@ export async function runBrowserTool(broker: BrowserBroker, name: string, input:
       }
       case "browser_tabs": {
         const tabs = await op.tabs();
-        return { ok: true, summary: tabs.length ? tabs.map((item) => `${item.tab}: ${item.title || item.url}${item.sensitive ? " (paused for sign-in)" : ""}`).join("\n") : "No tabs open.", result: { tabs } };
+        const line = (item: TabInfo) => {
+          const site = siteOf(item.url);
+          return `${item.tab}: ${item.title || item.url || "(no page)"}${item.title && site ? ` (${site})` : ""}${item.popup ? `, a window ${item.openedBy ?? "a page"} opened` : ""}${item.sensitive ? " (paused for sign-in)" : ""}`;
+        };
+        return { ok: true, summary: tabs.length ? tabs.map(line).join("\n") : "No tabs open.", result: { tabs } };
       }
       case "browser_close": {
         const closed = await op.close(a.tab as string);

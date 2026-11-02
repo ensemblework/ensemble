@@ -9,6 +9,7 @@
  * left idle. A tab marked sensitive (a sign-in or a takeover) refuses every capture and every
  * action except waiting for a URL, and its live view pauses.
  */
+import { EventEmitter } from "node:events";
 import { constants as fsConstants } from "node:fs";
 import { open as openFile, realpath, rm, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, sep } from "node:path";
@@ -67,7 +68,14 @@ export type TabInfo = {
   sensitive: boolean;
   recording: "video" | "trace" | null;
   expiresAt: string;
+  /** A window a page of this work opened (window.open, a link to a new window), and the tab that opened it. */
+  popup?: true;
+  openedBy?: string;
 };
+
+/** Why a tab closed, as the broker's `tabClosed` event says: an agent closed it, its lease ended, its work ended, Ensemble shut down, or its page or browser closed by itself. */
+export type TabClosedBy = "agent" | "lease" | "release" | "shutdown" | "page";
+export type TabClosed = { tab: string; operation: string; by: TabClosedBy };
 
 export type OpenOptions = {
   /** Navigate this tab instead of opening a new one. */
@@ -178,6 +186,8 @@ type Tab = {
   held?: { revives: number; since: number };
   /** Settles when a held tab that is being opened again is back (or gone). */
   reviving?: Promise<void>;
+  /** A popup: the tab whose page opened it. It shares that tab's lease (`family`). */
+  openedBy?: string;
 };
 
 type Operation = {
@@ -201,6 +211,10 @@ const PREVIEW_REASON = "The owner asked to see captures of this site before they
 const EXPOSED_REASON = "A one-time code or card field was on screen.";
 const REF = /^(?:f\d+)?e\d+$/;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+/** How long an action waits after it is done for a window it opened to show up. */
+const POPUP_GRACE_MS = 300;
+/** How long a new window gets to load, so its title and site can be told. */
+const POPUP_LOAD_MS = 3_000;
 const MAX_UPLOAD = 50 * 1024 * 1024;
 const MAX_DOWNLOAD = 100 * 1024 * 1024;
 const CREDENTIAL_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.netrc|\.pgpass|\.git-credentials|credentials(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ovpn))$/i;
@@ -271,6 +285,8 @@ export function hasDisplay(env: NodeJS.ProcessEnv, platform: string): boolean {
 }
 
 export class BrowserBroker {
+  /** `tabClosed` (`TabClosed`): a tab closed, and why. Live views end with their tab (takeover/session.ts, device-tools/terminal-sessions.ts). */
+  readonly events = new EventEmitter();
   private readonly options: Required<Pick<BrokerOptions, "leaseMs" | "idleBrowserMs" | "janitorMs" | "liveViewMs" | "snapshotChars" | "maxTabsPerOperation">> & BrokerOptions;
   private readonly contexts = new Map<string, ContextEntry>();
   private readonly launching = new Map<string, Promise<ContextEntry>>();
@@ -385,8 +401,24 @@ export class BrowserBroker {
     }
     const op = this.op(operation);
     tab.lastUsed = this.now();
-    tab.expiresAt = tab.lastUsed + (op.options.leaseMs ?? this.options.leaseMs);
+    const until = tab.lastUsed + (op.options.leaseMs ?? this.options.leaseMs);
+    for (const member of this.family(tab)) member.expiresAt = Math.max(member.expiresAt, until);
+    tab.expiresAt = until;
     return tab;
+  }
+
+  /**
+   * A tab with the windows it opened (and theirs) and the tab that opened it: one lease. Using any of
+   * them keeps all of them, and none closes while one of them is held for the owner.
+   */
+  private family(tab: Tab): Tab[] {
+    let root = tab;
+    for (let up = root.openedBy ? this.tabs.get(root.openedBy) : undefined; up && up.operation === tab.operation && up !== tab; up = up.openedBy ? this.tabs.get(up.openedBy) : undefined) root = up;
+    const members = [root];
+    for (let index = 0; index < members.length; index += 1) {
+      for (const other of this.tabs.values()) if (other.openedBy === members[index]!.id && other.operation === tab.operation && !members.includes(other)) members.push(other);
+    }
+    return members;
   }
 
   private evidenceDir(operation: string): string {
@@ -410,6 +442,7 @@ export class BrowserBroker {
       sensitive: tab.sensitive,
       recording: tab.recording?.kind ?? (tab.entry.tracing?.tab === tab.id ? "trace" : null),
       expiresAt: new Date(tab.expiresAt).toISOString(),
+      ...(tab.openedBy ? { popup: true as const, openedBy: tab.openedBy } : {}),
     };
   }
 
@@ -532,7 +565,7 @@ export class BrowserBroker {
     this.contexts.delete(entry.key);
     // Before its pages close: Chromium drops session cookies as its last page goes.
     await this.keepSessionCookies(entry);
-    for (const tab of [...this.tabs.values()]) if (tab.entry === entry) await this.closeTab(tab);
+    for (const tab of [...this.tabs.values()]) if (tab.entry === entry) await this.closeTab(tab, this.closed ? "shutdown" : "lease");
     if (entry.tracing) await this.discardTrace(entry, "its browser closed");
     await entry.context.close().catch(() => undefined);
   }
@@ -545,7 +578,7 @@ export class BrowserBroker {
 
   // ── tabs ──────────────────────────────────────────────────────────────────
 
-  private register(page: Page, operation: string, entry: ContextEntry): Tab {
+  private register(page: Page, operation: string, entry: ContextEntry, opener?: Tab): Tab {
     const known = this.pageTabs.get(page);
     if (known) return known;
     this.counter += 1;
@@ -557,7 +590,9 @@ export class BrowserBroker {
       page,
       entry,
       lastUsed: now,
-      expiresAt: now + (op.options.leaseMs ?? this.options.leaseMs),
+      // A popup keeps its opener's lease.
+      expiresAt: Math.max(now + (op.options.leaseMs ?? this.options.leaseMs), opener?.expiresAt ?? 0),
+      ...(opener ? { openedBy: opener.id } : {}),
       sensitive: false,
       consoleLog: [],
       network: [],
@@ -599,7 +634,7 @@ export class BrowserBroker {
       if (tab.downloads.length > 10) tab.downloads.shift();
     });
     page.on("popup", (popup) => {
-      if (this.tabsOf(operation).length < this.options.maxTabsPerOperation) this.register(popup, operation, tab.entry);
+      if (this.tabsOf(operation).length < this.options.maxTabsPerOperation) this.register(popup, operation, tab.entry, tab);
       else void popup.close().catch(() => undefined);
     });
     page.on("close", () => {
@@ -656,16 +691,17 @@ export class BrowserBroker {
     }
   }
 
-  private forgetTab(tab: Tab): void {
+  private forgetTab(tab: Tab, by: TabClosedBy = "page"): void {
     if (this.tabs.get(tab.id) !== tab) return;
     this.tabs.delete(tab.id);
+    this.events.emit("tabClosed", { tab: tab.id, operation: tab.operation, by } satisfies TabClosed);
     if (tab.recording?.kind === "video") void tab.recording.video.stop().catch(() => undefined);
     if (![...this.tabs.values()].some((other) => other.entry === tab.entry)) tab.entry.idleSince = this.now();
     const op = this.operations.get(tab.operation);
     if (op) this.updateLive(op);
   }
 
-  private async closeTab(tab: Tab): Promise<void> {
+  private async closeTab(tab: Tab, by: TabClosedBy): Promise<void> {
     if (tab.recording?.kind === "video") {
       // Finished with its tab (a close, a release, an expired lease): kept for its work to take, held as it was watched.
       const recording = tab.recording;
@@ -680,7 +716,7 @@ export class BrowserBroker {
     }
     if (tab.entry.tracing?.tab === tab.id) await this.discardTrace(tab.entry, "its tab closed");
     tab.recording = null;
-    this.forgetTab(tab);
+    this.forgetTab(tab, by);
     // The profile's last page: Chromium ends its session as it closes, so its session cookies are kept first.
     if (tab.entry.profile !== null && tab.entry.context.pages().every((page) => page === tab.page)) await this.keepSessionCookies(tab.entry, false);
     await tab.page.close().catch(() => undefined);
@@ -753,8 +789,31 @@ export class BrowserBroker {
   }
 
   async close(operation: string, id: string): Promise<{ closed: string }> {
-    await this.closeTab(this.tab(operation, id, "close"));
+    await this.closeTab(this.tab(operation, id, "close"), "agent");
     return { closed: id };
+  }
+
+  /** Where the tabs of an operation stand: the highest tab number so far, for `openedSince`. */
+  tabMark(): number {
+    return this.counter;
+  }
+
+  /**
+   * Windows that pages of this operation opened since `mark` (`tabMark`), still open: with `wait`, up
+   * to 300 ms for one an action (a click) just started, and then up to three seconds for each to load so its
+   * title and site can be told.
+   */
+  async openedSince(operation: string, mark: number, input: { wait?: boolean } = {}): Promise<TabInfo[]> {
+    const fresh = () => [...this.tabs.values()].filter((tab) => tab.operation === operation && tab.openedBy && Number(tab.id.slice(1)) > mark && !tab.page.isClosed());
+    for (const until = Date.now() + (input.wait ? POPUP_GRACE_MS : 0); !fresh().length && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 25));
+    const found = fresh();
+    await Promise.all(found.map((tab) => tab.page.waitForLoadState("domcontentloaded", { timeout: POPUP_LOAD_MS }).catch(() => undefined)));
+    return Promise.all(found.filter((tab) => this.tabs.get(tab.id) === tab).map((tab) => this.describe(tab)));
+  }
+
+  /** The tab id of a page, if it is one of the broker's (a popup the owner's live view follows). */
+  tabIdOf(page: Page): string | null {
+    return this.pageTabs.get(page)?.id ?? null;
   }
 
   async snapshot(operation: string, id: string, input: { maxChars?: number; mode?: "full" | "interactive" } = {}): Promise<{ tab: string; url: string; title: string; snapshot: string; truncated: boolean; mode?: "interactive" }> {
@@ -1191,7 +1250,8 @@ export class BrowserBroker {
     const tab = this.tabs.get(id);
     if (!tab) return;
     const op = this.operations.get(tab.operation);
-    tab.expiresAt = Math.max(tab.expiresAt, this.now() + (ms ?? op?.options.leaseMs ?? this.options.leaseMs));
+    const until = this.now() + (ms ?? op?.options.leaseMs ?? this.options.leaseMs);
+    for (const member of this.family(tab)) member.expiresAt = Math.max(member.expiresAt, until);
     if (op) op.lastUsed = this.now();
   }
 
@@ -1406,7 +1466,7 @@ export class BrowserBroker {
   async release(operation: string): Promise<{ closed: number }> {
     const op = this.operations.get(operation);
     const tabs = this.tabsOf(operation);
-    for (const tab of tabs) await this.closeTab(tab);
+    for (const tab of tabs) await this.closeTab(tab, "release");
     const own = this.contexts.get(`private:${operation}`);
     if (own) await this.closeContext(own);
     if (op) this.stopLive(op);
@@ -1420,11 +1480,12 @@ export class BrowserBroker {
     const closedTabs: string[] = [];
     const closedContexts: string[] = [];
     for (const tab of [...this.tabs.values()]) {
-      if (tab.expiresAt <= now && !tab.held && !tab.moving) {
-        closedTabs.push(tab.id);
-        this.log(`lease of ${tab.id} ended; closing it`);
-        await this.closeTab(tab);
-      }
+      if (this.tabs.get(tab.id) !== tab || tab.expiresAt > now || tab.held || tab.moving) continue;
+      // A popup and its opener go together: none while one of them is in use, held for the owner or moving.
+      if (this.family(tab).some((member) => member.expiresAt > now || member.held || member.moving)) continue;
+      closedTabs.push(tab.id);
+      this.log(`lease of ${tab.id} ended; closing it`);
+      await this.closeTab(tab, "lease");
     }
     for (const entry of [...this.contexts.values()]) {
       const used = [...this.tabs.values()].some((tab) => tab.entry === entry);
