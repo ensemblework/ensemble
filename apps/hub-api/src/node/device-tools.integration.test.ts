@@ -7,7 +7,9 @@
  * no answer unless the owner asks before browsing; a node's tool operation is its own across
  * conversations; what it captures comes with its reply; terminal screenshots and shared files go as
  * their requests; unattended calls say so; an older computer is asked to update; a long command runs
- * on in the background and wakes its node once when it ends. Node runs get only the secrets they name.
+ * on in the background and wakes its node once when it ends, unless the node stopped it, a newer
+ * attempt at the same sign-in replaced it, or it was a sign-in that ran out of time; a failure it knows
+ * comes with a hint. A model call past its limit says so. Node runs get only the secrets they name.
  * The computer is simulated: it hears frames on its event stream and answers with its device key.
  */
 import assert from "node:assert/strict";
@@ -25,13 +27,14 @@ const { settleTurns } = await import("./queue.js");
 const { saveSettings } = await import("../lib/settings.js");
 const { RunProfile } = await import("@ensemble/shared-types");
 const { sseHub } = await import("../lib/sse.js");
-const { deviceTools, forComputer } = await import("./device-tools.js");
+const { deviceTools, forComputer, signInWhich } = await import("./device-tools.js");
 const { postMessage } = await import("./store.js");
+const { ModelTimeoutError } = await import("../lib/model-timeout.js");
 after(() => h.close());
 
 type Call = { name: string; arguments: Record<string, unknown> };
 type Seen = { slug: string; transcript: string; tools: string[] };
-let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string } = () => ({ text: "ok" });
+let script: (turn: Seen) => { calls?: Call[]; text?: string; then?: string; fails?: Error } = () => ({ text: "ok" });
 const seen: Seen[] = [];
 
 setAskRuntimeStreamForTests(async (args) => {
@@ -44,6 +47,7 @@ setAskRuntimeStreamForTests(async (args) => {
   const current: Seen = { slug, transcript, tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name) };
   if (!second) seen.push(current);
   const step = script(current);
+  if (step.fails) throw step.fails;
   const calls = second ? [] : (step.calls ?? []);
   const text = second ? (step.then ?? "Done.") : calls.length ? "" : (step.text ?? "ok");
   const turn: RuntimeTurn = {
@@ -765,6 +769,160 @@ test("a CLI sign-in runs 15 minutes in the background; the code it prints is on 
   } finally {
     device.stop();
   }
+});
+
+/** A computer that runs each command in the background (its run id kept in `runs`) and stops one when asked. */
+function backgroundComputer(laptopId: string, key: { inject: HttpUser["inject"] }, onRun: (data: Record<string, unknown>) => Promise<void> | void = () => undefined) {
+  const runs: string[] = [];
+  const stops: string[] = [];
+  const device = computer(laptopId, key, async (data) => {
+    if (data.tool === "run_stop") {
+      stops.push(String(data.runId));
+      return { status: 200, body: { stopped: true } };
+    }
+    runs.push(String(data.runId));
+    await onRun(data);
+    return { status: 202, body: { runId: String(data.runId), background: true, output: "" } };
+  });
+  return { ...device, runs, stops };
+}
+
+/** The computer posts a run's last chunk: how it ended. */
+const endRun = (key: { inject: HttpUser["inject"] }, runId: string, end: { exitCode: number; text?: string; timedOut?: boolean }) =>
+  key.inject({ method: "POST", url: `/api/devices/self/tool-runs/${runId}/output`, payload: { seq: 0, text: end.text ?? "", done: true, exitCode: end.exitCode, wake: true, ...(end.timedOut ? { timedOut: true } : {}) } });
+
+test("which sign-in a command is: its program and subcommand, whatever its options", () => {
+  assert.equal(signInWhich("az login --use-device-code"), "az login");
+  assert.equal(signInWhich("az login --tenant 1111"), "az login");
+  assert.equal(signInWhich('bash -c "az login && az account show"'), "az login");
+  assert.equal(signInWhich("gh auth login --web -h github.com"), "gh auth login");
+  assert.equal(signInWhich("gcloud auth login --no-browser"), "gcloud auth login");
+  assert.equal(signInWhich("aws sso login --profile dev"), "aws sso login");
+  assert.equal(signInWhich("npm test"), null);
+});
+
+test("a newer attempt at a sign-in replaces the older one: stopped on the computer, its card says so, and its end wakes no one", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 3, cliLogins: 1 });
+  const { node, room } = await createNode(mira);
+  const url = "https://microsoft.com/devicelogin";
+  const device = backgroundComputer(laptop.id, key, async (data) => {
+    if (String(data.command).includes("--use-device-code")) await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: String(data.runId), url, code: "FWQZ8N3XP", command: String(data.command) } });
+  });
+  try {
+    script = (turn) =>
+      turn.transcript.includes("with a code")
+        ? { calls: [{ name: "computer_run", arguments: { command: "az login --use-device-code" } }], then: "The code is on the card." }
+        : turn.transcript.includes("in the browser")
+          ? { calls: [{ name: "computer_run", arguments: { command: "az login" } }], then: "The sign-in is on the card." }
+          : { text: "ok" };
+    await say(mira, room.id, "sign in to azure with a code");
+    const [older] = device.runs;
+    const card = (await rows(mira, room.id)).find((row) => row.data.type === "device_code")!;
+    assert.equal(card.data.status, "pending");
+    await say(mira, room.id, "sign in to azure in the browser");
+    assert.deepEqual(device.stops, [older], "the older attempt is stopped on the computer");
+    assert.equal(device.heard.at(-1)!.command, "az login");
+    const replaced = (await rows(mira, room.id)).find((row) => row.id === card.id)!;
+    assert.deepEqual([replaced.data.status, replaced.data.note], ["replaced", "Replaced by a newer sign-in."]);
+
+    // The browser attempt opened a page: its card. A third attempt replaces it too, and frees its tab there.
+    const loginId = `lg_${randomBytes(16).toString("hex")}`;
+    const login = { loginId, origin: "https://login.microsoftonline.com", tab: "t3", profile: null, saved: false, display: false, expiresAt: new Date(Date.now() + 900_000).toISOString(), source: "cli", command: "az login" };
+    assert.equal((await key.inject({ method: "POST", url: "/api/devices/self/nodes/logins", payload: { nodeId: node.id, operation: device.runs[1], login } })).statusCode, 200);
+    const page = (await rows(mira, room.id)).find((row) => row.data.type === "login" && row.data.loginId === loginId)!;
+    assert.deepEqual([page.data.status, page.data.run], ["pending", device.runs[1]]);
+    await say(mira, room.id, "sign in to azure in the browser");
+    assert.deepEqual(device.stops, [older, device.runs[1]]);
+    const ended = (await rows(mira, room.id)).find((row) => row.id === page.id)!;
+    assert.deepEqual([ended.data.status, ended.data.note, ended.data.replaced], ["ended", "Replaced by a newer sign-in.", true]);
+    // The older command's end (killed) wakes no one; the code it posts as it ends leaves the card as it is.
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    assert.equal((await endRun(key, older!, { exitCode: 143 })).statusCode, 200);
+    await key.inject({ method: "POST", url: "/api/devices/self/nodes/device-codes", payload: { nodeId: node.id, operation: older, url, code: "FWQZ8N3XP", command: "az login --use-device-code", status: "expired" } });
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns);
+    assert.equal((await rows(mira, room.id)).find((row) => row.id === card.id)!.data.status, "replaced");
+    // The newest attempt signs in: that wakes the node.
+    assert.equal((await endRun(key, device.runs[2]!, { exitCode: 0, text: "[]\n" })).statusCode, 200);
+    await settleTurns();
+    assert.equal(seen.filter((turn) => turn.transcript.includes("`az login` in your own folder")).length, 1);
+  } finally {
+    device.stop();
+  }
+});
+
+test("a sign-in that ran out of time wakes no one; one that failed early does, with what to do instead", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 3 });
+  const { node, room } = await createNode(mira);
+  const device = backgroundComputer(laptop.id, key);
+  try {
+    script = (turn) => (turn.transcript.includes("sign in") ? { calls: [{ name: "computer_run", arguments: { command: "az login --use-device-code" } }], then: "On the card." } : { text: "ok" });
+    await say(mira, room.id, "sign in to azure");
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    await endRun(key, device.runs[0]!, { exitCode: 1, text: "\n[stopped after 900 s]", timedOut: true });
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns, "its card already says it timed out");
+
+    await say(mira, room.id, "sign in to azure again");
+    const blocked = "AADSTS530035: Access has been blocked by security defaults. Security defaults is set up by the admin of the tenant.\nTrace ID: 0a1b2c3d-1111-2222-3333-444455556666\n";
+    await endRun(key, device.runs[1]!, { exitCode: 1, text: blocked });
+    await settleTurns();
+    const woken = seen.filter((turn) => turn.transcript.includes("ended after"));
+    assert.equal(woken.length, 1);
+    assert.match(woken[0]!.transcript, /Hint: Device-code sign-in is blocked by this account's security defaults: run plain `az login` \(browser sign-in\) instead\./);
+
+    await say(mira, room.id, "sign in to azure once more");
+    const none = "The following tenants don't contain accessible subscriptions. Use `az login --allow-no-subscriptions` to have tenant level access.\n72f988bf-86f1-41af-91ab-2d7cd011db47 'Contoso'\nNo subscriptions found for mira@example.com.\n";
+    await endRun(key, device.runs[2]!, { exitCode: 1, text: none });
+    await settleTurns();
+    const last = seen.filter((turn) => turn.transcript.includes("ended after")).at(-1)!;
+    assert.match(last.transcript, /Hint: .*`az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47`, and `az account list --all`/);
+  } finally {
+    device.stop();
+  }
+});
+
+test("computer_run_stop stops a background run on the computer and wakes no one; an older computer cannot, and the node is told", async () => {
+  const mira = await person("Mira");
+  const { laptop, key } = await laptopFor(mira, "unattended", { nodeTools: 3 });
+  const { node, room } = await createNode(mira);
+  const device = backgroundComputer(laptop.id, key);
+  try {
+    script = (turn) =>
+      turn.transcript.includes("never mind")
+        ? { calls: [{ name: "computer_run_stop", arguments: { run: device.runs.at(-1) } }], then: "Stopped." }
+        : { calls: [{ name: "computer_run", arguments: { command: "npm run dev", background: true } }], then: "It is running." };
+    await say(mira, room.id, "start the dev server");
+    await say(mira, room.id, "never mind");
+    assert.deepEqual(device.stops, [device.runs[0]]);
+    assert.match((await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!, /Stopped `npm run dev` on Mira's laptop, and what it started\. You are not woken for it\./);
+    const turns = await h.prisma.nodeTurn.count({ where: { nodeId: node.id } });
+    await endRun(key, device.runs[0]!, { exitCode: 143 });
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns);
+
+    await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { folders: ["app"], engines: ["claude-code"], nodeTools: 2 } as never } });
+    await say(mira, room.id, "start it again");
+    await say(mira, room.id, "never mind");
+    assert.equal(device.stops.length, 1, "an older computer is not asked");
+    assert.match((await lastReply(mira, room.id, node.id)).data.tools![0]!.summary!, /too old to stop a command from here\. It ends by itself at its time limit, and you are not woken for it\./);
+    await endRun(key, device.runs[1]!, { exitCode: 0 });
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { nodeId: node.id } }), turns + 2);
+  } finally {
+    device.stop();
+  }
+});
+
+test("a model call past its limit ends the turn with which model and how long, not the raw abort", async () => {
+  const mira = await person("Mira");
+  const { node, room } = await createNode(mira);
+  script = () => ({ fails: new ModelTimeoutError("gpt-6.1-sol", 900_000) });
+  await say(mira, room.id, "find SOTA VLM papers from official sources");
+  const notice = (await rows(mira, room.id)).filter((row) => row.authorNodeId === node.id && row.kind === "error").at(-1)!;
+  assert.equal(notice.body, "GPT-6.1 Sol did not answer within 15 minutes, so I stopped waiting. Ask again, or try a narrower question.");
 });
 
 test("a node's agent run gets only the secrets it names: none by default, a saved request's name once saved", async () => {

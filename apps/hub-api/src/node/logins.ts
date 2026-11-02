@@ -112,6 +112,8 @@ type PostInput = {
   /** A run's sign-in (its hosted job); else a node tool operation's. */
   jobId?: string | null;
   operation?: string | null;
+  /** A command's sign-in (`source: "cli"`): the node's command run that opened it. */
+  run?: string | null;
   planId?: string | null;
   planStep?: string | null;
   rootMessageId?: string | null;
@@ -150,7 +152,7 @@ export async function postLoginCard(app: FastifyInstance, input: PostInput): Pro
       takeover: input.login.takeover,
       expiresAt,
       // A command (`az login`) opened it: the card names the command, and its end tells the node (node/device-codes.ts).
-      ...(input.login.source === "cli" ? { source: "cli", command: input.login.command ?? null } : {}),
+      ...(input.login.source === "cli" ? { source: "cli", command: input.login.command ?? null, ...(input.run ? { run: input.run } : {}) } : {}),
       ...(input.jobId ? { jobId: input.jobId } : { operation: input.operation ?? null }),
       ...(input.private ? { private: true } : {}),
       // The step waits for the sign-in, and a routine's card expires as its other cards do.

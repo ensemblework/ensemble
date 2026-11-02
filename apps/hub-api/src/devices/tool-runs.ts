@@ -3,15 +3,21 @@
  * 64 KB, and commands still going after a minute, which run on in the background. The computer posts
  * their output here in order; it is kept in Redis for a few hours under the run's id (never in the
  * database), read with `computer_run_output`, and when a background command ends its node is woken
- * once with how it ended. The server keeps nothing else of a command.
+ * once with how it ended, with a hint for a failure it knows (node/sign-in-hints.ts). It is not woken
+ * for a run it stopped (`computer_run_stop`), for a sign-in a newer attempt replaced, or for a sign-in
+ * that ran out of time (its card already says so). The server keeps nothing else of a command.
  */
+import { createHash } from "node:crypto";
 import type { Device } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { NODE_TOOL_OUTPUT_BYTES, TERMINAL_CHUNK_BYTES } from "../remote/contract.js";
+import { CodeAnswer, NODE_TOOL_OUTPUT_BYTES, NODE_TOOLS_RUN_STOP, TERMINAL_CHUNK_BYTES } from "../remote/contract.js";
+import { deviceOnline } from "./constants.js";
+import { askDeviceFor } from "./file-relay.js";
 import { enqueueTurn } from "../node/queue.js";
 import { recoverNodeToolDecisions } from "../node/device-tool-decisions.js";
 import { recoverSudoCards, sudoRunEnded } from "../node/sudo.js";
+import { signInHints } from "../node/sign-in-hints.js";
 
 type Redisish = { get(key: string): Promise<string | null>; set(key: string, value: string, ...args: Array<string | number>): Promise<unknown>; del(...keys: string[]): Promise<unknown>; mget(...keys: string[]): Promise<Array<string | null>> };
 
@@ -30,6 +36,10 @@ export type ToolRunState = {
   startedAt: string;
   /** A command run as the administrator: its approval card, which says how it ended (node/sudo.ts). */
   cardId?: string | null;
+  /** A CLI sign-in (`az login`): which one, by program and subcommand; one attempt at a time per node and computer. */
+  signIn?: string | null;
+  /** Its time limit on the computer. */
+  timeoutSec?: number;
   next: number;
   bytes: number;
   done: boolean;
@@ -42,6 +52,10 @@ export const TOOL_RUN_TTL_SECONDS = 6 * 3600;
 const runKey = (runId: string) => `ensemble:nodetool:run:${runId}`;
 const chunkKey = (runId: string, seq: number) => `ensemble:nodetool:out:${runId}:${seq}`;
 const wokenKey = (runId: string) => `ensemble:nodetool:woken:${runId}`;
+const quietKey = (runId: string) => `ensemble:nodetool:quiet:${runId}`;
+const signInKey = (nodeId: string, deviceId: string, which: string) => `ensemble:nodetool:signin:${nodeId}:${deviceId}:${createHash("sha256").update(which).digest("hex").slice(0, 32)}`;
+/** A sign-in killed this close to its limit, and not successful, ran out of time. */
+const RAN_OUT_MARGIN_MS = 15_000;
 
 const ToolChunk = z.object({
   seq: z.number().int().min(0).max(100_000),
@@ -50,6 +64,8 @@ const ToolChunk = z.object({
   exitCode: z.number().int().min(-1).max(1_000_000).nullish(),
   /** The command's result was not in its answer: its end wakes the node. */
   wake: z.boolean().default(false),
+  /** It was killed at its time limit. */
+  timedOut: z.boolean().optional(),
 });
 
 export async function openToolRun(redis: Redisish, runId: string, state: Omit<ToolRunState, "next" | "bytes" | "done" | "exitCode">): Promise<void> {
@@ -85,12 +101,51 @@ export async function toolRunOutput(redis: Redisish, runId: string, options: { f
   return { text, next, done: run.done && next >= run.next, exitCode: run.done ? run.exitCode : null, more: next < run.next || !run.done };
 }
 
-/** The end of a run's output, for the note that wakes its node. */
-async function tailOf(redis: Redisish, runId: string, run: ToolRunState, bytes = 3000): Promise<string> {
+/** The last chunks of a run's output, for the note that wakes its node. */
+async function recentOutput(redis: Redisish, runId: string, run: ToolRunState): Promise<string> {
   const seqs = Array.from({ length: Math.min(run.next, 8) }, (_, index) => run.next - 1 - index).filter((seq) => seq >= 0).reverse();
   const texts = seqs.length ? await redis.mget(...seqs.map((seq) => chunkKey(runId, seq))) : [];
-  const all = texts.map((part) => part ?? "").join("");
-  return all.length > bytes ? `…${all.slice(-bytes)}` : all;
+  return texts.map((part) => part ?? "").join("");
+}
+
+const tailOf = (text: string, bytes = 3000) => (text.length > bytes ? `…${text.slice(-bytes)}` : text);
+
+/** A run whose end must not wake its node: one it stopped, or a sign-in a newer attempt replaced. */
+export async function quietRun(redis: Pick<Redisish, "set">, runId: string, why: "stopped" | "replaced"): Promise<void> {
+  await redis.set(quietKey(runId), why, "EX", TOOL_RUN_TTL_SECONDS);
+}
+
+/** Records `runId` as this node's attempt at a sign-in on a computer; answers the attempt it replaces, if any. */
+export async function swapSignInRun(redis: Pick<Redisish, "get" | "set">, nodeId: string, deviceId: string, which: string, runId: string): Promise<string | null> {
+  const key = signInKey(nodeId, deviceId, which);
+  const before = await redis.get(key);
+  await redis.set(key, runId, "EX", TOOL_RUN_TTL_SECONDS);
+  return before && before !== runId ? before : null;
+}
+
+/** How asking a computer to stop a run went. */
+export type StopOutcome = "stopped" | "not_running" | "offline" | "older" | "no_answer";
+
+/**
+ * Asks the run's computer to stop it and what it started (`run_stop`, nodeTools 3). An older computer
+ * cannot: its run ends at its time limit.
+ */
+export async function stopRunOnComputer(app: Pick<FastifyInstance, "redis">, device: Pick<Device, "id" | "lastSeenAt" | "capabilities">, nodeId: string, runId: string): Promise<StopOutcome> {
+  const level = (device.capabilities as { nodeTools?: unknown } | null)?.nodeTools;
+  if (!(typeof level === "number" && level >= NODE_TOOLS_RUN_STOP)) return "older";
+  if (!deviceOnline(device.lastSeenAt)) return "offline";
+  const raw = await askDeviceFor(app.redis as never, { deviceId: device.id, event: "node.tool.request", data: { tool: "run_stop", runId, nodeId, mission: `run:${runId}`, attended: true, grants: [] } }, 20_000);
+  if (!raw) return "no_answer";
+  const answer = CodeAnswer.safeParse(raw);
+  return answer.success && answer.data.status === 200 && (answer.data.body as { stopped?: unknown } | null)?.stopped === true ? "stopped" : "not_running";
+}
+
+/** Whether a run's end wakes its node: not when it was stopped or replaced, nor for a sign-in that ran out of time. */
+async function wakesNode(redis: Redisish, runId: string, run: ToolRunState, timedOut: boolean | undefined): Promise<boolean> {
+  if (await redis.get(quietKey(runId))) return false;
+  if (!run.signIn || run.exitCode === 0) return true;
+  const ranOut = timedOut === true || Date.now() - Date.parse(run.startedAt) >= (run.timeoutSec ?? 900) * 1000 - RAN_OUT_MARGIN_MS;
+  return !ranOut;
 }
 
 function duration(from: string): string {
@@ -128,7 +183,9 @@ export async function nodeToolRoutes(app: FastifyInstance, gate: Gate): Promise<
     // A command that ran on in the background wakes its node once, when it ends.
     if (chunk.done && chunk.wake && (await redis.set(wokenKey(runId), "1", "EX", TOOL_RUN_TTL_SECONDS, "NX")) === "OK") {
       if (run.cardId) await sudoRunEnded(app, run.cardId, next.exitCode).catch((error: unknown) => request.log.warn({ err: error }, "could not update the sudo card"));
-      const tail = (await tailOf(redis, runId, next)).trim();
+      if (!(await wakesNode(redis, runId, next, chunk.timedOut))) return { ok: true };
+      const recent = await recentOutput(redis, runId, next);
+      const tail = tailOf(recent).trim();
       await enqueueTurn(app, {
         nodeId: run.nodeId,
         roomId: run.roomId,
@@ -136,6 +193,7 @@ export async function nodeToolRoutes(app: FastifyInstance, gate: Gate): Promise<
         note: [
           `Your command \`${run.command}\` in ${run.folder} on ${run.deviceName} ended after ${duration(run.startedAt)}, exit code ${next.exitCode ?? "unknown"}.`,
           tail ? `Its output ends:\n${tail}` : "It printed nothing.",
+          ...signInHints(recent).map((hint) => `Hint: ${hint}`),
           `The whole output: computer_run_output with run ${runId}. Tell whoever asked what came of it.`,
         ].join("\n"),
         private: run.private,
