@@ -1,17 +1,20 @@
 /**
  * The owner's side of a takeover (node/takeovers.ts, B21): open one for a sign-in card's tab, a run's
  * tab or a live card's terminal or tab (watch it, or take control), start it with the channel's secret
- * sealed for the computer, fetch encrypted frames, send encrypted input, give it more time, and end it
- * (Stop, or I'm done). Only from a signed-in browser session, never a key or
- * an agent; every call after the first carries the capability (`x-ensemble-takeover`).
+ * sealed for the computer, fetch encrypted frames (one at a time, or as a stream of Server-Sent Events
+ * the page says it has seen), send encrypted input, give it more time, and end it (Stop, or I'm done).
+ * Only from a signed-in browser session, never a key or an agent; every call after the first carries
+ * the capability (`x-ensemble-takeover`), so the stream is read with fetch, not EventSource.
  */
+import { PassThrough } from "node:stream";
+import { constants as zlib, createGzip } from "node:zlib";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { readCookie, SESSION_COOKIE, sha256 } from "../lib/auth.js";
 import { SealedShape } from "../credentials/seal.js";
 import { ChannelMessage, type ChannelMessage as Message } from "../remote/contract.js";
 import { wireMessage } from "./store.js";
-import { controlTakeover, createTakeover, extendTakeover, finishTakeover, nextFrame, ownTakeover, relayInput, startTakeover, TakeoverError } from "./takeovers.js";
+import { controlTakeover, createTakeover, extendTakeover, finishTakeover, frameSeen, nextFrame, ownTakeover, relayInput, startTakeover, streamFrames, TakeoverError, type TakeoverRecord } from "./takeovers.js";
 
 const Target = z.union([
   z.object({ loginCardId: z.string().min(1).max(100) }).strict(),
@@ -67,6 +70,39 @@ export async function registerTakeoverRoutes(app: FastifyInstance, account: (req
       reply.raw.on("close", () => gone.abort());
       reply.header("Cache-Control", "no-store");
       return await nextFrame(app, record, after, gone.signal);
+    } catch (error) {
+      return fail(error, reply);
+    }
+  });
+
+  // The same frames as a stream: each new one as it comes, `end` when it ends, a comment every 15 s.
+  // Compressed here, flushed per event, so Cloudflare and the browser pass each one on at once.
+  app.get("/api/node/takeovers/:id/stream", { compress: false }, async (request, reply) => {
+    let record: TakeoverRecord;
+    let after: number;
+    try {
+      after = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query).after;
+      record = await own(request);
+    } catch (error) {
+      return fail(error, reply);
+    }
+    const gone = new AbortController();
+    reply.raw.on("close", () => gone.abort());
+    const gzip = /\bgzip\b/i.test(String(request.headers["accept-encoding"] ?? ""));
+    const body = gzip ? createGzip({ flush: zlib.Z_SYNC_FLUSH }) : new PassThrough();
+    reply.header("Content-Type", "text/event-stream; charset=utf-8").header("Cache-Control", "no-store, no-transform").header("X-Accel-Buffering", "no");
+    if (gzip) reply.header("Content-Encoding", "gzip").header("Vary", "Accept-Encoding");
+    void streamFrames(app, record, after, body, gone.signal).catch(() => body.end());
+    return reply.send(body);
+  });
+
+  // The page drew the frames up to `seq`: its stream sends the next.
+  app.post("/api/node/takeovers/:id/seen", async (request, reply) => {
+    try {
+      const body = z.object({ seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: "Say which frame was seen (seq)." });
+      await frameSeen(app, await own(request), body.data.seq);
+      return { ok: true };
     } catch (error) {
       return fail(error, reply);
     }

@@ -40,9 +40,11 @@ test("a skill needs its tools: without them it is not offered, and its lines fol
 });
 
 test("conversation turns offer the advanced browser and capture tools only for app or video work", () => {
-  const tools = ["browser_open", "browser_screenshot", "web_task", ...ADVANCED_TOOLS].map((name) => ({ name }));
+  const tools = ["browser_open", "browser_screenshot", "web_task", "browser_tabs", "browser_close", ...ADVANCED_TOOLS].map((name) => ({ name }));
   const plain = tieredTools(tools, "send me a screenshot of the Google stock chart").map((tool) => tool.name);
-  assert.deepEqual(plain, ["browser_open", "browser_screenshot", "web_task"]);
+  assert.deepEqual(plain, ["browser_open", "browser_screenshot", "web_task", "browser_tabs", "browser_close"]);
+  // A popup a click opened, or "close it" after a live view: the tabs and closing are always there.
+  for (const words of ["okay, close it", "the payment opened in a popup, use that tab"]) assert.deepEqual(tieredTools(tools, words).map((tool) => tool.name), plain, words);
   for (const words of ["test the sign-up page of my web app", "record a video of the demo", "check the console errors on localhost:3000", "what does the browser console say?", "capture_app_start {\"command\":\"npm start\"}"]) {
     assert.ok(wantsAdvancedTools(words), words);
     assert.equal(tieredTools(tools, words).length, tools.length, words);

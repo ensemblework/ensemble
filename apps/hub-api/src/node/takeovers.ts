@@ -4,11 +4,13 @@
  * short-lived, single-use capability bound to the account, the browser session that asked, the computer,
  * the tab, its site and the sign-in card or run; relays the channel's secret in a box sealed for the
  * computer (it cannot open it); keeps the latest encrypted frame for a few seconds so the page can fetch
- * it; and passes encrypted input on in order. It never holds a readable frame, key or keystroke: the
+ * it (one at a time, or as a stream that sends each new one while the page has seen all but one); and
+ * passes encrypted input on in order. It never holds a readable frame, key or keystroke: the
  * browser and the computer encrypt with keys only they derive. One controller at a time; it ends on
  * expiry, sign-out, unpairing, the computer ending it, Stop or I'm done (which checks the sign-in).
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { Writable } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import type { Device, NodeMessage } from "@prisma/client";
 import { SEAL_MAX_TTL_MS, type SealKeyInfo, type Sealed } from "@ensemble/shared-types";
@@ -34,6 +36,12 @@ const START_MS = 2 * 60_000;
 const FRAME_TTL_SECONDS = 30;
 /** A frames request waits this long for a new one. */
 const FRAMES_WAIT_MS = 20_000;
+/** A frames stream sends a comment this often, so proxies (Cloudflare) keep it open. */
+export const STREAM_HEARTBEAT_MS = 15_000;
+/** Frames a stream sends before the page says it has seen them: the rest wait, and only the newest goes. */
+export const STREAM_WINDOW = 2;
+/** A page that says nothing for this long is sent the next frame anyway. */
+const STREAM_SEEN_WAIT_MS = 5_000;
 const RECORD_TTL_SECONDS = 2 * 3600;
 
 /** The longest a takeover lasts (`ENSEMBLE_TAKEOVER_SECONDS`, default 15 minutes), as the computer has it too. */
@@ -85,6 +93,8 @@ const recordKey = (id: string) => `ensemble:takeover:${id}`;
 const targetKey = (deviceId: string, tab: string) => `ensemble:takeover:target:${deviceId}:${tab}`;
 const startedKey = (id: string) => `ensemble:takeover:started:${id}`;
 const frameKey = (id: string) => `ensemble:takeover:frame:${id}`;
+const frameSeqKey = (id: string) => `ensemble:takeover:frameseq:${id}`;
+const seenKey = (id: string) => `ensemble:takeover:seen:${id}`;
 const wake = (id: string) => `takeover:${id}`;
 
 const hash = (token: string) => createHash("sha256").update(token).digest();
@@ -134,7 +144,7 @@ async function markEnded(app: FastifyInstance, record: TakeoverRecord, reason: s
   await write(app, ended);
   const redis = redisOf(app);
   if ((await redis.get(targetKey(record.deviceId, record.tab))) === record.id) await redis.del(targetKey(record.deviceId, record.tab));
-  await redis.del(frameKey(record.id));
+  await redis.del(frameKey(record.id), frameSeqKey(record.id), seenKey(record.id));
   publishFileAnswer(wake(record.id));
   await appendLedger({ userId: record.accountId, actor: "me", action: "node.takeover_ended", payload: { takeoverId: record.id, deviceId: record.deviceId, reason, ...(detail ? { detail: detail.slice(0, 200) } : {}) } }).catch(() => undefined);
   return ended;
@@ -363,6 +373,81 @@ export async function nextFrame(app: FastifyInstance, record: TakeoverRecord, af
   }
 }
 
+/** Waits for the takeover's next wake (a frame, the page's `seen`, its end) or `ms`, whichever comes first. */
+function woken(id: string, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(done, Math.max(0, ms));
+    function done() {
+      clearTimeout(timer);
+      fileAnswers.off(wake(id), done);
+      resolve();
+    }
+    fileAnswers.once(wake(id), done);
+  });
+}
+
+/**
+ * The frames as Server-Sent Events (`GET /api/node/takeovers/:id/stream`): `frame` with each new sealed
+ * message, as `/frames` gives it; `end` with why when the takeover ends; a comment every 15 s. A frame
+ * goes only while fewer than `STREAM_WINDOW` sent ones are unseen (`frameSeen`), so a slow link gets the
+ * newest picture rather than a queue of old ones. Ends with the takeover or when `signal` aborts.
+ */
+export async function streamFrames(app: FastifyInstance, record: TakeoverRecord, after: number, out: Writable, signal: AbortSignal): Promise<void> {
+  const write = (text: string): void => {
+    if (!out.writableEnded && !out.destroyed) out.write(text);
+  };
+  const heartbeat = setInterval(() => write(": keep-alive\n\n"), STREAM_HEARTBEAT_MS);
+  heartbeat.unref();
+  write(": open\n\n");
+  let sent = after;
+  /** Frames sent that the page has not said it has seen. */
+  let unseen: number[] = [];
+  let waitingSince = 0;
+  try {
+    while (!signal.aborted) {
+      if (unseen.length) {
+        const seen = Number((await redisOf(app).get(seenKey(record.id))) ?? 0);
+        unseen = unseen.filter((seq) => seq > seen);
+      }
+      if (unseen.length >= STREAM_WINDOW) {
+        waitingSince ||= Date.now();
+        if (Date.now() - waitingSince < STREAM_SEEN_WAIT_MS) {
+          const current = await read(app, record.id);
+          if (!current || current.state === "ended") {
+            write(`event: end\ndata: ${JSON.stringify({ state: "ended", reason: current?.reason ?? "expired" })}\n\n`);
+            return;
+          }
+          await woken(record.id, 1_000);
+          continue;
+        }
+      }
+      waitingSince = 0;
+      const next = await nextFrame(app, record, sent, signal);
+      if (signal.aborted) return;
+      if (next.state === "ended") {
+        write(`event: end\ndata: ${JSON.stringify({ state: "ended", ...(next.reason ? { reason: next.reason } : {}) })}\n\n`);
+        return;
+      }
+      if (!next.frame) continue;
+      sent = next.frame.seq;
+      unseen.push(sent);
+      write(`event: frame\nid: ${next.frame.seq}\ndata: ${JSON.stringify(next.frame)}\n\n`);
+    }
+  } finally {
+    clearInterval(heartbeat);
+    if (!out.writableEnded) out.end();
+  }
+}
+
+/** The page has drawn frames up to `seq`: its stream may send the next. */
+export async function frameSeen(app: FastifyInstance, record: TakeoverRecord, seq: number): Promise<void> {
+  const redis = redisOf(app);
+  const known = Number((await redis.get(seenKey(record.id))) ?? 0);
+  if (seq <= known) return;
+  await redis.set(seenKey(record.id), String(seq), "EX", RECORD_TTL_SECONDS);
+  publishFileAnswer(wake(record.id));
+}
+
 /**
  * Input waiting to go to the computer, per takeover: the next number it expects, and messages that came
  * early (the page sends several at once, and their requests can overtake each other).
@@ -483,7 +568,13 @@ export async function finishTakeover(app: FastifyInstance, record: TakeoverRecor
   return { takeover: publicTakeover(ended), signedIn, ...(message ? { message } : {}), card };
 }
 
-/** One frame from the computer: kept, opaque, for a few seconds, and the page waiting for it woken. */
+/** Frames being stored, per takeover: each waits for the one before it. */
+const storing = new Map<string, Promise<boolean>>();
+
+/**
+ * One frame from the computer: kept, opaque, for a few seconds, and the page waiting for it woken. The
+ * computer may send two at once, so one older than the frame kept is dropped.
+ */
 export async function storeFrame(app: FastifyInstance, device: Pick<Device, "id">, id: string, message: ChannelMessage): Promise<"stored" | "gone"> {
   const record = await read(app, id);
   if (!record || record.deviceId !== device.id || record.state !== "live") return "gone";
@@ -491,9 +582,33 @@ export async function storeFrame(app: FastifyInstance, device: Pick<Device, "id"
     await markEnded(app, record, "expired");
     return "gone";
   }
-  await redisOf(app).set(frameKey(id), JSON.stringify({ seq: message.seq, iv: message.iv, ct: message.ct }), "EX", FRAME_TTL_SECONDS);
+  // One at a time per takeover in this process, as input is relayed: the newest number wins.
+  const before = storing.get(id) ?? Promise.resolve();
+  const turn = before.then(async () => {
+    const redis = redisOf(app);
+    if (Number((await redis.get(frameSeqKey(id))) ?? 0) >= message.seq) return false;
+    await redis.set(frameSeqKey(id), String(message.seq), "EX", FRAME_TTL_SECONDS);
+    await redis.set(frameKey(id), JSON.stringify({ seq: message.seq, iv: message.iv, ct: message.ct }), "EX", FRAME_TTL_SECONDS);
+    return true;
+  });
+  const settled = turn.catch(() => false);
+  storing.set(id, settled);
+  const stored = await turn.finally(() => {
+    if (storing.get(id) === settled) storing.delete(id);
+  });
+  if (!stored) return "stored";
   publishFileAnswer(wake(id));
   return "stored";
+}
+
+/** A live card ended (its tab or terminal is gone, or the node ended the view): a view open on it ends too. */
+export async function endCardViews(app: FastifyInstance, card: Pick<NodeMessage, "id" | "data">, reason: string): Promise<void> {
+  const data = (card.data ?? {}) as { deviceId?: unknown; tab?: unknown; session?: unknown; kind?: unknown };
+  const tab = data.kind === "terminal" ? data.session : data.tab;
+  if (typeof data.deviceId !== "string" || typeof tab !== "string") return;
+  const holder = await redisOf(app).get(targetKey(data.deviceId, tab));
+  const record = holder ? await read(app, holder) : null;
+  if (record && record.liveCardId === card.id && record.state !== "ended") await endOnComputer(app, record, reason);
 }
 
 /** The computer ended it itself (expired, idle, the tab closed). */

@@ -7,16 +7,23 @@
  * and posted to the relay, which keeps only the latest for seconds. A sign-in's takeover streams a
  * clean browser instead (logins/clean-signin.ts: Google and Cloudflare refuse the node's own browser),
  * opened at the tab's page, following the popups a page opens; its frames say which site they show.
- * When the clean browser cannot start here, the tab itself is streamed, and the answer says why. Input
+ * When the clean browser cannot start here, the tab itself is streamed, and the answer says why. The
+ * tab's own view follows the windows its page opens too (a payment popup): the newest is shown, with
+ * `popup` in its frames, and its opener again when it closes. Frames are sized for watching or for
+ * control and get smaller while they are slow to send (takeover/quality.ts); a frame like the last is
+ * not sent; two may be on their way at once (the relay keeps the newest). Input
  * comes back encrypted, each message with a sequence number: one not above the last accepted is
  * refused, as is one that does not open. A takeover ends on I'm done (which checks a sign-in and gives
  * the tab back), Stop, the sign-in seen done (its session moved into the tab), its time running out,
- * nobody watching for a minute, the tab closing, or this computer no longer taking work from the web.
+ * nobody watching for a minute, the tab closing (`closed_by_node` when its node closed it), or this
+ * computer no longer taking work from the web.
  * Typed keys and frames are never logged or kept here.
  */
+import { createHash } from "node:crypto";
 import type { CDPSession, Page } from "playwright-core";
 import { z } from "zod";
 import { browserBroker } from "../browser/index.js";
+import type { TabClosed } from "../browser/broker.js";
 import { trustedOrigins } from "../credentials/origins.js";
 import { takeOnce } from "../credentials/replay.js";
 import { checkAad, openSealed, SealError } from "../credentials/seal.js";
@@ -29,6 +36,7 @@ import { loadSettings } from "../remote/store.js";
 import type { CleanFrame, CleanSignIn } from "../logins/clean-signin.js";
 import { closeCleanSignIn, loginEvents, markLoginControlled, openCleanSignIn, resolveLogin, waitingLogin, type LoginOutcome } from "../logins/requests.js";
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, type ChannelKeys } from "./channel.js";
+import { CONTROL_LEVELS, FrameQuality, linkStep, WATCH_LEVELS, type FrameLevel } from "./quality.js";
 import { controlTerminalView, endAllTerminalViews, endTerminalView, extendTerminalView, isTerminalView, startTerminalView, terminalViewInput } from "./terminal-view.js";
 
 /** Nobody sent input or a ping for this long: the takeover ends. */
@@ -56,6 +64,12 @@ const Payload = z.object({ k: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(
 /** What a frame's header says beside its size: the page's address (without its query), host and title, whether it is a popup, and the mode. */
 type FrameMeta = { url: string; site: string; title: string; popup: boolean };
 
+/** Frames on their way to the relay at once. */
+export const FRAMES_IN_FLIGHT = 2;
+
+/** A page the tab's own view can show: the tab's, or a window it opened (its broker tab, when it has one). */
+type Shown = { page: Page; tab: string | null; popup: boolean; title: string };
+
 type Session = {
   id: string;
   tab: string;
@@ -64,8 +78,21 @@ type Session = {
   client: HostedClient;
   /** `clean`: a sign-in in the clean browser; `tab`: the tab itself. */
   mode: "clean" | "tab";
+  /** The page shown and typed into: the tab's, or the newest window it opened. */
   page: Page;
   cdp: CDPSession | null;
+  /** The tab's page and the windows opened from it that are open, oldest first; the last is shown. */
+  stack: Shown[];
+  /** Windows this takeover paused for the node while its owner controls them. */
+  markedPopups: Set<string>;
+  quality: FrameQuality;
+  inFlight: number;
+  /** The last frame sent, to send none like it. */
+  lastHash: string;
+  /** A switch of the page shown or of the picture's size is under way. */
+  switching: Promise<void>;
+  /** Its listeners on pages, taken off when it ends. */
+  listening: Array<() => void>;
   clean: CleanSignIn | null;
   /** The tab was not sensitive before: it is given back when the takeover ends. */
   marked: boolean;
@@ -80,7 +107,6 @@ type Session = {
   lastInput: number;
   viewport: { width: number; height: number };
   pending: { jpeg: Buffer; width: number; height: number; meta: FrameMeta | null } | null;
-  sending: boolean;
   queue: Promise<void>;
   timers: NodeJS.Timeout[];
   /** When it started, and its end (`takeover.extend` moves it, never past an hour after the start). */
@@ -88,6 +114,7 @@ type Session = {
   endsAt: number;
   deadline: NodeJS.Timeout | null;
   ended: boolean;
+  stopListening?: () => void;
 };
 
 const sessions = new Map<string, Session>();
@@ -141,31 +168,37 @@ export function openStartBox(frame: TakeoverStart, now = Date.now()): { secret: 
   }
 }
 
-/** Sends the latest frame, one at a time: a frame that waits is replaced by a newer one. */
-async function pump(session: Session): Promise<void> {
-  if (session.sending) return;
-  session.sending = true;
-  try {
-    while (session.pending && !session.ended) {
-      const next = session.pending;
-      session.pending = null;
-      session.outSeq += 1;
-      const meta = next.meta ?? tabMeta(session);
-      const header = { t: "frame", w: next.width, h: next.height, url: meta.url.split(/[?#]/)[0]!.slice(0, 500), site: meta.site.slice(0, 200), title: meta.title.slice(0, 200), popup: meta.popup, mode: session.mode };
-      const message = sealMessage(session.keys.d2w, session.id, "d2w", session.outSeq, packMessage(header, next.jpeg));
-      const sent = session.client.takeoverFrame ? await session.client.takeoverFrame(session.id, message).catch(() => true) : false;
+/**
+ * Sends the latest frame, at most `FRAMES_IN_FLIGHT` at once: a frame that waits is replaced by a newer
+ * one, and one like the last sent is dropped. Each one's send time steers the pictures' size.
+ */
+function pump(session: Session): void {
+  while (session.pending && session.inFlight < FRAMES_IN_FLIGHT && !session.ended) {
+    const next = session.pending;
+    session.pending = null;
+    const meta = next.meta ?? tabMeta(session);
+    const header = { t: "frame", w: next.width, h: next.height, url: meta.url.split(/[?#]/)[0]!.slice(0, 500), site: meta.site.slice(0, 200), title: meta.title.slice(0, 200), popup: meta.popup, mode: session.mode };
+    const hash = createHash("sha256").update(JSON.stringify(header)).update(next.jpeg).digest("base64url");
+    if (hash === session.lastHash) continue;
+    session.lastHash = hash;
+    session.outSeq += 1;
+    const message = sealMessage(session.keys.d2w, session.id, "d2w", session.outSeq, packMessage(header, next.jpeg));
+    session.inFlight += 1;
+    const started = performance.now();
+    const sending = session.client.takeoverFrame ? session.client.takeoverFrame(session.id, message).catch(() => true) : Promise.resolve(false);
+    void sending.then(async (sent) => {
+      session.inFlight -= 1;
       session.frames += 1;
-      if (!sent) {
-        await endTakeover(session.id, { done: false, reason: "relay_gone", tell: false });
-        return;
-      }
-    }
-  } finally {
-    session.sending = false;
+      if (!sent) return void (await endTakeover(session.id, { done: false, reason: "relay_gone", tell: false }));
+      const level = session.quality.sent(performance.now() - started);
+      if (level) void recast(session, level);
+      pump(session);
+    });
   }
 }
 
 function tabMeta(session: Session): FrameMeta {
+  const shown = session.stack.find((item) => item.page === session.page);
   const url = session.page.isClosed() ? "" : session.page.url();
   let site = "";
   try {
@@ -173,7 +206,143 @@ function tabMeta(session: Session): FrameMeta {
   } catch {
     site = "";
   }
-  return { url, site, title: "", popup: false };
+  return { url, site, title: shown?.title ?? "", popup: shown?.popup ?? false };
+}
+
+/** The screencast's settings for a level. */
+const castOf = (level: FrameLevel) => ({ format: "jpeg" as const, quality: level.quality, maxWidth: level.maxWidth, maxHeight: level.maxWidth, everyNthFrame: 1 });
+
+/** Streams `shown` (a new CDP session on its page), its frames sized as the takeover's level says. */
+async function cast(session: Session, shown: Shown): Promise<void> {
+  const cdp = await shown.page.context().newCDPSession(shown.page);
+  session.cdp = cdp;
+  session.page = shown.page;
+  session.viewport = shown.page.viewportSize() ?? session.viewport;
+  cdp.on("Page.screencastFrame", (event: { data: string; sessionId: number; metadata: { deviceWidth?: number; deviceHeight?: number } }) => {
+    void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => undefined);
+    if (session.ended || session.cdp !== cdp) return;
+    const width = Math.round(event.metadata.deviceWidth ?? session.viewport.width);
+    const height = Math.round(event.metadata.deviceHeight ?? session.viewport.height);
+    session.viewport = { width, height };
+    session.pending = { jpeg: Buffer.from(event.data, "base64"), width, height, meta: null };
+    pump(session);
+  });
+  await cdp.send("Page.startScreencast", castOf(session.quality.level));
+}
+
+async function uncast(session: Session): Promise<void> {
+  const cdp = session.cdp;
+  session.cdp = null;
+  if (!cdp) return;
+  await cdp.send("Page.stopScreencast").catch(() => undefined);
+  await cdp.detach().catch(() => undefined);
+}
+
+/** One change of what is streamed at a time, in order. */
+function switching(session: Session, change: () => Promise<void>): Promise<void> {
+  session.switching = session.switching.then(async () => {
+    if (!session.ended) await change().catch(() => undefined);
+  });
+  return session.switching;
+}
+
+/** The pictures get smaller or better (a new level): the screencast starts again with it. */
+function recast(session: Session, level: FrameLevel): Promise<void> {
+  if (session.clean) return session.clean.setQuality(level).catch(() => undefined);
+  return switching(session, async () => {
+    const cdp = session.cdp;
+    if (!cdp) return;
+    await cdp.send("Page.stopScreencast").catch(() => undefined);
+    if (session.cdp === cdp) await cdp.send("Page.startScreencast", castOf(level));
+  });
+}
+
+/** The page's title for the frames, kept as it loads. */
+function titled(session: Session, shown: Shown): void {
+  const update = () =>
+    void shown.page
+      .title()
+      .then((title) => (shown.title = title))
+      .catch(() => undefined);
+  update();
+  shown.page.on("domcontentloaded", update);
+  shown.page.on("load", update);
+  session.listening.push(() => {
+    shown.page.off("domcontentloaded", update);
+    shown.page.off("load", update);
+  });
+}
+
+/** A window the shown page opened (a payment popup): it is shown, paused for the node while its owner controls the view. */
+function followPopups(session: Session, shown: Shown): void {
+  const opened = (popup: Page) => {
+    if (session.ended || session.mode !== "tab") return;
+    // The broker made it a tab of the same work as it opened (its listener ran first); one it refused closes.
+    const tab = browserBroker().tabIdOf(popup);
+    if (!tab) return;
+    const next: Shown = { page: popup, tab, popup: true, title: "" };
+    titled(session, next);
+    popup.once("close", () => void popupClosed(session, next));
+    void switching(session, async () => {
+      if (popup.isClosed()) return;
+      session.stack.push(next);
+      if (session.view === "control") await pausePopup(session, tab, true);
+      await uncast(session);
+      try {
+        await cast(session, next);
+        followPopups(session, next);
+      } catch {
+        // It closed while it was being shown (a popup a site opens and closes at once): its opener again.
+        session.stack.splice(session.stack.indexOf(next), 1);
+        await pausePopup(session, tab, false);
+        await showTop(session);
+      }
+    });
+  };
+  shown.page.on("popup", opened);
+  session.listening.push(() => shown.page.off("popup", opened));
+}
+
+/** A window it showed closed: the one before it is shown again (in the end, the tab's own page). */
+function popupClosed(session: Session, shown: Shown): Promise<void> {
+  return switching(session, async () => {
+    const index = session.stack.indexOf(shown);
+    if (index > 0) {
+      session.stack.splice(index, 1);
+      if (shown.tab) await pausePopup(session, shown.tab, false);
+    }
+    await showTop(session);
+  });
+}
+
+/** Streams the newest page still open, unless it is streaming already. */
+async function showTop(session: Session): Promise<void> {
+  const top = session.stack.at(-1)!;
+  if ((session.cdp && session.page === top.page) || top.page.isClosed()) return;
+  await uncast(session);
+  await cast(session, top);
+}
+
+/** A popup is paused for the node while its owner controls the view (`on`), and given back after. */
+async function pausePopup(session: Session, tab: string, on: boolean): Promise<void> {
+  const broker = browserBroker();
+  if (on) {
+    broker.markControlled(tab, true);
+    if (session.markedPopups.has(tab)) return;
+    let sensitive = true;
+    try {
+      sensitive = broker.ownerTab(tab).sensitive;
+    } catch {
+      return;
+    }
+    if (!sensitive) {
+      await broker.markSensitive(tab, true).catch(() => undefined);
+      session.markedPopups.add(tab);
+    }
+    return;
+  }
+  broker.markControlled(tab, false);
+  if (session.markedPopups.delete(tab)) await broker.markSensitive(tab, false).catch(() => undefined);
 }
 
 /** A key as Playwright names it, held or let go; a printable character without a modifier is typed as text. */
@@ -276,7 +445,7 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
       const marked = !watch && !tab.sensitive;
       if (!watch) broker.markControlled(frame.tab, true);
       if (marked) await broker.markSensitive(frame.tab, true);
-      const cdp = clean ? null : await tab.context.newCDPSession(tab.page);
+      const view = watch ? "watch" : "control";
       const session: Session = {
         id: frame.takeoverId,
         tab: frame.tab,
@@ -285,11 +454,18 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         client,
         mode: clean ? "clean" : "tab",
         page: tab.page,
-        cdp,
+        cdp: null,
+        stack: [{ page: tab.page, tab: frame.tab, popup: false, title: "" }],
+        markedPopups: new Set(),
+        quality: new FrameQuality(view === "watch" ? WATCH_LEVELS : CONTROL_LEVELS, Date.now, linkStep()),
+        inFlight: 0,
+        lastHash: "",
+        switching: Promise.resolve(),
+        listening: [],
         clean,
         marked,
         live: !frame.loginId && !frame.jobId,
-        view: watch ? "watch" : "control",
+        view,
         inSeq: 0,
         outSeq: 0,
         refused: 0,
@@ -298,7 +474,6 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
         lastInput: Date.now(),
         viewport: tab.page.viewportSize() ?? { width: 1280, height: 800 },
         pending: null,
-        sending: false,
         queue: Promise.resolve(),
         timers: [],
         startedAt: Date.now(),
@@ -308,6 +483,12 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
       };
       sessions.set(session.id, session);
       if (frame.loginId && !clean) markLoginControlled(frame.loginId, true);
+      // Its node closing the tab says so; its page closing otherwise is "tab_closed".
+      const closed = (event: TabClosed) => {
+        if (event.tab === session.tab && event.by === "agent") void endTakeover(session.id, { done: false, reason: "closed_by_node", tell: true });
+      };
+      broker.events.on("tabClosed", closed);
+      session.stopListening = () => broker.events.off("tabClosed", closed);
       tab.page.once("close", () => void endTakeover(session.id, { done: false, reason: "tab_closed", tell: true }));
       const endsAt = Math.min(Date.parse(frame.endsAt) || Infinity, Date.now() + takeoverMaxMs());
       endAt(session, endsAt);
@@ -324,20 +505,14 @@ export async function startTakeover(client: HostedClient, frame: TakeoverStart, 
             if (session.ended) return;
             session.viewport = { width: shown.width || session.viewport.width, height: shown.height || session.viewport.height };
             session.pending = { jpeg: shown.jpeg, width: session.viewport.width, height: session.viewport.height, meta: { url: shown.url, site: shown.site, title: shown.title, popup: shown.popup } };
-            void pump(session);
+            pump(session);
           });
-          session.viewport = await clean.startStreaming();
+          session.viewport = await clean.startStreaming(session.quality.level);
         } else {
-          cdp!.on("Page.screencastFrame", (event: { data: string; sessionId: number; metadata: { deviceWidth?: number; deviceHeight?: number } }) => {
-            void cdp!.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => undefined);
-            if (session.ended) return;
-            const width = Math.round(event.metadata.deviceWidth ?? session.viewport.width);
-            const height = Math.round(event.metadata.deviceHeight ?? session.viewport.height);
-            session.viewport = { width, height };
-            session.pending = { jpeg: Buffer.from(event.data, "base64"), width, height, meta: null };
-            void pump(session);
-          });
-          await cdp!.send("Page.startScreencast", { format: "jpeg", quality: 60, maxWidth: 1280, maxHeight: 1280, everyNthFrame: 1 });
+          const own = session.stack[0]!;
+          titled(session, own);
+          followPopups(session, own);
+          await cast(session, own);
         }
       } catch (error) {
         await endTakeover(session.id, { done: false, reason: "failed", tell: false });
@@ -439,12 +614,13 @@ export async function endTakeover(id: string, input: { done: boolean; reason: st
   sessions.delete(id);
   for (const timer of session.timers) clearTimeout(timer);
   if (session.deadline) clearTimeout(session.deadline);
+  session.stopListening?.();
+  for (const stop of session.listening.splice(0)) stop();
   await session.queue.catch(() => undefined);
+  await session.switching.catch(() => undefined);
   for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
-  if (session.cdp) {
-    await session.cdp.send("Page.stopScreencast").catch(() => undefined);
-    await session.cdp.detach().catch(() => undefined);
-  }
+  await uncast(session);
+  for (const tab of [...session.markedPopups]) await pausePopup(session, tab, false);
   if (session.clean) await session.clean.stopStreaming().catch(() => undefined);
   if (session.loginId && session.mode === "tab") markLoginControlled(session.loginId, false);
   browserBroker().markControlled(session.tab, false);
@@ -496,14 +672,18 @@ export async function controlTakeover(id: string, on: boolean): Promise<"watch" 
       await broker.markSensitive(session.tab, true);
       session.marked = true;
     }
+    for (const shown of session.stack) if (shown.tab && shown.popup) await pausePopup(session, shown.tab, true);
     session.view = "control";
+    void recast(session, session.quality.use(CONTROL_LEVELS));
   } else if (!on && session.view === "control") {
     for (const key of heldKeys.get(session) ?? []) await session.page.keyboard.up(key).catch(() => undefined);
     heldKeys.delete(session);
     broker.markControlled(session.tab, false);
     if (session.marked) await broker.markSensitive(session.tab, false).catch(() => undefined);
     session.marked = false;
+    for (const tab of [...session.markedPopups]) await pausePopup(session, tab, false);
     session.view = "watch";
+    void recast(session, session.quality.use(WATCH_LEVELS));
   }
   session.lastInput = Date.now();
   await ledger("takeover.control", { takeoverId: id, on });

@@ -3,8 +3,8 @@
  * channel (takeover/session.ts, channel.ts): the same start box sealed in the owner's browser for this
  * computer (the session's id as its `name`), one key per direction, a frame only their browser opens.
  * Each frame is the whole screen as runs of cells (`TerminalFrameHeader` and `TerminalScreen`, secrets
- * hidden as capture/screen.ts hides them), sent when the screen changed, at most 15 a second; the relay
- * keeps only the latest. The owner types in it whether watching or in control (it is their shell);
+ * hidden as capture/screen.ts hides them), sent when the screen changed, at most 10 a second (changes in
+ * between are joined into the next), up to two on their way at once; the relay keeps only the latest. The owner types in it whether watching or in control (it is their shell);
  * control makes the node's typing wait. Input is refused unless its number is above the last one taken
  * and it opens. It ends on Stop, its time, a minute with no input or ping, the session ending, or this
  * computer no longer taking work from the web. What is typed or shown is never logged or kept here.
@@ -21,7 +21,9 @@ import { controlSession, ownerKey, ownerType, resizeSession, terminalSession, wa
 import { ChannelError, openMessage, packMessage, sealMessage, takeoverKeys, type ChannelKeys } from "./channel.js";
 
 /** At most this many frames a second. */
-export const TERMINAL_FPS = 15;
+export const TERMINAL_FPS = 10;
+/** Frames on their way to the relay at once. */
+const IN_FLIGHT = 2;
 /** Nobody sent input or a ping for this long: the view ends (as a takeover does). */
 const IDLE_MS = 60_000;
 /** The relay takes frames once the web has the start's answer: one refused before then is sent again. */
@@ -44,7 +46,7 @@ type View = {
   startedAt: number;
   scheduled: NodeJS.Timeout | null;
   retry: NodeJS.Timeout | null;
-  sending: boolean;
+  inFlight: number;
   again: boolean;
   queue: Promise<void>;
   timers: NodeJS.Timeout[];
@@ -75,39 +77,42 @@ export function terminalFrame(session: TerminalSession): { header: TerminalFrame
   };
 }
 
-/** Sends the screen if it changed since the last frame, one at a time. */
+/** Sends the screen if it changed since the last frame, up to `IN_FLIGHT` at once; a change while they are all on their way is sent after. */
 async function sendFrame(view: View): Promise<void> {
   if (view.ended) return;
-  if (view.sending) {
+  if (view.inFlight >= IN_FLIGHT) {
     view.again = true;
     return;
   }
-  view.sending = true;
+  const { header, screen } = terminalFrame(view.session);
+  const body = JSON.stringify(screen);
+  const key = `${JSON.stringify(header)}${body}`;
+  if (key === view.lastFrame) return;
+  view.lastFrame = key;
+  view.lastSent = Date.now();
+  view.outSeq += 1;
+  const message = sealMessage(view.keys.d2w, view.id, "d2w", view.outSeq, packMessage(header, Buffer.from(body, "utf8")));
+  view.inFlight += 1;
+  let sent: boolean;
   try {
-    do {
-      view.again = false;
-      const { header, screen } = terminalFrame(view.session);
-      const body = JSON.stringify(screen);
-      const key = `${JSON.stringify(header)}${body}`;
-      if (key === view.lastFrame) continue;
-      view.lastFrame = key;
-      view.lastSent = Date.now();
-      view.outSeq += 1;
-      const message = sealMessage(view.keys.d2w, view.id, "d2w", view.outSeq, packMessage(header, Buffer.from(body, "utf8")));
-      const sent = view.client.takeoverFrame ? await view.client.takeoverFrame(view.id, message).catch(() => true) : false;
-      view.frames += 1;
-      if (!sent && Date.now() - view.startedAt < STARTING_MS) {
-        view.lastFrame = "";
-        view.retry = setTimeout(() => void sendFrame(view), 250);
-        return;
-      }
-      if (!sent) {
-        await endTerminalView(view.id, { done: false, reason: "relay_gone", tell: false });
-        return;
-      }
-    } while (view.again && !view.ended);
+    sent = view.client.takeoverFrame ? await view.client.takeoverFrame(view.id, message).catch(() => true) : false;
   } finally {
-    view.sending = false;
+    view.inFlight -= 1;
+  }
+  view.frames += 1;
+  if (view.ended) return;
+  if (!sent && Date.now() - view.startedAt < STARTING_MS) {
+    view.lastFrame = "";
+    view.retry = setTimeout(() => void sendFrame(view), 250);
+    return;
+  }
+  if (!sent) {
+    await endTerminalView(view.id, { done: false, reason: "relay_gone", tell: false });
+    return;
+  }
+  if (view.again) {
+    view.again = false;
+    schedule(view);
   }
 }
 
@@ -176,7 +181,7 @@ export async function startTerminalView(client: HostedClient, frame: TakeoverSta
         startedAt: Date.now(),
         scheduled: null,
         retry: null,
-        sending: false,
+        inFlight: 0,
         again: false,
         queue: Promise.resolve(),
         timers: [],

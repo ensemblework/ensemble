@@ -110,13 +110,19 @@ const PAGES: Record<string, { title: string; snapshot: string; click?: Record<st
   "https://portal.example.test/deleted": { title: "Deleted", snapshot: '- heading "Resource group deleted" [ref=e1]' },
   "https://login.microsoftonline.com/common/oauth2": { title: "Sign in to your account", snapshot: '- heading "Sign in" [ref=e1]\n- textbox "Email, phone, or Skype" [ref=e2]\n- button "Next" [ref=e3]' },
   "https://shop.example.test/": { title: "Robot or human?", snapshot: '- heading "Robot or human?" [ref=e1]\n- button "Press & Hold" [ref=e2]' },
+  "https://store.example.test/cart": { title: "Your cart", snapshot: '- heading "Your cart" [ref=e1]\n- button "Continue" [ref=e6]' },
+  "https://pay.example.test/upi": { title: "Payment", snapshot: '- heading "Pay with UPI" [ref=e1]\n- text "Total 4,999 INR" [ref=e2]' },
 };
+/** Buttons that open a new window (a payment popup), by page and ref. */
+const POPUPS: Record<string, Record<string, string>> = { "https://store.example.test/cart": { e6: "https://pay.example.test/upi" } };
 
-/** The simulated computer: a tab per node, the pages above; `old` refuses inputs it does not know (an older Ensemble). */
-function computer(laptopId: string, key: { inject: HttpUser["inject"] }, options: { old?: boolean } = {}) {
+/** The simulated computer: a tab per node, the pages above; `old` refuses inputs it does not know (an older Ensemble); `popupCloses`: a popup closes by itself once it opened. */
+function computer(laptopId: string, key: { inject: HttpUser["inject"] }, options: { old?: boolean; popupCloses?: boolean } = {}) {
   const heard: Array<{ name: string; input: Record<string, unknown> }> = [];
   let url = "";
-  const page = () => PAGES[url] ?? { title: "Not found", snapshot: '- heading "Not found" [ref=e1]' };
+  let popup = "";
+  const pageAt = (at: string) => PAGES[at] ?? { title: "Not found", snapshot: '- heading "Not found" [ref=e1]' };
+  const page = () => pageAt(url);
   const answer = (data: { name: string; input: Record<string, unknown> }): Record<string, unknown> => {
     const { name, input } = data;
     if (options.old && ("mode" in input || "purpose" in input)) return { ok: false, error: { code: "bad_input", message: `input: Unrecognized key(s) in object: '${"mode" in input ? "mode" : "purpose"}'` } };
@@ -124,7 +130,14 @@ function computer(laptopId: string, key: { inject: HttpUser["inject"] }, options
       url = String(input.url);
       return { ok: true, summary: `Opened t1: ${page().title}.`, result: { tab: "t1", url, title: page().title, status: 200 } };
     }
+    if (name === "browser_snapshot" && input.tab === "t2" && options.popupCloses) return { ok: false, error: { code: "not_found", message: "There is no tab t2. Open one with browser_open." } };
+    if (name === "browser_snapshot" && input.tab === "t2" && popup) return { ok: true, summary: `${pageAt(popup).title}\n${pageAt(popup).snapshot}`, result: { tab: "t2", url: popup, title: pageAt(popup).title, snapshot: pageAt(popup).snapshot, truncated: false } };
     if (name === "browser_snapshot") return { ok: true, summary: `${page().title}\n${page().snapshot}`, result: { tab: "t1", url, title: page().title, snapshot: page().snapshot, truncated: false } };
+    if (name === "browser_click" && POPUPS[url]?.[String(input.ref)]) {
+      popup = POPUPS[url]![String(input.ref)]!;
+      const opened = { tab: "t2", title: pageAt(popup).title, url: popup, site: new URL(popup).host, openedBy: "t1" };
+      return { ok: true, summary: `Clicked ${input.ref}; the tab shows ${page().title}.\nIt opened a new window t2 (${opened.title}, ${opened.site}): use tab t2.`, result: { tab: "t1", url, title: page().title, opened: [opened] } };
+    }
     if (name === "browser_click") {
       const next = page().click?.[String(input.ref)];
       if (next) url = next;
@@ -172,6 +185,39 @@ test("web_task reads the tab, asks the model for one action at a time, and retur
     assert.equal(metered.filter((row) => String((row.payload as { title?: unknown }).title).startsWith("web_task: Find yesterday's usage")).length, 2, "each step's call is metered");
   } finally {
     device.stop();
+  }
+});
+
+test("a click that opens a new window (a payment popup): web_task goes on there and says which tab it is, and back to its opener when it closes by itself", async () => {
+  const { mira, key, laptop, node: made, room } = await setUp();
+  const device = computer(laptop.id, key);
+  try {
+    node = startsWebTask("what the payment page asks", { goal: "Continue the checkout and say what the payment page asks for", url: "https://store.example.test/cart" });
+    web = (page) => (page.includes("Pay with UPI") ? '{"action":"done","answer":"The payment page asks to pay 4,999 INR with UPI."}' : page.includes('button "Continue" [ref=e6]') ? '{"action":"click","ref":"e6"}' : '{"action":"stop","reason":"lost"}');
+    await say(mira, room.id, "find out what the payment page asks for");
+    assert.deepEqual(device.heard.map((row) => [row.name, row.input.tab]), [["browser_open", undefined], ["browser_snapshot", "t1"], ["browser_click", "t1"], ["browser_snapshot", "t2"]]);
+    assert.match(subAgent()[1]!.last, /2\. click e6 → Clicked e6; the tab shows Your cart\. It opened a new window, tab t2: going on there\./);
+    assert.match(subAgent()[1]!.last, /Page now \(https:\/\/pay\.example\.test\/upi — Payment\)/);
+    const call = (await h.prisma.assistantMessage.findMany({ where: { userId: mira.id, role: "assistant" }, orderBy: { createdAt: "asc" } })).map((row) => JSON.stringify(row.toolCalls)).join("\n");
+    assert.match(call, /A click opened a new window, tab t2 \(Payment, pay\.example\.test\), and it went on there; tab t1 is still open\. Use tab t2 for this page\./);
+    const reply = (await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!;
+    assert.equal(reply.body, "Result: web_task done: The payment page asks to pay 4,999 INR with UPI.");
+  } finally {
+    device.stop();
+  }
+
+  // A popup that closes by itself (it finished): web_task goes back to the tab that opened it.
+  const closing = computer(laptop.id, key, { popupCloses: true });
+  try {
+    asked.length = 0;
+    node = startsWebTask("after the popup", { goal: "Continue and say what the cart shows after", url: "https://store.example.test/cart" });
+    web = (page) => (page.includes("Pay with UPI") ? '{"action":"stop","reason":"wrong page"}' : asked.filter((row) => row.system === WEB_TASK_PROMPT).length > 1 ? '{"action":"done","answer":"The cart is back."}' : '{"action":"click","ref":"e6"}');
+    await say(mira, room.id, "after the popup, what does the cart show");
+    assert.deepEqual(closing.heard.map((row) => [row.name, row.input.tab]), [["browser_open", undefined], ["browser_snapshot", "t1"], ["browser_click", "t1"], ["browser_snapshot", "t2"], ["browser_snapshot", "t1"]]);
+    assert.match(subAgent()[1]!.last, /back to tab t1 → The new window, tab t2, closed by itself\./);
+    assert.equal((await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!.body, "Result: web_task done: The cart is back.");
+  } finally {
+    closing.stop();
   }
 });
 
