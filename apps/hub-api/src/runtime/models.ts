@@ -11,10 +11,11 @@ import { ModelUnreachableError } from "../lib/model-reach.js";
 import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { CONNECTION_DROPPED_NOTICE, normalizeTransportError } from "../lib/stream-drop.js";
 import { truncateText } from "../lib/text.js";
+import { runtimeCallTimeoutMs } from "../lib/model-timeout.js";
 import { IncludedLimitError } from "../included/errors.js";
 import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, noKeyMessage, parseProviderError } from "./errors.js";
 import { PROVIDERS, resolveCredential, type Credential } from "./credentials.js";
-import { postWithRetry, readJsonObject, sendJson, vendorFetch } from "./http.js";
+import { postWithRetry, readJsonObject, readLines, sendJson, vendorFetch } from "./http.js";
 import { includedTurn } from "./included.js";
 import { parseModelJson } from "./model-json.js";
 import { apiFor, buildResponsesPayload, cleanItems, itemsFromChat, learn, learnFromListing, otherEndpoint, toolsFor, turnFromResponse, turnFromStream, type Api } from "./responses-api.js";
@@ -188,22 +189,6 @@ async function openaiChat(
     { retry: options.retry !== false },
   );
   return readJsonObject(response);
-}
-
-async function* readLines(response: Response): AsyncGenerator<string> {
-  if (!response.body) return;
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) yield line;
-  }
-  if (buffer) yield buffer;
 }
 
 async function* openaiStreamEvents(
@@ -474,9 +459,10 @@ export async function completeWithTools(body: Json, options: CallOptions = {}): 
   const provider = providerForCall(body.provider, model);
   if (provider === "mock") return mockTurn(body, model);
   if (provider === "cursor") throw cursorChatError();
-  if (provider === INCLUDED_PROVIDER) return includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal: options.signal, timeoutMs: 300_000 });
-  if (provider === "anthropic") return anthropicChat(body, model, stringOrNull(body.userId), 300_000, options.signal);
-  return openaiTurn(body, model, provider, asMessages(body.messages), 300_000, {
+  const timeoutMs = runtimeCallTimeoutMs(body);
+  if (provider === INCLUDED_PROVIDER) return includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal: options.signal, timeoutMs });
+  if (provider === "anthropic") return anthropicChat(body, model, stringOrNull(body.userId), timeoutMs, options.signal);
+  return openaiTurn(body, model, provider, asMessages(body.messages), timeoutMs, {
     tools: toolsOf(body),
     stream: Boolean(body.stream),
     signal: options.signal,
@@ -551,6 +537,7 @@ function publicFailure(error: unknown): Json {
   if (error instanceof IncludedLimitError) return { message: error.message, kind: "credits", status: error.statusCode, code: error.code, resetsAt: error.resetsAt };
   if (error instanceof HostedAccessError) return { message: error.message, kind: "auth", status: 403 };
   if (error instanceof ModelUnreachableError) return error.toJSON();
+  if (error instanceof Error && error.name === "TimeoutError") return { message: "The model did not answer in time.", kind: "timeout", status: 504 };
   if (error instanceof Error && error.name === "ConnectionDropped") {
     return { message: CONNECTION_DROPPED_NOTICE, kind: "other", status: 503 };
   }
@@ -582,7 +569,7 @@ async function* yieldOpenAiFrames(
     yield sse("status", { text: "Waiting for the rate limit…" });
     await runtimeSleep(delay);
   }
-  for await (const event of openaiStreamEvents(provider, payload, userId, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, 300_000, {
+  for await (const event of openaiStreamEvents(provider, payload, userId, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, runtimeCallTimeoutMs(body), {
     retry: options.retry,
     signal: options.signal,
   })) {
@@ -606,13 +593,13 @@ async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<str
   }
   if (provider === "cursor") throw cursorChatError();
   if (provider === INCLUDED_PROVIDER) {
-    const result = await includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal, timeoutMs: 300_000 });
+    const result = await includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal, timeoutMs: runtimeCallTimeoutMs(body) });
     for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });
     yield sse("turn", result);
     return;
   }
   if (provider === "anthropic") {
-    const result = await anthropicChat(body, model, stringOrNull(body.userId), 300_000, signal);
+    const result = await anthropicChat(body, model, stringOrNull(body.userId), runtimeCallTimeoutMs(body), signal);
     for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });
     yield sse("turn", result);
     return;
@@ -662,7 +649,7 @@ async function* yieldResponsesFrames(provider: string, body: Json, model: string
     yield sse("status", { text: "Waiting for the rate limit…" });
     await runtimeSleep(delay);
   }
-  for await (const event of responsesEvents(provider, payload, userId, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, 300_000, { retry: true, signal })) {
+  for await (const event of responsesEvents(provider, payload, userId, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, runtimeCallTimeoutMs(body), { retry: true, signal })) {
     if (event.kind === "delta") yield sse("delta", { text: event.text });
     else yield sse("turn", event.turn);
   }

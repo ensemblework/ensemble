@@ -14,6 +14,8 @@ import { dispatchRuntime } from "./dispatch.js";
 import { ProviderError, noKeyMessage } from "./errors.js";
 import { anthropicUsage, chatUsage, clearIncludedThinkingForTests, rememberTurn, responsesUsage, withoutThinking } from "./included.js";
 import { completeText, completeWithTools, setRuntimeFetchForTests, streamWithTools } from "./models.js";
+import { askRuntimeStream } from "../lib/model-turn.js";
+import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
 import type { Json } from "./payload.js";
 
@@ -87,14 +89,34 @@ type Answer = (body: Json, init: RequestInit) => Response | Promise<Response>;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** Azure: each request takes the next answer; the last one repeats. */
+const sseOf = (events: unknown[]) => new Response(events.map((event) => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`).join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+
+/** A whole reply as Azure streams it: a Responses reply's text deltas then `response.completed`; a chat completion's chunks then its usage. */
+async function streamed(response: Response): Promise<Response> {
+  const data = (await response.json()) as Json;
+  if (Array.isArray(data.choices)) {
+    const message = ((data.choices as Json[])[0]!.message ?? {}) as Json;
+    const calls = ((message.tool_calls as Json[] | undefined) ?? []).map((call, index) => ({ index, ...call }));
+    return sseOf([
+      { model: data.model, choices: [{ index: 0, delta: { role: "assistant", content: message.content ?? "", ...(message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}), ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: null }] },
+      { model: data.model, choices: [{ index: 0, delta: {}, finish_reason: (data.choices as Json[])[0]!.finish_reason }] },
+      { model: data.model, choices: [], usage: data.usage },
+      "[DONE]",
+    ]);
+  }
+  const texts = ((data.output as Json[] | undefined) ?? []).flatMap((item) => (item.type === "message" ? ((item.content as Json[]) ?? []).map((part) => String(part.text ?? "")) : []));
+  return sseOf([{ type: "response.created", response: { ...data, status: "in_progress", output: [] } }, ...texts.map((delta) => ({ type: "response.output_text.delta", delta })), { type: "response.completed", response: data }]);
+}
+
+/** Azure: each request takes the next answer; the last one repeats. A whole reply to a streamed request goes back as a stream. */
 function azure(...answers: Answer[]): Sent[] {
   const sent: Sent[] = [];
   setRuntimeFetchForTests(async (input, init) => {
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Json) : {};
     sent.push({ url: String(input), headers: Object.fromEntries(new Headers(init?.headers).entries()), body });
     const answer = answers.length > 1 ? answers.shift()! : answers[0]!;
-    return answer(body, init ?? {});
+    const response = await answer(body, init ?? {});
+    return body.stream && response.ok && response.headers.get("content-type")?.includes("application/json") ? streamed(response) : response;
   });
   return sent;
 }
@@ -273,6 +295,91 @@ test("a streamed included turn sends deltas, then the turn with its credits", as
   const out = await frames({ provider: "ensemble", model: "gpt-6-luna", userId: "u1", messages: [{ role: "user", content: "Hi" }], chatTools: TOOLS });
   assert.equal(out.filter((frame) => frame.event === "delta").map((frame) => frame.data.text).join(""), "Hello there.");
   assert.equal(out.find((frame) => frame.event === "turn")?.data.credits, 1.25);
+});
+
+test("an included call streams from Azure and builds the same turn: text, a tool call, and the usage of response.completed", async () => {
+  const done = {
+    status: "completed",
+    model: "gpt-6.1-sol-2026-09-29",
+    output: [
+      { type: "reasoning", id: "rs_1", summary: [] },
+      { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "Looking at your tasks." }] },
+      { type: "function_call", id: "fc_1", call_id: "call_7", name: "hub_list_tasks", arguments: '{"limit":5}' },
+    ],
+    usage: { input_tokens: 1300, input_tokens_details: { cached_tokens: 1024 }, output_tokens: 44 },
+  };
+  const sent = azure(() =>
+    sseOf([
+      { type: "response.created", response: { ...done, status: "in_progress", output: [], usage: null } },
+      { type: "response.output_item.added", output_index: 1, item: { type: "message", id: "msg_1", content: [] } },
+      { type: "response.output_text.delta", item_id: "msg_1", delta: "Looking at " },
+      { type: "response.output_text.delta", item_id: "msg_1", delta: "your tasks." },
+      { type: "response.output_item.added", output_index: 2, item: { type: "function_call", id: "fc_1", call_id: "call_7", name: "hub_list_tasks", arguments: "" } },
+      { type: "response.function_call_arguments.delta", item_id: "fc_1", delta: '{"limit":' },
+      { type: "response.function_call_arguments.done", item_id: "fc_1", arguments: '{"limit":5}' },
+      { type: "response.completed", response: done },
+    ]),
+  );
+  const book = ledger();
+  const turn = await completeWithTools({ provider: "ensemble", model: "gpt-6.1-sol", userId: "u1", messages: [{ role: "user", content: "My tasks?" }], chatTools: TOOLS });
+  assert.equal(sent[0]!.body.stream, true);
+  assert.equal(turn.text, "Looking at your tasks.");
+  assert.deepEqual(turn.toolCalls, [{ id: "call_7", name: "hub_list_tasks", arguments: '{"limit":5}' }]);
+  assert.deepEqual([turn.model, turn.finishReason, turn.cutOff, turn.tokensIn, turn.tokensOut, turn.credits], ["gpt-6.1-sol-2026-09-29", "tool_calls", false, 1300, 44, 1.25]);
+  assert.deepEqual(book.settles, [{ id: "res-1", usage: { inputTokens: 1300, cacheReadTokens: 1024, cacheWriteTokens: 0, outputTokens: 44 }, answeredBy: "gpt-6.1-sol-2026-09-29" }]);
+  const chat = azure(() => json(DEEPSEEK_REPLY));
+  await completeWithTools({ provider: "ensemble", model: "deepseek-v4-flash", userId: "u1", messages: [{ role: "user", content: "Hi" }] });
+  assert.deepEqual([chat[0]!.body.stream, chat[0]!.body.stream_options], [true, { include_usage: true }], "Chat Completions streams too, with its usage");
+});
+
+test("a stream cut before response.completed keeps its text, is cut off, and settles with no usage", async () => {
+  azure(() => sseOf([{ type: "response.output_text.delta", delta: "Half an ans" }]));
+  const book = ledger();
+  const turn = await completeWithTools({ provider: "ensemble", model: "gpt-6-luna", userId: "u1", messages: [{ role: "user", content: "Hi" }] });
+  assert.deepEqual([turn.text, turn.cutOff], ["Half an ans", true]);
+  assert.deepEqual(book.settles, [{ id: "res-1", usage: null, answeredBy: "gpt-6-luna" }], "the ledger charges the reservation");
+});
+
+test("a stream Azure ends with response.failed settles with the usage it reports", async () => {
+  azure(() => sseOf([{ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The server had an error." }, usage: { input_tokens: 700, output_tokens: 3 } } }]));
+  const book = ledger();
+  await assert.rejects(completeWithTools({ provider: "ensemble", model: "gpt-6-luna", userId: "u1", messages: [{ role: "user", content: "Hi" }] }), (error) => error instanceof ProviderError && /server had an error/.test(error.message));
+  assert.deepEqual(book.settles, [{ id: "res-1", usage: { inputTokens: 700, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 3 }, answeredBy: null }]);
+});
+
+test("a call past its limit names the model and the limit, and closes Azure's stream", async () => {
+  let closed = false;
+  const sent = azure((_body, init) => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "response.created", response: { status: "in_progress" } })}\n\n`));
+        // As fetch does: the request's signal ends its body.
+        init.signal?.addEventListener("abort", () => {
+          closed = true;
+          controller.error(init.signal?.reason);
+        });
+      },
+      cancel() {
+        closed = true;
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  });
+  const book = ledger();
+  const started = Date.now();
+  await assert.rejects(
+    askRuntimeStream({ messages: [{ role: "user", content: "Find papers." }], model: "gpt-6.1-sol", provider: "ensemble", userId: "u1", activityId: "a1", chatTools: TOOLS, responsesTools: [], timeoutMs: 1_000 }),
+    (error) => {
+      assert.ok(error instanceof ModelTimeoutError);
+      assert.equal(error.message, "GPT-6.1 Sol did not answer within 1 second, so I stopped waiting. Ask again, or try a narrower question.");
+      return true;
+    },
+  );
+  assert.ok(Date.now() - started < 3_000, "it ends at its limit");
+  assert.equal(sent[0]!.body.stream, true);
+  assert.ok(closed, "Azure's stream is closed, so it stops generating");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(book.settles, [{ id: "res-1", usage: null, answeredBy: null }]);
 });
 
 test("a refused reservation never reaches Azure and keeps its code and reset time", async () => {
