@@ -547,7 +547,8 @@ select:focus-visible {
   margin-top: 0.35em;
 }
 .block-editor-body { position: relative; }
-.block-controls { position: absolute; left: -50px; display: flex; gap: 1px; padding-top: 3px; }
+/* --controls-indent: a nested block's handle sits beside it (a list item's beside its bullet). */
+.block-controls { position: absolute; left: calc(-50px + var(--controls-indent, 0px)); display: flex; gap: 1px; padding-top: 3px; transition: left 120ms ease; }
 .block-controls button { display: flex; align-items: center; justify-content: center; width: 23px; height: 25px; color: var(--faint); border-radius: 5px; background: var(--panel); }
 .block-controls button:hover, .block-controls button:focus-visible { color: var(--ink); background: var(--hover); }
 .block-controls button[data-block-position] { cursor: grab; touch-action: none; }
@@ -577,13 +578,18 @@ select:focus-visible {
 .block-drag-ghost.ProseMirror > * { margin-top: 0; margin-bottom: 0; }
 @keyframes block-lift { from { box-shadow: 0 0 0 1px transparent, 0 0 0 0 transparent; } }
 body.block-dragging, body.block-dragging * { cursor: grabbing !important; user-select: none !important; }
+body.block-dragging .block-controls, body.block-dragging .block-comment-action { opacity: 0; pointer-events: none; }
+/* Where a block carried into another container (a list, a nested item, out of a list) will land. */
+.block-drop-line { position: absolute; z-index: 41; height: 3px; margin-top: -1.5px; border-radius: 2px; background: rgb(var(--accent-rgb)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent); pointer-events: none; transition: top 90ms ease, left 90ms ease, width 90ms ease; }
+.block-drop-line[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .block-drop-line, .block-controls { transition: none; } }
 /* The empty line every page ends on (trailing-block.ts): drawn, and made real when clicked. */
 .ProseMirror .trailing-line { min-height: 1.65em; margin-top: 0.35em; cursor: text; border-radius: 4px; }
 .ProseMirror .trailing-line:hover::before { content: "Click to write"; color: var(--faint); pointer-events: none; }
 .ProseMirror[contenteditable="false"] .trailing-line, .block-drag-ghost .trailing-line { display: none; }
 /* Narrow views: no +, and the handle and comment button stay inside the page instead of being cut off. */
 .block-editor-body[data-gutter-left="tight"] { padding-left: 26px; }
-.block-editor-body[data-gutter-left="tight"] .block-controls { left: 0; }
+.block-editor-body[data-gutter-left="tight"] .block-controls { left: calc(var(--controls-indent, 0px) + 1px); }
 .block-editor-body[data-gutter-left="tight"] .block-controls button[aria-label="Add block"] { display: none; }
 .block-editor-body[data-gutter-right="tight"] { padding-right: 28px; }
 .block-editor-body[data-gutter-right="tight"] .block-comment-action { right: 2px; }
@@ -650,7 +656,7 @@ body.block-dragging, body.block-dragging * { cursor: grabbing !important; user-s
 .notion-bg-blue { background: color-mix(in srgb, #639bc9 20%, transparent); }
 .notion-bg-purple { background: color-mix(in srgb, #ac87ce 20%, transparent); }
 .notion-bg-pink, .notion-bg-red { background: color-mix(in srgb, #d98591 20%, transparent); }
-@media (max-width: 640px) { .block-editor-body { padding-left: 52px; } .block-controls { left: 0; } }
+@media (max-width: 640px) { .block-editor-body { padding-left: 52px; } .block-controls { left: var(--controls-indent, 0px); } }
 
 /* Agent-written sections: editable, but always visibly the agent's. */
 .agent-block {

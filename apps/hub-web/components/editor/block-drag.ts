@@ -1,12 +1,15 @@
 import type { Editor } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
-import { moveBlock } from "./block-move";
+import { moveBlock, moveBlockTo } from "./block-move";
+import { measureTargets, targetAt, type BlockTarget, type MeasuredTarget } from "./block-targets";
 
 /**
  * Dragging a block by its handle, the way cards move on a board: the block lifts into a copy that
  * follows the pointer, its neighbours slide aside to open the slot it will land in, and on release
- * it glides into place. The drop slot comes from the pointer's height alone, so the pointer can
- * stay in the gutter. Nothing here writes to the editor's DOM: the copy lives outside it and the
+ * it glides into place. Over a block of another container (another list, a nested item, the page
+ * around a list) a line shows where it will land instead, as in Notion, and the drop moves it there
+ * (`moveBlockTo`). The place comes from the pointer's height alone, so the pointer can stay in the
+ * gutter. Nothing here writes to the editor's DOM: the copy and the line live outside it and the
  * sliding is Web Animations, which ProseMirror does not see as edits.
  */
 
@@ -40,13 +43,17 @@ export class BlockDrag {
   private pointerY: number;
   private scrollFrame = 0;
   private done = false;
+  private readonly spots: MeasuredTarget[];
+  private line: HTMLElement | null = null;
+  /** Where it lands when that is outside its own container: before or after another block. */
+  private target: { pos: number; after: boolean } | null = null;
 
-  /** Null when the block cannot be dragged (no siblings, or the view has no element for one of them). */
-  static start(editor: Editor, from: number, pointerY: number, frame: HTMLElement): BlockDrag | null {
+  /** Null when the block cannot be dragged (the view has no element for it or one of its siblings). */
+  static start(editor: Editor, from: number, pointerY: number, frame: HTMLElement, targets: readonly BlockTarget[] = []): BlockDrag | null {
     const view = editor.view;
     const $from = editor.state.doc.resolve(from);
     const parent = $from.parent;
-    if (parent.childCount < 2) return null;
+    const size = editor.state.doc.nodeAt(from)?.nodeSize ?? 0;
     const root = view.dom as HTMLElement;
     const base = root.getBoundingClientRect().top;
     const slots: Slot[] = [];
@@ -64,11 +71,14 @@ export class BlockDrag {
       const previous = slots[index - 1];
       slot.step = next ? next.top - slot.top : slot.height + (previous ? Math.max(0, slot.top - (previous.top + previous.height)) : 0);
     });
-    return new BlockDrag(editor, slots, $from.index(), $from.start(), pointerY, frame);
+    // Where else it can land, measured before anything moves; never inside itself.
+    const spots = measureTargets(root, targets.filter((target) => target.pos < from || target.pos >= from + size));
+    return new BlockDrag(editor, slots, $from.index(), $from.start(), pointerY, frame, spots);
   }
 
-  private constructor(private readonly editor: Editor, slots: Slot[], source: number, parentStart: number, pointerY: number, frame: HTMLElement) {
+  private constructor(private readonly editor: Editor, slots: Slot[], source: number, parentStart: number, pointerY: number, frame: HTMLElement, spots: MeasuredTarget[]) {
     this.root = editor.view.dom as HTMLElement;
+    this.spots = spots;
     this.slots = slots;
     this.source = source;
     this.parentStart = parentStart;
@@ -98,13 +108,17 @@ export class BlockDrag {
     holder.removeAttribute("contenteditable");
     if (list) {
       const wrap = list.cloneNode(false) as HTMLElement;
+      // A numbered item keeps its number in the copy.
+      if (wrap.tagName === "OL") wrap.setAttribute("start", String(Number(list.getAttribute("start") ?? 1) + this.source));
       wrap.appendChild(copy);
       holder.appendChild(wrap);
     } else holder.appendChild(copy);
     const rootBox = this.root.getBoundingClientRect();
     const frameBox = this.frame.getBoundingClientRect();
+    // As wide as what it carries (a short line is a short card), never wider than the page.
     holder.style.left = `${rootBox.left - frameBox.left}px`;
-    holder.style.width = `${rootBox.width}px`;
+    holder.style.maxWidth = `${rootBox.width}px`;
+    holder.style.minWidth = `${Math.min(160, rootBox.width)}px`;
     this.frame.appendChild(holder);
     return holder;
   }
@@ -124,6 +138,20 @@ export class BlockDrag {
       const offset = base - this.frame.getBoundingClientRect().top;
       this.ghost.style.transform = `translate3d(0, ${Math.round(offset + top)}px, 0)`;
     }
+    // Over a block of another container (or inside a neighbour): a line where it will land.
+    const spot = targetAt(this.spots, this.pointerY - base);
+    if (spot && spot.parent !== this.parentStart) {
+      const after = this.pointerY - base > spot.middle;
+      this.target = { pos: spot.pos, after };
+      this.showLine(spot, after, base);
+      if (this.index !== this.source) {
+        this.index = this.source;
+        this.layout();
+      }
+      return;
+    }
+    this.target = null;
+    this.hideLine();
     const center = top + slot.height / 2;
     let index = 0;
     this.slots.forEach((other, at) => {
@@ -133,6 +161,26 @@ export class BlockDrag {
       this.index = index;
       this.layout();
     }
+  }
+
+  private showLine(spot: MeasuredTarget, after: boolean, base: number): void {
+    if (!this.line) {
+      this.line = document.createElement("div");
+      this.line.className = "block-drop-line";
+      this.line.setAttribute("aria-hidden", "true");
+      this.frame.appendChild(this.line);
+    }
+    const frameBox = this.frame.getBoundingClientRect();
+    const rootBox = this.root.getBoundingClientRect();
+    const inset = spot.left - (spot.marker ? 22 : 0);
+    this.line.style.top = `${Math.round(base - frameBox.top + (after ? spot.bottom : spot.top))}px`;
+    this.line.style.left = `${Math.round(rootBox.left - frameBox.left + inset)}px`;
+    this.line.style.width = `${Math.max(24, Math.round(rootBox.width - inset))}px`;
+    this.line.hidden = false;
+  }
+
+  private hideLine(): void {
+    if (this.line) this.line.hidden = true;
   }
 
   /** Neighbours between the block's old place and its new one slide by its height; it waits, faded, in its new slot. */
@@ -182,6 +230,7 @@ export class BlockDrag {
   /** Releases the block: moves it in the document (one transaction) and lets it glide into its slot. */
   drop(): boolean {
     if (this.done) return false;
+    if (this.target) return this.dropElsewhere(this.target);
     if (this.index === this.source) {
       this.cancel();
       return false;
@@ -215,6 +264,33 @@ export class BlockDrag {
     return true;
   }
 
+  /** Lands it in another container: the blocks that moved settle from where they were drawn. */
+  private dropElsewhere(target: { pos: number; after: boolean }): boolean {
+    const view = this.editor.view;
+    const home = this.slots[this.source]!.element;
+    const before = new Map<HTMLElement, number>();
+    for (const element of [...this.slots.map((slot) => slot.element), ...this.spots.map((spot) => spot.element)]) {
+      if (element !== home) before.set(element, element.getBoundingClientRect().top);
+    }
+    const ghostTop = this.ghost?.getBoundingClientRect().top ?? null;
+    const from = this.parentStart + this.slots.slice(0, this.source).reduce((size, slot) => size + slot.node.nodeSize, 0);
+    this.finish();
+    const moved = moveBlockTo(this.editor.state, from, target.pos, target.after);
+    if (!moved) return false;
+    view.dispatch(moved.tr);
+    for (const [element, was] of before) {
+      if (!element.isConnected || !canAnimate(element)) continue;
+      const delta = was - element.getBoundingClientRect().top;
+      if (Math.abs(delta) >= 0.5) element.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+    }
+    const landed = view.nodeDOM(moved.at);
+    if (landed instanceof HTMLElement && canAnimate(landed) && ghostTop !== null) {
+      const delta = ghostTop - landed.getBoundingClientRect().top;
+      landed.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+    }
+    return true;
+  }
+
   /** Puts everything back where it was. */
   cancel(): void {
     if (this.done) return;
@@ -234,6 +310,7 @@ export class BlockDrag {
     for (const { animation } of this.slides.values()) animation?.cancel();
     this.slides.clear();
     this.ghost?.remove();
+    this.line?.remove();
     document.body.classList.remove("block-dragging");
   }
 }
