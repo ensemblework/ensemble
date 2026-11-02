@@ -68,9 +68,3 @@ export function ViewerNote({ title, children, file, bytes, compact }: { title: s
 export function Toolbar({ children, className }: { children: React.ReactNode; className?: string }) {
   return <div className={cx("flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-line px-2 py-1 text-[12.5px] text-muted", className)}>{children}</div>;
 }
-
-export const CHECKER: React.CSSProperties = {
-  backgroundColor: "var(--panel)",
-  backgroundImage: "repeating-conic-gradient(var(--line-strong) 0% 25%, transparent 0% 50%)",
-  backgroundSize: "16px 16px",
-};

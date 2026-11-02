@@ -25,8 +25,10 @@ import { UploadDialog } from "@/components/plots/upload-dialog";
 import { ExportDialog } from "@/components/plots/export-dialog";
 import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigureRun } from "@/components/plots/figure-run";
 import { canvasSource } from "@/lib/plots/tile-code";
-import { InlineEdit, Popover } from "@/components/ui";
-import { seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
+import { InfoTip, InlineEdit, Popover } from "@/components/ui";
+import "./plots.css";
+import { Check, ChevronDown, Code2, Download, Maximize2, Plus, Trash2, Upload } from "lucide-react";
+import { readPlotTheme, seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
 import { useToast } from "@/components/toast";
@@ -308,7 +310,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
         errorRef,
         seedRef,
         title: choice.label,
-        annotations: choice.id === "reliability" ? [{ id: "diag", kind: "linear", m: 1, c: 0, label: "ideal", color: "#888888", style: "dashed" }] : [],
+        annotations: choice.id === "reliability" ? [{ id: "diag", kind: "linear", m: 1, c: 0, label: "ideal", color: readPlotTheme().muted, style: "dashed" }] : [],
         series: yRefs.map(() => ({ y: "y", axis: "left" as const, ...(choice.error ? { errorKind: choice.error } : {}) })),
       });
       return { ...current, tiles: withPack([...current.tiles, tile], packed) };
@@ -371,10 +373,24 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
     return <div className="px-8 py-8 text-[13px] text-muted">Opening the canvas…</div>;
   }
 
-  const cell = Math.max(48, width / 12);
+  // A phone has no room for the 12-column grid: tiles stack at full width, in reading order, and keep their saved places.
+  const stacked = width > 0 && width < 640;
+  const cell = stacked ? width / 12 : Math.max(48, width / 12);
   cellRef.current = cell;
   const shown = preview ? withPack(config.tiles, preview) : config.tiles;
-  const height = Math.max(420, shown.reduce((max, tile) => Math.max(max, (tile.row + tile.h) * ROW), 0) + 32);
+  const places = new Map<string, { col: number; row: number; w: number; h: number }>();
+  if (stacked) {
+    let row = 0;
+    for (const tile of [...shown].sort((a, b) => a.row - b.row || a.col - b.col)) {
+      const h = Math.max(4, Math.min(tile.h, 7));
+      places.set(tile.id, { col: 0, row, w: 12, h });
+      row += h;
+    }
+  }
+  const height = Math.max(420, shown.reduce((max, tile) => {
+    const place = places.get(tile.id) ?? tile;
+    return Math.max(max, (place.row + place.h) * ROW);
+  }, 0) + 32);
   const showLinks = groups.length > 0 && !linksHidden;
 
   return (
@@ -392,11 +408,41 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
             void client.invalidateQueries({ queryKey: ["entities"] });
           }).catch((error: Error) => toast(error.message, { tone: "error" }));
         }} className="display text-[28px] leading-none" />
-        <select aria-label="Plot space" className="field mr-auto max-w-48 text-[13px]" disabled={switching} value={workspaceId ?? ""} onChange={(event) => void openSpace(event.target.value)}>
-          {!(spaces.data?.plots ?? []).some((space) => space.id === workspaceId) ? <option value={workspaceId ?? ""}>{title}</option> : null}
-          {(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)).map((space) => <option key={space.id} value={space.id}>{space.title}</option>)}
-        </select>
-        <button type="button" className="btn" disabled={switching} onClick={() => void openSpace(undefined, true)}>New space</button>
+        <span className="mr-auto">
+          <Popover
+            width={260}
+            trigger={(open, toggle) => (
+              <button type="button" className="icon-btn" aria-label="Switch plot space" aria-expanded={open} title="Switch space" disabled={switching} onClick={toggle} data-plot-spaces>
+                <ChevronDown size={16} />
+              </button>
+            )}
+          >
+            {(close) => (
+              <div className="p-1" role="menu" aria-label="Plot spaces">
+                {[
+                  ...(!(spaces.data?.plots ?? []).some((space) => space.id === workspaceId) ? [{ id: workspaceId ?? "", title }] : []),
+                  ...(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)),
+                ].map((space) => (
+                  <button
+                    key={space.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={space.id === workspaceId}
+                    className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    onClick={() => { close(); if (space.id !== workspaceId) void openSpace(space.id); }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{space.title}</span>
+                    {space.id === workspaceId ? <Check size={14} className="shrink-0 text-accent" aria-hidden /> : null}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-line" />
+                <button type="button" role="menuitem" className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => { close(); void openSpace(undefined, true); }} data-plot-new-space>
+                  <Plus size={14} aria-hidden /> New space
+                </button>
+              </div>
+            )}
+          </Popover>
+        </span>
         {workspaceId ? <ShareButton target={{ kind: "plot_space", resourceId: workspaceId, title }} /> : null}
         </>
         )}
@@ -436,10 +482,10 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
             <button type="button" className="rounded-full px-2 py-1 text-[12px] text-muted" aria-label="Dismiss shared columns" onClick={() => setLinksHidden(true)}>×</button>
           </div>
         ) : null}
-        {shared || readOnly ? null : <button type="button" className="btn" onClick={() => setUploadOpen(true)} data-plot-upload>Upload</button>}
-        {readOnly ? null : <button type="button" className="btn" onClick={() => setAddOpen(true)} data-plot-add>Add tile</button>}
-        <button type="button" className="btn" onClick={() => setCodeOpen((open) => !open)}>Code</button>
-        <button type="button" className="btn-primary" onClick={() => setExportOpen(true)} data-export-figure>Export figure</button>
+        {shared || readOnly ? null : <button type="button" className="btn inline-flex items-center gap-1.5" onClick={() => setUploadOpen(true)} data-plot-upload><Upload size={14} aria-hidden />Upload</button>}
+        {readOnly ? null : <button type="button" className="btn inline-flex items-center gap-1.5" disabled={!columns.length} title={columns.length ? undefined : "Upload a table first"} onClick={() => setAddOpen(true)} data-plot-add><Plus size={14} aria-hidden />Add tile</button>}
+        <button type="button" className="btn inline-flex items-center gap-1.5" aria-pressed={codeOpen} onClick={() => setCodeOpen((open) => !open)}><Code2 size={14} aria-hidden />Code</button>
+        <button type="button" className="btn-primary inline-flex items-center gap-1.5" disabled={!config.tiles.length} title={config.tiles.length ? undefined : "Add a tile first"} onClick={() => setExportOpen(true)} data-export-figure><Download size={14} aria-hidden />Export figure</button>
       </div>
       {codeOpen ? (
         <div
@@ -448,10 +494,14 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
           data-code-edited={canvasEdited ? "1" : "0"}
         >
           <div className={`flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3 ${figureBeside ? "" : "flex-[3]"}`}>
-            <p className="shrink-0 text-[12px] leading-4 text-muted">
-              {canvasEdited
-                ? "Edited. Export figure offers this script or the tiles."
-                : "Every tile as a panel of one figure. load(\"name\") reads any dataset on this canvas by the name in the column pool, and save() captures the figure."}
+            <p className="flex shrink-0 items-center gap-1.5 text-[12px] leading-4 text-muted">
+              {canvasEdited ? "Edited script" : "Script for the whole canvas"}
+              <InfoTip
+                label="About the canvas script"
+                text={canvasEdited
+                  ? "Edited. Export figure offers this script or the tiles."
+                  : "Every tile as a panel of one figure. load(\"name\") reads any dataset on this canvas by the name in the column pool, and save() captures the figure."}
+              />
             </p>
             <div className="min-h-0 flex-1">
               <CodePane
@@ -483,12 +533,25 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
       ) : (
         <div ref={canvasRef} className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-bg" style={{ minHeight: height }} data-packing={preview ? "1" : undefined}>
           <div className="relative" style={{ height }}>
-            {shown.length === 0 ? (
-              <div className="absolute left-1/2 top-16 flex w-[min(420px,90%)] -translate-x-1/2 flex-col gap-3">
-                <button type="button" className="rounded-xl border border-dashed border-line px-6 py-10 text-left" onClick={() => setUploadOpen(true)}>
-                  <span className="display block text-[24px] leading-none">Upload a table</span>
-                  <span className="mt-2 block text-[13px] text-muted">Data is shared by every tile. Then add a chart from the gallery.</span>
-                </button>
+            {shown.length === 0 && !readOnly ? (
+              <div className="absolute left-1/2 top-16 flex w-[min(440px,90%)] -translate-x-1/2 flex-col gap-3" data-plot-empty>
+                {columns.length ? (
+                  <button type="button" className="plot-empty-card" onClick={() => setAddOpen(true)}>
+                    <span className="plot-empty-icon" aria-hidden><Plus size={18} /></span>
+                    <span className="min-w-0">
+                      <span className="block text-[15px] font-semibold text-ink">Add your first chart</span>
+                      <span className="mt-1 block text-[13px] text-muted">{datasets.length === 1 ? `${datasets[0]?.name ?? "Your table"} is ready` : `${datasets.length} tables are ready`}: {columns.length} columns to plot.</span>
+                    </span>
+                  </button>
+                ) : (
+                  <button type="button" className="plot-empty-card" onClick={() => setUploadOpen(true)}>
+                    <span className="plot-empty-icon" aria-hidden><Upload size={18} /></span>
+                    <span className="min-w-0">
+                      <span className="block text-[15px] font-semibold text-ink">Upload a table</span>
+                      <span className="mt-1 block text-[13px] text-muted">CSV, Excel, JSON or Parquet. Every chart on this canvas shares it.</span>
+                    </span>
+                  </button>
+                )}
               </div>
             ) : null}
             {ghost ? (
@@ -530,7 +593,8 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                 }}
                 onChange={(next) => setConfig((current) => (current ? { ...current, tiles: current.tiles.map((item) => (item.id === next.id ? next : item)) } : current))}
                 onLayout={layoutTiles}
-                onGesture={gesture}
+                onGesture={stacked ? () => undefined : gesture}
+                place={places.get(tile.id)}
                 siblings={packOf(config.tiles)}
               />
             ))}
@@ -627,7 +691,10 @@ function Tile({
   onChange,
   onLayout,
   onGesture,
+  place,
 }: {
+  /** Where the tile is drawn when it is not its saved place (stacked on a phone). */
+  place?: { col: number; row: number; w: number; h: number };
   tile: WorkspaceTile;
   datasets: PoolDataset[];
   links: WorkspaceConfig["links"];
@@ -643,14 +710,15 @@ function Tile({
   onGesture: (id: string, mode: "move" | "resize", event: React.PointerEvent) => void;
 }) {
   const theme = usePlotTheme();
+  const box = place ?? tile;
   return (
     <article
       className={`plot-tile absolute flex flex-col overflow-hidden rounded-xl border bg-panel shadow-sm ${selected ? "is-selected border-accent" : "border-line"}`}
       style={{
-        left: tile.col * cell + GUTTER / 2,
-        top: tile.row * ROW + GUTTER / 2,
-        width: Math.max(0, tile.w * cell - GUTTER),
-        height: Math.max(0, tile.h * ROW - GUTTER),
+        left: box.col * cell + GUTTER / 2,
+        top: box.row * ROW + GUTTER / 2,
+        width: Math.max(0, box.w * cell - GUTTER),
+        height: Math.max(0, box.h * ROW - GUTTER),
         zIndex: dragging ? 4 : 2,
       }}
       data-plot-tile={tile.id}
@@ -687,16 +755,16 @@ function Tile({
       <header className="flex shrink-0 cursor-grab items-center gap-2 px-2 py-1" onPointerDown={(event) => onGesture(tile.id, "move", event)}>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{tile.title || tile.chart}</span>
         {tile.code !== null ? <span className="shrink-0 rounded border border-line px-1 text-[10px] leading-4 text-muted" title="Exports draw this tile's edited code" data-tile-code-edited>Code</span> : null}
-        <span className="tile-tools flex items-center gap-1">
-          <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onOpen}>Open</button>
-          <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onDelete}>Delete</button>
+        <span className="tile-tools flex items-center gap-0.5" onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" className="icon-btn h-7 w-7" aria-label={`Open ${tile.title || tile.chart}`} title="Open" onClick={onOpen}><Maximize2 size={13} /></button>
+          <button type="button" className="icon-btn h-7 w-7 hover:text-danger" aria-label={`Delete ${tile.title || tile.chart}`} title="Delete" onClick={onDelete}><Trash2 size={13} /></button>
         </span>
       </header>
       {selected ? (
         <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 pb-1" data-quick-tweak>
           <input className="field h-7 w-28 text-[12px]" aria-label="Tile title" value={tile.title} onChange={(event) => onChange({ ...tile, title: event.target.value })} />
           <input type="color" aria-label="Series colour" className="h-7 w-8 cursor-pointer rounded border border-line bg-raised" value={seriesSwatchColor({ palette: tile.palette, series: tile.series, colors: {} }, 0, theme)} onChange={(event) => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, color: event.target.value } : series) })} />
-          <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={() => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, lineStyle: series.lineStyle === "dashed" ? "solid" : "dashed" } : series) })}>Line</button>
+          <button type="button" className="btn px-2 py-0.5 text-[12px]" aria-pressed={tile.series[0]?.lineStyle === "dashed"} onClick={() => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, lineStyle: series.lineStyle === "dashed" ? "solid" : "dashed" } : series) })}>Dashed</button>
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">

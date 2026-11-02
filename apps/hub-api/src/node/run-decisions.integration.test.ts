@@ -1,8 +1,9 @@
 /**
  * A node's runs ask in the chat (node/run-decisions.ts, docs/35 §8.6): when the agent of a run a node
  * started asks a question or a permission, its decision gets one owner-only card in the run card's
- * conversation and thread, and its notification opens it there. The Hub's Needs me leaves it out and
- * counts it as waiting in Node chats; the plain list (the CLI, Node) still has it. Answered with the
+ * conversation and thread, and its notification opens it there. The Hub's Needs me lists the decision
+ * once, as the session's (its agent and computer, via the node, linking to the card), not the card; the
+ * plain list (the CLI, Node) has it too. Answered with the
  * decide route the card says the owner answered; answered on the computer, by the node, by expiry or by
  * the run's end, the card follows. A run no node follows asks on the Hub's Needs me as before. The
  * computer is simulated with its device key.
@@ -89,7 +90,7 @@ const cardWith = (decisionId: string, status: string) =>
     return card && (card.data as { status?: string }).status === status ? card : null;
   }, `a ${status} card`);
 
-test("a node run's permission is a card in the run's thread for its owner; the Hub counts it as waiting in Node, and the owner's answer settles it", async () => {
+test("a node run's permission is a card in the run's thread for its owner; the Hub lists it as the session's, and the owner's answer settles it", async () => {
   const env = await setup();
   const { job, leaseToken, card: runCard, root } = await runningJob(env, "Fix the login bug", true);
   const id = await ask(env, job, leaseToken, { title: "Run `npm test` in app?", command: "npm test", event: "permission", tier: "ordinary" });
@@ -136,15 +137,18 @@ test("a node run's permission is a card in the run's thread for its owner; the H
   assert.equal((await h.prisma.notification.findFirstOrThrow({ where: { userId: env.mira.id, kind: "decision" }, orderBy: { createdAt: "desc" } })).url, "/needs-me");
 
   const hub = json(await env.mira.inject({ method: "GET", url: "/api/decisions?surface=hub" }));
-  assert.deepEqual(hub.decisions.map((row: { id: string }) => row.id), [hubOnly], "the Hub leaves the node's out");
-  assert.deepEqual(hub.nodeChat, { count: 1, url: `${NODE_SITE}/r/${env.room.id}#m-${card.id}` });
+  assert.deepEqual(hub.decisions.map((row: { id: string }) => row.id), [id, hubOnly], "the Hub lists both runs' requests");
+  const named = hub.decisions.find((row: { id: string }) => row.id === id).origin;
+  assert.deepEqual([named.agent, named.computer, named.node.slug, named.node.url], ["GitHub Copilot", "Mira's laptop", env.node.slug, `${NODE_SITE}/r/${env.room.id}#m-${card.id}`], "as the session's, via its node, linking to its card");
+  assert.equal(hub.decisions.find((row: { id: string }) => row.id === hubOnly).origin.node, null, "a run no node follows has no node");
+  assert.equal(hub.nodeChat, undefined);
   const everywhere = json(await env.mira.inject({ method: "GET", url: "/api/decisions" }));
-  assert.deepEqual(everywhere.decisions.map((row: { id: string }) => row.id).sort(), [id, hubOnly].sort(), "the CLI and Node still list it");
+  assert.deepEqual(everywhere.decisions.map((row: { id: string }) => row.id).sort(), [id, hubOnly].sort(), "the CLI and Node list it too");
   const shell = json(await env.mira.inject({ method: "GET", url: "/api/shell" }));
-  assert.equal(shell.decisions, 1, "the Hub's count leaves it out");
-  assert.equal(shell.nodeApprovals, 0, "nor is its card counted as one of the node's own");
+  assert.equal(shell.decisions, 2, "the Hub's count has both");
+  assert.equal(shell.nodeApprovals, 0, "and does not count its card a second time");
   const approvals = json(await env.mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>;
-  assert.ok(!approvals.some((row) => row.id === card.id), "nor listed with the node's cards on the Hub");
+  assert.ok(!approvals.some((row) => row.id === card.id), "nor is its card listed with the sessions' cards on the Hub");
   const activity = json(await env.mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>;
   assert.ok(activity.some((row) => row.id === card.id), "Node's own activity has it");
 
@@ -165,7 +169,7 @@ test("a node run's permission is a card in the run's thread for its owner; the H
   assert.match(String(data.answeredAt), /^\d{4}-\d{2}-\d{2}T/);
   assert.ok(frames.some((frame) => frame.includes("decision.answered") && frame.includes(id)), "the computer hears the answer");
   const after = json(await env.mira.inject({ method: "GET", url: "/api/decisions?surface=hub" }));
-  assert.deepEqual(after.nodeChat, { count: 0, url: `${NODE_SITE}/activity` });
+  assert.deepEqual(after.decisions.map((row: { id: string }) => row.id), [hubOnly], "answered on Node, it leaves the Hub");
 });
 
 test("the card follows answers given elsewhere (the computer, the node), expiry and the run's end", async () => {
@@ -204,18 +208,19 @@ test("the card follows answers given elsewhere (the computer, the node), expiry 
   await cardWith(open, "closed");
   assert.equal((await h.prisma.agentDecision.findUniqueOrThrow({ where: { id: open } })).status, "expired");
   const hub = json(await env.mira.inject({ method: "GET", url: "/api/decisions?surface=hub" }));
-  assert.equal(hub.nodeChat.count, 0);
+  assert.ok(!hub.decisions.some((row: { id: string }) => row.id === open), "and leaves the Hub");
 });
 
-test("without a Node site the Hub lists a node run's requests itself", async () => {
+test("without a Node site the Hub still lists a node run's requests, with no link into Node", async () => {
   const env = await setup();
   const { job, leaseToken } = await runningJob(env, "Docs", true);
   const id = await ask(env, job, leaseToken, { title: "Open a pull request?", event: "question", options: ["Yes", "No"] });
   process.env.ENSEMBLE_NODE_WEB_ORIGIN = "";
   try {
     const hub = json(await env.mira.inject({ method: "GET", url: "/api/decisions?surface=hub" }));
-    assert.ok(hub.decisions.some((row: { id: string }) => row.id === id));
-    assert.deepEqual(hub.nodeChat, { count: 0, url: null });
+    const row = hub.decisions.find((item: { id: string }) => item.id === id);
+    assert.ok(row);
+    assert.deepEqual([row.origin.node.slug, row.origin.node.url], [env.node.slug, null]);
     assert.equal(json(await env.mira.inject({ method: "GET", url: "/api/shell" })).decisions, 1);
   } finally {
     process.env.ENSEMBLE_NODE_WEB_ORIGIN = NODE_SITE;

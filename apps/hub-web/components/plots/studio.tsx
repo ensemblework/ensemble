@@ -31,7 +31,7 @@ import { figureBytes } from "@/lib/plots/figure-file";
 import { plottedCsv } from "@/lib/plots/option";
 import { seriesSwatchColor } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
-import { InlineEdit, Popover, Segmented, Toggle, cx } from "@/components/ui";
+import { InfoTip, InlineEdit, Popover, Segmented, Toggle, cx } from "@/components/ui";
 
 const CodePane = dynamic(() => import("./code-pane").then((mod) => mod.PlotCodePane), { ssr: false });
 
@@ -123,6 +123,9 @@ export function PlotStudio({ plotId }: { plotId: string }) {
   const [url, setUrl] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [renderUrl, setRenderUrl] = useState<string | null>(null);
+  useEffect(() => () => {
+    if (renderUrl) URL.revokeObjectURL(renderUrl);
+  }, [renderUrl]);
   const [errorText, setErrorText] = useState("");
   const saveTimer = useRef(0);
   const slow = useDelayedFlag(Boolean(busy));
@@ -208,8 +211,9 @@ export function PlotStudio({ plotId }: { plotId: string }) {
     mutationFn: () => api.duplicatePlot(plotId),
     onSuccess: (result) => {
       void client.invalidateQueries({ queryKey: ["plots"] });
-      window.location.href = `/plots/${result.plot.id}`;
+      router.push(`/plots/${result.plot.id}`);
     },
+    onError: (error) => toast(error instanceof Error ? error.message : "The plot could not be duplicated.", { tone: "error" }),
   });
 
   if (!config) {
@@ -229,7 +233,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
         <Link href="/plots" className="text-[12.5px] text-muted hover:text-ink">Plots</Link>
         <InlineEdit value={title} placeholder="Untitled plot" onSave={setTitle} className="display min-w-0 flex-1 text-[28px] leading-none" />
         <span className="text-[12px] text-faint">{busy && python === "loading" ? "Starting Python in your browser (the first time only, about 30 MB)" : busy || (dataset ? "Saved" : "New")}</span>
-        <button type="button" className="btn" onClick={() => duplicate.mutate()}>Duplicate</button>
+        <button type="button" className="btn" disabled={duplicate.isPending} onClick={() => duplicate.mutate()}>Duplicate</button>
       </div>
       <div className="mb-2 flex gap-1 overflow-x-auto" role="tablist">
         {TABS.map((item) => (
@@ -248,8 +252,11 @@ export function PlotStudio({ plotId }: { plotId: string }) {
             setErrorText("");
             try {
               const result = await renderPlot(plotId, { format: "png", code: code || boilerplate(dataset?.name || "data") });
-              if (renderUrl) URL.revokeObjectURL(renderUrl);
-              setRenderUrl(URL.createObjectURL(figureBytes("png", result.data)));
+              const next = URL.createObjectURL(figureBytes("png", result.data));
+              setRenderUrl((previous) => {
+                if (previous) URL.revokeObjectURL(previous);
+                return next;
+              });
             } catch (error) {
               setErrorText(error instanceof Error ? error.message : "The script failed.");
             } finally {
@@ -374,10 +381,10 @@ function DropZone({
     >
       <div className="max-w-md text-center">
         <h2 className="display text-[28px] leading-none">Drop a table</h2>
-        <p className="mt-2 text-[13.5px] leading-5 text-muted">CSV, TSV, TXT, Excel, Numbers, ODS, JSON, Parquet, or Feather. Or paste a public Sheets, Drive, or OneDrive link.</p>
+        <p className="mt-2 inline-flex items-center gap-1.5 text-[13px] text-muted">CSV, Excel, JSON, Parquet and more <InfoTip label="Supported files" text="CSV, TSV, TXT, Excel (xlsx, xls, xlsm), Numbers, ODS, JSON, JSON lines, Parquet, Feather or Arrow. Or paste a public Sheets, Drive, or OneDrive link." /></p>
       </div>
       <button type="button" className="btn-primary" onClick={() => input.current?.click()}>Choose a file</button>
-      <input ref={input} data-plot-file type="file" className="hidden" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods,.numbers,.json,.jsonl,.parquet,.feather,.arrow,.pkl,.pickle" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
+      <input ref={input} data-plot-file type="file" className="hidden" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.ods,.numbers,.json,.jsonl,.ndjson,.parquet,.feather,.arrow" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); }} />
       {slow ? <p className="text-[12.5px] text-muted">{busy}…</p> : null}
       <textarea value={paste} onChange={(event) => setPaste(event.target.value)} placeholder="Or paste rows here" aria-label="Paste data" className="field h-24 w-full max-w-lg resize-none" />
       <button type="button" className="btn" disabled={!paste.trim()} onClick={onPaste}>Use pasted data</button>
@@ -462,8 +469,10 @@ function EncodeTab({ dataset, config, update }: { dataset: Dataset; config: Plot
         axisOf={(id) => config.series.find((series) => series.y === id)?.axis ?? "left"}
         onAxis={(id, axis) => update({ series: config.series.map((series) => series.y === id ? { ...series, axis } : series) })}
       />
-      <p className="text-[11px] leading-4 text-faint">Count can tally a text column. A category or a non-positive value on a log axis is left off the chart.</p>
-      {(config.chart === "pie" || config.chart === "donut") && config.series.length > 1 ? <p className="text-[12px] leading-4 text-muted">Each series is drawn as its own pie.</p> : null}
+      <p className="inline-flex items-center gap-1.5 text-[12px] text-faint">
+        {(config.chart === "pie" || config.chart === "donut") && config.series.length > 1 ? "Each series is drawn as its own pie." : "What can be plotted"}
+        <InfoTip label="What can be plotted" text="Count can tally a text column. A category or a non-positive value on a log axis is left off the chart." />
+      </p>
       {(config.chart === "pie" || config.chart === "donut") ? (
         <div>
           <div className="mb-1 text-[12px] text-muted">Slice labels</div>

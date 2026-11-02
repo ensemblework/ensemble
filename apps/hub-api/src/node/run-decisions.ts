@@ -4,8 +4,8 @@
  * answers) gets one card in the run card's conversation and thread, for the owner only
  * (`data.type: "run_decision"`). It is answered there through `POST /api/decisions/:id/decide`, like any
  * decision; the card follows every answer, from anywhere (the decision bus), its expiry and the run's
- * end. Ensemble's Hub leaves these decisions out of its Needs me and says how many wait in Node chats
- * instead (`GET /api/decisions?surface=hub`), where Ensemble Node has a site (`nodeWebOrigin`).
+ * end. Ensemble's Hub lists the decision itself, named by the session that asks (node/needs-me.ts), and
+ * not this card.
  */
 import type { AgentDecision, NodeMessage, Prisma, PrismaClient } from "@prisma/client";
 import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
@@ -16,8 +16,6 @@ import { postMessage, updateMessageDataIf } from "./store.js";
 
 /** `data.type` of the card. */
 export const RUN_DECISION_CARD = "run_decision";
-/** A node's own computer-tool question (node/device-tool-decisions.ts `COMPUTER_CARD`), named here so the device runtime that imports this stays light. */
-const COMPUTER_CARD = "computer";
 /** Between answers seen on the bus, a waiting decision is read again this often (an answer from another process, or its run's end). */
 const RECHECK_MS = 60_000;
 
@@ -224,39 +222,4 @@ export async function recoverRunDecisions(ctx: RunDecisionContext): Promise<void
     const decisionId = text(record(card.data).decisionId);
     if (decisionId) watchRunDecision(ctx, decisionId);
   }
-}
-
-/**
- * Decisions waiting on a card in a Node chat (a node's runs, and a node's own computer tools), which
- * the Hub's Needs me leaves out, and where to open them: the one chat they are in, or Node's activity.
- * Empty without a Node site: then the Hub lists them all.
- */
-export async function nodeChatDecisions(prisma: Pick<PrismaClient, "nodeMessage">, userId: string): Promise<{ ids: Set<string>; url: string | null; rooms: Map<string, { roomId: string; cardId: string }> }> {
-  const origin = nodeWebOrigin();
-  if (!origin) return { ids: new Set(), url: null, rooms: new Map() };
-  const cards = await prisma.nodeMessage.findMany({
-    where: {
-      userId,
-      kind: "approval",
-      visibleTo: { equals: [userId] },
-      AND: [{ data: { path: ["status"], equals: "pending" } }, { OR: [{ data: { path: ["type"], equals: RUN_DECISION_CARD } }, { data: { path: ["type"], equals: COMPUTER_CARD } }] }],
-    },
-    select: { id: true, roomId: true, data: true },
-    orderBy: { createdAt: "asc" },
-    take: 500,
-  });
-  const rooms = new Map<string, { roomId: string; cardId: string }>();
-  for (const card of cards) {
-    const id = text(record(card.data).decisionId);
-    if (id && !rooms.has(id)) rooms.set(id, { roomId: card.roomId, cardId: card.id });
-  }
-  return { ids: new Set(rooms.keys()), url: `${origin}/activity`, rooms };
-}
-
-/** The Hub's line for decisions waiting in Node chats: how many, and the chat to open (Node's activity when they are in several). */
-export function nodeChatLine(waitingIds: readonly string[], chat: Awaited<ReturnType<typeof nodeChatDecisions>>): { count: number; url: string | null } {
-  const places = waitingIds.map((id) => chat.rooms.get(id)).filter((place): place is { roomId: string; cardId: string } => Boolean(place));
-  const roomIds = new Set(places.map((place) => place.roomId));
-  const one = roomIds.size === 1 ? places[0]! : null;
-  return { count: places.length, url: one ? cardUrl({ id: one.cardId, roomId: one.roomId }) : chat.url };
 }

@@ -304,8 +304,10 @@ test("a site that wants the owner's account pauses the tab and asks them; a logi
     assert.equal(card.data.origin, OTHER_SITE);
     assert.deepEqual([card.data.saved, card.data.display], [false, false], "no saved login, no screen: the card offers typing it");
     assert.ok((card.data.reasons as string[]).includes("the page has a password field"));
-    const needs = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>;
-    assert.ok(needs.some((row) => row.id === card.id), "it is on Needs me (Node and the Hub)");
+    const needs = json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>;
+    assert.ok(needs.some((row) => row.id === card.id), "it is on Node's Needs me");
+    const hub = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>;
+    assert.ok(!hub.some((row) => row.id === card.id), "the node's own sign-in is not in the Hub's Needs me");
     // Signing in on the computer needs a screen; this one has none.
     assert.equal((await answer(mira, card.id, { action: "local" })).statusCode, 409);
 
@@ -343,7 +345,7 @@ test("a site that wants the owner's account pauses the tab and asks them; a logi
     assert.equal(json(signedIn).message.data.status, "signed_in");
     assert.equal(json(signedIn).message.data.via, "typed");
     assert.match(json(signedIn).message.data.note ?? "", /not saved: Logins are saved for https sites/, "a plain-http site's login is not kept, and the card says so");
-    assert.ok(!(await mira.inject({ method: "GET", url: "/api/node/approvals" })).json().approvals.some((row: { id: string }) => row.id === card.id), "off Needs me");
+    assert.ok(!(await mira.inject({ method: "GET", url: "/api/node/activity" })).json().approvals.some((row: { id: string }) => row.id === card.id), "off Needs me");
 
     // The node was woken, told only that it is signed in; the same tab now shows the signed-in page.
     assert.ok(seen.some((turn) => turn.transcript.includes(`Your owner signed in to ${OTHER_SITE} on Mira's laptop`)));
@@ -497,6 +499,10 @@ test("a run's agent waits in its tool call; the card is where its run is followe
     }
     assert.ok(card, "the card is in the node's conversation, where the run card is");
     assert.equal(card.data.jobId, job.id);
+    const hub = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string; origin: { task: { title: string }; node: { slug: string } } | null }>;
+    const listed = hub.find((row) => row.id === card!.id);
+    assert.ok(listed, "a run's sign-in is in the Hub's Needs me");
+    assert.deepEqual([listed.origin?.task.title, listed.origin?.node.slug], ["Reconcile the invoices", node.slug], "named by its run, via its node");
 
     // I'm done before signing in: still waiting, said so.
     const early = await answer(mira, card.id, { action: "done" });

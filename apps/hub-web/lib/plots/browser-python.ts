@@ -233,6 +233,7 @@ function slot(kind: "plot" | "parse"): Slot {
   if (!current) {
     const url = URL.createObjectURL(new Blob([WORKER_JS], { type: "text/javascript" }));
     current = { worker: new Worker(url), used: false, ready: false };
+    URL.revokeObjectURL(url);
     slots[kind] = current;
   }
   return current;

@@ -223,9 +223,11 @@ test("a site that asks for a code: the card asks for it, the code goes sealed fo
     const asking = await cardNow(card.id);
     assert.deepEqual([asking.status, asking.codeHint], ["needs_code", "Enter the 6-digit code from your authenticator app"]);
     assert.equal(json(await computer.user.inject({ method: "GET", url: `/api/node/logins/${card.id}` })).codeHint, "Enter the 6-digit code from your authenticator app");
-    const waiting = json(await computer.user.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>;
-    assert.ok(waiting.some((row) => row.id === card.id), "it still waits for the owner on Needs me");
-    assert.equal(json(await computer.user.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 1);
+    const waiting = json(await computer.user.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>;
+    assert.ok(waiting.some((row) => row.id === card.id), "it still waits for the owner in the Node chat");
+    // The node's own sign-in: not in the Hub's Needs me, nor counted there (node/needs-me.ts).
+    assert.ok(!(json(await computer.user.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id));
+    assert.equal(json(await computer.user.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 0);
     // The page can be opened here too while it asks.
     assert.equal((await computer.user.inject({ method: "POST", url: "/api/node/takeovers", headers: { origin: NODE_SITE }, payload: { loginCardId: card.id } })).statusCode, 200);
     const sealed = await sealedFor(computer.user, card.id, { origin: "https://login.microsoftonline.com", code: "424242" });

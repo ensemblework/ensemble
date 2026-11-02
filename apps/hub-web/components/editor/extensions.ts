@@ -25,6 +25,8 @@ import {
   type BlockCommandId,
 } from "./editor-commands";
 import { PageLink, Underline, NotionColor } from "./imported-blocks";
+import { TrailingBlock } from "./trailing-block";
+import { canNestPages, livePageLink, NestedPage, type NestedPageOptions } from "./nested-page";
 import { PageImage } from "./page-image";
 import { ToggleBlock } from "./toggle-block";
 import { AgentBlock } from "./agent-block";
@@ -49,7 +51,7 @@ const SlashCommand = Extension.create({
         char: "/",
         // A table cannot go inside a table cell.
         items: ({ query, editor }) =>
-          matchCommands(query).filter((command) => command.id !== "table" || !inTable(editor.state.selection.$from)).map((command) => ({
+          matchCommands(query).filter((command) => (command.id !== "table" || !inTable(editor.state.selection.$from)) && (command.id !== "page" || canNestPages(editor))).map((command) => ({
             type: "block" as const,
             id: command.id,
             label: command.label,
@@ -223,6 +225,7 @@ export function editorExtensions(
   diagramsOn: () => boolean | null = () => true,
   plotsOn: () => boolean | null = () => true,
   files: Partial<FileAttachOptions> = {},
+  pages: Partial<NestedPageOptions> = {},
 ) {
   return [
     // dir="auto" lets each line of Arabic, Hebrew or Persian run right to left on its own. It is
@@ -244,7 +247,8 @@ export function editorExtensions(
     }),
     TaskList,
     ChecklistItem.configure({ nested: true }),
-    PageLink,
+    livePageLink(pages.client ?? files.client ?? (() => null)),
+    NestedPage.configure({ create: pages.create ?? null, client: pages.client ?? files.client ?? (() => null) }),
     PageImage,
     Underline,
     NotionColor,
@@ -255,6 +259,7 @@ export function editorExtensions(
     SlashCommand,
     PageClipboard,
     CodeIndent,
+    TrailingBlock,
     FileAttach.configure(files),
     EntityMention.configure({
       diagramsOn,

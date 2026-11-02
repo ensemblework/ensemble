@@ -689,6 +689,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const row = await waitFor(id, timeout * 1000);
     if (row && row.status === "pending" && row.expiresAt < new Date()) {
       const expired = await prisma.agentDecision.update({ where: { id }, data: { status: "expired" } });
+      decisionBus.emit(id);
+      sseHub.publish(expired.userId, { event: "decision", data: { id, status: "expired" } });
       return publicDecision(expired);
     }
     return publicDecision(row!);

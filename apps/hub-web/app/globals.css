@@ -556,8 +556,38 @@ select:focus-visible {
 .block-comment-action { position: absolute; right: -30px; margin-top: 3px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); }
 .block-comment-action:hover, .block-comment-action:focus-visible { color: var(--ink); border-color: var(--line-strong); }
 @media (max-width: 640px), (hover: none) { .block-comment-action { display: none; } }
-.block-drop-before { box-shadow: 0 -2px var(--accent); }
-.block-drop-after { box-shadow: 0 2px var(--accent); }
+/* A block carried by its handle (block-drag.ts): a lifted copy over the page while its neighbours slide. */
+.block-drag-ghost.ProseMirror {
+  position: absolute;
+  top: 0;
+  z-index: 40;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 8px;
+  margin-left: -8px;
+  box-sizing: content-box;
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 14px 32px -12px rgb(0 0 0 / 0.45);
+  opacity: 0.96;
+  pointer-events: none;
+  will-change: transform;
+  animation: block-lift 140ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.block-drag-ghost.ProseMirror > * { margin-top: 0; margin-bottom: 0; }
+@keyframes block-lift { from { box-shadow: 0 0 0 1px transparent, 0 0 0 0 transparent; } }
+body.block-dragging, body.block-dragging * { cursor: grabbing !important; user-select: none !important; }
+/* The empty line every page ends on (trailing-block.ts): drawn, and made real when clicked. */
+.ProseMirror .trailing-line { min-height: 1.65em; margin-top: 0.35em; cursor: text; border-radius: 4px; }
+.ProseMirror .trailing-line:hover::before { content: "Click to write"; color: var(--faint); pointer-events: none; }
+.ProseMirror[contenteditable="false"] .trailing-line, .block-drag-ghost .trailing-line { display: none; }
+/* Narrow views: no +, and the handle and comment button stay inside the page instead of being cut off. */
+.block-editor-body[data-gutter-left="tight"] { padding-left: 26px; }
+.block-editor-body[data-gutter-left="tight"] .block-controls { left: 0; }
+.block-editor-body[data-gutter-left="tight"] .block-controls button[aria-label="Add block"] { display: none; }
+.block-editor-body[data-gutter-right="tight"] { padding-right: 28px; }
+.block-editor-body[data-gutter-right="tight"] .block-comment-action { right: 2px; }
+@media (prefers-reduced-motion: reduce) { .block-drag-ghost.ProseMirror { animation: none; } }
 .toggle-block { position: relative; padding: 4px 0 4px 26px; }
 .toggle-block-trigger { position: absolute; left: 0; top: 5px; width: 22px; height: 25px; color: var(--muted); border-radius: 4px; }
 .toggle-block-trigger:hover { background: var(--hover); color: var(--ink); }
@@ -566,6 +596,9 @@ select:focus-visible {
 .toggle-block.is-collapsed .toggle-block-content > :not(:first-child) { display: none; }
 .page-link-block { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; color: var(--ink); text-decoration: none; background: color-mix(in srgb, var(--raised) 50%, transparent); }
 .page-link-block:hover { background: var(--hover); }
+.ProseMirror a.page-link-block { text-decoration: none; cursor: pointer; }
+.page-link-block > svg { flex: none; color: var(--muted); }
+.page-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line-strong); }
 .page-image { max-width: 100%; height: auto; border-radius: 8px; }
 .page-image-broken { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 64px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .page-image-broken a { color: var(--faint); text-decoration: underline; }

@@ -33,7 +33,8 @@ export type BlockCommandId =
   | "divider"
   | "toggle"
   | "image"
-  | "file";
+  | "file"
+  | "page";
 
 export interface BlockCommand {
   id: BlockCommandId;
@@ -58,6 +59,7 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "divider", label: "Divider", detail: "Separate sections", aliases: "hr rule line separator", symbol: "—" },
   { id: "image", label: "Image", detail: `A PNG, JPEG, GIF or WebP up to ${PAGE_IMAGE_MAX_LABEL}, shown in the page`, aliases: "picture photo img png jpg jpeg gif webp screenshot", symbol: "▣" },
   { id: "file", label: "File", detail: "Upload or attach a PDF, sheet or any file as a card", aliases: "attach attachment upload pdf document", symbol: "⎘" },
+  { id: "page", label: "Page", detail: "A new page inside this one", aliases: "subpage sub-page nested child new doc document note", symbol: "▤" },
 ];
 
 export function matchCommands(query: string): BlockCommand[] {
@@ -155,6 +157,10 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
     case "image":
       chain.run();
       editor.commands.chooseImage(range.from);
+      break;
+    case "page":
+      chain.run();
+      editor.commands.createNestedPage(range.from);
       break;
     default:
       convert(chain, command);

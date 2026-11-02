@@ -134,7 +134,14 @@ export function ChartView({
         painted.current = true;
         observer = new ResizeObserver(resize);
         observer.observe(host.current);
-        themeObserver = new MutationObserver(() => paint(false));
+        // The accent is an inline style on <html>, as are unrelated ones (a scroll lock): repaint only when the colours change.
+        let drawnTheme = JSON.stringify(readPlotTheme());
+        themeObserver = new MutationObserver(() => {
+          const next = JSON.stringify(readPlotTheme());
+          if (next === drawnTheme) return;
+          drawnTheme = next;
+          paint(false);
+        });
         themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-color-theme", "style"] });
       }).catch(() => {
         if (!disposed && host.current) host.current.dataset.plotChartError = "1";
@@ -190,7 +197,7 @@ export async function exportChartPng(frame: Frame, config: PlotConfig, pixelRati
   document.body.appendChild(node);
   const instance = echarts.init(node, undefined, { renderer: "canvas" });
   instance.setOption(chartOption(frame, config, readPlotTheme()));
-  const url = instance.getDataURL({ type: "png", pixelRatio, backgroundColor: readPlotTheme().dark ? "#141210" : "#fffcf7" });
+  const url = instance.getDataURL({ type: "png", pixelRatio, backgroundColor: readPlotTheme().panel });
   instance.dispose();
   node.remove();
   return figureBytes("png", url.slice(url.indexOf(",") + 1));

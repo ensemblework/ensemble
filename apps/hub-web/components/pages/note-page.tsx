@@ -5,10 +5,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { FileText, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { NestedPages, useLinkedPages } from "./nested-pages";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EMPTY_PAGE, type PageMention } from "@ensemble/shared-types";
+import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare } from "@/lib/api";
 import { quickAssignTask } from "@/lib/quick-assign";
 import { useEntities } from "@/lib/entities";
@@ -220,9 +221,11 @@ export function NotePage({
     },
   });
 
-  const onChange = useCallback(() => {
+  const { linked, track: trackLinks } = useLinkedPages(initialDoc);
+  const onChange = useCallback((doc: PageDocument) => {
+    trackLinks(doc);
     if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
-  }, []);
+  }, [trackLinks]);
 
   const onMentionClick = useCallback(
     (mention: PageMention) => {
@@ -342,10 +345,7 @@ export function NotePage({
         )}
       </PageContent>
 
-      {!shared && family.data?.pages.some((child) => child.parentId === pageId) ? <nav aria-label="Nested pages" className="mt-6 space-y-1 border-t border-line pt-4">
-        <p className="mb-2 text-[12px] font-medium text-muted">Nested pages</p>
-        {family.data.pages.filter((child) => child.parentId === pageId).map((child) => <Link key={child.id} className="page-link-block" href={`/pages/${child.id}`}><FileText size={15} /> {child.title || "Untitled"}</Link>)}
-      </nav> : null}
+      {!shared ? <NestedPages parentPageId={pageId} linked={linked} /> : null}
     </div>
   );
 }

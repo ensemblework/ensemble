@@ -4,10 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ArrowUpRight, Check, KeyRound, LogIn, Monitor, X } from "lucide-react";
 import { useToast } from "@/components/toast";
-import { api, type NodeApprovalCard } from "@/lib/api";
+import { api, ApiError, type NodeApprovalCard } from "@/lib/api";
 import { keptText, parseAllow, routeText, secretAnswer, targetFingerprint } from "@/lib/node-secret";
 import { codeAnswer, loginFingerprint, loginRouteText, typedLoginAnswer } from "@/lib/node-login";
 import { relative } from "@/lib/format";
+import { SessionLine } from "./editor-decisions";
 
 const WANTS: Record<string, string> = {
   tools: "wants to act for you",
@@ -31,6 +32,12 @@ function wants(card: NodeApprovalCard): string {
   if (card.data.type === "login" && card.data.status === "needs_code") return "needs the code the site asks for";
   return WANTS[card.data.type ?? "tools"] ?? WANTS.tools;
 }
+
+/**
+ * Who asks, as the card's first line names it before what it wants: the session's agent. The Hub lists
+ * only cards a node's runs raise for their agents (hub-api node/needs-me.ts).
+ */
+const asker = (card: NodeApprovalCard): string => card.origin?.agent ?? "The agent";
 
 /**
  * The value is encrypted here for the computer on the card (lib/node-secret.ts) and sent once; it is
@@ -220,9 +227,10 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
   );
 }
 
-/** The person's Ensemble Node approval cards. Ensemble on a computer has no Node, so a refusal there is an empty list. */
+/** Cards the person's Ensemble Node runs raised for their agents. Ensemble on a computer has no Node, so a refusal there is an empty list. */
 export function useNodeApprovals() {
-  return useQuery({ queryKey: ["node-approvals"], queryFn: api.nodeApprovals, retry: false, staleTime: 15_000 });
+  // Cards answered or closed on Node leave here too: the live stream says so, and this poll is the fallback.
+  return useQuery({ queryKey: ["node-approvals"], queryFn: api.nodeApprovals, retry: false, staleTime: 15_000, refetchInterval: 30_000, refetchOnWindowFocus: true });
 }
 
 function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string | null }) {
@@ -236,8 +244,10 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
       if (previous) client.setQueryData(["node-approvals"], { ...previous, approvals: previous.approvals.filter((row) => row.id !== card.id) });
       return { previous };
     },
-    onSuccess: (_result, decision) => toast(decision === "approve" ? `Approved. @${card.node?.slug ?? "the node"} goes on.` : card.data.type === "login" ? "Not now. The work goes on without it." : "Discarded. Nothing was done."),
+    onSuccess: (_result, decision) => toast(decision === "approve" ? (card.data.type === "media_preview" ? "Sent. The captures can be used now." : `Approved. ${asker(card)} goes on.`) : card.data.type === "login" ? "Not now. The work goes on without it." : "Discarded. Nothing was done."),
     onError: (error, _decision, context) => {
+      // Already answered or closed on Node: the card stays gone.
+      if (error instanceof ApiError && error.status === 409) return toast("This was already settled.");
       if (context?.previous) client.setQueryData(["node-approvals"], context.previous);
       toast((error as Error).message, { tone: "error" });
     },
@@ -252,14 +262,16 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-3">
           <span className="min-w-0">
-            <span className="block text-[12px] uppercase tracking-[0.04em] text-muted">Ensemble Node</span>
+            <span className="block text-[12px] uppercase tracking-[0.04em] text-muted">{card.origin?.task?.title ?? "Agent session"}</span>
             <span className="block text-[15px] font-medium">
-              @{card.node?.slug ?? "node"} {wants(card)}
+              {asker(card)} {wants(card)}
             </span>
-            <span className="mt-0.5 block text-[12px] text-muted">
-              {relative(card.createdAt)}
-              {card.room ? ` · in ${card.room.title}` : ""}
-            </span>
+            {card.origin ? (
+              <SessionLine origin={{ ...card.origin, node: card.origin.node ? { ...card.origin.node, url: null } : null }} />
+            ) : (
+              <span className="mt-0.5 block text-[12px] text-muted">via @{card.node?.slug ?? "node"}{card.room ? ` in ${card.room.title}` : ""}</span>
+            )}
+            <span className="mt-0.5 block text-[12px] text-muted">{relative(card.createdAt)}</span>
           </span>
           {open ? (
             <a className="btn shrink-0" href={open} target="_blank" rel="noreferrer">

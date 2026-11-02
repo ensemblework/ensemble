@@ -303,7 +303,8 @@ export async function askPerson(
       return null;
     });
     if (ctx.signal.aborted) {
-      await ctx.prisma.agentDecision.updateMany({ where: { id: row.id, status: "pending" }, data: { status: "expired" } });
+      const closed = await ctx.prisma.agentDecision.updateMany({ where: { id: row.id, status: "pending" }, data: { status: "expired" } });
+      if (closed.count) sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "expired" } });
       throw new DOMException("Stopped", "AbortError");
     }
     if (withdrawn?.aborted && decided?.status !== "decided") {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -19,6 +19,23 @@ export function PlotDialog({
   width?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  // The fade at the bottom only when there is more to scroll to.
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const node = body.current;
+    if (!open || !node) return;
+    const measure = () => setMore(node.scrollHeight - node.scrollTop - node.clientHeight > 4);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    if (node.firstElementChild) observer?.observe(node.firstElementChild);
+    node.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      observer?.disconnect();
+      node.removeEventListener("scroll", measure);
+    };
+  }, [open]);
   const titleId = useRef(`plot-dialog-${title.replace(/\s+/g, "-").toLowerCase()}`);
   useEffect(() => {
     if (!open) return;
@@ -44,7 +61,7 @@ export function PlotDialog({
         aria-modal="true"
         aria-labelledby={titleId.current}
         className="plot-dialog-panel relative flex max-h-[min(880px,90vh)] flex-col overflow-hidden rounded-xl border border-line shadow-pop"
-        style={{ width, background: "var(--panel)" }}
+        style={{ width: `min(${width}px, 100%)`, background: "var(--panel)" }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <h3 id={titleId.current} className="text-[15px] font-semibold">{title}</h3>
@@ -53,8 +70,10 @@ export function PlotDialog({
           </button>
         </div>
         <div className="relative min-h-0 flex-1">
-          <div className="max-h-[min(760px,74vh)] overflow-auto p-4 pb-12">{children}</div>
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10" style={{ background: "linear-gradient(to bottom, transparent, var(--panel))" }} data-dialog-fade />
+          <div ref={body} className="max-h-[min(760px,74vh)] overflow-auto p-4">
+            <div>{children}</div>
+          </div>
+          {more ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10" style={{ background: "linear-gradient(to bottom, transparent, var(--panel))" }} data-dialog-fade /> : null}
         </div>
       </div>
       <style>{`

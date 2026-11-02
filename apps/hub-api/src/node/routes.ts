@@ -66,6 +66,8 @@ import { accountLimits } from "../lib/limits.js";
 import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
 import { assignable, registerTaskAssignment } from "./task-assignment.js";
+import { sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
+import { answerFromChat } from "./chat-answers.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 
@@ -250,46 +252,42 @@ async function pendingApprovals(prisma: PrismaClient, accountId: string) {
 }
 
 /**
- * Cards the Hub's Needs me and the CLI do not list: a computer card and a run's question or permission
- * (their Ensemble decision is listed by the CLI and, where there is no Node site, the Hub, answerable;
- * node/run-decisions.ts), and a sudo card (its password box is only in the Node chat). Node's own
- * activity keeps them.
+/**
+ * Cards the CLI's Node tab does not list: a computer card and a run's question or permission (their
+ * Ensemble decision is listed by the CLI itself, answerable; node/run-decisions.ts), and a sudo card (its
+ * password box is only in the Node chat). Node's own activity keeps them.
  */
 const NODE_CHAT_ONLY = new Set(["computer", "sudo", "run_decision"]);
 
-/** Whether a node's card is listed in the Hub's Needs me and by the CLI. */
+/** Whether a node's card is listed by the CLI. */
 export function listedOutsideNode(row: { data: unknown }): boolean {
   return !NODE_CHAT_ONLY.has(String((row.data as { type?: unknown } | null)?.type ?? ""));
 }
 
-/** How many of a person's node cards wait for them in the Hub's Needs me (`/api/shell`). */
-export async function hubApprovalCount(prisma: PrismaClient, accountId: string): Promise<number> {
-  const rows = await prisma.nodeMessage.findMany({
-    where: {
-      kind: "approval",
-      userId: accountId,
-      visibleTo: { equals: [accountId] },
-      OR: [{ data: { path: ["status"], equals: "pending" } }, { AND: [{ data: { path: ["type"], equals: "login" } }, { data: { path: ["status"], equals: "needs_code" } }] }],
-    },
-    select: { data: true },
-    take: 1000,
-  });
-  return rows.filter(listedOutsideNode).length;
-}
-
-/** Pending approval cards with the node that asks and the conversation they are in: Needs me in the Hub and the CLI. */
-export async function approvalCards(prisma: PrismaClient, accountId: string) {
-  const rows = (await pendingApprovals(prisma, accountId)).filter(listedOutsideNode);
-  const [nodes, rooms] = await Promise.all([
+/**
+ * Pending approval cards with the node that asks and the conversation they are in. `hub`: only the
+ * cards a node's runs raise for their agents, each with the run's origin (node/needs-me.ts), for the
+ * Hub's Needs me; otherwise the cards the CLI's Node tab lists.
+ */
+export async function approvalCards(prisma: PrismaClient, accountId: string, options: { hub?: boolean } = {}) {
+  const rows = (await pendingApprovals(prisma, accountId)).filter((row) => (options.hub ? sessionCard(row.data) : listedOutsideNode(row)));
+  const [nodes, rooms, origins] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: rows.map((row) => row.authorNodeId).filter((id): id is string => Boolean(id)) } } }),
     prisma.nodeRoom.findMany({ where: { id: { in: rows.map((row) => row.roomId) } }, select: { id: true, title: true, kind: true } }),
+    options.hub ? sessionOrigins(prisma, accountId, rows.map((row) => String((row.data as { jobId?: unknown } | null)?.jobId ?? ""))) : Promise.resolve(new Map<string, SessionOrigin>()),
   ]);
   const nodeById = new Map(nodes.map((row) => [row.id, row]));
   const roomById = new Map(rooms.map((row) => [row.id, row]));
   return rows.map((row) => {
     const node = row.authorNodeId ? nodeById.get(row.authorNodeId) : undefined;
-    return { ...row, node: node ? publicNode(node) : null, room: roomById.get(row.roomId) ?? null };
+    const origin = options.hub ? (origins.get(String((row.data as { jobId?: unknown } | null)?.jobId ?? "")) ?? null) : undefined;
+    return { ...row, node: node ? publicNode(node) : null, room: roomById.get(row.roomId) ?? null, ...(origin !== undefined ? { origin } : {}) };
   });
+}
+
+/** How many node cards wait in the Hub's Needs me (`GET /api/shell`): the same rows as `GET /api/node/approvals`. */
+export async function hubApprovalCount(prisma: PrismaClient, accountId: string): Promise<number> {
+  return (await pendingApprovals(prisma, accountId)).filter((row) => sessionCard(row.data)).length;
 }
 
 /** Board tasks blocked or waiting for an approval: the same list as the Hub's Needs me. */
@@ -1010,7 +1008,10 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     } else if (!duplicate) {
       // An explicit yes to the lead's offer of one room task starts it, as the Start button does (node/room-results.ts).
       inBackground(app, async () => {
-        if (!(await startOnYes(app, room, message))) await dispatchMessage(app, message);
+        if (await startOnYes(app, room, message)) return;
+        // The owner's reply answers what a session here waits on, and leaves Needs me everywhere (node/chat-answers.ts).
+        await answerFromChat(app, room, message).catch((error: unknown) => app.log.warn({ err: error, messageId: message.id }, "could not answer a session's request from the chat"));
+        await dispatchMessage(app, message);
       });
     }
     // A person named in public hears of it privately, from their lead (node/room-events.ts).
@@ -1265,8 +1266,8 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** My nodes' pending approval cards, with the node and conversation: the Hub's Needs me ("From your nodes"). */
-  app.get("/api/node/approvals", async (request) => ({ approvals: await approvalCards(prisma, nodeAccount(request)), nodeUrl: nodeWebOrigin() }));
+  /** The Hub's Needs me (“From your nodes' sessions”): cards my nodes' runs raise for their agents, with the node, conversation and run (node/needs-me.ts). */
+  app.get("/api/node/approvals", async (request) => ({ approvals: await approvalCards(prisma, nodeAccount(request), { hub: true }), nodeUrl: nodeWebOrigin() }));
 
   app.get("/api/node/activity", async (request) => {
     const accountId = nodeAccount(request);

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { GALLERY, type GallerySlot, type PoolColumn } from "@ensemble/shared-types";
 import { PlotDialog } from "@/components/plots/plot-dialog";
+import { InfoTip } from "@/components/ui";
 
 const SLOT_LABEL: Record<GallerySlot, string> = { x: "X", y: "Y", error: "Error", seed: "Seed", value: "Value" };
 
@@ -42,6 +43,19 @@ export function AddTileDialog({
     onClose();
   };
 
+  const nameOf = (id: string | null) => (id ? columns.find((column) => column.id === id)?.name ?? null : null);
+  /** The columns in one slot, by name, for its chip. */
+  const slotNames = (name: GallerySlot): string[] => {
+    if (name === "x") return [nameOf(xRef)].filter((item): item is string => Boolean(item));
+    if (name === "y") return yRefs.map(nameOf).filter((item): item is string => Boolean(item));
+    if (name === "error") return [nameOf(errorRef)].filter((item): item is string => Boolean(item));
+    if (name === "seed") return [nameOf(seedRef)].filter((item): item is string => Boolean(item));
+    return [nameOf(valueRef)].filter((item): item is string => Boolean(item));
+  };
+  /** Which slots a column fills, for its row's marks. */
+  const slotsOf = (id: string): GallerySlot[] =>
+    (gallery?.slots ?? []).filter((name) => (name === "x" ? xRef === id : name === "y" ? yRefs.includes(id) : name === "error" ? errorRef === id : name === "seed" ? seedRef === id : valueRef === id));
+
   const filled = (name: GallerySlot) => {
     if (name === "x") return Boolean(xRef);
     if (name === "y") return yRefs.length > 0;
@@ -71,21 +85,32 @@ export function AddTileDialog({
         </div>
       ) : (
         <div data-column-pool>
-          <p className="mb-3 text-[12.5px] leading-5 text-muted">{gallery.hint}</p>
-          <input className="field mb-2 w-full" aria-label="Search columns" placeholder="Search columns" value={query} onChange={(event) => setQuery(event.target.value)} />
-          <div className="mb-2 flex flex-wrap gap-1 text-[12px]">
-            {gallery.slots.map((name) => (
-              <button key={name} type="button" className={`rounded-md px-2 py-1 ${slot === name ? "bg-accent-soft text-ink" : "text-muted"}`} onClick={() => setSlot(name)}>
-                {SLOT_LABEL[name]}{filled(name) ? " · set" : name === "seed" ? " · optional" : ""}
-              </button>
-            ))}
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12px]" role="group" aria-label="Chart slots">
+            {gallery.slots.map((name) => {
+              const picked = slotNames(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={slot === name}
+                  className={`inline-flex max-w-[16rem] items-center gap-1.5 rounded-md border px-2 py-1 ${slot === name ? "border-accent bg-accent-soft text-ink" : "border-line text-muted hover:text-ink"}`}
+                  onClick={() => setSlot(name)}
+                >
+                  <span className="font-semibold">{SLOT_LABEL[name]}</span>
+                  <span className="truncate">{picked.length ? picked.join(", ") : name === "seed" ? "optional" : "pick a column"}</span>
+                </button>
+              );
+            })}
+            <InfoTip label={`How ${gallery.label} uses columns`} text={gallery.hint} />
           </div>
+          <input className="field mb-2 w-full" aria-label="Search columns" placeholder="Search columns" value={query} onChange={(event) => setQuery(event.target.value)} />
           <ul className="max-h-64 space-y-1 overflow-auto">
             {filtered.map((column) => (
               <li key={column.id}>
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover"
+                  aria-pressed={slotsOf(column.id).length > 0}
+                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover ${slotsOf(column.id).length ? "bg-accent-soft" : ""}`}
                   onClick={() => {
                     if (slot === "x") {
                       setXRef(column.id);
@@ -97,6 +122,7 @@ export function AddTileDialog({
                   }}
                 >
                   <span className="flex-1 text-[13px]">{column.name}</span>
+                  {slotsOf(column.id).map((name) => <span key={name} className="rounded border border-accent px-1 text-[10.5px] font-semibold leading-4 text-accent">{SLOT_LABEL[name]}</span>)}
                   <span className="text-[11px] text-faint">{column.type}</span>
                   {column.source ? <span className="text-[11px] text-muted">{column.source}</span> : null}
                 </button>

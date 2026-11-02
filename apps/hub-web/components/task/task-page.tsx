@@ -22,9 +22,10 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { NestedPages, useLinkedPages } from "@/components/pages/nested-pages";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createContext, useContext, useId, useCallback, useEffect, useRef, useState } from "react";
-import type { PageMention } from "@ensemble/shared-types";
+import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime } from "@/lib/format";
@@ -296,9 +297,11 @@ export function TaskPage({
     },
   });
 
-  const onChange = useCallback(() => {
+  const { linked, track: trackLinks } = useLinkedPages(initialDoc);
+  const onChange = useCallback((doc: PageDocument) => {
+    trackLinks(doc);
     if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
-  }, []);
+  }, [trackLinks]);
 
   const exitFocus = focusMode.exit;
   const onMentionClick = useCallback(
@@ -794,6 +797,7 @@ export function TaskPage({
           <div className="skeleton mt-4 h-64 w-full" />
         )}
       </PageContent>
+      {!currentLink() && !currentShare() ? <NestedPages parentTaskId={taskId} linked={linked} /> : null}
 
       <AssignDialog open={assigning} onClose={() => setAssigning(false)} taskId={taskId} />
     </div>

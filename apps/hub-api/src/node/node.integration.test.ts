@@ -336,7 +336,7 @@ test("pausing a node stops everything it is doing and says what, without a model
   assert.equal(quietNotice.body, "Paused, as you asked. Send me a message when you need me again.", "with nothing running it only says it paused");
 });
 
-test("with Ask me first, work on the computer waits for the owner's card, which is in Needs me on Node, the Hub and the CLI", async () => {
+test("with Ask me first, work on the computer waits for the owner's card, which is in Needs me on Node and the CLI but not the Hub's", async () => {
   const mira = await person("Mira");
   const ben = await person("Ben");
   await laptopFor(mira, "Mira's laptop");
@@ -347,12 +347,13 @@ test("with Ask me first, work on the computer waits for the owner's card, which 
   assert.equal(await h.prisma.workspaceJob.count({ where: { userId: mira.id } }), 0, "nothing starts before approval");
   assert.match(seen[0]!.system, /check with them first/);
 
-  const cards = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string; data: { type: string }; node: { slug: string }; room: { title: string } }>;
+  const cards = json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string; roomId: string; data: { type: string } }>;
   assert.equal(cards.length, 1);
   assert.equal(cards[0]!.data.type, "session");
-  assert.equal(cards[0]!.node.slug, node.slug);
-  assert.equal(cards[0]!.room.title, "Assistant");
-  assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 1, "the Hub's Needs me counts it");
+  assert.equal(cards[0]!.roomId, room.id);
+  // The node's own request (to start work) is answered in its chat: the Hub neither lists nor counts it.
+  assert.deepEqual(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals, []);
+  assert.equal(json(await mira.inject({ method: "GET", url: "/api/shell" })).nodeApprovals, 0);
   const bridge = await h.asToken(mira, "bridge");
   const overview = json(await bridge.inject({ method: "GET", url: "/api/bridge/node" }));
   assert.equal(overview.approvals[0].node.slug, node.slug, "the CLI lists it with its node");
@@ -867,8 +868,9 @@ test("a node asks for a secret in a secure box: the value goes to the computer o
   assert.equal(card.data.name, "STRIPE_KEY");
   assert.equal(card.data.computer, "Mira's laptop");
   assert.equal(card.private, true, "only the owner sees the box");
-  const needs = json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string; data: { type: string } }>;
-  assert.ok(needs.some((row) => row.id === card!.id && row.data.type === "secret"), "the box is in Needs me");
+  const needs = json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string; data: { type: string } }>;
+  assert.ok(needs.some((row) => row.id === card!.id && row.data.type === "secret"), "the box is in Node's Needs me");
+  assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card!.id), "a node's own request is not in the Hub's");
   assert.equal((await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "approve" } })).statusCode, 400, "approving without a value is refused");
 
   // The computer answers the secret.save frame it hears on its stream.
@@ -1067,11 +1069,11 @@ test("declining and saving a secret card cannot both win, and a save a restart l
   // A save under way: a decline is refused.
   await h.prisma.nodeMessage.update({ where: { id: card.id }, data: { data: { ...card.data, status: "saving", savingId: "first", savingAt: new Date().toISOString() } } });
   assert.equal((await mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } })).statusCode, 409);
-  assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "it is not waiting on its owner");
+  assert.ok(!(json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id), "it is not waiting on its owner");
 
   // The server restarted mid-save: after a while the card is in Needs me again and can be declined once.
   await h.prisma.nodeMessage.update({ where: { id: card.id }, data: { data: { ...card.data, status: "saving", savingId: "first", savingAt: new Date(Date.now() - 60_000).toISOString() } } });
-  assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/approvals" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id));
+  assert.ok((json(await mira.inject({ method: "GET", url: "/api/node/activity" })).approvals as Array<{ id: string }>).some((row) => row.id === card.id));
   const [one, two] = await Promise.all([
     mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } }),
     mira.inject({ method: "POST", url: `/api/node/approvals/${card.id}`, payload: { decision: "discard" } }),
