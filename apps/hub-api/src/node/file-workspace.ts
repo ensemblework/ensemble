@@ -15,6 +15,8 @@ import { FileChangeReport, nodeFileAnswer, OriginalFile } from "../remote/node-f
 import { announce, postMessage } from "./store.js";
 import { publishTo } from "./events.js";
 import { registerThemeEndpoints } from "../routes/themes.js";
+import { registerEditorTheme } from "./editor-theme.js";
+import { registerFileRouting } from "./file-routing.js";
 
 const fail = (statusCode: number, message: string, code?: string) => Object.assign(new Error(message), { statusCode, expose: true, ...(code ? { code } : {}) });
 export const OriginalSource = z.discriminatedUnion("kind", [
@@ -26,6 +28,7 @@ const FileReadReply = z.object({
   path: z.string(), name: z.string(), location: z.string(), fileId: z.string().regex(/^[a-f0-9]{64}$/),
   content: z.string().nullable(), hash: z.string().regex(/^[a-f0-9]{40}$/).nullable(),
   size: z.number().int().min(0), binary: z.boolean(), truncated: z.boolean(), readOnly: z.string().nullable(),
+  modifiedAt: z.string().datetime().optional(),
 }).refine(file => !(file.binary || file.truncated || file.content === null || file.hash === null) || Boolean(file.readOnly));
 const FileSaveReply = z.object({ ok: z.literal(true), hash: z.string().regex(/^[a-f0-9]{40}$/) });
 export const FileQuote = z.object({
@@ -111,7 +114,7 @@ async function inventory(prisma: PrismaClient, accountId: string, query: { roomI
         j.device_id "deviceId", d.name "deviceName", r.node_id "nodeId", n.name "nodeName",
         r.room_id "roomId", room.title "roomTitle", j.folder_label folder, r.session_id "sessionId",
         COALESCE(f.value->>'status' IN ('deleted', 'D'), false) deleted,
-        COALESCE(j.finished_at, j.last_progress_at, j.started_at, j.created_at) at,
+        COALESCE((f.value->>'modifiedAt')::timestamp, j.finished_at, j.last_progress_at, j.started_at, j.created_at) at,
         'job:' || j.id || ':' || (f.value->>'path') key
       FROM workspace_jobs j LEFT JOIN node_runs r ON r.job_id = j.id
       LEFT JOIN node_rooms room ON room.id = r.room_id LEFT JOIN node_agents n ON n.id = r.node_id
@@ -122,7 +125,7 @@ async function inventory(prisma: PrismaClient, accountId: string, query: { roomI
       UNION ALL
       SELECT 'node', m.id, f.value->>'path', f.value->>'fileId', d.id, d.name, m.author_node_id, n.name,
         m.room_id, room.title, f.value->>'folder', NULL::text, COALESCE((f.value->>'deleted')::boolean, false),
-        COALESCE((m.data->>'updatedAt')::timestamp, m.created_at),
+        COALESCE((f.value->>'updatedAt')::timestamp, m.created_at),
         'node:' || m.id || ':' || (f.value->>'fileId')
       FROM node_messages m JOIN devices d ON d.id = m.data->>'deviceId' AND d.user_id = ${accountId}
       JOIN node_rooms room ON room.id = m.room_id LEFT JOIN node_agents n ON n.id = m.author_node_id
@@ -155,6 +158,8 @@ export async function registerFileWorkspace(app: FastifyInstance, accountOf: (re
     return accountId;
   };
   registerThemeEndpoints(app, "/api/node/themes", browser);
+  registerEditorTheme(app, browser);
+  registerFileRouting(app, browser);
   app.get("/api/node/files", async request => inventory(app.prisma, browser(request), z.object({ roomId: z.string().uuid().optional(), cursor: z.string().max(35000).optional(), q: z.string().max(120).default("") }).parse(request.query)));
   app.post("/api/devices/self/node-file-changes", { bodyLimit: 4 * 1024 * 1024 }, async (request, reply) => {
     const device = await ownDevice(app, request, reply);
@@ -194,6 +199,10 @@ export async function registerFileWorkspace(app: FastifyInstance, accountOf: (re
       const raw = await call("read");
       const result = body.action === "save" ? FileSaveReply.safeParse(raw) : FileReadReply.safeParse(raw);
       if (!result.success) throw fail(502, "The computer sent an incomplete file answer. Your draft is retained; restart or update its runtime and try again.");
+      if (body.action === "read" && body.source.kind === "job" && "fileId" in result.data) {
+        const source = body.source;
+        await app.prisma.$executeRaw`UPDATE workspace_jobs SET evidence = jsonb_set(evidence,'{files}',(SELECT jsonb_agg(CASE WHEN f->>'path'=${source.path} THEN f || jsonb_build_object('fileId',${result.data.fileId}::text) ELSE f END) FROM jsonb_array_elements(evidence->'files') f)) WHERE id=${source.id}`;
+      }
       if (body.action === "save") {
         await appendLedger({ userId: accountId, actor: "me", action: "node.file.save", payload: { deviceId: device?.id ?? null, source: { ...body.source, path: original.path } } });
       }

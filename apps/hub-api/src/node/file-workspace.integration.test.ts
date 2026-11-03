@@ -208,3 +208,52 @@ test("an unrelated missing shared folder does not block a run's original", async
   const answer = await nodeFileAnswer(h.app, { id: "local", method: "GET", path: "/api/code/node-file", query: { jobId: job.id, path: "main.ts" } });
   assert.equal(answer.status, 200, JSON.stringify(answer.body));
 });
+
+test("editor themes persist on the account, including imported colour data, not a particular browser", async () => {
+  const { loadBuiltinTheme } = await import("@ensemble/ide-theme");
+  const theme = await loadBuiltinTheme("builtin:github-dark");
+  assert.ok(theme);
+  const saved = await owner.inject({ method: "PUT", url: "/api/node/themes/current", headers, payload: { theme } });
+  assert.equal(saved.statusCode, 200, saved.body);
+  const secondBrowser = await h.app.inject({ method: "GET", url: "/api/node/themes/current", headers: { cookie: owner.cookie, origin: headers.origin } });
+  assert.equal(secondBrowser.json().theme.id, theme.id);
+  assert.equal((await stranger.inject({ method: "GET", url: "/api/node/themes/current" })).json().theme.id, "builtin:ensemble-default");
+  const imported = { ...theme, id: "import:fixture", label: "My imported colours" };
+  assert.equal((await owner.inject({ method: "PUT", url: "/api/node/themes/current", headers, payload: { theme: imported } })).statusCode, 200);
+  assert.deepEqual((await owner.inject({ method: "GET", url: "/api/node/themes/current" })).json().theme, imported);
+  const hubView = await owner.inject({ method: "GET", url: "/api/settings/editor-theme/current", headers: { origin: "http://localhost:3000" } });
+  assert.equal(hubView.statusCode, 200, hubView.body);
+  assert.deepEqual(hubView.json().theme, imported, "Hub Code can restore a palette imported in Node");
+  const hubSave = await owner.inject({ method: "PUT", url: "/api/settings/editor-theme/current", headers: { origin: "http://localhost:3000" }, payload: { theme } });
+  assert.equal(hubSave.statusCode, 200, hubSave.body);
+  assert.equal((await owner.inject({ method: "GET", url: "/api/node/themes/current" })).json().theme.id, theme.id, "Node follows the same account theme chosen in Hub Code");
+  const token = await h.asToken(owner, "full");
+  assert.equal((await token.inject({ method: "PUT", url: "/api/node/themes/current", headers, payload: { theme } })).statusCode, 403);
+});
+
+test("a quote targets the latest recorded editing node, not the current chat or last unrelated file in a card", async () => {
+  const response = await owner.inject({ method: "POST", url: "/api/node/nodes", payload: { name: "Other editor", templateId: "assistant" } });
+  assert.equal(response.statusCode, 201, response.body);
+  const other = response.json() as { node: { id: string }; room: { id: string } };
+  const edited = await h.prisma.nodeTurn.create({ data: { userId: owner.id, nodeId: other.node.id, roomId: other.room.id, reason: "dm", status: "done" } });
+  const file = originalFile({ path: folder, label: "project" }, "main.ts");
+  const report = await key.inject({ method: "POST", url: "/api/devices/self/node-file-changes", payload: { turnId: edited.id, nodeId: other.node.id, files: [{ ...file, updatedAt: new Date(Date.now() + 1000).toISOString() }] } });
+  assert.equal(report.statusCode, 200, report.body);
+  const target = await owner.inject({ method: "POST", url: "/api/node/files/target", headers, payload: { source } });
+  assert.equal(target.statusCode, 200, target.body);
+  assert.equal(target.json().target.nodeId, other.node.id);
+  assert.equal(target.json().target.roomId, other.room.id);
+  assert.equal(target.json().target.kind, "node");
+  const staleTarget = target.json().target;
+  const newer = await key.inject({ method: "POST", url: "/api/devices/self/node-file-changes", payload: { turnId: turn.id, nodeId: node.id, files: [{ ...file, updatedAt: new Date(Date.now() + 2000).toISOString() }] } });
+  assert.equal(newer.statusCode, 200);
+  const stale = await owner.inject({ method: "POST", url: "/api/node/files/query", headers, payload: { body: "Explain this", clientId: randomUUID(), target: staleTarget, fileQuotes: [{ source, from: 1, to: 1, text: "const answer = 1;", hash: null, draft: false }] } });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(stale.json().code, "FILE_TARGET_CHANGED");
+  const elsewhere = originalFile({ path: join(root, "other-project"), label: "other project" }, "main.ts");
+  await key.inject({ method: "POST", url: "/api/devices/self/node-file-changes", payload: { turnId: edited.id, nodeId: other.node.id, files: [{ ...elsewhere, updatedAt: new Date(Date.now() + 3000).toISOString() }] } });
+  const sameNamed = await owner.inject({ method: "POST", url: "/api/node/files/target", headers, payload: { source } });
+  assert.equal(sameNamed.json().target.nodeId, node.id, "same relative path on another checkout must not win");
+  const denied = await stranger.inject({ method: "POST", url: "/api/node/files/target", headers, payload: { source } });
+  assert.equal(denied.statusCode, 404);
+});

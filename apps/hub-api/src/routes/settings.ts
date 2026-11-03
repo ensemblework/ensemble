@@ -6,6 +6,11 @@ import { setOwnModule } from "../lib/own-modules.js";
 import { connectionState, listConnectors } from "../connectors/base.js";
 import { mirrorSettings } from "../spaces/store.js";
 import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
+import { registerEditorTheme } from "../node/editor-theme.js";
+import { accountIdOf } from "../lib/auth.js";
+import { requireWebPerson } from "../devices/web-unlock.js";
+import { isHosted } from "../lib/hosted-access.js";
+import { isVisitor } from "../sharing/context.js";
 
 /** Settings › Account › You. Refused with a reason instead of saved, so a typo never becomes the stored value. */
 export function checkIdentityPatch(body: Record<string, unknown>): Record<string, unknown> {
@@ -24,6 +29,12 @@ export function checkIdentityPatch(body: Record<string, unknown>): Record<string
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
+  registerEditorTheme(app, request => {
+    if (request.authVia === "session" || isHosted()) requireWebPerson(request);
+    const accountId = accountIdOf(request);
+    if (isVisitor(accountId) || (request.tokenScope && request.tokenScope !== "full")) throw Object.assign(new Error("Open editor themes from your own account."), { statusCode: 403 });
+    return accountId;
+  }, "/api/settings/editor-theme");
   app.get("/api/settings", async (request) => {
     const settings = await loadSettings(app.prisma, request.userId);
     const connectors = await Promise.all(

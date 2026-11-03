@@ -143,6 +143,52 @@ async function complete(key: Device, spec: Spec, outcome: "succeeded" | "failed"
 
 const call = (name: string, args: Record<string, unknown>, then = "(no reply)"): Step => ({ calls: [{ name, arguments: args }], then });
 const startCall = (title: string, prompt: string, extra: Record<string, unknown> = {}) => call("node_session_start", { title, prompt, folder: "ensemble", ...extra });
+
+test("file questions go directly into the editing agent session, queue without interrupting, and retry once", async () => {
+  const user = await person("File owner");
+  const { laptop, key } = await laptopFor(user, "File laptop", [COPILOT]);
+  const { node, room } = await createNode(user, "assistant");
+  script = () => startCall("Edit source", "Edit src/main.ts", { agent: "copilot-cli" });
+  await say(user, room.id, "Edit the source in my project");
+  const run = await h.prisma.nodeRun.findFirstOrThrow({ where: { userId: user.id, nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  const active = await claim(key);
+  assert.ok(active);
+  assert.equal(active.id, run.jobId);
+  const fileId = "f".repeat(64);
+  await h.prisma.workspaceJob.update({ where: { id: run.jobId }, data: { evidence: { files: [{ path: "src/main.ts", fileId, modifiedAt: new Date().toISOString() }] } } });
+  const origin = "http://localhost:3000";
+  const source = { kind: "job", id: run.jobId, path: "src/main.ts" };
+  const resolved = await user.inject({ method: "POST", url: "/api/node/files/target", headers: { origin }, payload: { source } });
+  assert.equal(resolved.statusCode, 200, resolved.body);
+  const target = resolved.json().target as { sessionId: string; nodeId: string };
+  assert.equal(target.nodeId, node.id);
+  assert.equal(target.sessionId, run.sessionId ?? run.jobId);
+  const clientId = randomUUID();
+  const body = { body: "Why is this value wrong?", clientId, target, fileQuotes: [{ source, from: 4, to: 4, text: "const answer = 41;", hash: null, draft: false }] };
+  seen.length = 0;
+  const sent = await user.inject({ method: "POST", url: "/api/node/files/query", headers: { origin }, payload: body });
+  assert.equal(sent.statusCode, 201, sent.body);
+  const repeated = await user.inject({ method: "POST", url: "/api/node/files/query", headers: { origin }, payload: body });
+  assert.equal(repeated.statusCode, 200, repeated.body);
+  assert.equal(repeated.json().message.id, sent.json().message.id);
+  const jobs = await h.prisma.workspaceJob.findMany({ where: { deviceId: laptop.id } });
+  assert.equal(jobs.length, 2, "one continuation only");
+  assert.equal(jobs.find(job => job.id === run.jobId)?.cancelRequestedAt, null);
+  const queued = jobs.find(job => job.id !== run.jobId)!;
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.continueFromJobId, run.jobId);
+  const task = await h.prisma.task.findUniqueOrThrow({ where: { id: queued.taskId } });
+  assert.match(task.description, /const answer = 41/);
+  assert.match(task.description, /Why is this value wrong/);
+  assert.equal(seen.length, 0, "the node model does not relay a direct agent-session query");
+  const other = await createNode(user, "researcher");
+  const turn = await h.prisma.nodeTurn.create({ data: { userId: user.id, nodeId: other.node.id, roomId: other.room.id, reason: "dm", status: "done" } });
+  const changed = await key.inject({ method: "POST", url: "/api/devices/self/node-file-changes", payload: { turnId: turn.id, nodeId: other.node.id, files: [{ fileId, path: source.path, folder: "ensemble", updatedAt: new Date(Date.now() + 1000).toISOString() }] } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const afterChange = await user.inject({ method: "POST", url: "/api/node/files/query", headers: { origin }, payload: body });
+  assert.equal(afterChange.statusCode, 200, "a lost acknowledgement remains idempotent even after another node edits the file");
+  assert.equal(await h.prisma.workspaceJob.count({ where: { deviceId: laptop.id } }), 2);
+});
 const newestJob = (user: HttpUser) => h.prisma.workspaceJob.findFirstOrThrow({ where: { userId: user.id }, orderBy: { sequence: "desc" } });
 const tuning = (job: { provider: string | null; model: string; reasoningEffort: string | null; context: unknown }) => [job.provider, job.model, job.reasoningEffort, (job.context as { contextTier?: string } | null)?.contextTier ?? null];
 

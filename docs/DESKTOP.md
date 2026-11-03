@@ -17,6 +17,8 @@ Local storage does not mean offline inference: model prompts go to the provider 
 
 When paired, the bundled runtime serves Node's original-file workspace (Code API 3, desktop 0.6.4+): version-checked text saves reach the original here, and file tools and commands report owner-only file references. Browsing and web-edit switches still apply. The Node website owns the split editor and selected-line quotes; see [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace).
 
+Desktop 0.6.5 reports canonical file identities and individual edit times for last-editor/session quote routing, and modification times for refreshed binary previews. These are metadata, not copies of source files.
+
 ## 2. Run it
 
 Install Rust 1.87 or newer and the Tauri system libraries (WebKitGTK 4.1 on Linux, WebView2 on Windows, the system WebKit on macOS). On Linux the Edit menu (Cut, Copy, Paste, Select All) needs libxdo: build with `libxdo-dev` (`libxdo-devel` on Fedora). From the repo root:

@@ -24,6 +24,7 @@ export const OriginalFile = z.object({
   path: z.string().min(1).max(4096),
   folder: z.string().max(4096),
   deleted: z.boolean().optional(),
+  updatedAt: z.string().datetime().optional(),
 });
 export type OriginalFile = z.infer<typeof OriginalFile>;
 export const FileChangeReport = z.object({ turnId: z.string().uuid(), nodeId: z.string().uuid(), files: z.array(OriginalFile).min(1).max(500) });
@@ -54,7 +55,22 @@ function registerOriginal(folder: ToolFolder, path: string, deleted = false): Or
   const fileId = createHash("sha256").update(resolve(folder.path, path)).digest("hex");
   const data = registry();
   if (!data.files[fileId]) data.files[fileId] = { root: folder.path, path };
-  return { fileId, path, folder: folder.label, ...(deleted ? { deleted: true } : {}) };
+  return { fileId, path, folder: folder.label, updatedAt: new Date().toISOString(), ...(deleted ? { deleted: true } : {}) };
+}
+export async function changedFileIdentity(root: string, paths: string[], path: string): Promise<{ fileId: string; modifiedAt: string } | null> {
+  try {
+    const { changedFileLocation } = await import("../workspace/folder-read.js");
+    const target = await changedFileLocation(root, paths, path);
+    if (refusedPath(target.path) || credentialPathReason(target.path)) return null;
+    const full = await jailPath(target.root, target.path);
+    if (full !== resolve(target.root, target.path)) return null;
+    const info = await lstat(full);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1) return null;
+    return { fileId: createHash("sha256").update(full).digest("hex"), modifiedAt: info.mtime.toISOString() };
+  } catch (error) {
+    if (error instanceof GuardError || (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 export function originalFile(folder: ToolFolder, path: string, deleted = false): OriginalFile {
   const file = registerOriginal(folder, path, deleted);
@@ -238,7 +254,7 @@ export async function nodeFileAnswer(app: Pick<FastifyInstance, "prisma">, reque
         const hash = truncated ? null : hashOf(bytes);
         const readOnly = binary ? "This format is previewed or downloaded, not edited as text." : hidden ? KEY_REASON : truncated ? "This file is larger than the web editor's 1 MB buffer. Download it or open it on the computer." : !settings.webEdit ? "Editing from the web is off on this computer." : null;
         if (request.method === "GET") {
-          const answer = { status: 200, body: { path: target.path, name: basename(target.path), location: target.full, fileId: createHash("sha256").update(target.full).digest("hex"), content, hash, size: info.size, binary, truncated, readOnly, eol: decoded.eol, bom: decoded.bom } };
+          const answer = { status: 200, body: { path: target.path, name: basename(target.path), location: target.full, fileId: createHash("sha256").update(target.full).digest("hex"), modifiedAt: info.mtime.toISOString(), content, hash, size: info.size, binary, truncated, readOnly, eol: decoded.eol, bom: decoded.bom } };
           return Buffer.byteLength(JSON.stringify(answer)) <= CODE_ANSWER_BYTES ? answer : { status: 413, body: { error: "This file's text exceeds the web relay buffer. Download the original to open it on your computer." } };
         }
         const body = z.object({ content: z.string(), expectedHash: z.string().regex(/^[a-f0-9]{40}$/) }).parse(request.body);
