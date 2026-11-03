@@ -107,7 +107,7 @@ If another program writes the file while you have unsaved typing, **nothing is o
 
 In a repository opened from the Explorer the same editor compares with the index: *Stage* (Alt+Y) stages that change as shown, *Discard* (Alt+N) puts the staged lines back.
 
-The theme picker (`components/code/ide-theme.tsx`, shared with plot code panes) saves the selected theme ID and favourites in account settings, and its sanitised palette through `GET/PUT /api/themes/current`. Built-ins, Open VSX and imported JSON/JSONC/VSIX colour data restore across browsers and are shared with Node's editor selection. Imports read bounded colour data and never execute extension scripts. Local caches retain recent palettes for fast loading. Code always uses a coding font (Cascadia Code → Consolas, ligatures off) at its own size.
+The theme picker (`components/code/ide-theme.tsx`, shared with plot code panes) saves the selected theme ID and favourites in account settings, and its sanitised palette through `GET/PUT /api/settings/editor-theme/current` (independent of the Code module). Built-ins, Open VSX and imported JSON/JSONC/VSIX colour data restore across browsers and are shared with Node's editor selection. Imports read bounded colour data and never execute extension scripts. Local caches retain recent palettes for fast loading. Code always uses a coding font (Cascadia Code → Consolas, ligatures off) at its own size.
 
 ---
 
