@@ -9,6 +9,8 @@ Type `ensemble` in a project folder and Ensemble opens full-screen in the termin
 
 The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.6.4+): direct node changes are reported as private file cards, and text edits in the website save back here with version checks. `ensemble browse on` allows reading and `ensemble web edit on` allows saving; no new permission bypass or terminal unlock is introduced. [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) describes the file and quote contract.
 
+CLI 0.6.5 includes canonical file identities and per-file edit timestamps in reports, allowing Node's floating selection action to address the last editing node or queue directly into its coding-agent session. The source bytes stay on the computer; account themes and document renderers are owned by the web UI.
+
 | What | Where |
 |---|---|
 | CLI (npm name `ensemblework`, command `ensemble`) | `apps/cli`; the app is `apps/cli/src/tui` (Ink and React, bundled into the same file) |

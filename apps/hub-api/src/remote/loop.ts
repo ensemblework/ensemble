@@ -27,7 +27,7 @@ import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { credentialCapabilities } from "../credentials/capabilities.js";
-import { flushFileChanges } from "./node-files.js";
+import { changedFileIdentity, flushFileChanges } from "./node-files.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
@@ -835,6 +835,10 @@ async function runTotals(local: WorkspaceJob): Promise<RunTotals> {
       ...(file.status === "added" || file.status === "modified" || file.status === "deleted" ? { status: file.status as "added" | "modified" | "deleted" } : {}),
       ...(file.binary === true ? { binary: true } : {}),
     }));
+  for (const file of files) {
+    const identity = await changedFileIdentity(local.externalRoot || local.repoPath, files.map(file => file.path), file.path);
+    if (identity) Object.assign(file, identity);
+  }
   return {
     model: typeof evidence.model === "string" ? evidence.model.slice(0, 200) : local.model?.slice(0, 200) ?? null,
     turns: local.turns,

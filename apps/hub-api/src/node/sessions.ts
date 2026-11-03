@@ -49,6 +49,7 @@ export type SessionLineage = { rootMessageId: string | null; botDepth: number; f
 
 /** Where a session call runs from: a node turn, or an approval its owner gave. */
 export type SessionEnv = {
+  operationId?: string;
   ctx: ToolContext;
   prisma: PrismaClient;
   app: FastifyInstance;
@@ -404,7 +405,7 @@ async function queueJob(env: SessionEnv, body: JobRequest, context: Record<strin
   try {
     // A plan step's run works where its step holds its place (node/placement.ts): its worktree, its port.
     const mission = await missionContext(env.prisma, env.plan);
-    const created = await createJob(env.prisma, env.node.userId, body, { actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...mission, ...context } as never });
+    const created = await createJob(env.prisma, env.node.userId, body, { operationId: env.operationId, actor: env.via === "card" ? "me" : "agent", keepSettings, context: { node: { nodeId: env.node.id }, secrets: await secretScopeFor(env.prisma, env), ...mission, ...context } as never });
     if (!created) throw new ToolBlockedError("That task is not available any more.");
     return created.jobId;
   } catch (error) {
@@ -438,6 +439,7 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
     authorKind: "node",
     authorNodeId: node.id,
     kind: "run",
+    clientId: `run:${info.jobId}`,
     body: info.title,
     planId: step?.planId ?? null,
     data: {
@@ -464,8 +466,10 @@ async function followRun(env: SessionEnv, info: Follow): Promise<NodeMessage> {
     rootMessageId: env.lineage.rootMessageId,
     botDepth: env.lineage.botDepth,
   });
-  await prisma.nodeRun.create({
-    data: {
+  await prisma.nodeRun.upsert({
+    where: { jobId: info.jobId },
+    update: {},
+    create: {
       userId: node.userId,
       nodeId: node.id,
       roomId: room.id,
@@ -650,6 +654,13 @@ export async function sendToSession(env: SessionEnv, input: SendInput): Promise<
   const { prisma, node } = env;
   await refuseWhenPaused(env);
   const session = await usableSession(prisma, node, input.session);
+  const existing = env.operationId ? await prisma.workspaceJob.findUnique({ where: { operationId: env.operationId } }) : null;
+  if (existing) {
+    if (existing.userId !== node.userId || (existing.context as { node?: { nodeId?: string } } | null)?.node?.nodeId !== node.id) throw new ToolBlockedError("That file question belongs to another node.");
+    await placeInQueue(prisma, scopeOf(node), session.id, existing.id, "last");
+    await followRun(env, { jobId: existing.id, taskId: existing.taskId, title: input.title ?? truncateText(input.prompt, 80), prompt: input.prompt, sessionId: session.id, direct: true, delivery: "queue", requested: {} });
+    return { summary: "This file question is already queued.", data: { session: session.id, jobId: existing.id } };
+  }
   if (session.deviceId) {
     const device = await prisma.device.findUnique({ where: { id: session.deviceId }, select: { appVersion: true, capabilities: true, name: true } });
     if (device && !continuesSessions(device)) {

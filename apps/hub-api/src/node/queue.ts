@@ -579,7 +579,7 @@ export async function settleTurns(): Promise<void> {
 }
 
 /** Wakes the nodes that should answer a message. */
-export async function dispatchMessage(app: FastifyInstance, message: NodeMessage): Promise<void> {
+export async function dispatchMessage(app: FastifyInstance, message: NodeMessage, operationId?: string): Promise<void> {
   if (message.kind !== "text" || message.authorKind === "system") return;
   const prisma = app.prisma;
   const room = await prisma.nodeRoom.findUnique({ where: { id: message.roomId } });
@@ -646,7 +646,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
   for (const target of targets) {
     const node = members.find((row) => row.nodeId === target.nodeId)?.node;
     if (node?.status === "paused" && wakes(node)) await resumeNode(app, node);
-    await enqueueTurn(app, { nodeId: target.nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: target.private, audience: target.audience, note: target.note ?? null });
+    await enqueueTurn(app, { nodeId: target.nodeId, roomId: room.id, reason: decision.reason, triggerMessageId: message.id, private: target.private, audience: target.audience, note: target.note ?? null, operationId });
   }
 }
 
