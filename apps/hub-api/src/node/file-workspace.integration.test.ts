@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test, { after } from "node:test";
 import { createHttpHarness } from "../test/http.js";
 
@@ -256,4 +256,42 @@ test("a quote targets the latest recorded editing node, not the current chat or 
   assert.equal(sameNamed.json().target.nodeId, node.id, "same relative path on another checkout must not win");
   const denied = await stranger.inject({ method: "POST", url: "/api/node/files/target", headers, payload: { source } });
   assert.equal(denied.statusCode, 404);
+});
+
+test("a protected sibling does not block a provenance-backed report, while the actual protected file remains denied", async () => {
+  const { resolveToolFolder } = await import("../device-tools/folders.js");
+  const protectedFile = join(folder, "sign-in-store.json");
+  await writeFile(protectedFile, '{"protected":"test-only"}');
+  await writeFile(join(folder, "safe-report.md"), "# Safe report\n");
+  const previous = process.env.ENSEMBLE_SECRET_KEY_FILE;
+  process.env.ENSEMBLE_SECRET_KEY_FILE = protectedFile;
+  try {
+    await assert.rejects(() => resolveToolFolder(folder), /holds keys/);
+    const ref = await report("safe-report.md");
+    const read = await owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source: ref, action: "read" } });
+    assert.equal(read.statusCode, 200, read.body);
+    const saved = await owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source: ref, action: "save", content: "# Edited safe report\n", expectedHash: read.json().hash } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    const downloaded = await owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source: ref, action: "download" } });
+    assert.equal(downloaded.statusCode, 200, downloaded.body);
+    assert.equal(downloaded.body, "# Edited safe report\n");
+    const guarded = await report("sign-in-store.json");
+    for (const action of ["read", "download"]) {
+      const response = await owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source: guarded, action } });
+      assert.equal(response.statusCode, 403, response.body);
+    }
+    assert.equal(await readFile(protectedFile, "utf8"), '{"protected":"test-only"}');
+  } finally { if (previous === undefined) delete process.env.ENSEMBLE_SECRET_KEY_FILE; else process.env.ENSEMBLE_SECRET_KEY_FILE = previous; }
+});
+
+test("a specifically recorded safe file can be opened even when its parent is too broad to hand to an agent", async () => {
+  const full = join(root, "safe-home-note.md");
+  await writeFile(full, "A safe generated note.");
+  const file = originalFile({ path: homedir(), label: "home" }, relative(homedir(), full));
+  const report = await key.inject({ method: "POST", url: "/api/devices/self/node-file-changes", payload: { turnId: turn.id, nodeId: node.id, files: [file] } });
+  assert.equal(report.statusCode, 200, report.body);
+  const card = await h.prisma.nodeMessage.findFirstOrThrow({ where: { userId: owner.id, kind: "files", roomId: room.id } });
+  const response = await owner.inject({ method: "POST", url: "/api/node/files/open", headers, payload: { source: { kind: "node", id: card.id, fileId: file.fileId, path: file.path }, action: "read" } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.json().content, "A safe generated note.");
 });

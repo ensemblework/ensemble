@@ -109,6 +109,8 @@ Ensemble Node's file workspace uses the same Code relay with `codeApi: 3` (CLI/d
 
 Runtime 0.6.5 reports canonical `fileId` and `modifiedAt` with each changed run file, and `updatedAt` per direct-file reference. These are metadata only. Node can resolve a quoted file to its last recorded editor across turns and sessions without confusing separate checkouts, and queue a question directly into the editing agent session. File reads also report modification time so an open binary preview refreshes after a change. Older runtimes remain compatible, but cannot supply provenance they did not record.
 
+Runtime 0.6.6 applies file-scoped protection to provenance-backed original reads and saves. A parent folder too broad or sensitive to grant as a whole execution root does not block a safe generated file in it. The exact file's secret, runtime, symlink/hardlink and write-floor checks still apply; node tools retain their existing folder execution guards.
+
 The web terminal needs a **passkey unlock** with user verification for the web's origin, ending after **30 minutes idle** or **8 hours** (`devices/web-unlock.ts`). *Lock now* ends the session and stops its commands. Commands follow `workspace/terminal-exec.ts`: allowed programs, arguments and folders, hardened Git, confirmation for destructive actions, OS confinement, time and output limits. It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-terminal--for-you-only).
 
 ### 4.8 Protocol and compatibility
