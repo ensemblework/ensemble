@@ -19,6 +19,8 @@ When paired, the bundled runtime serves Node's original-file workspace (Code API
 
 Desktop 0.6.5 reports canonical file identities and individual edit times for last-editor/session quote routing, and modification times for refreshed binary previews. These are metadata, not copies of source files.
 
+Desktop 0.6.6 uses file-scoped protection for Node's original viewer: a safe generated file is not blocked because its parent folder also holds protected files. This does not relax the node's execution grants or access to actual secrets and runtime data.
+
 ## 2. Run it
 
 Install Rust 1.87 or newer and the Tauri system libraries (WebKitGTK 4.1 on Linux, WebView2 on Windows, the system WebKit on macOS). On Linux the Edit menu (Cut, Copy, Paste, Select All) needs libxdo: build with `libxdo-dev` (`libxdo-devel` on Fedora). From the repo root:

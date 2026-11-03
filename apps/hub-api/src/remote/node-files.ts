@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -9,8 +9,8 @@ import { decode, encode, hashOf } from "../lib/code-versions.js";
 import { redactKeys } from "../lib/redact.js";
 import { readEvidenceFile } from "../evidence/files.js";
 import { archiveProblem } from "../device-tools/zip.js";
-import { resolveToolFolder, type ToolFolder } from "../device-tools/folders.js";
-import { GuardError, jailPath, within, workspaceRoot } from "../workspace/guard.js";
+import type { ToolFolder } from "../device-tools/folders.js";
+import { ENSEMBLE_SOURCE, GuardError, jailPath, outsideRefusal, within, workspaceRoot } from "../workspace/guard.js";
 import { listedChanges, outsideListing, refusedPath } from "../workspace/folder-read.js";
 import { credentialPathReason } from "../evidence/limits.js";
 import { savedSecretValues } from "../lib/run-secrets.js";
@@ -132,13 +132,20 @@ const ReadQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 type SourceQuery = z.infer<typeof ReadQuery>;
-async function location(app: Pick<FastifyInstance, "prisma">, input: SourceQuery): Promise<{ folder: ToolFolder; path: string; full: string }> {
+async function fileFolder(root: string, label = root): Promise<ToolFolder> {
+  if (!isAbsolute(root)) throw new GuardError("The original file has no recorded absolute folder.");
+  const path = resolve(root);
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink() || await realpath(path) !== path) throw new GuardError("The original folder now leads somewhere else.");
+  return { path, label };
+}
+async function location(app: Pick<FastifyInstance, "prisma">, input: SourceQuery, write: boolean): Promise<{ folder: ToolFolder; path: string; full: string }> {
   let folder: ToolFolder;
   let path: string;
   if (input.fileId) {
     const source = registry().files[input.fileId];
     if (!source) throw Object.assign(new Error("This original file is not recorded on this computer."), { statusCode: 404 });
-    folder = await resolveToolFolder(source.root);
+    folder = await fileFolder(source.root);
     if (folder.path !== source.root) throw new GuardError("The original folder now leads somewhere else.");
     path = source.path;
   } else {
@@ -155,14 +162,14 @@ async function location(app: Pick<FastifyInstance, "prisma">, input: SourceQuery
       })));
       if (!shared.some(parent => parent && within(parent, root))) throw new GuardError("This run's folder is no longer shared.");
     }
-    folder = await resolveToolFolder(root);
+    folder = await fileFolder(root);
     path = input.path;
     if (outsideListing(path)) {
       const named = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(path);
       if (await realpath(named) !== named) throw new GuardError("A linked original cannot be edited from the web.");
       const { changedFileLocation } = await import("../workspace/folder-read.js");
       const other = await changedFileLocation(root, listedChanges(job.evidence), path);
-      folder = await resolveToolFolder(other.root);
+      folder = await fileFolder(other.root);
       path = other.path;
     }
   }
@@ -171,6 +178,9 @@ async function location(app: Pick<FastifyInstance, "prisma">, input: SourceQuery
   const named = resolve(folder.path, path);
   const full = await jailPath(folder.path, path);
   if (named !== full || !within(folder.path, full, false)) throw new GuardError("A linked file cannot be edited from the web.");
+  const floor = credentialPathReason(full) ?? outsideRefusal(full, write);
+  if (floor) throw new GuardError(floor);
+  if (within(ENSEMBLE_SOURCE, full)) throw new GuardError("This file is part of the running Ensemble installation. Open it on the computer instead.");
   return { folder, path, full };
 }
 const BINARY = /\.(?:pdf|docx?|xlsx?|pptx?|zip|gz|tar|7z|png|jpe?g|gif|webp|avif|bmp|heic|mp[34]|wav|ogg|webm|mov|woff2?|ttf|exe|bin)$/i;
@@ -216,7 +226,7 @@ export async function nodeFileAnswer(app: Pick<FastifyInstance, "prisma">, reque
       touchDownload(input.token!);
       return { status: 200, body: { data: entry.bytes.subarray(input.offset, input.offset + 256 * 1024).toString("base64"), size: entry.bytes.length } };
     }
-    const target = await location(app, input);
+    const target = await location(app, input, request.method === "PUT");
     const secrets = (await savedSecretValues(app.prisma, env.ENSEMBLE_DEV_USER_ID)).filter(value => value.length >= 6);
     if (input.mode === "download") {
       const checked = await readEvidenceFile(target.full, { kind: "file", secrets, limit: NODE_FILE_MAX_BYTES });
@@ -252,7 +262,7 @@ export async function nodeFileAnswer(app: Pick<FastifyInstance, "prisma">, reque
         const content = binary ? null : secrets.reduce((text, value) => text.split(value).join("[redacted]"), redactKeys(decoded.text));
         const hidden = content !== null && content !== decoded.text;
         const hash = truncated ? null : hashOf(bytes);
-        const readOnly = binary ? "This format is previewed or downloaded, not edited as text." : hidden ? KEY_REASON : truncated ? "This file is larger than the web editor's 1 MB buffer. Download it or open it on the computer." : !settings.webEdit ? "Editing from the web is off on this computer." : null;
+        const readOnly = binary ? "This format is previewed or downloaded, not edited as text." : hidden ? KEY_REASON : truncated ? "This file is larger than the web editor's 1 MB buffer. Download it or open it on the computer." : !settings.webEdit ? "Editing from the web is off on this computer." : outsideRefusal(target.full, true);
         if (request.method === "GET") {
           const answer = { status: 200, body: { path: target.path, name: basename(target.path), location: target.full, fileId: createHash("sha256").update(target.full).digest("hex"), modifiedAt: info.mtime.toISOString(), content, hash, size: info.size, binary, truncated, readOnly, eol: decoded.eol, bom: decoded.bom } };
           return Buffer.byteLength(JSON.stringify(answer)) <= CODE_ANSWER_BYTES ? answer : { status: 413, body: { error: "This file's text exceeds the web relay buffer. Download the original to open it on your computer." } };

@@ -11,6 +11,8 @@ The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.
 
 CLI 0.6.5 includes canonical file identities and per-file edit timestamps in reports, allowing Node's floating selection action to address the last editing node or queue directly into its coding-agent session. The source bytes stay on the computer; account themes and document renderers are owned by the web UI.
 
+CLI 0.6.6 checks the exact recorded original in the web file viewer, rather than reapplying a whole-folder execution guard. Safe generated reports can be read and edited beside protected siblings; actual credentials, runtime files, linked files and protected write targets remain blocked.
+
 | What | Where |
 |---|---|
 | CLI (npm name `ensemblework`, command `ensemble`) | `apps/cli`; the app is `apps/cli/src/tui` (Ink and React, bundled into the same file) |
