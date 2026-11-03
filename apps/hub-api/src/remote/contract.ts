@@ -372,7 +372,7 @@ export const RunTotals = z.object({
   /** The run's review on this computer (protocol 4): the web opens it in the Code tab through this computer. */
   reviewId: z.string().uuid().nullish(),
   files: z
-    .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional() }))
+    .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional(), fileId: z.string().regex(/^[a-f0-9]{64}$/).optional(), modifiedAt: z.string().datetime().optional() }))
     .max(200)
     .default([]),
   /** What the engine reported it ran with. */

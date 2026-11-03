@@ -112,7 +112,11 @@ export function IdeSpace({ className, children, diagram = false, root = false }:
     const cached = sanitizeIdeTheme(store.current.themes[id]);
     if (cached) return cached;
     if (id.startsWith("builtin:")) return (await loadBuiltinTheme(id)) ?? ensembleDefaultTheme;
-    if (id.startsWith("import:")) throw new Error("Import that theme on this device to use it here.");
+    if (id.startsWith("import:")) {
+      const saved = sanitizeIdeTheme((await hub.currentIdeTheme()).theme);
+      if (!saved || saved.id !== id) throw new Error("Import that theme again to save its colour data to your account.");
+      return saved;
+    }
     const parsed = parseOpenVsxThemeId(id);
     if (!parsed) return ensembleDefaultTheme;
     const loaded = await hub.loadOpenVsxTheme(parsed);
@@ -127,7 +131,8 @@ export function IdeSpace({ className, children, diagram = false, root = false }:
       store.current = readStore();
       window.dispatchEvent(new CustomEvent("ensemble:ide-theme", { detail: { theme, favourites: nextFavourites } }));
       try {
-        const saved = await hub.saveSettings({ ideTheme: { activeId: theme.id, favourites: nextFavourites } });
+        await hub.saveIdeTheme(theme);
+        const saved = await hub.saveSettings({ ideTheme: { favourites: nextFavourites } });
         client.setQueryData(["settings"], (current: { settings: unknown; connectors?: unknown } | undefined) =>
           current ? { ...current, settings: saved.settings } : current,
         );

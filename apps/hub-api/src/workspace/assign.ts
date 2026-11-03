@@ -244,6 +244,7 @@ export function requestedMode(body: Pick<AssignInput, "kind" | "mode" | "unatten
 const BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
 
 export interface CreateJobOptions {
+  operationId?: string;
   retryOf?: string;
   /** Stored on `WorkspaceJob.context`. A job claimed from the web carries its hosted id here. */
   context?: Prisma.InputJsonValue;
@@ -319,6 +320,7 @@ async function createDeviceJob(
   const mode = requestedMode(body);
   const job = await createCappedJob(prisma, owner, {
     data: {
+      ...(options.operationId ? { operationId: options.operationId } : {}),
       userId,
       runnerAccountId: runner,
       taskId: task.id,
@@ -476,6 +478,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
 
   const job = await createCappedJob(prisma, userId, {
     data: {
+      ...(options.operationId ? { operationId: options.operationId } : {}),
       userId,
       taskId: task.id,
       kind: body.kind,

@@ -1663,6 +1663,8 @@ export const api = bindClient({
   codePullRequest: (source: { review?: string; repo?: string }, pr: { title: string; body: string; base: string; draft: boolean }) => post<{ ok: boolean; url: string; number: number }>("/api/code/pull-request", { ...source, ...pr }),
   codeSearch: (source: { review?: string; repo?: string }, q: string, matchCase: boolean) => get<CodeSearch>(`/api/code/search${qs({ ...source, q, case: matchCase ? "1" : "0" })}`),
   searchThemes: (q: string) => get<{ extensions: ThemeDirectoryExtension[] }>(`/api/themes/search${qs({ q })}`),
+  currentIdeTheme: () => get<{ theme: IdeTheme }>("/api/settings/editor-theme/current"),
+  saveIdeTheme: (theme: IdeTheme) => put<{ theme: IdeTheme }>("/api/settings/editor-theme/current", { theme }),
   loadOpenVsxTheme: (query: { namespace: string; name: string; version: string; label: string }) =>
     get<{ theme: IdeTheme | null; reason?: string }>(`/api/themes/openvsx${qs(query)}`),
   scm: (repo: string) => get<ScmStatus>(`/api/code/scm${qs({ repo })}`),
