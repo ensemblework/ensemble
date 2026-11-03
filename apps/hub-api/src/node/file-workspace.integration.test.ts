@@ -221,6 +221,12 @@ test("editor themes persist on the account, including imported colour data, not 
   const imported = { ...theme, id: "import:fixture", label: "My imported colours" };
   assert.equal((await owner.inject({ method: "PUT", url: "/api/node/themes/current", headers, payload: { theme: imported } })).statusCode, 200);
   assert.deepEqual((await owner.inject({ method: "GET", url: "/api/node/themes/current" })).json().theme, imported);
+  const hubView = await owner.inject({ method: "GET", url: "/api/themes/current", headers: { origin: "http://localhost:3000" } });
+  assert.equal(hubView.statusCode, 200, hubView.body);
+  assert.deepEqual(hubView.json().theme, imported, "Hub Code can restore a palette imported in Node");
+  const hubSave = await owner.inject({ method: "PUT", url: "/api/themes/current", headers: { origin: "http://localhost:3000" }, payload: { theme } });
+  assert.equal(hubSave.statusCode, 200, hubSave.body);
+  assert.equal((await owner.inject({ method: "GET", url: "/api/node/themes/current" })).json().theme.id, theme.id, "Node follows the same account theme chosen in Hub Code");
   const token = await h.asToken(owner, "full");
   assert.equal((await token.inject({ method: "PUT", url: "/api/node/themes/current", headers, payload: { theme } })).statusCode, 403);
 });
