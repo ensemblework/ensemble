@@ -58,7 +58,7 @@ pnpm dev
 | Secrets | `ENSEMBLE_INTERNAL_TOKEN`, `ENSEMBLE_BRIDGE_TOKEN`, `ENSEMBLE_SECRET_KEY` (or the local secret-key file) |
 | Model providers | Provider keys, endpoints and role/model settings; hosted ordinary users never use operator keys |
 | Connector apps | Provider client variables, Google Picker settings, vendor MCP clients ([03](03_MODULE_CONTEXT_ENGINE.md)) |
-| Included AI | `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_MODELS`, `ENSEMBLE_INCLUDED_MONTHLY_CREDITS`, `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD`, `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` ([33](33_INCLUDED_AI.md)) |
+| Included AI | `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_MODELS`, `ENSEMBLE_INCLUDED_WEB_SEARCH`, `ENSEMBLE_INCLUDED_MONTHLY_CREDITS`, `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD`, `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` ([33](33_INCLUDED_AI.md)) |
 | Model calls | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS`: how long one model call may take, 900000 (15 minutes) by default, 30 s to 30 min; hub-api and agent-runtime read it ([11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)) |
 | Workspace and local runtime | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_DATA_DIR`, state directories, queue/remote-loop/scheduler switches |
 | Hosted quotas | `ENSEMBLE_MAX_CONNECTORS`, `ENSEMBLE_MAX_JOBS_PER_DAY`, `ENSEMBLE_MAX_DATASET_BYTES`, `ENSEMBLE_MAX_DOCUMENTS`, `ENSEMBLE_MAX_DOCUMENT_BYTES`, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` |
@@ -102,7 +102,7 @@ Run steps and model metrics keep the reported model and token counts. Dollar and
 
 ### 6.4 Included AI
 
-The `ensemble` catalog offers the enabled Azure deployments; each must exist and have quota. Each account gets **20,000 credits per UTC month**, bounded by the operator's global monthly ceiling and a worst-case per-call reservation. A paired desktop or CLI uses them without receiving Azure credentials ([33](33_INCLUDED_AI.md)).
+The `ensemble` catalog defaults to **GPT-5 mini and GPT-4.1 mini**; each deployment must exist and have quota. The hosted personal dev/test setup uses Visual Studio Azure credits; Luna, Sol and Grok are not currently included, but remain supported for explicit eligible deployments. Each account gets **20,000 credits per UTC month**, bounded by its environment's operator ceiling and a worst-case reservation. Azure hosted grounding is opt-in because it can incur separate charges. A paired desktop or CLI uses the hosted catalog without receiving Azure credentials ([33](33_INCLUDED_AI.md)).
 
 ## 7. Conventions and logs
 
@@ -114,7 +114,7 @@ The `ensemble` catalog offers the enabled Azure deployments; each must exist and
 
 Workflow files are authoritative for pinned action and runtime versions.
 
-**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`): `pnpm version:check`, `pnpm db:generate`, the `shared-types`, `hub-api`, `hub-web` and CLI typechecks, CLI channel isolation, focused web and in-memory API regressions, the testing deploy guard, the release-script tests and the route inventory. It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
+**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`): `pnpm version:check`, `pnpm db:generate`, the `shared-types`, `hub-api`, `hub-web` and CLI typechecks, CLI channel isolation, focused web and in-memory API regressions, included mini-default/credit-ledger/grounding-opt-in regressions, the testing deploy guard, the release-script tests and the route inventory. It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
 
 **`.github/workflows/deploy.yml`** runs after `ci` succeeds on a push to `main`, or by hand (Actions → deploy → Run workflow: `all`, `api`, `app` or `landing`). It does nothing unless the repository variable `DEPLOY_ENABLED` is `true`. One deploy runs at a time.
 

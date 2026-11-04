@@ -1,7 +1,7 @@
 /**
  * Provider-native web grounding. An empty list means the Hub should use its fallback search. Included
- * models search with Azure Foundry's hosted web_search tool on the account's included credits
- * (`includedWebSearch`); hub_web_search (assistant/tools/graph.ts) picks the path.
+ * models can opt into Azure Foundry's separately billed hosted web_search tool
+ * (`includedWebSearch`); hub_web_search (assistant/tools/graph.ts) otherwise uses free search.
  */
 import { INCLUDED_PROVIDER, type IncludedModel } from "@ensemble/shared-types";
 import { reserveIncluded, settleIncluded } from "../included/budget.js";
@@ -212,8 +212,8 @@ export function fromWebSearchResponse(data: Json): { hits: SearchHit[]; answer: 
 
 /**
  * One web search on an included model (Azure Foundry's Responses API with the hosted web_search tool),
- * on the account's included credits: its worst case is reserved first, and its tokens and searches
- * are settled after. Null when this server has no included model that can search (or on a computer,
+ * on the account's Ensemble credits: its worst case is reserved first, and its tokens and searches
+ * are settled after. Null when hosted grounding is off, no included model can search (or on a computer,
  * which holds no Azure key). An IncludedLimitError (credits used, paused) is the caller's to explain.
  */
 export async function includedWebSearch(
@@ -223,6 +223,7 @@ export async function includedWebSearch(
 ): Promise<GroundedAnswer | null> {
   if (onDevice()) return null;
   const config = includedConfig();
+  if (!config?.webSearch) return null;
   const entry = config ? includedSearchModel(config, options.tier) : null;
   if (!config || !entry) return null;
   const request: Json = {

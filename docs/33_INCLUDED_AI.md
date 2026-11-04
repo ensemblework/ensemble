@@ -8,14 +8,16 @@ Code: `apps/hub-api/src/included/`, `packages/shared-types/src/included.ts`, `ap
 
 Provider id `ensemble`, shown as **Included with Ensemble**. The model id is also the Azure deployment name. The catalog is `INCLUDED_MODELS` in `packages/shared-types/src/included.ts`; it does not check live Azure availability or quota.
 
+The hosted personal dev/test setup uses a **Visual Studio monthly-credit Azure subscription** and includes **GPT-5 mini and GPT-4.1 mini only**, in production-labelled and testing environments alike. GPT-6 Luna, GPT-6.1 Sol, Grok 4.7 and DeepSeek V4 Flash are **not currently included**. Their adapters remain supported: an operator can offer them again after obtaining eligible quota, deploying them and explicitly updating `ENSEMBLE_INCLUDED_MODELS`. This is deployment availability, not a permanent removal or a restriction on personal API keys and AI plans. Subscription IDs, resource names and billing operations belong in `private/HOSTING.md`.
+
 | Model | Shown as | API on Azure | Thinking | Typical cost | Role | Offered |
 |---|---|---|---|---|---|---|
-| `gpt-6-luna` | GPT-6 Luna (2026-09-22) | Responses, `openai` host | Auto (Medium), Low, Medium, High | 1× | everyday | By default |
-| `deepseek-v4-flash` | DeepSeek V4 Flash | Chat Completions, `services` host | Auto only | about 2× | everyday | By default |
-| `gpt-6.1-sol` | GPT-6.1 Sol (2026-09-29) | Responses, `openai` host | Auto (Medium), Low, Medium, High | about 20× | step-up | By default |
-| `grok-4.7` | Grok 4.7 | Responses, `services` host | Auto (High), Low, Medium, High | about 20× | step-up | By default |
-| `gpt-5-mini` | GPT-5 mini (2025-08-07) | Responses, `openai` host | Auto (Medium), Low, Medium, High | about 3× | everyday | Only when named in `ENSEMBLE_INCLUDED_MODELS` |
-| `gpt-4.1-mini` | GPT-4.1 mini (2025-04-14) | Responses, `openai` host | Auto only (no reasoning) | about 4× | everyday | Only when named |
+| `gpt-5-mini` | GPT-5 mini (2025-08-07) | Responses, `openai` host | Auto (Medium), Low, Medium, High | about 3× | everyday | By default |
+| `gpt-4.1-mini` | GPT-4.1 mini (2025-04-14) | Responses, `openai` host | Auto only (no reasoning) | about 4× | everyday | By default |
+| `gpt-6-luna` | GPT-6 Luna (2026-09-22) | Responses, `openai` host | Auto (Medium), Low, Medium, High | 1× | everyday | Not currently hosted; explicit deployment only |
+| `deepseek-v4-flash` | DeepSeek V4 Flash | Chat Completions, `services` host | Auto only | about 2× | everyday | Not currently hosted; explicit deployment only |
+| `gpt-6.1-sol` | GPT-6.1 Sol (2026-09-29) | Responses, `openai` host | Auto (Medium), Low, Medium, High | about 20× | step-up | Not currently hosted; explicit deployment only |
+| `grok-4.7` | Grok 4.7 | Responses, `services` host | Auto (High), Low, Medium, High | about 20× | step-up | Not currently hosted; explicit deployment only |
 
 Hosts: `openai` is `https://{resource}.openai.azure.com/openai/v1`, `services` is `https://{resource}.services.ai.azure.com/openai/v1` (then `/responses` or `/chat/completions`). "Typical cost" is a turn of 25,000 input and 1,000 output tokens relative to GPT-6 Luna. GPT models always use the Responses API with `store: false` (GPT-6.1 Sol takes function tools only there). Both runtimes send the key in the `api-key` header, no temperature or `top_p`, and no fallback model. Responses and Chat Completions calls stream (`stream: true`; Chat Completions with `stream_options.include_usage`) and are put together into the same turn as a whole reply (`turnFromStream`, `readSseStream`; `_read_responses`, `_read_chat` in Python), so a call that is stopped closes its stream and Azure stops generating.
 
@@ -31,6 +33,7 @@ The transports also support Foundry's Anthropic Messages endpoint (`api: "anthro
 - Credits belong to the **account**: a space spends its owner's credits; in a space shared with you, the call is yours, as with model keys ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
 - The month is the **UTC calendar month**; credits reset at 00:00 UTC on the 1st and do not carry over. Deleting workspace data, switching spaces or devices, or recreating an account with the same email does not renew the allowance.
 - Background work on an included tier (document summaries, skill mining, the model test) spends the same credits as chat.
+- Hosted Azure web grounding is **off by default** (`ENSEMBLE_INCLUDED_WEB_SEARCH=off`). `hub_web_search` uses free search instead. Opting into hosted grounding meters its tokens and search fees in Ensemble, but Azure can bill grounding outside subscription credits; the Ensemble allowance is not a promise of Azure credit eligibility.
 - Ensemble Node spends the same account credits: node turns are recorded with purpose `Ensemble Node` ([35](35_ENSEMBLE_NODE.md#5-a-node-turn)). Rooms with other people have no routing call: only a mention wakes a node ([35 §12](35_ENSEMBLE_NODE.md#12-rooms-with-people)). The Hub, the desktop app, the CLI and Node draw on one allowance.
 
 ## 3. How a call is metered
@@ -76,7 +79,7 @@ The date in the messages is the actual reset date. The body is `{code, error, me
 - **Reply footer**: *Ensemble included* with the model's name and version.
 - **The assistant's model menu** (the Low/Medium/High/Max button under the chat box, `components/assistant/assistant-dock.tsx`) lists included models under *Included with Ensemble* with the credits left. Picking one sends that model with every message of the chat on Auto (`model`, `provider: "ensemble"`, `reasoningEffort: "default"` on `POST /api/assistant/turn`); picking a tier returns to the tier's model.
 - Nothing about credits appears when the server offers no included models. A local-only desktop app or CLI shows the *Included models need your Ensemble account* notice in Settings → Models, Metrics and the model menu (`IncludedLocalOnly`).
-- **Default tiers** (`included/defaults.ts`, hosted only): a tier whose provider has no key the account can use (none saved, and not an operator with that provider's server key) reads as an included model. That covers the shipped Gemini default for everyone without a Google key. Low and Medium use the first offered everyday model, High the first step-up model, Max the same at High thinking. Tiers on the account's own key, an AI plan (Claude Code, Codex…) or Cursor are never changed. Saving settings keeps what was read.
+- **Default tiers** (`included/defaults.ts`, hosted only): a tier whose provider has no key the account can use (none saved, and not an operator with that provider's server key), or whose saved included deployment is unavailable, reads as an available included model. That covers the shipped Gemini default and retired hosted included choices. Low and Medium use the first offered everyday model, High the first step-up model or the everyday model when there is none, Max the same at High thinking when supported. With the mini-only defaults these resolve to GPT-5 mini. Available included choices, tiers on the account's own key, an AI plan (Claude Code, Codex…) or Cursor are preserved. Saving settings keeps what was read.
 
 ## 7. API
 
@@ -96,13 +99,14 @@ The date in the messages is the actual reset date. The body is `{code, error, me
 |---|---|---|
 | `AZURE_FOUNDRY_RESOURCE` | (none) | The Foundry resource name, such as `ensemble-ai`, not a URL |
 | `AZURE_FOUNDRY_API_KEY` | (none) | The resource's key. Server-only: never returned by `/api/credentials`, the catalog or any page |
-| `ENSEMBLE_INCLUDED_MODELS` | The four default models | Comma list of deployments to offer (from §1), or `off`. A wrong value (an unknown id, a URL as the resource) turns included AI off and hub-api logs "Included AI is off: …" |
+| `ENSEMBLE_INCLUDED_MODELS` | `gpt-5-mini,gpt-4.1-mini` | Comma list of deployments to offer (from §1), or `off`. A wrong value (an unknown id, a URL as the resource) turns included AI off and hub-api logs "Included AI is off: …" |
+| `ENSEMBLE_INCLUDED_WEB_SEARCH` | `off` | `on` explicitly enables separately billed Azure hosted grounding; otherwise free search is used |
 | `ENSEMBLE_INCLUDED_MONTHLY_CREDITS` | 20000 | Credits per account per month |
 | `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` | 180 | Model cost across all accounts per month, in USD |
 | `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` | 16000 | Reply cap per call, reasoning included (max 128000) |
 | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS` | 900000 | How long one model call may take, included or not (30 s to 30 min; [11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)) |
 
-hub-api and agent-runtime read the same values from `/etc/ensemble.env`. An Azure budget only alerts (a day late) and does not stop spending; keep one on the subscription anyway as a second net. Deployment runbooks are private, not in `docs/`.
+hub-api and agent-runtime read the same operator values from the deployment's environment file. An Azure **subscription-wide** budget can track models, grounding, storage and other resources together, but it only alerts (billing data can be a day late); it does not stop spending. `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` only enforces this environment's model ledger: separate production and testing ledgers are not one subscription budget, and their UTC month need not match Azure's credit cycle. Azure's credit spending limit stops eligible services at the credit allowance; it cannot be lowered to a custom dollar amount. Separately billed products and pending charges require a billing review. Deployment runbooks and INR budget conversions are private, not in `docs/`.
 
 ## 9. Data and retention
 

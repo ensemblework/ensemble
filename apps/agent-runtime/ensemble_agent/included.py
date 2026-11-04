@@ -1,4 +1,4 @@
-"""Included AI: the four models the operator deploys on Azure AI Foundry and pays for.
+"""Included AI: models the operator deploys on Azure AI Foundry and pays for.
 
 hub-api keeps the credits ledger. Every call here reserves its worst case there before Azure sees
 it and settles the reservation with the real usage after (docs/33). Each model answers on the
@@ -64,13 +64,12 @@ _LEVELS = ("low", "medium", "high")
 
 # Must match INCLUDED_MODELS in packages/shared-types/src/included.ts. The id is also the Azure deployment name.
 MODELS: dict[str, IncludedModel] = {
-    "gpt-6-luna": IncludedModel("responses", "openai", "GPT-6 Luna", "2026-09-22", _LEVELS),
-    "deepseek-v4-flash": IncludedModel("chat", "services", "DeepSeek V4 Flash", None, ()),
-    "gpt-6.1-sol": IncludedModel("responses", "openai", "GPT-6.1 Sol", "2026-09-29", _LEVELS),
-    "grok-4.7": IncludedModel("responses", "services", "Grok 4.7", None, _LEVELS),
-    # For testing on an Azure free account, whose quota tier gives the four above no tokens.
-    "gpt-5-mini": IncludedModel("responses", "openai", "GPT-5 mini", "2025-08-07", _LEVELS, by_default=False),
-    "gpt-4.1-mini": IncludedModel("responses", "openai", "GPT-4.1 mini", "2025-04-14", (), by_default=False),
+    "gpt-6-luna": IncludedModel("responses", "openai", "GPT-6 Luna", "2026-09-22", _LEVELS, by_default=False),
+    "deepseek-v4-flash": IncludedModel("chat", "services", "DeepSeek V4 Flash", None, (), by_default=False),
+    "gpt-6.1-sol": IncludedModel("responses", "openai", "GPT-6.1 Sol", "2026-09-29", _LEVELS, by_default=False),
+    "grok-4.7": IncludedModel("responses", "services", "Grok 4.7", None, _LEVELS, by_default=False),
+    "gpt-5-mini": IncludedModel("responses", "openai", "GPT-5 mini", "2025-08-07", _LEVELS),
+    "gpt-4.1-mini": IncludedModel("responses", "openai", "GPT-4.1 mini", "2025-04-14", ()),
 }
 
 # How a Claude model answers without thinking, at effort high or below.

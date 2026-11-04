@@ -141,7 +141,7 @@ Migration `20261006010000_account_data_lifetime` adds SQL foreign keys that stop
 ## 8. Models and credits
 
 - Personal API keys are checked and stored encrypted per account. Provider discovery is cached with explicit refresh. Provider and model are always named together; effort levels are validated.
-- Included AI is an operator-configured provider: **20,000 credits per account per UTC month** (`DEFAULT_MONTHLY_CREDITS`), within the operator's global monthly ceiling and a per-call reservation. Enabled deployments decide which models appear.
+- Included AI defaults to **GPT-5 mini and GPT-4.1 mini**, with **20,000 credits per account per UTC month** (`DEFAULT_MONTHLY_CREDITS`), within each environment's operator ceiling and a per-call reservation. Hosted dev/test uses Visual Studio Azure credits. Luna, Sol and Grok are not currently included; eligible deployments can be explicitly enabled later. Azure paid grounding is opt-in; free web search remains available ([33](33_INCLUDED_AI.md)).
 - Included models work on the web, on Ensemble Node and on a paired desktop or CLI, from one list and one allowance per account. A local-only computer must connect first; no Azure key is copied to it.
 - Subscriptions on paired computers are a separate source. External coding engines use their own local sign-in.
 - Run usage separates reported tokens, included credits, estimated prices and unknown prices.

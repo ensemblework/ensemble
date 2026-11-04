@@ -16,7 +16,7 @@ import { fromWebSearchResponse, includedSearchModel, includedWebSearch, setSearc
 import { setWebSearchFetchForTests, webSearchFrom } from "../workspace/research.js";
 import { graphTools } from "../assistant/tools/graph.js";
 
-const ENV = ["AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY", "ENSEMBLE_INCLUDED_MODELS"] as const;
+const ENV = ["AZURE_FOUNDRY_RESOURCE", "AZURE_FOUNDRY_API_KEY", "ENSEMBLE_INCLUDED_MODELS", "ENSEMBLE_INCLUDED_WEB_SEARCH"] as const;
 const saved = Object.fromEntries(ENV.map((name) => [name, process.env[name]]));
 
 const FOUNDRY_REPLY = {
@@ -103,7 +103,8 @@ const ctx = (provider: string = INCLUDED_PROVIDER, model = "gpt-6-luna") => ({ a
 test.beforeEach(() => {
   process.env.AZURE_FOUNDRY_RESOURCE = "ensemble-ai";
   process.env.AZURE_FOUNDRY_API_KEY = "azure-test-key";
-  delete process.env.ENSEMBLE_INCLUDED_MODELS;
+  process.env.ENSEMBLE_INCLUDED_MODELS = "gpt-6-luna,deepseek-v4-flash,gpt-6.1-sol,grok-4.7";
+  process.env.ENSEMBLE_INCLUDED_WEB_SEARCH = "on";
   resetBuckets();
   warnings.length = 0;
 });
@@ -150,6 +151,17 @@ test("an included model searches with Foundry's web_search tool, cites its sourc
   assert.equal(book.reserves[0]!.purpose, "Web search");
   assert.ok((book.reserves[0]!.extraUsd ?? 0) >= 2 * WEB_SEARCH_CALL_USD, "the reservation covers the searches");
   assert.deepEqual(book.settles, [{ id: "res-1", usage: { inputTokens: 9000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 300 }, answeredBy: "gpt-6-luna", extraUsd: 2 * WEB_SEARCH_CALL_USD }]);
+});
+
+test("hosted grounding is off by default; free search runs without any Azure reservation", async () => {
+  delete process.env.ENSEMBLE_INCLUDED_WEB_SEARCH;
+  const seen = engines({ bing: () => new Response(BING_RSS, { status: 200 }) });
+  const book = ledger();
+  const result = await search.run(ctx(), { query: "rtx 5090 price" });
+  assert.equal((result.data as { provider: string }).provider, "fallback");
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((row) => !row.url.includes("azure.com")));
+  assert.equal(book.reserves.length, 0);
 });
 
 test("the searching model is the tier's when it can search, else GPT-6 Luna, else an OpenAI-host model", () => {

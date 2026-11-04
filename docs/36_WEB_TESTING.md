@@ -22,10 +22,12 @@ Each Node website talks only to its own API: the testing API's `ENSEMBLE_NODE_WE
 
 Testing copies released **code**, not production accounts, sessions, pages, connector credentials or uploaded files. Provider/email/Turnstile services are configured privately; OAuth and connector clients require callback URLs belonging to the testing API. Tests do not promote database contents back to production.
 
+Both environments offer **GPT-5 mini and GPT-4.1 mini** from the Visual Studio Azure subscription; their accounts and Ensemble credit ledgers remain isolated. Paired stable and testing CLIs read their own server's catalog. Luna, Sol and Grok are not currently included, and paid Azure grounding is off by default. Availability, future eligible model opt-in and the difference between an environment model ceiling and an all-resource Azure budget are in [33](33_INCLUDED_AI.md); subscription/resource values belong in `private/HOSTING.md`.
+
 ## Daily development
 
 - Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
-- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) cover versions, shared/API/web/CLI types, focused board/page/comment/motion regressions, Node original-file/theme isolation and direct queued-session questions, namespaced authentication, CLI channel isolation, in-memory API isolation, deployment guards and the route inventory. The Vercel build remains a real production frontend build.
+- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) cover versions, shared/API/web/CLI types, focused board/page/comment/motion regressions, Node original-file/theme isolation and direct queued-session questions, namespaced authentication, CLI channel isolation, in-memory API isolation, included mini-default/credit-ledger/grounding-opt-in regressions, deployment guards and the route inventory. The Vercel build remains a real production frontend build.
 - A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
 - After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
 - PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { INCLUDED_MODELS, includedModelName, includedPeriod, includedResetsAt, isIncludedErrorCode } from "./included.js";
 
-test("four included models by default plus two for free accounts, each named with its version, none of them Claude", () => {
-  assert.deepEqual(INCLUDED_MODELS.filter((model) => model.offeredByDefault).map((model) => model.id), ["gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7"]);
-  assert.deepEqual(INCLUDED_MODELS.filter((model) => !model.offeredByDefault).map((model) => model.id), ["gpt-5-mini", "gpt-4.1-mini"]);
+test("mini models are included by default; other supported deployments require opt-in", () => {
+  assert.deepEqual(INCLUDED_MODELS.filter((model) => model.offeredByDefault).map((model) => model.id), ["gpt-5-mini", "gpt-4.1-mini"]);
+  assert.deepEqual(INCLUDED_MODELS.filter((model) => !model.offeredByDefault).map((model) => model.id), ["gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7"]);
   assert.equal(includedModelName("gpt-5-mini"), "GPT-5 mini (2025-08-07)");
   assert.ok(INCLUDED_MODELS.every((model) => model.vendor !== "Anthropic"), "Azure credits cannot pay for Claude");
   assert.equal(includedModelName("grok-4.7"), "Grok 4.7");
