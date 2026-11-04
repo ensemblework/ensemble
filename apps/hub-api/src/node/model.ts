@@ -2,7 +2,7 @@
  * Which chat model a node talks with (docs/35 §5). A node may use any model its owner can: the
  * included models this server offers (credits shared with every Ensemble app), models on the owner's
  * own API keys, and AI plans (Claude Code, Codex, Cursor, Copilot) on a paired computer, which run the
- * turn there. Default: gpt-6.1-sol (else gpt-6-luna, gpt-5-mini or another everyday included model)
+ * turn there. Default: gpt-5-mini (else gpt-4.1-mini or another everyday included model)
  * at low thinking (`node.effort`), else the owner's own medium tier.
  */
 import type { PrismaClient } from "@prisma/client";
@@ -23,15 +23,11 @@ import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { computerAgents, deviceOwners } from "../subscriptions/turn.js";
 
 /**
- * A node with no model of its own talks with Sol (at low thinking, `turnEffort`): on the planning
- * evaluation (scripts/node-plan-eval.mjs, docs/35 §11) Luna sent planned work straight to one coding
- * run and skipped the checks its owner asked for, so it is not the default (ensemble-node design
- * decision 8). `ENSEMBLE_NODE_MODEL` names another. Luna stays the fast model a conversation turn
- * cut off by a rate limit answers with.
+ * A node with no model of its own uses an available mini deployment. An operator can name another
+ * deployed model with ENSEMBLE_NODE_MODEL without changing the shipped defaults.
  */
-export const NODE_DEFAULT_MODEL = "gpt-6.1-sol";
-const NODE_FAST_MODEL = "gpt-6-luna";
-const FAST_ORDER = [NODE_FAST_MODEL, "gpt-5-mini"];
+export const NODE_DEFAULT_MODEL = "gpt-5-mini";
+const FAST_ORDER = ["gpt-4.1-mini", NODE_DEFAULT_MODEL];
 
 function defaultOrder(env: NodeJS.ProcessEnv): string[] {
   const chosen = env.ENSEMBLE_NODE_MODEL?.trim();
@@ -69,13 +65,13 @@ export function fastChatModel(settings: Pick<Settings, "models">, env: NodeJS.Pr
 
 /**
  * A crew's lead plans the crew's work and reports on it, so unless its owner chose its model it thinks
- * with a stronger one (ensemble-node design decision 2): `ENSEMBLE_NODE_LEAD_MODEL` (default gpt-6.1-sol,
+ * with the configured lead model: `ENSEMBLE_NODE_LEAD_MODEL` (default gpt-5-mini,
  * when this server includes it; "off" for none) at `ENSEMBLE_NODE_LEAD_EFFORT` (default medium) unless
  * the owner set the node's thinking level. Null: the node's own model applies.
  */
 export function leadChatModel(node: { model: string | null; effort: string | null }, env: NodeJS.ProcessEnv = process.env): { pick: ChatModel; effort: string } | null {
   if (node.model) return null;
-  const model = (env.ENSEMBLE_NODE_LEAD_MODEL ?? "gpt-6.1-sol").trim();
+  const model = (env.ENSEMBLE_NODE_LEAD_MODEL ?? NODE_DEFAULT_MODEL).trim();
   if (!model || model === "off" || !includedModelOn(model, env)) return null;
   return { pick: { provider: INCLUDED_PROVIDER, model }, effort: node.effort ?? (env.ENSEMBLE_NODE_LEAD_EFFORT?.trim() || "medium") };
 }

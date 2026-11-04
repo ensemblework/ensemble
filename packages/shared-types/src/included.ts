@@ -1,5 +1,5 @@
 /**
- * Included AI: four models the operator deploys on Azure AI Foundry and pays for. Each account
+ * Included AI: models the operator deploys on Azure AI Foundry and pays for. Each account
  * spends a monthly allowance of Ensemble credits on them; people see credits, never dollars.
  * Prices and the dollar ledger live in hub-api only (src/included). docs/33.
  */
@@ -61,18 +61,16 @@ export type IncludedModel = {
 };
 
 /**
- * Checked 17 Oct 2026 against Azure's model list and price meters (Global Standard, pay per token).
- * All are sold and billed by Microsoft, so Azure credits pay for them. The last two are for testing on
- * an Azure free account, whose quota tier gives no tokens to the first four (Microsoft's "Tier 0":
- * gpt-5-mini 500K and gpt-4.1-mini 200K tokens a minute).
+ * The mini models are the shipped defaults. Other supported models require an explicit operator
+ * list and eligible deployments; catalog membership does not establish quota or credit coverage.
  */
 export const INCLUDED_MODELS: readonly IncludedModel[] = [
-  { id: "gpt-6-luna", label: "GPT-6 Luna", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2026-09-22", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 1, role: "everyday", images: true, documents: true, offeredByDefault: true },
-  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", vendor: "DeepSeek", api: "chat", host: "services", azureVersion: null, efforts: [], autoEffort: null, relativeCost: 2, role: "everyday", images: false, documents: false, offeredByDefault: true },
-  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2026-09-29", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 20, role: "step-up", images: true, documents: true, offeredByDefault: true },
-  { id: "grok-4.7", label: "Grok 4.7", vendor: "xAI", api: "responses", host: "services", azureVersion: null, efforts: INCLUDED_EFFORTS, autoEffort: "high", relativeCost: 20, role: "step-up", images: true, documents: true, offeredByDefault: true },
-  { id: "gpt-5-mini", label: "GPT-5 mini", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2025-08-07", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 3, role: "everyday", images: true, documents: true, offeredByDefault: false },
-  { id: "gpt-4.1-mini", label: "GPT-4.1 mini", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2025-04-14", efforts: [], autoEffort: null, relativeCost: 4, role: "everyday", images: true, documents: true, offeredByDefault: false },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2026-09-22", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 1, role: "everyday", images: true, documents: true, offeredByDefault: false },
+  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", vendor: "DeepSeek", api: "chat", host: "services", azureVersion: null, efforts: [], autoEffort: null, relativeCost: 2, role: "everyday", images: false, documents: false, offeredByDefault: false },
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2026-09-29", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 20, role: "step-up", images: true, documents: true, offeredByDefault: false },
+  { id: "grok-4.7", label: "Grok 4.7", vendor: "xAI", api: "responses", host: "services", azureVersion: null, efforts: INCLUDED_EFFORTS, autoEffort: "high", relativeCost: 20, role: "step-up", images: true, documents: true, offeredByDefault: false },
+  { id: "gpt-5-mini", label: "GPT-5 mini", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2025-08-07", efforts: INCLUDED_EFFORTS, autoEffort: "medium", relativeCost: 3, role: "everyday", images: true, documents: true, offeredByDefault: true },
+  { id: "gpt-4.1-mini", label: "GPT-4.1 mini", vendor: "OpenAI", api: "responses", host: "openai", azureVersion: "2025-04-14", efforts: [], autoEffort: null, relativeCost: 4, role: "everyday", images: true, documents: true, offeredByDefault: true },
 ];
 
 export function includedModel(id: string | null | undefined): IncludedModel | null {

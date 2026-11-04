@@ -22,6 +22,7 @@ async function operator(db: PrismaClient | Prisma.TransactionClient, account: st
 /**
  * On a hosted server with included models, a tier whose provider has no key this account can use
  * reads as an included model: hosted people have no server keys, so that tier could not answer.
+ * A saved included tier whose deployment is unavailable also reads as an available included model.
  * A tier on the account's own key, its AI plan (claude-code, codex…) or Cursor is never changed.
  * The shipped Gemini default is such a tier for everyone without a Google key.
  */
@@ -29,18 +30,20 @@ export async function withIncludedDefaults(db: PrismaClient | Prisma.Transaction
   if (!isHosted()) return settings;
   const config = includedConfig();
   if (!config) return settings;
+  const unavailable = TIERS.filter((tier) => settings.models[tier].provider === INCLUDED_PROVIDER && !config.models.some((model) => model.id === settings.models[tier].model));
   const keyed = TIERS.filter((tier) => KEYED.has(settings.models[tier].provider));
-  if (!keyed.length) return settings;
+  if (!keyed.length && !unavailable.length) return settings;
   const saved = new Set(
-    (await db.modelCredential.findMany({ where: { userId: account, provider: { in: [...KEYED] } }, select: { provider: true } })).map((row) => row.provider),
+    keyed.length ? (await db.modelCredential.findMany({ where: { userId: account, provider: { in: [...KEYED] } }, select: { provider: true } })).map((row) => row.provider) : [],
   );
   const missing = keyed.filter((tier) => !saved.has(settings.models[tier].provider));
-  if (!missing.length) return settings;
+  if (!missing.length && !unavailable.length) return settings;
   let unusable = missing;
-  if (await operator(db, account)) {
+  if (missing.length && await operator(db, account)) {
     const { hasEnvKey } = await import("../runtime/credentials.js");
     unusable = missing.filter((tier) => settings.models[tier].provider !== "ollama" && !hasEnvKey(settings.models[tier].provider));
   }
+  unusable = [...unavailable, ...unusable];
   if (!unusable.length) return settings;
   const everyday = config.models.find((model) => model.role === "everyday") ?? config.models[0]!;
   const stepUp = config.models.find((model) => model.role === "step-up") ?? everyday;
