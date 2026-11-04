@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { GALLERY, type GallerySlot, type PoolColumn } from "@ensemble/shared-types";
 import { PlotDialog } from "@/components/plots/plot-dialog";
 import { InfoTip } from "@/components/ui";
+import { ArrowLeft, Search } from "lucide-react";
 
 const SLOT_LABEL: Record<GallerySlot, string> = { x: "X", y: "Y", error: "Error", seed: "Seed", value: "Value" };
 
@@ -65,18 +66,24 @@ export function AddTileDialog({
   };
 
   return (
-    <PlotDialog open={open} onClose={close} title={gallery ? gallery.label : "Add tile"} width={720}>
+    <PlotDialog
+      open={open}
+      onClose={close}
+      title={gallery ? gallery.label : "Add tile"}
+      description={gallery ? "Pick a column for each slot. Y can take several." : "Pick a chart. Next, choose its columns."}
+      width={760}
+    >
       {!gallery ? (
-        <div className="space-y-4" data-gallery>
+        <div className="space-y-5" data-gallery>
           {(["paper", "everyday"] as const).map((group) => (
             <section key={group}>
-              <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">{group === "paper" ? "Paper figures" : "Everyday charts"}</h4>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              <h4 className="pl-section-label">{group === "paper" ? "Paper figures" : "Everyday charts"}</h4>
+              <div className="pl-gallery-grid">
                 {GALLERY.filter((item) => item.group === group).map((item) => (
-                  <button key={item.id} type="button" className="rounded-lg border border-line bg-raised px-3 py-3 text-left hover:bg-hover" onClick={() => { setGallery(item); setSlot(item.slots[0] ?? "x"); }}>
-                    <GalleryMark id={item.id} />
-                    <span className="mt-2 block text-[13px] font-medium">{item.label}</span>
-                    <span className="mt-0.5 block text-[11px] leading-4 text-muted">{item.blurb}</span>
+                  <button key={item.id} type="button" className="pl-gallery-card" onClick={() => { setGallery(item); setSlot(item.slots[0] ?? "x"); }}>
+                    <span className="pl-gallery-mark"><GalleryMark id={item.id} /></span>
+                    <span className="pl-gallery-name">{item.label}</span>
+                    <span className="pl-gallery-blurb">{item.blurb}</span>
                   </button>
                 ))}
               </div>
@@ -85,7 +92,7 @@ export function AddTileDialog({
         </div>
       ) : (
         <div data-column-pool>
-          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[12px]" role="group" aria-label="Chart slots">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[12px]" role="group" aria-label="Chart slots">
             {gallery.slots.map((name) => {
               const picked = slotNames(name);
               return (
@@ -93,24 +100,28 @@ export function AddTileDialog({
                   key={name}
                   type="button"
                   aria-pressed={slot === name}
-                  className={`inline-flex max-w-[16rem] items-center gap-1.5 rounded-md border px-2 py-1 ${slot === name ? "border-accent bg-accent-soft text-ink" : "border-line text-muted hover:text-ink"}`}
+                  className="pl-slot"
+                  data-filled={picked.length ? "1" : undefined}
                   onClick={() => setSlot(name)}
                 >
-                  <span className="font-semibold">{SLOT_LABEL[name]}</span>
+                  <span className="pl-slot-key">{SLOT_LABEL[name]}</span>
                   <span className="truncate">{picked.length ? picked.join(", ") : name === "seed" ? "optional" : "pick a column"}</span>
                 </button>
               );
             })}
             <InfoTip label={`How ${gallery.label} uses columns`} text={gallery.hint} />
           </div>
-          <input className="field mb-2 w-full" aria-label="Search columns" placeholder="Search columns" value={query} onChange={(event) => setQuery(event.target.value)} />
-          <ul className="max-h-64 space-y-1 overflow-auto">
+          <label className="pl-search mb-2">
+            <Search size={14} aria-hidden className="pl-search-icon" />
+            <input className="pl-search-input" aria-label="Search columns" placeholder="Search columns" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>
+          <ul className="max-h-72 space-y-0.5 overflow-auto">
             {filtered.map((column) => (
               <li key={column.id}>
                 <button
                   type="button"
                   aria-pressed={slotsOf(column.id).length > 0}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-hover ${slotsOf(column.id).length ? "bg-accent-soft" : ""}`}
+                  className="pl-col-row"
                   onClick={() => {
                     if (slot === "x") {
                       setXRef(column.id);
@@ -121,20 +132,20 @@ export function AddTileDialog({
                     else setYRefs((current) => current.includes(column.id) ? current.filter((item) => item !== column.id) : [...current, column.id].slice(0, 6));
                   }}
                 >
-                  <span className="flex-1 text-[13px]">{column.name}</span>
-                  {slotsOf(column.id).map((name) => <span key={name} className="rounded border border-accent px-1 text-[10.5px] font-semibold leading-4 text-accent">{SLOT_LABEL[name]}</span>)}
-                  <span className="text-[11px] text-faint">{column.type}</span>
-                  {column.source ? <span className="text-[11px] text-muted">{column.source}</span> : null}
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{column.name}</span>
+                  {slotsOf(column.id).map((name) => <span key={name} className="pl-slot-mark">{SLOT_LABEL[name]}</span>)}
+                  <span className="pl-type">{column.type}</span>
+                  {column.source ? <span className="max-w-[10rem] truncate text-[11px] text-muted">{column.source}</span> : null}
                 </button>
               </li>
             ))}
           </ul>
           {!columns.length ? <p className="text-[13px] text-muted">Upload a table first. Tiles share that data.</p> : null}
-          <div className="mt-3 flex justify-end gap-2">
-            <button type="button" className="btn" onClick={() => setGallery(null)}>Back</button>
+          <div className="pl-dialog-footer">
+            <button type="button" className="pl-btn" onClick={() => setGallery(null)}><ArrowLeft size={14} aria-hidden />Back</button>
             <button
               type="button"
-              className="btn-primary"
+              className="btn-primary pl-primary"
               disabled={(!xRef && gallery.id !== "runs") || yRefs.length === 0 || (gallery.slots.includes("error") && !errorRef) || (gallery.slots.includes("value") && !valueRef)}
               onClick={() => {
                 const ys = valueRef ? [...yRefs, valueRef] : yRefs;
