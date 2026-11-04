@@ -27,7 +27,7 @@ import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigure
 import { canvasSource } from "@/lib/plots/tile-code";
 import { InfoTip, InlineEdit, Popover } from "@/components/ui";
 import "./plots.css";
-import { Check, ChevronDown, Code2, Download, Maximize2, Plus, Trash2, Upload } from "lucide-react";
+import { Check, ChevronDown, Code2, Download, Eye, GripVertical, LayoutGrid, Link2, Maximize2, Plus, Trash2, Upload, X } from "lucide-react";
 import { readPlotTheme, seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
@@ -395,98 +395,104 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
 
   return (
     <div className="flex h-[calc(100dvh-4.5rem)] min-h-0 flex-col px-4 pb-4 pt-3" data-plot-canvas inert={switching}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        {shared ? (
-          <h1 className="display mr-auto text-[28px] leading-none">{title}</h1>
-        ) : (
-        <>
-        <InlineEdit value={title} onSave={(next) => {
-          if (!workspaceId) return;
-          void api.updatePlot(workspaceId, { title: next }).then(() => {
-            setTitle(next);
-            void client.invalidateQueries({ queryKey: ["plots"] });
-            void client.invalidateQueries({ queryKey: ["entities"] });
-          }).catch((error: Error) => toast(error.message, { tone: "error" }));
-        }} className="display text-[28px] leading-none" />
-        <span className="mr-auto">
-          <Popover
-            width={260}
-            trigger={(open, toggle) => (
-              <button type="button" className="icon-btn" aria-label="Switch plot space" aria-expanded={open} title="Switch space" disabled={switching} onClick={toggle} data-plot-spaces>
-                <ChevronDown size={16} />
-              </button>
-            )}
-          >
-            {(close) => (
-              <div className="p-1" role="menu" aria-label="Plot spaces">
-                {[
-                  ...(!(spaces.data?.plots ?? []).some((space) => space.id === workspaceId) ? [{ id: workspaceId ?? "", title }] : []),
-                  ...(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)),
-                ].map((space) => (
-                  <button
-                    key={space.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={space.id === workspaceId}
-                    className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }}
-                    onClick={() => { close(); if (space.id !== workspaceId) void openSpace(space.id); }}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{space.title}</span>
-                    {space.id === workspaceId ? <Check size={14} className="shrink-0 text-accent" aria-hidden /> : null}
+      <header className="pl-topbar">
+        <div className="pl-heading">
+          {shared ? (
+            <h1 className="display pl-title">{title}</h1>
+          ) : (
+            <>
+              <InlineEdit value={title} onSave={(next) => {
+                if (!workspaceId) return;
+                void api.updatePlot(workspaceId, { title: next }).then(() => {
+                  setTitle(next);
+                  void client.invalidateQueries({ queryKey: ["plots"] });
+                  void client.invalidateQueries({ queryKey: ["entities"] });
+                }).catch((error: Error) => toast(error.message, { tone: "error" }));
+              }} className="display pl-title" />
+              <Popover
+                width={260}
+                trigger={(open, toggle) => (
+                  <button type="button" className="pl-icon-btn" aria-label="Switch plot space" aria-expanded={open} title="Switch space" disabled={switching} onClick={toggle} data-plot-spaces>
+                    <ChevronDown size={16} aria-hidden />
                   </button>
-                ))}
-                <div className="my-1 border-t border-line" />
-                <button type="button" role="menuitem" className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => { close(); void openSpace(undefined, true); }} data-plot-new-space>
-                  <Plus size={14} aria-hidden /> New space
-                </button>
-              </div>
-            )}
-          </Popover>
-        </span>
-        {workspaceId ? <ShareButton target={{ kind: "plot_space", resourceId: workspaceId, title }} /> : null}
-        </>
-        )}
-        {readOnly ? <span className="rounded-md border border-line px-1.5 py-0.5 text-2xs text-muted">View only</span> : null}
-        {config.sample ? (
-          <>
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-accent" data-sample-mark>Sample</span>
-            <button type="button" className="btn" onClick={() => void clearSample()} data-clear-sample>Clear sample</button>
-          </>
-        ) : null}
-        {showLinks ? (
-          <div className="inline-flex items-center gap-1 rounded-full border border-line bg-panel pl-1" data-shared-columns>
-            <Popover
-              width={360}
-              align="right"
-              trigger={(_open, toggle) => (
-                <button type="button" className="rounded-full px-2 py-1 text-[12px]" onClick={toggle}>Shared columns</button>
-              )}
-            >
-              {() => (
-                <div className="space-y-1 p-1 text-[13px]" style={{ background: "var(--panel)" }}>
-                  <p className="px-1 text-[12px] text-muted">A key can join files. A measure should stay separate.</p>
-                  {groups.map((group) => {
-                    const choice: LinkChoice = config.links[group.name] === "join" && group.sameType ? "join" : "separate";
-                    return (
-                      <div key={group.name} className="flex flex-wrap items-center gap-2 py-1">
-                        <span className="font-medium">{group.name}</span>
-                        <button type="button" className={`rounded-md px-2 py-1 ${choice === "separate" ? "bg-accent-soft" : "text-muted"}`} aria-pressed={choice === "separate"} onClick={() => update({ links: { ...config.links, [group.name]: "separate" } })}>Keep separate</button>
-                        <button type="button" className={`rounded-md px-2 py-1 ${choice === "join" ? "bg-accent-soft" : "text-muted"}`} aria-pressed={choice === "join"} disabled={!group.sameType} onClick={() => update({ links: { ...config.links, [group.name]: "join" } })}>Join on this column</button>
-                        {!group.sameType ? <span className="text-[12px] text-faint">Types differ, so this cannot be a key.</span> : <span className="text-[12px] text-faint">{group.columns.map((column) => column.source).join(" · ")}</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Popover>
-            <button type="button" className="rounded-full px-2 py-1 text-[12px] text-muted" aria-label="Dismiss shared columns" onClick={() => setLinksHidden(true)}>×</button>
+                )}
+              >
+                {(close) => (
+                  <div className="p-1" role="menu" aria-label="Plot spaces">
+                    <div className="pl-menu-label">Plot spaces</div>
+                    {[
+                      ...(!(spaces.data?.plots ?? []).some((space) => space.id === workspaceId) ? [{ id: workspaceId ?? "", title }] : []),
+                      ...(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)),
+                    ].map((space) => (
+                      <button
+                        key={space.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={space.id === workspaceId}
+                        className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }}
+                        onClick={() => { close(); if (space.id !== workspaceId) void openSpace(space.id); }}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{space.title}</span>
+                        {space.id === workspaceId ? <Check size={14} className="shrink-0 text-accent" aria-hidden /> : null}
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-line" />
+                    <button type="button" role="menuitem" className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => { close(); void openSpace(undefined, true); }} data-plot-new-space>
+                      <Plus size={14} aria-hidden /> New space
+                    </button>
+                  </div>
+                )}
+              </Popover>
+            </>
+          )}
+          {readOnly ? <span className="pl-badge"><Eye size={13} aria-hidden />View only</span> : null}
+          {config.sample ? (
+            <span className="pl-sample">
+              <span className="pl-sample-mark" data-sample-mark>Sample</span>
+              <button type="button" className="pl-sample-clear" onClick={() => void clearSample()} data-clear-sample>Clear sample</button>
+            </span>
+          ) : null}
+          {workspaceId && !shared ? <span className="pl-share"><ShareButton target={{ kind: "plot_space", resourceId: workspaceId, title }} /></span> : null}
+        </div>
+        <div className="pl-actions">
+          {showLinks ? (
+            <div className="pl-links" data-shared-columns>
+              <Popover
+                width={360}
+                align="right"
+                trigger={(_open, toggle) => (
+                  <button type="button" className="pl-links-open" onClick={toggle}><Link2 size={13} aria-hidden />Shared columns</button>
+                )}
+              >
+                {() => (
+                  <div className="space-y-1 p-1 text-[13px]" style={{ background: "var(--panel)" }}>
+                    <p className="px-1 text-[12px] text-muted">A key can join files. A measure should stay separate.</p>
+                    {groups.map((group) => {
+                      const choice: LinkChoice = config.links[group.name] === "join" && group.sameType ? "join" : "separate";
+                      return (
+                        <div key={group.name} className="flex flex-wrap items-center gap-2 py-1">
+                          <span className="font-medium">{group.name}</span>
+                          <button type="button" className={`rounded-md px-2 py-1 ${choice === "separate" ? "bg-accent-soft" : "text-muted"}`} aria-pressed={choice === "separate"} onClick={() => update({ links: { ...config.links, [group.name]: "separate" } })}>Keep separate</button>
+                          <button type="button" className={`rounded-md px-2 py-1 ${choice === "join" ? "bg-accent-soft" : "text-muted"}`} aria-pressed={choice === "join"} disabled={!group.sameType} onClick={() => update({ links: { ...config.links, [group.name]: "join" } })}>Join on this column</button>
+                          {!group.sameType ? <span className="text-[12px] text-faint">Types differ, so this cannot be a key.</span> : <span className="text-[12px] text-faint">{group.columns.map((column) => column.source).join(" · ")}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Popover>
+              <button type="button" className="pl-links-close" aria-label="Dismiss shared columns" onClick={() => setLinksHidden(true)}><X size={13} aria-hidden /></button>
+            </div>
+          ) : null}
+          <div className="pl-seg" role="group" aria-label="View">
+            <button type="button" className="pl-seg-btn" aria-pressed={!codeOpen} aria-label="Canvas" title="The tiles" onClick={() => setCodeOpen(false)}><LayoutGrid size={14} aria-hidden /><span className="pl-label">Canvas</span></button>
+            <button type="button" className="pl-seg-btn" aria-pressed={codeOpen} aria-label="Code" title="One script for the whole canvas" onClick={() => setCodeOpen(true)}><Code2 size={14} aria-hidden /><span className="pl-label">Code</span></button>
           </div>
-        ) : null}
-        {shared || readOnly ? null : <button type="button" className="btn inline-flex items-center gap-1.5" onClick={() => setUploadOpen(true)} data-plot-upload><Upload size={14} aria-hidden />Upload</button>}
-        {readOnly ? null : <button type="button" className="btn inline-flex items-center gap-1.5" disabled={!columns.length} title={columns.length ? undefined : "Upload a table first"} onClick={() => setAddOpen(true)} data-plot-add><Plus size={14} aria-hidden />Add tile</button>}
-        <button type="button" className="btn inline-flex items-center gap-1.5" aria-pressed={codeOpen} onClick={() => setCodeOpen((open) => !open)}><Code2 size={14} aria-hidden />Code</button>
-        <button type="button" className="btn-primary inline-flex items-center gap-1.5" disabled={!config.tiles.length} title={config.tiles.length ? undefined : "Add a tile first"} onClick={() => setExportOpen(true)} data-export-figure><Download size={14} aria-hidden />Export figure</button>
-      </div>
+          {shared || readOnly ? null : <button type="button" className="pl-btn" aria-label="Upload" title="Add a table: a file, a link or a paste" onClick={() => setUploadOpen(true)} data-plot-upload><Upload size={15} aria-hidden /><span className="pl-label">Upload</span></button>}
+          {readOnly ? null : <button type="button" className="pl-btn" disabled={!columns.length} title={columns.length ? "Add a chart to the canvas" : "Upload a table first"} onClick={() => setAddOpen(true)} data-plot-add><Plus size={15} aria-hidden />Add tile</button>}
+          <button type="button" className="btn-primary pl-primary" disabled={!config.tiles.length} title={config.tiles.length ? "One figure with every tile, for a paper" : "Add a tile first"} onClick={() => setExportOpen(true)} data-export-figure><Download size={15} aria-hidden />Export<span className="pl-wide"> figure</span></button>
+        </div>
+      </header>
       {codeOpen ? (
         <div
           className={figureBeside ? "grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:overflow-hidden" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto"}
@@ -531,25 +537,24 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
           </div>
         </div>
       ) : (
-        <div ref={canvasRef} className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-bg" style={{ minHeight: height }} data-packing={preview ? "1" : undefined}>
-          <div className="relative" style={{ height }}>
+        <div ref={canvasRef} className="pl-canvas relative min-h-0 flex-1 overflow-auto" style={{ minHeight: height }} data-packing={preview ? "1" : undefined}>
+          {/* Faint dots mark the grid tiles snap to. */}
+          <div className="pl-grid relative" style={{ height, backgroundSize: `${cell}px ${ROW}px` }} data-stacked={stacked ? "1" : undefined}>
             {shown.length === 0 && !readOnly ? (
-              <div className="absolute left-1/2 top-16 flex w-[min(440px,90%)] -translate-x-1/2 flex-col gap-3" data-plot-empty>
+              <div className="pl-empty" data-plot-empty>
                 {columns.length ? (
                   <button type="button" className="plot-empty-card" onClick={() => setAddOpen(true)}>
-                    <span className="plot-empty-icon" aria-hidden><Plus size={18} /></span>
-                    <span className="min-w-0">
-                      <span className="block text-[15px] font-semibold text-ink">Add your first chart</span>
-                      <span className="mt-1 block text-[13px] text-muted">{datasets.length === 1 ? `${datasets[0]?.name ?? "Your table"} is ready` : `${datasets.length} tables are ready`}: {columns.length} columns to plot.</span>
-                    </span>
+                    <span className="plot-empty-icon" aria-hidden><Plus size={20} /></span>
+                    <span className="plot-empty-title">Add your first chart</span>
+                    <span className="plot-empty-text">{datasets.length === 1 ? `${datasets[0]?.name ?? "Your table"} is ready` : `${datasets.length} tables are ready`}: {columns.length} columns to plot.</span>
+                    <span className="plot-empty-cta" aria-hidden><Plus size={14} />Add tile</span>
                   </button>
                 ) : (
                   <button type="button" className="plot-empty-card" onClick={() => setUploadOpen(true)}>
-                    <span className="plot-empty-icon" aria-hidden><Upload size={18} /></span>
-                    <span className="min-w-0">
-                      <span className="block text-[15px] font-semibold text-ink">Upload a table</span>
-                      <span className="mt-1 block text-[13px] text-muted">CSV, Excel, JSON or Parquet. Every chart on this canvas shares it.</span>
-                    </span>
+                    <span className="plot-empty-icon" aria-hidden><Upload size={20} /></span>
+                    <span className="plot-empty-title">Upload a table</span>
+                    <span className="plot-empty-text">CSV, Excel, JSON or Parquet. Every chart on this canvas shares it.</span>
+                    <span className="plot-empty-cta" aria-hidden><Upload size={14} />Choose data</span>
                   </button>
                 )}
               </div>
@@ -557,7 +562,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
             {ghost ? (
               <div
                 data-tile-ghost
-                className="pointer-events-none absolute rounded-xl border border-dashed"
+                className="pointer-events-none absolute rounded-xl border-2 border-dashed"
                 style={{
                   left: ghost.x * cell + GUTTER / 2,
                   top: ghost.y * ROW + GUTTER / 2,
@@ -713,7 +718,7 @@ function Tile({
   const box = place ?? tile;
   return (
     <article
-      className={`plot-tile absolute flex flex-col overflow-hidden rounded-xl border bg-panel shadow-sm ${selected ? "is-selected border-accent" : "border-line"}`}
+      className={`plot-tile absolute flex flex-col overflow-hidden ${selected ? "is-selected" : ""}`}
       style={{
         left: box.col * cell + GUTTER / 2,
         top: box.row * ROW + GUTTER / 2,
@@ -752,35 +757,33 @@ function Tile({
         }
       }}
     >
-      <header className="flex shrink-0 cursor-grab items-center gap-2 px-2 py-1" onPointerDown={(event) => onGesture(tile.id, "move", event)}>
-        <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{tile.title || tile.chart}</span>
-        {tile.code !== null ? <span className="shrink-0 rounded border border-line px-1 text-[10px] leading-4 text-muted" title="Exports draw this tile's edited code" data-tile-code-edited>Code</span> : null}
-        <span className="tile-tools flex items-center gap-0.5" onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" className="icon-btn h-7 w-7" aria-label={`Open ${tile.title || tile.chart}`} title="Open" onClick={onOpen}><Maximize2 size={13} /></button>
-          <button type="button" className="icon-btn h-7 w-7 hover:text-danger" aria-label={`Delete ${tile.title || tile.chart}`} title="Delete" onClick={onDelete}><Trash2 size={13} /></button>
+      <header className="pl-tile-head" onPointerDown={(event) => onGesture(tile.id, "move", event)}>
+        <GripVertical size={14} aria-hidden className="pl-grip" />
+        <span className="pl-tile-title" title={tile.title || tile.chart}>{tile.title || tile.chart}</span>
+        {tile.code !== null ? <span className="pl-chip" title="Exports draw this tile's edited code" data-tile-code-edited><Code2 size={11} aria-hidden />Code</span> : null}
+        <span className="tile-tools pl-tile-tools" onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" className="pl-icon-btn is-small" aria-label={`Open ${tile.title || tile.chart}`} title="Open (Enter)" onClick={onOpen}><Maximize2 size={14} aria-hidden /></button>
+          <button type="button" className="pl-icon-btn is-small is-danger" aria-label={`Delete ${tile.title || tile.chart}`} title="Delete" onClick={onDelete}><Trash2 size={14} aria-hidden /></button>
         </span>
       </header>
       {selected ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 pb-1" data-quick-tweak>
-          <input className="field h-7 w-28 text-[12px]" aria-label="Tile title" value={tile.title} onChange={(event) => onChange({ ...tile, title: event.target.value })} />
-          <input type="color" aria-label="Series colour" className="h-7 w-8 cursor-pointer rounded border border-line bg-raised" value={seriesSwatchColor({ palette: tile.palette, series: tile.series, colors: {} }, 0, theme)} onChange={(event) => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, color: event.target.value } : series) })} />
-          <button type="button" className="btn px-2 py-0.5 text-[12px]" aria-pressed={tile.series[0]?.lineStyle === "dashed"} onClick={() => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, lineStyle: series.lineStyle === "dashed" ? "solid" : "dashed" } : series) })}>Dashed</button>
+        <div className="pl-tweak" data-quick-tweak>
+          <input className="pl-tweak-title" aria-label="Tile title" value={tile.title} onChange={(event) => onChange({ ...tile, title: event.target.value })} />
+          <label className="pl-swatch" title="Series colour">
+            <input type="color" aria-label="Series colour" value={seriesSwatchColor({ palette: tile.palette, series: tile.series, colors: {} }, 0, theme)} onChange={(event) => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, color: event.target.value } : series) })} />
+          </label>
+          <button type="button" className="pl-toggle" aria-pressed={tile.series[0]?.lineStyle === "dashed"} onClick={() => onChange({ ...tile, series: tile.series.map((series, index) => index === 0 ? { ...series, lineStyle: series.lineStyle === "dashed" ? "solid" : "dashed" } : series) })}>
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden><path d="M2 8 H14" stroke="currentColor" strokeWidth="1.8" strokeDasharray="3 2.2" /></svg>
+            Dashed
+          </button>
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <TileChart tile={tile} datasets={datasets} links={links} onOpen={onOpen} />
       </div>
-      <button type="button" aria-label="Resize tile" data-tile-resize className="tile-tools absolute bottom-0.5 right-0.5 z-[3] grid h-4 w-4 cursor-nwse-resize place-items-center text-faint hover:text-muted" onPointerDown={(event) => { event.stopPropagation(); onGesture(tile.id, "resize", event); }}>
-        <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden><path d="M9 3 3 9M9 6.5 6.5 9" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
+      <button type="button" aria-label="Resize tile" data-tile-resize className="tile-tools pl-resize" onPointerDown={(event) => { event.stopPropagation(); onGesture(tile.id, "resize", event); }}>
+        <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden><path d="M9 3 3 9M9 6.5 6.5 9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
       </button>
-      <style>{`
-        .plot-tile { transition: left 160ms ease, top 160ms ease, width 160ms ease, height 160ms ease; }
-        [data-packing] .plot-tile { transition: none; }
-        .plot-tile[data-dragging] { transition: none; opacity: 0.82; }
-        .plot-tile .tile-tools { opacity: 0; }
-        .plot-tile:hover .tile-tools, .plot-tile:focus-within .tile-tools, .plot-tile.is-selected .tile-tools { opacity: 1; }
-        @media (prefers-reduced-motion: reduce) { .plot-tile { transition: none; } }
-      `}</style>
     </article>
   );
 }

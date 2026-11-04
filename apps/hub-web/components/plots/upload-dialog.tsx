@@ -1,6 +1,6 @@
 "use client";
 
-import { UploadCloud } from "lucide-react";
+import { ClipboardPaste, Link2, UploadCloud } from "lucide-react";
 import { useRef, useState } from "react";
 import { MAX_UPLOAD_BYTES, UPLOAD_TOO_LARGE, stagePercent, type LinkChoice } from "@ensemble/shared-types";
 import { API, ApiError, api } from "@/lib/api";
@@ -211,17 +211,17 @@ export function UploadDialog({
     : [];
 
   return (
-    <PlotDialog open={open} onClose={() => { reset(); onClose(); }} title="Add data" width={560}>
+    <PlotDialog open={open} onClose={() => { reset(); onClose(); }} title="Add data" description="Every chart on this canvas can use the table." width={560}>
       {pending ? (
         <div data-column-summary>
-          <p className="text-[14px] font-medium">{pending.name}</p>
-          <p className="mt-1 text-[13px] text-muted">{pending.rowCount.toLocaleString()} rows · {pending.columns.length} columns</p>
-          <ul className="mt-3 divide-y divide-line">
+          <p className="text-[14px] font-semibold">{pending.name}</p>
+          <p className="mt-0.5 text-[12.5px] text-muted">{pending.rowCount.toLocaleString()} rows · {pending.columns.length} columns · check each column’s type</p>
+          <ul className="pl-col-list mt-3">
             {pending.columns.map((column) => (
-              <li key={column.name} className="flex items-center justify-between gap-3 py-1.5 text-[13px]">
+              <li key={column.name} className="flex items-center justify-between gap-3 px-3 py-1.5 text-[13px]">
                 <span className="min-w-0 truncate">{column.name}</span>
                 <select
-                  className="field h-8"
+                  className="pl-select"
                   aria-label={`${column.name} type`}
                   value={column.type}
                   onChange={(event) => {
@@ -237,7 +237,7 @@ export function UploadDialog({
             ))}
           </ul>
           {collisions.length ? (
-            <div className="mt-3 rounded-lg border border-line px-3 py-2" data-duplicate-links>
+            <div className="mt-3 rounded-xl border border-line px-3 py-2" data-duplicate-links>
               <p className="mb-2 text-[12px] text-muted">These names are already on the canvas. A key can join. A measure should stay separate.</p>
               {collisions.map((group) => (
                 <div key={group.name} className="flex flex-wrap items-center gap-2 py-1 text-[13px]">
@@ -250,22 +250,22 @@ export function UploadDialog({
             </div>
           ) : null}
           {pending.warnings.length ? <p className="mt-2 text-[12px] text-warn">{pending.warnings.join(" ")}</p> : null}
-          <div className="mt-4 flex justify-end gap-2">
-            <button type="button" className="btn" onClick={() => { void api.deletePlotDataset(pending.id); reset(); }}>Cancel</button>
-            <button type="button" className="btn-primary" onClick={() => { onAccept(pending, links); reset(); onClose(); }}>OK</button>
+          <div className="pl-dialog-footer">
+            <button type="button" className="pl-btn" onClick={() => { void api.deletePlotDataset(pending.id); reset(); }}>Cancel</button>
+            <button type="button" className="btn-primary pl-primary" onClick={() => { onAccept(pending, links); reset(); onClose(); }}>OK</button>
           </div>
         </div>
       ) : choose ? (
         <div className="space-y-3" data-sheet-choice>
           <p className="text-[13px]">{choose.file.name} has {choose.sheets.length} sheets. Which one?</p>
-          <select className="field w-full" aria-label="Sheet" value={choose.sheet} onChange={(event) => setChoose({ ...choose, sheet: event.target.value })}>
+          <select className="pl-select w-full" aria-label="Sheet" value={choose.sheet} onChange={(event) => setChoose({ ...choose, sheet: event.target.value })}>
             {choose.sheets.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
           </select>
-          <div className="flex justify-end gap-2">
-            <button type="button" className="btn" onClick={reset}>Cancel</button>
+          <div className="pl-dialog-footer">
+            <button type="button" className="pl-btn" onClick={reset}>Cancel</button>
             <button
               type="button"
-              className="btn-primary"
+              className="btn-primary pl-primary"
               onClick={() => void addInBrowser(choose.file, choose.bytes, choose.sheet).catch((reason: unknown) => {
                 setBusy(false);
                 setError(reason instanceof Error ? reason.message : "Could not read that file.");
@@ -283,9 +283,9 @@ export function UploadDialog({
           </p>
         </div>
       ) : (
-        <div className="space-y-3" data-upload-start>
+        <div className="space-y-4" data-upload-start>
           <div
-            className={`flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-7 text-center transition-colors ${dragging ? "border-accent bg-accent-soft" : "border-line"}`}
+            className="pl-drop"
             data-plot-drop
             data-dragging={dragging ? "1" : undefined}
             onDragOver={(event) => {
@@ -304,12 +304,12 @@ export function UploadDialog({
               if (file) void sendFile(file);
             }}
           >
-            <UploadCloud size={22} className="text-muted" aria-hidden />
-            <span className="block text-[14px] font-medium">Drop a file here</span>
+            <span className="pl-drop-icon" aria-hidden><UploadCloud size={22} /></span>
+            <span className="block text-[14px] font-semibold">Drop a file here</span>
             <span className="block text-[12px] text-muted">Up to {MAX_UPLOAD_BYTES / (1024 * 1024)} MB</span>
-            <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>Choose a file</button>
-            <span className="flex flex-wrap justify-center gap-1">
-              {FORMATS.map((format) => <span key={format} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">{format}</span>)}
+            <button type="button" className="btn-primary pl-primary mt-1" onClick={() => fileInput.current?.click()}>Choose a file</button>
+            <span className="mt-1 flex flex-wrap justify-center gap-1">
+              {FORMATS.map((format) => <span key={format} className="pl-format">{format}</span>)}
             </span>
             <input
               ref={fileInput}
@@ -326,53 +326,60 @@ export function UploadDialog({
               }}
             />
           </div>
-          <label className="block text-[12px] text-muted">Public link
-            <input className="field mt-1 w-full" aria-label="Sheet link" value={url} placeholder="Google Sheets, Drive, OneDrive, or SharePoint" onChange={(event) => setUrl(event.target.value)} />
-          </label>
-          <button
-            type="button"
-            className="btn"
-            disabled={!url.trim()}
-            onClick={() => {
-              setBusy(true);
-              setError("");
-              report(stagePercent("upload", 0), "Fetching the link");
-              void postDataset({ url: url.trim() }, report).then(finish).catch((reason: unknown) => {
-                setBusy(false);
-                // On Ensemble on the web the server does not read spreadsheets; the browser can, from a file.
-                if (reason instanceof ApiError && reason.status === 403 && reason.code === "HOST_ACCESS_DENIED") {
-                  setError("That link is a spreadsheet. Download it (as Excel or CSV) and add the file here: it is read in your browser.");
-                  return;
-                }
-                setError(reason instanceof Error ? reason.message : "Could not fetch that link.");
-              });
-            }}
-          >
-            Fetch link
-          </button>
-          <label className="block text-[12px] text-muted">Paste
-            <textarea className="field mt-1 h-24 w-full" aria-label="Paste table" value={paste} onChange={(event) => setPaste(event.target.value)} />
-          </label>
-          <button
-            type="button"
-            className="btn"
-            disabled={!paste.trim()}
-            onClick={() => {
-              if (new Blob([paste]).size > MAX_UPLOAD_BYTES) {
-                setError(UPLOAD_TOO_LARGE);
-                return;
-              }
-              setBusy(true);
-              setError("");
-              void scanText(paste, report).then(() => postDataset({ text: paste, filename: "pasted.csv" }, report)).then(finish).catch((reason: unknown) => {
-                setBusy(false);
-                setError(reason instanceof Error ? reason.message : "Could not read that paste.");
-              });
-            }}
-          >
-            Use paste
-          </button>
-          {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
+          <div className="pl-or" aria-hidden><span>or</span></div>
+          <div>
+            <label className="pl-field-label" htmlFor="plot-sheet-link"><Link2 size={13} aria-hidden />Public link</label>
+            <div className="pl-inline">
+              <input id="plot-sheet-link" className="pl-input" aria-label="Sheet link" value={url} placeholder="Google Sheets, Drive, OneDrive, or SharePoint" onChange={(event) => setUrl(event.target.value)} />
+              <button
+                type="button"
+                className="pl-btn"
+                disabled={!url.trim()}
+                onClick={() => {
+                  setBusy(true);
+                  setError("");
+                  report(stagePercent("upload", 0), "Fetching the link");
+                  void postDataset({ url: url.trim() }, report).then(finish).catch((reason: unknown) => {
+                    setBusy(false);
+                    // On Ensemble on the web the server does not read spreadsheets; the browser can, from a file.
+                    if (reason instanceof ApiError && reason.status === 403 && reason.code === "HOST_ACCESS_DENIED") {
+                      setError("That link is a spreadsheet. Download it (as Excel or CSV) and add the file here: it is read in your browser.");
+                      return;
+                    }
+                    setError(reason instanceof Error ? reason.message : "Could not fetch that link.");
+                  });
+                }}
+              >
+                Fetch link
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="pl-field-label" htmlFor="plot-paste"><ClipboardPaste size={13} aria-hidden />Paste a table</label>
+            <textarea id="plot-paste" className="pl-input pl-textarea" aria-label="Paste table" placeholder={"epoch,loss\n1,0.92\n2,0.71"} value={paste} onChange={(event) => setPaste(event.target.value)} />
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                className="pl-btn"
+                disabled={!paste.trim()}
+                onClick={() => {
+                  if (new Blob([paste]).size > MAX_UPLOAD_BYTES) {
+                    setError(UPLOAD_TOO_LARGE);
+                    return;
+                  }
+                  setBusy(true);
+                  setError("");
+                  void scanText(paste, report).then(() => postDataset({ text: paste, filename: "pasted.csv" }, report)).then(finish).catch((reason: unknown) => {
+                    setBusy(false);
+                    setError(reason instanceof Error ? reason.message : "Could not read that paste.");
+                  });
+                }}
+              >
+                Use paste
+              </button>
+            </div>
+          </div>
+          {error ? <p className="text-[12.5px] text-danger" role="alert">{error}</p> : null}
         </div>
       )}
     </PlotDialog>

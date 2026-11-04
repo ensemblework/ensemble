@@ -18,7 +18,7 @@ Navigation follows the signup profession, enabled modules and access. Code, Runs
 | `/pages`, `/pages/[id]` | Nested standalone documents |
 | `/context`, `/projects`, `/projects/[id]` | People, projects, repositories, preferences, graph and profile records |
 | `/meetings`, `/files`, `/files/[id]` | Notes shelf, file library and original-file preview |
-| `/diagrams`, `/diagrams/[id]`, `/plots`, `/plots/[id]` | Diagrams, datasets and figures |
+| `/diagrams`, `/diagrams/[id]`, `/plots`, `/plots/[id]` | Diagrams (cards with their drawings, then the editor; [21](21_BLOCK_DIAGRAMS_DSL.md#editor)), datasets and figures ([20](20_PLOTS_DESIGN.md)) |
 | `/needs-me`, `/runs`, `/code`, `/code/review` | Decisions, live agent queue and run history, code review. `/workspace` opens `/runs` |
 | `/skills`, `/morning-brief`, `/recap`, `/metrics` | Personal instructions, briefing preferences, weekly review and usage |
 | `/completed`, `/trash` | Completed work and recoverable deletion |

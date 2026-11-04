@@ -9,12 +9,15 @@ export function PlotDialog({
   open,
   onClose,
   title,
+  description,
   children,
   width = 640,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
+  /** One line under the title. */
+  description?: React.ReactNode;
   children: React.ReactNode;
   width?: number;
 }) {
@@ -53,38 +56,32 @@ export function PlotDialog({
   }, [open, onClose]);
   if (!open || typeof document === "undefined") return null;
   return createPortal(
-    <div className="plot-dialog-root fixed inset-0 z-[90] flex items-start justify-center px-4 pt-[10vh]" role="presentation">
+    <div className="plot-dialog-root fixed inset-0 z-[90] flex items-start justify-center px-3 pt-[8vh] sm:px-4 sm:pt-[10vh]" role="presentation">
       <button type="button" className="plot-dialog-backdrop absolute inset-0 cursor-default border-0" aria-label="Close dialog" onClick={onClose} />
       <div
         ref={ref}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId.current}
-        className="plot-dialog-panel relative flex max-h-[min(880px,90vh)] flex-col overflow-hidden rounded-xl border border-line shadow-pop"
-        style={{ width: `min(${width}px, 100%)`, background: "var(--panel)" }}
+        className="plot-dialog-panel relative flex max-h-[min(880px,90vh)] flex-col overflow-hidden"
+        style={{ width: `min(${width}px, 100%)` }}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-          <h3 id={titleId.current} className="text-[15px] font-semibold">{title}</h3>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={15} />
+        <div className="plot-dialog-head">
+          <div className="min-w-0">
+            <h3 id={titleId.current} className="plot-dialog-title">{title}</h3>
+            {description ? <p className="plot-dialog-description">{description}</p> : null}
+          </div>
+          <button type="button" className="pl-icon-btn" onClick={onClose} aria-label="Close">
+            <X size={16} aria-hidden />
           </button>
         </div>
         <div className="relative min-h-0 flex-1">
-          <div ref={body} className="max-h-[min(760px,74vh)] overflow-auto p-4">
+          <div ref={body} className="max-h-[min(760px,74vh)] overflow-auto px-5 pb-5 pt-4">
             <div>{children}</div>
           </div>
           {more ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10" style={{ background: "linear-gradient(to bottom, transparent, var(--panel))" }} data-dialog-fade /> : null}
         </div>
       </div>
-      <style>{`
-        .plot-dialog-backdrop { background: rgb(var(--bg-rgb) / 0.72); animation: plot-veil 160ms linear; }
-        .plot-dialog-panel { animation: plot-dialog-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-        @keyframes plot-veil { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes plot-dialog-in { from { transform: translateY(8px) scale(0.98); } to { transform: none; } }
-        @media (prefers-reduced-motion: reduce) {
-          .plot-dialog-backdrop, .plot-dialog-panel { animation: none; }
-        }
-      `}</style>
     </div>,
     document.body,
   );

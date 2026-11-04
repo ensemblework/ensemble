@@ -30,13 +30,15 @@ import {
   type PortName,
 } from "@ensemble/block-diagrams";
 import { groupContents, isLocked, refitGroups } from "@ensemble/block-diagrams/layout";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { Minus, Plus, Scan } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import "@xyflow/react/dist/style.css";
 import "./diagrams.css";
 import { DiagramEdgeView, type DiagramEdgeData } from "./edge";
 import { GroupNode, ShapeNode, TextNode, type GroupNodeData, type ShapeNodeData, type TextNodeData } from "./nodes";
 import { SNAP_PX, snapMove, snapResize, type Box, type Guide } from "./snap";
 import { LiveCursors, useCursorBroadcast } from "../sharing/live-cursors";
+import { ToolButton, ToolDivider, shortcutLabel } from "./toolbar";
 
 const nodeTypes = { shape: ShapeNode, text: TextNode, frame: GroupNode };
 const edgeTypes = { diagram: DiagramEdgeView };
@@ -513,8 +515,8 @@ function Surface(props: SurfaceProps) {
       connectionLineStyle={{ stroke: "var(--diagram-line)", strokeWidth: 1.5 }}
       fitView
       fitViewOptions={{ padding: 0.25, maxZoom: 1.4 }}
-      minZoom={0.1}
-      maxZoom={2}
+      minZoom={MIN_ZOOM}
+      maxZoom={MAX_ZOOM}
       // Double-click edits a label; it does not zoom.
       zoomOnDoubleClick={false}
       proOptions={{ hideAttribution: false }}
@@ -530,6 +532,38 @@ function Surface(props: SurfaceProps) {
   );
 }
 
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 2;
+const FIT = { padding: 0.25, maxZoom: 1.4 };
+
+function motion(ms: number): number {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
+}
+
+/** Zoom out, the zoom level (click for 100%), zoom in and fit, in one small floating group. */
+export function ZoomPill() {
+  const zoom = useStore((state) => state.transform[2]);
+  const flow = useReactFlow();
+  const percent = Math.round(zoom * 100);
+  return (
+    <div className="dg-float dg-zoom" role="toolbar" aria-label="Zoom">
+      <ToolButton label="Zoom out" shortcut={shortcutLabel("diagram-zoom-out")} tip="top" tipAlign="start" disabled={zoom <= MIN_ZOOM + 0.001} onClick={() => void flow.zoomOut({ duration: motion(140) })}>
+        <Minus size={16} aria-hidden />
+      </ToolButton>
+      <ToolButton label={`Zoom ${percent}%, reset to 100%`} hint="Reset to 100%" tip="top" text className="dg-zoom-value" onClick={() => void flow.zoomTo(1, { duration: motion(160) })}>
+        {percent}%
+      </ToolButton>
+      <ToolButton label="Zoom in" shortcut={shortcutLabel("diagram-zoom-in")} tip="top" disabled={zoom >= MAX_ZOOM - 0.001} onClick={() => void flow.zoomIn({ duration: motion(140) })}>
+        <Plus size={16} aria-hidden />
+      </ToolButton>
+      <ToolDivider />
+      <ToolButton label="Fit to screen" shortcut={shortcutLabel("diagram-zoom-fit")} tip="top" tipAlign="end" onClick={() => void flow.fitView({ ...FIT, duration: motion(180) })}>
+        <Scan size={16} aria-hidden />
+      </ToolButton>
+    </div>
+  );
+}
+
 export type DiagramCanvasHandle = {
   zoomIn: () => void;
   zoomOut: () => void;
@@ -542,9 +576,9 @@ function ZoomApi({ apiRef, editRef }: { apiRef: Ref<DiagramCanvasHandle>; editRe
   const flow = useReactFlow();
   useImperativeHandle(apiRef, () => ({
     editLabel: (edgeId: string) => editRef.current(edgeId),
-    zoomIn: () => void flow.zoomIn({ duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 140 }),
-    zoomOut: () => void flow.zoomOut({ duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 140 }),
-    fit: () => void flow.fitView({ padding: 0.25, maxZoom: 1.4, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180 }),
+    zoomIn: () => void flow.zoomIn({ duration: motion(140) }),
+    zoomOut: () => void flow.zoomOut({ duration: motion(140) }),
+    fit: () => void flow.fitView({ ...FIT, duration: motion(180) }),
   }), [flow, editRef]);
   return null;
 }
@@ -565,6 +599,8 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, {
   /** Set on a saved diagram: live cursors of others on it. */
   diagramId?: string;
   readOnly?: boolean;
+  /** Floating controls over the canvas. They sit inside the canvas's React Flow context, so they can read the zoom. */
+  overlay?: ReactNode;
 }>(function DiagramCanvas(props, ref) {
   const editRef = useRef<(id: string) => void>(ignore);
   return (
@@ -591,6 +627,7 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, {
           );
         }}
       />
+      {props.overlay}
     </ReactFlowProvider>
   );
 });

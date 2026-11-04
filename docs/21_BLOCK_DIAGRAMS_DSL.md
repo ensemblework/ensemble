@@ -613,6 +613,17 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 
 ## Editor
 
+The Diagrams list (`app/(hub)/diagrams/page.tsx`) is a grid of cards, each with the diagram's drawing (`components/diagrams/diagram-thumb.tsx` renders the SVG once the card nears the screen), its title and when it changed. Search filters by title; Recent or Name sorts. **New diagram** opens the templates (Blank first); a card's ⋯ menu downloads PNG, SVG, PDF or JPG without opening it, or deletes after a confirm on the card.
+
+The editor (`components/diagrams/editor.tsx`, styles in `diagrams.css`) has one top bar: a *Diagrams* breadcrumb, the title (edit it in place), the save state, Share, **Canvas only**, **More actions** (Explain this diagram, Duplicate, Version history) and **Export** (PNG, SVG, PDF, JPG; Copy as image; Copy as Mermaid). On the canvas, controls float:
+
+- **The dock** (bottom centre): rectangle, rounded, diamond, circle and database in one click; **Add block** with every shape; **Text box**; **Lock**; **Reorganize** with a menu for Fit vertically and Fit horizontally. On a canvas narrower than 640 px the one-click shapes hide.
+- **Zoom** (bottom left; centred with the dock on a narrow canvas): out, the zoom level (click for 100%), in, and fit (`ZoomPill` in `canvas.tsx`).
+- **The format bar** (top centre) while something is selected.
+- **Canvas only** puts the canvas in the browser's full screen with the title and save state at the top left and Export and Exit at the top right.
+
+Every tool is a 32 px button (40 px on touch screens) with a tooltip that names it and its shortcut (`components/diagrams/toolbar.tsx`). Menus on the canvas are drawn inside it, so they still show in full screen; ↑ and ↓ move through them and Esc closes them.
+
 - **Reorganize** runs layout again and writes the new `layout` section. Locked blocks stay put.
 - **Fit vertically** and **Fit horizontally** do the same with a compact top-down or left-to-right direction, and they update the `direction` line.
 - **Lock** on the selection, or `locked` in the text, is the same flag.
@@ -632,4 +643,4 @@ Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is on
 
 ### History browser
 
-`components/diagrams/diagram-more.tsx` uses the shared `components/history/version-history.tsx` dialog also used by pages. Diagram entries show saved time and title; selecting one enables its existing restore action. The diagram list/restore APIs are unchanged. The extra inline Ask form has been removed; the floating assistant and Refresh with AI continue to use the current diagram as context. Code inspection, 17 Oct 2026.
+**More actions › Version history** (`components/diagrams/diagram-more.tsx`) opens the shared `components/history/version-history.tsx` dialog also used by pages. Entries show saved time and title; selecting one enables Restore. When the work a diagram was drawn from has changed, a notice under the top bar offers **Refresh with AI**, which asks the assistant with the current diagram as context.
