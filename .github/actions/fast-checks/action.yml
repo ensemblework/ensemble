@@ -36,7 +36,7 @@ runs:
     - name: Focused web and API regressions
       shell: bash
       run: |
-        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx lib/session-cookie.test.ts
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx components/connectors/store-dialog.test.tsx lib/session-cookie.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/routes/page-boards.integration.test.ts src/routes/cookie-namespace.integration.test.ts src/lib/production.test.ts src/node/file-workspace.integration.test.ts src/device-tools/file-changes.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-name-pattern="file questions go directly" src/node/session-control.integration.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.

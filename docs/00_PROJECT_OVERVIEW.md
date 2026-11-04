@@ -46,6 +46,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Area | What works | Boundary |
 | --- | --- | --- |
 | Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion | Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
+| Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
 | Profiles | Onboarding sets a profession profile, desk and modules. Engineer and Builder profiles can turn on Code, Agent queue, Runs and Skills; every profile keeps Diagrams, Plots and Metrics (`packages/shared-types/src/modules.ts`). Queue and history share the Runs page | The onboarding profile is set once; Settings cannot switch it. Hiding a module keeps its data |

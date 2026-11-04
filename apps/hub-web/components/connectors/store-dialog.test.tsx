@@ -181,6 +181,7 @@ test("Notion detail: MCP, sign-in and token each call the right endpoint", async
     await click(document.querySelector<HTMLElement>('[data-store-card="notion"]')!);
     const detail = document.querySelector<HTMLElement>('[data-testid="connector-detail"]');
     assert.equal(detail?.dataset.connector, "notion");
+    assert.equal(detail?.querySelector('[aria-label="Google data privacy"]'), null, "Google-specific disclosures are not attached to another provider");
     assert.equal(document.activeElement?.tagName, "H3");
 
     await click(button(/Connect tools/, detail!));
@@ -254,6 +255,9 @@ test("Google Workspace asks only for the products that are on", async () => {
     handle: (call) => (call.url.startsWith("/api/connectors/google/start") ? { url: "https://accounts.google.com/o/oauth2/v2/auth?x=1" } : undefined),
   });
   try {
+    const privacy = document.querySelector<HTMLElement>('[aria-label="Google data privacy"]');
+    assert.ok(privacy, "the Google disclosure is visible before approving access");
+    assert.ok(privacy.querySelector('a[href="https://ensemblework.com/privacy#google-user-data"]'));
     const gmail = document.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="Gmail"]')!;
     assert.equal(gmail.getAttribute("aria-checked"), "true");
     await click(gmail);
@@ -274,7 +278,7 @@ test("connected suite: a product that needs consent asks before leaving, and dis
       google_workspace: {
         connected: true,
         account: "mira@fieldnote.example",
-        products: { gmail: true, calendar: true, drive_docs: true, drive_search: false },
+        products: { gmail: true, calendar: true, drive_docs: true, drive_search: false, meet: false },
         sources: { gmail: { enabled: true, lastSyncAt: "2026-10-07T08:00:00.000Z", lastError: null } },
       },
     },
@@ -286,6 +290,7 @@ test("connected suite: a product that needs consent asks before leaving, and dis
     },
   });
   try {
+    assert.ok(document.querySelector('[aria-label="Google data privacy"]'), "the disclosure remains available for an existing connection");
     assert.match(document.body.textContent ?? "", /Connected as mira@fieldnote\.example/);
     await click(button(/Sync Gmail now/));
     assert.ok(view.calls.some((call) => call.method === "POST" && call.url === "/api/connections/gmail/sync"));
@@ -293,7 +298,7 @@ test("connected suite: a product that needs consent asks before leaving, and dis
     await click(document.querySelector<HTMLButtonElement>('button[role="switch"][aria-label="Search all of Drive"]')!);
     const put = view.calls.find((call) => call.method === "PUT")!;
     assert.equal(put.url, "/api/connectors/google_workspace/products");
-    assert.deepEqual((put.body as { products: Record<string, boolean> }).products, { gmail: true, calendar: true, drive_docs: true, drive_search: true });
+    assert.deepEqual((put.body as { products: Record<string, boolean> }).products, { gmail: true, calendar: true, drive_docs: true, drive_search: true, meet: false });
     assert.equal(view.assigned.length, 0, "no surprise redirect");
     await click(button(/Continue to Google/));
     assert.equal(view.assigned.at(-1), "https://accounts.google.com/o/oauth2/v2/auth?more=1");
