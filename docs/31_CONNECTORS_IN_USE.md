@@ -12,7 +12,7 @@ Each connector's detail page (Settings → Connections → Browse connectors) li
 
 ### 2.1 Sync people
 
-**Sync people** is manual. It reads bounded contact metadata from Gmail, Outlook, Google Calendar, Outlook Calendar, Slack, Teams and GitHub, filters automated senders by rule (no model), and saves real people (`connectors/people-sync.ts`). It stores no message bodies, artifacts or proposed tasks and does not call item adapters or download files. Scheduled fetch reads nothing from providers. Meeting-note imports and action-item tasks are separate, explicit operations.
+**Sync people** is manual. It reads bounded contact metadata from Gmail, Outlook, Google Calendar, Outlook Calendar, Slack, Teams and GitHub, filters automated senders by rule (no model), and saves real people (`connectors/people-sync.ts`). It stores no message bodies, artifacts or proposed tasks and does not call item adapters or download files. Scheduled fetch reads nothing from providers; the Today calendar's refresh is separate (§2.7). Meeting-note imports and action-item tasks are separate, explicit operations.
 
 ### 2.2 The assistant
 
@@ -63,6 +63,10 @@ Files (a PDF in Drive, an email attachment, a deck in OneDrive, Dropbox or Box) 
 
 **Add people from …** on Context → People adds an app's members with their email or handle, so mail, chats, meetings and mentions point at one person. It never merges existing people; a clash becomes a merge suggestion. Apps: Slack, GitHub (organisation members), Linear, Jira, Notion, Asana, ClickUp, monday.com, HubSpot (owners), Zendesk (agents) and Front (teammates). Matching is by email or the app's handle (Slack user id, GitHub login, Atlassian account id); people with neither are skipped, so Trello (no emails) is not offered. `POST /api/app-items/people`, at most 500 people per run.
 
+### 2.7 The Today calendar
+
+With Google Calendar or Outlook calendar switched on, or a calendar link added, Today shows one calendar made from all of them, and each event once even when several calendars hold it (a Teams meeting on Outlook and as a forwarded Google invite, Christmas on two holiday calendars). Ensemble reads the calendars every 30 minutes and on **Sync**, and keeps that copy only for the calendar; reading it changes nothing at the provider. Calendar links (ICS, iCal or webcal addresses from iCloud, Proton, Fastmail, Notion Calendar or a holiday calendar) are added in Settings → Connections → Calendars on Today. Sources, matching rules and routes: [03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-the-today-calendar). Linear and Notion are not calendar sources: Linear issues have due dates, not events, and Notion Calendar shows Google calendars (or gives an ICS link).
+
 ## 3. Ways to connect
 
 | Way | Who sets it up | Used by |
@@ -92,7 +96,7 @@ The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types
 
 | App (store group) | Connects by | In Ensemble |
 |---|---|---|
-| Google Workspace, Microsoft 365 (Google & Microsoft) | sign in | Sync people · attach files, conversations and attachments · import files · assistant reads and writes (Apply) |
+| Google Workspace, Microsoft 365 (Google & Microsoft) | sign in | Sync people · Today calendar (§2.7) · attach files, conversations and attachments · import files · assistant reads and writes (Apply) |
 | Dropbox (Files) | sign in · MCP (operator app) | attach and import files · assistant tools |
 | Box (Files) | sign in | attach and import files |
 | Linear (Projects) | sign in · token · MCP via your Linear connection | attach issues and projects · post updates · people · import · assistant tools |
@@ -181,3 +185,4 @@ All routes need a verified email on hosted servers, act only on the person's own
 - `apps/hub-web/components/connectors/mcp-way.test.tsx`: Hugging Face offers **Sign in with Hugging Face** and **Paste an access token** (no anonymous Connect); a public-only connection says so and offers both; store labels ("Connected as …", "Connected · public data only").
 - `apps/hub-web/components/connectors/brand-logo.test.tsx`, `catalog-view.test.ts`: every entry has its vendor's logo, a way in, and says what Ensemble does with it.
 - `apps/hub-web/components/app-items/*.test.tsx`: the picker and the attached list.
+- `apps/hub-api/src/calendar/*.test.ts`: the merged Today calendar ([03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-the-today-calendar)); `apps/hub-web/components/calendar/agenda.test.tsx`, `lib/calendar.test.ts`: its day view.

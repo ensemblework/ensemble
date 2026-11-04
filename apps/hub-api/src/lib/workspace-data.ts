@@ -18,6 +18,7 @@ const KEPT_MODELS = new Set([
   "CliAuthRequest",
   "ConnectorApp",
   "McpConnection",
+  "CalendarFeed",
   "IncludedUsage",
   "TerminalSettings",
   "Preference",

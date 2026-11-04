@@ -42,6 +42,8 @@ export function isConnected(entry: CatalogEntry): boolean {
 
 /** Sync sources that Sync people reads (names and addresses only). */
 export const PEOPLE_SYNC_SOURCES: ReadonlySet<string> = new Set(["gmail", "outlook", "slack", "teams", "github", "google_calendar", "outlook_calendar"]);
+/** Sources whose events Ensemble keeps for the Today calendar (hub-api calendar/sync.ts). */
+const CALENDAR_SOURCES: ReadonlySet<string> = new Set(["google_calendar", "outlook_calendar"]);
 
 /** Browser sign-in is set up on this server (the operator registered the provider's app). */
 export function oauthReady(entry: CatalogEntry): boolean {
@@ -100,6 +102,9 @@ export function connectorUses(entry: CatalogEntry): string[] {
   const brandName = entry.vendor === entry.name ? entry.name : (entry.name.split(" ")[0] ?? entry.name);
   if (Object.keys(entry.state.sources ?? {}).some((id) => PEOPLE_SYNC_SOURCES.has(id))) {
     uses.push("Sync people adds the people you work with here to People. Messages and files are saved only when you ask.");
+  }
+  if (Object.keys(entry.state.sources ?? {}).some((id) => CALENDAR_SOURCES.has(id))) {
+    uses.push("Your calendars show on Today, merged with your other calendars and calendar links: a meeting or holiday in several of them shows once.");
   }
   if (entry.category === "meetings" && entry.auth.includes("token")) {
     uses.push("With an API key, ask the assistant to import recent notes into Meetings (up to 20 at a time), matched to your calendar. Action items become proposed todos only if you ask.");

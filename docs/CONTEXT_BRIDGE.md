@@ -83,7 +83,7 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 | `ensemble_diagrams`, `ensemble_plots` | — | Saved diagrams and plot context |
 | `ensemble_skills` | `ensemble://skills`, `ensemble://skills/{id}` | Current enabled skills; one skill's current body |
 | `ensemble_deliverables` | `ensemble://deliverables` | Deliverables |
-| `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) |
+| `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) from Google Calendar, Outlook and calendar links, one row per event ([03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-the-today-calendar)) |
 | `ensemble_people` | `ensemble://people`, `ensemble://people/{id}` | Engineer Graph people |
 | `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts (read only) |
 | `ensemble_today` | `ensemble://today` | Focus, proposed todos, deliverables, meetings, Needs-me counts |
@@ -110,7 +110,7 @@ The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine
 
 ## 7. Known diagnostics limitation
 
-`apps/hub-api/src/bridge/gaps.ts` still says the Outlook, Outlook calendar and Teams connectors and a secret-redaction helper are missing. Those strings are stale: `connectors/microsoft.ts` and `lib/redact.ts` exist ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)). Do not treat `ensemble_gaps` as the connector inventory. Its semantic-retrieval, private-reminder, layout, skill-history and read-only entries are accurate.
+`apps/hub-api/src/bridge/gaps.ts` still says a secret-redaction helper is missing. That string is stale: `lib/redact.ts` exists ([03](03_MODULE_CONTEXT_ENGINE.md)). Do not treat `ensemble_gaps` as the connector inventory ([31](31_CONNECTORS_IN_USE.md)). Its calendar, semantic-retrieval, private-reminder, layout, skill-history and read-only entries are accurate.
 
 ## 8. Transports
 

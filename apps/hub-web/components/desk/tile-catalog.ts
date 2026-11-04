@@ -44,7 +44,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "your-week": "Tasks you finished on each of the last seven days, your total, and your streak.",
   progress: "See recent completed, active, planned, and waiting work in one donut chart.",
   workload: "Compare recent work in each status with a clear column chart.",
-  agenda: "Upcoming meetings and events from your connected Google or Outlook calendar.",
+  agenda: "Upcoming meetings and events from your connected calendars (Google, Outlook, calendar links), each event once.",
   calendar: "Explore a month of deadlines and reminders. Select a day to see what is due.",
   "time-split": "See where your logged hours go, grouped by subject or activity.",
   "due-week": "Balance the next seven days using a daily chart of dated work.",

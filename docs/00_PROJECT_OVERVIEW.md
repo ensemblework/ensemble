@@ -107,6 +107,7 @@ The Hub assistant operates the app through typed tools. Its instructions stay th
 | Connect an account | Saves the person's grant or token; imports nothing. The store lists connected apps first and guides each way of connecting | [31 §3](31_CONNECTORS_IN_USE.md#3-ways-to-connect) |
 | Sync people | Bounded contact metadata from Gmail, Outlook, calendars, Slack, Teams and GitHub; filters service identities; no bodies, no tasks | [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors) |
 | Scheduled fetch | Reads nothing: `fetchAll(…, "schedule")` in `connectors/sync.ts` returns at once | [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work) |
+| Today calendar | Google Calendar, Outlook (Teams meetings included) and calendar links (ICS) as one calendar, read every 30 minutes; the same event from several calendars shows once (fixed rules, no model) | [03 §2.4](03_MODULE_CONTEXT_ENGINE.md#24-the-today-calendar) |
 | Native connected items | Explicit search/read, attach, add task, people, supported write-backs (for example Zotero notes) | [31](31_CONNECTORS_IN_USE.md) |
 | Vendor MCP | The vendor's enabled tools with schema, approval and access checks. A server holding personal data needs sign-in or a token; one that answers without an account shows "Connected · public data only". AWS Knowledge, Context7 and Exa need no account | [03 §2.2](03_MODULE_CONTEXT_ENGINE.md#22-remote-mcp-connectors) |
 | Board imports | Native board sources and uploaded exports; preview, mapping, background progress, rerun, undo | [27](27_IMPORTS.md) |

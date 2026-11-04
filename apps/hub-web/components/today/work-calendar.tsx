@@ -1,152 +1,128 @@
 "use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight } from "lucide-react";
-import Link from "next/link";
-import { useMemo, useState } from "react";
-import { api, type CalendarEvent } from "@/lib/api";
-import { clock, isoDate, relative, shortDate } from "@/lib/format";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { api, type CalendarEvent, type CalendarPayload } from "@/lib/api";
+import { conflicts, dateKey, daysFrom, dayLabel, displayZone, eventsOn, shortDay } from "@/lib/calendar";
+import { isoDate, shortDate } from "@/lib/format";
 import { useTodayData, workWeek } from "@/lib/home";
-import { useToast } from "../toast";
+import { AgendaSkeleton, CalendarStatus, ConnectCalendar, DayAgenda } from "../calendar/agenda";
+import { useCalendarSync } from "../calendar/sync";
 import { FetchGlyph } from "@/components/motion/slot";
 import { cx } from "../ui";
 import type { Size } from "@ensemble/shared-types/widgets";
 
 const LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 
-export function WorkCalendar({ timezone, size = "l" }: { timezone: string; size?: Size }) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const [offset, setOffset] = useState(0);
-  const start = useMemo(() => workWeek(offset).start, [offset]);
-  const days = useMemo(
-    () =>
-      Array.from({ length: 5 }, (_, index) => {
-        const day = new Date(start);
-        day.setDate(start.getDate() + index);
-        return day;
-      }),
-    [start],
+function DayButton({ day, events, selected, today, compact, onSelect }: { day: string; events: readonly CalendarEvent[]; selected: boolean; today: boolean; compact: boolean; onSelect: () => void }) {
+  const date = new Date(`${day}T12:00:00Z`);
+  const clash = conflicts(events).size > 0;
+  const allDay = events.filter((event) => event.allDay).length;
+  const marks = Math.min(3, events.length);
+  const label = `${date.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}: ${events.length ? `${events.length} event${events.length === 1 ? "" : "s"}` : "nothing scheduled"}${clash ? ", with overlaps" : ""}`;
+  return (
+    <button type="button" className={cx("cal-day", today && "cal-day-today")} aria-pressed={selected} aria-label={label} title={label} onClick={onSelect} data-day={day}>
+      <span className="cal-day-date">
+        <span className="cal-day-name">{compact ? LETTERS[date.getUTCDay()] : date.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })}</span>
+        <span className="cal-day-num">{date.getUTCDate()}</span>
+      </span>
+      <span className="cal-day-marks" aria-hidden>
+        {Array.from({ length: marks }, (_, index) => (
+          <span key={index} className={cx("cal-day-mark", clash && index === marks - 1 ? "cal-day-mark-conflict" : index < allDay && "cal-day-mark-allday")} />
+        ))}
+      </span>
+    </button>
   );
-  const end = new Date(start);
-  end.setDate(start.getDate() + 5);
+}
+
+/** The Today calendar widget: a work week of the merged calendar (Google, Outlook, calendar links) and the chosen day's agenda. */
+export function WorkCalendar({ timezone, size = "m" }: { timezone: string; size?: Size }) {
+  const client = useQueryClient();
+  const [offset, setOffset] = useState(0);
+  const week = useMemo(() => workWeek(offset), [offset]);
+  const first = isoDate(week.start);
+  const days = useMemo(() => daysFrom(first, 5), [first]);
 
   const { ready } = useTodayData();
-  const dayKey = isoDate(start);
-  const calendar = useQuery({
-    queryKey: ["calendar", dayKey],
-    queryFn: () => api.calendar(start.toISOString(), end.toISOString()),
-    enabled: offset !== 0 || ready || client.getQueryData(["calendar", dayKey]) !== undefined,
+  const calendar = useQuery<CalendarPayload>({
+    queryKey: ["calendar", first],
+    queryFn: () => api.calendar(week.start.toISOString(), week.end.toISOString(), displayZone(timezone)),
+    enabled: offset !== 0 || ready || client.getQueryData(["calendar", first]) !== undefined,
   });
+  const sync = useCalendarSync();
 
-  const sync = useMutation({
-    mutationFn: async () => {
-      const connections = await api.connections();
-      const calendars = connections.connections.filter((row) => row.group === "calendar" && row.enabled);
-      if (!calendars.length) throw new Error("No calendar is switched on. Turn one on in Settings → Connections.");
-      return Promise.all(calendars.map((row) => api.syncConnection(row.id)));
-    },
-    onSuccess: (results) => {
-      const failed = results.find((row) => !row.ok);
-      toast(failed ? failed.message : "Calendar synced.", { tone: failed ? "error" : "ok" });
-      void client.invalidateQueries({ queryKey: ["calendar"] });
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
+  const zone = displayZone(calendar.data?.timeZone ?? timezone);
+  const today = dateKey(new Date(), zone);
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => setPicked(null), [first]);
+  const selected = picked && days.includes(picked) ? picked : days.includes(today) ? today : days[0]!;
 
-  const eventsFor = (day: Date): CalendarEvent[] =>
-    (calendar.data?.events ?? []).filter((event) => isoDate(new Date(event.start)) === isoDate(day));
-
-  const syncState = calendar.data?.sync ?? [];
-  const status = syncState.find((row) => row.lastError)?.lastError
-    ? `Calendar needs attention: ${syncState.find((row) => row.lastError)!.lastError}`
-    : syncState.length
-      ? `Synced ${relative(syncState[0]!.lastSyncAt)}`
-      : "No calendar connected yet";
-  const today = isoDate(new Date());
-  const anyEvents = days.some((day) => eventsFor(day).length > 0);
+  const events = calendar.data?.events ?? [];
+  const byDay = useMemo(() => new Map(days.map((day) => [day, eventsOn(events, day, zone)])), [days, events, zone]);
+  const sources = calendar.data?.sources ?? [];
+  const nothingConnected = calendar.isSuccess && !sources.length && !events.length;
 
   const compact = size === "s";
-  const roomy = size === "l" || size === "xl";
+  const limit = compact ? 2 : size === "m" ? 5 : 10;
 
+  const heading = dayLabel(selected, today);
+  const range = `${shortDate(week.start)} – ${shortDate(new Date(week.end.getTime() - 86_400_000))}`;
   return (
-    <section className="min-w-0">
-      <div className="mb-1.5 flex items-center gap-1">
-        <button type="button" className="icon-btn h-6 w-6 shrink-0" onClick={() => setOffset(offset - 1)} aria-label="Previous week">
-          <ArrowLeft size={13} />
+    <section className="cal-widget min-w-0" aria-label="Calendar" data-calendar-widget data-size={size}>
+      <div className="cal-head">
+        <button type="button" className="icon-btn h-7 w-6 shrink-0" onClick={() => setOffset(offset - 1)} aria-label="Previous week" title="Previous week">
+          <ChevronLeft size={14} aria-hidden />
         </button>
-        <button type="button" className="icon-btn h-6 w-6 shrink-0" onClick={() => setOffset(offset + 1)} aria-label="Next week">
-          <ArrowRight size={13} />
+        <div className="cal-week" role="group" aria-label={`Week of ${range}`}>
+          {days.map((day) => (
+            <DayButton key={day} day={day} events={byDay.get(day) ?? []} selected={day === selected} today={day === today} compact={compact} onSelect={() => setPicked(day)} />
+          ))}
+        </div>
+        <button type="button" className="icon-btn h-7 w-6 shrink-0" onClick={() => setOffset(offset + 1)} aria-label="Next week" title="Next week">
+          <ChevronRight size={14} aria-hidden />
         </button>
+      </div>
+      <div className="cal-subhead">
+        <p className="cal-day-heading">
+          {heading}
+          {heading !== shortDay(selected) && !compact ? <span className="cal-day-heading-date"> · {shortDay(selected)}</span> : null}
+        </p>
         {offset !== 0 ? (
-          <button type="button" className="btn-ghost shrink-0 px-1.5 py-0.5" onClick={() => setOffset(0)}>
-            Today
+          <button type="button" className="cal-more" onClick={() => setOffset(0)}>
+            This week
           </button>
-        ) : null}
-        {!compact ? (
-          <span className="min-w-0 truncate text-[12px] text-muted">
-            {shortDate(days[0]!)} – {shortDate(days[4]!)}
-          </span>
         ) : null}
         <button
           type="button"
           className="icon-btn ml-auto h-6 w-6 shrink-0"
           onClick={() => sync.mutate()}
           disabled={sync.isPending}
-          aria-label="Sync calendar"
-          title="Sync calendar"
+          aria-label="Sync calendars"
+          title="Sync Google, Outlook and calendar links"
         >
           <FetchGlyph active={sync.isPending} slot="connector.sync" size={12} />
         </button>
-        {roomy ? (
-          <Link href="/board" className="shrink-0 text-[12px] text-muted hover:text-ink">
-            Board
-          </Link>
-        ) : null}
       </div>
-      <div className="grid min-w-0 grid-cols-5">
-        {days.map((day) => {
-          const events = eventsFor(day);
-          const isToday = isoDate(day) === today;
-          const shown = events.slice(0, compact ? 1 : roomy ? 4 : 2);
-          return (
-            <div key={day.toISOString()} className="min-w-0 px-0.5 text-center">
-              <div className={cx("text-[11px] uppercase tracking-wide", isToday ? "text-ink" : "text-muted")}>
-                {compact ? LETTERS[day.getDay()] : day.toLocaleDateString(undefined, { weekday: "short" })}
-              </div>
-              <div
-                className={cx(
-                  "mx-auto mt-0.5 flex h-5 w-5 items-center justify-center rounded-full text-[11.5px]",
-                  isToday ? "on-accent font-semibold" : "text-muted",
-                )}
-              >
-                {day.getDate()}
-              </div>
-              {shown.map((event) => (
-                <div key={event.id} className="mt-1 truncate text-left text-[11px] leading-4 text-ink" title={event.title}>
-                  {compact ? null : <span className="text-muted">{event.allDay ? "All day" : clock(event.start)} </span>}
-                  {event.title}
-                </div>
-              ))}
-              {events.length > shown.length ? <div className="text-[10px] text-faint">+{events.length - shown.length}</div> : null}
-            </div>
-          );
-        })}
+      <div className="cal-day-body">
+        {calendar.isPending ? (
+          <AgendaSkeleton rows={compact ? 2 : 3} />
+        ) : calendar.isError ? (
+          <p className="cal-empty">
+            Your calendar could not load.{" "}
+            <button type="button" className="cal-more" onClick={() => void calendar.refetch()}>
+              Try again
+            </button>
+          </p>
+        ) : nothingConnected ? (
+          <ConnectCalendar compact={compact || size === "m"} />
+        ) : (
+          <DayAgenda key={selected} events={byDay.get(selected) ?? []} day={selected} zone={zone} limit={limit} compact={compact} foldPast={selected === today} />
+        )}
       </div>
-      {roomy && anyEvents ? (
-        <ul className="mt-2 space-y-1">
-          {days.flatMap((day) =>
-            eventsFor(day).slice(0, 3).map((event) => (
-              <li key={event.id} className="truncate text-[12.5px]">
-                <span className="text-muted">{event.allDay ? "All day" : clock(event.start)} · </span>
-                {event.title}
-              </li>
-            )),
-          )}
-        </ul>
-      ) : null}
-      {!compact ? <div className="mt-1 truncate text-[11.5px] text-muted">{status}</div> : null}
-      <span className="sr-only">{timezone}</span>
+      {!compact ? <CalendarStatus sources={sources} /> : null}
     </section>
   );
 }

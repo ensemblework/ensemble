@@ -638,7 +638,7 @@ const ADD_NOUN: Record<string, string> = {
 };
 
 const TILE_HREF: Record<string, string> = {
-  agenda: "/settings?tab=connections",
+  agenda: "/settings?tab=connections#calendars",
   "focus-now": "/board",
   agents: "/runs",
   "your-week": "/recap",

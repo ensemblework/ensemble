@@ -6,6 +6,7 @@ import { matchExcerpt } from "../bridge/text.js";
  */
 import { Prisma, type PrismaClient, type TaskStatus } from "@prisma/client";
 import { claimSlot } from "../jobs/claim.js";
+import { collapseEventRows, EVENT_ROW_SELECT } from "../calendar/read.js";
 import { PageDocument, moduleDenied, restoreMentionLinks } from "@ensemble/shared-types";
 import { separateLists } from "../imports/markdown.js";
 import { markdownToNodes, pageMarkdown } from "../pages/markdown.js";
@@ -450,18 +451,20 @@ async function prepBundle(
 export async function listMeetingCues(db: Db, userId: string, now = new Date()) {
   const horizon = new Date(now.getTime() + 24 * 3600_000);
   const lookback = new Date(now.getTime() - 48 * 3600_000);
-  const [events, sessions, people] = await Promise.all([
+  const [rows, sessions, people] = await Promise.all([
     db.artifact.findMany({
       where: { userId, deletedAt: null, kind: "event", ts: { gte: lookback, lt: horizon } },
       orderBy: { ts: "asc" },
-      take: 40,
-      select: { id: true, title: true, ts: true, metadata: true, participants: true },
+      take: 80,
+      select: EVENT_ROW_SELECT,
     }),
     db.meetingSession.findMany({
       where: { userId, deletedAt: null, OR: [{ status: "live" }, { endedAt: { gte: new Date(now.getTime() - 36 * 3600_000) } }] },
     }),
     db.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, email: true } }),
   ]);
+  // One cue per meeting, however many calendars it came from (calendar/dedupe.ts).
+  const events = collapseEventRows(rows).slice(0, 40);
   const cues = [];
   for (const event of events) {
     const meta = asRecord(event.metadata);
@@ -471,7 +474,7 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
     const names = participantNames(event.participants);
     const session =
       sessions
-        .filter((row) => row.artifactId === event.id)
+        .filter((row) => row.artifactId !== null && event.memberIds.includes(row.artifactId))
         .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())[0] ?? null;
     if (names.length === 0 && !session) continue;
     if (phase === "follow_up" && session && session.attachState !== "pending" && session.status === "ended") continue;
@@ -492,7 +495,7 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
     });
   }
   for (const session of sessions) {
-    if (session.artifactId && events.some((event) => event.id === session.artifactId)) continue;
+    if (session.artifactId && events.some((event) => event.memberIds.includes(session.artifactId!))) continue;
     if (session.status !== "live") continue;
     const attendees = matchAttendees([], people).concat(session.personIds.map((id) => ({ id, name: people.find((person) => person.id === id)?.name ?? id })));
     const prep = await prepBundle(db, userId, attendees);

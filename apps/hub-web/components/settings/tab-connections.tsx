@@ -5,6 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
+import { CalendarLinksSection } from "@/components/calendar/calendar-links";
 import { ConnectionsOverview } from "@/components/connectors/featured";
 import { ImportLauncher } from "@/components/connectors/import-launcher";
 import { RecentImports } from "@/components/imports/recent-imports";
@@ -29,6 +30,9 @@ export function ConnectionsTab({ settings, patch }: { settings: Settings; patch:
           onImport={() => setImporting({})}
           onCustom={() => navigateSettings({ connector: "custom", store: null })}
         />
+      </div>
+      <div id="calendars" className="scroll-mt-6">
+        <CalendarLinksSection />
       </div>
       <div id="imports" className="scroll-mt-6 empty:hidden">
         <ImportsCard onImport={() => setImporting({})} />

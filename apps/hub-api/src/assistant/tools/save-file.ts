@@ -136,12 +136,13 @@ export type Fetched = { bytes: Buffer; url: string; contentType: string; disposi
 
 /**
  * Downloads a public file: http(s), every hop's address checked when it connects (no private, loopback
- * or link-local network), at most 5 redirects, at most `maxBytes`. A web page is refused with a hint.
+ * or link-local network), at most 5 redirects, at most `maxBytes`, within `timeoutMs`. A web page is refused with a hint.
+ * Calendar subscriptions (calendar/feeds.ts) fetch through here too.
  */
-export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), deps: SaveFetchDeps = testDeps ?? {}): Promise<Fetched> {
+export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), deps: SaveFetchDeps = testDeps ?? {}, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
   const allowed = deps.allowAddress ?? ((address: string) => !privateAddress(address));
   const lookup = guardedLookup(deps.lookup ?? defaultLookup, allowed);
-  const signal = AbortSignal.timeout(TIMEOUT_MS);
+  const signal = AbortSignal.timeout(timeoutMs);
   let url = checkedLink(raw);
   for (let hop = 0; ; hop += 1) {
     const host = url.hostname.replace(/^\[|\]$/g, "");
