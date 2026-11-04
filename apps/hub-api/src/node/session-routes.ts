@@ -12,7 +12,7 @@ import { requireBrowserSession } from "../bridge/auth.js";
 import { accountIdOf } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
-import { listSessions, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
+import { listSessionGroups, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
 import { stepLive } from "./plans.js";
 import { sessionOwners, sessionSnapshot } from "./session-queue.js";
 import { editSessionQueue, moveSession, ownerContext, sendToSession, stopSession, type SessionEnv } from "./sessions.js";
@@ -110,45 +110,69 @@ async function recentRuns(prisma: PrismaClient, runs: SessionRun[], rootId: stri
 export function registerSessionRoutes(app: FastifyInstance): void {
   const prisma = app.prisma;
 
-  /**
-   * My agent sessions, most recently active first, each with the node that manages it (null: none, such
-   * as one started in the Hub or the CLI), so I can give one to a node.
-   */
+  /** My sessions with recorded node/room usage and exact original-file references, never file bodies. */
   app.get("/api/node/sessions", async (request) => {
     const accountId = owner(request);
     const query = ListQuery.parse(request.query ?? {});
-    const sessions = await listSessions(prisma, { space: accountId, runner: null }, { query: query.q, limit: query.limit });
+    const groups = await listSessionGroups(prisma, { space: accountId, runner: null }, { limit: 100 });
+    const sessions = groups.map(row => row.session);
     const ids = sessions.map((row) => row.id);
-    const owners = await sessionOwners(prisma, accountId, ids);
-    // Each session's newest run card, so the list can open it in its conversation.
-    const cards = await prisma.nodeRun.findMany({
-      where: { userId: accountId, messageId: { not: null }, OR: [{ sessionId: { in: ids } }, { sessionId: null, jobId: { in: ids } }] },
-      orderBy: { createdAt: "desc" },
-      select: { sessionId: true, jobId: true, messageId: true, roomId: true },
-      take: 500,
-    });
-    const newest = new Map<string, { messageId: string | null; roomId: string }>();
-    for (const card of cards) {
-      const id = card.sessionId ?? card.jobId;
-      if (!newest.has(id)) newest.set(id, { messageId: card.messageId, roomId: card.roomId });
-    }
-    return {
-      sessions: sessions.map((row) => ({
-        id: row.id,
-        nodeId: owners.get(row.id) ?? null,
-        card: newest.get(row.id) ?? null,
-        status: row.status,
-        agent: row.agent,
-        agentName: row.agentName,
+    const runIds = groups.flatMap(row => row.runIds);
+    const [owners, cards, jobs] = await Promise.all([
+      sessionOwners(prisma, accountId, ids),
+      prisma.nodeRun.findMany({
+        where: { userId: accountId, jobId: { in: runIds } },
+        orderBy: { createdAt: "desc" },
+        select: { jobId: true, nodeId: true, messageId: true, roomId: true, room: { select: { id: true, kind: true, title: true, archivedAt: true, members: { where: { userId: accountId, nodeId: null }, select: { id: true } } } } },
+      }),
+      prisma.workspaceJob.findMany({
+        where: { id: { in: runIds }, userId: accountId, runnerAccountId: null },
+        select: { id: true, deviceId: true, folderLabel: true, externalRoot: true, repoPath: true, evidence: true, createdAt: true, finishedAt: true },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+    const agents = await prisma.nodeAgent.findMany({ where: { userId: accountId, id: { in: [...new Set(cards.map(row => row.nodeId))] } }, select: { id: true, name: true, slug: true } });
+    const nodes = new Map(agents.map(row => [row.id, row]));
+    const needle = query.q?.toLocaleLowerCase();
+    const rows = groups.map(({ session: row, runIds }) => {
+      const inSession = new Set(runIds);
+      const history = cards.filter(card => inSession.has(card.jobId));
+      const card = history.find(card => card.messageId && !card.room.archivedAt && card.room.members.length);
+      const usedBy = [...new Map(history.flatMap(run => {
+        const node = nodes.get(run.nodeId);
+        if (!node) return [];
+        const room = !run.room.archivedAt && run.room.members.length && ["crew", "room"].includes(run.room.kind)
+          ? { id: run.room.id, title: run.room.title, kind: run.room.kind } : null;
+        return [[`${node.id}:${room?.id ?? ""}`, { node, room }] as const];
+      })).values()];
+      const files = new Map<string, { source: { kind: "job"; id: string; path: string }; deviceId: string | null; deviceName: string | null; folder: string | null; sessionId: string; deleted: boolean; updatedAt: string }>();
+      for (const job of jobs) {
+        if (!inSession.has(job.id)) continue;
+        const entries = z.object({ files: z.array(z.object({ path: z.string().min(1), status: z.string().optional(), fileId: z.string().optional(), modifiedAt: z.string().datetime().optional() })).optional() }).safeParse(job.evidence);
+        if (!entries.success) {
+          if (job.evidence !== null) app.log.warn({ jobId: job.id }, "Session file metadata could not be read");
+          continue;
+        }
+        for (const file of entries.data.files ?? []) {
+          const key = `${job.deviceId ?? ""}:${file.fileId ?? `${job.externalRoot ?? job.repoPath ?? job.folderLabel ?? job.id}:${file.path}`}`;
+          const updatedAt = file.modifiedAt ?? (job.finishedAt ?? job.createdAt).toISOString();
+          if (files.has(key) && files.get(key)!.updatedAt >= updatedAt) continue;
+          files.set(key, { source: { kind: "job", id: job.id, path: file.path }, deviceId: job.deviceId, deviceName: row.computer, folder: job.folderLabel ?? row.folder, sessionId: row.id, deleted: ["deleted", "D"].includes(file.status ?? ""), updatedAt });
+        }
+      }
+      return {
+        id: row.id, nodeId: owners.get(row.id) ?? null,
+        card: card ? { messageId: card.messageId, roomId: card.roomId } : null,
+        status: row.status, agent: row.agent, agentName: row.agentName,
         model: row.model && row.model !== "default" ? row.model : null,
-        computer: row.computer,
-        folder: row.folder,
-        title: row.title,
-        latestTask: row.latestTask.title,
-        summary: truncateText(row.summary, 300),
-        runs: row.runs,
-        lastActiveAt: row.lastActiveAt,
-      })),
+        computer: row.computer, folder: row.folder, title: row.title,
+        latestTask: row.latestTask.title, summary: truncateText(row.summary, 300),
+        runs: row.runs, lastActiveAt: row.lastActiveAt, usedBy,
+        files: [...files.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+      };
+    });
+    return {
+      sessions: rows.filter(row => !needle || [row.title, row.agentName, row.model, row.folder, row.computer, row.status, `${row.runs} ${row.runs === 1 ? "run" : "runs"}`, ...row.files.map(file => file.source.path), ...row.usedBy.flatMap(item => [item.node.name, item.node.slug, item.room?.title])].some(value => value?.toLocaleLowerCase().includes(needle))).slice(0, query.limit),
     };
   });
 

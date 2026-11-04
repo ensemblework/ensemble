@@ -226,6 +226,14 @@ export async function listSessions(
   scope: SessionScope,
   filter: { taskId?: string | null; deviceIds?: string[] | null; query?: string | null; limit?: number } = {},
 ): Promise<AgentSession[]> {
+  return (await listSessionGroups(prisma, scope, filter)).map(row => row.session);
+}
+
+export async function listSessionGroups(
+  prisma: PrismaClient,
+  scope: SessionScope,
+  filter: { taskId?: string | null; deviceIds?: string[] | null; query?: string | null; limit?: number } = {},
+): Promise<Array<{ session: AgentSession; runIds: string[] }>> {
   const byId = await sessionRuns(prisma, scope);
   const groups = new Map<string, Row[]>();
   for (const row of byId.values()) {
@@ -241,8 +249,8 @@ export async function listSessions(
     .filter(({ session, runs }) => !filter.taskId || runs.some((row) => row.taskId === filter.taskId) || session.latestTask.id === filter.taskId)
     .filter(({ session }) => !filter.deviceIds?.length || (session.deviceId !== null && filter.deviceIds.includes(session.deviceId)))
     .filter(({ session, runs }) => !needle || [session.title, session.summary, session.folder, session.agentName, session.computer ?? "", ...runs.map((row) => row.task.title)].some((text) => text.toLowerCase().includes(needle)))
-    .map(({ session }) => session)
-    .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))
+    .map(({ session, runs }) => ({ session, runIds: runs.map(row => row.id) }))
+    .sort((a, b) => b.session.lastActiveAt.localeCompare(a.session.lastActiveAt))
     .slice(0, Math.max(1, Math.min(filter.limit ?? 20, 100)));
 }
 
