@@ -424,3 +424,27 @@ test("one click and a drag through text that reaches another block ends as those
     editor.destroy();
   }
 });
+
+test("a page inside a bordered card keeps its controls inside the card: the + goes where the card leaves no room for it", async () => {
+  const rect = (left: number, right: number) => ({ left, right, top: 0, bottom: 400, width: right - left, height: 400, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+  for (const [inset, gutter] of [[22, "tight"], [58, ""]] as const) {
+    const editor = new Editor({ extensions: [StarterKit], content: { type: "doc", content: [p("Notes")] } });
+    const card = document.createElement("div");
+    card.style.border = "1px solid black";
+    const body = document.createElement("div");
+    card.appendChild(body);
+    document.body.appendChild(card);
+    card.getBoundingClientRect = () => rect(300, 1000);
+    body.getBoundingClientRect = () => rect(300 + inset, 960);
+    const root = createRoot(body);
+    try {
+      await act(async () => root.render(<BlockControls editor={editor} />));
+      assert.equal(body.dataset.gutterLeft ?? "", gutter, `${inset}px from the card's border`);
+      assert.equal(body.dataset.gutterRight ?? "", "");
+    } finally {
+      await act(async () => root.unmount());
+      card.remove();
+      editor.destroy();
+    }
+  }
+});

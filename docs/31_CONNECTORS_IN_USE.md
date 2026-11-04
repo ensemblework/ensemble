@@ -92,7 +92,7 @@ The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types
 
 | App (store group) | Connects by | In Ensemble |
 |---|---|---|
-| Google Workspace, Microsoft 365 (Google & Microsoft) | sign in | Sync people · attach files, conversations and attachments · import files · assistant reads and writes (Apply) |
+| Google Workspace, Microsoft 365 (Google & Microsoft) | sign in | Sync people · attach files, conversations and attachments · import files · Google Meet and Teams meeting transcripts on request (products `meet`, `teams_meetings`) · assistant reads and writes (Apply) |
 | Dropbox (Files) | sign in · MCP (operator app) | attach and import files · assistant tools |
 | Box (Files) | sign in | attach and import files |
 | Linear (Projects) | sign in · token · MCP via your Linear connection | attach issues and projects · post updates · people · import · assistant tools |
@@ -104,9 +104,9 @@ The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types
 | monday.com (Projects) | token · MCP | attach tasks and boards · post updates · people · import · assistant tools |
 | CSV or spreadsheet (Projects) | file | import |
 | Notion (Notes) | sign in · token · MCP | attach pages and databases · post updates · people · import · assistant tools |
-| Granola, Fireflies.ai, Fathom, Krisp, Jamie, Otter.ai (Meetings) | token · MCP | meeting-note import on request · action-item tasks on request · assistant tools |
-| tl;dv (Meetings) | token | meeting-note import on request · action-item tasks on request |
-| Zoom (Meetings) | sign in | assistant tools for meetings, recordings, summaries and transcripts |
+| Granola, Fireflies.ai, Fathom, Krisp, Jamie, Otter.ai (Meetings) | token · MCP | meeting-note import on request (assistant, or Meeting notes → Import) · action-item tasks on request · assistant tools |
+| tl;dv (Meetings) | token | meeting-note import on request (assistant, or Meeting notes → Import) · action-item tasks on request |
+| Zoom (Meetings) | sign in | cloud-recording transcripts into Meeting notes on request · assistant tools for meetings, recordings, summaries and transcripts |
 | Slack (Chat) | sign in · token · MCP (operator app) | Sync people · attach channels · people · assistant tools |
 | Discord (Chat) | sign in | attach channels |
 | GitHub (Developer) | sign in · token · MCP via your GitHub connection | Sync people · attach repositories, issues and pull requests · post updates · people · repositories for agents · import · assistant tools |
