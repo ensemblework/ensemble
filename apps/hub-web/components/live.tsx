@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { HUB_API, api } from "@/lib/api";
 import { loadFailureKind } from "@/lib/load-failure";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
-import { LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
+import { LIVE_OPENED_EVENT, LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { notify, notifyDecision } from "@/lib/notify";
 import { presenceStore } from "@/lib/presence";
@@ -113,6 +113,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         }
         opened = true;
         sawError = false;
+        window.dispatchEvent(new CustomEvent(LIVE_OPENED_EVENT));
       };
       source.onerror = () => {
         sawError = true;

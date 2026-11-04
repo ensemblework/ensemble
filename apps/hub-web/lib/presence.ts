@@ -1,21 +1,47 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-import type { PresenceEntry, ShareKind } from "./api";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { api, presenceJoined, type PresenceEntry, type PresenceUpdate, type ShareKind } from "./api";
+import { LIVE_OPENED_EVENT } from "./events";
+import { followStore } from "./follow";
 
 /**
- * Who else is in this space right now, fed by the event stream (`presence` frames) and the
- * first GET /api/presence. One entry per browser tab; your own tabs are left out.
+ * Who else is in this space right now, fed by the event stream (`presence` frames) and
+ * GET /api/presence whenever the stream opens. One entry per browser tab; your own tabs are
+ * left out. The timings match hub-api's sharing/presence.ts.
  */
-const TTL_MS = 45_000;
-let entries = new Map<string, PresenceEntry>();
+export const HEARTBEAT_MS = 10_000;
+const TTL_MS = 30_000;
+const AWAY_TTL_MS = 150_000;
+const SWEEP_MS = 5_000;
+
+/** When this browser last heard each tab, by its own clock: the server's `at` may be off by minutes. */
+type Held = { entry: PresenceEntry; seen: number };
+let entries = new Map<string, Held>();
+/** Tabs that left, and when: an answer to GET /api/presence asked before then must not bring them back. */
+let left = new Map<string, number>();
+/** When each person first appeared, so avatars keep their place as others come and go. */
+const joined = new Map<string, number>();
 let me: string | null = null;
 let snapshot: PresenceEntry[] = [];
 const listeners = new Set<() => void>();
 
-function emit(): void {
-  const cutoff = Date.now() - TTL_MS;
-  snapshot = [...entries.values()].filter((entry) => entry.at >= cutoff && entry.accountId !== me);
+const keyOf = (entry: Pick<PresenceEntry, "accountId" | "tabId">) => `${entry.accountId}:${entry.tabId}`;
+const fresh = (held: Held, now: number) => held.seen >= now - (held.entry.away ? AWAY_TTL_MS : TTL_MS);
+
+function emit(force = false): void {
+  const now = Date.now();
+  for (const [key, held] of entries) if (!fresh(held, now)) entries.delete(key);
+  const accounts = new Set<string>();
+  for (const { entry } of entries.values()) {
+    accounts.add(entry.accountId);
+    if (!joined.has(entry.accountId)) joined.set(entry.accountId, now);
+  }
+  for (const account of joined.keys()) if (!accounts.has(account)) joined.delete(account);
+  const next = [...entries.values()].map((held) => held.entry).filter((entry) => entry.accountId !== me);
+  // Same people, same frames: keep the snapshot, so nothing re-renders on a quiet sweep.
+  if (!force && next.length === snapshot.length && next.every((entry, index) => entry === snapshot[index])) return;
+  snapshot = next;
   for (const listener of listeners) listener();
 }
 
@@ -23,17 +49,36 @@ export const presenceStore = {
   setMe(id: string | null): void {
     if (me === id) return;
     me = id;
-    emit();
+    emit(true);
   },
-  reset(list: PresenceEntry[], you: string): void {
+  /**
+   * Everyone the server lists. `now` is the server's clock when it answered and `asked` this
+   * browser's when the request went out: frames that arrived since are newer than the list.
+   */
+  reset(list: PresenceEntry[], you: string, now?: number, asked = 0): void {
     me = you;
-    entries = new Map(list.map((entry) => [`${entry.accountId}:${entry.tabId}`, entry]));
-    emit();
+    const local = Date.now();
+    const next = new Map<string, Held>();
+    for (const entry of list) {
+      const key = keyOf(entry);
+      if ((left.get(key) ?? -1) >= asked) continue;
+      const held = entries.get(key);
+      next.set(key, held && held.seen >= asked ? held : { entry, seen: local - Math.max(0, now === undefined ? 0 : now - entry.at) });
+    }
+    for (const [key, held] of entries) if (!next.has(key) && held.seen >= asked && asked > 0) next.set(key, held);
+    entries = next;
+    emit(true);
   },
   apply(entry: PresenceEntry): void {
-    const key = `${entry.accountId}:${entry.tabId}`;
-    if (entry.gone) entries.delete(key);
-    else entries.set(key, entry);
+    const key = keyOf(entry);
+    if (entry.gone) {
+      entries.delete(key);
+      left.set(key, Date.now());
+      if (left.size > 500) left = new Map([...left].slice(-200));
+    } else {
+      entries.set(key, { entry, seen: Date.now() });
+      left.delete(key);
+    }
     emit();
   },
   clear(): void {
@@ -43,6 +88,14 @@ export const presenceStore = {
   /** Drops tabs that stopped sending heartbeats. */
   sweep(): void {
     emit();
+  },
+  /** Your account id (a `visitor:…` id on a public link). */
+  me(): string | null {
+    return me;
+  },
+  /** Whether someone has any tab open here now. */
+  isHere(accountId: string): boolean {
+    return snapshot.some((entry) => entry.accountId === accountId);
   },
   subscribe(listener: () => void): () => void {
     listeners.add(listener);
@@ -55,19 +108,41 @@ export const presenceStore = {
 
 const empty: PresenceEntry[] = [];
 
-/** Every other tab in this space, newest first. */
+/** Every other tab in this space. */
 export function usePresence(): PresenceEntry[] {
   return useSyncExternalStore(presenceStore.subscribe, presenceStore.snapshot, () => empty);
 }
 
-/** One row per person (their most recent tab). */
+/** One row per person: their tab in front, else their most recent one. In the order they arrived, so avatars keep their place. */
 export function people(list: PresenceEntry[]): PresenceEntry[] {
   const byPerson = new Map<string, PresenceEntry>();
   for (const entry of list) {
     const seen = byPerson.get(entry.accountId);
-    if (!seen || seen.at < entry.at) byPerson.set(entry.accountId, entry);
+    if (!seen || (seen.away && !entry.away) || (Boolean(seen.away) === Boolean(entry.away) && seen.at < entry.at)) byPerson.set(entry.accountId, entry);
   }
-  return [...byPerson.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const order = (entry: PresenceEntry) => joined.get(entry.accountId) ?? Number.MAX_SAFE_INTEGER;
+  return [...byPerson.values()].sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
+}
+
+export type PresenceStatus = "editing" | "viewing" | "away";
+/** Typing now, looking, or with the tab in the background. */
+export function statusOf(entry: Pick<PresenceEntry, "typing" | "away">): PresenceStatus {
+  return entry.away ? "away" : entry.typing ? "editing" : "viewing";
+}
+
+/** "Owner", "Can edit", "Can view". */
+export function roleLabel(role: PresenceEntry["role"]): string {
+  return role === "owner" ? "Owner" : role === "edit" ? "Can edit" : "Can view";
+}
+
+/** An anonymous visitor on a public link. */
+export function isGuest(entry: Pick<PresenceEntry, "signedIn" | "accountId">): boolean {
+  return entry.signedIn === false || entry.accountId.startsWith("visitor:");
+}
+
+/** "Mira Chen · editing", "Curious Otter (guest) · viewing": the tooltip on an avatar. */
+export function presenceLine(entry: PresenceEntry): string {
+  return `${entry.name}${isGuest(entry) ? " (guest)" : ""} · ${statusOf(entry)}`;
 }
 
 /** The people on one item (a page, a diagram). */
@@ -172,4 +247,90 @@ export function announceTyping(send: (typing: boolean) => Promise<unknown>): voi
     typingSent = 0;
     void send(false).catch(() => undefined);
   }, 4000);
+}
+
+async function resync(): Promise<void> {
+  const asked = Date.now();
+  try {
+    const data = await api.presence();
+    presenceStore.reset(data.people, data.you, data.now, asked);
+  } catch {
+    // The next stream open or heartbeat tries again.
+  }
+}
+
+/**
+ * Keeps this tab in the room while `active`: says where you are when it changes and every
+ * `HEARTBEAT_MS` (marked away while the tab is hidden), reads who is here whenever the stream
+ * opens or the tab comes back (from the background, sleep or offline), and leaves on `pagehide`
+ * and when it stops. `room` names the space or item, and `where` what a post says about you.
+ * `scope` runs the leave under the share or link header the view opened with.
+ */
+export function usePresenceSession({
+  active,
+  room,
+  place,
+  where,
+  scope,
+}: {
+  active: boolean;
+  room: string | null;
+  place: string;
+  where: () => Pick<PresenceUpdate, "route" | "resource">;
+  scope: (fn: () => void) => void;
+}): void {
+  const whereRef = useRef(where);
+  whereRef.current = where;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+
+  useEffect(() => {
+    if (!active || !room) return;
+    presenceJoined();
+    const send = () => void api.sendPresence({ tabId: tabId(), ...whereRef.current(), away: document.visibilityState === "hidden", follows: followStore.get()?.accountId ?? null }).catch(() => undefined);
+    let tick = Date.now();
+    void resync();
+    const beat = window.setInterval(() => {
+      const now = Date.now();
+      // Timers stop while a laptop sleeps: what we know is stale.
+      if (now - tick > HEARTBEAT_MS * 2.5) void resync();
+      tick = now;
+      send();
+    }, HEARTBEAT_MS);
+    const sweep = window.setInterval(() => presenceStore.sweep(), SWEEP_MS);
+    const back = () => {
+      send();
+      void resync();
+    };
+    const onVisibility = () => (document.visibilityState === "visible" ? back() : send());
+    const onShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      presenceJoined();
+      back();
+    };
+    const leave = () => scopeRef.current(() => api.leavePresence(tabId()));
+    const unfollow = followStore.subscribe(send);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener(LIVE_OPENED_EVENT, back);
+    window.addEventListener("online", back);
+    window.addEventListener("pageshow", onShow);
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.clearInterval(beat);
+      window.clearInterval(sweep);
+      unfollow();
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener(LIVE_OPENED_EVENT, back);
+      window.removeEventListener("online", back);
+      window.removeEventListener("pageshow", onShow);
+      window.removeEventListener("pagehide", leave);
+      leave();
+      presenceStore.clear();
+    };
+  }, [active, room]);
+
+  useEffect(() => {
+    if (!active || !room) return;
+    void api.sendPresence({ tabId: tabId(), ...whereRef.current(), away: document.visibilityState === "hidden", follows: followStore.get()?.accountId ?? null }).catch(() => undefined);
+  }, [active, room, place]);
 }

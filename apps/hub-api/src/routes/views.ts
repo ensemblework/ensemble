@@ -40,7 +40,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
     const accountId = accountIdOf(request);
-    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals] = await Promise.all([
+    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals, publicLinks] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(hubDecisionCount(prisma, userId)),
@@ -54,6 +54,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       // Ensemble Node's cards are the account's own: they count in its own space only, and only those its
       // sessions raise, as `GET /api/node/approvals` lists them (node/needs-me.ts).
       accountId === userId ? countOrZero(hubApprovalCount(prisma, accountId)) : 0,
+      countOrZero(prisma.publicLink.count({ where: { spaceId: userId } })),
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
@@ -87,6 +88,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         members,
         /** Members plus people with a single shared item: when above zero, presence is worth sending. */
         collaborators: members + recipients.length,
+        /** Items open to anyone with the link: visitors may arrive, so presence is worth sending. */
+        publicLinks,
         // Set when the space is someone else's and shared with you.
         shared:
           spaceOwner && access && access.kind !== "owner" && access.kind !== "gone"

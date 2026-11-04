@@ -1310,6 +1310,8 @@ export const api = bindClient({
         members?: number;
         /** Members and people with a shared item. Above zero, presence is sent. */
         collaborators?: number;
+        /** Items in this space open to anyone with the link. */
+        publicLinks?: number;
         /** Set when this is someone else's space, shared with you. */
         shared?: { owner: SharingPerson; role: "viewer" | "editor" } | null;
       };
@@ -1980,8 +1982,27 @@ export const api = bindClient({
   removeShare: (id: string) => del<void>(`/api/sharing/items/${id}`),
   /** Sent without the share header, so a wrong or removed share gets its own answer rather than the header's 404. */
   openShare: (id: string) => withShare(null, () => get<OpenedShare>(`/api/sharing/open/${id}`)),
-  presence: () => get<{ you: string; people: PresenceEntry[] }>("/api/presence"),
-  sendPresence: (data: PresenceUpdate, keepalive = false) => request<void>("/api/presence", { method: "POST", json: data, keepalive }),
+  presence: () => get<{ you: string; now?: number; people: PresenceEntry[] }>("/api/presence"),
+  // After a leave nothing more is said (a blur or the hidden tab as it closes) until the tab joins again.
+  sendPresence: (data: PresenceUpdate, keepalive = false) => (presenceLeft ? Promise.resolve() : request<void>("/api/presence", { method: "POST", json: { ...data, seq: presenceSeq() }, keepalive })),
+  /**
+   * Leaving as the tab closes or the view unmounts. A raw keepalive request, outside `request`,
+   * so the guard that aborts in-flight requests on `pagehide` (fetch-cancel.ts) cannot cancel it.
+   */
+  leavePresence: (tabId: string) => {
+    presenceLeft = true;
+    try {
+      void fetch(`${API}/api/presence`, {
+        method: "POST",
+        keepalive: true,
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...itemViewHeaders() },
+        body: JSON.stringify({ tabId, leave: true, seq: presenceSeq() }),
+      }).catch(() => undefined);
+    } catch {
+      // No fetch while the document is torn down: the server's sweep drops the tab instead.
+    }
+  },
   publicLinks: () => get<{ limit: number; links: PublicLink[] }>("/api/links"),
   publicLinkFor: (kind: ShareKind, resourceId: string) =>
     get<{ limit: number; used: number; allowed: boolean; link: PublicLink | null }>(`/api/links/item${qs({ kind, resourceId })}`),
@@ -2079,6 +2100,14 @@ export type PresenceEntry = {
   viewport: { x: number; y: number; zoom: number } | null;
   /** Their text cursor on a page: positions in the live document at `version`. */
   caret?: { anchor: number; head: number; version?: number } | null;
+  /** The first position in view on their page, at `version`: what a follower scrolls to. */
+  scroll?: { pos: number; version?: number } | null;
+  /** The account id of the person this tab follows. */
+  follows?: string | null;
+  /** The space's owner, or what their access lets them do there. */
+  role?: "owner" | "edit" | "view";
+  /** Their tab is in the background. */
+  away?: boolean;
   typing: boolean;
   at: number;
   gone?: boolean;
@@ -2097,6 +2126,21 @@ export function publicLinkUrl(token: string): string {
   return `${typeof window === "undefined" ? "" : window.location.origin}/p/${token}`;
 }
 
+let lastSeq = 0;
+let presenceLeft = false;
+/** This tab is in a room again after leaving one (a new view, or back from the back-forward cache). */
+export function presenceJoined(): void {
+  presenceLeft = false;
+}
+/**
+ * Orders this browser's presence posts, across reloads too (it starts from the clock), so the
+ * server ignores one that arrives after a newer one: a leave overtaken by the next join, say.
+ */
+export function presenceSeq(): number {
+  lastSeq = Math.max(lastSeq + 1, Date.now() * 1000);
+  return lastSeq;
+}
+
 export type PresenceUpdate = {
   tabId: string;
   route?: string | null;
@@ -2104,6 +2148,9 @@ export type PresenceUpdate = {
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
   caret?: { anchor: number; head: number; version?: number } | null;
+  scroll?: { pos: number; version?: number } | null;
+  follows?: string | null;
+  away?: boolean;
   typing?: boolean;
   leave?: boolean;
 };
