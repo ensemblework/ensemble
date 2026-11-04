@@ -437,14 +437,54 @@ export type DeliverableRecord = {
 
 export type ReminderRecord = { id: string; title: string; dueDate: string; dueTime: string | null };
 
+export type CalendarEventSource = {
+  connector: string;
+  /** "Google", "Outlook", or a calendar link's name. */
+  label: string;
+  calendar: string | null;
+  url: string | null;
+};
+
+/** One event on the merged Today calendar (hub-api calendar/read.ts). The same event from several calendars comes once, with every source. */
 export type CalendarEvent = {
   id: string;
   title: string;
   start: string;
   end: string | null;
   allDay: boolean;
+  /** The online meeting link, else the event's own page. */
   joinUrl: string | null;
   location: string | null;
+  /** All-day span as calendar dates, end exclusive. */
+  startDate?: string | null;
+  endDate?: string | null;
+  /** The online meeting link only. */
+  meetingUrl?: string | null;
+  url?: string | null;
+  organizer?: string | null;
+  attendees?: Array<{ email: string | null; name: string | null }>;
+  hasDescription?: boolean;
+  memberIds?: string[];
+  sources?: CalendarEventSource[];
+};
+
+/** A calendar that feeds Today: Google, Outlook, or one calendar link. */
+export type CalendarSourceState = { connector: string; id: string | null; label: string; lastSyncAt: string | null; lastError: string | null };
+
+export type CalendarPayload = {
+  events: CalendarEvent[];
+  sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }>;
+  sources?: CalendarSourceState[];
+  timeZone?: string;
+};
+
+/** A calendar subscription by link (ICS). The link itself is never sent back. */
+export type CalendarFeed = { id: string; name: string; host: string; lastSyncAt: string | null; lastError: string | null; itemCount: number; createdAt: string };
+
+export type CalendarSyncResult = {
+  outcomes: Array<{ connector: string; id?: string; label: string; ok: boolean; items: number; message: string }>;
+  merged: number;
+  message?: string;
 };
 
 export type PersonRecord = {
@@ -1329,6 +1369,7 @@ export const api = bindClient({
       reminders: ReminderRecord[];
       events: CalendarEvent[];
       sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }>;
+      calendarSources?: CalendarSourceState[];
       timezone: string;
     }>(`/api/today/home${qs({ from, to })}`),
 
@@ -1393,10 +1434,12 @@ export const api = bindClient({
   createReminder: (data: { title: string; dueDate: string; dueTime?: string | null; timeZone?: string }) =>
     post("/api/reminders", data),
   dismissReminder: (id: string) => post(`/api/reminders/${id}/dismiss`),
-  calendar: (from: string, to: string) =>
-    get<{ events: CalendarEvent[]; sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }> }>(
-      `/api/calendar${qs({ from, to })}`,
-    ),
+  calendar: (from: string, to: string, tz?: string) => get<CalendarPayload>(`/api/calendar${qs({ from, to, tz })}`),
+  syncCalendars: () => post<CalendarSyncResult>("/api/calendar/sync"),
+  calendarFeeds: () => get<{ feeds: CalendarFeed[] }>("/api/calendar/feeds"),
+  addCalendarFeed: (data: { url: string; name?: string }) => post<{ feed: CalendarFeed; events: number; warning?: string }>("/api/calendar/feeds", data),
+  renameCalendarFeed: (id: string, name: string) => patch<{ feed: CalendarFeed }>(`/api/calendar/feeds/${encodeURIComponent(id)}`, { name }),
+  removeCalendarFeed: (id: string) => del<void>(`/api/calendar/feeds/${encodeURIComponent(id)}`),
 
   // account
   authStatus: () => get<{

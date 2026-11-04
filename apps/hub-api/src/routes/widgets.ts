@@ -3,6 +3,7 @@
  * Takes are caps. Nothing here fans out per row.
  */
 import type { FastifyInstance } from "fastify";
+import { collapseEventRows, EVENT_ROW_SELECT } from "../calendar/read.js";
 
 function linesFrom(content: unknown): string[] {
   const out: string[] = [];
@@ -80,8 +81,8 @@ export async function widgetRoutes(app: FastifyInstance): Promise<void> {
       prisma.artifact.findMany({
         where: { userId, deletedAt: null, kind: "event", ts: { gte: now, lt: soon } },
         orderBy: { ts: "asc" },
-        take: 8,
-        select: { id: true, title: true, ts: true },
+        take: 24,
+        select: EVENT_ROW_SELECT,
       }),
       prisma.taskPage.findMany({
         where: { userId, taskId: { not: null }, task: { deletedAt: null } },
@@ -128,7 +129,8 @@ export async function widgetRoutes(app: FastifyInstance): Promise<void> {
         updatedAt: row.updatedAt.toISOString(),
       })),
       projects: projects.map((row) => ({ id: row.id, name: row.name, ...(progress.get(row.id) ?? { done: 0, total: 0 }) })),
-      events: events.map((row) => ({ id: row.id, title: row.title || "Untitled", start: row.ts.toISOString() })),
+      // Copies of one event from several calendars count once (calendar/dedupe.ts).
+      events: collapseEventRows(events).slice(0, 8).map((row) => ({ id: row.id, title: row.title || "Untitled", start: row.ts.toISOString() })),
       pages: pages.flatMap((row) =>
         row.task && row.taskId
           ? [{ taskId: row.taskId, title: row.task.title, projectId: row.task.projectId, lines: linesFrom(row.content) }]

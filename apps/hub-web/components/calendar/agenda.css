@@ -1,0 +1,262 @@
+/*
+ * The merged Today calendar: components/calendar/agenda.tsx, components/today/work-calendar.tsx,
+ * components/desk/calendar-agenda.tsx and the calendar links in Settings (calendar-links.tsx).
+ * Loaded by app/(hub)/layout.tsx, not by the components, so node tests can import them.
+ * Theme tokens only; the source colours below are the desk's chart colours.
+ */
+
+:root {
+  --cal-google: #85b5ee;
+  --cal-outlook: #64c9af;
+  --cal-ics: #b3a0e4;
+}
+[data-theme="light"] {
+  --cal-google: #386fba;
+  --cal-outlook: #23816a;
+  --cal-ics: #8160b4;
+}
+
+/* Source dots: one per calendar an event came from. */
+.cal-dots { display: inline-flex; flex-shrink: 0; align-items: center; }
+.cal-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--panel);
+}
+.cal-dot[data-source="google"] { background: var(--cal-google); }
+.cal-dot[data-source="outlook"] { background: var(--cal-outlook); }
+.cal-dot[data-source="ics"] { background: var(--cal-ics); }
+.cal-dots .cal-dot + .cal-dot { margin-left: -2px; }
+
+/* One day. */
+.cal-agenda { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+
+.cal-allday { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; }
+.cal-allday-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--ink);
+}
+
+.cal-rows { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.cal-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 3px 6px 3px 8px;
+  transition: background-color 150ms ease;
+}
+.cal-row:hover { background: var(--hover); }
+.cal-row-past { opacity: 0.55; }
+.cal-row-conflict::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(var(--warn-rgb) / 0.75);
+}
+.cal-time {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-width: 116px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cal-now {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--accent);
+}
+.cal-main { display: flex; min-width: 0; flex: 1 1 auto; align-items: baseline; gap: 8px; }
+.cal-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--ink);
+  border-radius: 3px;
+}
+a.cal-title:hover { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
+.cal-place {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 45%;
+  flex-shrink: 1;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.cal-conflict { display: inline-flex; flex-shrink: 0; color: var(--warn); }
+.cal-join {
+  display: inline-flex;
+  flex-shrink: 0;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.cal-join:hover { border-color: rgb(var(--accent-rgb) / 0.6); background: var(--accent-soft); }
+.cal-more { align-self: flex-start; border-radius: 4px; padding: 2px 6px; font-size: 11.5px; color: var(--muted); }
+.cal-more:hover { color: var(--ink); }
+.cal-empty { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 12px; color: var(--muted); }
+.cal-connect {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 12px;
+}
+.cal-connect-line { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink); }
+
+/* Which calendars feed Today, and their last sync. */
+.cal-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.cal-status-error {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  border-radius: 4px;
+  color: var(--warn);
+}
+.cal-status-error:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* The Today widget: the week as one row of days, then the chosen day. */
+.cal-widget { display: flex; flex-direction: column; gap: 6px; }
+.cal-head { display: flex; min-width: 0; align-items: center; gap: 2px; }
+.cal-week { display: grid; min-width: 0; flex: 1 1 auto; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
+.cal-day {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 8px;
+  padding: 3px 2px;
+  color: var(--muted);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.cal-day:hover { background: var(--hover); color: var(--ink); }
+.cal-day[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+.cal-day-date { display: inline-flex; min-width: 0; align-items: baseline; gap: 5px; white-space: nowrap; }
+.cal-day-name { font-size: 11px; letter-spacing: 0.02em; }
+.cal-day-num {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.cal-day-today .cal-day-name { color: var(--ink); font-weight: 600; }
+.cal-day-today .cal-day-num { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.cal-day-marks { display: flex; height: 4px; align-items: center; gap: 3px; }
+.cal-day-mark { width: 4px; height: 4px; border-radius: 999px; background: var(--faint); }
+.cal-day-mark-allday { background: rgb(var(--accent-rgb) / 0.7); }
+.cal-day-mark-conflict { background: var(--warn); }
+.cal-subhead { display: flex; min-width: 0; min-height: 24px; align-items: center; gap: 6px; padding-left: 2px; }
+.cal-day-heading { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--ink); }
+.cal-day-heading-date { font-weight: 400; color: var(--muted); }
+.cal-day-body { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.cal-widget[data-size="s"] .cal-day-date { flex-direction: column; align-items: center; gap: 1px; }
+
+/* The desk's Calendar agenda tile. */
+.cal-days { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
+.cal-day-group { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.cal-day-group > .cal-day-heading { padding-left: 2px; }
+.cal-tile-foot { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-top: auto; }
+.cal-tile-foot .cal-status { flex: 1 1 12rem; }
+
+/* Settings → Connections → Calendars on Today. */
+.cal-links { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.cal-link-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 2px;
+}
+.cal-link-row > .cal-dot { margin-top: 6px; }
+.cal-link-error { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: 12px; line-height: 17px; color: var(--warn); }
+.cal-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  padding: 12px;
+}
+
+.cal-join:focus-visible,
+.cal-day:focus-visible,
+.cal-more:focus-visible,
+a.cal-title:focus-visible,
+.cal-status-error:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / 0.9);
+  outline-offset: 1px;
+}
+
+@media (max-width: 480px) {
+  .cal-time { min-width: 0; }
+  .cal-place { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cal-row, .cal-join, .cal-day { transition: none; }
+}
+[data-reduce-motion="true"] .cal-row,
+[data-reduce-motion="true"] .cal-join,
+[data-reduce-motion="true"] .cal-day { transition: none; }

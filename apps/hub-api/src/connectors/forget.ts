@@ -35,7 +35,8 @@ export async function deleteSourceData(prisma: PrismaClient, userId: string, sou
   return prisma.$transaction(async (tx) => {
     if (meetings.length) await tx.meetingNote.deleteMany({ where: { userId, externalSource: { in: meetings } } });
     const removed = await tx.artifact.deleteMany({ where: { userId, OR: filters } });
-    await tx.syncState.deleteMany({ where: { userId, connector: { in: [...sources] } } });
+    // Calendars also keep the Today calendar's sync row (calendar/sources.ts syncKey).
+    await tx.syncState.deleteMany({ where: { userId, connector: { in: [...sources, ...sources.map((source) => `calendar:${source}`)] } } });
     return removed.count;
   });
 }

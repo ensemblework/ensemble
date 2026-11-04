@@ -5,6 +5,7 @@
  * and wait for Apply.
  */
 import { prisma } from "../lib/prisma.js";
+import { findJoinUrl } from "../calendar/dedupe.js";
 import { stripQuoted } from "./google.js";
 import { htmlToText, upsertArtifact, upsertPerson } from "./ingest.js";
 import { hasScopes, syncAccount } from "./tokens.js";
@@ -164,6 +165,9 @@ export async function syncOutlook(ctx: SyncContext): Promise<SyncResult> {
 
 export interface GraphEvent {
   id: string;
+  iCalUId?: string | null;
+  type?: string;
+  originalStart?: string | null;
   subject?: string | null;
   bodyPreview?: string;
   body?: { contentType?: string; content?: string };
@@ -190,54 +194,95 @@ const utc = (value: string | undefined): Date | null => {
 };
 
 /** One Graph event as an event artifact input, or null when it should not be on the calendar. Exported for tests. */
-export function outlookEventInput(event: GraphEvent) {
+export function outlookEventInput(event: GraphEvent, calendar: { id: string; name: string | null } = { id: "default", name: null }) {
   if (event.isCancelled || event.responseStatus?.response === "declined") return null;
   const start = utc(event.start?.dateTime);
   if (!start) return null;
   const end = utc(event.end?.dateTime);
-  const joinUrl = event.onlineMeeting?.joinUrl ?? event.onlineMeetingUrl ?? null;
+  const allDay = Boolean(event.isAllDay);
+  const text = event.body?.contentType?.toLowerCase() === "html" ? htmlToText(event.body.content ?? "") : (event.body?.content ?? event.bodyPreview ?? "");
+  const location = event.location?.displayName || null;
+  const joinUrl = event.onlineMeeting?.joinUrl ?? event.onlineMeetingUrl ?? findJoinUrl(location, text);
+  const original = utc(event.originalStart ?? undefined);
   return {
     kind: "event" as const,
     externalId: `outlook:${event.id}`,
     url: event.webLink ?? null,
     ts: start,
     title: event.subject?.trim() || "(busy)",
-    text: event.body?.contentType?.toLowerCase() === "html" ? htmlToText(event.body.content ?? "") : (event.body?.content ?? event.bodyPreview ?? ""),
+    text,
     participants: (event.attendees ?? []).map((row) => ({ name: row.emailAddress?.name ?? null, email: row.emailAddress?.address?.toLowerCase() ?? null })),
     authoredByMe: Boolean(event.isOrganizer),
     metadata: {
       source: "outlook",
+      calendarSync: true,
+      calendarId: calendar.id,
+      calendar: calendar.name,
       end: end ? end.toISOString() : null,
-      allDay: Boolean(event.isAllDay),
+      allDay,
+      // Graph sends all-day events as midnight UTC whatever zone is asked for: the date is the calendar day.
+      startDate: allDay ? start.toISOString().slice(0, 10) : null,
+      endDate: allDay && end ? end.toISOString().slice(0, 10) : null,
       joinUrl,
-      location: event.location?.displayName || null,
+      location,
       organizer: event.organizer?.emailAddress?.address?.toLowerCase() ?? null,
       eventId: event.id,
+      uid: event.iCalUId ?? null,
+      originalStart: original ? original.toISOString() : null,
+      hasDescription: Boolean(text.trim()),
     },
   };
 }
 
-const EVENT_SELECT = "id,subject,bodyPreview,body,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,webLink,onlineMeeting,onlineMeetingUrl,attendees,organizer,responseStatus";
+const EVENT_SELECT = "id,iCalUId,type,originalStart,subject,bodyPreview,body,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,webLink,onlineMeeting,onlineMeetingUrl,attendees,organizer,responseStatus";
 
-export async function syncOutlookCalendar(ctx: SyncContext): Promise<SyncResult> {
+interface GraphCalendar {
+  id: string;
+  name?: string | null;
+  isDefaultCalendar?: boolean;
+  owner?: { address?: string | null } | null;
+}
+
+const MAX_CALENDARS = 10;
+
+/** The default calendar plus the person's own others (holidays, birthdays), not calendars shared by colleagues. */
+async function outlookCalendars(token: string, account: string | null): Promise<GraphCalendar[]> {
+  const fallback = [{ id: "default", isDefaultCalendar: true }];
+  let all: GraphCalendar[];
+  try {
+    all = await graphPages<GraphCalendar>(token, `${GRAPH}/me/calendars?${odata({ $select: "id,name,isDefaultCalendar,owner", $top: 50 })}`, "Outlook calendar", 100);
+  } catch (error) {
+    if (error instanceof ConnectorError && error.needsReconnect) throw error;
+    return fallback;
+  }
+  const me = account?.toLowerCase();
+  const mine = all.filter((row) => row.isDefaultCalendar || (me && row.owner?.address?.toLowerCase() === me));
+  mine.sort((a, b) => Number(Boolean(b.isDefaultCalendar)) - Number(Boolean(a.isDefaultCalendar)));
+  return mine.length ? mine.slice(0, MAX_CALENDARS) : fallback;
+}
+
+/** Reads the Outlook calendars (Teams meetings included) in the window into the Today calendar (calendar/sync.ts). Sync only reads. */
+export async function syncOutlookCalendar(ctx: SyncContext, window = { from: new Date(Date.now() - 7 * 86_400_000), to: new Date(Date.now() + 21 * 86_400_000) }): Promise<SyncResult> {
   const { token, account } = await graphAccount(ctx.userId, ["Calendars.ReadWrite"], "Outlook calendar");
-  const from = new Date(Date.now() - 7 * 86_400_000);
-  const to = new Date(Date.now() + 21 * 86_400_000);
-  const url = `${GRAPH}/me/calendarView?${odata({ startDateTime: from.toISOString(), endDateTime: to.toISOString(), $top: 100, $select: EVENT_SELECT, $orderby: "start/dateTime" })}`;
-  const events = await graphPages<GraphEvent>(token, url, "Outlook calendar", CALENDAR_MAX, { Prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"' });
+  const { from, to } = window;
+  const query = odata({ startDateTime: from.toISOString(), endDateTime: to.toISOString(), $top: 100, $select: EVENT_SELECT, $orderby: "start/dateTime" });
+  const prefer = { Prefer: 'outlook.timezone="UTC", outlook.body-content-type="text"' };
+  const events: Array<{ event: GraphEvent; calendar: { id: string; name: string | null } }> = [];
+  const ids = new Set<string>();
+  for (const calendar of await outlookCalendars(token, account)) {
+    const path = calendar.id === "default" ? "/me/calendarView" : `/me/calendars/${encodeURIComponent(calendar.id)}/calendarView`;
+    for (const event of await graphPages<GraphEvent>(token, `${GRAPH}${path}?${query}`, "Outlook calendar", CALENDAR_MAX, prefer)) {
+      if (ids.has(event.id)) continue;
+      ids.add(event.id);
+      events.push({ event, calendar: { id: calendar.isDefaultCalendar ? "default" : calendar.id, name: calendar.name ?? null } });
+    }
+    if (events.length >= CALENDAR_MAX) break;
+  }
   const result: SyncResult = { items: 0, stored: [], proposals: [], triage: [], account };
   const seen: string[] = [];
-  const self = [account, ctx.settings.email];
-  for (const event of events) {
-    const input = outlookEventInput(event);
+  for (const { event, calendar } of events) {
+    const input = outlookEventInput(event, calendar);
     if (!input) continue;
-    for (const attendee of event.attendees ?? []) {
-      await upsertPerson(
-        ctx.userId,
-        { email: attendee.emailAddress?.address, name: attendee.emailAddress?.name, at: input.ts, evidence: `outlook_calendar:${event.id}` },
-        self,
-      );
-    }
     const stored = await upsertArtifact(ctx.userId, input);
     seen.push(input.externalId);
     if (!stored) continue;

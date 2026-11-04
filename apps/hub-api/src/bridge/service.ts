@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { collapseEventRows, EVENT_ROW_SELECT } from "../calendar/read.js";
 import { NOT_UPLOADED } from "../context/artifacts.js";
 import { EXTRACTED_TEXT_TO_MODELS } from "../files/extracted-text-policy.js";
 import { fileFormat, hasModule, PageDocument } from "@ensemble/shared-types";
@@ -378,13 +379,14 @@ export async function listMeetings(db: Db, userId: string, query: { from?: strin
   const events = await db.artifact.findMany({
     where: { userId, deletedAt: null, kind: "event", ts: { gte: from, lt: to } },
     orderBy: { ts: "asc" },
-    take: query.limit,
-    select: { id: true, title: true, ts: true, url: true, metadata: true, participants: true },
+    take: query.limit * 3,
+    select: EVENT_ROW_SELECT,
   });
   return {
-    meetings: events.map(eventCard),
+    // One row per event, however many calendars it came from (calendar/dedupe.ts).
+    meetings: collapseEventRows(events).slice(0, query.limit).map(eventCard),
     window: { from: from.toISOString(), to: to.toISOString() },
-    notes: `${UNTRUSTED_NOTE} Outlook calendar is not connected in this build; these rows are Artifact kind "event".`,
+    notes: `${UNTRUSTED_NOTE} Events from the person's connected calendars (Google, Outlook, calendar links), one row per event even when several calendars have it; Artifact kind "event".`,
     gaps: DATA_GAPS,
   };
 }
@@ -463,8 +465,8 @@ export async function todayBriefing(db: Db, userId: string) {
     db.artifact.findMany({
       where: { userId, deletedAt: null, kind: "event", ts: { gte: day.from, lt: new Date(day.from.getTime() + 7 * 86_400_000) } },
       orderBy: { ts: "asc" },
-      take: 20,
-      select: { id: true, title: true, ts: true, url: true, metadata: true, participants: true },
+      take: 60,
+      select: EVENT_ROW_SELECT,
     }),
     db.approval.count({ where: { userId, decision: null } }),
     db.agentDecision.count({ where: { userId, status: "pending" } }),
@@ -487,7 +489,7 @@ export async function todayBriefing(db: Db, userId: string) {
       trust: "hub" as const,
       trustLabel: "A deliverable stored in your Ensemble Hub.",
     })),
-    meetings: meetings.map(eventCard),
+    meetings: collapseEventRows(meetings).slice(0, 20).map(eventCard),
     needsMe: { pendingApprovals: approvals, pendingEditorDecisions: decisions, url: hubUrl("/needs-me") },
     omitted: ["Private reminders are stored in the Hub and shown on Today. They are not included here."],
     notes: REFERENCE_NOTE,

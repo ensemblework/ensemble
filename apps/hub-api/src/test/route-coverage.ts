@@ -344,6 +344,15 @@ export const artifactRouteCoverage: Readonly<Record<string, readonly RouteCheck[
   "DELETE /api/artifacts/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
+/** The Today calendar's sync and calendar links. Owned by src/routes/calendar.ts; checked in src/calendar/calendar.integration.test.ts. */
+export const calendarRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "POST /api/calendar/sync": ["happy-path", "isolation", "hosted-verification"],
+  "GET /api/calendar/feeds": ["happy-path", "isolation"],
+  "POST /api/calendar/feeds": ["happy-path", "invalid-input", "hosted-verification"],
+  "PATCH /api/calendar/feeds/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "DELETE /api/calendar/feeds/:id": ["happy-path", "isolation", "unknown-id"],
+};
+
 export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/context/search": ["happy-path", "isolation", "invalid-input"],
 };
@@ -396,4 +405,5 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   ...linksRouteCoverage,
   ...fileRouteCoverage,
   ...artifactRouteCoverage,
+  ...calendarRouteCoverage,
 };

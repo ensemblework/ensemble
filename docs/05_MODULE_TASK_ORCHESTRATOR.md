@@ -29,6 +29,7 @@ Task / deliverable / assistant / CLI assignment
 | Stale notices, watchers | Built-in conditions only, not user programs |
 | Retention | Daily at/after 03:30 local time; a missed day catches up ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)) |
 | Scheduled fetch | Due only with `ENSEMBLE_SCHEDULED_FETCH=on`; even then `fetchAll(..., "schedule")` in `connectors/sync.ts` reads no provider |
+| Calendar refresh | Every 30 minutes per person with a calendar on Today (`calendar/sync.ts` `refreshCalendarsIfDue`, one claim per 30-minute slot): reads Google Calendar, Outlook and calendar links and merges copies of one event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)). `ENSEMBLE_CALENDAR_REFRESH=off` stops it |
 
 Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler, mail-to-task pipeline or user-defined routine. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
 

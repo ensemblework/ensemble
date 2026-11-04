@@ -410,7 +410,7 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
 
 /**
  * Hands a space to one of its members, once. The space's content stays; everything private to
- * the old owner leaves with them: connected apps, model keys, devices, editor keys, settings.
+ * the old owner leaves with them: connected apps, calendar links, model keys, devices, editor keys, settings.
  * The old owner stays on as an editor, so nobody loses their work.
  */
 export async function transferSpace(db: PrismaClient, accountId: string, spaceId: string, toId: string): Promise<void> {
@@ -437,9 +437,10 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
       throw new SharingError("Their contact list is full, so they could not keep you on the space. Ask them to make room first.", 409);
     }
 
-    // Private to the old owner: connected apps, model keys, devices, editor keys, preferences.
+    // Private to the old owner: connected apps, calendar links, model keys, devices, editor keys, preferences.
     await tx.authToken.deleteMany({ where: { userId: spaceId } });
     await tx.mcpConnection.deleteMany({ where: { userId: spaceId } });
+    await tx.calendarFeed.deleteMany({ where: { userId: spaceId } });
     await tx.modelCredential.deleteMany({ where: { userId: spaceId } });
     await tx.modelCatalog.deleteMany({ where: { userId: spaceId } });
     await tx.apiToken.updateMany({ where: { userId: spaceId, revokedAt: null }, data: { revokedAt: new Date() } });

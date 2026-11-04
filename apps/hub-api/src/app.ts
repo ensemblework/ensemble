@@ -37,6 +37,7 @@ import { IncludedLimitError } from "./included/errors.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { contextRoutes } from "./routes/context.js";
 import { boardRoutes } from "./routes/board.js";
+import { calendarRoutes } from "./routes/calendar.js";
 import { pageBoardRoutes } from "./routes/page-boards.js";
 import { skillRoutes } from "./routes/skills.js";
 import { runRoutes } from "./routes/runs.js";
@@ -250,6 +251,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     pageRoutes,
     collabRoutes,
     boardRoutes,
+    calendarRoutes,
     pageBoardRoutes,
     assistantRoutes,
     internalRoutes,

@@ -5,6 +5,8 @@
  * minutes) and is scored by shared attendees and title words. Two events that
  * score about the same leave the meeting unmatched rather than guessing.
  */
+import type { Prisma } from "@prisma/client";
+import { collapseEventRows } from "../../calendar/read.js";
 import { prisma } from "../../lib/prisma.js";
 
 export interface MeetingWindow {
@@ -136,7 +138,7 @@ function candidate(row: ArtifactRow): EventCandidate {
   };
 }
 
-const SELECT = { id: true, externalId: true, title: true, ts: true, url: true, participants: true, metadata: true, projectId: true } as const;
+const SELECT = { id: true, externalId: true, title: true, ts: true, url: true, participants: true, metadata: true, projectId: true, createdAt: true } as const;
 
 /** Stored calendar events near the meeting, plus the one its calendar event id names. */
 export async function matchEvent(userId: string, meeting: MeetingWindow, self: ReadonlySet<string>): Promise<MatchResult> {
@@ -148,12 +150,16 @@ export async function matchEvent(userId: string, meeting: MeetingWindow, self: R
     take: 60,
   });
   const wanted = meeting.calendarEventId?.trim();
+  // The same meeting from two calendars is one candidate, not a tie (calendar/dedupe.ts).
+  const named = (row: ArtifactRow) => Boolean(wanted) && (row.externalId === wanted || row.externalId === `outlook:${wanted}`);
+  const kept = collapseEventRows(rows.map((row) => ({ ...row, metadata: row.metadata as Prisma.JsonValue })));
+  for (const row of rows) if (named(row) && !kept.some((item) => item.id === row.id)) kept.push({ ...row, metadata: row.metadata as Prisma.JsonValue, memberIds: [row.id] });
   if (wanted && !rows.some((row) => row.externalId === wanted || row.externalId === `outlook:${wanted}`)) {
     const exact = await prisma.artifact.findFirst({
       where: { userId, kind: "event", deletedAt: null, externalId: { in: [wanted, `outlook:${wanted}`] } },
       select: SELECT,
     });
-    if (exact) rows.push(exact);
+    if (exact) kept.push({ ...exact, metadata: exact.metadata as Prisma.JsonValue, memberIds: [exact.id] });
   }
-  return pickEvent(meeting, rows.map(candidate), self);
+  return pickEvent(meeting, kept.map(candidate), self);
 }
