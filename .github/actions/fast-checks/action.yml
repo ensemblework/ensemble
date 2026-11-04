@@ -43,6 +43,8 @@ runs:
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
     - name: Included model defaults and credit-safe search
       shell: bash
+      env:
+        DATABASE_URL: postgresql://localhost/unused
       run: |
         pnpm --filter @ensemble/shared-types exec tsx --test src/included.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/included/pricing.test.ts src/included/budget.integration.test.ts src/runtime/included.test.ts src/runtime/web-search.test.ts src/node/model.test.ts

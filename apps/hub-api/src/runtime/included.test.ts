@@ -368,14 +368,20 @@ test("a call past its limit names the model and the limit, and closes Azure's st
   });
   const book = ledger();
   const started = Date.now();
-  await assert.rejects(
-    askRuntimeStream({ messages: [{ role: "user", content: "Find papers." }], model: "gpt-6.1-sol", provider: "ensemble", userId: "u1", activityId: "a1", chatTools: TOOLS, responsesTools: [], timeoutMs: 1_000 }),
-    (error) => {
-      assert.ok(error instanceof ModelTimeoutError);
-      assert.equal(error.message, "GPT-6.1 Sol did not answer within 1 second, so I stopped waiting. Ask again, or try a narrower question.");
-      return true;
-    },
-  );
+  // The fake stream has no socket to keep Node alive for AbortSignal.timeout's unref'ed timer.
+  const keepAlive = setTimeout(() => {}, 5_000);
+  try {
+    await assert.rejects(
+      askRuntimeStream({ messages: [{ role: "user", content: "Find papers." }], model: "gpt-6.1-sol", provider: "ensemble", userId: "u1", activityId: "a1", chatTools: TOOLS, responsesTools: [], timeoutMs: 1_000 }),
+      (error) => {
+        assert.ok(error instanceof ModelTimeoutError);
+        assert.equal(error.message, "GPT-6.1 Sol did not answer within 1 second, so I stopped waiting. Ask again, or try a narrower question.");
+        return true;
+      },
+    );
+  } finally {
+    clearTimeout(keepAlive);
+  }
   assert.ok(Date.now() - started < 3_000, "it ends at its limit");
   assert.equal(sent[0]!.body.stream, true);
   assert.ok(closed, "Azure's stream is closed, so it stops generating");
