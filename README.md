@@ -38,6 +38,8 @@ Open http://localhost:3000 and sign up; locally the first account claims the pla
 
 Hosted included AI defaults to **GPT-5 mini and GPT-4.1 mini**, served from the operator's Visual Studio Azure credit subscription. The Hub, Node and paired desktop/CLI share their environment's model list and credits. Luna, Sol and Grok are not currently included; their adapters remain available for eligible future deployments. Personal model keys and AI plans are unchanged ([included AI](docs/33_INCLUDED_AI.md)).
 
+Hosted Google data access, productivity use, selected-provider AI processing, storage, sharing and deletion are described in the public [Privacy policy](https://ensemblework.com/privacy#google-user-data) and [Terms](https://ensemblework.com/terms). The Google connector links these disclosures before consent; signing in and connecting Workspace remain separate authorizations.
+
 `pnpm dev:web`, `pnpm dev:api` and `pnpm dev:agent` start one piece each; use them instead of `pnpm dev`, not beside it, or the ports collide (`Address already in use`). If port 5055 is still taken after stopping `pnpm dev`, find the leftover with `lsof -nP -iTCP:5055 -sTCP:LISTEN` and stop it.
 
 | Symptom | Fix |

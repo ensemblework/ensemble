@@ -129,6 +129,15 @@ export function ConnectorDetail({
           </div>
         </header>
         <p className="text-[13.5px] leading-5 text-ink/90">{entry.tagline}</p>
+        {entry.provider === "google" ? (
+          <section aria-label="Google data privacy" className="rounded-xl border border-line px-3 py-3 text-[12.5px] leading-5 text-muted">
+            Google data is used for the productivity features you choose, not advertising or general model training. Calendar access can keep Today in sync. If you use AI features with connected content, relevant data can be sent to your selected model provider or agent; use provider settings compatible with Google&apos;s Limited Use requirements.{" "}
+            <a href="https://ensemblework.com/privacy#google-user-data" target="_blank" rel="noreferrer" className="text-accent underline underline-offset-2">
+              Google data, AI processing and deletion
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          </section>
+        ) : null}
         {entry.status === "soon" ? (
           <section className="rounded-xl border border-dashed border-line-strong px-3 py-3 text-[13px] text-muted">
             <div className="font-medium text-ink">Coming soon</div>
