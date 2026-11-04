@@ -50,8 +50,8 @@ export default function PagesPage() {
   const row = (page: DirectoryPage) => {
     const trail = parentTrail(page, byId);
     const when = sort === "created" && page.createdAt ? `Created ${shortDate(page.createdAt)}` : `Edited ${relative(page.updatedAt)}`;
-    return <li key={page.id}>
-      <Link href={boardPageHref(page)} className="tile group flex items-start gap-3 rounded-xl bg-panel px-4 py-3">
+    return <li key={page.id} className="min-w-0">
+      <Link href={boardPageHref(page)} className="tile group flex h-full items-start gap-3 rounded-xl bg-panel px-4 py-3">
         <FileText size={18} className="mt-0.5 shrink-0 text-muted" aria-hidden />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{page.title || "Untitled"}</span>
@@ -63,8 +63,8 @@ export default function PagesPage() {
     </li>;
   };
 
-  return <div className="mx-auto max-w-4xl px-6 pb-20 pt-10 sm:px-10">
-    <PageHeader title="Pages" description="Independent writing up front. Board pages, neatly tucked away below." />
+  return <div className="mx-auto max-w-5xl px-6 pb-20 pt-10 sm:px-10">
+    <PageHeader title="Pages" />
     {pages.error ? <LoadError error={pages.error} what="your pages" retrying={pages.isFetching} onRetry={() => { void pages.refetch(); }} /> : pages.isLoading ? <SkeletonRows count={3} /> : <>
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <input
@@ -88,14 +88,14 @@ export default function PagesPage() {
           ? `${plural(found.length, "page")} match${found.length === 1 ? "es" : ""}${text.isFetching ? " · searching page text…" : ""}`
           : plural(all.length, "page")}
       </p>
-      {visible.length ? <ul ref={list} className="mt-2 flex flex-col gap-2">{visible.map(row)}</ul> : <p className="mt-4 text-[14px] text-muted">{searching ? (text.isFetching ? "Searching page text…" : found.length ? "Matching pages are grouped by board below." : "No page title or text matches that search.") : grouped.boards.length ? "Your board pages are below. Create a page for independent notes." : "Create a page or import from Notion using the pages panel."}</p>}
+      {visible.length ? <ul ref={list} className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">{visible.map(row)}</ul> : <p className="mt-4 text-[14px] text-muted">{searching ? (text.isFetching ? "Searching page text…" : found.length ? "Matching pages are grouped by board below." : "No page title or text matches that search.") : grouped.boards.length ? "Your board pages are below. Create a page for independent notes." : "Create a page or import from Notion using the pages panel."}</p>}
       {left > 0 ? <button type="button" className="btn mt-4" onClick={showMore}>Show {Math.min(PAGE_STEP, left)} more <span className="text-muted">({left} left)</span></button> : null}
       {grouped.boards.length > 0 && <div className="mt-8 space-y-3">
         <h2 className="mb-3 text-[11px] font-medium uppercase tracking-widest text-muted">Pages in boards</h2>
         {grouped.boards.map((group) => <details key={group.id} className="group/board rounded-xl border border-line bg-panel/30" open={searching || undefined}>
           <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-4 text-[14px]"><ChevronRight size={15} className="text-muted group-open/board:rotate-90" /><Columns3 size={17} className="text-muted" /><span className="min-w-0 flex-1 truncate font-medium">{group.title}</span><span className="text-[12px] text-muted">{plural(group.pages.length, "page")}</span></summary>
           <div className="px-3 pb-3"><Link href={group.id === "ensemble" ? "/board" : boardHref(group.id)} className="mb-3 ml-1 inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink">Open board<ArrowUpRight size={12} /></Link>
-            <ul className="flex flex-col gap-2">{group.pages.slice(0, shown).map(row)}</ul>
+            <ul className="grid grid-cols-1 gap-2 md:grid-cols-2">{group.pages.slice(0, shown).map(row)}</ul>
             {group.pages.length > shown && <button type="button" className="btn mt-3" onClick={() => setShown((count) => count + PAGE_STEP)}>Show more pages in {group.title}</button>}
           </div>
         </details>)}

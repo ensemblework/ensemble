@@ -353,6 +353,8 @@ export type StandalonePageSummary = {
 export type StandalonePageRecord = {
   parentId?: string | null;
   parentTaskId?: string | null;
+  /** The pages it sits inside, from the top down (a task's page goes by the task's title). */
+  ancestors?: Array<{ id: string; title: string; taskId: string | null }>;
   id: string;
   title: string;
   taskId: null;

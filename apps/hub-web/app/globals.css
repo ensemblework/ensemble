@@ -2315,6 +2315,49 @@ span.mention:not(.mention-off) {
 }
 .date-block span:first-child { font-size: 14px; font-weight: 700; }
 .date-block span:last-child { font-size: 11px; letter-spacing: 0.04em; color: var(--muted); }
+/* A file's own screen: one thin bar, then the file. */
+.file-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 48px;
+  padding: 6px 10px 6px 8px;
+}
+.file-bar-title {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: min(42ch, 40vw);
+  align-items: center;
+  gap: 8px;
+}
+.file-bar-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+}
+.file-bar-slot:empty { display: none; }
+.file-bar-slot > .file-bar-tools { justify-content: center; }
+/* The viewer's own controls sit at the bar's height. */
+.file-bar-slot .field { height: 28px; }
+.file-bar-slot .icon-btn, .file-bar-slot .btn-ghost, .file-bar-slot .btn { height: 28px; }
+.file-bar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+@media (max-width: 900px) {
+  .file-bar-title { max-width: none; flex: 1 1 0; }
+  /* The viewer's controls take a row of their own below the name. */
+  .file-bar-slot { order: 3; flex-basis: 100%; justify-content: flex-start; }
+  .file-bar-slot > .file-bar-tools { justify-content: flex-start; }
+}
+
 .file-mark {
   display: inline-flex;
   height: 28px;

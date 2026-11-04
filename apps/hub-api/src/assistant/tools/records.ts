@@ -5,7 +5,7 @@ import { AddInput, KINDS, itemLabel } from "./desk.js";
 import { updateTask } from "../../services/tasks.js";
 import { recordUndoInTransaction, type UndoModel } from "../../lib/undo.js";
 import { sseHub } from "../../lib/sse.js";
-import { resolvePageParent } from "../../pages/store.js";
+import { assertNestingFits, resolvePageParent } from "../../pages/store.js";
 
 const Id = z.string().uuid();
 const DeskInput = AddInput.extend({ id: Id });
@@ -108,7 +108,7 @@ export const recordTools = [
       return toolOk(label ? `Updated “${label}” in ${KINDS[input.kind].label}.` : `Updated ${input.kind}.`, { id: input.id, kind: input.kind, ...(label ? { title: label } : {}) }, { href: "/today", invalidate: ["desk-live", "context", "tasks"] });
     }
   }),
-  defineTool({ name: "hub_move_page", area: "projects", description: "Move a standalone page beneath another page (parentId), inside a task's page (parentTaskId), or to the top level with parentId null. Keeps the page and its descendants. Cannot create a nesting cycle.", input: z.object({ pageId: Id, parentId: Id.nullable(), parentTaskId: Id.optional() }), isWrite: true, risk: "low", undoable: true,
+  defineTool({ name: "hub_move_page", area: "projects", description: "Move a standalone page beneath another page (parentId), inside a task's page (parentTaskId), or to the top level with parentId null. Keeps the page and its descendants. Cannot create a nesting cycle. Pages nest at most 4 levels deep (a page and three levels inside it), counting the pages it carries.", input: z.object({ pageId: Id, parentId: Id.nullable(), parentTaskId: Id.optional() }), isWrite: true, risk: "low", undoable: true,
     async preview(ctx, input) { return `Move “${await pageTitle(ctx.prisma, ctx.userId, input.pageId)}” ${input.parentTaskId ? "inside a task" : input.parentId ? `under “${await pageTitle(ctx.prisma, ctx.userId, input.parentId)}”` : "to the top level"}.`; },
     async run(ctx, input) {
       const moved = await inTransaction(ctx, async tx => {
@@ -118,6 +118,7 @@ export const recordTools = [
         if (input.parentTaskId) {
           // A task's page has no parent of its own, so there is no cycle to check.
           const parentId = await resolvePageParent(tx, ctx.userId, { parentTaskId: input.parentTaskId });
+          await assertNestingFits(tx, ctx.userId, parentId, before.id);
           const after = await tx.taskPage.update({ where: { id: before.id }, data: { parentId } });
           const op = { op: "update" as const, model: "taskPage" as const, id: before.id, before, after };
           await recordUndoInTransaction(tx, { userId: ctx.userId, actor: "agent", label: "Moved page", kind: "update", subject: "page", inverse: op, forward: op });
@@ -126,6 +127,7 @@ export const recordTools = [
         }
         let parent = input.parentId; const seen = new Set([input.pageId]);
         while (parent) { if (seen.has(parent)) throw new Error("A page cannot be nested under itself or a descendant."); seen.add(parent); const row = await tx.taskPage.findFirst({ where: { id: parent, userId: ctx.userId, deletedAt: null }, select: { parentId: true } }); if (!row) throw new Error("Parent page not found."); parent = row.parentId; }
+        await assertNestingFits(tx, ctx.userId, input.parentId, before.id);
         const after = await tx.taskPage.update({ where: { id: before.id }, data: { parentId: input.parentId } });
         const op = { op: "update" as const, model: "taskPage" as const, id: before.id, before, after };
         await recordUndoInTransaction(tx, { userId: ctx.userId, actor: "agent", label: "Moved page", kind: "update", subject: "page", inverse: op, forward: op });
