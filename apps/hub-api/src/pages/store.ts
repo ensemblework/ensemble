@@ -178,6 +178,8 @@ export type StandalonePageSummary = {
 export type StandalonePageContent = {
   parentId: string | null;
   parentTaskId: string | null;
+  /** The pages above it, from the top down (on a page read; empty when it has no parent or is shared). */
+  ancestors?: PageAncestor[];
   id: string;
   title: string;
   taskId: null;
@@ -257,9 +259,58 @@ export function searchSnippet(text: string, title: string, query: string): strin
   return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
 }
 
-/** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
 /** Where a nested page goes: inside a page, or inside a task's page. */
 export type PageParent = { parentPageId?: string | null; parentTaskId?: string | null };
+
+/**
+ * How deep pages nest: a page (or a task's page), a page inside it, one inside that, and one more.
+ * Imports keep the structure they bring.
+ */
+export const MAX_PAGE_DEPTH = 4;
+const TOO_DEEP = `Pages nest up to ${MAX_PAGE_DEPTH} levels. Put this one next to its parent, or higher up.`;
+
+/** A page above another, nearest last: its title (a task's page goes by the task's title) and its task. */
+export type PageAncestor = { id: string; title: string; taskId: string | null };
+
+/** The pages a page sits inside, from the top down. Stops at a page that is gone or not this space's. */
+export async function pageAncestors(db: Db | PrismaClient, userId: string, id: string): Promise<PageAncestor[]> {
+  const out: PageAncestor[] = [];
+  const seen = new Set([id]);
+  let next = (await db.taskPage.findFirst({ where: { id, userId }, select: { parentId: true } }))?.parentId ?? null;
+  while (next && !seen.has(next) && out.length < 16) {
+    seen.add(next);
+    const row = await db.taskPage.findFirst({
+      where: { id: next, userId, deletedAt: null },
+      select: { id: true, title: true, parentId: true, taskId: true, task: { select: { title: true, deletedAt: true } } },
+    });
+    if (!row || row.task?.deletedAt) break;
+    out.unshift({ id: row.id, title: (row.taskId ? row.task?.title : row.title) || "Untitled", taskId: row.taskId });
+    next = row.parentId;
+  }
+  return out;
+}
+
+/** How many levels a page and the pages inside it take (a page with no pages inside takes 1). */
+async function subtreeLevels(db: Db | PrismaClient, userId: string, id: string): Promise<number> {
+  let levels = 1;
+  let frontier = [id];
+  const seen = new Set(frontier);
+  while (frontier.length && levels <= MAX_PAGE_DEPTH + 1) {
+    const children = await db.taskPage.findMany({ where: { userId, parentId: { in: frontier }, deletedAt: null }, select: { id: true } });
+    frontier = children.map((child) => child.id).filter((child) => !seen.has(child));
+    for (const child of frontier) seen.add(child);
+    if (frontier.length) levels += 1;
+  }
+  return levels;
+}
+
+/** Refuses a page (with the pages inside it) under `parentId` when that would nest deeper than the limit. */
+export async function assertNestingFits(db: Db | PrismaClient, userId: string, parentId: string | null, pageId?: string): Promise<void> {
+  if (!parentId) return;
+  const parentDepth = (await pageAncestors(db, userId, parentId)).length + 1;
+  const levels = pageId ? await subtreeLevels(db, userId, pageId) : 1;
+  if (parentDepth + levels > MAX_PAGE_DEPTH) throw new TaskPageError("TOO_DEEP", TOO_DEEP, 400);
+}
 
 /**
  * The page a new page nests under: a page of this space, or a task's own page (made now if the
@@ -277,10 +328,13 @@ export async function resolvePageParent(db: Db, userId: string, parent: PagePare
   if (parent.parentPageId) {
     const page = await db.taskPage.findFirst({ where: { id: parent.parentPageId, userId, deletedAt: null }, select: { id: true } });
     if (!page) throw new TaskPageError("PARENT_NOT_FOUND", "That page is not in this space.", 404);
+    await assertNestingFits(db, userId, page.id);
     return page.id;
   }
   return null;
 }
+
+/** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
 
 export async function createStandalonePage(
   prisma: Db,
@@ -323,7 +377,11 @@ export async function getStandalonePage(
   options: { trashed?: boolean } = {},
 ): Promise<StandalonePageContent & { deletedAt?: string }> {
   const page = await ownedStandalone(prisma, userId, id);
-  if (page) return standaloneDto(page);
+  if (page) {
+    const dto = standaloneDto(page);
+    // The way back up (the page header's breadcrumb), for the space's own people: a shared page shows no parents.
+    return { ...dto, ancestors: dto.parentId ? await pageAncestors(prisma, userId, page.id) : [] };
+  }
   const binned = isGuestIn(userId)
     ? null
     : await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: { not: null } }, include: PAGE_INCLUDE });

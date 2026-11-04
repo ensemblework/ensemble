@@ -1757,6 +1757,7 @@ model User {
   cliAuthRequests       CliAuthRequest[]
   importJobs            ImportJob[]
   mcpConnections        McpConnection[]
+  calendarFeeds         CalendarFeed[]
   personIdentities      PersonIdentity[]
   projectLinks          ProjectLink[]
   apiTokens             ApiToken[]
@@ -2252,6 +2253,29 @@ model McpConnection {
   @@unique([userId, serverId])
   @@index([userId])
   @@map("mcp_connections")
+}
+
+/// An iCalendar subscription (ICS link) on the Today calendar (docs/03 §2.4).
+/// Such links usually carry a private token, so the address is stored encrypted.
+model CalendarFeed {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  name       String
+  /// The subscription address, encrypted with lib/secrets.ts.
+  secret     String
+  /// Keyed hash of the address, to refuse the same link twice.
+  urlKey     String    @map("url_key")
+  /// Host only, for display.
+  host       String
+  lastSyncAt DateTime? @map("last_sync_at")
+  lastError  String?   @map("last_error")
+  itemCount  Int       @default(0) @map("item_count")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, urlKey])
+  @@map("calendar_feeds")
 }
 
 /// People an account shares with. At most five per account; removing one revokes everything shared with them.

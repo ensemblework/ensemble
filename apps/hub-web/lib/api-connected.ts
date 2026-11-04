@@ -33,8 +33,16 @@ export type ImportedMeetingNote = {
   occurredAt: string;
   summary: string;
   decisions: string[];
-  actionItems: Array<{ text: string; owner: MeetingPersonRef | null; mine: boolean; completed: boolean; due: string | null; url: string | null }>;
+  actionItems: Array<{ text: string; owner: MeetingPersonRef | null; mine: boolean; completed: boolean; due: string | null; url: string | null; at?: string | null; taskId?: string | null }>;
   waitingOn: Array<{ text: string; owner: MeetingPersonRef | null }>;
+  /** Decisions and action items were found by phrases in what was said, not written by a tool. */
+  suggested?: boolean;
+  speakers?: string[];
+  lineCount?: number;
+  durationMinutes?: number | null;
+  format?: string | null;
+  /** Only on one note (GET /api/meetings/notes/:id). */
+  transcript?: Array<{ speaker: string; text: string; at: string | null }>;
   transcriptUrl: string | null;
   event: { id: string; title: string; url: string | null; startsAt: string } | null;
   project: { id: string; name: string } | null;

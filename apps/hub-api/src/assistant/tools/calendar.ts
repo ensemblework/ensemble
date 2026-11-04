@@ -1,21 +1,21 @@
 import { isGuestIn } from "../../sharing/context.js";
 /**
- * The calendar Ensemble keeps (events synced from every connected Google and Outlook calendar,
- * the same rows as GET /api/calendar) and the weekly recap (GET /api/recap/week), for the
- * assistant. Read only; creating or moving events is the calendar app tools' job.
+ * The calendar Ensemble keeps (every connected Google and Outlook calendar and calendar link,
+ * copies of one event merged: the same list as GET /api/calendar, calendar/read.ts) and the
+ * weekly recap (GET /api/recap/week), for the assistant. Read only; creating or moving events
+ * is the calendar app tools' job.
  */
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 import { addCalendarDays } from "../../cowork/dates.js";
 import { participantNames } from "../../cowork/meetings.js";
 import { weeklyRecap } from "../../cowork/service.js";
 import { zonedDateTimeToUtc, zonedParts } from "../../lib/clock.js";
+import { readCalendar } from "../../calendar/read.js";
 import { defineTool, toolOk } from "../types.js";
 
 export const DateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD. Work out relative dates from today's date in the prompt.");
 
-const CALENDAR_SOURCE: Record<string, string> = { google: "Google Calendar", outlook: "Outlook calendar" };
-const CALENDAR_SYNCS = ["google_calendar", "outlook_calendar"];
+const CALENDAR_SOURCE: Record<string, string> = { google_calendar: "Google Calendar", outlook_calendar: "Outlook calendar" };
 const MAX_DAYS = 62;
 
 function badInput(message: string): Error {
@@ -46,7 +46,7 @@ function endTime(end: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(end);
 }
 
-function namesOf(participants: Prisma.JsonValue): string[] {
+function namesOf(participants: unknown): string[] {
   const names = participantNames(participants);
   return names.length > 10 ? [...names.slice(0, 10), `and ${names.length - 10} more`] : names;
 }
@@ -56,7 +56,7 @@ export const calendarTools = [
     name: "hub_list_events",
     area: "tasks",
     description:
-      "List calendar events already saved in Ensemble (Google Calendar, Outlook) between from and to (YYYY-MM-DD, inclusive, the person's time zone; default today to 7 days ahead): time, title, place or meeting link, attendees, which calendar, and any meeting notes linked to the event. To create or move an event use the calendar app tools.",
+      "List the person's calendar as Ensemble keeps it (Google Calendar, Outlook and calendar links, the same event from several calendars listed once) between from and to (YYYY-MM-DD, inclusive, the person's time zone; default today to 7 days ahead): time, title, place or meeting link, attendees, which calendars, and any meeting notes linked to the event. To create or move an event use the calendar app tools.",
     input: z.object({
       from: DateField.optional(),
       to: DateField.optional(),
@@ -70,66 +70,61 @@ export const calendarTools = [
       const timeZone = ctx.settings.timezone;
       const range = dayRange(timeZone, input.from, input.to, 7);
       if (range.end.getTime() - range.start.getTime() > (MAX_DAYS + 1) * 86_400_000) throw badInput(`Ask for at most ${MAX_DAYS} days at a time.`);
-      const query = input.query.trim();
-      const rows = await ctx.prisma.artifact.findMany({
-        where: {
-          userId: ctx.userId,
-          kind: "event",
-          deletedAt: null,
-          ts: { gte: range.start, lt: range.end },
-          ...(query ? { title: { contains: query, mode: "insensitive" } } : {}),
-        },
-        orderBy: { ts: "asc" },
-        take: input.limit + 1,
-        select: { id: true, title: true, ts: true, url: true, metadata: true, participants: true },
-      });
-      const events = rows.slice(0, input.limit);
-      const ids = events.map((row) => row.id);
-      const [sessions, imported, syncs] = await Promise.all([
+      const query = input.query.trim().toLowerCase();
+      const calendar = await readCalendar(ctx.prisma, ctx.userId, { from: range.start, to: range.end, timeZone });
+      const matching = query ? calendar.events.filter((row) => row.title.toLowerCase().includes(query)) : calendar.events;
+      const events = matching.slice(0, input.limit);
+      const ids = events.flatMap((row) => row.memberIds);
+      const [sessions, imported] = await Promise.all([
         ids.length
           ? ctx.prisma.meetingSession.findMany({ where: { userId: ctx.userId, deletedAt: null, artifactId: { in: ids } }, select: { id: true, title: true, artifactId: true } })
           : [],
         ids.length
           ? ctx.prisma.meetingNote.findMany({ where: { userId: ctx.userId, deletedAt: null, eventArtifactId: { in: ids }, source: { not: "live" } }, select: { id: true, title: true, eventArtifactId: true } })
           : [],
-        ctx.prisma.syncState.findMany({ where: { userId: ctx.userId, connector: { in: CALENDAR_SYNCS } }, select: { connector: true, lastSyncAt: true, lastError: true } }),
       ]);
-      const notesFor = (id: string) => [
-        ...sessions.filter((row) => row.artifactId === id).map((row) => ({ id: row.id, title: row.title })),
-        ...imported.filter((row) => row.eventArtifactId === id).map((row) => ({ id: row.id, title: row.title })),
+      const notesFor = (members: string[]) => [
+        ...sessions.filter((row) => row.artifactId && members.includes(row.artifactId)).map((row) => ({ id: row.id, title: row.title })),
+        ...imported.filter((row) => row.eventArtifactId && members.includes(row.eventArtifactId)).map((row) => ({ id: row.id, title: row.title })),
       ];
       const list = events.map((row) => {
-        const meta = (row.metadata ?? {}) as { end?: string | null; allDay?: boolean; joinUrl?: string | null; location?: string | null; source?: string; calendar?: string | null };
-        const end = meta.end ? new Date(meta.end) : null;
-        const allDay = Boolean(meta.allDay);
-        const notes = notesFor(row.id);
+        const start = new Date(row.start);
+        const end = row.end ? new Date(row.end) : null;
+        const notes = notesFor(row.memberIds);
+        const lastDay = row.allDay && row.startDate && row.endDate ? addCalendarDays(row.endDate, -1) : null;
+        const dateOnly = (date: string) => localWhen(new Date(`${date}T12:00:00Z`), "UTC", true);
+        const calendars = [...new Set(row.sources.map((source) => CALENDAR_SOURCE[source.connector] ?? source.label))];
         return {
           id: row.id,
           title: row.title || "(busy)",
-          when: allDay ? `${localWhen(row.ts, timeZone, true)}, all day` : `${localWhen(row.ts, timeZone)}${end && !Number.isNaN(end.getTime()) ? `–${endTime(end, timeZone)}` : ""}`,
-          start: row.ts.toISOString(),
-          ...(end && !Number.isNaN(end.getTime()) ? { end: end.toISOString() } : {}),
-          ...(meta.location ? { location: meta.location } : {}),
-          ...(meta.joinUrl || row.url ? { link: meta.joinUrl ?? row.url } : {}),
-          attendees: namesOf(row.participants),
-          calendar: CALENDAR_SOURCE[meta.source ?? ""] ?? meta.source ?? "Calendar",
+          when: row.allDay && row.startDate
+            ? `${dateOnly(row.startDate)}${lastDay && lastDay !== row.startDate ? `–${dateOnly(lastDay)}` : ""}, all day`
+            : `${localWhen(start, timeZone)}${end && !Number.isNaN(end.getTime()) ? `–${endTime(end, timeZone)}` : ""}`,
+          start: row.start,
+          ...(end && !Number.isNaN(end.getTime()) ? { end: row.end } : {}),
+          ...(row.location ? { location: row.location } : {}),
+          ...(row.joinUrl ? { link: row.joinUrl } : {}),
+          attendees: namesOf(row.attendees),
+          calendar: calendars.join(" · ") || "Calendar",
+          ...(row.sources.length > 1 ? { mergedFrom: row.sources.length } : {}),
           ...(notes.length ? { meetingNotes: notes } : {}),
         };
       });
-      const sync = syncs.map((row) => ({
-        calendar: row.connector === "google_calendar" ? "Google Calendar" : "Outlook calendar",
-        lastSync: row.lastSyncAt?.toISOString() ?? null,
+      const sync = calendar.sync.map((row) => ({
+        calendar: CALENDAR_SOURCE[row.connector] ?? "Calendar links",
+        lastSync: row.lastSyncAt,
         ...(row.lastError ? { error: row.lastError.slice(0, 200) } : {}),
       }));
-      const note = sync.length
+      const note = sync.length || calendar.sources.length
         ? undefined
-        : "No calendar syncs to Ensemble yet. Connect Google Workspace or Microsoft 365 in Settings → Connections (/settings?tab=connections).";
-      return toolOk(`${list.length} event(s) from ${range.from} to ${range.to}${rows.length > input.limit ? " (more; narrow the range)" : ""}.`, {
+        : "No calendar syncs to Ensemble yet. Connect Google Workspace or Microsoft 365, or add a calendar link (ICS), in Settings → Connections (/settings?tab=connections).";
+      const more = matching.length > input.limit;
+      return toolOk(`${list.length} event(s) from ${range.from} to ${range.to}${more ? " (more; narrow the range)" : ""}.`, {
         timeZone,
         from: range.from,
         to: range.to,
         events: list,
-        ...(rows.length > input.limit ? { more: true } : {}),
+        ...(more ? { more: true } : {}),
         sync,
         ...(note ? { note } : {}),
       });

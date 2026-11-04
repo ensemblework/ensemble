@@ -6,12 +6,47 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { useEffect } from "react";
 import { api, type PresenceEntry } from "@/lib/api";
+import { useFollowing } from "@/lib/follow";
 import { tabId, usePresence } from "@/lib/presence";
 import { sessionOf } from "./collab";
 
 /** Caret moves go out at most this often, and only while someone else is on the page. */
 const SEND_EVERY_MS = 300;
 const AFTER_EDIT_MS = 120;
+/** Scroll positions go out at most this often, also only while someone else is here. */
+const SCROLL_EVERY_MS = 200;
+/** Where the first line in view sits below the top of the scroll area. */
+const TOP_GAP = 12;
+
+/** The element a page scrolls in (the Hub's main area, a peek, a shared item's body), or null for the window. */
+export function scrollParentOf(node: HTMLElement): HTMLElement | null {
+  for (let element = node.parentElement; element; element = element.parentElement) {
+    if (/(auto|scroll|overlay)/.test(getComputedStyle(element).overflowY)) return element;
+  }
+  return null;
+}
+
+function visibleBox(scroller: HTMLElement | null): { top: number; bottom: number } {
+  if (scroller) {
+    const box = scroller.getBoundingClientRect();
+    return { top: box.top, bottom: box.bottom };
+  }
+  return { top: 0, bottom: window.innerHeight };
+}
+
+function reducedMotion(): boolean {
+  return document.documentElement.dataset.reduceMotion === "true" || Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+}
+
+/** The first document position in view, or 0 while the top of the page shows. */
+function firstInView(editor: Editor, scroller: HTMLElement | null): number | null {
+  const view = editor.view;
+  const box = visibleBox(scroller);
+  const rect = view.dom.getBoundingClientRect();
+  if (rect.top >= box.top) return 0;
+  const hit = view.posAtCoords({ left: rect.left + Math.min(24, rect.width / 2), top: box.top + TOP_GAP });
+  return hit ? hit.pos : null;
+}
 
 const carets = new PluginKey<DecorationSet>("remote-carets");
 
@@ -84,6 +119,9 @@ function caretPlugin(editor: Editor): Plugin<DecorationSet> {
  */
 export function RemoteCarets({ editor, page }: { editor: Editor; page: { kind: string; id: string } }) {
   const here = usePresence().filter((entry) => entry.resource?.kind === page.kind && entry.resource.id === page.id);
+  const following = useFollowing();
+  // Their tab in front, if they have several here.
+  const followed = following ? here.filter((entry) => entry.accountId === following.accountId).sort((a, b) => Number(Boolean(a.away)) - Number(Boolean(b.away)) || b.at - a.at)[0] : undefined;
   const shown = here.filter((entry) => entry.caret);
   const signature = JSON.stringify(shown.map((entry) => [entry.accountId, entry.tabId, entry.caret, entry.color, entry.name]));
   const watched = here.length > 0;
@@ -146,6 +184,69 @@ export function RemoteCarets({ editor, page }: { editor: Editor; page: { kind: s
       editor.off("blur", moved);
     };
   }, [editor, watched, page.kind, page.id]);
+
+  // Where you are scrolled to, so someone following you sees the same part of the page.
+  useEffect(() => {
+    if (!watched || editor.isDestroyed) return;
+    const scroller = scrollParentOf(editor.view.dom);
+    const target: HTMLElement | Window = scroller ?? window;
+    let timer: number | undefined;
+    let last = 0;
+    let sent = "";
+    const send = () => {
+      if (editor.isDestroyed) return;
+      const pos = firstInView(editor, scroller);
+      if (pos === null) return;
+      const version = sessionOf(editor)?.caretVersion();
+      const scroll = { pos, ...(typeof version === "number" ? { version } : {}) };
+      const value = JSON.stringify(scroll);
+      if (value === sent) return;
+      sent = value;
+      last = Date.now();
+      void api.sendPresence({ tabId: tabId(), scroll }).catch(() => undefined);
+    };
+    const onScroll = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(send, Math.max(0, SCROLL_EVERY_MS - (Date.now() - last)));
+    };
+    target.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    onScroll();
+    return () => {
+      window.clearTimeout(timer);
+      target.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [editor, watched, page.kind, page.id]);
+
+  // Following someone here: show what they see, and keep their caret in view as it moves.
+  const anchor = followed?.scroll ?? null;
+  const caret = followed?.caret ?? null;
+  useEffect(() => {
+    if (!followed || editor.isDestroyed) return;
+    const view = editor.view;
+    const scroller = scrollParentOf(view.dom);
+    const size = editor.state.doc.content.size;
+    const at = (pos: number, version?: number) => sessionOf(editor)?.place({ anchor: pos, head: pos, version })?.head ?? Math.max(0, Math.min(size, pos));
+    const box = visibleBox(scroller);
+    let delta: number | null = null;
+    try {
+      if (anchor?.pos === 0) delta = -(scroller ? scroller.scrollTop : window.scrollY);
+      else if (anchor) delta = view.coordsAtPos(at(anchor.pos, anchor.version)).top - (box.top + TOP_GAP);
+      if (caret) {
+        const point = view.coordsAtPos(at(caret.head, caret.version));
+        const shift = delta ?? 0;
+        // Their caret would be out of view (screens differ in size): bring it to the upper third.
+        if (point.top - shift < box.top || point.bottom - shift > box.bottom - 24) delta = point.top - (box.top + (box.bottom - box.top) / 3);
+      }
+    } catch {
+      return;
+    }
+    if (delta === null || Math.abs(delta) < 2) return;
+    (scroller ?? window).scrollBy({ top: delta, behavior: Math.abs(delta) < 40 || reducedMotion() ? "auto" : "smooth" });
+    // The positions name everything this reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, following?.accountId, followed === undefined, anchor?.pos, anchor?.version, caret?.head, caret?.version]);
 
   return null;
 }

@@ -1510,102 +1510,6 @@ span.mention:not(.mention-off) {
   outline: none;
   text-align: center;
 }
-/* The format bar floats over the top of the canvas while something is selected. */
-.diagram-format-bar {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  translate: -50% 0;
-  z-index: 20;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  max-width: calc(100% - 24px);
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  background: var(--panel);
-  padding: 4px;
-  box-shadow: 0 8px 24px rgb(28 25 21 / 0.12);
-}
-.diagram-stage.is-focus .diagram-format-bar {
-  top: 62px;
-}
-.diagram-format-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.diagram-format-group + .diagram-format-group {
-  border-left: 1px solid var(--line);
-  padding-left: 4px;
-}
-.diagram-format-btn {
-  display: inline-flex;
-  height: 26px;
-  min-width: 26px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  color: var(--muted);
-}
-.diagram-format-btn:hover:not(:disabled),
-.diagram-format-text:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.diagram-format-btn[data-active] {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--ink);
-}
-.diagram-format-btn:disabled {
-  opacity: 0.4;
-}
-.diagram-format-stepper {
-  display: inline-flex;
-  align-items: center;
-}
-.diagram-format-value {
-  min-width: 3.4ch;
-  text-align: center;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-.diagram-format-swatch {
-  width: 20px;
-  height: 20px;
-  border: 1.5px solid transparent;
-  border-radius: 99px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--muted);
-}
-.diagram-format-swatch.is-auto {
-  border-color: var(--line-strong);
-  background: var(--diagram-paper);
-}
-.diagram-format-swatch[data-active] {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.diagram-format-select {
-  height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-  padding: 0 4px;
-  font-size: 12px;
-  color: var(--ink);
-}
-.diagram-format-text {
-  height: 26px;
-  border-radius: 7px;
-  padding: 0 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
 .diagram-swatch {
   display: inline-block;
   width: 0.62em;
@@ -1694,45 +1598,6 @@ span.mention:not(.mention-off) {
   z-index: 80;
   display: flex;
   background: var(--diagram-paper);
-}
-.diagram-focus-bar {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  z-index: 5;
-  display: flex;
-  translate: -50% 0;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  padding: 4px;
-  box-shadow: 0 8px 24px rgb(28 25 21 / 0.12);
-}
-.diagram-shape-menu {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  width: 280px;
-  max-height: 360px;
-  overflow: auto;
-}
-.diagram-shape-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  padding: 4px 6px;
-  color: var(--ink);
-  text-align: left;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.diagram-shape-option:hover {
-  background: var(--hover);
 }
 .diagram-inline {
   position: relative;
@@ -2315,6 +2180,49 @@ span.mention:not(.mention-off) {
 }
 .date-block span:first-child { font-size: 14px; font-weight: 700; }
 .date-block span:last-child { font-size: 11px; letter-spacing: 0.04em; color: var(--muted); }
+/* A file's own screen: one thin bar, then the file. */
+.file-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 48px;
+  padding: 6px 10px 6px 8px;
+}
+.file-bar-title {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: min(42ch, 40vw);
+  align-items: center;
+  gap: 8px;
+}
+.file-bar-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+}
+.file-bar-slot:empty { display: none; }
+.file-bar-slot > .file-bar-tools { justify-content: center; }
+/* The viewer's own controls sit at the bar's height. */
+.file-bar-slot .field { height: 28px; }
+.file-bar-slot .icon-btn, .file-bar-slot .btn-ghost, .file-bar-slot .btn { height: 28px; }
+.file-bar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+@media (max-width: 900px) {
+  .file-bar-title { max-width: none; flex: 1 1 0; }
+  /* The viewer's controls take a row of their own below the name. */
+  .file-bar-slot { order: 3; flex-basis: 100%; justify-content: flex-start; }
+  .file-bar-slot > .file-bar-tools { justify-content: flex-start; }
+}
+
 .file-mark {
   display: inline-flex;
   height: 28px;
@@ -2523,36 +2431,6 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 .task-peek.is-full { width: 100%; }
 @media (max-width: 767px) {
   .task-peek { width: 100%; }
-}
-
-.diagram-focus-palette {
-  position: absolute;
-  left: 12px;
-  top: 72px;
-  bottom: 12px;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow: auto;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-tile);
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  padding: 6px;
-  box-shadow: 0 8px 24px rgb(28 25 21 / 0.12);
-}
-.diagram-focus-palette button {
-  display: flex;
-  width: 36px;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-tile);
-  color: var(--ink);
-}
-.diagram-focus-palette button:hover,
-.diagram-focus-palette button:focus-visible {
-  background: var(--hover);
 }
 
 /* ── account avatar (top right) ─────────────────────────────────────────── */

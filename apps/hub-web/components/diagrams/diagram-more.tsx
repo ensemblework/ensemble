@@ -1,16 +1,43 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { explainDiagram, toMermaid, type DiagramModel } from "@ensemble/block-diagrams";
+import { explainDiagram, type DiagramModel } from "@ensemble/block-diagrams";
+import { BookOpen, CopyPlus, History, MoreHorizontal, RefreshCw, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import { Dialog, Popover } from "../ui";
 import { VersionHistoryDialog } from "../history/version-history";
-import { copyDiagramPng } from "./export-image";
 import { prefillAssistant, refreshDiagramPrompt } from "./make-diagram";
+import { ToolButton } from "./toolbar";
 
-export function DiagramMore({
+function MenuRow({ icon: Icon, label, disabled, onClick }: { icon: LucideIcon; label: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" role="menuitem" disabled={disabled} onClick={onClick} className="dg-pop-item">
+      <Icon size={15} aria-hidden className="dg-pop-icon" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </button>
+  );
+}
+
+/** A thin notice under the top bar when the work this diagram was drawn from changed since. */
+export function DiagramFreshness({ id, title }: { id: string; title: string }) {
+  const freshness = useQuery({ queryKey: ["diagram-freshness", id], queryFn: () => api.diagramFreshness(id) });
+  if (!freshness.data?.stale) return null;
+  return (
+    <div className="dg-notice" role="status">
+      <RefreshCw size={14} aria-hidden className="shrink-0 text-accent" />
+      <span className="min-w-0 flex-1 truncate">{freshness.data.reasons[0] ?? "This drawing may be out of date."}</span>
+      <button type="button" className="btn-ghost h-7 shrink-0 px-2 text-[12.5px]" onClick={() => prefillAssistant(refreshDiagramPrompt(id, title))}>
+        Refresh with AI
+      </button>
+    </div>
+  );
+}
+
+/** The quieter actions in the editor's top bar: explain, duplicate, version history. */
+export function DiagramMoreMenu({
   id,
   model,
   onAdopt,
@@ -25,10 +52,8 @@ export function DiagramMore({
   const [selected, setSelected] = useState<string | null>(null);
   const [explain, setExplain] = useState(false);
   const [history, setHistory] = useState(false);
-  const freshness = useQuery({ queryKey: ["diagram-freshness", id], queryFn: () => api.diagramFreshness(id) });
   const revisions = useQuery({ queryKey: ["diagram-revisions", id], queryFn: () => api.diagramRevisions(id), enabled: history });
   useEffect(() => { if (history && revisions.data?.revisions.length && !revisions.data.revisions.some(item => String(item.version) === selected)) setSelected(String(revisions.data.revisions[0]!.version)); }, [history, revisions.data, selected]);
-  const title = model.meta.title || "Untitled diagram";
 
   const restore = useMutation({
     mutationFn: (version: number) => api.restoreDiagram(id, version),
@@ -46,52 +71,28 @@ export function DiagramMore({
   });
 
   return (
-    <div className="border-b border-line px-3 py-1.5">
-      {freshness.data?.stale ? (
-        <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
-          <span>{freshness.data.reasons[0] ?? "This drawing may be out of date."}</span>
-          <button type="button" className="btn-ghost" onClick={() => prefillAssistant(refreshDiagramPrompt(id, title))}>
-            Refresh with AI
-          </button>
-        </div>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <button type="button" className="btn-ghost" aria-expanded={explain} onClick={() => setExplain((open) => !open)}>
-          Explain
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => {
-            void navigator.clipboard.writeText(toMermaid(model)).then(
-              () => toast("Copied Mermaid."),
-              () => toast("Couldn't copy Mermaid.", { tone: "error" }),
-            );
-          }}
-        >
-          Copy Mermaid
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => {
-            void copyDiagramPng(model).then(
-              () => toast("Copied image."),
-              () => toast("Couldn't copy the image.", { tone: "error" }),
-            );
-          }}
-        >
-          Copy image
-        </button>
-        <button type="button" className="btn-ghost" disabled={duplicate.isPending} onClick={() => duplicate.mutate()}>
-          Duplicate
-        </button>
-        <button type="button" className="btn-ghost" aria-expanded={history} onClick={() => setHistory((open) => !open)}>
-          History
-        </button>
-      </div>
-      {explain ? <p className="mt-2 max-w-[68ch] whitespace-pre-wrap text-[13px] leading-5 text-muted">{explainDiagram(model)}</p> : null}
+    <>
+      <Popover
+        align="right"
+        width={216}
+        trigger={(open, toggle) => (
+          <ToolButton label="More actions" tipAlign="end" aria-haspopup="menu" aria-expanded={open} active={open} onClick={toggle}>
+            <MoreHorizontal size={17} aria-hidden />
+          </ToolButton>
+        )}
+      >
+        {(close) => (
+          <div role="menu" aria-label="More actions" className="dg-pop-menu">
+            <MenuRow icon={BookOpen} label="Explain this diagram" onClick={() => { close(); setExplain(true); }} />
+            <MenuRow icon={CopyPlus} label={duplicate.isPending ? "Duplicating…" : "Duplicate"} disabled={duplicate.isPending} onClick={() => { close(); duplicate.mutate(); }} />
+            <MenuRow icon={History} label="Version history" onClick={() => { close(); setHistory(true); }} />
+          </div>
+        )}
+      </Popover>
+      <Dialog open={explain} onClose={() => setExplain(false)} title="About this diagram" width={560}>
+        <p className="max-w-[68ch] whitespace-pre-wrap text-[13.5px] leading-6 text-muted">{explainDiagram(model)}</p>
+      </Dialog>
       <VersionHistoryDialog open={history} onClose={() => setHistory(false)} title="Diagram" versions={(revisions.data?.revisions ?? []).map(item => ({ ...item, id: String(item.version) }))} selected={selected} onSelect={setSelected} loading={revisions.isPending} error={revisions.error?.message ?? restore.error?.message} onRetry={() => void revisions.refetch()} restoring={restore.isPending} onRestore={() => { if (selected) restore.mutate(Number(selected)); }} preview={<p className="text-[13px] text-muted">{selected ? `Version ${selected} · ${revisions.data?.revisions.find(item => String(item.version) === selected)?.title ?? "Diagram"}` : "Choose a saved version."}</p>} />
-    </div>
+    </>
   );
 }

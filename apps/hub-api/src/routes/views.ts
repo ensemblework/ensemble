@@ -11,6 +11,7 @@ import { templateById } from "@ensemble/shared-types/templates";
 import { templateByMarketId } from "@ensemble/shared-types/marketplace";
 import { envDevTools } from "../lib/dev-tools.js";
 import { loadSettings } from "../lib/settings.js";
+import { readCalendar } from "../calendar/read.js";
 import { undoState } from "../lib/undo.js";
 import { serializeTask } from "./tasks.js";
 import { canUseHostCredentials, isHosted } from "../lib/hosted-access.js";
@@ -40,7 +41,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
     const accountId = accountIdOf(request);
-    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals] = await Promise.all([
+    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode, nodeApprovals, publicLinks] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(hubDecisionCount(prisma, userId)),
@@ -54,6 +55,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       // Ensemble Node's cards are the account's own: they count in its own space only, and only those its
       // sessions raise, as `GET /api/node/approvals` lists them (node/needs-me.ts).
       accountId === userId ? countOrZero(hubApprovalCount(prisma, accountId)) : 0,
+      countOrZero(prisma.publicLink.count({ where: { spaceId: userId } })),
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
@@ -87,6 +89,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         members,
         /** Members plus people with a single shared item: when above zero, presence is worth sending. */
         collaborators: members + recipients.length,
+        /** Items open to anyone with the link: visitors may arrive, so presence is worth sending. */
+        publicLinks,
         // Set when the space is someone else's and shared with you.
         shared:
           spaceOwner && access && access.kind !== "owner" && access.kind !== "gone"
@@ -132,9 +136,12 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/today/home", async (request) => {
-    const query = z.object({ from: z.string(), to: z.string() }).parse(request.query);
+    const query = z.object({ from: z.string(), to: z.string(), tz: z.string().max(64).optional() }).parse(request.query);
     const userId = request.userId;
-    const [tasks, deliverables, reminders, events, sync, settings] = await Promise.all([
+    const from = new Date(query.from);
+    const to = new Date(query.to);
+    const range = !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && from < to;
+    const [tasks, deliverables, reminders, calendar, settings] = await Promise.all([
       prisma.task.findMany({
         where: { userId, deletedAt: null },
         orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],
@@ -149,42 +156,17 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         orderBy: [{ dueDate: "asc" }, { dueTime: "asc" }],
         select: { id: true, title: true, dueDate: true, dueTime: true, timeZone: true },
       }),
-      prisma.artifact.findMany({
-        where: {
-          userId,
-          kind: "event",
-          deletedAt: null,
-          ts: { gte: new Date(query.from), lt: new Date(query.to) },
-        },
-        orderBy: { ts: "asc" },
-        select: { id: true, title: true, ts: true, url: true, metadata: true },
-      }),
-      prisma.syncState.findMany({
-        where: { userId, connector: { in: ["google_calendar", "outlook_calendar"] } },
-      }),
+      range ? readCalendar(prisma, userId, { from, to, timeZone: query.tz ?? null }) : Promise.resolve({ events: [], sync: [], sources: [] }),
       loadSettings(prisma, userId),
     ]);
     return {
       tasks: tasks.map(serializeTask),
       deliverables,
       reminders,
-      events: events.map((event) => {
-        const meta = (event.metadata ?? {}) as { end?: string; allDay?: boolean; joinUrl?: string; location?: string };
-        return {
-          id: event.id,
-          title: event.title,
-          start: event.ts.toISOString(),
-          end: meta.end ?? null,
-          allDay: Boolean(meta.allDay),
-          joinUrl: meta.joinUrl ?? event.url ?? null,
-          location: meta.location ?? null,
-        };
-      }),
-      sync: sync.map((row) => ({
-        connector: row.connector,
-        lastSyncAt: row.lastSyncAt?.toISOString() ?? null,
-        lastError: row.lastError,
-      })),
+      // The same merged calendar as GET /api/calendar (calendar/read.ts).
+      events: calendar.events,
+      sync: calendar.sync,
+      calendarSources: calendar.sources,
       timezone: settings.timezone,
     };
   });

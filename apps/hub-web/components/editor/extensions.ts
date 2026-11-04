@@ -249,7 +249,7 @@ export function editorExtensions(
     TaskList,
     ChecklistItem.configure({ nested: true }),
     livePageLink(pages.client ?? files.client ?? (() => null)),
-    NestedPage.configure({ create: pages.create ?? null, client: pages.client ?? files.client ?? (() => null) }),
+    NestedPage.configure({ create: pages.create ?? null, allowed: pages.allowed ?? (() => true), client: pages.client ?? files.client ?? (() => null) }),
     PageImage,
     Underline,
     NotionColor,

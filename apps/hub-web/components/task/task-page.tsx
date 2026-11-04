@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { NestedPages, useLinkedPages } from "@/components/pages/nested-pages";
+import { PageCrumbs } from "@/components/pages/page-crumbs";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createContext, useContext, useId, useCallback, useEffect, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
@@ -366,11 +367,7 @@ export function TaskPage({
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">
-        <div className="flex items-center gap-1">
-          <Link href="/board" className="hover:text-ink">
-            Task
-          </Link>
-          <span>/</span>
+        <PageCrumbs back={variant === "page" && !shared} crumbs={[{ label: "Task", href: "/board" }]}>
           <Popover
             trigger={(_open, toggle) => (
               <button type="button" onClick={toggle} className="row-tile rounded px-1 hover:text-ink">
@@ -399,7 +396,7 @@ export function TaskPage({
               ))
             }
           </Popover>
-        </div>
+        </PageCrumbs>
         <div className="flex flex-wrap items-center gap-2">
           <PagePeople kind="task" id={taskId} />
           {!shared && !access.guest ? <><button type="button" className="icon-btn" title="Version history" aria-label="Version history" onClick={() => { void (async () => { if (titleSave.current) await titleSave.current; await sync.flush(); setHistoryOpen(true); })().catch((error: Error) => toast(error.message, { tone: "error" })); }}><History size={14} /></button><PageHistory kind="task" id={taskId} open={historyOpen} onClose={() => setHistoryOpen(false)} /></> : null}

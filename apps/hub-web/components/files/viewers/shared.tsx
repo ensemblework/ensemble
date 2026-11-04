@@ -3,7 +3,8 @@
 /** @jsxImportSource react */
 
 import { Download } from "lucide-react";
-import { createContext, useState } from "react";
+import { createContext, useContext, useState } from "react";
+import { createPortal } from "react-dom";
 import type { FileFormat, FileRecord } from "@ensemble/shared-types";
 import { emitToast } from "@/lib/toast-bus";
 import { cx } from "../../ui";
@@ -35,12 +36,14 @@ export type PresentControl = {
 
 export const PresentContext = createContext<PresentControl | null>(null);
 
-export function DownloadButton({ file, bytes, className, label = "Download" }: { file: FileRecord; bytes?: ArrayBuffer; className?: string; label?: string }) {
+export function DownloadButton({ file, bytes, className, label = "Download", iconOnly = false }: { file: FileRecord; bytes?: ArrayBuffer; className?: string; label?: string; iconOnly?: boolean }) {
   const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
-      className={cx("btn", className)}
+      className={cx(iconOnly ? "icon-btn" : "btn", className)}
+      aria-label={iconOnly ? `${label} ${file.filename}` : undefined}
+      title={iconOnly ? label : undefined}
       disabled={busy}
       onClick={() => {
         setBusy(true);
@@ -49,7 +52,7 @@ export function DownloadButton({ file, bytes, className, label = "Download" }: {
           .finally(() => setBusy(false));
       }}
     >
-      <Download size={13} aria-hidden /> {label}
+      <Download size={iconOnly ? 15 : 13} aria-hidden /> {iconOnly ? null : label}
     </button>
   );
 }
@@ -65,6 +68,15 @@ export function ViewerNote({ title, children, file, bytes, compact }: { title: s
   );
 }
 
+/**
+ * On a file's own screen, the bar the viewer's controls join (page, zoom, sheets), so the file gets
+ * the room and there is one thin bar above it. Elsewhere (a card in a page, full screen) the controls
+ * keep their own bar on the viewer.
+ */
+export const ToolbarSlot = createContext<HTMLElement | null>(null);
+
 export function Toolbar({ children, className }: { children: React.ReactNode; className?: string }) {
+  const slot = useContext(ToolbarSlot);
+  if (slot) return createPortal(<div className={cx("file-bar-tools flex min-w-0 flex-wrap items-center gap-1 text-[12.5px] text-muted", className)}>{children}</div>, slot);
   return <div className={cx("flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-line px-2 py-1 text-[12.5px] text-muted", className)}>{children}</div>;
 }

@@ -353,6 +353,8 @@ export type StandalonePageSummary = {
 export type StandalonePageRecord = {
   parentId?: string | null;
   parentTaskId?: string | null;
+  /** The pages it sits inside, from the top down (a task's page goes by the task's title). */
+  ancestors?: Array<{ id: string; title: string; taskId: string | null }>;
   id: string;
   title: string;
   taskId: null;
@@ -435,14 +437,54 @@ export type DeliverableRecord = {
 
 export type ReminderRecord = { id: string; title: string; dueDate: string; dueTime: string | null };
 
+export type CalendarEventSource = {
+  connector: string;
+  /** "Google", "Outlook", or a calendar link's name. */
+  label: string;
+  calendar: string | null;
+  url: string | null;
+};
+
+/** One event on the merged Today calendar (hub-api calendar/read.ts). The same event from several calendars comes once, with every source. */
 export type CalendarEvent = {
   id: string;
   title: string;
   start: string;
   end: string | null;
   allDay: boolean;
+  /** The online meeting link, else the event's own page. */
   joinUrl: string | null;
   location: string | null;
+  /** All-day span as calendar dates, end exclusive. */
+  startDate?: string | null;
+  endDate?: string | null;
+  /** The online meeting link only. */
+  meetingUrl?: string | null;
+  url?: string | null;
+  organizer?: string | null;
+  attendees?: Array<{ email: string | null; name: string | null }>;
+  hasDescription?: boolean;
+  memberIds?: string[];
+  sources?: CalendarEventSource[];
+};
+
+/** A calendar that feeds Today: Google, Outlook, or one calendar link. */
+export type CalendarSourceState = { connector: string; id: string | null; label: string; lastSyncAt: string | null; lastError: string | null };
+
+export type CalendarPayload = {
+  events: CalendarEvent[];
+  sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }>;
+  sources?: CalendarSourceState[];
+  timeZone?: string;
+};
+
+/** A calendar subscription by link (ICS). The link itself is never sent back. */
+export type CalendarFeed = { id: string; name: string; host: string; lastSyncAt: string | null; lastError: string | null; itemCount: number; createdAt: string };
+
+export type CalendarSyncResult = {
+  outcomes: Array<{ connector: string; id?: string; label: string; ok: boolean; items: number; message: string }>;
+  merged: number;
+  message?: string;
 };
 
 export type PersonRecord = {
@@ -1310,6 +1352,8 @@ export const api = bindClient({
         members?: number;
         /** Members and people with a shared item. Above zero, presence is sent. */
         collaborators?: number;
+        /** Items in this space open to anyone with the link. */
+        publicLinks?: number;
         /** Set when this is someone else's space, shared with you. */
         shared?: { owner: SharingPerson; role: "viewer" | "editor" } | null;
       };
@@ -1327,6 +1371,7 @@ export const api = bindClient({
       reminders: ReminderRecord[];
       events: CalendarEvent[];
       sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }>;
+      calendarSources?: CalendarSourceState[];
       timezone: string;
     }>(`/api/today/home${qs({ from, to })}`),
 
@@ -1391,10 +1436,12 @@ export const api = bindClient({
   createReminder: (data: { title: string; dueDate: string; dueTime?: string | null; timeZone?: string }) =>
     post("/api/reminders", data),
   dismissReminder: (id: string) => post(`/api/reminders/${id}/dismiss`),
-  calendar: (from: string, to: string) =>
-    get<{ events: CalendarEvent[]; sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }> }>(
-      `/api/calendar${qs({ from, to })}`,
-    ),
+  calendar: (from: string, to: string, tz?: string) => get<CalendarPayload>(`/api/calendar${qs({ from, to, tz })}`),
+  syncCalendars: () => post<CalendarSyncResult>("/api/calendar/sync"),
+  calendarFeeds: () => get<{ feeds: CalendarFeed[] }>("/api/calendar/feeds"),
+  addCalendarFeed: (data: { url: string; name?: string }) => post<{ feed: CalendarFeed; events: number; warning?: string }>("/api/calendar/feeds", data),
+  renameCalendarFeed: (id: string, name: string) => patch<{ feed: CalendarFeed }>(`/api/calendar/feeds/${encodeURIComponent(id)}`, { name }),
+  removeCalendarFeed: (id: string) => del<void>(`/api/calendar/feeds/${encodeURIComponent(id)}`),
 
   // account
   authStatus: () => get<{
@@ -1820,7 +1867,7 @@ export const api = bindClient({
       };
     }>(`/api/meetings/notes/${id}`),
   meetingSession: (id: string) =>
-    get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
+    get<{ session: MeetingSessionRecord; attendees?: Array<{ id: string; name: string }>; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
   startMeeting: (artifactId: string | null, title?: string, projectId?: string) =>
     post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title, ...(projectId ? { projectId } : {}) }),
   /** Links meeting notes to a project; null unlinks them. */
@@ -1980,8 +2027,27 @@ export const api = bindClient({
   removeShare: (id: string) => del<void>(`/api/sharing/items/${id}`),
   /** Sent without the share header, so a wrong or removed share gets its own answer rather than the header's 404. */
   openShare: (id: string) => withShare(null, () => get<OpenedShare>(`/api/sharing/open/${id}`)),
-  presence: () => get<{ you: string; people: PresenceEntry[] }>("/api/presence"),
-  sendPresence: (data: PresenceUpdate, keepalive = false) => request<void>("/api/presence", { method: "POST", json: data, keepalive }),
+  presence: () => get<{ you: string; now?: number; people: PresenceEntry[] }>("/api/presence"),
+  // After a leave nothing more is said (a blur or the hidden tab as it closes) until the tab joins again.
+  sendPresence: (data: PresenceUpdate, keepalive = false) => (presenceLeft ? Promise.resolve() : request<void>("/api/presence", { method: "POST", json: { ...data, seq: presenceSeq() }, keepalive })),
+  /**
+   * Leaving as the tab closes or the view unmounts. A raw keepalive request, outside `request`,
+   * so the guard that aborts in-flight requests on `pagehide` (fetch-cancel.ts) cannot cancel it.
+   */
+  leavePresence: (tabId: string) => {
+    presenceLeft = true;
+    try {
+      void fetch(`${API}/api/presence`, {
+        method: "POST",
+        keepalive: true,
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...itemViewHeaders() },
+        body: JSON.stringify({ tabId, leave: true, seq: presenceSeq() }),
+      }).catch(() => undefined);
+    } catch {
+      // No fetch while the document is torn down: the server's sweep drops the tab instead.
+    }
+  },
   publicLinks: () => get<{ limit: number; links: PublicLink[] }>("/api/links"),
   publicLinkFor: (kind: ShareKind, resourceId: string) =>
     get<{ limit: number; used: number; allowed: boolean; link: PublicLink | null }>(`/api/links/item${qs({ kind, resourceId })}`),
@@ -2079,6 +2145,14 @@ export type PresenceEntry = {
   viewport: { x: number; y: number; zoom: number } | null;
   /** Their text cursor on a page: positions in the live document at `version`. */
   caret?: { anchor: number; head: number; version?: number } | null;
+  /** The first position in view on their page, at `version`: what a follower scrolls to. */
+  scroll?: { pos: number; version?: number } | null;
+  /** The account id of the person this tab follows. */
+  follows?: string | null;
+  /** The space's owner, or what their access lets them do there. */
+  role?: "owner" | "edit" | "view";
+  /** Their tab is in the background. */
+  away?: boolean;
   typing: boolean;
   at: number;
   gone?: boolean;
@@ -2097,6 +2171,21 @@ export function publicLinkUrl(token: string): string {
   return `${typeof window === "undefined" ? "" : window.location.origin}/p/${token}`;
 }
 
+let lastSeq = 0;
+let presenceLeft = false;
+/** This tab is in a room again after leaving one (a new view, or back from the back-forward cache). */
+export function presenceJoined(): void {
+  presenceLeft = false;
+}
+/**
+ * Orders this browser's presence posts, across reloads too (it starts from the clock), so the
+ * server ignores one that arrives after a newer one: a leave overtaken by the next join, say.
+ */
+export function presenceSeq(): number {
+  lastSeq = Math.max(lastSeq + 1, Date.now() * 1000);
+  return lastSeq;
+}
+
 export type PresenceUpdate = {
   tabId: string;
   route?: string | null;
@@ -2104,6 +2193,9 @@ export type PresenceUpdate = {
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
   caret?: { anchor: number; head: number; version?: number } | null;
+  scroll?: { pos: number; version?: number } | null;
+  follows?: string | null;
+  away?: boolean;
   typing?: boolean;
   leave?: boolean;
 };

@@ -4,6 +4,7 @@
  * calendar writes go through the assistant and wait for Apply.
  */
 import { prisma } from "../lib/prisma.js";
+import { findJoinUrl } from "../calendar/dedupe.js";
 import { htmlToText, parseAddress, parseAddressList, upsertArtifact, upsertPerson } from "./ingest.js";
 import { GOOGLE_PRODUCT_SCOPES } from "./products.js";
 import { hasScopes, syncAccount } from "./tokens.js";
@@ -130,6 +131,10 @@ export async function syncGmail(ctx: SyncContext): Promise<SyncResult> {
 
 interface CalendarEvent {
   id: string;
+  iCalUID?: string;
+  recurringEventId?: string;
+  originalStartTime?: { dateTime?: string; date?: string };
+  eventType?: string;
   status?: string;
   summary?: string;
   description?: string;
@@ -141,6 +146,54 @@ interface CalendarEvent {
   attendees?: Array<{ email?: string; displayName?: string; self?: boolean; responseStatus?: string }>;
   organizer?: { email?: string; displayName?: string; self?: boolean };
   conferenceData?: { entryPoints?: Array<{ entryPointType?: string; uri?: string }> };
+}
+
+const instantOf = (value: { dateTime?: string; date?: string } | undefined): Date | null => {
+  // An all-day date is a calendar day, not an instant: it is kept at UTC midnight with the date beside it.
+  const raw = value?.dateTime ?? (value?.date ? `${value.date}T00:00:00Z` : null);
+  const date = raw ? new Date(raw) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+};
+
+/** One Google event as an event artifact input for the Today calendar, or null when it should not be there. Exported for tests. */
+export function googleEventInput(event: CalendarEvent, calendar: { id: string; name: string | null }) {
+  if (event.status === "cancelled" || event.eventType === "workingLocation") return null;
+  if (event.attendees?.find((row) => row.self)?.responseStatus === "declined") return null;
+  const allDay = Boolean(event.start?.date && !event.start?.dateTime);
+  const start = instantOf(event.start);
+  if (!start) return null;
+  const end = instantOf(event.end);
+  const original = instantOf(event.originalStartTime);
+  const text = htmlToText(event.description ?? "");
+  const joinUrl =
+    event.hangoutLink ?? event.conferenceData?.entryPoints?.find((row) => row.entryPointType === "video")?.uri ?? findJoinUrl(event.location, text);
+  return {
+    kind: "event" as const,
+    externalId: event.id,
+    url: event.htmlLink ?? null,
+    ts: start,
+    title: event.summary ?? "(busy)",
+    text,
+    participants: (event.attendees ?? []).map((row) => ({ name: row.displayName ?? null, email: row.email?.toLowerCase() ?? null })),
+    authoredByMe: Boolean(event.organizer?.self),
+    metadata: {
+      source: "google",
+      calendarSync: true,
+      calendarId: calendar.id,
+      calendar: calendar.name,
+      eventId: event.id,
+      uid: event.iCalUID ?? null,
+      originalStart: original?.toISOString() ?? null,
+      end: end?.toISOString() ?? null,
+      allDay,
+      startDate: allDay ? event.start!.date! : null,
+      endDate: allDay ? (event.end?.date ?? null) : null,
+      joinUrl: joinUrl ?? null,
+      location: event.location ?? null,
+      organizer: event.organizer?.email?.toLowerCase() ?? null,
+      hasDescription: Boolean(text.trim()),
+    },
+  };
 }
 
 interface CalendarListEntry {
@@ -175,13 +228,13 @@ async function calendarsToRead(access: string, scopes: string[]): Promise<Calend
   return chosen.length ? chosen.slice(0, MAX_CALENDARS) : [{ id: "primary", primary: true }];
 }
 
-export async function syncCalendar(ctx: SyncContext): Promise<SyncResult> {
+/** Reads every shown Google calendar in the window into the Today calendar (calendar/sync.ts). Sync only reads. */
+export async function syncCalendar(ctx: SyncContext, window = { from: new Date(Date.now() - 7 * 86_400_000), to: new Date(Date.now() + 21 * 86_400_000) }): Promise<SyncResult> {
   const { token: access, account, scopes } = await token(ctx.userId, {
     label: "Google Calendar",
     anyOf: [[`${G}calendar.events`], [`${G}calendar.readonly`]],
   });
-  const from = new Date(Date.now() - 7 * 86_400_000);
-  const to = new Date(Date.now() + 21 * 86_400_000);
+  const { from, to } = window;
   const events: Array<CalendarEvent & { calendarId: string; calendarName: string | null }> = [];
   const ids = new Set<string>();
   for (const calendar of await calendarsToRead(access, scopes)) {
@@ -211,41 +264,10 @@ export async function syncCalendar(ctx: SyncContext): Promise<SyncResult> {
 
   const result: SyncResult = { items: 0, stored: [], proposals: [], triage: [], account };
   const seen: string[] = [];
-  const self = [account, ctx.settings.email];
   for (const event of events) {
-    if (event.status === "cancelled") continue;
-    const allDay = Boolean(event.start?.date && !event.start?.dateTime);
-    const start = new Date(event.start?.dateTime ?? `${event.start?.date}T00:00:00`);
-    const end = event.end?.dateTime ?? (event.end?.date ? `${event.end.date}T00:00:00` : null);
-    const joinUrl =
-      event.hangoutLink ?? event.conferenceData?.entryPoints?.find((row) => row.entryPointType === "video")?.uri ?? null;
-    const declined = event.attendees?.find((row) => row.self)?.responseStatus === "declined";
-    if (declined) continue;
-    for (const attendee of event.attendees ?? []) {
-      if (!attendee.self) {
-        await upsertPerson(ctx.userId, { email: attendee.email, name: attendee.displayName, at: start, evidence: `calendar:${event.id}` }, self);
-      }
-    }
-    const stored = await upsertArtifact(ctx.userId, {
-      kind: "event",
-      externalId: event.id,
-      url: event.htmlLink ?? null,
-      ts: start,
-      title: event.summary ?? "(busy)",
-      text: htmlToText(event.description ?? ""),
-      participants: (event.attendees ?? []).map((row) => ({ name: row.displayName ?? null, email: row.email ?? null })),
-      authoredByMe: Boolean(event.organizer?.self),
-      metadata: {
-        source: "google",
-        calendarId: event.calendarId,
-        calendar: event.calendarName,
-        end: end ? new Date(end).toISOString() : null,
-        allDay,
-        joinUrl,
-        location: event.location ?? null,
-        organizer: event.organizer?.email ?? null,
-      },
-    });
+    const input = googleEventInput(event, { id: event.calendarId, name: event.calendarName });
+    if (!input) continue;
+    const stored = await upsertArtifact(ctx.userId, input);
     seen.push(event.id);
     if (!stored) continue;
     result.items += 1;

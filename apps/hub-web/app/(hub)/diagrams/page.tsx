@@ -5,12 +5,49 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DIAGRAM_TEMPLATES } from "@ensemble/block-diagrams/templates";
+import {
+  ArrowLeftRight,
+  Database,
+  GitBranch,
+  ListChecks,
+  Milestone,
+  Network,
+  Plus,
+  Route,
+  Search,
+  Server,
+  Shapes,
+  Share2,
+  Waypoints,
+  Workflow,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { LoadError } from "@/components/load-error";
-import { PageHeader, SkeletonRows } from "@/components/ui";
+import { PageHeader, Segmented } from "@/components/ui";
 import { useToast } from "@/components/toast";
-import { api } from "@/lib/api";
+import { api, type DiagramSummary } from "@/lib/api";
 import { relative } from "@/lib/format";
-import { DiagramDownloadMenu } from "@/components/diagrams/download-menu";
+import { DiagramCardMenu } from "@/components/diagrams/download-menu";
+import { DiagramThumb } from "@/components/diagrams/diagram-thumb";
+
+const TEMPLATE_ICONS: Record<string, LucideIcon> = {
+  flowchart: Workflow,
+  architecture: Server,
+  journey: Route,
+  decision: GitBranch,
+  timeline: Milestone,
+  org: Network,
+  mindmap: Waypoints,
+  network: Share2,
+  er: Database,
+  sequence: ArrowLeftRight,
+  plan: ListChecks,
+};
+
+type Sort = "recent" | "name";
+
+const collator = typeof Intl === "undefined" ? null : new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 
 export default function DiagramsPage() {
   const router = useRouter();
@@ -20,7 +57,9 @@ export default function DiagramsPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [gallery, setGallery] = useState(false);
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<Sort>("recent");
   const creating = useRef(false);
+  const galleryRef = useRef<HTMLElement>(null);
   const create = useMutation({
     mutationFn: (source?: string) => api.createDiagram(source),
     onSuccess: (result) => {
@@ -50,100 +89,207 @@ export default function DiagramsPage() {
     },
     onError: (error) => toast(error instanceof Error ? error.message : "Couldn't delete that diagram.", { tone: "error" }),
   });
-  const diagrams = list.data?.diagrams ?? [];
+  const diagrams = useMemo(() => list.data?.diagrams ?? [], [list.data]);
   const prefetchIds = diagrams.slice(0, 8).map((diagram) => diagram.id).join(" ");
   useEffect(() => {
     for (const id of prefetchIds.split(" ").filter(Boolean)) router.prefetch(`/diagrams/${id}`);
   }, [prefetchIds, router]);
   const shown = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    if (!needle) return diagrams;
-    return diagrams.filter((diagram) => (diagram.title || "Untitled diagram").toLowerCase().includes(needle));
-  }, [diagrams, filter]);
+    const matching = needle ? diagrams.filter((diagram) => (diagram.title || "Untitled diagram").toLowerCase().includes(needle)) : diagrams;
+    if (sort === "recent") return [...matching].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    return [...matching].sort((a, b) => (collator ? collator.compare(a.title || "Untitled diagram", b.title || "Untitled diagram") : 0));
+  }, [diagrams, filter, sort]);
+  const empty = Boolean(list.data) && !diagrams.length;
+  const showGallery = gallery || empty;
+  useEffect(() => {
+    if (!gallery) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setGallery(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [gallery]);
+  const openGallery = () => {
+    if (empty) {
+      galleryRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+      return;
+    }
+    setGallery((open) => !open);
+  };
+  const count = diagrams.length;
+
   return (
-    <div className="mx-auto max-w-[880px] px-4 pb-24 pt-8 sm:px-10">
+    <div className="mx-auto max-w-[1120px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Diagrams"
         description="Describe a system in plain text, or start from a few blocks and rearrange them."
         actions={
-          <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => setGallery((open) => !open)}>
+          <button type="button" className="btn-primary dg-primary" disabled={create.isPending} aria-expanded={showGallery} aria-controls="diagram-gallery" onClick={openGallery}>
+            <Plus size={15} aria-hidden />
             {create.isPending ? "Creating…" : "New diagram"}
           </button>
         }
       />
-      {gallery ? (
-        <div className="mb-4 rounded-xl border border-line bg-panel p-3" role="dialog" aria-label="New diagram">
-          <div className="mb-2 text-[13px] font-medium">Start from</div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <button type="button" className="tile rounded-lg px-3 py-2 text-left" disabled={create.isPending} onClick={() => start()}>
-              <div className="text-[13.5px] font-medium">Blank</div>
-              <div className="mt-0.5 text-[12px] text-muted">An empty canvas</div>
-            </button>
-            {DIAGRAM_TEMPLATES.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                className="tile rounded-lg px-3 py-2 text-left"
-                disabled={create.isPending}
-                onClick={() => start(template.source)}
-              >
-                <div className="text-[13.5px] font-medium">{template.name}</div>
-                <div className="mt-0.5 text-[12px] text-muted">{template.blurb}</div>
-              </button>
-            ))}
-          </div>
+      {empty ? (
+        <div className="dg-empty">
+          <span className="dg-empty-icon" aria-hidden>
+            <Shapes size={22} />
+          </span>
+          <h2 className="dg-empty-title">No diagrams yet</h2>
+          <p className="dg-empty-text">Describe the blocks in plain text, paste a Mermaid flowchart, or pick a starting point below.</p>
         </div>
       ) : null}
-      <input
-        value={filter}
-        onChange={(event) => setFilter(event.target.value)}
-        aria-label="Search diagrams"
-        placeholder="Search diagrams"
-        className="field mb-3 w-full px-3 py-2 text-[13.5px]"
-      />
+      {showGallery ? (
+        <section ref={galleryRef} id="diagram-gallery" className="dg-gallery" aria-label="New diagram">
+          <div className="dg-gallery-head">
+            <h2 className="dg-gallery-title">Start from</h2>
+            {empty ? null : (
+              <button type="button" className="icon-btn" aria-label="Close templates" onClick={() => setGallery(false)}>
+                <X size={15} aria-hidden />
+              </button>
+            )}
+          </div>
+          <div className="dg-gallery-grid">
+            <button type="button" className="dg-template is-blank" disabled={create.isPending} onClick={() => start()}>
+              <span className="dg-template-icon" aria-hidden>
+                <Plus size={18} />
+              </span>
+              <span className="min-w-0">
+                <span className="dg-template-name">Blank</span>
+                <span className="dg-template-blurb">An empty canvas</span>
+              </span>
+            </button>
+            {DIAGRAM_TEMPLATES.map((template) => {
+              const Icon = TEMPLATE_ICONS[template.id] ?? Shapes;
+              return (
+                <button key={template.id} type="button" className="dg-template" disabled={create.isPending} onClick={() => start(template.source)}>
+                  <span className="dg-template-icon" aria-hidden>
+                    <Icon size={18} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="dg-template-name">{template.name}</span>
+                    <span className="dg-template-blurb">{template.blurb}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+      {empty ? null : (
+        <div className="dg-list-bar">
+          <label className="dg-search">
+            <Search size={15} aria-hidden className="dg-search-icon" />
+            <input value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Search diagrams" placeholder="Search diagrams" className="dg-search-input" />
+          </label>
+          {count ? (
+            <span className="dg-list-count" aria-live="polite">
+              {filter.trim() ? `${shown.length} of ${count}` : count === 1 ? "1 diagram" : `${count} diagrams`}
+            </span>
+          ) : null}
+          <Segmented<Sort>
+            label="Sort diagrams"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { id: "recent", label: "Recent" },
+              { id: "name", label: "Name" },
+            ]}
+          />
+        </div>
+      )}
       {failure ? (
         <LoadError error={failure} what="your diagrams" onRetry={retry} />
       ) : list.isPending ? (
-        <SkeletonRows count={3} rowClassName="h-16" />
-      ) : !diagrams.length ? (
-        <div className="empty-state">No diagrams yet. Create one and describe the blocks, or paste a Mermaid flowchart into the text.</div>
-      ) : !shown.length ? (
-        <p className="text-[13.5px] text-muted">No diagrams match that search.</p>
+        <ul className="dg-grid" aria-hidden>
+          {[0, 1, 2].map((index) => (
+            <li key={index} className="dg-card is-skeleton">
+              <div className="skeleton dg-thumb" />
+              <div className="dg-card-body">
+                <div className="skeleton h-4 w-2/3" />
+                <div className="skeleton mt-2 h-3 w-1/3" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : diagrams.length && !shown.length ? (
+        <div className="dg-no-match">
+          <p>No diagrams match “{filter.trim()}”.</p>
+          <button type="button" className="btn-ghost" onClick={() => setFilter("")}>
+            Clear search
+          </button>
+        </div>
       ) : null}
-      <ul className="space-y-2">
-        {shown.map((diagram) => (
-          <li key={diagram.id} className="tile flex items-center gap-3 rounded-xl bg-panel px-4 py-3">
-            <Link
-              href={`/diagrams/${diagram.id}`}
-              prefetch={false}
-              className="min-w-0 flex-1"
-              onMouseEnter={() => router.prefetch(`/diagrams/${diagram.id}`)}
-              onFocus={() => router.prefetch(`/diagrams/${diagram.id}`)}
-            >
-              <div className="truncate text-[15px] font-medium">{diagram.title || "Untitled diagram"}</div>
-              <div className="mt-0.5 text-[12.5px] text-muted">Updated {relative(diagram.updatedAt)}</div>
-            </Link>
-            {pending === diagram.id ? (
-              <span className="flex items-center gap-2 text-[13px]">
-                <span className="text-muted">Delete this diagram?</span>
-                <button type="button" className="btn" onClick={() => remove.mutate(diagram.id)}>
-                  Delete
-                </button>
-                <button type="button" className="btn-ghost" onClick={() => setPending(null)}>
-                  Keep
-                </button>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1">
-                <DiagramDownloadMenu id={diagram.id} />
-                <button type="button" className="btn-ghost" onClick={() => setPending(diagram.id)}>
-                  Delete
-                </button>
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
+      {shown.length ? (
+        <ul className="dg-grid">
+          {shown.map((diagram) => (
+            <DiagramListCard
+              key={diagram.id}
+              diagram={diagram}
+              confirming={pending === diagram.id}
+              deleting={remove.isPending && remove.variables === diagram.id}
+              onPrefetch={() => router.prefetch(`/diagrams/${diagram.id}`)}
+              onAskDelete={() => setPending(diagram.id)}
+              onDelete={() => remove.mutate(diagram.id)}
+              onKeep={() => setPending(null)}
+            />
+          ))}
+        </ul>
+      ) : null}
     </div>
+  );
+}
+
+function DiagramListCard({
+  diagram,
+  confirming,
+  deleting,
+  onPrefetch,
+  onAskDelete,
+  onDelete,
+  onKeep,
+}: {
+  diagram: DiagramSummary;
+  confirming: boolean;
+  deleting: boolean;
+  onPrefetch: () => void;
+  onAskDelete: () => void;
+  onDelete: () => void;
+  onKeep: () => void;
+}) {
+  const title = diagram.title || "Untitled diagram";
+  const keep = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirming) keep.current?.focus();
+  }, [confirming]);
+  return (
+    <li className="dg-card" data-confirming={confirming || undefined}>
+      <Link href={`/diagrams/${diagram.id}`} prefetch={false} className="dg-card-link" onMouseEnter={onPrefetch} onFocus={onPrefetch}>
+        <DiagramThumb id={diagram.id} updatedAt={diagram.updatedAt} />
+        <span className="dg-card-body">
+          <span className="dg-card-title" title={title}>
+            {title}
+          </span>
+          <span className="dg-card-meta">Updated {relative(diagram.updatedAt)}</span>
+        </span>
+      </Link>
+      <div className="dg-card-actions">
+        <DiagramCardMenu id={diagram.id} title={title} onDelete={onAskDelete} />
+      </div>
+      {confirming ? (
+        <div className="dg-card-confirm" role="group" aria-label={`Delete ${title}`}>
+          <p className="dg-card-confirm-text">Delete this diagram?</p>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn-danger dg-danger" disabled={deleting} onClick={onDelete}>
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+            <button ref={keep} type="button" className="btn" onClick={onKeep}>
+              Keep
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </li>
   );
 }

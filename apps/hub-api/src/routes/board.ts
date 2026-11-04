@@ -261,47 +261,6 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
-  // ── calendar ────────────────────────────────────────────────────────────
-
-  app.get("/api/calendar", async (request) => {
-    const query = z.object({
-      from: DateInput,
-      to: DateInput,
-    }).refine((value) => new Date(value.from) < new Date(value.to), { message: "from must be before to." }).parse(request.query);
-    const events = await prisma.artifact.findMany({
-      where: {
-        userId: request.userId,
-        kind: "event",
-        deletedAt: null,
-        ts: { gte: new Date(query.from), lt: new Date(query.to) },
-      },
-      orderBy: { ts: "asc" },
-      select: { id: true, title: true, ts: true, url: true, metadata: true, participants: true },
-    });
-    const sync = await prisma.syncState.findMany({
-      where: { userId: request.userId, connector: { in: ["google_calendar", "outlook_calendar"] } },
-    });
-    return {
-      events: events.map((event) => {
-        const meta = (event.metadata ?? {}) as { end?: string; allDay?: boolean; joinUrl?: string; location?: string };
-        return {
-          id: event.id,
-          title: event.title,
-          start: event.ts.toISOString(),
-          end: meta.end ?? null,
-          allDay: Boolean(meta.allDay),
-          joinUrl: meta.joinUrl ?? event.url ?? null,
-          location: meta.location ?? null,
-        };
-      }),
-      sync: sync.map((row) => ({
-        connector: row.connector,
-        lastSyncAt: row.lastSyncAt?.toISOString() ?? null,
-        lastError: row.lastError,
-      })),
-    };
-  });
-
   // ── needs me ────────────────────────────────────────────────────────────
 
   app.post("/api/approvals/:id/decide", async (request, reply) => {

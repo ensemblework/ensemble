@@ -1,119 +1,190 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, ExternalLink } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpRight, CalendarDays, CheckSquare, Clock, ExternalLink, FileText, FolderKanban, Plus, Trash2, Users } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { MarkdownText } from "@/components/markdown-text";
+import { api } from "@/lib/api";
 import { connectedApi, type ImportedMeetingNote } from "@/lib/api-connected";
-import { whenLabel } from "@/lib/format";
+import { MEETING_QUERY, meetingsApi } from "@/lib/api-meetings";
+import { InfoTip, Spinner } from "../ui";
+import { useToast } from "../toast";
+import { NoteSourceMark } from "./note-source";
+import { meetingWhen } from "./meeting-time";
+import { TranscriptView } from "./transcript-view";
 
 const ownerLabel = (owner: { name: string | null; email: string | null } | null) => owner?.name ?? owner?.email ?? "Someone";
+export const personHref = (name: string) => `/context?tab=people&search=${encodeURIComponent(name)}`;
 
-/** Meetings Fireflies, Fathom, Granola and the other meeting-notes connectors brought in. Hidden until there are any. */
-export function ImportedMeetingNotes({ search = "" }: { search?: string }) {
-  const notes = useQuery({ queryKey: ["meetings-imported"], queryFn: connectedApi.importedMeetings });
-  const [open, setOpen] = useState<string | null>(null);
-  const rows = (notes.data?.notes ?? []).filter((note) => `${note.title} ${note.summary} ${note.sourceLabel}`.toLowerCase().includes(search.trim().toLowerCase()));
-  if (notes.isError) return <div className="work-load-error" role="alert">Couldn't load notes from connected meeting tools.<button type="button" className="btn" onClick={() => void notes.refetch()}>Try again</button></div>;
-  if (!rows.length) return null;
-  return (
-    <section className="mb-8" data-testid="imported-meetings">
-      <h2 className="mb-2 text-[15px] font-semibold">From your meeting tools</h2>
-      <ul className="imported-meeting-grid">
-        {rows.map((note) => (
-          <li key={note.id} className="rounded-xl border border-line bg-panel">
-            <button type="button" className="imported-meeting-card" aria-expanded={open === note.id} onClick={() => setOpen(open === note.id ? null : note.id)}>
-              <span className="meeting-card-meta"><CalendarDays size={14} />{note.sourceLabel} · {whenLabel(note.occurredAt)}</span>
-              <strong>{note.title}</strong>
-              {note.summary && <p>{note.summary.slice(0, 160)}</p>}
-              <span className="meeting-card-footer">{note.actionItems.length} action items · {note.decisions.length} decisions<span>{open === note.id ? "Close" : "Open notes"}</span></span>
-            </button>
-            {open === note.id ? <MeetingNoteDetail note={note} /> : null}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-export function MeetingNoteDetail({ note }: { note: ImportedMeetingNote }) {
-  const mine = note.actionItems.filter((item) => item.mine);
-  return (
-    <div className="space-y-4 border-t border-line px-4 py-3 text-[13px]">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-muted">
-        {note.event ? (
-          <span className="inline-flex items-center gap-1">
-            <CalendarDays size={13} />
-            {note.event.url ? (
-              <a href={note.event.url} target="_blank" rel="noreferrer" className="hover:underline">
-                {note.event.title}
-              </a>
-            ) : (
-              note.event.title
-            )}
-          </span>
+/**
+ * A meeting brought in from a transcript, a meeting app or a meeting-notes app: the calendar event
+ * and people it belongs to, what was decided, action items that become tasks, and the whole
+ * transcript. Read only; the source is the record.
+ */
+export function MeetingNoteDetail({ note: listed, onDelete }: { note: ImportedMeetingNote; onDelete?: (note: ImportedMeetingNote) => void }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const router = useRouter();
+  const full = useQuery({ queryKey: MEETING_QUERY.note(listed.id), queryFn: () => connectedApi.meetingNote(listed.id), staleTime: 30_000 });
+  const note = full.data?.note ?? listed;
+  const transcript = full.data?.note.transcript ?? [];
+  const makeTask = useMutation({
+    mutationFn: (item: { text: string; owner: string | null }) => meetingsApi.makeTask(listed.id, item.text, item.owner),
+    onSuccess: (result) => {
+      toast(result.created ? `Added “${result.task.title}” to your tasks.` : "That task is already on your board.", {
+        action: { label: "Open", run: () => router.push(`/tasks/${result.task.id}`) },
+      });
+      void client.invalidateQueries({ queryKey: MEETING_QUERY.note(listed.id) });
+      void client.invalidateQueries({ queryKey: ["meetings-imported"] });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 300_000 });
+  // People in the meeting besides you: those in People, then speakers who are not.
+  const named = new Set([...note.people.map((person) => person.name?.toLowerCase()), me.data?.user.name.trim().toLowerCase()]);
+  const others = (note.speakers ?? []).filter((name) => !named.has(name.toLowerCase()));
+  const open = note.actionItems.filter((item) => !item.completed);
+  const yours = open.filter((item) => item.mine || !item.owner);
+  const theirs = open.filter((item) => !item.mine && item.owner);
+  const waitingElse = note.waitingOn.filter((row) => !note.actionItems.some((item) => item.text === row.text));
+  const listedTasks = note.tasks.filter((task) => !note.actionItems.some((item) => item.taskId === task.id));
+  const actionRow = (item: ImportedMeetingNote["actionItems"][number]) => {
+    const pending = makeTask.isPending && makeTask.variables?.text === item.text;
+    return (
+      <li key={item.text} className="note-action">
+        <CheckSquare size={15} aria-hidden className="note-action-icon" />
+        <div className="min-w-0 flex-1">
+          <p>{item.text}</p>
+          {item.owner || item.at || item.due ? (
+            <p className="note-action-meta">
+              {item.owner ? <span>{ownerLabel(item.owner)}</span> : null}
+              {item.at ? <span className="inline-flex items-center gap-1"><Clock size={11} aria-hidden />{item.at}</span> : null}
+              {item.due ? <span>Due {new Date(item.due).toLocaleDateString()}</span> : null}
+            </p>
+          ) : null}
+        </div>
+        {item.taskId ? (
+          <Link href={`/tasks/${item.taskId}`} className="btn shrink-0">Open task</Link>
         ) : (
-          <span>Not matched to a calendar event</span>
+          <button type="button" className="btn shrink-0" disabled={makeTask.isPending} aria-label={`Make task: ${item.text}`} onClick={() => makeTask.mutate({ text: item.text, owner: item.owner?.name ?? null })}>
+            {pending ? <Spinner size={12} /> : <Plus size={13} aria-hidden />}Make task
+          </button>
         )}
-        {note.transcriptUrl ? (
-          <a href={note.transcriptUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">
-            Open in {note.sourceLabel} <ExternalLink size={12} />
-          </a>
+      </li>
+    );
+  };
+  return (
+    <div className="note-detail">
+      <div className="meeting-paper-kicker">
+        <NoteSourceMark source={note.source} label={note.sourceLabel} />
+        <span className="note-kicker-text">{note.sourceLabel}</span>
+        <span aria-hidden>·</span>
+        <time dateTime={note.occurredAt}>{meetingWhen(note.occurredAt)}</time>
+        {note.durationMinutes ? <><span aria-hidden>·</span><span>{note.durationMinutes} min</span></> : null}
+        {onDelete ? (
+          <button type="button" className="icon-btn ml-auto" aria-label={`Delete “${note.title}”`} title="Delete this meeting" onClick={() => onDelete(note)}>
+            <Trash2 size={14} />
+          </button>
         ) : null}
-        {note.project ? (
-          <Link href={`/projects/${note.project.id}`} className="hover:underline">
-            {note.project.name}
-          </Link>
-        ) : null}
-        {note.people.length ? <span>{note.people.map((person) => person.name).join(", ")}</span> : null}
       </div>
-      {note.summary ? (
+      <h2 className="note-title">{note.title}</h2>
+      <dl className="note-props">
         <div>
-          <h3 className="text-[12px] font-semibold text-muted">Summary</h3>
-          <div className="mt-1 max-h-72 overflow-auto leading-6">
-            <MarkdownText text={note.summary} />
+          <dt><CalendarDays size={14} aria-hidden />Meeting</dt>
+          <dd>
+            {note.event ? (
+              note.event.url ? <a href={note.event.url} target="_blank" rel="noopener noreferrer" className="note-link">{note.event.title}<ArrowUpRight size={12} aria-hidden /></a> : <span>{note.event.title}</span>
+            ) : (
+              <span className="text-faint">Not linked to a calendar event</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt><Users size={14} aria-hidden />People</dt>
+          <dd className="note-people">
+            {note.people.map((person) => (
+              <Link key={person.id} href={personHref(person.name ?? "")} className="note-person" data-linked>{person.name}</Link>
+            ))}
+            {others.map((name) => <span key={name} className="note-person" title="Spoke in the meeting; not in People">{name}</span>)}
+            {!note.people.length && !others.length ? <span className="text-faint">No one recorded</span> : null}
+          </dd>
+        </div>
+        {note.project ? (
+          <div>
+            <dt><FolderKanban size={14} aria-hidden />Project</dt>
+            <dd><Link href={`/projects/${note.project.id}`} className="note-link">{note.project.name}</Link></dd>
           </div>
-        </div>
+        ) : null}
+        {note.transcriptUrl ? (
+          <div>
+            <dt><ExternalLink size={14} aria-hidden />Source</dt>
+            <dd><a href={note.transcriptUrl} target="_blank" rel="noopener noreferrer" className="note-link">Open in {note.sourceLabel}<ArrowUpRight size={12} aria-hidden /></a></dd>
+          </div>
+        ) : null}
+      </dl>
+
+      {note.summary ? (
+        <section className="note-section">
+          <h3>Summary</h3>
+          <div className="note-summary"><MarkdownText text={note.summary} /></div>
+        </section>
       ) : null}
+
       {note.decisions.length ? (
-        <div>
-          <h3 className="text-[12px] font-semibold text-muted">Decisions</h3>
-          <ul className="mt-1 list-disc space-y-0.5 pl-5">
-            {note.decisions.map((decision) => (
-              <li key={decision}>{decision}</li>
-            ))}
+        <section className="note-section">
+          <h3>Decisions{note.suggested ? <SuggestedTip /> : null}</h3>
+          <ul className="note-decisions">
+            {note.decisions.map((decision) => <li key={decision}>{decision}</li>)}
           </ul>
-        </div>
+        </section>
       ) : null}
-      {mine.length || note.tasks.length ? (
-        <div>
-          <h3 className="text-[12px] font-semibold text-muted">Your action items</h3>
-          <ul className="mt-1 space-y-0.5">
-            {note.tasks.map((task) => (
-              <li key={task.id}>
-                <Link href={`/tasks/${task.id}`} className="hover:underline">
-                  {task.title}
-                </Link>{" "}
-                <span className="text-[12px] text-muted">{task.status === "proposed" ? "proposed" : task.status}</span>
-              </li>
-            ))}
-            {note.tasks.length ? null : mine.map((item) => <li key={item.text}>{item.text}</li>)}
-          </ul>
-        </div>
-      ) : null}
-      {note.waitingOn.length ? (
-        <div>
-          <h3 className="text-[12px] font-semibold text-muted">Waiting on others</h3>
-          <ul className="mt-1 space-y-0.5">
-            {note.waitingOn.map((item) => (
-              <li key={`${ownerLabel(item.owner)}:${item.text}`}>
-                <span className="font-medium">{ownerLabel(item.owner)}</span>: {item.text}
+
+      {yours.length || listedTasks.length ? (
+        <section className="note-section">
+          <h3>Action items{note.suggested ? <SuggestedTip /> : null}</h3>
+          <ul className="note-actions">
+            {yours.map(actionRow)}
+            {listedTasks.map((task) => (
+              <li key={task.id} className="note-action">
+                <CheckSquare size={15} aria-hidden className="note-action-icon" />
+                <p className="min-w-0 flex-1">{task.title}</p>
+                <Link href={`/tasks/${task.id}`} className="btn shrink-0">{task.status === "proposed" ? "Review" : "Open task"}</Link>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
+      ) : null}
+
+      {theirs.length || waitingElse.length ? (
+        <section className="note-section">
+          <h3>Waiting on others{note.suggested && !yours.length ? <SuggestedTip /> : null}</h3>
+          <ul className="note-actions">
+            {theirs.map(actionRow)}
+            {waitingElse.map((item) => (
+              <li key={`${ownerLabel(item.owner)}:${item.text}`} className="note-action">
+                <CheckSquare size={15} aria-hidden className="note-action-icon" />
+                <div className="min-w-0 flex-1">
+                  <p>{item.text}</p>
+                  <p className="note-action-meta"><span>{ownerLabel(item.owner)}</span></p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {full.isPending && (note.lineCount ?? 0) > 0 ? (
+        <p className="mt-5 inline-flex items-center gap-2 text-[13px] text-muted"><Spinner size={13} />Loading the transcript…</p>
+      ) : transcript.length ? (
+        <TranscriptView key={note.id} lines={transcript} defaultOpen={!note.summary} />
+      ) : !note.summary && !note.decisions.length && !open.length ? (
+        <p className="empty-state mt-5"><FileText size={14} className="mr-1 inline" aria-hidden />{note.sourceLabel} sent no transcript for this meeting.</p>
       ) : null}
     </div>
   );
+}
+
+function SuggestedTip() {
+  return <InfoTip label="Where these came from" text="Found in what was said, by phrases like “I'll send…”, “Could you review…” and “We agreed…”. Nothing was sent to a model; make a task from the ones that are real." />;
 }

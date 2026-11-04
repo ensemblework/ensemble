@@ -12,13 +12,14 @@ import { normalisedName } from "../../people/identity.js";
 import { upsertArtifact, upsertPerson } from "../ingest.js";
 import type { Proposal, SyncContext, SyncResult } from "../types.js";
 import { decisionsFromMarkdown, dueDate, isMine, itemKey, meFrom, transcriptText, type Me } from "./actions.js";
-import { matchEvent } from "./match.js";
-import { VENDOR_LABEL, type MeetingRecord, type MeetingVendor } from "./types.js";
+import { matchEvent, type MatchResult } from "./match.js";
+import { MAX_TRANSCRIPT_CHARS, transcriptDocument } from "./transcript-parse.js";
+import { isMeetingVendor, originLabel, type MeetingOrigin, type MeetingRecord } from "./types.js";
 
 const SUMMARY_CAP = 12_000;
 
 export interface NoteExtraction {
-  via: MeetingVendor;
+  via: MeetingOrigin;
   summary: string;
   decisions: string[];
   actionItems: Array<{
@@ -34,6 +35,24 @@ export interface NoteExtraction {
   /** Other people's action items: what I am waiting on. */
   waitingOn: Array<{ text: string; owner: { name: string | null; email: string | null } }>;
   eventMatch: { reason: string; score: number };
+  /** Speakers as the transcript names them, matched to people or not. */
+  speakers?: string[];
+  lineCount?: number;
+  durationSeconds?: number | null;
+}
+
+/** How one explicit import differs from a vendor batch. */
+export interface IngestOptions {
+  /** MeetingNote.source; vendor batches are "connector". */
+  source?: "connector" | "upload" | "paste";
+  /** The calendar event the person picked; no matching then. */
+  eventArtifactId?: string | null;
+  /** People the person picked or added for this meeting, beside the ones found. */
+  personIds?: readonly string[];
+  /** Asking again for one meeting brings back a note the person deleted. */
+  revive?: boolean;
+  /** Fields kept on the note's extraction (format, file name, whether items were found in speech). */
+  extraction?: Record<string, unknown>;
 }
 
 export async function whoAmI(userId: string, settingsEmail: string, extra: ReadonlyArray<string | null | undefined> = []): Promise<Me> {
@@ -54,11 +73,23 @@ async function namedPerson(userId: string, name: string): Promise<string | null>
   return rows.length === 1 ? rows[0]!.id : null;
 }
 
-export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, records: readonly MeetingRecord[], account: string | null): Promise<SyncResult> {
-  const label = VENDOR_LABEL[vendor];
+async function chosenEvent(userId: string, id: string): Promise<MatchResult> {
+  const event = await prisma.artifact.findFirst({ where: { id, userId, kind: "event", deletedAt: null }, select: { id: true, externalId: true, title: true, ts: true, url: true, projectId: true } });
+  if (!event) throw Object.assign(new Error("That calendar event was not found."), { statusCode: 404 });
+  return { event: { ...event, start: event.ts, end: null, emails: [] }, reason: "event-id", score: 1 };
+}
+
+export async function ingestMeetings(
+  ctx: SyncContext,
+  vendor: MeetingOrigin,
+  records: readonly MeetingRecord[],
+  account: string | null,
+  options: IngestOptions = {},
+): Promise<SyncResult & { noteIds: string[] }> {
+  const label = originLabel(vendor);
   const me = await whoAmI(ctx.userId, ctx.settings.email, [account]);
   const self = [...me.emails];
-  const result: SyncResult = { items: 0, stored: [], proposals: [], triage: [], account };
+  const result: SyncResult & { noteIds: string[] } = { items: 0, stored: [], proposals: [], triage: [], account, noteIds: [] };
 
   for (const record of records) {
     const existing = await prisma.meetingNote.findUnique({
@@ -66,7 +97,7 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
       select: { id: true, deletedAt: true, projectId: true, eventArtifactId: true },
     });
     // A note the person deleted stays deleted, and its action items are not proposed again.
-    if (existing?.deletedAt) continue;
+    if (existing?.deletedAt && !options.revive) continue;
 
     const evidence = `${vendor}:${record.id}`;
     const personIds: string[] = [];
@@ -87,6 +118,7 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
           : null;
       if (id && !personIds.includes(id)) personIds.push(id);
     }
+    for (const id of options.personIds ?? []) if (!personIds.includes(id)) personIds.push(id);
 
     const emails = record.attendees.map((row) => row.email?.trim().toLowerCase()).filter((value): value is string => Boolean(value));
     const duration = record.end ? Math.round((record.end.getTime() - record.start.getTime()) / 60_000) : null;
@@ -98,7 +130,8 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
       url: record.url,
       ts: record.start,
       title: record.title,
-      text: lines.length ? transcriptText(lines, label) : summary,
+      // Transcripts from a file or the meeting app have nowhere else to open; the note keeps all of it.
+      text: lines.length ? transcriptText(lines, isMeetingVendor(vendor) ? label : "Meeting notes") : summary,
       participants: record.attendees.map((row) => ({ name: row.name ?? null, email: row.email?.toLowerCase() ?? null })),
       authoredByMe: Boolean(record.organizer && me.emails.has(record.organizer.toLowerCase())),
       metadata: {
@@ -117,7 +150,9 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
     result.items += 1;
     result.stored.push(stored);
 
-    const match = await matchEvent(ctx.userId, { start: record.start, end: record.end, title: record.title, emails, calendarEventId: record.calendarEventId }, me.emails);
+    const match = options.eventArtifactId
+      ? await chosenEvent(ctx.userId, options.eventArtifactId)
+      : await matchEvent(ctx.userId, { start: record.start, end: record.end, title: record.title, emails, calendarEventId: record.calendarEventId }, me.emails);
     const eventArtifactId = match.event?.id ?? existing?.eventArtifactId ?? null;
     const projectId = existing?.projectId ?? match.event?.projectId ?? stored.projectId ?? null;
 
@@ -144,14 +179,21 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
       actionItems: items,
       waitingOn: items.filter((item) => !item.mine && item.owner && !item.completed).map((item) => ({ text: item.text, owner: item.owner! })),
       eventMatch: { reason: match.reason, score: Math.round(match.score * 100) / 100 },
+      speakers: [...new Set((record.speakers ?? []).map((row) => row.name?.trim()).filter((name): name is string => Boolean(name)))].slice(0, 60),
+      lineCount: lines.length,
+      durationSeconds: duration !== null ? duration * 60 : null,
+      ...(options.extraction ?? {}),
     };
+    // The whole transcript, as "[mm:ss] Speaker: words" lines; the artifact keeps only the start for search.
+    const transcript = transcriptDocument(lines).slice(0, MAX_TRANSCRIPT_CHARS);
     const data = {
       title: record.title.slice(0, 300) || `${label} meeting`,
       titleSource: "connector",
+      prompt: transcript,
       answer: summary,
       occurredAt: record.start,
       personIds,
-      source: "connector",
+      source: options.source ?? "connector",
       status: "ready",
       error: null,
       extraction: extraction as unknown as Prisma.InputJsonValue,
@@ -160,10 +202,12 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
       artifactId: eventArtifactId,
       transcriptArtifactId: stored.id,
       projectId,
+      ...(existing?.deletedAt ? { deletedAt: null } : {}),
     };
     const note = existing
       ? await prisma.meetingNote.update({ where: { id: existing.id }, data, select: { id: true } })
-      : await prisma.meetingNote.create({ data: { userId: ctx.userId, externalSource: vendor, externalId: record.id, prompt: "", ...data }, select: { id: true } });
+      : await prisma.meetingNote.create({ data: { userId: ctx.userId, externalSource: vendor, externalId: record.id, ...data }, select: { id: true } });
+    result.noteIds.push(note.id);
 
     for (const item of items) {
       if (!item.mine || item.completed || !item.sourceRef) continue;
@@ -193,7 +237,7 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
 }
 
 /** Notes synced before their calendar event was: try the match again once the calendar has caught up. */
-export async function rematchRecent(userId: string, vendor: MeetingVendor, me: Me): Promise<number> {
+export async function rematchRecent(userId: string, vendor: MeetingOrigin, me: Me): Promise<number> {
   const notes = await prisma.meetingNote.findMany({
     where: { userId, externalSource: vendor, eventArtifactId: null, deletedAt: null, occurredAt: { gte: new Date(Date.now() - 14 * 86_400_000) } },
     select: { id: true, title: true, occurredAt: true, extraction: true, transcriptArtifact: { select: { participants: true, metadata: true } } },

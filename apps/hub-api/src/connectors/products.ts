@@ -30,6 +30,7 @@ export const GOOGLE_PRODUCT_SCOPES = {
   calendar: [`${GOOGLE}calendar.events`, `${GOOGLE}calendar.calendarlist.readonly`],
   drive_docs: [`${GOOGLE}drive.file`],
   drive_search: [`${GOOGLE}drive.readonly`],
+  meet: [`${GOOGLE}meetings.space.readonly`],
 } as const;
 
 export const SUITES: Readonly<Record<string, SuiteSpec>> = {
@@ -43,6 +44,8 @@ export const SUITES: Readonly<Record<string, SuiteSpec>> = {
       drive_docs: { scopes: GOOGLE_PRODUCT_SCOPES.drive_docs, sources: [], defaultOn: true },
       // Restricted scope: public servers need Google's security assessment before this can be offered to everyone.
       drive_search: { scopes: GOOGLE_PRODUCT_SCOPES.drive_search, sources: [], defaultOn: false },
+      // Read when the person fetches one meeting's transcript (connectors/meetings/google-meet.ts).
+      meet: { scopes: GOOGLE_PRODUCT_SCOPES.meet, sources: [], defaultOn: false },
     },
   },
   microsoft_365: {
@@ -56,6 +59,8 @@ export const SUITES: Readonly<Record<string, SuiteSpec>> = {
       teams: { scopes: ["Chat.Read"], sources: ["teams"], defaultOn: false },
       onedrive: { scopes: ["Files.Read"], sources: [], defaultOn: true },
       office: { scopes: ["Files.ReadWrite"], sources: [], defaultOn: true },
+      // Work or school accounts; transcript access often needs an admin's approval (connectors/meetings/teams.ts).
+      teams_meetings: { scopes: ["OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All"], additionalScopes: ["OnlineMeetingRecording.Read.All"], sources: [], defaultOn: false },
     },
   },
 };

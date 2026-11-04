@@ -110,3 +110,28 @@ test("double-clicking a template in New diagram makes one diagram", async () => 
     await view.done();
   }
 });
+
+test("the list sorts by name or by last edit, and a search with no match offers Clear search", async () => {
+  const older = { ...DIAGRAM, id: "d2", title: "api gateway", updatedAt: "2026-10-01T09:00:00.000Z" };
+  const newest = { ...DIAGRAM, id: "d3", title: "Billing flow", updatedAt: "2026-10-20T09:00:00.000Z" };
+  const view = await mount((call) => (call.path === "/api/diagrams" ? json({ diagrams: [DIAGRAM, older, newest] }) : json({}, 404)));
+  const titles = () => Array.from(document.querySelectorAll(".dg-card-title")).map((node) => node.textContent);
+  try {
+    await settle();
+    assert.deepEqual(titles(), ["Billing flow", "Fieldnote sync", "api gateway"]);
+    await act(async () => button(/^Name$/).click());
+    assert.deepEqual(titles(), ["api gateway", "Billing flow", "Fieldnote sync"]);
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search diagrams"]');
+    assert.ok(search);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "roadmap");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    assert.deepEqual(titles(), []);
+    assert.match(text(), /No diagrams match “roadmap”/);
+    await act(async () => button(/^Clear search$/).click());
+    assert.equal(titles().length, 3);
+  } finally {
+    await view.done();
+  }
+});

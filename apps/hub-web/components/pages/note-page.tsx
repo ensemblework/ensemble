@@ -3,14 +3,14 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
 import { Trash2 } from "lucide-react";
 import { NestedPages, useLinkedPages } from "./nested-pages";
+import { PageCrumbs, type Crumb } from "./page-crumbs";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
-import { ApiError, api, currentLink, currentShare } from "@/lib/api";
+import { ApiError, api, currentLink, currentShare, type StandalonePageRecord } from "@/lib/api";
 import { quickAssignTask } from "@/lib/quick-assign";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
@@ -258,25 +258,27 @@ export function NotePage({
       data-page-focus={focusMode.active ? "true" : undefined}
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-[12.5px] text-muted">
-        <span>
-          {shared?.link
-            ? gone
-              ? "Public link · turned off"
-              : canEdit
-                ? "Public link · anyone with it can edit"
-                : "Public link · view only"
-            : shared
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[12.5px] text-muted">
+        {shared ? (
+          <span>
+            {shared.link
               ? gone
+                ? "Public link · turned off"
+                : canEdit
+                  ? "Public link · anyone with it can edit"
+                  : "Public link · view only"
+              : gone
                 ? "Not shared with you anymore"
                 : canEdit
-                ? "Shared with you · can edit"
-                : "Shared with you · view only"
-              : canEdit
-                ? "Pages"
-                : "Pages · view only"}
-        </span>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                  ? "Shared with you · can edit"
+                  : "Shared with you · view only"}
+          </span>
+        ) : (
+          <PageCrumbs back={!inPeek} crumbs={pageCrumbs(record, family.data?.pages)}>
+            {canEdit ? null : <span className="px-1">view only</span>}
+          </PageCrumbs>
+        )}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <PagePeople kind="page" id={pageId} />
           {!shared && !access.guest ? <PageActions id={pageId} title={record.title} before={async () => { if (titleSave.current) await titleSave.current; if (!(await flush())) throw new Error("Save the page before using this action."); }} /> : null}
           {shared || !canEdit ? (
@@ -310,7 +312,6 @@ export function NotePage({
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
         )}
       </div>
-      {!shared && record.parentId ? <Link className="mt-3 inline-flex text-[12px] text-muted hover:text-ink" href={record.parentTaskId ? `/tasks/${record.parentTaskId}` : `/pages/${record.parentId}`}>← {family.data?.pages.find((parent) => parent.id === record.parentId)?.title || (record.parentTaskId ? "Parent task" : "Parent page")}</Link> : null}
       <PageContent status={saveText} error={saveState === "error"} before={locked && unsaved ? (
         <KeptEdits
           message={gone ? "This page isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this page anymore, so your last changes weren't saved. They're still on screen."}
@@ -329,7 +330,7 @@ export function NotePage({
             entities={entities.get}
             onChange={onChange}
             onMentionClick={onMentionClick}
-            page={{ kind: "page", id: pageId }}
+            page={{ kind: "page", id: pageId, depth: (record.ancestors?.length ?? (record.parentId ? 1 : 0)) + 1 }}
             editable={!leaving && canEdit}
             collab={sync.binding}
           />
@@ -348,4 +349,12 @@ export function NotePage({
       {!shared ? <NestedPages parentPageId={pageId} linked={linked} /> : null}
     </div>
   );
+}
+
+/** Pages, then each page this one sits inside (a task's page links to the task). */
+function pageCrumbs(record: StandalonePageRecord, pages: Array<{ id: string; title: string }> | undefined): Crumb[] {
+  const crumbs: Crumb[] = [{ label: "Pages", href: "/pages" }];
+  const ancestors = record.ancestors ?? (record.parentId ? [{ id: record.parentId, title: pages?.find((page) => page.id === record.parentId)?.title ?? (record.parentTaskId ? "Task" : "Page"), taskId: record.parentTaskId ?? null }] : []);
+  for (const ancestor of ancestors) crumbs.push({ label: ancestor.title || "Untitled", href: ancestor.taskId ? `/tasks/${ancestor.taskId}` : `/pages/${ancestor.id}` });
+  return crumbs;
 }
