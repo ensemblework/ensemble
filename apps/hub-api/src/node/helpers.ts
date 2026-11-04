@@ -308,7 +308,7 @@ export const NewNode = z
     charter: z.string().min(1).max(8000).describe("Its standing instructions: what it is for, how it works, what it reports."),
     templateId: z.enum(NODE_TEMPLATES.map((row) => row.id) as [string, ...string[]]).optional().describe("A template to start from: its look, and its handle when the name is the template's."),
     avatar: z
-      .object({ shape: z.enum(["orb", "square", "spark", "hex", "leaf", "compass"]), color: z.enum(AVATAR_COLORS), eyes: z.enum(["dot", "line", "wide"]) })
+      .object({ shape: z.enum(["orb", "square", "spark", "hex", "leaf", "compass", "pebble", "bloom"]), color: z.enum(AVATAR_COLORS), eyes: z.enum(["dot", "line", "wide"]) })
       .strict()
       .optional()
       .describe("Its look, only when your owner asked for one."),

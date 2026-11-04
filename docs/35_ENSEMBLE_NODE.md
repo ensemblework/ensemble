@@ -544,7 +544,7 @@ The owner controls a session from its card with the same functions the node's to
 
 | Route | Effect |
 | --- | --- |
-| `GET /api/node/sessions?q=&limit=` | The owner's sessions, most recently active first (20 by default, at most 50): `{ sessions: [{ id, nodeId, card, status, agent, agentName, model, computer, folder, title, latestTask, summary, runs, lastActiveAt }] }`; `nodeId` is the node that manages it, null for none (a session started in the Hub or the CLI); `card` is its newest run card `{ messageId, roomId }`, null when it has none |
+| `GET /api/node/sessions?q=&limit=` | The owner's sessions, most recently active first (20 by default, at most 50): `{ sessions: [{ id, nodeId, card, status, agent, agentName, model, computer, folder, title, latestTask, summary, runs, lastActiveAt, usedBy, files }] }`. `nodeId` is the current manager or null; `card` is the newest accessible run card. `usedBy` records actual node and optional crew/room usage; direct usage has no group. `files` are deduplicated exact-job original references with deletion state and edit time, never bytes. Search covers displayed title, agent/model, location, state/count, node/group and paths, not hidden work summaries; it searches the most recent 100 session candidates before applying the response limit. |
 | `GET /api/node/sessions/:id` | `{ session: { id, nodeId, status, agent, agentName, model, computer, folder, running, queue, runs } }`; `runs` are the 20 newest with their status, position, prompt, summary, settings and card (`messageId`, `roomId`) |
 | `POST /api/node/sessions/:id/control {action, prompt?, title?, queued?}` | `queue`, `steer` or `replace` with `prompt` (as `node_session_send`), or `stop` with `queued: keep \| drop` (as `node_session_stop`); `{ ok, jobId? }` |
 | `POST /api/node/sessions/:id/queue {order}` | Every queued message's `jobId` in the new order |
@@ -552,6 +552,8 @@ The owner controls a session from its card with the same functions the node's to
 | `POST /api/node/sessions/:id/hand-over {nodeId}` | Hands the session to another of the owner's nodes, not a helper (or gives a session no node manages to one); `{ ok, nodeId }` |
 
 A refusal (the computer's agent cannot honour a setting, Stop everything is on, a message already started) is a 409 with what to do instead.
+
+The Node Sessions page is an inventory rather than a work log: identity, recency, recorded usage, two file cards and disclosure. Originals open in the existing split editor even outside a chat. Work descriptions and assignment controls stay off this page; conversation run cards retain their controls. Portrait shapes include Orb, Square, Spark, Hex, Leaf, Compass, Pebble and Bloom; all accepted creation/edit paths share these shapes.
 
 **Queue order.** A session's queued messages run in the order of `workspace_jobs.queue_position`, separate from `continueFromJobId`, which stays the true resume ancestry. The session's first run always comes first; a queued message goes last, a steer first, and a reorder sets them all (`queuedOrder`, `placeInQueue`, `reorderQueue`, `dropFromQueue` in `workspace/sessions.ts`). A queue from before positions runs along `continueFromJobId` until it is next changed.
 
