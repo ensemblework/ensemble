@@ -1822,7 +1822,7 @@ export const api = bindClient({
       };
     }>(`/api/meetings/notes/${id}`),
   meetingSession: (id: string) =>
-    get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
+    get<{ session: MeetingSessionRecord; attendees?: Array<{ id: string; name: string }>; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
   startMeeting: (artifactId: string | null, title?: string, projectId?: string) =>
     post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title, ...(projectId ? { projectId } : {}) }),
   /** Links meeting notes to a project; null unlinks them. */

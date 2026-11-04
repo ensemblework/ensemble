@@ -560,3 +560,323 @@ test("meeting routes list imported notes with decisions, action items and the ma
   const task = await user.inject({ method: "GET", url: `/api/tasks/${note.tasks[0]!.id}` });
   assert.equal(task.json<{ task: { meetingNoteId: string } }>().task.meetingNoteId, note.id);
 });
+
+// ── transcripts: files, pastes, Teams, Google Meet ─────────────────────────
+
+const { saveAccount } = await import("../connectors/accounts.js");
+
+const ATLAS_VTT = `WEBVTT
+
+a1/1-0
+00:00:03.000 --> 00:00:06.000
+<v Mira Chen>Let's review the Atlas launch.</v>
+
+a1/2-0
+00:00:07.000 --> 00:00:11.000
+<v Arjun Rao>The CSV fix is on staging. I'll send the release note tomorrow.</v>
+`;
+
+const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+
+async function teamsEvent(userId: string, joinUrl: string) {
+  return db.artifact.create({
+    data: {
+      userId,
+      kind: "event",
+      externalId: `outlook:evt-${randomUUID().slice(0, 8)}`,
+      ts: START,
+      title: "Atlas launch review",
+      participants: [{ name: "Arjun Rao", email: "arjun@fieldnote.example" }],
+      metadata: { source: "outlook", end: iso(30), joinUrl },
+    },
+  });
+}
+
+type NoteJson = {
+  id: string;
+  source: string;
+  sourceLabel: string;
+  title: string;
+  event: { id: string } | null;
+  people: Array<{ id: string; name: string }>;
+  speakers: string[];
+  lineCount: number;
+  suggested: boolean;
+  actionItems: Array<{ text: string; owner: { name: string | null } | null; taskId: string | null }>;
+  transcript?: Array<{ speaker: string; text: string; at: string | null }>;
+};
+
+test("a Teams .vtt upload becomes a meeting note: preview, speakers as people, the calendar event, the whole transcript", async () => {
+  resetMocks();
+  const user = await mira("transcript-file");
+  const other = await mira("transcript-file-other");
+  const event = await teamsEvent(user.id, "https://teams.microsoft.com/l/meetup-join/19%3ameeting_atlas%40thread.v2/0");
+  const file = { filename: "Atlas launch review-20261103_150302-Meeting Transcript.vtt", dataBase64: b64(ATLAS_VTT) };
+
+  const preview = await call(user, "POST", "/api/meetings/transcripts/preview", "/api/meetings/transcripts/preview", "happy-path", file);
+  assert.equal(preview.statusCode, 200, preview.body);
+  const shown = preview.json<{ preview: { format: string; title: string; lineCount: number; speakers: Array<{ name: string; me: boolean }> } }>().preview;
+  assert.equal(shown.format, "teams-vtt");
+  assert.equal(shown.title, "Atlas launch review");
+  assert.deepEqual(shown.speakers.map((row) => [row.name, row.me]), [["Mira Chen", true], ["Arjun Rao", false]]);
+  const wrongType = await call(user, "POST", "/api/meetings/transcripts/preview", "/api/meetings/transcripts/preview", "invalid-input", { filename: "atlas.mp4", dataBase64: b64("x") });
+  assert.equal(wrongType.statusCode, 400, wrongType.body);
+  assert.match(wrongType.json<{ error: string }>().error, /\.vtt, \.srt, \.txt, \.docx or \.json/);
+
+  const imported = await call(user, "POST", "/api/meetings/transcripts", "/api/meetings/transcripts", "happy-path", { ...file, eventId: event.id });
+  assert.equal(imported.statusCode, 201, imported.body);
+  const note = imported.json<{ note: NoteJson }>().note;
+  assert.equal(note.source, "transcript");
+  assert.equal(note.sourceLabel, "Microsoft Teams transcript (.vtt)");
+  assert.equal(note.event?.id, event.id);
+  assert.deepEqual(note.speakers, ["Mira Chen", "Arjun Rao"]);
+  assert.deepEqual(note.people.map((row) => row.name), ["Arjun Rao"], "Arjun is the event's attendee; Mira is me");
+  assert.equal(note.suggested, true);
+  assert.deepEqual(note.actionItems.map((item) => [item.text, item.owner?.name]), [["I'll send the release note tomorrow.", "Arjun Rao"]]);
+  const stored = await db.meetingNote.findUniqueOrThrow({ where: { id: note.id } });
+  assert.equal(stored.source, "upload");
+  const arjun = await db.person.findFirstOrThrow({ where: { userId: user.id, email: "arjun@fieldnote.example" } });
+  assert.deepEqual(stored.personIds, [arjun.id]);
+
+  const again = await user.inject({ method: "POST", url: "/api/meetings/transcripts", payload: file });
+  assert.equal(again.json<{ note: { id: string } }>().note.id, note.id, "the same file updates its note");
+  const foreignEvent = await call(other, "POST", "/api/meetings/transcripts", "/api/meetings/transcripts", "relation-isolation", { ...file, eventId: event.id });
+  assert.equal(foreignEvent.statusCode, 404, foreignEvent.body);
+  const empty = await call(user, "POST", "/api/meetings/transcripts", "/api/meetings/transcripts", "invalid-input", { text: "   " });
+  assert.equal(empty.statusCode, 400, empty.body);
+
+  const read = await user.inject({ method: "GET", url: `/api/meetings/notes/${note.id}` });
+  assert.deepEqual(read.json<{ note: NoteJson }>().note.transcript, [
+    { speaker: "Mira Chen", text: "Let's review the Atlas launch.", at: "00:03" },
+    { speaker: "Arjun Rao", text: "The CSV fix is on staging. I'll send the release note tomorrow.", at: "00:07" },
+  ]);
+});
+
+test("a pasted Teams transcript: action items become tasks once, and the note can be deleted and restored", async () => {
+  resetMocks();
+  const user = await mira("transcript-paste");
+  const other = await mira("transcript-paste-other");
+  const pasted = await user.inject({
+    method: "POST",
+    url: "/api/meetings/transcripts",
+    payload: { text: "Arjun Rao  0:03 Could you review the migration plan?\nMira Chen  0:09 Yes. We agreed to keep Postgres.\n", title: "Migration sync", occurredAt: iso(0), addPeople: ["Arjun Rao"] },
+  });
+  assert.equal(pasted.statusCode, 201, pasted.body);
+  const note = pasted.json<{ note: NoteJson }>().note;
+  assert.equal(note.title, "Migration sync");
+  assert.equal(note.sourceLabel, "Copied from a Teams transcript");
+  assert.deepEqual(note.people.map((row) => row.name), ["Arjun Rao"], "added to People when asked");
+  assert.equal((await db.meetingNote.findUniqueOrThrow({ where: { id: note.id } })).source, "paste");
+
+  const item = note.actionItems[0]!;
+  const made = await call(user, "POST", `/api/meetings/notes/${note.id}/tasks`, "/api/meetings/notes/:id/tasks", "happy-path", { text: item.text });
+  assert.equal(made.statusCode, 201, made.body);
+  const task = made.json<{ task: { id: string; title: string; status: string } }>().task;
+  assert.equal(task.title, "Could you review the migration plan?");
+  assert.equal(task.status, "todo");
+  const row = await db.task.findUniqueOrThrow({ where: { id: task.id } });
+  assert.equal(row.meetingNoteId, note.id);
+  assert.equal(row.sourceKind, "meeting");
+  const twice = await user.inject({ method: "POST", url: `/api/meetings/notes/${note.id}/tasks`, payload: { text: item.text } });
+  assert.equal(twice.json<{ task: { id: string }; created: boolean }>().task.id, task.id);
+  assert.equal(twice.json<{ created: boolean }>().created, false);
+  const linked = await user.inject({ method: "GET", url: `/api/meetings/notes/${note.id}` });
+  assert.equal(linked.json<{ note: NoteJson }>().note.actionItems[0]!.taskId, task.id);
+  const foreignTask = await call(other, "POST", `/api/meetings/notes/${note.id}/tasks`, "/api/meetings/notes/:id/tasks", "isolation", { text: item.text });
+  assert.equal(foreignTask.statusCode, 404, foreignTask.body);
+  const tooShort = await call(user, "POST", `/api/meetings/notes/${note.id}/tasks`, "/api/meetings/notes/:id/tasks", "invalid-input", { text: "x" });
+  assert.equal(tooShort.statusCode, 400, tooShort.body);
+  const unknownTask = await call(user, "POST", `/api/meetings/notes/${randomUUID()}/tasks`, "/api/meetings/notes/:id/tasks", "unknown-id", { text: item.text });
+  assert.equal(unknownTask.statusCode, 404, unknownTask.body);
+
+  const foreignDelete = await call(other, "DELETE", `/api/meetings/notes/${note.id}`, "/api/meetings/notes/:id", "isolation");
+  assert.equal(foreignDelete.statusCode, 404, foreignDelete.body);
+  const deleted = await call(user, "DELETE", `/api/meetings/notes/${note.id}`, "/api/meetings/notes/:id", "happy-path");
+  assert.equal(deleted.statusCode, 200, deleted.body);
+  assert.equal((await user.inject({ method: "GET", url: "/api/meetings/imported" })).json<{ notes: unknown[] }>().notes.length, 0);
+  const unknownDelete = await call(user, "DELETE", `/api/meetings/notes/${randomUUID()}`, "/api/meetings/notes/:id", "unknown-id");
+  assert.equal(unknownDelete.statusCode, 404);
+  const foreignRestore = await call(other, "POST", `/api/meetings/notes/${note.id}/restore`, "/api/meetings/notes/:id/restore", "isolation");
+  assert.equal(foreignRestore.statusCode, 404);
+  const restored = await call(user, "POST", `/api/meetings/notes/${note.id}/restore`, "/api/meetings/notes/:id/restore", "happy-path");
+  assert.equal(restored.statusCode, 200, restored.body);
+  assert.equal((await user.inject({ method: "GET", url: "/api/meetings/imported" })).json<{ notes: unknown[] }>().notes.length, 1);
+  const unknownRestore = await call(user, "POST", `/api/meetings/notes/${randomUUID()}/restore`, "/api/meetings/notes/:id/restore", "unknown-id");
+  assert.equal(unknownRestore.statusCode, 404);
+});
+
+const GRAPH_ME = "graph-user-mira";
+const JOIN = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_review%40thread.v2/0?context=%7b%7d";
+
+async function microsoft(user: HttpUser, scopes: string[]) {
+  await saveAccount(user.id, "microsoft", { accessToken: "ms-token", scopes, account: user.email, meta: { graphUserId: GRAPH_ME } });
+}
+
+function graphMeeting(organizerId: string) {
+  mock("https://graph.microsoft.com/v1.0/me/onlineMeetings?", (url) => {
+    assert.match(decodeURIComponent(url), /JoinWebUrl eq 'https:\/\/teams\.microsoft\.com\/l\/meetup-join/);
+    return Response.json({
+      value: [
+        {
+          id: "MSo-review",
+          subject: "Atlas launch review",
+          startDateTime: iso(0),
+          endDateTime: iso(30),
+          joinWebUrl: JOIN,
+          participants: {
+            organizer: { upn: organizerId === GRAPH_ME ? "mira@fieldnote.example" : "lena@fieldnote.example", identity: { user: { id: organizerId, displayName: organizerId === GRAPH_ME ? "Mira Chen" : "Lena Ortiz" } } },
+            attendees: [{ upn: "arjun@fieldnote.example", identity: { user: { id: "graph-arjun", displayName: "Arjun Rao" } } }],
+          },
+        },
+      ],
+    });
+  });
+}
+
+test("Teams: Get transcript on a calendar meeting imports the organizer's transcript; attendees, missing access and blocked tenants get next steps", async () => {
+  resetMocks();
+  const user = await mira("teams");
+  const other = await mira("teams-other");
+  const event = await teamsEvent(user.id, JOIN);
+
+  const notConnected = await call(user, "POST", `/api/meetings/events/${event.id}/transcript`, "/api/meetings/events/:id/transcript", "happy-path");
+  assert.equal(notConnected.json<{ problem: { code: string } }>().problem.code, "not_connected");
+
+  await microsoft(user, ["User.Read", "Calendars.ReadWrite"]);
+  const access = await user.inject({ method: "POST", url: `/api/meetings/events/${event.id}/transcript` });
+  const needs = access.json<{ ok: boolean; problem: { code: string; actions: Array<{ kind: string; connector?: string; product?: string }> } }>();
+  assert.equal(needs.ok, false);
+  assert.equal(needs.problem.code, "needs_access");
+  assert.deepEqual(needs.problem.actions[0], { kind: "connect", label: "Turn on and approve", connector: "microsoft_365", product: "teams_meetings" });
+
+  await microsoft(user, ["User.Read", "Calendars.ReadWrite", "OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All"]);
+  graphMeeting(GRAPH_ME);
+  mock("https://graph.microsoft.com/v1.0/me/onlineMeetings/MSo-review/transcripts", (url) =>
+    url.includes("/content") ? new Response(ATLAS_VTT, { headers: { "content-type": "text/vtt" } }) : Response.json({ value: [{ id: "tr-1", createdDateTime: iso(1) }] }),
+  );
+  const fetched = await user.inject({ method: "POST", url: `/api/meetings/events/${event.id}/transcript` });
+  const ok = fetched.json<{ ok: boolean; note: NoteJson }>();
+  assert.equal(ok.ok, true, fetched.body);
+  assert.equal(ok.note.source, "teams");
+  assert.equal(ok.note.sourceLabel, "Microsoft Teams");
+  assert.equal(ok.note.event?.id, event.id);
+  assert.equal(ok.note.lineCount, 2);
+  assert.ok(calls.some((url) => url.includes("/transcripts/tr-1/content?$format=text/vtt")));
+  const foreign = await call(other, "POST", `/api/meetings/events/${event.id}/transcript`, "/api/meetings/events/:id/transcript", "isolation");
+  assert.equal(foreign.statusCode, 404);
+  const unknown = await call(user, "POST", `/api/meetings/events/${randomUUID()}/transcript`, "/api/meetings/events/:id/transcript", "unknown-id");
+  assert.equal(unknown.statusCode, 404);
+
+  // An attendee: Graph refuses, and the answer offers the organizer, Teams and pasting.
+  resetMocks();
+  graphMeeting("graph-lena");
+  mock("https://graph.microsoft.com/v1.0/me/onlineMeetings/MSo-review/transcripts", () => Response.json({ error: { code: "Forbidden", message: "Forbidden" } }, { status: 403 }));
+  const attendee = await call(user, "POST", "/api/meetings/remote/teams/import", "/api/meetings/remote/:provider/import", "happy-path", { ref: JOIN, title: "Atlas launch review" });
+  const refused = attendee.json<{ ok: boolean; problem: { code: string; actions: Array<{ kind: string; email?: string; url?: string }> } }>();
+  assert.equal(refused.problem.code, "not_organizer");
+  assert.deepEqual(refused.problem.actions.map((action) => action.kind), ["ask_organizer", "open", "paste"]);
+  assert.equal(refused.problem.actions[0]!.email, "lena@fieldnote.example");
+  assert.equal(refused.problem.actions[1]!.url, JOIN);
+
+  resetMocks();
+  graphMeeting(GRAPH_ME);
+  mock("https://graph.microsoft.com/v1.0/me/onlineMeetings/MSo-review/transcripts", () =>
+    Response.json({ error: { code: "Forbidden", message: "Graph API access to transcripts is disabled for this tenant.", innerError: { code: "GraphAccessToTranscriptsDisabled" } } }, { status: 403 }),
+  );
+  const blocked = await user.inject({ method: "POST", url: "/api/meetings/remote/teams/import", payload: { ref: JOIN } });
+  assert.equal(blocked.json<{ problem: { code: string } }>().problem.code, "admin_blocked");
+
+  resetMocks();
+  graphMeeting(GRAPH_ME);
+  mock("https://graph.microsoft.com/v1.0/me/onlineMeetings/MSo-review/transcripts", () => Response.json({ value: [] }));
+  const none = await user.inject({ method: "POST", url: "/api/meetings/remote/teams/import", payload: { ref: JOIN } });
+  assert.equal(none.json<{ problem: { code: string } }>().problem.code, "no_transcript");
+  const badBody = await call(user, "POST", "/api/meetings/remote/teams/import", "/api/meetings/remote/:provider/import", "invalid-input", {});
+  assert.equal(badBody.statusCode, 400);
+
+  // The list: Outlook calendar's Teams meetings, with the one already imported.
+  resetMocks();
+  mock("https://graph.microsoft.com/v1.0/me/calendarView?", () =>
+    Response.json({ value: [{ id: "evt-graph", subject: "Atlas launch review", start: { dateTime: iso(0).replace("Z", "") }, end: { dateTime: iso(30).replace("Z", "") }, isOrganizer: true, onlineMeeting: { joinUrl: JOIN }, organizer: { emailAddress: { name: "Mira Chen" } } }] }),
+  );
+  const listed = await call(user, "GET", "/api/meetings/remote/teams", "/api/meetings/remote/:provider", "happy-path");
+  const meetings = listed.json<{ meetings: Array<{ ref: string; eventId: string | null; noteId: string | null }> }>().meetings;
+  assert.equal(meetings.length, 1, listed.body);
+  assert.equal(meetings[0]!.eventId, event.id);
+  assert.equal(meetings[0]!.noteId, ok.note.id);
+  const otherList = await call(other, "GET", "/api/meetings/remote/teams", "/api/meetings/remote/:provider", "isolation");
+  assert.equal(otherList.json<{ problem: { code: string } }>().problem.code, "not_connected");
+});
+
+test("Google Meet: a call's transcript entries become a note; no transcript and recordings say so", async () => {
+  resetMocks();
+  const user = await mira("meet");
+  const join = "https://meet.google.com/abc-mnop-xyz";
+  const event = await db.artifact.create({
+    data: { userId: user.id, kind: "event", externalId: "meet-evt-1", ts: START, title: "Atlas weekly sync", participants: [{ name: "Arjun Rao", email: "arjun@fieldnote.example" }], metadata: { source: "google", end: iso(30), joinUrl: join } },
+  });
+  await saveAccount(user.id, "google", { accessToken: "g-token", scopes: ["openid", "email", "https://www.googleapis.com/auth/meetings.space.readonly"], account: user.email });
+  const record = "conferenceRecords/rec-1";
+  mock("https://meet.googleapis.com/v2/conferenceRecords?", (url) => {
+    assert.match(decodeURIComponent(url), /space\.meeting_code = "abc-mnop-xyz"/);
+    return Response.json({ conferenceRecords: [{ name: record, startTime: iso(1), endTime: iso(31), space: "spaces/s1" }] });
+  });
+  mock(`https://meet.googleapis.com/v2/${record}/transcripts?`, () => Response.json({ transcripts: [{ name: `${record}/transcripts/t1`, state: "FILE_GENERATED", docsDestination: { exportUri: "https://docs.google.com/document/d/doc1/view" } }] }));
+  mock(`https://meet.googleapis.com/v2/${record}/participants`, () => Response.json({ participants: [{ name: `${record}/participants/p1`, signedinUser: { user: "users/1", displayName: "Mira Chen" } }, { name: `${record}/participants/p2`, signedinUser: { user: "users/2", displayName: "Arjun Rao" } }] }));
+  mock(`https://meet.googleapis.com/v2/${record}/transcripts/t1/entries`, () =>
+    Response.json({
+      transcriptEntries: [
+        { participant: `${record}/participants/p2`, text: "The import is done.", startTime: new Date(START.getTime() + 75_000).toISOString() },
+        { participant: `${record}/participants/p1`, text: "Great, let's ship Friday.", startTime: new Date(START.getTime() + 125_000).toISOString() },
+      ],
+    }),
+  );
+  const fetched = await user.inject({ method: "POST", url: `/api/meetings/events/${event.id}/transcript` });
+  const body = fetched.json<{ ok: boolean; note: NoteJson }>();
+  assert.equal(body.ok, true, fetched.body);
+  assert.equal(body.note.source, "google_meet");
+  assert.equal(body.note.event?.id, event.id);
+  const read = await user.inject({ method: "GET", url: `/api/meetings/notes/${body.note.id}` });
+  assert.deepEqual(read.json<{ note: NoteJson }>().note.transcript, [
+    { speaker: "Arjun Rao", text: "The import is done.", at: "00:15" },
+    { speaker: "Mira Chen", text: "Great, let's ship Friday.", at: "01:05" },
+  ]);
+
+  resetMocks();
+  mock("https://meet.googleapis.com/v2/conferenceRecords?", () => Response.json({ conferenceRecords: [{ name: record, startTime: iso(1), endTime: iso(31) }] }));
+  mock(`https://meet.googleapis.com/v2/${record}/transcripts?`, () => Response.json({}));
+  mock(`https://meet.googleapis.com/v2/${record}/recordings`, () => Response.json({ recordings: [{ name: `${record}/recordings/r1` }] }));
+  const recorded = await user.inject({ method: "POST", url: `/api/meetings/events/${event.id}/transcript` });
+  assert.equal(recorded.json<{ problem: { code: string } }>().problem.code, "recording_only");
+
+  resetMocks();
+  mock("https://meet.googleapis.com/v2/conferenceRecords?", () => Response.json({}));
+  const missing = await user.inject({ method: "POST", url: `/api/meetings/events/${event.id}/transcript` });
+  assert.equal(missing.json<{ problem: { code: string } }>().problem.code, "not_found");
+});
+
+test("meeting sources: apps, meeting-notes vendors and their state; vendor imports need a connection", async () => {
+  resetMocks();
+  const user = await mira("sources");
+  await saveAccount(user.id, "microsoft", { accessToken: "ms-token", scopes: ["User.Read", "Calendars.ReadWrite"], account: user.email, meta: { graphUserId: GRAPH_ME } });
+  const sources = await call(user, "GET", "/api/meetings/sources", "/api/meetings/sources", "happy-path");
+  assert.equal(sources.statusCode, 200, sources.body);
+  const body = sources.json<{ apps: Array<{ id: string; state: string }>; vendors: Array<{ id: string; connected: boolean }>; calendar: boolean }>();
+  assert.deepEqual(Object.fromEntries(body.apps.map((row) => [row.id, row.state])), { teams: "needs_access", google_meet: "not_connected", zoom: "not_connected" });
+  assert.ok(body.vendors.some((row) => row.id === "granola" && !row.connected));
+  assert.equal(body.calendar, true);
+  const other = await mira("sources-other");
+  const foreign = await call(other, "GET", "/api/meetings/sources", "/api/meetings/sources", "isolation");
+  assert.equal(foreign.json<{ apps: Array<{ state: string }> }>().apps[0]!.state, "not_connected");
+
+  const notConnected = await call(user, "POST", "/api/meetings/vendors/fireflies/import", "/api/meetings/vendors/:vendor/import", "happy-path", {});
+  assert.equal(notConnected.statusCode, 409, notConnected.body);
+  assert.match(notConnected.json<{ error: string }>().error, /Fireflies is not connected/);
+  const unknown = await call(user, "POST", "/api/meetings/vendors/notes-app/import", "/api/meetings/vendors/:vendor/import", "invalid-input", {});
+  assert.equal(unknown.statusCode, 404);
+  FIXTURES.find((row) => row.vendor === "fireflies")!.install(other.email);
+  await other.inject({ method: "POST", url: "/api/connectors/fireflies/token", payload: { token: "ff-key-0123456789" } });
+  const imported = await call(other, "POST", "/api/meetings/vendors/fireflies/import", "/api/meetings/vendors/:vendor/import", "isolation", { days: 90 });
+  assert.equal(imported.json<{ items: number }>().items, 1, imported.body);
+  assert.equal(await db.meetingNote.count({ where: { userId: user.id, externalSource: "fireflies" } }), 0);
+});

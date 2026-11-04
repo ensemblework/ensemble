@@ -261,6 +261,16 @@ export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteC
   "GET /api/project-links/containers": ["happy-path", "isolation", "invalid-input"],
   "GET /api/meetings/imported": ["happy-path", "isolation"],
   "GET /api/meetings/notes/:id": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/meetings/transcripts/preview": ["happy-path", "invalid-input"],
+  "POST /api/meetings/transcripts": ["happy-path", "invalid-input", "relation-isolation"],
+  "DELETE /api/meetings/notes/:id": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/meetings/notes/:id/restore": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/meetings/notes/:id/tasks": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "GET /api/meetings/sources": ["happy-path", "isolation"],
+  "POST /api/meetings/vendors/:vendor/import": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/meetings/remote/:provider": ["happy-path", "isolation"],
+  "POST /api/meetings/remote/:provider/import": ["happy-path", "invalid-input"],
+  "POST /api/meetings/events/:id/transcript": ["happy-path", "isolation", "unknown-id"],
 };
 
 /** The person's own AI subscriptions and their relayed assistant turns. Owned by src/subscriptions/routes.ts; checked in src/subscriptions/subscriptions.integration.test.ts. */

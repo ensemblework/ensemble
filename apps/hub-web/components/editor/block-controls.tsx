@@ -170,13 +170,16 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
   }, [editor]);
 
   // Room beside the page for the controls. Where the view is narrow (a side peek, a small window) the
-  // + goes, and the handle and the comment button sit just inside the page's edges instead of being cut off.
+  // + goes, and the handle and the comment button sit just inside the page's edges instead of being cut off
+  // by a scrolling ancestor or spilling over the border of a card the page sits in (meeting notes).
   useEffect(() => {
     const body = host.current?.parentElement;
     if (!body) return;
     const clipOf = (): HTMLElement | null => {
       for (let node = body.parentElement; node && node !== document.body; node = node.parentElement) {
-        if (getComputedStyle(node).overflowX !== "visible") return node;
+        const style = getComputedStyle(node);
+        if (style.overflowX !== "visible") return node;
+        if (parseFloat(style.borderLeftWidth) > 0 && parseFloat(style.borderRightWidth) > 0 && style.borderLeftStyle !== "none") return node;
       }
       return null;
     };
