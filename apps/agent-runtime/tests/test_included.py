@@ -182,7 +182,7 @@ def server(monkeypatch: pytest.MonkeyPatch) -> _Server:
     monkeypatch.setenv("ENSEMBLE_INTERNAL_TOKEN", "internal-test-token")
     monkeypatch.setenv("AZURE_FOUNDRY_RESOURCE", "ensemble-ai")
     monkeypatch.setenv("AZURE_FOUNDRY_API_KEY", KEY)
-    monkeypatch.delenv("ENSEMBLE_INCLUDED_MODELS", raising=False)
+    monkeypatch.setenv("ENSEMBLE_INCLUDED_MODELS", ",".join(included.MODELS))
     monkeypatch.delenv("ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS", raising=False)
     monkeypatch.setattr(httpx, "AsyncClient", _Client)
     monkeypatch.setattr(included, "pace", no_pace)
@@ -200,6 +200,7 @@ def claude(server: _Server, monkeypatch: pytest.MonkeyPatch) -> _Server:
         "claude-sonnet-5-5": included.IncludedModel("anthropic", "services", "Claude Sonnet 5.5", None, ("low", "medium", "high")),
     }
     monkeypatch.setattr(included, "MODELS", {**included.MODELS, **stub})
+    monkeypatch.setenv("ENSEMBLE_INCLUDED_MODELS", ",".join(included.MODELS))
     server.azure = [lambda body: httpx.Response(200, json=CLAUDE_REPLY)]
     return server
 
@@ -222,7 +223,7 @@ def test_config_follows_hub_api_rules() -> None:
     assert included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": "OFF"}) is None
     everything = included.included_config(base)
     assert everything is not None
-    assert everything.models == ("gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7")
+    assert everything.models == ("gpt-5-mini", "gpt-4.1-mini")
     assert everything.max_output_tokens == 16000
     raised = included.included_config({**base, "ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS": "32000"})
     assert raised is not None and raised.max_output_tokens == 32000
@@ -232,7 +233,7 @@ def test_config_follows_hub_api_rules() -> None:
     picked = included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": " grok-4.7 , gpt-6-luna "})
     assert picked is not None and picked.models == ("gpt-6-luna", "grok-4.7")
     free = included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": "gpt-4.1-mini,gpt-5-mini"})
-    assert free is not None and free.models == ("gpt-5-mini", "gpt-4.1-mini"), "free-account models only when named"
+    assert free is not None and free.models == ("gpt-5-mini", "gpt-4.1-mini")
     assert included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": ","}) is None, "a list with no names offers none, as in hub-api"
     with pytest.raises(included.IncludedConfigError, match="claude-haiku-5-5"):
         included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": "gpt-6-luna,claude-haiku-5-5"})

@@ -14,7 +14,9 @@ process.env.AZURE_FOUNDRY_RESOURCE = "ensemble-ai-test";
 process.env.AZURE_FOUNDRY_API_KEY = "test-key-not-real";
 process.env.ENSEMBLE_INCLUDED_MONTHLY_CREDITS = "100";
 process.env.ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD = "200";
-delete process.env.ENSEMBLE_INCLUDED_MODELS;
+const supportedModels = "gpt-6-luna,deepseek-v4-flash,gpt-6.1-sol,grok-4.7";
+process.env.ENSEMBLE_INCLUDED_MODELS = supportedModels;
+test.beforeEach(() => { process.env.ENSEMBLE_INCLUDED_MODELS = supportedModels; });
 
 const harness = await createHttpHarness();
 const covered = new Map<string, Set<RouteCheck>>();
@@ -262,6 +264,19 @@ test("hosted: a tier whose provider has no key for this account reads as an incl
     const free = await withIncludedDefaults(db, user.id, chosen);
     assert.deepEqual(free.models.medium, { provider: "ensemble", model: "gpt-5-mini", effort: "default" }, "a free account's models");
     assert.deepEqual((await withIncludedDefaults(db, (await harness.asUser()).id, DEFAULT_SETTINGS)).models.max, { provider: "ensemble", model: "gpt-5-mini", effort: "high" });
+    const retired = {
+      ...chosen,
+      models: {
+        ...chosen.models,
+        easy: { provider: "ensemble" as const, model: "gpt-6.1-sol", effort: "high" as const },
+        medium: { provider: "ensemble" as const, model: "gpt-4.1-mini", effort: "default" as const },
+      },
+    };
+    const current = await withIncludedDefaults(db, user.id, retired);
+    assert.deepEqual(current.models.easy, { provider: "ensemble", model: "gpt-5-mini", effort: "default" }, "an unavailable included deployment is replaced");
+    assert.deepEqual(current.models.medium, retired.models.medium, "an available included choice stays");
+    assert.deepEqual(current.models.high, retired.models.high, "the account's own API key stays");
+    assert.deepEqual(current.models.max, retired.models.max, "the account's own AI plan stays");
   } finally {
     process.env.NODE_ENV = before;
     delete process.env.ENSEMBLE_INCLUDED_MODELS;

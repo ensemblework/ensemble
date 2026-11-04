@@ -41,6 +41,11 @@ runs:
         pnpm --filter @ensemble/hub-api exec tsx --test --test-name-pattern="file questions go directly" src/node/session-control.integration.test.ts
         # Unit tests that load the server's settings need a database address; nothing connects to it.
         DATABASE_URL=postgresql://localhost/unused pnpm --filter @ensemble/hub-api exec tsx --test src/node/report.test.ts src/node/missions-core.test.ts src/node/plan-contract.test.ts src/node/packet.test.ts src/node/cron.test.ts src/node/router.test.ts src/node/missions.integration.test.ts src/node/dispatch.integration.test.ts
+    - name: Included model defaults and credit-safe search
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/shared-types exec tsx --test src/included.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/included/pricing.test.ts src/included/budget.integration.test.ts src/runtime/included.test.ts src/runtime/web-search.test.ts src/node/model.test.ts
     - name: Deployment guards, release scripts and route inventory
       shell: bash
       run: |

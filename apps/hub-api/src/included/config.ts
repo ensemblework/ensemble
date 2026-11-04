@@ -1,5 +1,5 @@
 /**
- * Included AI on this server: which Azure AI Foundry resource holds the four deployments, which of
+ * Included AI on this server: which Azure AI Foundry resource holds the deployments, which of
  * them people may use, and the two monthly limits. The operator sets these in /etc/ensemble.env;
  * agent-runtime reads the same variables (ensemble_agent/included.py).
  */
@@ -15,6 +15,7 @@ export type IncludedConfig = {
   models: IncludedModel[];
   monthlyCredits: number;
   totalMonthlyUsd: number;
+  webSearch: boolean;
   /** max_tokens / max_output_tokens on every included call. */
   maxOutputTokens: number;
 };
@@ -67,12 +68,15 @@ export function parseIncludedConfig(env: NodeJS.ProcessEnv = process.env): Inclu
   }
   const models = INCLUDED_MODELS.filter((model) => (wanted ? wanted.has(model.id) : model.offeredByDefault));
   if (!models.length) return null;
+  const webSearch = (env.ENSEMBLE_INCLUDED_WEB_SEARCH ?? "off").trim().toLowerCase();
+  if (!["on", "off"].includes(webSearch)) throw new Error("ENSEMBLE_INCLUDED_WEB_SEARCH must be on or off.");
   return {
     resource,
     apiKey,
     models,
     monthlyCredits: positive(env, "ENSEMBLE_INCLUDED_MONTHLY_CREDITS", DEFAULT_MONTHLY_CREDITS),
     totalMonthlyUsd: positive(env, "ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD", DEFAULT_TOTAL_MONTHLY_USD),
+    webSearch: webSearch === "on",
     maxOutputTokens: outputCap(env),
   };
 }

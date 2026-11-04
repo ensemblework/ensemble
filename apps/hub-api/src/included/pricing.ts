@@ -2,7 +2,7 @@
  * What each included call really costs the operator, in USD. Azure bills Global Standard
  * deployments per token at these rates. Checked 17 Oct 2026 against the Azure Retail Prices API
  * (eastus2, Global Standard meters) and xAI's and OpenAI's model pages for the long-prompt rules.
- * Recheck when Azure changes a rate; a wrong rate here makes the $200 ceiling wrong.
+ * Recheck when Azure changes a rate; a wrong rate here makes the operator's ceiling wrong.
  */
 import { CREDITS_PER_USD } from "./config.js";
 

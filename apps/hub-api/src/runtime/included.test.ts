@@ -142,6 +142,7 @@ function ledger(options: { refuse?: IncludedLimitError; settleFails?: boolean } 
 
 function withClaude(): void {
   catalog.push(CLAUDE);
+  process.env.ENSEMBLE_INCLUDED_MODELS += `,${CLAUDE.id}`;
 }
 
 async function frames(body: Json): Promise<Array<{ event: string; data: Json }>> {
@@ -157,7 +158,7 @@ test.beforeEach(() => {
   process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
   process.env.AZURE_FOUNDRY_RESOURCE = "ensemble-ai";
   process.env.AZURE_FOUNDRY_API_KEY = KEY;
-  delete process.env.ENSEMBLE_INCLUDED_MODELS;
+  process.env.ENSEMBLE_INCLUDED_MODELS = "gpt-6-luna,deepseek-v4-flash,gpt-6.1-sol,grok-4.7,gpt-5-mini,gpt-4.1-mini";
   delete process.env.ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS;
   resetBuckets();
   clearIncludedThinkingForTests();
