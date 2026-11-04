@@ -119,6 +119,8 @@ Connected apps come first wherever connectors are listed: the store grid (every 
 
 The detail page's connect panel has one **Step-by-step guide** disclosure, open by default (`aria-expanded` button; numbered steps, links in a new tab, "Looks like", "Not this", "Permissions" and "More help" notes). Token, address and own-app ways have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short what-to-approve guide (`connectorGuide`). Guides and field labels use the vendor's name for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's **Get a token** opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
 
+Google detail also shows its productivity use, selected-provider AI processing and Limited Use notice before consent and while connected, with a public privacy/deletion link (`connector-detail.tsx`; [31](31_CONNECTORS_IN_USE.md)).
+
 ### 3.10 Files
 
 Files lists uploaded originals and app content the person explicitly saved or imported. Viewers offer supported previews, original download, text/cell editing and page conversion/export. A saved file and its extracted text are distinct from a transient connected-item search result. Caps, formats and edit limits: [32](32_FILES.md).

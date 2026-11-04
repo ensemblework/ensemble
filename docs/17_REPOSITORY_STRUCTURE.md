@@ -107,6 +107,7 @@ apps/agent-runtime/tests/     pytest suite
 apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, robots, sitemap), lib/
                               (site, topics, download.ts install data), public/ (install.sh, install.ps1, llms.txt,
                               IndexNow key), scripts/indexnow.mjs, vercel.json (script headers, ensemblework.app redirects)
+                              Privacy/terms own the hosted Google-data and Limited Use disclosures linked by the Google connector.
 apps/context-bridge/          src/ (MCP server; exports ./server, ./hub, ./config), clients/ (editor configs), test/, scripts/
 apps/cli/                     src/ (commands, tui/, login, sidecar, editors, services), scripts/build.mjs
                               (esbuild → dist/ensemble.mjs), bin/ensemble (POSIX launcher), launcher/ (Go, Windows)

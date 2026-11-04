@@ -90,6 +90,10 @@ Settings → Data offers erasure scopes through `lib/workspace-data.ts`, driven 
 
 `account_deletion_logs` keeps only an HMAC-derived email key, deletion time and expiry, with no readable email, profile, feedback or account link. The same email overwrites the earlier entry and may sign up again. Entries expire after **90 days**; the scheduler purges them even when no accounts remain. After restoring a backup or with the scheduler off, the operator must check this cleanup. `pnpm --filter @ensemble/hub-api deletion-log:erase` removes one entry, reading the address from stdin without printing it. The public privacy policy discloses the log. This guide describes code behaviour, not legal compliance.
 
+### Google data disclosures
+
+The public [Google data and Limited Use disclosure](https://ensemblework.com/privacy#google-user-data) and [terms](https://ensemblework.com/terms) are rendered by `apps/landing/app/privacy/page.tsx` and `terms/page.tsx`. They distinguish encrypted OAuth credentials from saved/imported content, calendar refresh from manual contact sync, selected AI-provider transfers from model training, and disconnect from workspace/account deletion. `components/connectors/connector-detail.tsx` links that disclosure in the Google connector before consent and while connected. These pages describe the hosted service and its policy commitments; they are not a certification of Google approval, universal provider zero retention, end-to-end content encryption or a fixed cross-provider deletion deadline.
+
 ## 7. Tests
 
 API auth, isolation and public-signup suites send real Fastify requests to an isolated migrated database with mocked providers; Postgres/Redis CI covers integration and constraints; OS tests exercise sandbox boundaries. They do not prove live notifications, calendar writes or provider billing. There is no `eval/` corpus or productivity baseline in the repo.
