@@ -3,7 +3,7 @@
  * template is a set of nodes and the one that leads. People edit the charter before or after creating.
  */
 
-export type NodeAvatar = { shape: "orb" | "square" | "spark" | "hex" | "leaf" | "compass"; color: string; eyes: "dot" | "line" | "wide" };
+export type NodeAvatar = { shape: "orb" | "square" | "spark" | "hex" | "leaf" | "compass" | "pebble" | "bloom"; color: string; eyes: "dot" | "line" | "wide" };
 
 export type NodeTemplate = {
   id: string;
@@ -236,7 +236,7 @@ export function crewTemplate(id: string): CrewTemplate | undefined {
 }
 
 export const AVATAR_COLORS = ["#D7B56F", "#7FB3D5", "#E07A5F", "#81B29A", "#B39DDB", "#F2CC8F", "#5FB4A2", "#E8A3B5"] as const;
-const AVATAR_SHAPES = ["orb", "square", "spark", "hex", "leaf", "compass"] as const;
+const AVATAR_SHAPES = ["orb", "square", "spark", "hex", "leaf", "compass", "pebble", "bloom"] as const;
 const AVATAR_EYES = ["dot", "line", "wide"] as const;
 
 /** The look of a node made without a template: the account's nth node gets the nth pick, so new nodes look different. */

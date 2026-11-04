@@ -81,7 +81,7 @@ export function nodeAccount(request: FastifyRequest): string {
 }
 
 const Avatar = z.object({
-  shape: z.enum(["orb", "square", "spark", "hex", "leaf", "compass"]),
+  shape: z.enum(["orb", "square", "spark", "hex", "leaf", "compass", "pebble", "bloom"]),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   eyes: z.enum(["dot", "line", "wide"]),
 });

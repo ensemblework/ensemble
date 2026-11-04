@@ -450,6 +450,49 @@ test("a session goes to another node when its node hands it over or from its car
   assert.equal((await (await h.asToken(ama, "full")).inject({ method: "GET", url: "/api/node/sessions" })).statusCode, 403, "the owner's browser only");
 });
 
+test("session inventory searches visible metadata and preserves exact run files and node/crew provenance", async () => {
+  const user = await person("Session owner");
+  const stranger = await person("Other owner");
+  const { laptop } = await laptopFor(user, "Development computer");
+  const builder = await createNode(user, "developer");
+  for (const shape of ["pebble", "bloom"]) {
+    const changed = await user.inject({ method: "PATCH", url: `/api/node/nodes/${builder.node.id}`, payload: { avatar: { shape, color: "#81B29A", eyes: "dot" } } });
+    assert.equal(changed.statusCode, 200, changed.body);
+    assert.equal(json(changed).node.avatar.shape, shape);
+  }
+  const crew = await user.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Release workshop", nodeIds: [builder.node.id], leadNodeId: builder.node.id } });
+  assert.equal(crew.statusCode, 201, crew.body);
+  const task = await h.prisma.task.create({ data: { userId: user.id, title: "Repair the parser", createdBy: "me" } });
+  const at = (hours: number) => new Date(Date.now() - hours * 3600000);
+  const data = { userId: user.id, taskId: task.id, kind: "code" as const, provider: "copilot-cli", model: "gpt-6.1-sol", executionMode: "sandbox" as const, deviceId: laptop.id, folderLabel: "workspace", status: "succeeded" as const, summary: "hidden-summary-needle" };
+  const root = await h.prisma.workspaceJob.create({ data: { ...data, createdAt: at(4), startedAt: at(4), finishedAt: at(3), evidence: { files: [{ path: "src/parser.ts", fileId: "a".repeat(64), status: "modified" }, { path: "obsolete.txt", status: "added" }] } } });
+  const next = await h.prisma.workspaceJob.create({ data: { ...data, continueFromJobId: root.id, createdAt: at(2), startedAt: at(2), finishedAt: at(1), evidence: { files: [{ path: "src/parser.ts", fileId: "a".repeat(64), status: "modified" }, { path: "guide.md", status: "added" }, { path: "obsolete.txt", status: "deleted" }] } } });
+  const other = await h.prisma.workspaceJob.create({ data: { ...data, createdAt: at(5), startedAt: at(5), finishedAt: at(5), evidence: { files: [{ path: "only-other.txt", status: "added" }] } } });
+  await h.prisma.nodeRun.createMany({ data: [
+    { userId: user.id, nodeId: builder.node.id, roomId: json(crew).room.id, jobId: root.id, taskId: task.id, sessionId: root.id },
+    { userId: user.id, nodeId: builder.node.id, roomId: builder.room.id, jobId: next.id, taskId: task.id, sessionId: root.id },
+  ] });
+  const list = async (q = "") => {
+    const response = await user.inject({ method: "GET", url: `/api/node/sessions?q=${encodeURIComponent(q)}` });
+    assert.equal(response.statusCode, 200, response.body);
+    return json(response).sessions as Array<{ id: string; runs: number; usedBy: Array<{ node: { id: string }; room: { id: string; title: string } | null }>; files: Array<{ source: { id: string; path: string }; deleted: boolean }> }>;
+  };
+  const rows = await list();
+  const session = rows.find(row => row.id === root.id)!;
+  assert.equal(session.runs, 2);
+  assert.deepEqual(new Set(session.files.map(file => file.source.path)), new Set(["src/parser.ts", "guide.md", "obsolete.txt"]));
+  assert.equal(session.files.find(file => file.source.path === "src/parser.ts")?.source.id, next.id, "latest exact run reference");
+  assert.equal(session.files.find(file => file.source.path === "obsolete.txt")?.deleted, true);
+  assert.ok(session.usedBy.some(item => item.node.id === builder.node.id && item.room?.title === "Release workshop"));
+  assert.ok(session.usedBy.some(item => item.node.id === builder.node.id && item.room === null), "DM usage has no invented crew");
+  assert.deepEqual(rows.find(row => row.id === other.id)?.usedBy, [], "a Hub session has no invented node");
+  assert.deepEqual((await list("Release workshop")).map(row => row.id), [root.id]);
+  assert.deepEqual((await list("guide.md")).map(row => row.id), [root.id]);
+  assert.equal((await list("gpt-6.1-sol")).length, 2);
+  assert.deepEqual(await list("hidden-summary-needle"), [], "hidden summaries are not search matches");
+  assert.ok(!json(await stranger.inject({ method: "GET", url: "/api/node/sessions" })).sessions.some((row: { id: string }) => row.id === root.id));
+});
+
 test("reordering changes the order runs start in; each claimed run continues the run that actually ran before it, and a session that never ran starts afresh in its folder", async () => {
   const kofi = await person("Kofi");
   const { key } = await laptopFor(kofi, "Kofi's laptop");
