@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Globe, Link2, Lock, RefreshCw, Search, Share2, X } from "lucide-react";
+import { Check, ChevronDown, Copy, Globe, Link2, Lock, RefreshCw, Search, Share2, Users, X } from "lucide-react";
 import {
   api, ApiError,
   type ItemRole,
@@ -11,7 +11,7 @@ import {
   type SharingPerson,
 } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
-import { colorFor } from "@/lib/presence";
+import { colorFor, isGuest, onResource, presenceLine, roleLabel, statusOf, usePresence } from "@/lib/presence";
 import { publicLinkUrl } from "@/lib/api";
 import { Dialog } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -98,7 +98,7 @@ export function RoleSelect<T extends string>({
 }
 
 /** People search: name or email; picks someone who already has an Ensemble account. */
-export function PersonPicker({ onPick, exclude }: { onPick: (person: SharingPerson) => void; exclude: Set<string> }) {
+export function PersonPicker({ onPick, exclude, linkHint = false }: { onPick: (person: SharingPerson) => void; exclude: Set<string>; /** The item can also be opened with a public link. */ linkHint?: boolean }) {
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
   const q = useDebounced(query.trim(), 180);
@@ -149,7 +149,9 @@ export function PersonPicker({ onPick, exclude }: { onPick: (person: SharingPers
           {results.isError ? <div className="px-3 py-2.5 text-[12px] text-danger">{(results.error as Error).message}</div> : null}
           {results.isSuccess && !rows.length ? (
             <div className="px-3 py-2.5 text-[12px] text-muted">
-              Nobody on Ensemble matches “{q}”. They need an Ensemble account first; type their full email to be sure.
+              {q.includes("@")
+                ? `No Ensemble account uses ${q} yet. Ask them to sign up, then add them here${linkHint ? ", or turn on “Anyone with the link” below and send them the link" : ""}.`
+                : `Nobody on Ensemble matches “${q}”. Type their full email to be sure.`}
             </div>
           ) : null}
           {rows.map((row, index) => (
@@ -288,7 +290,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
             This space is shared with {limit} people, the most a space can have. Remove someone to add another.
           </div>
         ) : (
-          <PersonPicker onPick={(person) => { setPending(person); if (contactsFull && !contactIds.has(person.id)) setContactsLimit(true); }} exclude={already} />
+          <PersonPicker onPick={(person) => { setPending(person); if (contactsFull && !contactIds.has(person.id)) setContactsLimit(true); }} exclude={already} linkHint={!space && PUBLIC_KINDS.has(target.kind)} />
         )}
         {blocked ? (
           <p className="text-[12px] text-warn">
@@ -360,6 +362,8 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
           </div>
         </section>
 
+        {space ? null : <HereNow kind={target.kind} id={target.resourceId} />}
+
         <GeneralAccess target={target} />
 
         <section className="rounded-lg bg-panel px-3 py-2.5">
@@ -401,11 +405,16 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
           ) : null}
         </section>
 
-        <div className="flex items-center justify-between border-t border-line pt-3">
-          <Meter label="contacts" used={contacts.data?.contacts.length ?? 0} limit={contactLimit} />
-          <a href="/settings?tab=sharing" className="flex items-center gap-1 text-2xs text-muted hover:text-ink">
-            Manage contacts
-          </a>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+          <span className="flex items-center gap-3">
+            <Meter label="contacts" used={contacts.data?.contacts.length ?? 0} limit={contactLimit} />
+            <a href="/settings?tab=sharing" className="rounded text-2xs text-muted hover:text-ink focus-visible:ring-2 focus-visible:ring-accent">
+              Manage contacts
+            </a>
+          </span>
+          <button type="button" className="btn btn-primary h-8 px-4 text-[12.5px]" onClick={onClose}>
+            Done
+          </button>
         </div>
       </div>
     </Dialog>
@@ -413,6 +422,49 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
 }
 
 const PUBLIC_KINDS: ReadonlySet<string> = new Set(["page", "task", "diagram", "meeting"]);
+
+/** The clipboard, with a fallback for browsers that refuse it outside a secure context. */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    const done = document.execCommand("copy");
+    field.remove();
+    if (!done) throw new Error("copy refused");
+  }
+}
+
+/** Who has this item open right now, with what they are doing and may do. */
+function HereNow({ kind, id }: { kind: ShareKind; id: string }) {
+  const here = onResource(usePresence(), kind, id);
+  if (!here.length) return null;
+  return (
+    <section aria-label="Here now">
+      <h4 className="mb-1.5 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wide text-faint">
+        <span aria-hidden className="pulse-dot size-1.5 rounded-full bg-ok" /> Here now
+      </h4>
+      <ul className="flex flex-wrap gap-1.5">
+        {here.map((entry) => (
+          <li key={entry.accountId} className="flex min-w-0 items-center gap-1.5 rounded-full border border-line py-0.5 pl-0.5 pr-2.5 text-[12px]" title={presenceLine(entry)}>
+            <Avatar person={entry} color={entry.color} size={20} ring dim={statusOf(entry) === "away"} title="" />
+            <span className="max-w-[140px] truncate font-medium">{entry.name}</span>
+            {isGuest(entry) ? <span className="rounded bg-hover px-1 text-[10px] text-muted">Guest</span> : null}
+            <span className="text-2xs text-muted">
+              {statusOf(entry)}
+              {entry.role ? ` · ${roleLabel(entry.role).toLowerCase()}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 /**
  * "Anyone with the link": open one page, task, diagram or meeting notes to people without an
@@ -434,6 +486,8 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
   const refresh = () => {
     void client.invalidateQueries({ queryKey: ["public-link"] });
     void client.invalidateQueries({ queryKey: ["public-links"] });
+    // The shell counts public links: with one on, presence starts for visitors.
+    void client.invalidateQueries({ queryKey: ["shell"] });
   };
   const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
   const setLink = useMutation({ mutationFn: (role: ItemRole) => api.setPublicLink({ kind: itemKind as ShareKind, resourceId, role }), onSuccess: () => { refresh(); setLinkLimit(false); }, onError: (error) => { if (error instanceof ApiError && error.code === "PUBLIC_LINK_LIMIT") setLinkLimit(true); else fail(error); } });
@@ -452,10 +506,15 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
   const link = state.data?.link ?? null;
   const viewOnly = target.kind === "meeting";
   const full = !link && (state.data?.used ?? 0) >= (state.data?.limit ?? 3);
-  const copy = (token: string) => {
-    void navigator.clipboard.writeText(publicLinkUrl(token));
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+  const copy = (token: string, role: ItemRole) => {
+    void copyText(publicLinkUrl(token)).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+        toast(`Link copied. Anyone with it can ${role === "edit" ? "edit" : "view"} this ${KIND_LABEL[target.kind as ShareKind]}.`, { tone: "ok" });
+      },
+      () => toast("Couldn't copy the link. Select it and copy it yourself.", { tone: "error" }),
+    );
   };
   return (
     <section>
@@ -464,11 +523,11 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
         <h4 className="text-2xs font-medium uppercase tracking-wide text-faint">General access</h4>
         {state.data ? <Meter label="public links" used={state.data.used} limit={state.data.limit} /> : null}
       </div>
-      <div className="flex items-center gap-2.5 rounded-lg border border-line px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2 rounded-lg border border-line px-3 py-2">
         <span className={`grid size-7 shrink-0 place-items-center rounded-full ${link ? "bg-accent-soft text-ink" : "bg-hover text-muted"}`}>
-          {link ? <Globe size={14} /> : <Lock size={13} />}
+          {link ? <Globe size={14} aria-hidden /> : <Lock size={13} aria-hidden />}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[180px] flex-1">
           <RoleSelect
             value={link ? "anyone" : "restricted"}
             options={[["restricted", "Only people you add"], ["anyone", "Anyone with the link"]]}
@@ -485,7 +544,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
           </div>
         </div>
         {link ? (
-          <>
+          <span className="flex shrink-0 items-center gap-1.5 max-sm:w-full max-sm:justify-end">
             <RoleSelect
               value={link.role}
               options={viewOnly ? [["view", "Can view"]] : [["view", "Can view"], ["edit", "Can edit"]]}
@@ -496,35 +555,93 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
             <button type="button" className="icon-btn" title="Make a new link (the old one stops working)" aria-label="Make a new link" onClick={() => rotate.mutate(link.id)} disabled={rotate.isPending}>
               <RefreshCw size={13} />
             </button>
-            <button type="button" className="btn h-7 gap-1.5 px-2.5 text-[12.5px]" onClick={() => copy(link.token)}>
-              {copied ? <Check size={13} /> : <Link2 size={13} />} {copied ? "Copied" : "Copy link"}
+            <button type="button" className={`btn h-7 gap-1.5 px-2.5 text-[12.5px] ${copied ? "text-ok" : ""}`} onClick={() => copy(link.token, link.role)} aria-live="polite">
+              {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />} {copied ? "Copied" : "Copy link"}
             </button>
-          </>
+          </span>
         ) : null}
       </div>
+      {link ? (
+        <input
+          readOnly
+          value={publicLinkUrl(link.token)}
+          aria-label="The link"
+          onFocus={(event) => event.currentTarget.select()}
+          className="mt-1.5 w-full truncate rounded-md border border-line bg-panel px-2 py-1 font-mono text-2xs text-muted outline-none focus-visible:border-line-strong"
+        />
+      ) : null}
       {link?.role === "edit" ? (
-        <p className="mt-1.5 text-2xs text-faint">Anyone with the link can change this {target.kind}'s content without signing in. They show up with a creature name.</p>
+        <p className="mt-1.5 text-2xs text-faint">Anyone with the link can change this {KIND_LABEL[target.kind as ShareKind]}'s content without signing in. Guests show up with a friendly animal name, and everyone here sees who is in it.</p>
       ) : null}
     </section>
   );
 }
 
-/** The "Share" button on a page, diagram, board… Only the space's owner shares. */
+export type ShareState = { people: number; link: ItemRole | null };
+
+/** Who can open an item now: people it is shared with, and whether anyone with the link can. */
+export function useShareState(target: ShareTarget, enabled: boolean): ShareState | null {
+  const item = target.kind === "space" ? null : target;
+  const shares = useQuery({
+    queryKey: ["item-shares", item?.kind ?? "", item?.resourceId ?? ""],
+    queryFn: () => api.itemShares(item!.kind, item!.resourceId),
+    enabled: enabled && Boolean(item),
+    staleTime: 30_000,
+  });
+  const link = useQuery({
+    queryKey: ["public-link", item?.kind ?? null, item?.resourceId ?? ""],
+    queryFn: () => api.publicLinkFor(item!.kind, item!.resourceId),
+    enabled: enabled && Boolean(item && PUBLIC_KINDS.has(item.kind)),
+    staleTime: 30_000,
+  });
+  if (!item || !shares.data) return null;
+  return { people: shares.data.shares.length, link: link.data?.link?.role ?? null };
+}
+
+/** "Private", "Shared with 2 people", "Anyone with the link can edit": the Share button's state in words. */
+export function shareStateLabel(state: ShareState | null): string {
+  if (!state) return "Share";
+  const people = state.people ? `shared with ${state.people} ${state.people === 1 ? "person" : "people"}` : "";
+  const link = state.link ? `anyone with the link can ${state.link === "edit" ? "edit" : "view"}` : "";
+  const parts = [link, people].filter(Boolean);
+  return parts.length ? `Share. ${parts.join(", ").replace(/^./, (c) => c.toUpperCase())}` : "Share. Only you can open it";
+}
+
+/**
+ * The "Share" button on a page, diagram, board… Only the space's owner shares. It shows how the
+ * item is shared: a globe while anyone with the link can open it, people with a count while it is
+ * shared with someone, the plain share icon while it is private.
+ */
 export function ShareButton({ target, compact = false }: { target: ShareTarget; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  if (!shell.data || shell.data.space?.shared) return null;
+  const owner = Boolean(shell.data && !shell.data.space?.shared);
+  const state = useShareState(target, owner);
+  if (!shell.data || !owner) return null;
+  const Icon = state?.link ? Globe : state?.people ? Users : Share2;
+  const label = shareStateLabel(state);
+  const shared = Boolean(state?.link || state?.people);
+  const badge = state?.people && !state.link ? state.people : null;
   return (
     <>
       <button
         type="button"
-        className={compact ? "icon-btn" : "btn h-7 gap-1.5 px-2.5 text-[12.5px]"}
+        className={compact ? `icon-btn relative ${shared ? "text-ink" : ""}` : `btn relative h-7 gap-1.5 px-2.5 text-[12.5px] ${shared ? "border-accent/50" : ""}`}
         onClick={() => setOpen(true)}
-        aria-label="Share"
-        title="Share with someone on Ensemble"
+        aria-label={label}
+        aria-haspopup="dialog"
+        title={label.replace(/^Share\. /, "")}
+        data-share-state={state?.link ? "link" : state?.people ? "people" : "private"}
       >
-        <Share2 size={compact ? 15 : 13} />
-        {compact ? null : "Share"}
+        <Icon size={compact ? 15 : 13} aria-hidden className={state?.link ? "text-accent" : undefined} />
+        {compact ? null : shared ? "Shared" : "Share"}
+        {compact && state?.link ? <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" style={{ boxShadow: "0 0 0 1.5px var(--bg)" }} /> : null}
+        {compact && badge ? (
+          <span aria-hidden className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-accent px-0.5 text-[9px] font-semibold leading-none text-bg">
+            {badge}
+          </span>
+        ) : null}
+        {!compact && badge ? <span className="rounded-full bg-hover px-1.5 text-2xs tabular-nums text-muted">{badge}</span> : null}
       </button>
       {open ? <ShareDialog open={open} onClose={() => setOpen(false)} target={target} /> : null}
     </>

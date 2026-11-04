@@ -10,6 +10,7 @@ import { usePlotTheme } from "@/lib/plots/theme";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { canvasPanels } from "@/lib/plots/tile-code";
 import { useToast } from "@/components/toast";
+import { ChevronDown, ChevronUp, Download } from "lucide-react";
 
 export function ExportDialog({
   open,
@@ -125,22 +126,22 @@ export function ExportDialog({
   };
 
   return (
-    <PlotDialog open={open} onClose={onClose} title="Export figure" width={920}>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]" data-export-dialog>
-        <div className="overflow-hidden rounded-lg border border-line" style={{ background: "var(--raised)" }} data-export-preview>
+    <PlotDialog open={open} onClose={onClose} title="Export figure" description={fromCode ? "Matplotlib export of the canvas code." : "Matplotlib export of every tile as one figure. Size is in inches."} width={940}>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]" data-export-dialog>
+        <div className="pl-export-preview" data-export-preview>
           {preview ? <img src={preview} alt="Multi-panel figure preview" className="mx-auto block max-h-[520px] max-w-full" /> : errorText ? (
             <div className="max-w-sm px-4 py-8 text-center">
               <p className="text-[13px] text-danger">{errorText}</p>
-              <button type="button" className="btn mt-3" onClick={() => setAttempt((value) => value + 1)}>Retry</button>
+              <button type="button" className="pl-btn mx-auto mt-3" onClick={() => setAttempt((value) => value + 1)}>Retry</button>
             </div>
           ) : <p className="px-4 py-8 text-center text-[13px] text-muted">{drawable ? (python === "loading" ? "Starting Python in your browser for the preview (the first time only, about 30 MB)…" : "Rendering the preview…") : "Add a tile with columns first."}</p>}
         </div>
-        <div className="space-y-3 text-[13px]">
+        <div className="space-y-4 text-[13px]">
           {canvasCode !== null ? (
             <div role="radiogroup" aria-label="Draw the figure from" className="space-y-1" data-export-source={source}>
-              <div className="text-[12px] text-muted">Draw from</div>
+              <div className="pl-field-label">Draw from</div>
               {([["code", "Your edited canvas code", "The script in Code, as you edited it. Its own size and layout apply."], ["tiles", "The tiles", "A panel per tile, laid out with the settings below."]] as const).map(([value, label, hint]) => (
-                <button key={value} type="button" role="radio" aria-checked={source === value} className={`block w-full rounded-md border px-2 py-1.5 text-left ${source === value ? "border-accent bg-accent-soft" : "border-line"}`} onClick={() => setSource(value)}>
+                <button key={value} type="button" role="radio" aria-checked={source === value} className="pl-choice" onClick={() => setSource(value)}>
                   <span className="block text-[12.5px] font-medium">{label}</span>
                   <span className="block text-[11.5px] text-muted">{hint}</span>
                 </button>
@@ -152,51 +153,56 @@ export function ExportDialog({
               Drawn by their edited code: {editedTiles.join(", ")}. In PDF, SVG and EPS those panels are pictures at the DPI below.
             </p>
           ) : null}
-          {fromCode ? <p className="text-[12px] text-muted">Matplotlib export of the canvas code.</p> : <p className="text-[12px] text-muted">Matplotlib export. Size is in inches.</p>}
-          <div className={fromCode ? "hidden" : "space-y-3"}>
-            <label className="block text-[12px] text-muted">Width (in)
-              <input type="number" min={1} max={12} step={0.1} className="field mt-1 w-full" aria-label="Figure width inches" value={widthIn} onChange={(event) => setWidthIn(Number(event.target.value))} />
+          <div className={fromCode ? "hidden" : "grid grid-cols-2 gap-3"}>
+            <label className="pl-field-label is-stacked">Width (in)
+              <input type="number" min={1} max={12} step={0.1} className="pl-input" aria-label="Figure width inches" value={widthIn} onChange={(event) => setWidthIn(Number(event.target.value))} />
             </label>
-            <label className="block text-[12px] text-muted">Height (in)
-              <input type="number" min={1} max={12} step={0.1} className="field mt-1 w-full" aria-label="Figure height inches" value={heightIn} onChange={(event) => setHeightIn(Number(event.target.value))} />
+            <label className="pl-field-label is-stacked">Height (in)
+              <input type="number" min={1} max={12} step={0.1} className="pl-input" aria-label="Figure height inches" value={heightIn} onChange={(event) => setHeightIn(Number(event.target.value))} />
             </label>
           </div>
-          <label className="block text-[12px] text-muted">DPI
-            <input type="number" min={72} max={600} className="field mt-1 w-full" aria-label="Figure DPI" value={dpi} onChange={(event) => setDpi(Number(event.target.value))} />
-          </label>
-          <div className={fromCode ? "hidden" : "space-y-3"}>
-            <label className="block text-[12px] text-muted">Font size
-              <input type="number" min={8} max={18} className="field mt-1 w-full" aria-label="Figure font size" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} />
+          <div className="grid grid-cols-2 gap-3">
+            <label className="pl-field-label is-stacked">DPI
+              <input type="number" min={72} max={600} className="pl-input" aria-label="Figure DPI" value={dpi} onChange={(event) => setDpi(Number(event.target.value))} />
             </label>
+            <label className={fromCode ? "hidden" : "pl-field-label is-stacked"}>Font size
+              <input type="number" min={8} max={18} className="pl-input" aria-label="Figure font size" value={fontSize} onChange={(event) => setFontSize(Number(event.target.value))} />
+            </label>
+          </div>
+          <div className={fromCode ? "hidden" : "space-y-4"}>
             <div>
-              <div className="mb-1 text-[12px] text-muted">Panels per row</div>
-              <div className="flex gap-1">
+              <div className="pl-field-label">Panels per row</div>
+              <div className="pl-seg is-block" role="radiogroup" aria-label="Panels per row">
                 {[1, 2, 3].map((count) => (
-                  <button key={count} type="button" className={`rounded-md px-2 py-1 ${columns === count ? "bg-accent-soft" : "text-muted"}`} onClick={() => setColumns(count)}>{count}</button>
+                  <button key={count} type="button" role="radio" aria-checked={columns === count} className="pl-seg-btn" onClick={() => setColumns(count)}>{count}</button>
                 ))}
               </div>
             </div>
             <span className="flex items-center gap-2"><Toggle checked={legend} label="Shared legend" onChange={setLegend} /> Shared legend</span>
             <div>
-              <div className="mb-1 text-[12px] text-muted">Panel order</div>
-              <ol className="space-y-1">
-                {order.map((id) => {
+              <div className="pl-field-label">Panel order</div>
+              <ol className="pl-order">
+                {order.map((id, index) => {
                   const tile = tiles.find((item) => item.id === id);
                   return (
-                    <li key={id} className="flex items-center gap-1">
+                    <li key={id} className="pl-order-row">
+                      <span className="pl-order-index">{index + 1}</span>
                       <span className="min-w-0 flex-1 truncate">{tile?.title || "Tile"}</span>
-                      <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={() => move(id, -1)} aria-label={`Move ${tile?.title || "tile"} up`}>Up</button>
-                      <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={() => move(id, 1)} aria-label={`Move ${tile?.title || "tile"} down`}>Down</button>
+                      <button type="button" className="pl-icon-btn is-small" disabled={index === 0} onClick={() => move(id, -1)} aria-label={`Move ${tile?.title || "tile"} up`} title="Move up"><ChevronUp size={14} aria-hidden /></button>
+                      <button type="button" className="pl-icon-btn is-small" disabled={index === order.length - 1} onClick={() => move(id, 1)} aria-label={`Move ${tile?.title || "tile"} down`} title="Move down"><ChevronDown size={14} aria-hidden /></button>
                     </li>
                   );
                 })}
               </ol>
             </div>
           </div>
-          <div className="flex flex-wrap gap-1">
-            {(["pdf", "svg", "png", "eps"] as const).map((format) => (
-              <button key={format} type="button" className="btn-primary" disabled={busy || !drawable} data-export-format={format} onClick={() => void download(format)}>{format.toUpperCase()}</button>
-            ))}
+          <div>
+            <div className="pl-field-label"><Download size={13} aria-hidden />Download</div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(["pdf", "svg", "png", "eps"] as const).map((format) => (
+                <button key={format} type="button" className={format === "pdf" ? "btn-primary pl-primary justify-center" : "pl-btn justify-center"} disabled={busy || !drawable} data-export-format={format} onClick={() => void download(format)}>{format.toUpperCase()}</button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

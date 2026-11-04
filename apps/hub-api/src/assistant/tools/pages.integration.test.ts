@@ -444,3 +444,27 @@ test("pages nest inside a page or a task, from /page and from the assistant, and
   await apply(mira.id, "hub_move_page", { pageId: row.id, parentId });
   assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id: row.id } })).parentId, parentId);
 });
+
+test("pages nest four levels deep and no deeper, from /page, a move or the assistant; a page read names its parents", async () => {
+  const mira = await harness.asUser();
+  const make = async (parentId?: string) => {
+    const response = await mira.inject({ method: "POST", url: "/api/pages", payload: parentId ? { parentId } : {} });
+    return { status: response.statusCode, id: response.json().page?.id as string, error: response.json().error as string | undefined };
+  };
+  const one = await make();
+  const two = await make(one.id);
+  const three = await make(two.id);
+  const four = await make(three.id);
+  assert.deepEqual([two.status, three.status, four.status], [201, 201, 201]);
+  const five = await make(four.id);
+  assert.equal(five.status, 400);
+  assert.match(String(five.error), /up to 4 levels/);
+  await refused(apply(mira.id, "hub_create_page", { title: "Too deep", parentPageId: four.id }), /up to 4 levels/);
+  // Moving a page that has a page inside it counts both levels.
+  const top = await make();
+  await make(top.id);
+  await refused(apply(mira.id, "hub_move_page", { pageId: top.id, parentId: three.id }), /up to 4 levels/);
+  await apply(mira.id, "hub_move_page", { pageId: top.id, parentId: two.id });
+  const read = (await mira.inject({ method: "GET", url: `/api/pages/${four.id}` })).json() as { ancestors: Array<{ id: string }> };
+  assert.deepEqual(read.ancestors.map((row) => row.id), [one.id, two.id, three.id]);
+});

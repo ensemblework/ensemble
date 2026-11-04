@@ -137,7 +137,7 @@ test("catalog merges the shared list with each person's own state", async () => 
   assert.equal(google.state.account, "mira@fieldnote.example");
   assert.equal(google.state.appReady, true);
   assert.equal(google.state.oauthReady, true);
-  assert.deepEqual(google.state.products, { gmail: true, calendar: true, drive_docs: true, drive_search: false });
+  assert.deepEqual(google.state.products, { gmail: true, calendar: true, drive_docs: true, drive_search: false, meet: false });
   assert.deepEqual(google.state.needsConsent.sort(), ["calendar", "drive_docs"]);
   assert.deepEqual(google.state.sources.gmail, { enabled: true, lastSyncAt: "2026-10-06T09:00:00.000Z", lastError: null });
   assert.equal(google.state.sources.google_calendar?.enabled, false);
@@ -267,7 +267,7 @@ test("hosted: unverified people are blocked, verified non-operators connect end 
   assert.equal(stored?.meta.via, "oauth");
   assert.ok(stored?.scopes.includes(`${G}calendar.events`));
   const settings = await loadSettings(harness.prisma, member.id);
-  assert.deepEqual(settings.connectorProducts.google_workspace, { gmail: true, calendar: true, drive_docs: false, drive_search: false });
+  assert.deepEqual(settings.connectorProducts.google_workspace, { gmail: true, calendar: true, drive_docs: false, drive_search: false, meet: false });
   assert.equal(settings.connections.gmail?.enabled, true);
   assert.equal(settings.connections.google_calendar?.enabled, true);
 

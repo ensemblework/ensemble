@@ -6,12 +6,12 @@ import dynamic from "next/dynamic";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, Columns3, FileText, FolderGit2, LineChart, BookOpen, CalendarCheck, Briefcase, Workflow, CheckSquare, ShieldOff, X } from "lucide-react";
 import { ApiError, HUB_API, SHARE_GONE_EVENT, api, setOpenLink, setOpenShare, withLink, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
-import { LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
+import { LIVE_OPENED_EVENT, LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
-import { presenceStore, tabId } from "@/lib/presence";
+import { presenceStore, usePresenceSession } from "@/lib/presence";
 import { STATUS } from "@/lib/format";
-import { Avatar } from "./people";
-import { PagePeople } from "./page-people";
+import { Avatar, FollowBanner } from "./people";
+import { PagePeople, PresenceInHeader } from "./page-people";
 import { Tag } from "@/components/ui";
 import { LinkifiedText } from "@/components/linkified-text";
 import { useToast } from "@/components/toast";
@@ -83,6 +83,7 @@ function useShareLive(shareId: string, link: boolean, active: boolean) {
             window.dispatchEvent(new CustomEvent(LIVE_REOPENED_EVENT));
           }
           opened = true;
+          window.dispatchEvent(new CustomEvent(LIVE_OPENED_EVENT));
         };
         source.onerror = () => {
           source?.close();
@@ -96,24 +97,21 @@ function useShareLive(shareId: string, link: boolean, active: boolean) {
       }
     };
     void connect();
-    // Who is here, then a heartbeat.
-    void api.presence().then((data) => presenceStore.reset(data.people, data.you)).catch(() => undefined);
-    const beat = () => void api.sendPresence({ tabId: tabId() }).catch(() => undefined);
-    beat();
-    const timer = window.setInterval(beat, 15_000);
-    const sweep = window.setInterval(() => presenceStore.sweep(), 10_000);
     return () => {
       closed = true;
       window.clearTimeout(retry);
-      window.clearInterval(timer);
-      window.clearInterval(sweep);
       source?.close();
-      // The share header is already cleared when this runs: name the share explicitly.
-      const leave = () => api.sendPresence({ tabId: tabId(), leave: true }, true);
-      void (link ? withLink(shareId, leave) : withShare(shareId, leave)).catch(() => undefined);
-      presenceStore.clear();
     };
   }, [client, shareId, link, active]);
+  // Who is here, and you on the item. The share header may already be cleared when the view
+  // unmounts, so the leave names the share or link explicitly.
+  usePresenceSession({
+    active,
+    room: shareId,
+    place: shareId,
+    where: () => ({}),
+    scope: (fn) => (link ? withLink(shareId, fn) : withShare(shareId, fn)),
+  });
 }
 
 /** Asks again what the share opens when something says it is gone. */
@@ -406,8 +404,11 @@ function Opened({ share, gone }: { share: OpenedShare; gone: boolean }) {
       </header>
       {gone ? <GoneBanner>{share.owner.name} stopped sharing this with you. It stays on screen until you leave, and nothing you change here is saved.</GoneBanner> : null}
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <Body share={share} gone={gone} />
+        <PresenceInHeader.Provider value>
+          <Body share={share} gone={gone} />
+        </PresenceInHeader.Provider>
       </main>
+      <FollowBanner />
     </div>
   );
 }
@@ -524,8 +525,11 @@ function PublicOpened({ token, link, gone }: { token: string; link: NonNullable<
       </header>
       {gone ? <GoneBanner>The owner turned this link off. What's here stays on screen until you leave, and nothing you change here is saved.</GoneBanner> : null}
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <Body share={link} link gone={gone} />
+        <PresenceInHeader.Provider value>
+          <Body share={link} link gone={gone} />
+        </PresenceInHeader.Provider>
       </main>
+      <FollowBanner />
     </div>
   );
 }

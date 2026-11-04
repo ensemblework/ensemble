@@ -17,6 +17,7 @@ import { acceptsDocument, replaceDocument, type EditorControl } from "./replace-
 import { RemoteCarets } from "./remote-carets";
 import { CollabSync, type CollabBinding } from "./collab";
 import { useModuleState } from "@/lib/use-module";
+import { MAX_PAGE_DEPTH } from "./nested-page";
 import { usePeek } from "../shell/peek";
 import { markFreshPage } from "../pages/fresh-page";
 import { useToast } from "../toast";
@@ -49,7 +50,8 @@ export function BlockEditor({
   onMentionClick?: (mention: PageMention) => void;
   placeholder?: string;
   editable?: boolean;
-  page?: { kind: string; id: string };
+  /** `depth`: how deep the page sits (a top-level page or a task is 1); `/page` stops at the deepest level. */
+  page?: { kind: string; id: string; depth?: number };
   /** False: no comments on this page, only inline `@ensemble` requests (meeting notes). */
   comments?: boolean;
   /** Someone else's saved version. Applied in place (your selection kept), never saved back. */
@@ -101,6 +103,7 @@ export function BlockEditor({
         // `/page`: a page inside this page or task (from a project or meeting notes, a page of its own),
         // linked where the caret was and opened beside it.
         create: page && !currentLink() ? (instance, pos) => void createNestedPage(instance, pos) : null,
+        allowed: () => (pageRef.current?.depth ?? 1) < MAX_PAGE_DEPTH,
       }),
       ...(collab ? [CollabSync.configure({ version: collab.version, clientID: collab.clientID })] : []),
     ],

@@ -19,3 +19,5 @@ export function eventSourceInit(): { withCredentials: true } {
 export const PAGE_STEPS_EVENT = "ensemble:page-steps";
 /** The stream reconnected after a drop: live pages fetch the steps they missed. */
 export const LIVE_REOPENED_EVENT = "ensemble:live-reopened";
+/** The stream opened, the first time too: presence reads who is here, since frames sent while it was closed never arrive. */
+export const LIVE_OPENED_EVENT = "ensemble:live-opened";

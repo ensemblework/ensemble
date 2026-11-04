@@ -97,7 +97,7 @@ test("each connector says what Ensemble does with it", () => {
 
 test("what a connector does is not over-promised", () => {
   const entries = catalogWith({
-    google_workspace: { connected: true, sources: { gmail: { enabled: true, lastSyncAt: null, lastError: null } } },
+    google_workspace: { connected: true, sources: { gmail: { enabled: true, lastSyncAt: null, lastError: null }, google_calendar: { enabled: true, lastSyncAt: null, lastError: null } } },
     linear: { connected: true, sources: { linear: { enabled: true, lastSyncAt: null, lastError: null } } },
   });
   const by = (id: string) => entries.find((entry) => entry.id === id)!;
@@ -105,6 +105,8 @@ test("what a connector does is not over-promised", () => {
   assert.doesNotMatch(every, /Syncs into your context|proposed todos on Today|Meeting notes arrive/);
   assert.match(connectorUses(by("google_workspace")).join(" "), /Sync people adds the people you work with here to People\. Messages and files are saved only when you ask\./);
   assert.doesNotMatch(connectorUses(by("linear")).join(" "), /Sync people/, "Linear's source does not sync people");
+  assert.match(connectorUses(by("google_workspace")).join(" "), /Your calendars show on Today, merged with your other calendars/);
+  assert.doesNotMatch(connectorUses(by("linear")).join(" "), /calendars show on Today/);
   assert.match(connectorUses(by("google_workspace")).join(" "), /After your Apply, the assistant can change these for you: Calendar events and invites; Docs, Sheets and Slides\./);
   assert.match(connectorUses(by("granola")).join(" "), /Action items become proposed todos only if you ask/);
   assert.match(connectorUses(by("atlassian")).join(" "), /Post an update back to Jira \(when connected with an API token\)/);

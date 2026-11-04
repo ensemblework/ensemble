@@ -195,7 +195,7 @@ export const pageTools = [
     input: z.object({
       title: z.string().trim().min(1).max(200),
       markdown: z.string().max(MAX_MARKDOWN).default("").describe("The page body in Markdown."),
-      parentPageId: z.string().uuid().optional().describe("Nest the new page inside this page (a sub-page). Leave out for a top-level page."),
+      parentPageId: z.string().uuid().optional().describe("Nest the new page inside this page (a sub-page). Leave out for a top-level page. Pages nest at most 4 levels deep."),
       parentTaskId: z.string().uuid().optional().describe("Nest the new page inside this task's page, e.g. notes or a spec for the task."),
     }),
     isWrite: true,

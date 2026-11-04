@@ -15,13 +15,13 @@ import { relative } from "@/lib/format";
 import { useFullscreen } from "@/lib/fullscreen";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
 import { useToast } from "../toast";
-import { Spinner, cx } from "../ui";
+import { InfoTip, Spinner, cx } from "../ui";
 import { AttachToPage } from "./attach-to-page";
 import { FileIcon } from "./file-icon";
 import { FilePreview } from "./file-preview";
 import { DeleteFileDialog } from "./delete-file";
 import { useFileRecord } from "./use-file";
-import { DownloadButton, PresentContext, type PresentControl } from "./viewers/shared";
+import { DownloadButton, PresentContext, ToolbarSlot, type PresentControl } from "./viewers/shared";
 
 /** Previews that can fill the screen as they are, with their own zoom. Slides present instead; audio has nothing to fill it with. */
 const FULL_SCREEN = new Set<ViewerKind>(["pdf", "docx", "sheet", "image", "video", "text"]);
@@ -44,6 +44,7 @@ export function FileScreen({ id }: { id: string }) {
   const [converting, setConverting] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
   const screen = useFullscreen();
   const [canPresent, setCanPresent] = useState(false);
   const present = useMemo<PresentControl>(
@@ -101,88 +102,93 @@ export function FileScreen({ id }: { id: string }) {
 
   const facts = [format.ext ? format.label : "File", formatBytes(file.byteSize), countLabel(file), `Added ${relative(file.createdAt)}`].filter(Boolean).join(" · ");
 
+  const about = (
+    <div className="space-y-1.5 text-[12.5px] leading-5">
+      <p className="font-medium text-ink">{file.filename}</p>
+      <p className="text-muted">{facts}</p>
+      {file.source ? (
+        <p className="flex items-center gap-1.5 text-muted">
+          <BrandLogo id={file.source.app} name={brandName(file.source.app, file.source.label)} size={13} decorative />
+          {file.source.url ? (
+            <a href={file.source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 hover:text-ink hover:underline">
+              From {file.source.label} <ExternalLink size={11} aria-hidden />
+            </a>
+          ) : (
+            <span>From {file.source.label}</span>
+          )}
+        </p>
+      ) : null}
+      {file.warnings.length ? (
+        <ul className="space-y-0.5 border-t border-line pt-1.5 text-muted" aria-label="About this file">
+          {file.warnings.map((warning) => (
+            <li key={warning} className="flex items-start gap-1.5">
+              <Info size={13} className="mt-[3px] shrink-0 text-warn" aria-hidden /> {warning}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col" data-file-screen={file.id}>
-      <header className="shrink-0 border-b border-line px-4 pb-3 pt-4 sm:px-6">
-        <Link href="/files" className="inline-flex items-center gap-1 text-[12.5px] text-muted hover:text-ink">
-          <ArrowLeft size={13} aria-hidden /> Files
-        </Link>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-[1_1_20rem] items-start gap-3">
-            <FileIcon kind={file.kind ?? format.kind} size={38} />
-            <div className="min-w-0">
-              <h1 className="truncate text-[20px] font-semibold leading-7" title={file.filename}>
-                {file.filename}
-              </h1>
-              <p className="flex flex-wrap items-center gap-x-2 text-[12.5px] text-muted">
-                <span>{facts}</span>
-                {file.source ? (
-                  <span className="inline-flex items-center gap-1">
-                    ·
-                    <BrandLogo id={file.source.app} name={brandName(file.source.app, file.source.label)} size={13} decorative />
-                    {file.source.url ? (
-                      <a href={file.source.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 hover:text-ink hover:underline">
-                        From {file.source.label} <ExternalLink size={11} aria-hidden />
-                      </a>
-                    ) : (
-                      <span>From {file.source.label}</span>
-                    )}
-                  </span>
-                ) : null}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {show === "present" ? (
-              <button
-                type="button"
-                className="btn"
-                disabled={!canPresent}
-                onClick={(event) => screen.enter(event.currentTarget)}
-                title="One slide at a time on the whole screen. Arrow keys move, Esc stops."
-              >
-                <Presentation size={13} aria-hidden /> Present
-              </button>
-            ) : show === "full" ? (
-              <button type="button" className="btn" onClick={(event) => screen.enter(event.currentTarget)} title="Show the file on the whole screen. Esc leaves.">
-                <Maximize2 size={13} aria-hidden /> Full screen
-              </button>
-            ) : null}
-            <DownloadButton file={file} />
-            {way ? (
-              <button
-                type="button"
-                className="btn"
-                disabled={Boolean(converting)}
-                onClick={() => void convert()}
-                title={keepsFormatting ? "Edit it as a page. Exporting back keeps the original's formatting." : "Make a page from the file's text."}
-              >
-                {converting ? <Spinner size={12} /> : <FilePlus2 size={13} aria-hidden />}
-                {keepsFormatting ? "Convert to a page" : "Make a page"}
-              </button>
-            ) : null}
-            <button type="button" className="btn" onClick={() => setAttaching(true)}>
-              <Paperclip size={13} aria-hidden /> Attach to a page…
-            </button>
-            <button type="button" className="icon-btn" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
-              <Trash2 size={15} />
-            </button>
-          </div>
+      {/* One thin bar: back, the name (details on the info icon), the viewer's own controls, the file's actions. */}
+      <header className="file-bar shrink-0 border-b border-line">
+        <div className="file-bar-title">
+          <Link href="/files" className="icon-btn" aria-label="Back to Files" title="Files">
+            <ArrowLeft size={16} aria-hidden />
+          </Link>
+          <FileIcon kind={file.kind ?? format.kind} size={20} />
+          <h1 className="min-w-0 truncate text-[14px] font-semibold" title={file.filename}>
+            {file.filename}
+          </h1>
+          <InfoTip text={about} label={file.warnings.length ? "About this file (has notes)" : "About this file"} />
+          {file.warnings.length ? <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--warn)" }} aria-hidden /> : null}
         </div>
-        {converting ? (
-          <p className="mt-2 text-[12.5px] text-muted" role="status">
-            {converting}
-          </p>
-        ) : null}
-        {file.warnings.length ? (
-          <ul className="mt-2 space-y-0.5 text-[12.5px] text-muted" aria-label="About this file">
-            {file.warnings.map((warning) => (
-              <li key={warning} className="flex items-start gap-1.5">
-                <Info size={13} className="mt-[3px] shrink-0 text-faint" aria-hidden /> {warning}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <div ref={setToolbarSlot} className="file-bar-slot" />
+        <div className="file-bar-actions">
+          {converting ? (
+            <span className="max-w-[16rem] truncate text-[12px] text-muted max-sm:hidden" role="status" aria-live="polite">
+              {converting}
+            </span>
+          ) : null}
+          {way ? (
+            <button
+              type="button"
+              className="btn h-8 px-2.5"
+              disabled={Boolean(converting)}
+              onClick={() => void convert()}
+              aria-label={keepsFormatting ? "Convert to a page" : "Make a page"}
+              title={keepsFormatting ? "Edit it as a page. Exporting back keeps the original's formatting." : "Make a page from the file's text."}
+            >
+              {converting ? <Spinner size={12} /> : <FilePlus2 size={14} aria-hidden />}
+              <span className="max-lg:hidden">{keepsFormatting ? "Convert to a page" : "Make a page"}</span>
+            </button>
+          ) : null}
+          {show === "present" ? (
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={!canPresent}
+              aria-label="Present"
+              onClick={(event) => screen.enter(event.currentTarget)}
+              title="Present: one slide at a time on the whole screen. Arrow keys move, Esc stops."
+            >
+              <Presentation size={15} aria-hidden />
+            </button>
+          ) : show === "full" ? (
+            <button type="button" className="icon-btn" aria-label="Full screen" onClick={(event) => screen.enter(event.currentTarget)} title="Full screen (Esc leaves)">
+              <Maximize2 size={15} aria-hidden />
+            </button>
+          ) : null}
+          <DownloadButton file={file} iconOnly />
+          <button type="button" className="icon-btn" aria-label="Attach to a page" title="Attach to a page…" onClick={() => setAttaching(true)}>
+            <Paperclip size={15} aria-hidden />
+          </button>
+          <button type="button" className="icon-btn hover:text-danger" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
+            <Trash2 size={15} />
+          </button>
+        </div>
       </header>
       <div
         ref={show === "full" ? screen.layer : undefined}
@@ -206,7 +212,9 @@ export function FileScreen({ id }: { id: string }) {
           </div>
         ) : null}
         <PresentContext.Provider value={show === "present" ? present : null}>
-          <FilePreview fileId={file.id} className={full ? "min-h-0 flex-1" : undefined} />
+          <ToolbarSlot.Provider value={full ? null : toolbarSlot}>
+            <FilePreview fileId={file.id} className={full ? "min-h-0 flex-1" : undefined} />
+          </ToolbarSlot.Provider>
         </PresentContext.Provider>
       </div>
       <AttachToPage file={file} open={attaching} onClose={() => setAttaching(false)} onOpen={(href) => router.push(href)} />

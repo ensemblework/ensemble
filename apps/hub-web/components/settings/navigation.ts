@@ -18,6 +18,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["assistant", "quiet", "Quiet hours", [["Quiet hours", "do not disturb notifications"], "Quiet hours start", "Quiet hours end"]],
   ["assistant", "prompts", "Prompts", [["Prompts", "system instructions model requests"]]],
   ["connections", "connections", "Connected apps", [["Connections", "connectors integrations apps", "Connected apps"]]],
+  ["connections", "calendars", "Calendars on Today", [["Calendars on Today", "calendar union merged duplicates ics ical webcal icloud proton fastmail notion holidays subscription feed"], ["Add calendar by URL (ICS)", "ics ical webcal subscribe calendar link url feed"], ["Sync calendars", "refresh calendar events"]]],
   ["connections", "imports", "Imports", [["Imports", "import migration csv todoist notion trello asana clickup obsidian"], "Recent imports"]],
   ["connections", "fetch", "Sync people", [["Sync people", "sync contacts people refresh fetching"], ["Look back", "fetch lookback days"]]],
   ["connections", "editors", "Editors & agents", [["Editors & agents", "connect editor vscode cursor claude codex mcp"], "Connect an editor or AI app", ["Personal token", "api token hooks credentials"]]],

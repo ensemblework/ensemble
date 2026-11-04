@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { api, type CalendarEvent, type DeliverableRecord, type ReminderRecord, type TaskRecord } from "./api";
+import { api, type CalendarEvent, type CalendarPayload, type CalendarSourceState, type DeliverableRecord, type ReminderRecord, type TaskRecord } from "./api";
 import { isoDate, startOfDay } from "./format";
 
 export type HomePayload = {
@@ -10,6 +10,7 @@ export type HomePayload = {
   reminders: ReminderRecord[];
   events: CalendarEvent[];
   sync: Array<{ connector: string; lastSyncAt: string | null; lastError: string | null }>;
+  calendarSources?: CalendarSourceState[];
   timezone: string;
 };
 
@@ -55,7 +56,7 @@ export function seedToday(client: QueryClient, data: HomePayload, day: string): 
   put(["tasks"], { tasks: data.tasks });
   put(["deliverables", false], { deliverables: data.deliverables });
   put(["reminders"], { reminders: data.reminders });
-  put(["calendar", day], { events: data.events, sync: data.sync });
+  put(["calendar", day], { events: data.events, sync: data.sync, sources: data.calendarSources ?? [] } satisfies CalendarPayload);
 }
 
 /**

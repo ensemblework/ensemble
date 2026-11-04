@@ -2,6 +2,8 @@
 
 Ensemble imports work from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub Issues and any spreadsheet: titles, due dates, labels and tags, status, priority, assignees, descriptions, page content and projects. Running an import again updates what came over instead of adding copies, and **Undo this import** removes what an import added.
 
+Meetings come in elsewhere: Meeting notes → **Import** brings a transcript file or paste (Teams, Zoom, Google Meet, Otter, Fireflies, tl;dv, captions), one meeting from Teams, Google Meet or Zoom, or recent notes from Granola, Fireflies.ai, Fathom, tl;dv, Krisp, Jamie and Otter.ai, each as a meeting note with its event, people, transcript and action items ([03 §2.3–2.4](03_MODULE_CONTEXT_ENGINE.md#24-meeting-transcripts-files-pastes-teams-google-meet-and-zoom), [02](02_MODULE_INTERACTION_HUB_UI.md#manual-and-imported-meeting-notes)).
+
 Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/routes/imports.ts` (API), `apps/hub-web/components/imports/` (dialog, summary, recent list), `apps/hub-web/lib/api-imports.ts` (client). Labels on tasks: `packages/shared-types/src/domain.ts` (`TaskLabels`), `apps/hub-api/src/services/tasks.ts`, `apps/hub-web/components/task/labels.tsx`. No test calls a real vendor API.
 
 ## 1. How it works

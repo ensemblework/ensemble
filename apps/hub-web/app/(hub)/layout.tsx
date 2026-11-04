@@ -27,6 +27,7 @@ import { TopBar } from "@/components/shell/topbar";
 import { FeatureGate } from "@/components/features/gate";
 import { FeatureTour } from "@/components/features/tour";
 import dynamic from "next/dynamic";
+import "@/components/calendar/agenda.css";
 import "@/components/desk/desk.css";
 import "@/components/onboarding/tour.css";
 import { CelebrateHost } from "@/components/motion/celebrate";

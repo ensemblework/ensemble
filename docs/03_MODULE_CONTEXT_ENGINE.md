@@ -14,7 +14,7 @@ No background graph crawler, nightly relationship inference or semantic ranker r
 
 ## 2. Connectors
 
-Manual **Sync people** (`POST /api/fetch`, `POST /api/connections/:id/sync`) calls `connectors/people-sync.ts`. It stores contact metadata only: no message bodies, artifacts, proposals or model triage. Connecting an app saves no content. Scheduled fetches read nothing: `fetchAll` (`connectors/sync.ts`) returns at once for a scheduled call, even with `ENSEMBLE_SCHEDULED_FETCH=on`.
+Manual **Sync people** (`POST /api/fetch`, `POST /api/connections/:id/sync`) calls `connectors/people-sync.ts`. It stores contact metadata only: no message bodies, artifacts, proposals or model triage. Connecting an app saves no content, except the calendar events Today shows (§2.5). Scheduled fetches read nothing: `fetchAll` (`connectors/sync.ts`) returns at once for a scheduled call, even with `ENSEMBLE_SCHEDULED_FETCH=on`.
 
 | Source | Metadata read on manual sync |
 | --- | --- |
@@ -28,7 +28,7 @@ Manual **Sync people** (`POST /api/fetch`, `POST /api/connections/:id/sync`) cal
 
 `people/filter.ts` applies fixed domain, local-address and bulk/list header rules. Removed people stay removed (identity tombstones and suppressions). Exact addresses and provider-confirmed Slack/Teams/Linear user IDs reuse or merge identities; names alone never merge. Sync needs a verified account and granted product scopes. Provider errors never erase saved people.
 
-Files and artifacts enter only through an explicit upload, import, attach/save or an assistant action the person asked for. Search results are transient; reading one saves nothing else. `connectors/items` and the connected-app assistant tools use the person's own refreshed grants; signing in with a provider never grants connector access. See [31](31_CONNECTORS_IN_USE.md), [32](32_FILES.md).
+Files and artifacts enter only through an explicit upload, import, attach/save or an assistant action the person asked for; calendar events for Today are the one exception (§2.5). Search results are transient; reading one saves nothing else. `connectors/items` and the connected-app assistant tools use the person's own refreshed grants; signing in with a provider never grants connector access. See [31](31_CONNECTORS_IN_USE.md), [32](32_FILES.md).
 
 ### 2.1 Connector store, OAuth apps, products and tokens
 
@@ -60,11 +60,13 @@ The store lists `CONNECTOR_CATALOG` (`packages/shared-types/src/connectors.ts`).
 | `calendar` | `calendar.events`, `calendar.calendarlist.readonly`; `calendar.freebusy` also requested on new consent | `google_calendar` |
 | `drive_docs` (on by default) | `drive.file` (non-sensitive; files the person picks or Ensemble creates; Docs, Sheets, Slides) | Google Picker, assistant tools |
 | `drive_search` (off by default) | `drive.readonly` (restricted: public servers need Google verification) | assistant tools |
+| `meet` (off by default) | `meetings.space.readonly` (the Google Meet REST API must be on in the server's Cloud project) | Google Meet transcripts on request (§2.4) |
 | `outlook_mail` | `Mail.Read` | `outlook` |
 | `outlook_calendar` | `Calendars.ReadWrite` | `outlook_calendar` |
 | `teams` (off by default) | `Chat.Read` (work or school accounts) | `teams` |
 | `onedrive` | `Files.Read` | assistant tools |
 | `office` | `Files.ReadWrite` (Word, Excel, PowerPoint; covers OneDrive read) | assistant tools |
+| `teams_meetings` (off by default) | `OnlineMeetings.Read`, `OnlineMeetingTranscript.Read.All` (work or school accounts; many tenants need an admin's consent); `OnlineMeetingRecording.Read.All` also requested on new consent | Teams meeting transcripts on request (§2.4) |
 
 Explicit calendar reads use the person's granted calendars; Sync people reads attendee metadata only. A token with a narrower calendar read grant keeps its permitted reads; writing and availability need their own grants.
 
@@ -165,7 +167,7 @@ Token exchange, refresh and tool calls are tested against an in-process mock ser
 
 ### 2.3 Meeting-notes sources
 
-Meeting tools with a personal API key have import adapters in `apps/hub-api/src/connectors/meetings/`. Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts` and a `CONNECTOR_CATALOG` entry in category `meetings`. Sync people does not run them. `hub_import_meeting_notes` saves a requested batch (up to 20 meetings since a date) after Apply and proposes action-item tasks only when asked (`proposeTasks`). Single-meeting reads go through the app tools.
+Meeting tools with a personal API key have import adapters in `apps/hub-api/src/connectors/meetings/`; transcripts from files, pastes and the meeting apps themselves are §2.4. Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts` and a `CONNECTOR_CATALOG` entry in category `meetings`. Sync people does not run them. `hub_import_meeting_notes` saves a requested batch (up to 20 meetings since a date) after Apply and proposes action-item tasks only when asked (`proposeTasks`); Meeting notes' Import menu runs the same import for the last 30 days (`POST /api/meetings/vendors/:vendor/import`, `days` 1–90) without proposing tasks. Single-meeting reads go through the app tools.
 
 | Source id | API requests (personal API key) |
 |---|---|
@@ -183,11 +185,90 @@ Each vendor maps its response to one `MeetingRecord` (`meetings/types.ts`); `mee
 
 1. **Transcript** → `Artifact(kind transcript, externalId "<vendor>:<id>")`: speaker lines with timestamps, trimmed to 18,000 characters (`TRANSCRIPT_CAP`) with a note to open the rest in the vendor; metadata keeps the vendor id, end time, duration, summary and action items. Secrets are redacted (§2.1).
 2. **People**: attendees and speakers with an address go through `upsertPerson` (§4.7) and become the note's `personIds`. A speaker with only a name links to an existing person with exactly that full name, never a new one.
-3. **Calendar match** (`meetings/match.ts`): the vendor's calendar event id wins when it names a stored event (Google event id, or the Graph id behind `outlook:<id>`). Otherwise an event within 12 hours must fit in time (overlap of at least half the shorter one, or a start within 10 minutes) and is scored `0.5·time + 0.3·shared attendees (not me) + 0.2·title words`. The best event also needs a shared attendee, a title overlap of 0.3, or to be the only close fit; if the runner-up is within 0.1 the meeting stays unmatched. Unmatched notes from the last 14 days are retried on the next requested import.
-4. **Meeting note**: one `MeetingNote` per `(user, external_source, external_id)` with `source = "connector"`, the vendor summary as `answer`, `event_artifact_id`, `transcript_artifact_id`, and `extraction = { via, summary, decisions, actionItems, waitingOn, eventMatch }`. Decisions come from the vendor where it has them, plus bullets under a "Decisions"/"Agreed" heading of the summary. A note the person deleted stays deleted.
+3. **Calendar match** (`meetings/match.ts`): the vendor's calendar event id wins when it names a stored event (Google event id, or the Graph id behind `outlook:<id>`). Copies of one event from several calendars are one candidate (§2.5). Otherwise an event within 12 hours must fit in time (overlap of at least half the shorter one, or a start within 10 minutes) and is scored `0.5·time + 0.3·shared attendees (not me) + 0.2·title words`. The best event also needs a shared attendee, a title overlap of 0.3, or to be the only close fit; if the runner-up is within 0.1 the meeting stays unmatched. Unmatched notes from the last 14 days are retried on the next requested import.
+4. **Meeting note**: one `MeetingNote` per `(user, external_source, external_id)` with `source = "connector"`, the vendor summary as `answer`, the whole transcript as `[mm:ss] Speaker: words` lines in `prompt` (up to 400,000 characters, `MAX_TRANSCRIPT_CHARS`), `event_artifact_id`, `transcript_artifact_id`, and `extraction = { via, summary, decisions, actionItems, waitingOn, eventMatch, speakers, lineCount, durationSeconds }`. Decisions come from the vendor where it has them, plus bullets under a "Decisions"/"Agreed" heading of the summary. A note the person deleted stays deleted.
 5. **Action items**: an item is mine when its assignee's address is one of mine (account email, `settings.email`, connected-account emails, the vendor account), or, with no address, when the name is my full name or first name alone. Fireflies' grouped text and Markdown "Action items"/"Next steps" sections are parsed for owners (`**Name**` groups, `Name:` prefixes). With `proposeTasks`, my open items become proposed todos (`sourceKind meeting`, `meeting_note_id`, excerpt, the vendor's link to that moment or the meeting, else the calendar event), keyed `meeting:<vendor>:<id>:<hash>` so a re-import, or a dismissed todo, never proposes the same item again (`connectors/triage.ts` `createProposals`). Others' open items stay on the note as `waitingOn`.
 
 Disconnect with *delete what was read* removes that source's transcripts and meeting notes; todos stay. Tests use mocked vendor responses (`src/connectors/meetings/meetings.test.ts`, `src/routes/connected-data.integration.test.ts`).
+
+### 2.4 Meeting transcripts: files, pastes, Teams, Google Meet and Zoom
+
+A transcript the person uploads or pastes, or one fetched from the meeting app for one meeting, becomes a meeting note through the same `ingestMeetings` (§2.3) with `external_source` `transcript`, `teams`, `google_meet` or `zoom`. Nothing is sent to a model, and nothing runs in the background: each fetch is one request by the person. Routes are in `src/routes/meeting-notes.ts`; the page is [02](02_MODULE_INTERACTION_HUB_UI.md#manual-and-imported-meeting-notes).
+
+**Reading a transcript** (`meetings/transcript-parse.ts`). The format is detected from the content, not the extension:
+
+| Format (`format`) | Recognised by |
+|---|---|
+| `teams-vtt` | WebVTT with `<v Speaker>` voice tags (Teams downloads, Graph content) |
+| `zoom-vtt` | WebVTT with numbered cues that start `Speaker: text` |
+| `vtt`, `srt` | Other WebVTT captions; SubRip numbered cues |
+| `teams-docx`, `teams-copy` | `Name  0:03` headers on their own line or inline: text copied from the Teams transcript panel, or a Teams .docx (a `.docx` file, "started transcription" or a `1m 23s` duration) |
+| `zoom-txt` | `[Name] 00:00:01` headers (Zoom's saved transcript) |
+| `otter` | `Name  0:03` headers with Otter's `SPEAKERS` or `SUMMARY KEYWORDS` sections or an otter.ai footer |
+| `google-meet` | `Name: text` lines in the Meet transcript Doc (.docx or .txt): "This editable transcript was computer generated", "Notes by Gemini", or `Attendees` with `00:00:00` stamps |
+| `speaker-lines` | `Name: text`, `[00:01] Name: text` or a time line then `Name: text` |
+| `fireflies-json`, `tldv-json`, `json` | JSON arrays of sentences or segments (`text`/`sentence` with `speaker_name`/`speaker` and `start_time`/`start`) |
+| `plain` | Anything else with text: paragraphs with no speaker, and a warning |
+
+Consecutive turns by one speaker merge (up to 2,400 characters a turn); a file stops at 400,000 characters with a warning. A title, date and time (with its zone when the file names one), duration, attendees, and any written summary, decisions and next steps come along; the file name can supply a title and date. With no written decisions or action items, they are found from phrases in what was said ("I'll send…", "Could you review…", "We agreed…", "Action item: …") and the note is marked `suggested`.
+
+**Upload and paste** (`meetings/transcript-import.ts`). `POST /api/meetings/transcripts/preview` and `POST /api/meetings/transcripts` take `{ filename, dataBase64 }` or `{ text }`; the import adds `title`, `occurredAt`, `eventId` (a saved calendar event) and `addPeople`. Files are `.vtt`, `.srt`, `.txt`, `.text`, `.md`, `.docx` (read in the file worker, `files/extract.ts`) or `.json` up to 10 MB or the file store's smaller limit (`transcriptFileLimit`); `.doc` asks for .docx; a paste is up to 2,000,000 characters. Guests in a shared space can't import, and the account must be verified. The preview returns the format, speakers (me, a matching person, or neither), line count, the first six lines, counts of decisions and action items, and warnings. The start is the time given, else the event's start, else the instant or written time in the file (in the person's time zone unless the file names one), else now. Speakers become the note's people: an event attendee with that name gives the address, else an existing person with that full name or address, or a lone first name only one person has; a new person only for names in `addPeople`. `external_id` is a hash of the transcript text, so importing the same transcript again updates its note, including one the person deleted.
+
+**From the meeting app** (`meetings/remote.ts`). `GET /api/meetings/sources` lists Teams, Google Meet and Zoom (`ready`, `needs_access` when the product is off or waits for consent, `not_connected`; `available` when the server has the OAuth app), the meeting-notes vendors with their connection, whether a calendar is connected, and the file limit. `GET /api/meetings/remote/:provider?days=1–30` (default 14) lists recent meetings; `POST /api/meetings/remote/:provider/import` takes `{ ref }` (a join link, Meet conference record or Zoom meeting id) or `{ eventId }`, with optional `title` and `start`; `POST /api/meetings/events/:id/transcript` fetches for a saved event by its join link. Both answer `{ ok: true, note }` or `{ ok: false, problem }`, where `problem` is `{ code, provider, title, detail, actions }` and each action is `connect` (connector and product), `open` (a link), `ask_organizer` (address, subject and body for an email), `paste` or `upload`.
+
+| Provider | Requests | Notes |
+|---|---|---|
+| Teams (`meetings/teams.ts`) | Graph `GET /me/calendarView` (Teams join links, with Calendars access), `GET /me/onlineMeetings?$filter=JoinWebUrl eq '…'`, `…/transcripts`, `…/transcripts/{id}/content?$format=text/vtt`, `…/recordings` | Up to 10 transcripts of a meeting become one note. Graph lets apps download a transcript only with the organizer's account |
+| Google Meet (`meetings/google-meet.ts`) | Meet REST v2 `conferenceRecords?filter=space.meeting_code = "…" AND start_time…` (the call nearest the event, from 3 hours before to 6 after), `…/transcripts`, `…/transcripts/{id}/entries` (up to 6,000), `…/participants`, `…/recordings` | Google keeps entries for 30 days after a call; the transcript Doc in Drive stays |
+| Zoom (`meetings/zoom.ts`) | `GET /users/me/recordings` (30 days), `GET /meetings/{id}/transcript`, then its WebVTT download | Cloud recordings on paid plans, for the host |
+
+| `code` | When | Next steps offered |
+|---|---|---|
+| `not_connected` | No account for the provider | Connect; Upload |
+| `needs_access` | The token lacks the product's scopes, or the provider refused for scope or consent | Turn on and approve (reconnect with the product); Paste or Upload |
+| `admin_blocked` | Teams: the tenant turned off Graph access to transcripts | Open in Teams; Paste from Teams |
+| `personal_account` | Teams with an outlook.com, hotmail, live or msn account | Open in Teams; Paste from Teams |
+| `not_organizer` | Teams 403/404 when you didn't organize it (attendees can read it and ask Copilot in Teams, but apps can't download it); Meet 403; Zoom 404 (someone else hosted) | Teams: Ask the organizer to share it, Open in Teams, Paste from Teams. Meet and Zoom: Open, Upload |
+| `not_found` | Teams returned no meeting for that link (another organization, some channel meetings); not a Meet or Zoom link; no Meet call record for this account | Teams: Open in Teams, Paste from Teams. Meet and Zoom: Upload |
+| `no_transcript` | Nobody transcribed it, or the transcript is empty | Open; Paste or Upload; Ask the organizer when you weren't the organizer |
+| `recording_only` | Teams or Meet has a recording but no transcript | Open; Upload |
+| `processing` | Meet or Zoom is still writing it | Try again later |
+| `expired` | Teams meeting expired, Meet entries older than 30 days, Zoom transcript deleted | Upload (the Doc or a saved file); Open |
+| `app_not_set_up` | Meet: the Meet REST API is off in the server's Cloud project | Open; Upload the transcript Doc |
+| `unavailable` | Rate limit, network or another provider error | Paste or Upload |
+
+**Action items to tasks.** `POST /api/meetings/notes/:id/tasks` with `{ text, owner? }` makes one todo owned by me that cites the meeting (`sourceKind meeting`, `meeting_note_id`, the note's project, the owner when they are one of the note's people), keyed like §2.3's proposals so asking again returns the same task. `DELETE /api/meetings/notes/:id` and `POST /api/meetings/notes/:id/restore` soft-delete and restore an imported note with its transcript artifact; tasks stay.
+
+Tests: `src/connectors/meetings/transcript-parse.test.ts` (each format, sample files), `src/routes/connected-data.integration.test.ts` (imports, isolation, every problem path with mocked Graph, Meet and Zoom responses).
+
+### 2.5 The Today calendar
+
+Calendars are the one source Ensemble keeps a rolling copy of. `src/calendar/sync.ts` reads every calendar that feeds Today into `Artifact(kind event)` rows, one row per copy, for a window from 14 days back to 42 days ahead: when the person presses Sync (`POST /api/calendar/sync`), when a calendar link is added, and every 30 minutes from the scheduler (`refreshCalendarsIfDue`, claimed once per person and slot across API processes; `ENSEMBLE_CALENDAR_REFRESH=off` stops it). It only reads: it writes to no provider and creates no people (Sync people does that, §2). Rows that left the window or the source are soft-deleted on the next sync; a calendar switched off or disconnected drops out at once and its rows are hidden on the next sync.
+
+| Source | Read | Row |
+|---|---|---|
+| Google Calendar (`google_calendar` on, Google connected) | `calendarList` (primary plus calendars shown in Google Calendar, at most 10), then `events?singleEvents=true` per calendar. Cancelled, declined and working-location entries are skipped (`connectors/google.ts` `googleEventInput`) | `externalId` = event id, `metadata.source` `google` |
+| Outlook calendar, Teams meetings included (`outlook_calendar` on, Microsoft 365 connected) | `/me/calendars` (the default and the person's own calendars, not colleagues' shared ones, at most 10), then `calendarView` per calendar (`connectors/microsoft.ts` `outlookEventInput`) | `outlook:<id>`, `outlook` |
+| Calendar links: ICS, iCal or webcal (iCloud, Proton, Fastmail, Notion Calendar, holiday calendars) | `calendar/feeds.ts`, parsed by `calendar/ics.ts`: TZID (IANA, Windows names, VTIMEZONE), floating and UTC times, all-day dates, RRULE, RDATE, EXDATE and RECURRENCE-ID overrides | `ics:<link id>:<hash>`, `ics` |
+
+Each row's metadata keeps `calendarSync: true`, `calendarId`, `calendar`, `eventId`, `uid` (iCalendar UID), `originalStart` (a recurring occurrence's original start), `end`, `allDay`, `startDate`/`endDate` (all-day, end exclusive), `joinUrl` (the Meet, Teams, Zoom or Webex link, also found in the location or description), `location`, `organizer` and `hasDescription`.
+
+**Calendar links** (`calendar_feeds`, migration `20261121100000_calendar_feeds`; Settings → Connections → Calendars on Today). `POST /api/calendar/feeds { url, name? }` takes `https://` or `webcal://` links without a user name or password, reads the link once and refuses anything that is not `BEGIN:VCALENDAR`. The address usually carries a private token: it is stored encrypted (`lib/secrets.ts`) with a keyed hash that refuses the same link twice, only the host is shown, and no route returns it. Every read goes through the Files link guard (`fetchPublicFile` in `assistant/tools/save-file.ts` with `plots/ssrf.ts`: public addresses only on every hop, at most 5 redirects), at most 5 MB and 20 seconds, at most 2,000 events per window, at most 20 links per person. `GET /api/calendar/feeds` lists them with the last sync, error and event count; `PATCH /api/calendar/feeds/:id { name }` renames one; `DELETE /api/calendar/feeds/:id` removes it and its events (copies from other calendars stay). A space handed to a new owner loses the old owner's links ([29](29_SHARING.md)).
+
+**One event, however many calendars have it** (`calendar/dedupe.ts`, fixed rules, no model). Copies are joined with a union–find, strongest rule first:
+
+1. The same iCalendar UID and the same occurrence (original start, else start) within 2 minutes. Only this rule joins two copies from one calendar.
+2. The same online meeting (`meetingKey`: Teams thread or meeting id, Meet code, Zoom meeting id, Webex meeting; percent-encoding and query strings ignored) at overlapping times. A personal room (Zoom `/my/`, Webex `/meet/`) also needs matching titles.
+3. Timed events whose starts and ends, compared as UTC instants, are each within 2 minutes and whose titles match. Titles are compared after NFKC, lower case, emoji and punctuation removed and mail prefixes dropped (`Fwd:`, `Re:`, `Invitation:`, `Updated invitation:`, `Accepted:`, `Declined:`, `Canceled:`/`Cancelled:` …); they match when equal, when one contains the other as whole words (at least 3 characters), or at token Jaccard ≥ 0.6.
+4. All-day events with the same date span and matching titles after a small holiday vocabulary (`HOLIDAY_PHRASES`, `HOLIDAY_STOPWORDS`): "Christmas Day" is "Christmas", "Deepavali" is "Diwali", but "Christmas Eve" never matches "Christmas".
+
+Rules 2–4 never join two copies from the same calendar, so two events at the same time with different titles, or the same title at different times, stay apart. A cancelled copy is never joined to an active one: it is dropped. Rules 1, 2 and 4 compare within buckets (UID, meeting, date span) and rule 3 compares neighbours in start order, so merging stays near O(n log n). A merged event keeps the earliest-created copy's id; its time and title come from the best copy (Google or Outlook before a calendar link, then the copy with the most fields; the title without a mail prefix); other fields are the first non-empty value in that order; attendees are the union by address; `sources` lists every copy, best first.
+
+The merge runs at sync and at read. After every sync `regroupCalendar` stores each copy's group id in `metadata.dedupeKey`; every read merges again (`calendar/read.ts`), so events kept by hand or by the assistant join too, and a calendar that is switched off drops out without a resync. Readers of the merged list: `GET /api/calendar`, `/api/today/home`, `hub_list_events` ([11](11_HOW_THE_ASSISTANT_WORKS.md)), the tile feed (`/api/widgets/feed`), meeting cues, the meeting-notes match (§2.3) and the bridge's meetings ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)).
+
+`GET /api/calendar?from=&to=[&tz=]` returns `{ timeZone, events, sync, sources }`. Every event has `id`, `title`, `start`, `end`, `allDay`, `joinUrl` (the meeting link, else the event's page) and `location`, plus `startDate`/`endDate`, `meetingUrl` (the meeting link only), `url`, `organizer`, `attendees` (at most 50), `hasDescription`, `memberIds` (every copy's row id) and `sources: [{ connector, label, calendar, url }]`. Timed events are in range when they overlap it; all-day events by the person's dates. `sync` is each source's last sync and error (`sync_state` rows `calendar:<source>`); `sources` lists the calendars that feed Today. Calendar routes are owner-only: a space's guests never see the calendar.
+
+Tests: `src/calendar/dedupe.test.ts` (Teams meeting on Outlook and a forwarded Google invite, Christmas from two holiday calendars, time zones, recurring occurrences, cancelled copies, a three-calendar chain, ICS duplicates, 6,000 events), `src/calendar/ics.test.ts`, `src/calendar/calendar.integration.test.ts` (mocked Google, Graph and links end to end; isolation; private addresses).
 
 ---
 
@@ -220,7 +301,7 @@ Graph views derive edges from these records and mentions; there is no separate g
 
 ### 4.3 Meeting processing
 
-Adapters normalize to `MeetingRecord`; `meetings/ingest.ts` stores the transcript and source metadata, matches saved calendar events conservatively (ambiguous stays unmatched) and records source-attributed notes (§2.3). Transcript excerpts are bounded; the source link has the rest. Manual and imported notes have different editing rights (§7).
+Adapters, transcript files and meeting-app fetches normalize to `MeetingRecord`; `meetings/ingest.ts` stores the transcript and source metadata, matches saved calendar events conservatively (ambiguous stays unmatched; an event the person picked is used as is) and records source-attributed notes (§2.3, §2.4). Transcript excerpts are bounded; the source link has the rest. Manual and imported notes have different editing rights (§7).
 
 ### 4.4 Graph maintenance
 
@@ -264,9 +345,9 @@ Profile, timezone, profession and selected personal instructions inform requests
 
 ## 7. Meeting context
 
-`routes/cowork.ts` serves manual notes: `GET/POST /api/meetings/sessions`, `GET/PATCH/DELETE /api/meetings/sessions/:id` (a `projectId`, owned by the same account, links notes to a project; null unlinks them), `/end`, `/attach`, `/decline`, `/recap`, plus `GET /api/meetings/cues` (saved calendar events from 48 hours back to 24 hours ahead, with their sessions) and `POST /api/meetings/summarize`. `routes/meeting-notes.ts` serves `GET /api/meetings/imported` and `GET /api/meetings/notes/:id`.
+`routes/cowork.ts` serves manual notes: `GET/POST /api/meetings/sessions`, `GET/PATCH/DELETE /api/meetings/sessions/:id` (a `projectId`, owned by the same account, links notes to a project; null unlinks them), `/end`, `/attach`, `/decline`, `/recap`, plus `GET /api/meetings/cues` (saved calendar events from 48 hours back to 24 hours ahead, with their sessions) and `POST /api/meetings/summarize`. `routes/meeting-notes.ts` serves `GET /api/meetings/imported` (newest 50) and `GET /api/meetings/notes/:id` (with `transcript`, the turns read back from the note), and the imports, fetches, deletes and action-item tasks of §2.4.
 
-Manual notes use the page editor, with saved `content` plus Markdown `notes`, and attendee/event links. Attaching notes to an event saves the link inside Ensemble only; calendar apps are not written. Imported notes are read-only. Summaries, decisions and tasks must come from the selected note. There is no microphone recording or audio/video understanding. The assistant can read notes, import a bounded batch, create/edit manual notes and propose tasks when asked ([34](34_ASSISTANT_ACTIONS.md)).
+Manual notes use the page editor, with saved `content` plus Markdown `notes`, and attendee/event links. Attaching notes to an event saves the link inside Ensemble only; calendar apps are not written. Imported notes are read-only; their action items become tasks one at a time (§2.4). Summaries, decisions and tasks must come from the selected note. There is no microphone recording or audio/video understanding: transcripts are read as text. The assistant can read notes, import a bounded batch, create/edit manual notes and propose tasks when asked ([34](34_ASSISTANT_ACTIONS.md)).
 
 ## 8. Project pages
 

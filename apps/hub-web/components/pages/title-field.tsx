@@ -46,6 +46,20 @@ export function PageTitleField({
     element.style.height = "0px";
     element.style.height = `${element.scrollHeight}px`;
   }, [draft]);
+  // A title measured while hidden (display: none) or before its column settled has the wrong height; measure again when the width changes.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      element.style.height = "0px";
+      element.style.height = `${element.scrollHeight}px`;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!autoFocus || focused.current) return;
     const element = ref.current;

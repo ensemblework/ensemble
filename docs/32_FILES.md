@@ -24,7 +24,9 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format 
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
-**Present and Full screen** (on a file's own screen, `components/files/file-screen.tsx`):
+A file's own screen (`components/files/file-screen.tsx`) is the file under one thin bar: back to Files, the name (its size, pages, source and any notes about it behind the information icon), the viewer's own controls (page, zoom, fit, sheets; `Toolbar` in `viewers/shared.tsx` draws into the bar there), and the actions as icons (Convert to a page, Full screen or Present, Download, Attach to a page, Delete). On a narrow screen the viewer's controls take a second row.
+
+**Present and Full screen** (on a file's own screen):
 
 - Slides have **Present** (`components/files/viewers/present.tsx`): one slide at a time, fitted to the screen on black. It starts at the slide in view, skips slides hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters browser fullscreen; Esc stops. Controls and cursor hide after 2 seconds without mouse movement.
 - Pictures sit on a backdrop drawn from their own colours (a blurred copy behind them), so the room a different shape leaves around a picture looks like part of it; a picture with see-through parts sits on the plain surface with a soft shadow that follows its shape (`components/files/viewers/image-viewer.tsx`). The zoom shows the scale the picture is drawn at.

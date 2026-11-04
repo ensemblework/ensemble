@@ -1,12 +1,14 @@
 /**
  * In-process scheduler (docs/05 §2): the fetch times each person set (paused
- * unless ENSEMBLE_SCHEDULED_FETCH=on), a daily retention pass, expiry of
+ * unless ENSEMBLE_SCHEDULED_FETCH=on), the Today calendar's 30-minute refresh
+ * (calendar/sync.ts), a daily retention pass, expiry of
  * editor decisions nobody answered, and an hourly sweep of blobs nothing uses (jobs/blob-sweep.ts).
  *
  * One minute tick. A slot runs once per user per local day, recorded in
  * sync_state so a restart inside the same minute does not run it twice.
  */
 import type { FastifyInstance } from "fastify";
+import { refreshCalendarsIfDue } from "../calendar/sync.js";
 import { fetchAll } from "../connectors/sync.js";
 import { expireStale } from "../lib/decisions.js";
 import { loadSettings } from "../lib/settings.js";
@@ -87,6 +89,7 @@ async function tick(app: FastifyInstance): Promise<void> {
     void deliverMorningBrief(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "morning brief failed"));
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
+    void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));
     if (scheduledFetchDue(settings, now.time)) {
       if (await claimSchedule(app, userId, `fetch@${now.date}T${now.time}`)) {
         app.log.info({ userId, at: now }, "scheduled fetch");

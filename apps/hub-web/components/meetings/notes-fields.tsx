@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderKanban } from "lucide-react";
@@ -99,7 +99,7 @@ function saveInOrder<T>(id: string, save: () => Promise<T>): Promise<T> {
  * A meeting's title and notes. The notes are a page (the block editor): `/` for blocks, `@` to
  * mention, `@ensemble` to ask in place. No comments. Saves go in order, 600 ms after typing stops.
  */
-export function MeetingNotesFields({ session, onRemoved, editor }: { session: MeetingSessionRecord; onRemoved: () => void; editor?: NotesEditor }) {
+export function MeetingNotesFields({ session, onRemoved, editor, details }: { session: MeetingSessionRecord; onRemoved: () => void; editor?: NotesEditor; details?: ReactNode }) {
   const client = useQueryClient();
   const toast = useToast();
   const router = useRouter();
@@ -219,6 +219,7 @@ export function MeetingNotesFields({ session, onRemoved, editor }: { session: Me
       <ShareButton target={{ kind: "meeting", resourceId: session.id, title: draft.title }} />
       <button type="button" className="btn" disabled={removing} onClick={() => void remove()}>Delete notes</button>
     </div>
+    {details}
     <PageContent status={status} error={failed} actions={failed ? <button type="button" className="btn" onClick={() => void flushRef.current()}>Retry save</button> : null} onBlur={() => { void flushRef.current(); }}>
       {Editor ? (
         <Editor

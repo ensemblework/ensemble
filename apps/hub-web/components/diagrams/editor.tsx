@@ -29,9 +29,9 @@ import {
   type PortName,
   type ShapeId,
 } from "@ensemble/block-diagrams";
-import { layoutOverlaps } from "@ensemble/block-diagrams/layout";
+import { isLocked, layoutOverlaps } from "@ensemble/block-diagrams/layout";
 import { SHORTCUTS, eventMatchesChord } from "@ensemble/shared-types";
-import { ChevronRight, LayoutGrid, Lock, Type, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CloudOff, Download, Eye, LayoutGrid, Lock, LockOpen, Maximize2, Minimize2, MonitorSmartphone, MoveDown, MoveRight, Shapes, Type, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
@@ -39,13 +39,16 @@ import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import { useToast } from "@/components/toast";
 import { ApiError, api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
-import { DiagramCanvas, type DiagramCanvasHandle } from "./canvas";
+import { BrandMorph } from "@/components/motion/brand-morph";
+import { DiagramCanvas, ZoomPill, type DiagramCanvasHandle } from "./canvas";
 import type { DiagramCodeHandle } from "./diagram-code";
-import { DiagramMore } from "./diagram-more";
+import { DiagramFreshness, DiagramMoreMenu } from "./diagram-more";
+import { DiagramExportMenu, EXPORT_KINDS } from "./download-menu";
 import { FormatBar, type FormatAction } from "./format-bar";
 import { downloadDiagram, type DiagramExportKind } from "./export-image";
 import { ShapeGlyph } from "./glyph";
 import { layoutInBackground } from "./layout-client";
+import { FloatMenu, ToolButton, ToolDivider, shortcutLabel } from "./toolbar";
 import { useSpaceAccess } from "@/lib/access";
 import { PagePeople } from "../sharing/page-people";
 import { ShareButton } from "../sharing/share-dialog";
@@ -76,6 +79,24 @@ const SHAPES: Array<{ shape: ShapeId; label: string }> = [
   { shape: "browser", label: "Web app" },
   { shape: "delay", label: "Delay" },
 ];
+
+/** One click from the dock. Every shape is in Add block. */
+const QUICK_SHAPES: ShapeId[] = ["rectangle", "rounded", "diamond", "circle", "cylinder"];
+
+/** Which floating menu on the canvas is open. One at a time. */
+type CanvasMenu = "shapes" | "layout" | "export" | null;
+
+type SaveState = "idle" | "saving" | "saved" | "error";
+
+function SaveStatus({ state }: { state: SaveState }) {
+  const text = state === "saving" ? "Saving…" : state === "error" ? "Not saved" : "Saved";
+  return (
+    <span className="dg-save" data-state={state} role="status" title="Edits save automatically">
+      {state === "error" ? <CloudOff size={13} aria-hidden /> : state === "saving" ? <span className="dg-save-dot" aria-hidden /> : <Check size={13} aria-hidden />}
+      {text}
+    </span>
+  );
+}
 
 function useRoomy(): { width: number; height: number; ok: boolean } | null {
   const [ok, setOk] = useState<{ width: number; height: number; ok: boolean } | null>(null);
@@ -115,9 +136,8 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [version, setVersion] = useState(1);
   const [dirty, setDirty] = useState(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [menu, setMenu] = useState(false);
-  const [focusExport, setFocusExport] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [menu, setMenu] = useState<CanvasMenu>(null);
   const [exporting, setExporting] = useState(false);
   const [focus, setFocus] = useState(false);
   const [textWidth, setTextWidth] = useState(440);
@@ -146,8 +166,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<DiagramCanvasHandle>(null);
   const focusRef = useRef(false);
-  const menuRef = useRef(false);
-  const focusExportRef = useRef(false);
+  const menuRef = useRef<CanvasMenu>(null);
   const textWidthRef = useRef(440);
   const textRef = useRef("");
   const undoStack = useRef<string[]>([]);
@@ -163,7 +182,6 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   versionRef.current = version;
   focusRef.current = focus;
   menuRef.current = menu;
-  focusExportRef.current = focusExport;
   textWidthRef.current = textWidth;
 
   useEffect(() => {
@@ -358,7 +376,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     if (!current) return;
     const count = Object.keys(current.nodes).length;
     commit(addBlock(current, shape, { x: 80 + (count % 4) * 36, y: 80 + (count % 3) * 28 }));
-    setMenu(false);
+    setMenu(null);
     setFitTick((value) => value + 1);
   }
 
@@ -416,8 +434,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   }
 
   async function enterFocus() {
-    setMenu(false);
-    setFocusExport(false);
+    setMenu(null);
     focusRef.current = true;
     setFocus(true);
     const stage = stageRef.current;
@@ -433,7 +450,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   async function exitFocus() {
     focusRef.current = false;
     setFocus(false);
-    setFocusExport(false);
+    setMenu(null);
     if (!document.fullscreenElement) return;
     try {
       await document.exitFullscreen();
@@ -452,23 +469,22 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       if (document.fullscreenElement || !focusRef.current) return;
       focusRef.current = false;
       setFocus(false);
-      setFocusExport(false);
+      setMenu(null);
     };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
 
   useEffect(() => {
-    if (!menu && !focusExport) return;
+    if (!menu) return;
     const close = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("[data-diagram-menu]")) return;
-      setMenu(false);
-      setFocusExport(false);
+      setMenu(null);
     };
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
-  }, [menu, focusExport]);
+  }, [menu]);
 
   function startResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -534,10 +550,11 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       });
       if (!hit) return;
       if (hit.id === "diagram-focus-exit") {
-        if (menuRef.current || focusExportRef.current) {
+        if (menuRef.current) {
           event.preventDefault();
-          setMenu(false);
-          setFocusExport(false);
+          const trigger = document.querySelector<HTMLElement>('[data-diagram-menu] [aria-expanded="true"]');
+          setMenu(null);
+          trigger?.focus({ preventScroll: true });
           return;
         }
         if (!focusRef.current) return;
@@ -637,122 +654,167 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     );
   }
 
+  const title = model.meta.title || "Untitled diagram";
+  const zoomOnly = <div className="dg-bottom"><ZoomPill /></div>;
+
   if (!roomy.ok) {
     return (
       <IdeSpace diagram className="flex h-full min-h-0 flex-col">
-        <header className="flex flex-wrap items-center gap-2 border-b border-line p-3">
-          <Link href="/diagrams" className="btn">Back to diagrams</Link>
-          <h1 className="order-first w-full min-w-0 break-words font-semibold sm:order-none sm:w-auto sm:flex-1">{model.meta.title || "Untitled diagram"}</h1>
-          <button type="button" className="btn" onClick={() => canvasRef.current?.fit()}>Fit</button>
-          <button type="button" className="btn" aria-label="Zoom in" onClick={() => canvasRef.current?.zoomIn()}>+</button>
-          <button type="button" className="btn" aria-label="Zoom out" onClick={() => canvasRef.current?.zoomOut()}>−</button>
-          <button type="button" className="btn" disabled={exporting} onClick={() => void exportAs("svg")}>{exporting ? "Downloading…" : "Download SVG"}</button>
+        <header className="dg-topbar is-compact">
+          <Link href="/diagrams" className="dg-back" aria-label="Back to diagrams">
+            <ChevronLeft size={18} aria-hidden />
+          </Link>
+          <h1 className="dg-topbar-title min-w-0 flex-1 truncate">{title}</h1>
+          <button type="button" className="btn-primary dg-primary" disabled={exporting} onClick={() => void exportAs("svg")}>
+            <Download size={15} aria-hidden />
+            {exporting ? "Downloading…" : "SVG"}
+          </button>
         </header>
-        <p className="px-3 py-2 text-[12px] text-muted">Preview · Pan and zoom to explore. Editing needs {MIN_VIEWPORT.width} × {MIN_VIEWPORT.height}px. This window is {roomy.width} × {roomy.height}px.</p>
+        <p className="dg-preview-note">
+          <MonitorSmartphone size={14} aria-hidden className="shrink-0" />
+          <span>
+            Preview only. Pan and zoom to look around; editing needs a window of at least {MIN_VIEWPORT.width} × {MIN_VIEWPORT.height} px.
+          </span>
+        </p>
         <div className="diagram-stage min-h-0 flex-1">
-          <DiagramCanvas ref={canvasRef} model={model} readOnly fitTick={fitTick} onSelection={select} onRename={() => undefined} onMove={() => undefined} onConnect={() => undefined} />
+          <DiagramCanvas ref={canvasRef} model={model} readOnly fitTick={fitTick} onSelection={select} onRename={() => undefined} onMove={() => undefined} onConnect={() => undefined} overlay={zoomOnly} />
         </div>
       </IdeSpace>
     );
   }
 
+  const lockShortcut = shortcutLabel("diagram-lock");
+  const picked = selected.nodes.filter((nodeId) => model.nodes[nodeId] || model.texts[nodeId] || model.groups[nodeId]);
+  const allLocked = picked.length > 0 && picked.every((nodeId) => isLocked(model, nodeId));
   // aria-disabled rather than disabled, so the reason shows on hover and focus.
-  const lockTitle = selected.nodes.length
-    ? "Lock or unlock the selection, so it cannot be moved (Alt+Shift+L)"
-    : "Select blocks, text boxes or groups first, then lock them in place (Alt+Shift+L)";
+  const lockLabel = !picked.length ? "Lock in place" : allLocked ? "Unlock the selection" : "Lock the selection";
+  const lockHint = picked.length ? lockLabel : "Select blocks, text boxes or groups, then lock them in place";
   const problemCount = diagnostics.length;
   const problemLabel = problemCount === 0 ? "No problems" : problemCount === 1 ? "1 problem" : `${problemCount} problems`;
   const markedId = activeProblem == null ? null : diagnostics[activeProblem]?.target ?? null;
-  const exportKinds: DiagramExportKind[] = ["png", "jpg", "pdf", "svg"];
+  const toggleMenu = (next: Exclude<CanvasMenu, null>) => setMenu((open) => (open === next ? null : next));
+
+  const dock = readOnly ? null : (
+    <div className="dg-float dg-dock" role="toolbar" aria-label="Canvas tools" data-diagram-menu>
+      <span className="dg-dock-quick" role="group" aria-label="Shapes">
+        {QUICK_SHAPES.map((shape) => {
+          const label = SHAPES.find((item) => item.shape === shape)?.label ?? shape;
+          return (
+            <ToolButton key={shape} label={`Add ${label}`} hint={label} tip="top" onClick={() => addShape(shape)}>
+              <ShapeGlyph shape={shape} size={20} />
+            </ToolButton>
+          );
+        })}
+      </span>
+      <span className="dg-menu-anchor">
+        <ToolButton label="Add block" hint="All shapes" tip="top" className="has-chevron" aria-haspopup="menu" aria-expanded={menu === "shapes"} active={menu === "shapes"} onClick={() => toggleMenu("shapes")}>
+          <Shapes size={17} aria-hidden />
+          <ChevronUp size={12} aria-hidden className="dg-chevron" />
+        </ToolButton>
+        {menu === "shapes" ? (
+          <FloatMenu label="Add block" className="dg-shape-grid">
+            {SHAPES.map((item) => (
+              <button key={item.shape} type="button" role="menuitem" className="dg-shape-option" onClick={() => addShape(item.shape)}>
+                <ShapeGlyph shape={item.shape} size={24} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </FloatMenu>
+        ) : null}
+      </span>
+      <ToolButton label="Text box" shortcut={shortcutLabel("diagram-text")} tip="top" onClick={addNote}>
+        <Type size={17} aria-hidden />
+      </ToolButton>
+      <ToolDivider />
+      <ToolButton
+        label={lockLabel}
+        hint={lockHint}
+        shortcut={lockShortcut}
+        tip="top"
+        active={allLocked}
+        aria-pressed={picked.length ? allLocked : undefined}
+        aria-disabled={!picked.length}
+        onClick={lockSelection}
+      >
+        {allLocked ? <Lock size={16} aria-hidden /> : <LockOpen size={16} aria-hidden />}
+      </ToolButton>
+      <ToolDivider />
+      <span className="dg-menu-anchor dg-split">
+        <ToolButton label={busy ? "Reorganizing…" : "Reorganize"} hint="Reorganize the layout" shortcut={shortcutLabel("diagram-reorganize")} tip="top" disabled={busy} onClick={() => void reorganize()}>
+          {busy ? <BrandMorph size={16} kind="beacon" loader state="loop" /> : <LayoutGrid size={16} aria-hidden />}
+        </ToolButton>
+        <ToolButton label="Layout direction" tip="top" tipAlign="end" className="is-chevron" disabled={busy} aria-haspopup="menu" aria-expanded={menu === "layout"} active={menu === "layout"} onClick={() => toggleMenu("layout")}>
+          <ChevronUp size={13} aria-hidden />
+        </ToolButton>
+        {menu === "layout" ? (
+          <FloatMenu label="Layout" align="end">
+            <button type="button" role="menuitem" className="dg-menu-item" onClick={() => { setMenu(null); void reorganize(); }}>
+              <LayoutGrid size={15} aria-hidden />
+              <span className="dg-menu-text">Reorganize<small>Lay out again; locked blocks stay put</small></span>
+              <kbd>{shortcutLabel("diagram-reorganize")}</kbd>
+            </button>
+            <button type="button" role="menuitem" className="dg-menu-item" onClick={() => { setMenu(null); void reorganize("vertical"); }}>
+              <MoveDown size={15} aria-hidden />
+              <span className="dg-menu-text">Fit vertically<small>Flow from top to bottom</small></span>
+            </button>
+            <button type="button" role="menuitem" className="dg-menu-item" onClick={() => { setMenu(null); void reorganize("horizontal"); }}>
+              <MoveRight size={15} aria-hidden />
+              <span className="dg-menu-text">Fit horizontally<small>Flow from left to right</small></span>
+            </button>
+          </FloatMenu>
+        ) : null}
+      </span>
+    </div>
+  );
+
   return (
     <IdeSpace diagram className="flex h-full min-h-0 flex-col">
       {focus ? null : (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-1.5">
-          <input
-            value={model.meta.title}
-            aria-label="Diagram title"
-            placeholder="Untitled diagram"
-            className="field min-w-[8rem] flex-1 bg-transparent px-2 py-1 text-[15px] font-semibold"
-            onChange={(event) => commit(setTitle(model, event.target.value))}
-            readOnly={readOnly}
-          />
-          <PagePeople kind="diagram" id={id} />
-          {readOnly ? <span className="rounded-md border border-line px-1.5 py-0.5 text-2xs text-muted">View only</span> : null}
-          {shared ? null : <ShareButton target={{ kind: "diagram", resourceId: id, title: model.meta.title }} />}
-          <span className="text-[12px] text-muted">
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : "Edits save automatically"}
-          </span>
-          {readOnly ? null : (
-          <>
-          <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
-          <button type="button" className="btn" disabled={busy} onClick={() => void reorganize()}>
-            {busy ? "Reorganizing…" : "Reorganize"}
-          </button>
-          <button type="button" className="btn" disabled={busy} onClick={() => void reorganize("vertical")}>
-            Fit vertically
-          </button>
-          <button type="button" className="btn" disabled={busy} onClick={() => void reorganize("horizontal")}>
-            Fit horizontally
-          </button>
-          <button type="button" className="btn aria-disabled:cursor-not-allowed aria-disabled:opacity-50" aria-disabled={!selected.nodes.length} title={lockTitle} onClick={lockSelection}>
-            Lock
-          </button>
-          <button type="button" className="btn" onClick={addNote}>
-            Text box
-          </button>
-          <div className="relative" data-diagram-menu>
-            <button type="button" className="btn" aria-expanded={menu} aria-haspopup="menu" onClick={() => setMenu((open) => !open)}>
-              Add block
-            </button>
-            {menu ? (
-              <div className="diagram-shape-menu absolute right-0 z-20 mt-1 rounded-xl border border-line-strong bg-panel p-1.5 shadow-pop" role="menu">
-                {SHAPES.map((item) => (
-                  <button key={item.shape} type="button" role="menuitem" className="diagram-shape-option" onClick={() => addShape(item.shape)}>
-                    <ShapeGlyph shape={item.shape} size={26} />
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <button type="button" className="btn" title="Alt+Shift+F" onClick={() => void enterFocus()}>
-            Canvas only
-          </button>
-          </>
+        <header className="dg-topbar">
+          <nav aria-label="Breadcrumb" className="dg-crumbs">
+            {shared ? null : (
+              <>
+                <Link href="/diagrams" className="dg-crumb">Diagrams</Link>
+                <ChevronRight size={14} aria-hidden className="dg-crumb-sep" />
+              </>
+            )}
+            <input
+              value={model.meta.title}
+              aria-label="Diagram title"
+              placeholder="Untitled diagram"
+              className="dg-title"
+              onChange={(event) => commit(setTitle(model, event.target.value))}
+              readOnly={readOnly}
+            />
+          </nav>
+          {readOnly ? (
+            <span className="dg-badge"><Eye size={13} aria-hidden />View only</span>
+          ) : (
+            <SaveStatus state={saveState} />
           )}
-          <div className="relative" data-diagram-menu>
-            <button type="button" className="btn" aria-expanded={focusExport && !focus} aria-haspopup="menu" disabled={exporting} onClick={() => setFocusExport((open) => !open)}>
-              Export
-            </button>
-            {focusExport && !focus ? (
-              <div className="absolute right-0 z-20 mt-1 flex w-28 flex-col rounded-xl border border-line-strong bg-panel p-1 shadow-pop" role="menu">
-                {exportKinds.map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    role="menuitem"
-                    className="rounded-lg px-2.5 py-1.5 text-left text-[13px] hover:bg-hover"
-                    onClick={() => {
-                      setFocusExport(false);
-                      void exportAs(kind);
-                    }}
-                  >
-                    {kind.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+          <div className="dg-topbar-actions">
+            <PagePeople kind="diagram" id={id} />
+            {shared ? null : (
+              <span className="dg-share">
+                <ShareButton target={{ kind: "diagram", resourceId: id, title: model.meta.title }} />
+              </span>
+            )}
+            <ToolButton label="Canvas only" shortcut={shortcutLabel("diagram-focus")} tipAlign="end" onClick={() => void enterFocus()}>
+              <Maximize2 size={16} aria-hidden />
+            </ToolButton>
+            {/* Explain, duplicate and history act on the whole space: not from a shared item or a public link. */}
+            {shared ? null : <DiagramMoreMenu id={id} model={model} onAdopt={adopt} />}
+            <DiagramExportMenu model={model} exporting={exporting} onExport={(kind) => void exportAs(kind)} />
           </div>
-        </div>
+        </header>
       )}
-      {/* Ask, explain, duplicate and history act on the whole space: not from a shared item or a public link. */}
-      {focus || shared ? null : <DiagramMore id={id} model={model} onAdopt={adopt} />}
+      {focus || shared ? null : <DiagramFreshness id={id} title={title} />}
       <div className="flex min-h-0 flex-1">
         {focus ? null : (
           <>
-            <div className="flex min-h-0 shrink-0 flex-col border-r border-line" style={{ width: textWidth }}>
-              <div className="flex flex-wrap items-center justify-between gap-1 border-b border-line px-2 py-1">
-                <span className="px-1 text-[12px] font-medium text-ink">Diagram text</span>
+            <div className="flex min-h-0 shrink-0 flex-col" style={{ width: textWidth }}>
+              <div className="dg-pane-head">
+                <span className="dg-pane-title">Diagram text</span>
                 <ThemeControl />
               </div>
               {codeReady ? (
@@ -791,12 +853,13 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
               ) : null}
               <button
                 type="button"
-                className="flex h-6 shrink-0 items-center gap-1 border-t border-line px-2 text-left text-[11.5px] text-muted hover:text-ink"
+                className="dg-problems-toggle"
+                data-count={problemCount || undefined}
                 aria-expanded={problemsOpen}
                 aria-controls="diagram-problems"
                 onClick={() => setProblemsOpen((open) => !open)}
               >
-                <ChevronRight size={12} className={problemsOpen ? "rotate-90" : ""} />
+                <ChevronRight size={12} aria-hidden className={problemsOpen ? "rotate-90" : ""} />
                 {problemLabel}
               </button>
             </div>
@@ -833,83 +896,67 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
               if (next) commit(next);
               else if (edgeBetween(model, from.node, to.node)) toast("These blocks are already connected. Select the line to change it.");
             }}
+            overlay={
+              <div className="dg-bottom">
+                {dock}
+                <ZoomPill />
+              </div>
+            }
           />
           {readOnly ? null : <FormatBar model={model} nodes={selected.nodes} edges={selected.edges} onAction={format} />}
           {overlapNotice === "shown" && !readOnly ? (
-            <div className="diagram-overlap-notice flex items-center gap-2 rounded-xl border border-line-strong bg-panel py-1 pl-3 pr-1 text-[12.5px] text-ink shadow-pop" role="status">
-              <LayoutGrid size={14} className="shrink-0 text-accent" aria-hidden />
+            <div className="dg-float dg-overlap" role="status">
+              <LayoutGrid size={15} className="shrink-0 text-accent" aria-hidden />
               <span className="min-w-0">Some blocks overlap.</span>
-              <button type="button" className="btn-primary px-2.5 py-0.5 text-[12.5px]" disabled={busy} title="Lay the diagram out again, keeping locked blocks where they are" onClick={() => void reorganize()}>
+              <button type="button" className="btn-primary dg-overlap-fix" disabled={busy} title="Lay the diagram out again, keeping locked blocks where they are" onClick={() => void reorganize()}>
                 {busy ? "Tidying…" : "Tidy up"}
               </button>
-              <button type="button" className="icon-btn h-6 w-6" aria-label="Dismiss" onClick={() => setOverlapNotice("dismissed")}>
+              <ToolButton label="Dismiss" tip={false} className="is-small" onClick={() => setOverlapNotice("dismissed")}>
                 <X size={14} aria-hidden />
-              </button>
+              </ToolButton>
             </div>
           ) : null}
           {focus ? (
-            <div className="diagram-focus-palette" role="toolbar" aria-label="Blocks">
-              {SHAPES.map((item) => (
-                <button key={item.shape} type="button" aria-label={`Add ${item.label}`} title={item.label} onClick={() => addShape(item.shape)}>
-                  <ShapeGlyph shape={item.shape} size={22} />
-                </button>
-              ))}
-              <button type="button" aria-label="Add text box" title="Text box" onClick={addNote}>
-                <Type size={16} />
-              </button>
-              <button type="button" className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40" aria-label="Lock selection" aria-disabled={!selected.nodes.length} title={lockTitle} onClick={lockSelection}>
-                <Lock size={16} />
-              </button>
-            </div>
-          ) : null}
-          {focus ? (
-            <div className="diagram-focus-bar" role="toolbar" aria-label="Canvas tools">
-              <button type="button" className="btn-ghost" aria-label="Zoom out" onClick={() => canvasRef.current?.zoomOut()}>
-                −
-              </button>
-              <button type="button" className="btn-ghost" aria-label="Zoom in" onClick={() => canvasRef.current?.zoomIn()}>
-                +
-              </button>
-              <button type="button" className="btn-ghost" onClick={() => canvasRef.current?.fit()}>
-                Fit
-              </button>
-              <button type="button" className="btn-ghost" disabled={busy} onClick={() => void reorganize()}>
-                {busy ? "Reorganizing…" : "Reorganize"}
-              </button>
-              <button type="button" className="btn-ghost" disabled={busy} onClick={() => void reorganize("vertical")}>
-                Fit vertically
-              </button>
-              <button type="button" className="btn-ghost" disabled={busy} onClick={() => void reorganize("horizontal")}>
-                Fit horizontally
-              </button>
-              <div className="relative" data-diagram-menu>
-                <button type="button" className="btn-ghost" aria-expanded={focusExport} aria-haspopup="menu" onClick={() => setFocusExport((open) => !open)}>
-                  Export
-                </button>
-                {focusExport ? (
-                  <div className="absolute left-1/2 top-full z-10 mt-2 flex flex-col rounded-xl border border-line-strong bg-panel p-1 shadow-pop" style={{ translate: "-50% 0" }} role="menu">
-                    {exportKinds.map((kind) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        role="menuitem"
-                        className="rounded-lg px-3 py-1.5 text-left text-[13px] hover:bg-hover"
-                        disabled={exporting}
-                        onClick={() => {
-                          setFocusExport(false);
-                          void exportAs(kind);
-                        }}
-                      >
-                        {kind.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+            <>
+              <div className="dg-float dg-focus-head">
+                <span className="dg-focus-name" title={title}>{title}</span>
+                {readOnly ? <span className="dg-badge"><Eye size={13} aria-hidden />View only</span> : <SaveStatus state={saveState} />}
               </div>
-              <button type="button" className="btn" onClick={() => void exitFocus()}>
-                Exit
-              </button>
-            </div>
+              <div className="dg-float dg-focus-actions" role="toolbar" aria-label="Canvas only" data-diagram-menu>
+                <span className="dg-menu-anchor">
+                  <ToolButton label="Export" text tip={false} aria-haspopup="menu" aria-expanded={menu === "export"} active={menu === "export"} disabled={exporting} onClick={() => toggleMenu("export")}>
+                    {exporting ? <BrandMorph size={15} kind="beacon" loader state="loop" /> : <Download size={15} aria-hidden />}
+                    Export
+                    <ChevronDown size={13} aria-hidden className="dg-chevron" />
+                  </ToolButton>
+                  {menu === "export" ? (
+                    <FloatMenu label="Export" side="bottom" align="end">
+                      {EXPORT_KINDS.map((kind) => (
+                        <button
+                          key={kind.id}
+                          type="button"
+                          role="menuitem"
+                          className="dg-menu-item"
+                          disabled={exporting}
+                          onClick={() => {
+                            setMenu(null);
+                            void exportAs(kind.id);
+                          }}
+                        >
+                          <kind.icon size={15} aria-hidden />
+                          <span className="dg-menu-text">{kind.label}</span>
+                        </button>
+                      ))}
+                    </FloatMenu>
+                  ) : null}
+                </span>
+                <ToolDivider />
+                <ToolButton label="Exit canvas only" hint="Leave canvas only" shortcut="Esc" text tipAlign="end" onClick={() => void exitFocus()}>
+                  <Minimize2 size={15} aria-hidden />
+                  Exit
+                </ToolButton>
+              </div>
+            </>
           ) : null}
         </div>
       </div>

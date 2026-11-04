@@ -8,6 +8,7 @@ import test, { after } from "node:test";
 import type { InjectOptions } from "fastify";
 import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http.js";
 import { linksRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
+import type { Frame } from "../lib/sse.js";
 
 const harness: HttpHarness = await createHttpHarness();
 const db = harness.prisma;
@@ -148,4 +149,94 @@ test("three public links per account, only for pages, tasks, diagrams and meetin
   const visitor = room.people.find((row) => !row.signedIn);
   assert.ok(visitor?.emoji, "the owner sees the visitor with their creature");
   assert.equal(visitor?.route, null, "a visitor never reports where else they are");
+});
+
+test("the owner hears a link visitor arrive, move and leave at once, in order and without lost posts", async () => {
+  const mira = await person("Mira Chen");
+  const ben = await person("Ben Ortiz");
+  const page = await ok<{ page: { id: string } }>(mira.inject({ method: "POST", url: "/api/pages" }), 201);
+  const made = await ok<{ link: { token: string } }>(mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: page.page.id, role: "edit" } }), 201);
+  const token = made.link.token;
+  const { delivers, sseHub } = await import("../lib/sse.js");
+  const { AWAY_TTL_MS, PRESENCE_TTL_MS, sweepPresence } = await import("./presence.js");
+  type Row = { accountId: string; tabId: string; name: string; role: string; away: boolean; caret: unknown; scroll: unknown; gone?: boolean };
+  const frames: Array<{ userId: string; frame: Frame }> = [];
+  const stop = sseHub.onFrame((event) => {
+    if (event.frame.event === "presence") frames.push(event);
+  });
+  const owner = { owner: true, accountId: mira.id };
+  const visitorStream = { accountId: "visitor:visitor-two-123", owner: false, share: { kind: "page", resourceId: page.page.id, linkId: "link" } };
+  const last = (tab: string) => frames.filter((event) => (event.frame.data as Row).tabId === tab).at(-1);
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+  try {
+    const t = Date.now() * 1000;
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t } }, "visitor-two-123"), 204);
+    const joined = last("guest-tab-1");
+    assert.ok(joined, "joining publishes at once, without waiting for a heartbeat");
+    assert.equal(joined.userId, mira.id, "on the owner's own channel");
+    assert.ok(delivers(owner, joined.frame, undefined), "the owner's stream delivers it");
+    assert.deepEqual(joined.frame.about, { kind: "page", id: page.page.id });
+    const row = joined.frame.data as Row;
+    assert.equal(row.role, "edit");
+    assert.match(row.name, /^[A-Z][a-z]+ [A-Z][a-z]+$/);
+
+    // The owner on the page is heard by the visitor's item-only stream; a signed-in visitor shows by name.
+    await ok(mira.inject({ method: "POST", url: "/api/presence", payload: { tabId: "mira-tab-1", route: `/pages/${page.page.id}`, resource: { kind: "page", id: page.page.id } } }), 204);
+    const miraFrame = last("mira-tab-1")!;
+    assert.ok(delivers(visitorStream, miraFrame.frame, undefined), "a link visitor hears the owner on the item");
+    assert.equal((miraFrame.frame.data as Row).role, "owner");
+    await ok(harness.app.inject({ method: "POST", url: "/api/presence", payload: { tabId: "ben-tab-1" }, headers: { cookie: ben.cookie, "x-ensemble-link": token } }), 204);
+    assert.deepEqual([(last("ben-tab-1")!.frame.data as Row).name, (last("ben-tab-1")!.frame.data as Row).role], ["Ben Ortiz", "edit"]);
+
+    // Posts closer together than the gap are merged into one frame with the latest state, never dropped.
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t + 1, caret: { anchor: 2, head: 4 } } }, "visitor-two-123"), 204);
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t + 2, scroll: { pos: 9 } } }, "visitor-two-123"), 204);
+    await settle();
+    const merged = last("guest-tab-1")!.frame.data as Row;
+    assert.deepEqual([merged.caret, merged.scroll], [{ anchor: 2, head: 4 }, { pos: 9 }]);
+
+    // A leave, then a late post from before it: the late one is ignored, so nobody comes back as a ghost.
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t + 10, leave: true } }, "visitor-two-123"), 204);
+    assert.equal((last("guest-tab-1")!.frame.data as Row).gone, true, "leaving publishes at once");
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t + 9 } }, "visitor-two-123"), 204);
+    const room = await ok<{ now: number; people: Row[] }>(mira.inject({ method: "GET", url: "/api/presence" }));
+    assert.equal(room.people.some((entry) => entry.tabId === "guest-tab-1"), false);
+    assert.equal(typeof room.now, "number");
+    // A reload: the same tab joins again with a later seq.
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-1", seq: t + 11 } }, "visitor-two-123"), 204);
+    assert.equal((last("guest-tab-1")!.frame.data as Row).gone, undefined);
+
+    // Silent tabs drop off on their own, and the owner hears it; a background tab is kept longer.
+    await ok(anon(token, { method: "POST", url: "/api/presence", payload: { tabId: "guest-tab-2", seq: t, away: true } }, "visitor-three-123"), 204);
+    const now = Date.now();
+    sweepPresence(now + PRESENCE_TTL_MS + 1_000);
+    assert.equal((last("guest-tab-1")!.frame.data as Row).gone, true, "a closed laptop or lost network leaves after the TTL");
+    assert.equal(last("guest-tab-1")!.userId, mira.id);
+    assert.equal((last("guest-tab-2")!.frame.data as Row).gone, undefined, "a background tab stays");
+    sweepPresence(now + AWAY_TTL_MS + 1_000);
+    assert.equal((last("guest-tab-2")!.frame.data as Row).gone, true);
+  } finally {
+    stop();
+  }
+});
+
+test("people in one room get distinct colours, so their carets and cursors tell them apart", async () => {
+  const mira = await person("Mira Chen");
+  const page = await ok<{ page: { id: string } }>(mira.inject({ method: "POST", url: "/api/pages" }), 201);
+  const made = await ok<{ link: { token: string } }>(mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: page.page.id, role: "view" } }), 201);
+  const { anonymousVisitor } = await import("./visitors.js");
+  const visitors = Array.from({ length: 9 }, (_, index) => `colour-visitor-${index}`);
+  const wanted = visitors.map((id) => anonymousVisitor(id).color);
+  assert.ok(new Set(wanted).size < wanted.length, "some of these visitors would share a colour");
+  for (const [index, visitor] of visitors.entries()) {
+    await ok(anon(made.link.token, { method: "POST", url: "/api/presence", payload: { tabId: `colour-tab-${index}` } }, visitor), 204);
+  }
+  // A second tab keeps the person's colour.
+  await ok(anon(made.link.token, { method: "POST", url: "/api/presence", payload: { tabId: "colour-tab-0b" } }, visitors[0]), 204);
+  const room = await ok<{ people: Array<{ accountId: string; tabId: string; color: string }> }>(mira.inject({ method: "GET", url: "/api/presence" }));
+  const mine = room.people.filter((entry) => entry.tabId.startsWith("colour-tab-"));
+  const byPerson = new Map(mine.map((entry) => [entry.accountId, entry.color]));
+  assert.equal(byPerson.size, 9);
+  assert.equal(new Set(byPerson.values()).size, 9, "nobody shares a colour");
+  assert.equal(mine.find((entry) => entry.tabId === "colour-tab-0b")?.color, mine.find((entry) => entry.tabId === "colour-tab-0")?.color);
 });

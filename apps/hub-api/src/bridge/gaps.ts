@@ -23,9 +23,9 @@ export const DATA_GAPS: readonly DataGap[] = [
   },
   {
     requested: "Outlook, Outlook calendar, and Teams",
-    status: "missing",
+    status: "partial",
     detail:
-      "Those connectors are not built. Calendar entries are Artifact rows with kind \"event\" (Google Calendar, once connected). Chat is Slack, not Teams.",
+      "Calendar entries are Artifact rows with kind \"event\" from Google Calendar, Outlook (Teams meetings included) and calendar links, one row per event however many calendars have it. Outlook mail and Teams chats are saved only when the person asks.",
   },
   {
     requested: "saved M365 answers",
