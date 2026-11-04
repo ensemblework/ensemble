@@ -9,7 +9,7 @@ import { SHARE_KINDS } from "./context.js";
 import { SHARING_CAPS } from "@ensemble/shared-types";
 import { saveSettings } from "../lib/settings.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
-import { presenceIn, updatePresence } from "./presence.js";
+import { presenceIn, updatePresence, type PresenceRole } from "./presence.js";
 import { revokeMember, revokeShare } from "./revoke.js";
 import { isPublicKind, linkFor, listLinks, MAX_PUBLIC_LINKS, ownerName, removeLink, rotateLink, setLink } from "./links.js";
 import {
@@ -48,9 +48,21 @@ const Presence = z.object({
   cursor: Point.nullable().optional(),
   viewport: Point.extend({ zoom: z.number().finite().min(0.01).max(20) }).nullable().optional(),
   caret: z.object({ anchor: z.number().int().min(0).max(50_000_000), head: z.number().int().min(0).max(50_000_000), version: z.number().int().min(0).optional() }).nullable().optional(),
+  scroll: z.object({ pos: z.number().int().min(0).max(50_000_000), version: z.number().int().min(0).optional() }).nullable().optional(),
+  follows: z.string().trim().min(1).max(128).nullable().optional(),
+  seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  away: z.boolean().optional(),
   typing: z.boolean().optional(),
   leave: z.boolean().optional(),
 });
+
+/** What someone may do where they are, as the people beside them see it. */
+function presenceRole(access: FastifyRequest["access"]): PresenceRole {
+  if (!access || access.kind === "owner") return "owner";
+  if (access.kind === "member") return access.role === "editor" ? "edit" : "view";
+  if (access.kind === "share" || access.kind === "link") return access.role;
+  return "view";
+}
 
 function browserOnly(request: FastifyRequest): void {
   requireBrowserSession(request);
@@ -292,7 +304,8 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/presence", async (request) => {
     const access = request.access;
     const only = access?.kind === "share" || access?.kind === "link" ? { kind: access.resource, id: access.resourceId } : undefined;
-    return { you: accountIdOf(request), people: presenceIn(request.userId, only) };
+    // `now` lets a browser whose clock differs from the server's tell how long ago each entry was heard.
+    return { you: accountIdOf(request), now: Date.now(), people: presenceIn(request.userId, only) };
   });
 
   app.post("/api/presence", async (request, reply) => {
@@ -311,7 +324,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
             signedIn: false,
           }
         : undefined;
-    await updatePresence(prisma, request.userId, accountIdOf(request), { ...body, ...pinned }, visitor);
+    await updatePresence(prisma, request.userId, accountIdOf(request), { ...body, ...pinned, role: presenceRole(access) }, visitor);
     return reply.code(204).send();
   });
 
