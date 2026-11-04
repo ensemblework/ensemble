@@ -21,6 +21,29 @@ export const VENDOR_LABEL: Record<MeetingVendor, string> = {
 
 export const isMeetingVendor = (value: string): value is MeetingVendor => (MEETING_VENDORS as readonly string[]).includes(value);
 
+/**
+ * Notes that come from a transcript rather than a meeting-notes vendor: a file or paste
+ * ("transcript"), or the meeting app itself, fetched for one meeting when the person asks.
+ */
+export const TRANSCRIPT_ORIGINS = ["transcript", "teams", "google_meet", "zoom"] as const;
+export type TranscriptOrigin = (typeof TRANSCRIPT_ORIGINS)[number];
+export type MeetingOrigin = MeetingVendor | TranscriptOrigin;
+
+export const ORIGIN_LABEL: Record<TranscriptOrigin, string> = {
+  transcript: "Transcript",
+  teams: "Microsoft Teams",
+  google_meet: "Google Meet",
+  zoom: "Zoom",
+};
+
+export const isTranscriptOrigin = (value: string): value is TranscriptOrigin => (TRANSCRIPT_ORIGINS as readonly string[]).includes(value);
+
+export function originLabel(origin: string): string {
+  if (isMeetingVendor(origin)) return VENDOR_LABEL[origin];
+  if (isTranscriptOrigin(origin)) return ORIGIN_LABEL[origin];
+  return origin;
+}
+
 export interface MeetingPerson {
   name?: string | null;
   email?: string | null;

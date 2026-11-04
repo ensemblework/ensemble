@@ -160,14 +160,19 @@ test("Graph scopes match with or without the resource prefix, and broader grants
 test("suite products choose scopes and sources", () => {
   const google = SUITES.google_workspace!;
   const defaults = productState(google, { connectorProducts: {} });
-  assert.deepEqual(defaults, { gmail: true, calendar: true, drive_docs: true, drive_search: false });
+  assert.deepEqual(defaults, { gmail: true, calendar: true, drive_docs: true, drive_search: false, meet: false });
   const scopes = scopesFor(google, { ...defaults, gmail: false });
   assert.ok(scopes.includes("https://www.googleapis.com/auth/calendar.events"));
   assert.ok(scopes.includes("https://www.googleapis.com/auth/calendar.calendarlist.readonly"));
   assert.ok(!scopes.includes("https://www.googleapis.com/auth/gmail.readonly"));
   assert.ok(!scopes.includes("https://www.googleapis.com/auth/drive.readonly"));
   assert.ok(!scopes.includes("https://www.googleapis.com/auth/calendar.readonly"));
+  assert.ok(!scopes.includes("https://www.googleapis.com/auth/meetings.space.readonly"), "Meet transcripts are asked for only when switched on");
+  assert.ok(scopesFor(google, { ...defaults, meet: true }).includes("https://www.googleapis.com/auth/meetings.space.readonly"));
   const microsoft = SUITES.microsoft_365!;
+  const transcripts = scopesFor(microsoft, { ...productState(microsoft, { connectorProducts: {} }), teams_meetings: true });
+  for (const scope of ["OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All", "OnlineMeetingRecording.Read.All"]) assert.ok(transcripts.includes(scope), scope);
+  assert.ok(!scopesFor(microsoft, productState(microsoft, { connectorProducts: {} })).includes("OnlineMeetingTranscript.Read.All"), "off by default");
   assert.deepEqual(sourceToggles(microsoft, { outlook_mail: true, outlook_calendar: false, teams: true }), { outlook: true, outlook_calendar: false, teams: true });
   const saved = productState(microsoft, { connectorProducts: { microsoft_365: { teams: true, office: false } } });
   assert.equal(saved.teams, true);
