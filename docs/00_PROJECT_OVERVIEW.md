@@ -27,6 +27,7 @@ This page maps what works today and its limits; each row links to the guide that
 - Pairing a desktop or CLI with a hosted account does not replicate the hosted database. The paired computer claims jobs, answers Code and terminal requests and runs subscription calls; its included-model calls go through the hosted account ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 - Original source files are read from the computer and relayed without being kept as cloud originals. Code/Node editor buffers stay in browser memory; file lines a person explicitly quotes and sends are part of their chat history ([16](16_CODE_TAB.md), [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace)).
 - Node's session inventory includes exact recorded node/crew usage and original-file references across each session's run chain. Its compact list opens originals beside the session without a work-description feed ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
+- Owner-confirmed session deletion stops active work and removes the underlying coding agent's saved history on its computer before hiding it from session inventories. Project files stay; nodes request deletion through an owner-only chat confirmation ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
 - Root `release.json` sets the version of every surface. Desktop updates are signed; OS code signing is not configured.
 
 ## 2. How work flows

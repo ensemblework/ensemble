@@ -42,6 +42,7 @@ import { appliedLine, requestedSettings, startingSettings, tuningProblem, type S
 import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
 import { missionContext } from "./placement.js";
+import { deleteAgentSession } from "../workspace/delete-session.js";
 
 export { sessionOwners };
 
@@ -138,7 +139,8 @@ export const HandOverInput = z
   .strict();
 export type HandOverInput = z.infer<typeof HandOverInput>;
 
-export type SessionCall = { action: "start"; input: StartInput } | { action: "send"; input: SendInput } | { action: "hand_over"; input: HandOverInput };
+export const DeleteSessionInput = z.object({ session: z.string().uuid() }).strict();
+export type SessionCall = { action: "start"; input: StartInput } | { action: "send"; input: SendInput } | { action: "hand_over"; input: HandOverInput } | { action: "delete"; input: z.infer<typeof DeleteSessionInput> };
 
 /** Whether the owner asked this node to check with them before it starts work on their computer. */
 export function computerWorkAsks(node: Pick<NodeAgent, "autonomy">): boolean {
@@ -224,6 +226,7 @@ function sessionView(row: NodeSession, work: WorkItem[], runs: SessionRun[]) {
     runs: row.runs,
     ...queueView(row, runs),
     work,
+    deletion: row.deletion ?? null,
   };
 }
 
@@ -895,6 +898,7 @@ export async function handOverSession(env: SessionEnv, input: HandOverInput): Pr
 
 /** What a held session call does, as the card says it under "@node wants to start work on your computer". */
 function describeCall(call: SessionCall): string {
+  if (call.action === "delete") return "Delete this agent session and its saved native history. Stop active work and cancel its queue. Project files stay. This cannot be undone.";
   if (call.action === "hand_over") {
     const input = call.input;
     return `Hand a session to @${input.to.replace(/^@/, "")}${input.note ? `\n\n${truncateText(input.note, 600)}` : ""}`;
@@ -937,6 +941,14 @@ export async function holdForOwner(env: SessionEnv, call: SessionCall, extra: Re
 }
 
 export async function runSessionCall(env: SessionEnv, call: SessionCall): Promise<Started> {
+  if (call.action === "delete") {
+    const input = DeleteSessionInput.parse(call.input);
+    const session = await resolveSession(env.prisma, scopeOf(env.node), input.session, true);
+    if (!session) throw new ToolBlockedError("That session is not available.", "List your sessions again.");
+    const manager = (await sessionOwners(env.prisma, env.node.userId, [session.id])).get(session.id);
+    if (manager && manager !== env.node.id) throw new ToolBlockedError("That session is managed by another node.", "Ask its managing node, or delete it from Sessions.");
+    return { summary: "Deleted the agent session and its saved native history. Project files were kept.", data: await deleteAgentSession(env.app, env.node.userId, session.id) };
+  }
   if (call.action === "hand_over") return handOverSession(env, HandOverInput.parse(call.input));
   return call.action === "start" ? startSession(env, StartInput.parse(call.input)) : sendToSession(env, SendInput.parse(call.input));
 }
@@ -1037,6 +1049,18 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
     }),
     start,
     send,
+    defineTool({
+      name: "node_session_delete",
+      area: "tasks",
+      description: "Only when your owner explicitly asks to delete an agent session: request permanent deletion of one of your sessions or an unmanaged session. Stops its active work, cancels its queue and removes its saved native history on its computer, not project files. Always raises an owner-only confirmation card; never use for routine cleanup or to stop work temporarily.",
+      input: DeleteSessionInput,
+      isWrite: false,
+      risk: "high",
+      async run(ctx, input) {
+        const session = await usableSession(scope.prisma, scope.node, input.session);
+        return holdForOwner(env(ctx), { action: "delete", input }, {}, `Delete “${session.title}” · ${session.agentName} in ${session.folder}${session.computer ? ` on ${session.computer}` : ""}?\n\nStop its work, cancel queued messages and permanently delete the agent's saved session history. Project files stay. This cannot be undone.`);
+      },
+    }),
     defineTool({
       name: "node_session_stop",
       area: "tasks",

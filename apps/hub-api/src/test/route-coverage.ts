@@ -376,6 +376,7 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
 };
 
 export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "DELETE /api/node/sessions/:id": ["happy-path", "isolation", "invalid-input"],
   "GET /api/boards": ["happy-path", "isolation"],
   "POST /api/boards": ["happy-path", "invalid-input"],
   "GET /api/boards/:id": ["happy-path", "isolation"],

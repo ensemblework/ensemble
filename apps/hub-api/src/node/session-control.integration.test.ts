@@ -10,6 +10,9 @@
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
 import { randomBytes, randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { LightMyRequestResponse } from "fastify";
 import { createHttpHarness, type HttpUser } from "../test/http.js";
 import type { RuntimeTurn } from "../lib/model-turn.js";
@@ -491,6 +494,100 @@ test("session inventory searches visible metadata and preserves exact run files 
   assert.equal((await list("gpt-6.1-sol")).length, 2);
   assert.deepEqual(await list("hidden-summary-needle"), [], "hidden summaries are not search matches");
   assert.ok(!json(await stranger.inject({ method: "GET", url: "/api/node/sessions" })).sessions.some((row: { id: string }) => row.id === root.id));
+});
+
+test("session deletion stops work, requires native acknowledgement, retries and cannot resume or cross accounts", async () => {
+  const user = await person("Deletion owner");
+  const stranger = await person("Other owner");
+  const { laptop, key } = await laptopFor(user, "Deletion computer");
+  const builder = await createNode(user, "developer");
+  const task = await h.prisma.task.create({ data: { userId: user.id, title: "Disposable session", createdBy: "me" } });
+  const root = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "copilot-cli", model: "default", executionMode: "sandbox", deviceId: laptop.id, status: "running", startedAt: new Date(), claimedAt: new Date() } });
+  const queued = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "copilot-cli", model: "default", executionMode: "sandbox", deviceId: laptop.id, continueFromJobId: root.id, status: "queued" } });
+  await h.prisma.nodeRun.create({ data: { userId: user.id, nodeId: builder.node.id, roomId: builder.room.id, jobId: root.id, taskId: task.id, sessionId: root.id } });
+  script = () => call("node_session_delete", { session: root.id });
+  await say(user, builder.room.id, "Delete the disposable agent session.");
+  const approval = (await read(user, builder.room.id)).find(message => message.kind === "approval" && message.data.action === "delete")!;
+  assert.ok(approval, "the owner-requested node tool raises a confirmation card");
+  assert.equal(approval.data.status, "pending");
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: root.id } })).status, "running", "requesting confirmation does not stop or delete anything");
+  assert.equal((await user.inject({ method: "POST", url: `/api/node/approvals/${approval.id}`, payload: { decision: "discard" } })).statusCode, 200);
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: root.id } })).status, "running");
+  const headers = { origin: process.env.HUB_WEB_ORIGIN ?? "http://localhost:3000" };
+  const remove = (confirmed = true) => user.inject({ method: "DELETE", url: `/api/node/sessions/${root.id}`, headers, payload: { confirmed } });
+  assert.equal((await remove(false)).statusCode, 400);
+  assert.equal((await stranger.inject({ method: "DELETE", url: `/api/node/sessions/${root.id}`, headers, payload: { confirmed: true } })).statusCode, 404);
+  assert.equal((await user.inject({ method: "DELETE", url: `/api/node/sessions/${root.id}`, headers: { origin: "https://untrusted.example" }, payload: { confirmed: true } })).statusCode, 403);
+  assert.equal((await (await h.asToken(user, "full")).inject({ method: "DELETE", url: `/api/node/sessions/${root.id}`, payload: { confirmed: true } })).statusCode, 403);
+  assert.match((await remove()).body, /Update Ensemble/);
+  assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } })).status, "queued", "preflight failure does not stop work");
+  await h.prisma.device.update({ where: { id: laptop.id }, data: { capabilities: { sessionDelete: 1 } } });
+  const { sseHub } = await import("../lib/sse.js");
+  let success = false, calls = 0;
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (userId !== `device:${laptop.id}` || frame.event !== "session.delete") return;
+    calls++;
+    const data = frame.data as { id: string; jobIds: string[] };
+    assert.deepEqual(data.jobIds, [root.id], "only a run that reached the computer is relayed");
+    void key.inject({ method: "POST", url: `/api/devices/self/code-requests/${data.id}`, payload: success ? { status: 200, body: { deleted: true } } : { status: 409, body: { error: "Native deletion failed; retry." } } });
+  });
+  const finishing = setInterval(() => {
+    void h.prisma.workspaceJob.findUnique({ where: { id: root.id } }).then(job => {
+      if (job?.cancelRequestedAt) return h.prisma.workspaceJob.updateMany({ where: { id: root.id, status: "running" }, data: { status: "cancelled", finishedAt: new Date() } });
+    });
+  }, 30);
+  try {
+    const failed = await remove();
+    assert.equal(failed.statusCode, 409, failed.body);
+    assert.match(failed.body, /Native deletion failed/);
+    assert.equal((await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } })).status, "cancelled");
+    const listed = json(await user.inject({ method: "GET", url: "/api/node/sessions" })).sessions.find((row: { id: string }) => row.id === root.id);
+    assert.equal(listed.deletion.state, "pending", "failed deletion remains visible");
+    assert.match(listed.deletion.error, /Native deletion failed/);
+    assert.equal((await control(user, root.id, { action: "queue", prompt: "Do not resurrect this." })).statusCode, 404);
+    const { createCappedJob } = await import("../lib/hosted-limits.js");
+    await assert.rejects(createCappedJob(h.prisma, user.id, { data: { userId: user.id, taskId: task.id, kind: "code", provider: "copilot-cli", model: "default", executionMode: "sandbox", continueFromJobId: root.id } }), /being deleted/);
+    success = true;
+    const done = await remove();
+    assert.equal(done.statusCode, 200, done.body);
+    assert.equal(calls, 2);
+    assert.ok(!json(await user.inject({ method: "GET", url: "/api/node/sessions" })).sessions.some((row: { id: string }) => row.id === root.id));
+    assert.equal((await remove()).statusCode, 200, "retry after success is idempotent");
+    assert.equal(calls, 2, "completed deletion never repeats its native command");
+    const descendant = await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } });
+    assert.equal((descendant.context as { sessionDeletion: { state: string } }).sessionDeletion.state, "deleted", "retained descendants cannot reappear as a session in a bounded inventory");
+    assert.ok(await h.prisma.task.findUnique({ where: { id: task.id } }), "deletion does not delete the task or project");
+  } finally { stop(); clearInterval(finishing); }
+});
+
+test("local session deletion propagates to exact native history and local inventory without deleting project files", async () => {
+  const user = await person("Local deletion owner");
+  const home = await mkdtemp(join(tmpdir(), "ensemble-local-delete-"));
+  const config = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = home;
+  const hosted = randomUUID(), native = randomUUID();
+  const transcript = join(home, "projects", "fixture", native + ".jsonl");
+  try {
+    await mkdir(join(home, "projects", "fixture"), { recursive: true });
+    await writeFile(transcript, "disposable native transcript");
+    await writeFile(join(home, "project.ts"), "keep project");
+    const task = await h.prisma.task.create({ data: { userId: user.id, title: "Disposable local session", createdBy: "me" } });
+    const job = await h.prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, kind: "code", provider: "claude-code", model: "default", executionMode: "sandbox", status: "succeeded", startedAt: new Date(), finishedAt: new Date(), context: { hostedJobId: hosted } } });
+    await h.prisma.workspaceEvent.create({ data: { jobId: job.id, kind: "engine", data: { engine: "claude-code", session: native } } });
+    const { deleteLocalJobSessions } = await import("../remote/session-delete.js");
+    const { resolveSession, listSessions } = await import("../workspace/sessions.js");
+    await assert.rejects(deleteLocalJobSessions(h.app, [randomUUID()], true, user.id), /could not be found/);
+    await deleteLocalJobSessions(h.app, [hosted], true, user.id);
+    await assert.rejects(stat(transcript), { code: "ENOENT" });
+    assert.equal(await readFile(join(home, "project.ts"), "utf8"), "keep project");
+    assert.equal(await resolveSession(h.prisma, { space: user.id, runner: null }, job.id), null);
+    assert.equal((await listSessions(h.prisma, { space: user.id, runner: null })).length, 0);
+    await deleteLocalJobSessions(h.app, [hosted], true, user.id);
+    assert.equal(await h.prisma.preference.count({ where: { userId: user.id, key: { startsWith: "session.native-deleted:" } } }), 1, "native receipt avoids duplicate deletion on retry");
+  } finally {
+    if (config === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = config;
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("reordering changes the order runs start in; each claimed run continues the run that actually ran before it, and a session that never ran starts afresh in its folder", async () => {

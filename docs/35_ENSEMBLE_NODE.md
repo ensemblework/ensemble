@@ -179,6 +179,7 @@ The assistant works in one space per conversation. A node acts for its owner in 
 | `node_session_start {title, prompt, taskId?, agent?, computer?, folder?, repoUrl?, model?, effort?, context?, mode?, branch?, pullRequest?, profile?}` | A new session with one of the owner's coding agents (§8.1). |
 | `node_session_send {session, prompt, delivery: queue\|steer\|replace, title?, taskId?, model?, effort?, mode?}` | The next message for one of the node's sessions (§8.3). |
 | `node_session_stop {session, queued: drop\|keep}` | Stops the run going on in the session, and what is queued in it unless `keep`. |
+| `node_session_delete {session}` | Only at the owner's request, raises an owner-only confirmation to stop work and permanently delete the underlying agent's saved session history. Project files stay. |
 | `node_secret_request {name, why, computer?, allow?}` | Asks the owner for a secret by environment variable name, in a secure box encrypted for the computer (§8.7); `allow` suggests where it may be sent. |
 | `secret_http {ref, url, method?, headers?, body?, computer?}` | A request made on the owner's computer with a saved secret put in where `{{NAME}}` appears, only to that secret's allowed destinations; the answer has the value hidden (§8.7.5). Only where the owner reads alone and started the turn. |
 | `computer_run {folder?, command, computer?, cwd?, timeoutSec ≤ 900, background?, secrets?}` | Runs one command on the owner's computer itself, in the computer's sandbox (§8.13); without `folder`, in the node's own folder there. A command still going after a minute runs on, and its end wakes the node. |
@@ -550,12 +551,32 @@ The owner controls a session from its card with the same functions the node's to
 | --- | --- |
 | `GET /api/node/sessions?q=&limit=` | The owner's sessions, most recently active first (20 by default, at most 50): `{ sessions: [{ id, nodeId, card, status, agent, agentName, model, computer, folder, title, latestTask, summary, runs, lastActiveAt, usedBy, files }] }`. `nodeId` is the current manager or null; `card` is the newest accessible run card. `usedBy` records actual node and optional crew/room usage; direct usage has no group. `files` are deduplicated exact-job original references with deletion state and edit time, never bytes. Search covers displayed title, agent/model, location, state/count, node/group and paths, not hidden work summaries; it searches the most recent 100 session candidates before applying the response limit. |
 | `GET /api/node/sessions/:id` | `{ session: { id, nodeId, status, agent, agentName, model, computer, folder, running, queue, runs } }`; `runs` are the 20 newest with their status, position, prompt, summary, settings and card (`messageId`, `roomId`) |
+| `DELETE /api/node/sessions/:id {confirmed:true}` | Owner's browser only. Stops running work, cancels the queue and deletes each recorded native agent session on its computer before removing the session from inventories. Keeps project files, tasks, chat messages and original-file references. Offline, outdated or failed native deletion stays visible with a retryable error. |
 | `POST /api/node/sessions/:id/control {action, prompt?, title?, queued?}` | `queue`, `steer` or `replace` with `prompt` (as `node_session_send`), or `stop` with `queued: keep \| drop` (as `node_session_stop`); `{ ok, jobId? }` |
 | `POST /api/node/sessions/:id/queue {order}` | Every queued message's `jobId` in the new order |
 | `DELETE /api/node/sessions/:id/queue/:jobId` | Takes one queued message out: it is cancelled and never starts (204) |
 | `POST /api/node/sessions/:id/hand-over {nodeId}` | Hands the session to another of the owner's nodes, not a helper (or gives a session no node manages to one); `{ ok, nodeId }` |
 
 A refusal (the computer's agent cannot honour a setting, Stop everything is on, a message already started) is a 409 with what to do instead.
+
+**Permanent deletion.** `workspace/delete-session.ts` marks the session pending under the same advisory lock as claims and continuations. New continuations are refused; queued work is cancelled and running work must end before native deletion. A successful native acknowledgement marks the root deleted, removing it from Node and Hub session inventories without deleting the user's work. Failed/partial attempts remain pending with their error; retry uses computer-side native-deletion receipts. This is not a request to erase provider inference logs or remote backups.
+
+The session inventory includes `deletion: {state:"pending", error?, until?}` while an attempt is in progress or awaiting retry. The local paired-runtime inventory follows the same deleted marker, so the removed native session cannot be resumed from the CLI either.
+
+The computer advertises `capabilities.sessionDelete: 1` and handles `session.delete {id,jobIds}` through `remote/session-delete.ts`, answering on the existing device-authenticated code-answer channel. Job IDs resolve only through its local held-job registry or recorded hosted-job context; browsers and models never supply native paths or native session IDs. Newer agent versions may be needed for their deletion API.
+
+| Agent | Native deletion |
+| --- | --- |
+| GitHub Copilot | Its headless server's `session.delete`, checking `success` |
+| Codex / ChatGPT's Codex | App-server `thread/delete`, not archive |
+| Claude Code | Exact session transcript and subagent directory under its configured `projects` history |
+| Cursor | Exact UUID chat directory under `.cursor/chats/<workspace>` |
+| Grok Build | `grok sessions delete <id>` |
+| OpenCode | `opencode session delete <id>` |
+| Gemini CLI | `gemini --delete-session <id>` in its recorded workspace |
+| Antigravity | The pinned ACP server's exact conversation `.db`/sidecar/WAL files and per-session brain directory under its isolated home; never credentials or shared configuration |
+
+`node_session_delete {session}` is available only in the owner's private thread, for the node's own or unmanaged sessions. It always raises an owner-only confirmation card, even when ordinary computer work runs without asking. The node must use it only when its owner requests deletion. Declining keeps the session untouched. The Sessions page uses an in-app confirmation with the same stop/history/file-preservation wording.
 
 The Node Sessions page is an inventory rather than a work log: identity, recency, recorded usage, two file cards and disclosure. Originals open in the existing split editor even outside a chat. Work descriptions and assignment controls stay off this page; conversation run cards retain their controls. Portrait shapes include Orb, Square, Spark, Hex, Leaf, Compass, Pebble and Bloom; all accepted creation/edit paths share these shapes.
 
