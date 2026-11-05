@@ -25,6 +25,7 @@ import { startRoutines } from "./routines.js";
 import { refreshRunCard, settingsLine, storedSettings } from "./settings.js";
 import { startWatchdog, stopWatchdog } from "./watchdog.js";
 import { closeRunDecisions } from "./run-decisions.js";
+import { sessionDeletionOf } from "../workspace/sessions.js";
 
 export const RUN_ENDED = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 /** How often run states are mirrored: a run's end reaches its node within this time. */
@@ -40,6 +41,7 @@ type JobView = {
   summary: string | null;
   error: string | null;
   report: Prisma.JsonValue | null;
+  context: Prisma.JsonValue;
   task: { title: string } | null;
   device: { name: string } | null;
 };
@@ -53,7 +55,7 @@ export async function pollRuns(app: FastifyInstance): Promise<void> {
     if (!runs.length) return;
     const jobs = await prisma.workspaceJob.findMany({
       where: { id: { in: runs.map((row) => row.jobId) } },
-      select: { id: true, status: true, progress: true, summary: true, error: true, report: true, task: { select: { title: true } }, device: { select: { name: true } } },
+      select: { id: true, status: true, progress: true, summary: true, error: true, report: true, context: true, task: { select: { title: true } }, device: { select: { name: true } } },
     });
     const byId = new Map(jobs.map((row) => [row.id, row as JobView]));
     const cardIds = runs.map((row) => row.messageId).filter((id): id is string => Boolean(id));
@@ -97,6 +99,13 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
   // The card's settings (as asked, sent and reported by the agent) and its session's queue follow the job.
   if (status !== run.status || ended || shown.progress !== progress) await refreshRunCard(prisma, run).catch((error: unknown) => app.log.warn({ err: error, runId: run.id }, "Could not refresh a run card"));
   if (!ended) return;
+  if (sessionDeletionOf(job?.context)) {
+    if (run.planId && run.planStep) {
+      const step = await stepRow(prisma, run.planId, run.planStep);
+      if (step?.status === "working") await finishStep(app, run.planId, run.planStep, { status: "blocked", outcome: "blocked", result: "Your owner requested deletion of this agent session. Its work was stopped; project files were kept.", attempt: step.attempt });
+    }
+    return;
+  }
   // A newer call took this run over (steer, replace, stop, pause): the node already knows.
   if (typeof shown.quiet === "string") return;
   // A run from an earlier attempt of its step: the step has moved on.

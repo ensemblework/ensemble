@@ -544,6 +544,10 @@ test("session deletion stops work, requires native acknowledgement, retries and 
     const listed = json(await user.inject({ method: "GET", url: "/api/node/sessions" })).sessions.find((row: { id: string }) => row.id === root.id);
     assert.equal(listed.deletion.state, "pending", "failed deletion remains visible");
     assert.match(listed.deletion.error, /Native deletion failed/);
+    const { pollRuns } = await import("./runs.js");
+    await pollRuns(h.app);
+    await settleTurns();
+    assert.equal(await h.prisma.nodeTurn.count({ where: { userId: user.id, reason: "run" } }), 0, "deletion cancellation cannot wake the node to restart or report cancelled work");
     assert.equal((await control(user, root.id, { action: "queue", prompt: "Do not resurrect this." })).statusCode, 404);
     const { createCappedJob } = await import("../lib/hosted-limits.js");
     await assert.rejects(createCappedJob(h.prisma, user.id, { data: { userId: user.id, taskId: task.id, kind: "code", provider: "copilot-cli", model: "default", executionMode: "sandbox", continueFromJobId: root.id } }), /being deleted/);
