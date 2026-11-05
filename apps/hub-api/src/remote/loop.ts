@@ -25,6 +25,7 @@ import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
+import { answerSessionDelete, SESSION_DELETE_API } from "./session-delete.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { credentialCapabilities } from "../credentials/capabilities.js";
 import { changedFileIdentity, flushFileChanges } from "./node-files.js";
@@ -115,6 +116,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // The web's Code tab and terminal work here (protocol 4); each switch is this computer's.
     code: true,
     codeApi: CODE_API,
+    sessionDelete: SESSION_DELETE_API,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
     // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
@@ -349,6 +351,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         if (event === "files.request") void answerFileRequest(app, client, data).catch(() => undefined);
         // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
         if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
+        if (event === "session.delete") void answerSessionDelete(app, client, data).catch(error => app.log.warn({ err: error }, "Could not answer session deletion"));
         if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
         // A node's own tool call (protocol 6): judged and run here; a lost answer times out on the web.
         if (event === "node.tool.request") void answerNodeToolRequest(app, client, data).catch(() => undefined);

@@ -11,7 +11,7 @@ import { dispatchMessage, enqueueTurn } from "./queue.js";
 import { mentionsFor, postMessage, updateMessageData } from "./store.js";
 import { refsNote, savedRefs } from "../assistant/refs.js";
 import { sessionOfJob } from "../workspace/sessions.js";
-import { HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
+import { DeleteSessionInput, HandOverInput, ownerContext, runSessionCall, SendInput, StartInput, type SessionCall } from "./sessions.js";
 import { declineSecret } from "./node-secrets.js";
 import { answerLoginCard, LOGIN_CARD } from "./logins.js";
 import { finishStep, planLinkOf } from "./plans.js";
@@ -38,6 +38,7 @@ const SessionCard = z.union([
   z.object({ type: z.literal("session"), status: z.string(), action: z.literal("start"), input: StartInput, private: z.boolean().optional() }).passthrough(),
   z.object({ type: z.literal("session"), status: z.string(), action: z.literal("send"), input: SendInput, private: z.boolean().optional() }).passthrough(),
   z.object({ type: z.literal("session"), status: z.string(), action: z.literal("hand_over"), input: HandOverInput, private: z.boolean().optional() }).passthrough(),
+  z.object({ type: z.literal("session"), status: z.string(), action: z.literal("delete"), input: DeleteSessionInput, private: z.boolean().optional() }).passthrough(),
 ]);
 
 export class ApprovalError extends Error {
@@ -267,7 +268,7 @@ async function settleSession(app: FastifyInstance, card: NodeMessage, node: Node
     nodeId: node.id,
     roomId: card.roomId,
     reason: "approval",
-    note: `${parsed.action === "hand_over" ? "Your owner agreed" : "Your owner approved and it started"}: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
+    note: `${parsed.action === "hand_over" || parsed.action === "delete" ? "Your owner agreed" : "Your owner approved and it started"}: ${done.summary} Reply ${"(no reply)"} unless there is more to say.`,
     private: parsed.private === true,
     ...(planLinkOf(card.data) ?? {}),
   });
@@ -409,4 +410,3 @@ async function declinedInStep(app: FastifyInstance, node: NodeAgent, card: NodeM
   });
   if (!queued) await finishStep(app, link.planId, link.planStep, { status: "blocked", result: `Your owner declined ${what}.` });
 }
-

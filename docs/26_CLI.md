@@ -9,6 +9,8 @@ Type `ensemble` in a project folder and Ensemble opens full-screen in the termin
 
 The runtime also serves Ensemble Node's original-file editor (Code API 3, CLI 0.6.4+): direct node changes are reported as private file cards, and text edits in the website save back here with version checks. `ensemble browse on` allows reading and `ensemble web edit on` allows saving; no new permission bypass or terminal unlock is introduced. [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace) describes the file and quote contract.
 
+The runtime reports `sessionDelete: 1` for owner-confirmed deletion from Node's Sessions page or a node's confirmation card. It deletes the underlying coding agent's recorded session after active jobs stop, keeps project files, and reports native failures instead of hiding an undeleted session. Update and restart the paired runtime to use it; [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card) lists the native methods.
+
 CLI 0.6.5 includes canonical file identities and per-file edit timestamps in reports, allowing Node's floating selection action to address the last editing node or queue directly into its coding-agent session. The source bytes stay on the computer; account themes and document renderers are owned by the web UI.
 
 CLI 0.6.6 checks the exact recorded original in the web file viewer, rather than reapplying a whole-folder execution guard. Safe generated reports can be read and edited beside protected siblings; actual credentials, runtime files, linked files and protected write targets remain blocked.

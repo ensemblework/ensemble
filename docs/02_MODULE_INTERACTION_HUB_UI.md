@@ -189,6 +189,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`; `routes/assistant.ts` |
 | Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts` (native desks use preferences instead) |
 | Workspace/agent | `/api/workspace`, `/api/agent/assign`, `/api/agent/sessions` and job/control routes; `routes/agents.ts`, `job-files.ts` |
+| Node session deletion | `DELETE /api/node/sessions/:id {confirmed:true}`: owner's browser only; stops work and requires native-agent deletion acknowledgement on the computer. Project files stay; [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card). |
 | Code/terminal | `routes/code*.ts`, `terminal*.ts`; [16](16_CODE_TAB.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
 | Trash/data | `/api/deleted`, `/api/deleted/restore`, `/api/deleted/empty`, `/api/data/delete`; `routes/system.ts` |
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |

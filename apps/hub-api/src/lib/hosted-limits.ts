@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { isHosted, requireVerifiedUser } from "./hosted-access.js";
 import { lockUserTransaction } from "./user-lock.js";
+import { assertSessionContinuation } from "../workspace/sessions.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -73,6 +74,7 @@ export async function withHostedUserLock<T>(
 
 export async function createCappedJob(db: PrismaClient, userId: string, args: Prisma.WorkspaceJobCreateArgs) {
   return withHostedUserLock(db, userId, async (tx) => {
+    if (typeof args.data.continueFromJobId === "string") await assertSessionContinuation(tx, args.data.continueFromJobId);
     let usage: { key: string; count: number; account: string } | undefined;
     if (isHosted()) {
       // A run in a space shared with you counts against you, the person whose computer runs it.
