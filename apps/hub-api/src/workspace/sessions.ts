@@ -345,12 +345,15 @@ export async function sessionOfJob(prisma: PrismaClient, job: { id: string; user
   let current: { id: string; provider: string | null; continueFromJobId: string | null } | null = { id: job.id, provider: job.provider, continueFromJobId: null };
   const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true } });
   current.continueFromJobId = own?.continueFromJobId ?? null;
-  for (let hops = 0; current?.continueFromJobId && hops < 200; hops += 1) {
+  const seen = new Set([job.id]);
+  while (current?.continueFromJobId) {
     const parent: { id: string; provider: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findFirst({
-      where: { id: current.continueFromJobId, userId: job.userId },
+      where: { id: current.continueFromJobId, userId: job.userId, runnerAccountId: job.runnerAccountId },
       select: { id: true, provider: true, continueFromJobId: true },
     });
     if (!parent || parent.provider !== job.provider) break;
+    if (seen.has(parent.id)) throw new Error("The agent session has a cyclic resume chain.");
+    seen.add(parent.id);
     current = parent;
   }
   const resumable = (await resumableJobs(prisma, [job.id])).has(job.id);
@@ -447,9 +450,10 @@ export async function assertSessionContinuation(tx: Prisma.TransactionClient, id
 async function rootOfRun(db: Db, run: { id: string; userId: string; provider: string | null; continueFromJobId: string | null }): Promise<string> {
   let current: { id: string; continueFromJobId: string | null } = run;
   const seen = new Set([run.id]);
-  for (let hops = 0; current.continueFromJobId && hops < 200; hops += 1) {
+  while (current.continueFromJobId) {
     const parent = await db.workspaceJob.findFirst({ where: { id: current.continueFromJobId, userId: run.userId }, select: { id: true, provider: true, continueFromJobId: true } });
-    if (!parent || parent.provider !== run.provider || seen.has(parent.id)) break;
+    if (!parent || parent.provider !== run.provider) break;
+    if (seen.has(parent.id)) throw new QueueChangedError("The session has a cyclic resume chain.");
     seen.add(parent.id);
     current = parent;
   }

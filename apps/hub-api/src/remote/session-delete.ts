@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import { isCodeEngine } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { deleteNativeSession } from "../workspace/engines/delete-session.js";
@@ -86,9 +87,9 @@ export async function deleteLocalJobSessions(app: FastifyInstance, ids: string[]
     }
     for (const root of roots) await app.prisma.$transaction(async tx => {
       await lockSession(tx, root);
-      const row = await tx.workspaceJob.findUniqueOrThrow({ where: { id: root } });
-      const context = row.context && typeof row.context === "object" && !Array.isArray(row.context) ? row.context : {};
-      await tx.workspaceJob.update({ where: { id: root }, data: { context: { ...context, sessionDeletion: { state: "deleted", at: new Date().toISOString() } } } });
+      const deleted = JSON.stringify({ state: "deleted", at: new Date().toISOString() });
+      const runs = await runsOfSession(tx, { space: accountId, runner: null }, root, true);
+      await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${deleted}::jsonb) WHERE id IN (${Prisma.join(runs.map(run => run.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     });
   }
 }

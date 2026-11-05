@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import { Prisma } from "@prisma/client";
 import { CodeAnswer } from "../remote/contract.js";
 import { deleteLocalJobSessions } from "../remote/session-delete.js";
 import { currentDevice } from "../devices/successor.js";
@@ -83,7 +84,8 @@ export async function deleteAgentSession(app: FastifyInstance, accountId: string
       await lockSession(tx, session.id);
       const current = await tx.workspaceJob.findUniqueOrThrow({ where: { id: session.id } });
       if (record(record(current.context).sessionDeletion).operation !== operation) throw fail("The deletion attempt changed. Read the session again.");
-      await tx.workspaceJob.update({ where: { id: session.id }, data: { context: { ...record(current.context), sessionDeletion: { state: "deleted", at: new Date().toISOString() } } } });
+      const deleted = JSON.stringify({ state: "deleted", at: new Date().toISOString() });
+      await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${deleted}::jsonb) WHERE id IN (${Prisma.join(jobs.map(job => job.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     });
     await appendLedger({ userId: accountId, actor: "me", action: "workspace.session.delete", payload: { sessionId: session.id, jobIds: jobs.map(job => job.id), engine: session.agent, projectFilesKept: true } });
     notify();

@@ -554,6 +554,8 @@ test("session deletion stops work, requires native acknowledgement, retries and 
     assert.ok(!json(await user.inject({ method: "GET", url: "/api/node/sessions" })).sessions.some((row: { id: string }) => row.id === root.id));
     assert.equal((await remove()).statusCode, 200, "retry after success is idempotent");
     assert.equal(calls, 2, "completed deletion never repeats its native command");
+    const descendant = await h.prisma.workspaceJob.findUniqueOrThrow({ where: { id: queued.id } });
+    assert.equal((descendant.context as { sessionDeletion: { state: string } }).sessionDeletion.state, "deleted", "retained descendants cannot reappear as a session in a bounded inventory");
     assert.ok(await h.prisma.task.findUnique({ where: { id: task.id } }), "deletion does not delete the task or project");
   } finally { stop(); clearInterval(finishing); }
 });
