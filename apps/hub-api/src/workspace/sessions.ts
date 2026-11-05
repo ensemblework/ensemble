@@ -48,7 +48,13 @@ export type AgentSession = {
   chat: boolean;
   startedAt: string;
   lastActiveAt: string;
+  deletion?: { state: "pending" | "deleted"; error?: string; until?: number } | null;
 };
+
+export function sessionDeletionOf(context: unknown): AgentSession["deletion"] {
+  const value = context && typeof context === "object" && "sessionDeletion" in context ? context.sessionDeletion : null;
+  return value && typeof value === "object" && "state" in value && (value.state === "pending" || value.state === "deleted") ? value as NonNullable<AgentSession["deletion"]> : null;
+}
 
 const WAITING: WorkspaceJobStatus[] = ["queued", "claimed", "running", "waiting_approval", "stopping"];
 const SELECT = {
@@ -206,6 +212,7 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
     chat: ordered.every((row) => isChat(row.context)),
     startedAt: first.createdAt.toISOString(),
     lastActiveAt: (last.finishedAt ?? last.createdAt).toISOString(),
+    deletion: sessionDeletionOf(runs.find(row => row.id === rootId)?.context),
   };
 }
 
@@ -246,6 +253,7 @@ export async function listSessionGroups(
   const sessions = await onCurrentPairing(prisma, built.map(({ root, runs }) => build(root, runs, resumable)));
   return built
     .map(({ runs }, index) => ({ session: sessions[index]!, runs }))
+    .filter(({ session }) => session.deletion?.state !== "deleted")
     .filter(({ session, runs }) => !filter.taskId || runs.some((row) => row.taskId === filter.taskId) || session.latestTask.id === filter.taskId)
     .filter(({ session }) => !filter.deviceIds?.length || (session.deviceId !== null && filter.deviceIds.includes(session.deviceId)))
     .filter(({ session, runs }) => !needle || [session.title, session.summary, session.folder, session.agentName, session.computer ?? "", ...runs.map((row) => row.task.title)].some((text) => text.toLowerCase().includes(needle)))
@@ -258,21 +266,24 @@ export async function listSessionGroups(
  * A session by its id, or by any run in it: every run of it, the newest being the one a new task
  * continues from. Null when it is not the scope's, or not a coding agent's run.
  */
-export async function resolveSession(prisma: PrismaClient, scope: SessionScope, id: string): Promise<AgentSession | null> {
+export async function resolveSession(prisma: PrismaClient, scope: SessionScope, id: string, includeDeletion = false): Promise<AgentSession | null> {
   // Any run, as listSessions roots a chain at its first run even when that one never started; walked to the real root however long the chain.
   const job = await prisma.workspaceJob.findFirst({ where: { id, userId: scope.space, runnerAccountId: scope.runner }, select: { id: true, userId: true, runnerAccountId: true, provider: true, kind: true } });
   const root = job ? await sessionOfJob(prisma, job) : null;
-  return root ? sessionFrom(prisma, scope, root.id) : null;
+  const session = root ? await sessionFrom(prisma, scope, root.id) : null;
+  return session?.deletion && !includeDeletion ? null : session;
 }
 
 /** The runs of the session that starts at `root`: it and the runs that continue it by the same agent, transitively. */
-async function chainFrom(prisma: PrismaClient, scope: SessionScope, root: string): Promise<Row[]> {
+async function chainFrom(prisma: Pick<PrismaClient, "workspaceJob">, scope: SessionScope, root: string, complete = false): Promise<Row[]> {
   const first = (await prisma.workspaceJob.findFirst({ where: { id: root, userId: scope.space, runnerAccountId: scope.runner }, select: SELECT })) as Row | null;
   if (!first || !isCodeEngine(first.provider)) return [];
   const runs: Row[] = [first];
+  const seen = new Set([root]);
   let frontier = [root];
-  for (let round = 0; frontier.length && round < 200 && runs.length < 500; round += 1) {
-    const next = (await prisma.workspaceJob.findMany({ where: { userId: scope.space, runnerAccountId: scope.runner, continueFromJobId: { in: frontier }, provider: first.provider }, select: SELECT })) as Row[];
+  for (let round = 0; frontier.length && (complete || round < 200 && runs.length < 500); round += 1) {
+    const next = ((await prisma.workspaceJob.findMany({ where: { userId: scope.space, runnerAccountId: scope.runner, continueFromJobId: { in: frontier }, provider: first.provider }, select: SELECT })) as Row[]).filter(row => !seen.has(row.id));
+    for (const row of next) seen.add(row.id);
     runs.push(...next);
     frontier = next.map((row) => row.id);
   }
@@ -304,8 +315,8 @@ export type SessionRun = {
 };
 
 /** Every run of a session (`root` is its id), oldest first: what Ensemble Node steers, queues behind and stops. */
-export async function runsOfSession(prisma: PrismaClient, scope: SessionScope, root: string): Promise<SessionRun[]> {
-  const runs = await chainFrom(prisma, scope, root);
+export async function runsOfSession(prisma: Pick<PrismaClient, "workspaceJob">, scope: SessionScope, root: string, complete = false): Promise<SessionRun[]> {
+  const runs = await chainFrom(prisma, scope, root, complete);
   return runs
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((row) => ({
@@ -334,12 +345,15 @@ export async function sessionOfJob(prisma: PrismaClient, job: { id: string; user
   let current: { id: string; provider: string | null; continueFromJobId: string | null } | null = { id: job.id, provider: job.provider, continueFromJobId: null };
   const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true } });
   current.continueFromJobId = own?.continueFromJobId ?? null;
-  for (let hops = 0; current?.continueFromJobId && hops < 200; hops += 1) {
+  const seen = new Set([job.id]);
+  while (current?.continueFromJobId) {
     const parent: { id: string; provider: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findFirst({
-      where: { id: current.continueFromJobId, userId: job.userId },
+      where: { id: current.continueFromJobId, userId: job.userId, runnerAccountId: job.runnerAccountId },
       select: { id: true, provider: true, continueFromJobId: true },
     });
     if (!parent || parent.provider !== job.provider) break;
+    if (seen.has(parent.id)) throw new Error("The agent session has a cyclic resume chain.");
+    seen.add(parent.id);
     current = parent;
   }
   const resumable = (await resumableJobs(prisma, [job.id])).has(job.id);
@@ -423,13 +437,23 @@ export async function lockSession(tx: Prisma.TransactionClient, rootId: string):
   await tx.$queryRaw`SELECT 1 AS held FROM pg_advisory_xact_lock(hashtext(${`ensemble:session:${rootId}`}))`;
 }
 
+export async function assertSessionContinuation(tx: Prisma.TransactionClient, id: string): Promise<void> {
+  const previous = await tx.workspaceJob.findUnique({ where: { id } });
+  if (!previous) throw new QueueChangedError("That earlier run is not available.");
+  const root = await rootOfRun(tx, previous);
+  await lockSession(tx, root);
+  const row = await tx.workspaceJob.findUnique({ where: { id: root }, select: { context: true } });
+  if (sessionDeletionOf(row?.context)) throw new QueueChangedError("This session is being deleted or has been deleted. Start a new session instead.");
+}
+
 /** The first run of the session a run belongs to: back along `continueFromJobId` while the earlier run is by the same agent. */
 async function rootOfRun(db: Db, run: { id: string; userId: string; provider: string | null; continueFromJobId: string | null }): Promise<string> {
   let current: { id: string; continueFromJobId: string | null } = run;
   const seen = new Set([run.id]);
-  for (let hops = 0; current.continueFromJobId && hops < 200; hops += 1) {
+  while (current.continueFromJobId) {
     const parent = await db.workspaceJob.findFirst({ where: { id: current.continueFromJobId, userId: run.userId }, select: { id: true, provider: true, continueFromJobId: true } });
-    if (!parent || parent.provider !== run.provider || seen.has(parent.id)) break;
+    if (!parent || parent.provider !== run.provider) break;
+    if (seen.has(parent.id)) throw new QueueChangedError("The session has a cyclic resume chain.");
     seen.add(parent.id);
     current = parent;
   }
@@ -463,10 +487,12 @@ export type SessionTurn = { wait: true } | { wait: false; links: { continueFromJ
  * a computer, it starts afresh in the session's folder. Null: not a run that continues a session.
  */
 export async function sessionTurn(tx: Prisma.TransactionClient, candidate: Pick<QueueRow, "id" | "userId" | "runnerAccountId" | "kind" | "provider" | "continueFromJobId" | "folderLabel" | "repoUrl">): Promise<SessionTurn | null> {
-  if (candidate.kind !== "code" || !isCodeEngine(candidate.provider) || !candidate.continueFromJobId) return null;
+  if (candidate.kind !== "code" || !isCodeEngine(candidate.provider)) return null;
   const root = await rootOfRun(tx, candidate);
-  if (root === candidate.id) return null;
   await lockSession(tx, root);
+  const rootRow = await tx.workspaceJob.findUnique({ where: { id: root }, select: { context: true } });
+  if (sessionDeletionOf(rootRow?.context)) return { wait: true };
+  if (root === candidate.id) return null;
   const rows = await queueRows(tx, candidate, root);
   const self = rows.find((row) => row.id === candidate.id);
   if (!self || self.status !== "queued") return { wait: true };

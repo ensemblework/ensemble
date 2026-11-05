@@ -1392,6 +1392,7 @@
   {"method":"POST","path":"/api/node/secrets/:messageId","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"GET","path":"/api/node/sessions","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/sessions","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
+  {"method":"DELETE","path":"/api/node/sessions/:id","mode":"hosted","auth":"identity","hasId":true,"hasTest":true,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection","happy-path","isolation","invalid-input"]},
   {"method":"GET","path":"/api/node/sessions/:id","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/sessions/:id","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"POST","path":"/api/node/sessions/:id/control","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},

@@ -12,9 +12,12 @@ import { requireBrowserSession } from "../bridge/auth.js";
 import { accountIdOf } from "../lib/auth.js";
 import { truncateText } from "../lib/text.js";
 import { isVisitor } from "../sharing/context.js";
+import { env } from "../config.js";
+import { nodeWebOrigin } from "../lib/node-origin.js";
 import { listSessionGroups, liveOrder, resolveSession, type SessionRun } from "../workspace/sessions.js";
 import { stepLive } from "./plans.js";
 import { sessionOwners, sessionSnapshot } from "./session-queue.js";
+import { deleteAgentSession } from "../workspace/delete-session.js";
 import { editSessionQueue, moveSession, ownerContext, sendToSession, stopSession, type SessionEnv } from "./sessions.js";
 
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
@@ -167,13 +170,22 @@ export function registerSessionRoutes(app: FastifyInstance): void {
         model: row.model && row.model !== "default" ? row.model : null,
         computer: row.computer, folder: row.folder, title: row.title,
         latestTask: row.latestTask.title, summary: truncateText(row.summary, 300),
-        runs: row.runs, lastActiveAt: row.lastActiveAt, usedBy,
+        runs: row.runs, lastActiveAt: row.lastActiveAt, usedBy, deletion: row.deletion,
         files: [...files.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
       };
     });
     return {
       sessions: rows.filter(row => !needle || [row.title, row.agentName, row.model, row.folder, row.computer, row.status, `${row.runs} ${row.runs === 1 ? "run" : "runs"}`, ...row.files.map(file => file.source.path), ...row.usedBy.flatMap(item => [item.node.name, item.node.slug, item.room?.title])].some(value => value?.toLocaleLowerCase().includes(needle))).slice(0, query.limit),
     };
+  });
+
+  app.delete("/api/node/sessions/:id", async request => {
+    const accountId = owner(request);
+    const origin = request.headers.origin;
+    if (!origin || ![env.HUB_WEB_ORIGIN, nodeWebOrigin()].includes(origin)) throw fail(403, "Delete sessions from Ensemble or Ensemble Node.");
+    const { id } = Params.parse(request.params);
+    z.object({ confirmed: z.literal(true) }).strict().parse(request.body);
+    return deleteAgentSession(app, accountId, id);
   });
 
   /** One of my sessions: its state, the run going on, the queue in order and its recent runs. */
