@@ -563,6 +563,8 @@ A refusal (the computer's agent cannot honour a setting, Stop everything is on, 
 
 The session inventory includes `deletion: {state:"pending", error?, until?}` while an attempt is in progress or awaiting retry. The local paired-runtime inventory follows the same deleted marker, so the removed native session cannot be resumed from the CLI either.
 
+Every affected job is marked pending before cancellation. The Node watcher closes its outstanding questions but does not enqueue cancellation reports or ask the agent for a result; an affected working plan step becomes blocked with the owner's deletion reason. Deletion cannot silently restart the stopped work in another session.
+
 The computer advertises `capabilities.sessionDelete: 1` and handles `session.delete {id,jobIds}` through `remote/session-delete.ts`, answering on the existing device-authenticated code-answer channel. Job IDs resolve only through its local held-job registry or recorded hosted-job context; browsers and models never supply native paths or native session IDs. Newer agent versions may be needed for their deletion API.
 
 | Agent | Native deletion |

@@ -47,7 +47,8 @@ export async function deleteAgentSession(app: FastifyInstance, accountId: string
     const current = await tx.workspaceJob.findUniqueOrThrow({ where: { id: session.id } });
     const deleting = sessionDeletionOf(current.context);
     if (deleting?.state === "pending" && (deleting.until ?? 0) > Date.now()) throw fail("Deletion is already in progress. Wait for it to finish.");
-    await tx.workspaceJob.update({ where: { id: session.id }, data: { context: { ...record(current.context), sessionDeletion: { state: "pending", operation, until: Date.now() + 90_000 } } } });
+    const pending = JSON.stringify({ state: "pending", operation, until: Date.now() + 90_000 });
+    await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${pending}::jsonb) WHERE id IN (${Prisma.join(jobs.map(job => job.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     await tx.workspaceJob.updateMany({ where: { id: { in: runs.map(run => run.id) }, status: "queued" }, data: { status: "cancelled", cancelRequestedAt: new Date(), finishedAt: new Date(), progress: "Session deletion", error: "Cancelled because the owner is deleting this session." } });
   });
   const notify = () => {
