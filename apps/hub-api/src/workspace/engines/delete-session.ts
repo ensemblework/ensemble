@@ -51,7 +51,7 @@ async function command(program: string, args: string[], cwd: string, env = proce
     let output = "";
     child.stdout.on("data", data => { output = (output + String(data)).slice(-2000); });
     child.stderr.on("data", data => { output = (output + String(data)).slice(-2000); });
-    const timer = setTimeout(() => { child.kill(); reject(new Error("Native session deletion timed out. Retry after checking the agent on your computer.")); }, 30_000);
+    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Native session deletion timed out. Retry after checking the agent on your computer.")); }, 30_000);
     child.once("error", error => { clearTimeout(timer); reject(error); });
     child.once("exit", code => {
       clearTimeout(timer);
