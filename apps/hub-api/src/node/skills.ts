@@ -22,10 +22,13 @@ export const NODE_SKILLS: readonly NodeSkill[] = [
     title: "Shopping and prices",
     match: /\b(?:prices?|pricing|priced|cost(?:s|ing)?|cheap(?:est|er)?|deals?|discounts?|on sale|for sale|buy(?:ing)?|purchase|shop(?:ping)?|in stock|out of stock|msrp|retailers?|stores?)\b/gi,
     needs: ["browser_shop"],
-    lines: () => [
+    lines: (has) => [
       "- One call: browser_shop with the product (query), the stores your owner named (else leave stores out: Amazon, Walmart, Target, Best Buy, Costco) and the location (a US state is enough; the tool picks a ZIP there).",
       "- Reply with a Markdown table: Store | Product | Price | Availability/delivery | Link. Then one line on the best deal.",
       "- Say which stores blocked automated browsing or showed a human check. Offer to open the check for your owner only if they want that store.",
+      ...(has("hub_web_search") && has("browser_extract")
+        ? ["- A store browser_shop could not read: one hub_web_search for the product at that store, then browser_extract on its product page (url), whose structured data carries the price. Never retry a page that blocked you."]
+        : []),
       "- Never invent a price: write “not shown” when a store gave none.",
       "- The stores' screenshots come with your reply by themselves.",
     ],
@@ -86,9 +89,12 @@ export const NODE_SKILLS: readonly NodeSkill[] = [
     title: "Research and facts",
     match: /\b(?:research|look up|find out|latest|news|facts?|compare|comparison|vs\.?|versus|reviews?|specs?|sources?|cite|explain)\b/gi,
     needs: ["hub_web_search"],
+    // The method follows DeerFlow's deep-research skill (MIT): one search per angle, primary sources, dates checked.
     lines: (has) => [
       "- hub_web_search first, with market (en-US, en-IN…) when the answer depends on the country.",
+      "- A question with parts (a comparison, several products, pros and cons): one search per part, all in the same reply, before reading.",
       has("browser_extract") ? "- When details matter, browser_extract on 1 to 3 of the best sources (url) and answer from what they say." : "- When details matter, open 1 to 3 of the best sources and read them.",
+      "- Prefer primary sources (the maker, the official docs, the standard) over roundups, and check each source's date when the question says latest or current.",
       "- Cite the links you used, and say what you could not verify.",
     ],
   },

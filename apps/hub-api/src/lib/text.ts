@@ -48,6 +48,26 @@ export function truncateText(value: string, maxLength: number): string {
   return stripLoneSurrogates(out);
 }
 
+/**
+ * At most `maxLength` code units: the start (two thirds) and the end (one third) with a note of how much
+ * was cut between them, on grapheme boundaries. For output whose end matters as much as its start: a
+ * command's error, a result's last fields.
+ */
+export function headAndTail(value: string, maxLength: number): string {
+  const clean = stripLoneSurrogates(value);
+  if (clean.length <= maxLength) return clean;
+  const parts = graphemes(clean);
+  const note = (cut: number) => `\n… [${cut} characters cut] …\n`;
+  const room = Math.max(0, maxLength - note(clean.length).length);
+  const headRoom = Math.ceil((room * 2) / 3);
+  let head = "";
+  let i = 0;
+  for (; i < parts.length && head.length + parts[i]!.length <= headRoom; i += 1) head += parts[i];
+  let tail = "";
+  for (let j = parts.length - 1; j >= i && tail.length + parts[j]!.length <= room - head.length; j -= 1) tail = parts[j] + tail;
+  return `${head}${note(clean.length - head.length - tail.length)}${tail}`;
+}
+
 /** Stream or display chunks that never stop inside an emoji. */
 export function chunkText(value: string, size = 24): string[] {
   const clean = stripLoneSurrogates(value);

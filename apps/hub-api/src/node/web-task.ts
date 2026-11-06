@@ -60,6 +60,10 @@ export const WEB_TASK_PROMPT = [
   '{"action":"stop","reason":"why it cannot be done"}',
   "Rules: never type a password, a one-time code or card details: on a sign-in page stop with reason \"sign in\". Never click to buy, pay, subscribe, delete, send or post: that click is your owner's to approve. A captcha or \"Robot or human?\": stop with reason \"human check\".",
   "Use only refs from the page now. Answer done as soon as the goal is met.",
+  // How to move through real sites, after OpenClaw's browser-automation skill and browser-use's browser rules (both MIT).
+  "Use the site's own search box, filters and sort before scrolling through long lists; goto a search URL when you know the site's pattern.",
+  "If an action did not change the page, do not repeat it: try another element, scroll to find it, or another way in. \"Access denied\", a 403 or an empty page: stop with reason \"blocked\"; do not retry it.",
+  "Before done, check the page now shows what the goal asks: the exact value, its unit and where it was.",
 ].join("\n");
 
 /** Sign-in pages: a password field, or an identity provider's own page. */

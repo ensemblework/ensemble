@@ -20,6 +20,7 @@ import { callCost } from "../lib/pricing.js";
 import { truncateText } from "../lib/text.js";
 import { MAX_MEDIA, peekTurnMedia, type Media } from "./media.js";
 import { validateRefs, type RefProblem } from "./refs-check.js";
+import { replyProblems } from "./reply-check.js";
 
 export type Check =
   | { kind: "screenshots"; count: number; names?: string[]; exact?: boolean }
@@ -364,11 +365,13 @@ export function startDeliverables(app: FastifyInstance, input: DeliverablesInput
       }
       checks.splice(0, checks.length, ...mergeChecklists(rules, settled ?? null));
       const brokenLinks = state.text.includes("ensemble://") ? await validateRefs(state.text, input.ownerId, app.prisma) : [];
-      if (!checks.length && !brokenLinks.length && !MEDIA_CLAIM.test(state.text) && !FILES_CLAIM.test(state.text)) return null;
+      // What the reply says it did or will do, against what its tools did (node/reply-check.ts).
+      const unbacked = replyProblems(state.text, state.calls, state.round);
+      if (!checks.length && !brokenLinks.length && !unbacked.length && !MEDIA_CLAIM.test(state.text) && !FILES_CLAIM.test(state.text)) return null;
       const saved = savedFileIds(state.calls);
       const owners = [...new Set([input.ownerId, ...saved.flatMap((row) => (row.space ? [row.space] : []))])];
       const savedFiles = saved.length ? await app.prisma.document.count({ where: { id: { in: saved.map((row) => row.id) }, deletedAt: null, userId: { in: owners } } }) : 0;
-      return feedbackFor(problemsWith(checks, { text: state.text, calls: state.calls, media: peekTurnMedia(input.turnId), savedFiles, brokenLinks, round: state.round }));
+      return feedbackFor([...problemsWith(checks, { text: state.text, calls: state.calls, media: peekTurnMedia(input.turnId), savedFiles, brokenLinks, round: state.round }), ...unbacked]);
     },
   };
 }
