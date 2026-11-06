@@ -777,6 +777,8 @@ model Notification {
   channel       String    @default("hub")
   taskId        String?   @map("task_id")
   url           String?
+  /// What a "needs you" notification is about (`decision:<id>`, `task:<id>`): it leaves the bell once that is answered, closed or gone.
+  subject       String?
   urgent        Boolean   @default(false)
   readAt        DateTime? @map("read_at")
   deferredUntil DateTime? @map("deferred_until")
@@ -1489,6 +1491,36 @@ model AuthToken {
 
   @@unique([userId, provider])
   @@map("oauth_tokens")
+}
+
+/// Work the Ensemble assistant does on a schedule (docs/02 §3.10): its instruction, run as a turn of
+/// its own conversation at each time its cron (in `timezone`) names, with the person's own settings.
+model AssistantRoutine {
+  id                 String    @id @default(uuid())
+  userId             String    @map("user_id")
+  title              String
+  /// What the assistant does each time, in the person's words.
+  instruction        String
+  /// Five-field cron in `timezone`.
+  cron               String
+  timezone           String    @default("UTC")
+  /// active | paused
+  status             String    @default("active")
+  nextRunAt          DateTime? @map("next_run_at")
+  lastRunAt          DateTime? @map("last_run_at")
+  /// running | ok | failed
+  lastStatus         String?   @map("last_status")
+  /// The start of the last reply, or why it failed.
+  lastSummary        String?   @map("last_summary")
+  /// The conversation every run of this routine adds to.
+  conversationId     String?   @map("conversation_id")
+  runCount           Int       @default(0) @map("run_count")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([status, nextRunAt])
+  @@map("assistant_routines")
 }
 
 model AssistantConversation {

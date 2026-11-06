@@ -287,7 +287,7 @@ export async function askPerson(
   // A node's run on this server asks in its node's chat too (node/run-decisions.ts); elsewhere there is none.
   const card = await postRunDecisionCard({ prisma: ctx.prisma }, row).catch(() => null);
   await ctx.prisma.notification.create({
-    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, urgent: true, url: (card && cardUrl(card)) ?? "/needs-me" },
+    data: { userId: ctx.userId, kind: "decision", title: `Agent needs you: ${input.title}`.slice(0, 200), body: ctx.taskTitle, subject: `decision:${row.id}`, urgent: true, url: (card && cardUrl(card)) ?? "/needs-me" },
   });
   sseHub.publish(ctx.userId, { event: "decision", data: { id: row.id, status: "pending", title: input.title, source: "ensemble" } });
   await ctx.event("needs_me", { decisionId: row.id, title: input.title });

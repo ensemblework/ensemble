@@ -20,11 +20,14 @@ import {
   Check,
   CheckCheck,
   ChevronRight,
+  ChevronsDownUp,
   Columns2,
+  FilePlus2,
   Files,
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   GitBranch,
   HelpCircle,
   House,
@@ -34,6 +37,7 @@ import {
   Maximize2,
   Minimize2,
   PanelLeft,
+  RefreshCw,
   RotateCcw,
   Search,
   TerminalSquare,
@@ -53,7 +57,7 @@ import { Terminal } from "@/components/code/terminal";
 import { useToast } from "@/components/toast";
 import { Spinner, cx } from "@/components/ui";
 import { useSpaceAccess } from "@/lib/access";
-import { api, ApiError, type ChangedFile, type CodeTreeEntry, type CodeVersions } from "@/lib/api";
+import { api, ApiError, type ChangedFile, type CodeCreated, type CodeTreeEntry, type CodeVersions } from "@/lib/api";
 import { useCodeApi, type Source } from "@/lib/code-target";
 import { openTab } from "@/lib/code-tabs";
 import { dateTime, languageFor } from "@/lib/format";
@@ -481,6 +485,7 @@ export function CodeIde({ source }: { source: Source }) {
               active={active}
               progressOf={progressOf}
               onOpen={open}
+              canCreate={!viewOnly}
             />
           ) : panel === "search" ? (
             <SearchPanel source={source} onOpen={open} />
@@ -647,6 +652,7 @@ function Explorer({
   active,
   progressOf,
   onOpen,
+  canCreate,
 }: {
   source: Source;
   changed: ChangedFile[];
@@ -655,9 +661,46 @@ function Explorer({
   active: string | null;
   progressOf: (path: string) => { total: number; pending: number; yours: number } | null;
   onOpen: (path: string, line?: number) => void;
+  canCreate: boolean;
 }) {
   const { code, key } = useCodeApi();
+  const client = useQueryClient();
   const [filter, setFilter] = useState("");
+  // The folders open in the tree, and the one a new file goes in: the folder last clicked, or the open file's.
+  const [openDirs, setOpenDirs] = useState<ReadonlySet<string>>(() => new Set());
+  const [here, setHere] = useState<string | null>(null);
+  const [creating, setCreatingRow] = useState<"file" | "folder" | null>(null);
+  const [, setFolds] = usePersistentState<Record<string, boolean>>("ensemble.code.folds", {});
+  // Naming something new opens the Folder section, where the name is typed.
+  const setCreating = (kind: "file" | "folder" | null) => {
+    if (kind) setFolds((current) => (current.folder === false ? { ...current, folder: true } : current));
+    setCreatingRow(kind);
+  };
+  const toggleDir = useCallback((path: string) => {
+    setHere(path);
+    setOpenDirs((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+  const base = here ?? (active && active.includes("/") ? active.slice(0, active.lastIndexOf("/")) : "");
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: ["code-tree", key] });
+    void client.invalidateQueries({ queryKey: ["code-files", key] });
+  };
+  const made = (created: CodeCreated) => {
+    setCreating(null);
+    refresh();
+    if (!created.path) return;
+    // Every folder on the way opens, so what was made shows in the tree.
+    const parts = created.path.split("/");
+    const folders = parts.slice(0, created.kind === "folder" ? parts.length : -1).map((_, index) => parts.slice(0, index + 1).join("/"));
+    setOpenDirs((current) => new Set([...current, ...folders]));
+    if (created.kind === "folder") setHere(created.path);
+    else onOpen(created.path);
+  };
   const [wantFiles, setWantFiles] = useState(false);
   const all = useQuery({ queryKey: ["code-files", key, source], queryFn: () => code.files(source), enabled: wantFiles, staleTime: 30_000 });
   const matches = filter.trim() ? (all.data?.files ?? []).filter((path) => path.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 50) : [];
@@ -732,8 +775,32 @@ function Explorer({
                 ))}
               </Fold>
             ) : null}
-            <Fold title="Folder" persist="folder">
-              <TreeNode source={source} path="" depth={0} active={active} onOpen={onOpen} />
+            <Fold
+              title="Folder"
+              persist="folder"
+              actions={
+                <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+                  {canCreate ? (
+                    <>
+                      <button type="button" className="icon-btn h-6 w-6" title={`New file in ${base || "the top folder"}`} aria-label="New file" onClick={() => setCreating("file")}>
+                        <FilePlus2 size={13} />
+                      </button>
+                      <button type="button" className="icon-btn h-6 w-6" title={`New folder in ${base || "the top folder"}`} aria-label="New folder" onClick={() => setCreating("folder")}>
+                        <FolderPlus size={13} />
+                      </button>
+                    </>
+                  ) : null}
+                  <button type="button" className="icon-btn h-6 w-6" title="Refresh" aria-label="Refresh the folder" onClick={refresh}>
+                    <RefreshCw size={12} />
+                  </button>
+                  <button type="button" className="icon-btn h-6 w-6" title="Collapse folders" aria-label="Collapse folders" onClick={() => { setOpenDirs(new Set()); setHere(null); }}>
+                    <ChevronsDownUp size={13} />
+                  </button>
+                </span>
+              }
+            >
+              {creating ? <CreateRow kind={creating} base={base} source={source} onDone={made} onCancel={() => setCreating(null)} /> : null}
+              <TreeNode source={source} path="" depth={0} active={active} onOpen={(path) => { setHere(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""); onOpen(path); }} openDirs={openDirs} onToggle={toggleDir} />
             </Fold>
           </>
         )}
@@ -742,10 +809,71 @@ function Explorer({
   );
 }
 
-function TreeNode({ source, path, depth, active, onOpen }: { source: Source; path: string; depth: number; active: string | null; onOpen: (path: string) => void }) {
+/**
+ * Naming a new file or folder, as an editor's explorer does: the name (or a path, `lib/new.ts`, whose
+ * folders are made too) goes in the folder shown; a full path (`~/notes/todo.md`) makes it elsewhere,
+ * in the workspace or a folder Code can use. Enter makes it, Escape or leaving it empty cancels.
+ */
+function CreateRow({ kind, base, source, onDone, onCancel }: { kind: "file" | "folder"; base: string; source: Source; onDone: (created: CodeCreated) => void; onCancel: () => void }) {
+  const { code } = useCodeApi();
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const typedFull = /^[~/]/.test(name.trim());
+  const create = useMutation({
+    mutationFn: () => {
+      const value = name.trim().replace(/\\/g, "/");
+      return code.create(source, typedFull ? value : [base, value.replace(/^\.\//, "")].filter(Boolean).join("/"), kind);
+    },
+    onSuccess: onDone,
+    onError: (failure) => setError((failure as Error).message),
+  });
+  const submit = () => {
+    if (create.isPending) return;
+    if (!name.trim()) return onCancel();
+    setError("");
+    create.mutate();
+  };
+  const Icon = kind === "file" ? FileText : Folder;
+  return (
+    <div className="mx-1.5 mb-1 rounded-md border border-[rgb(var(--accent-rgb)/0.45)] bg-panel px-2 py-1.5">
+      <div className="flex items-center gap-1.5">
+        <Icon size={12} className="shrink-0 text-muted" />
+        <input
+          autoFocus
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setError("");
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          onBlur={() => {
+            if (!name.trim() && !create.isPending) onCancel();
+          }}
+          placeholder={kind === "file" ? "File name" : "Folder name"}
+          aria-label={kind === "file" ? "New file name" : "New folder name"}
+          spellCheck={false}
+          className="min-w-0 flex-1 bg-transparent font-mono text-[12px] outline-none placeholder:font-sans placeholder:text-faint"
+        />
+        {create.isPending ? <Spinner size={11} /> : null}
+      </div>
+      <p className={cx("mt-1 truncate text-[10.5px]", error ? "text-danger" : "text-faint")} title={error || undefined}>
+        {error || (typedFull ? "A full path: made there, if it is in the workspace or a folder Code can use" : `In ${base ? `${base}/` : "the top folder"} · Enter to make · Esc to cancel`)}
+      </p>
+    </div>
+  );
+}
+
+function TreeNode({ source, path, depth, active, onOpen, openDirs, onToggle }: { source: Source; path: string; depth: number; active: string | null; onOpen: (path: string) => void; openDirs: ReadonlySet<string>; onToggle: (path: string) => void }) {
   const { code, key } = useCodeApi();
   const listing = useQuery({ queryKey: ["code-tree", key, source, path], queryFn: () => code.tree(source, path), staleTime: 15_000, retry: false });
-  const [open, setOpen] = useState<Record<string, boolean>>({});
   const pad = { paddingLeft: 12 + depth * 12 };
   if (listing.isLoading) return <div className="py-1" style={pad}><Spinner size={11} /></div>;
   if (listing.error) return <div className="py-1 pr-3 text-[12px] text-danger" style={pad}>{(listing.error as Error).message}</div>;
@@ -756,14 +884,14 @@ function TreeNode({ source, path, depth, active, onOpen }: { source: Source; pat
       {data.entries.map((entry: CodeTreeEntry) => {
         const child = path ? `${path}/${entry.name}` : entry.name;
         const dir = entry.kind === "dir";
-        const expanded = Boolean(open[entry.name]);
+        const expanded = openDirs.has(child);
         return (
           <li key={entry.name}>
             <button
               type="button"
               disabled={entry.kind === "link"}
               title={entry.kind === "link" ? "A link that leads outside the repository" : child}
-              onClick={() => (dir ? setOpen({ ...open, [entry.name]: !expanded }) : onOpen(child))}
+              onClick={() => (dir ? onToggle(child) : onOpen(child))}
               className={cx("flex w-full min-w-0 items-center gap-1 py-[3px] pr-3 text-left hover:bg-hover disabled:cursor-default disabled:opacity-50", active === child && "bg-[var(--accent-soft)]")}
               style={pad}
               aria-expanded={dir ? expanded : undefined}
@@ -772,7 +900,7 @@ function TreeNode({ source, path, depth, active, onOpen }: { source: Source; pat
               {dir ? expanded ? <FolderOpen size={12} className="shrink-0 text-muted" /> : <Folder size={12} className="shrink-0 text-muted" /> : <FileText size={12} className="shrink-0 text-faint" />}
               <span className={cx("min-w-0 flex-1 truncate", entry.secret && "text-faint")}>{entry.name}</span>
             </button>
-            {dir && expanded ? <TreeNode source={source} path={child} depth={depth + 1} active={active} onOpen={onOpen} /> : null}
+            {dir && expanded ? <TreeNode source={source} path={child} depth={depth + 1} active={active} onOpen={onOpen} openDirs={openDirs} onToggle={onToggle} /> : null}
           </li>
         );
       })}

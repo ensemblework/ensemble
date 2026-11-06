@@ -666,6 +666,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         kind: "decision",
         title: `Agent needs you: ${title}`.slice(0, 200),
         body: held.job.task.title,
+        subject: `decision:${row.id}`,
         urgent: true,
         url: (card && cardUrl(card)) ?? (held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`),
       },

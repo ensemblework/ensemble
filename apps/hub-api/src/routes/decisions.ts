@@ -20,7 +20,7 @@ import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { takesRunAnswer } from "../remote/policy.js";
 import { ownerAnswering, recoverRunDecisions, settleRunDecisionCards } from "../node/run-decisions.js";
-import { decisionOrigins, hubDecisionsWhere } from "../node/needs-me.js";
+import { decisionOrigins, hubDecisionsWhere, withoutHiddenNodeRequests } from "../node/needs-me.js";
 
 // In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
 const HOOK_SCRIPT = hookScriptPath();
@@ -218,7 +218,7 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
       },
     });
     await prisma.notification.create({
-      data: { userId: request.userId, kind: "decision", title: `${label(call.source)} is waiting: ${call.title}`, body: call.cwd ?? "", urgent: true, url: "/needs-me" },
+      data: { userId: request.userId, kind: "decision", title: `${label(call.source)} is waiting: ${call.title}`, body: call.cwd ?? "", subject: `decision:${row.id}`, urgent: true, url: "/needs-me" },
     });
     // From the owner's own editors: their commands and folders, never shown to people they share with.
     sseHub.publish(request.userId, { event: "decision", data: decisionFrame(row), ownerOnly: true });
@@ -306,9 +306,11 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
       orderBy: { requestedAt: status === "pending" ? "asc" : "desc" },
       take: 100,
     });
+    // A node's runs' requests stay in the Node chat when the account turned that on (node/needs-me.ts).
+    const shown = hub ? await withoutHiddenNodeRequests(prisma, request.userId, rows) : rows;
     // The Hub names the session that asks: its agent, folder and computer, and the node it works for.
-    const origins = hub && ownsOpenSpace(request) ? await decisionOrigins(prisma, request.userId, rows) : null;
-    return { decisions: rows.map((row) => ({ ...publicDecision(row), ...(origins ? { origin: origins.get(row.id) ?? null } : {}) })) };
+    const origins = hub && ownsOpenSpace(request) ? await decisionOrigins(prisma, request.userId, shown) : null;
+    return { decisions: shown.map((row) => ({ ...publicDecision(row), ...(origins ? { origin: origins.get(row.id) ?? null } : {}) })) };
   });
 
   app.post("/api/decisions/:id/decide", async (request) => {

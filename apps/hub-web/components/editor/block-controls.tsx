@@ -17,6 +17,9 @@ type Menu = { pos: number; kind: BlockCommandId | null; count: number };
 
 /** Pointer travel (px) after pressing the handle before it counts as a drag rather than a click. */
 const DRAG_SLOP = 4;
+/** How far beside the page the pointer still steers the controls: the + and the handle on the left, the comment button on the right. */
+const GUTTER_LEFT = 88;
+const GUTTER_RIGHT = 56;
 
 /** Asks the page's comment layer to start a comment on this text range (see comment-layer.tsx). */
 export const COMMENT_BLOCK_EVENT = "ensemble:comment-block";
@@ -145,6 +148,30 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
       // A tap has no hover: touching a block shows its controls.
       scope.addEventListener("pointerdown", hover);
     }
+    // Beside the page, where the + and the handle are drawn, nothing of the editor is under the pointer:
+    // the controls follow the block at the pointer's height, so they keep up with it in the gutter too.
+    let gutterFrame = 0;
+    let gutterAt: { x: number; y: number; target: EventTarget | null } | null = null;
+    const gutter = (event: PointerEvent) => {
+      if (dragged.current !== null || menuOpen.current) return;
+      gutterAt = { x: event.clientX, y: event.clientY, target: event.target };
+      if (gutterFrame) return;
+      gutterFrame = requestAnimationFrame(() => {
+        gutterFrame = 0;
+        const at = gutterAt;
+        if (!at || dragged.current !== null || menuOpen.current) return;
+        const element = at.target instanceof Element ? at.target : null;
+        // Over the page itself the body's own listener answers; another panel's gutter is not this page's.
+        if (!element || body.contains(element)) return;
+        const panel = element.closest("nav, aside, header, [role=menu], [role=dialog], [role=toolbar]");
+        if (panel && !panel.contains(body)) return;
+        const box = body.getBoundingClientRect();
+        if (at.y < box.top || at.y > box.bottom || at.x < box.left - GUTTER_LEFT || at.x > box.right + GUTTER_RIGHT) return;
+        const found = targetAt(measureTargets(root, blocks().targets), at.y - root.getBoundingClientRect().top);
+        if (found) show(placed(found));
+      });
+    };
+    document.addEventListener("pointermove", gutter, { passive: true });
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", drop);
     document.addEventListener("pointercancel", clear);
@@ -154,6 +181,8 @@ export function BlockControls({ editor, comment = false }: { editor: Editor; com
     editor.on("transaction", transaction);
     return () => {
       cancelAnimationFrame(frameId);
+      cancelAnimationFrame(gutterFrame);
+      document.removeEventListener("pointermove", gutter);
       for (const scope of scopes) {
         scope.removeEventListener("pointermove", hover);
         scope.removeEventListener("pointerdown", hover);

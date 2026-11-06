@@ -130,7 +130,11 @@ export async function listNotifications(db: Db, userId: string) {
     }),
     db.user.findUnique({ where: { id: userId }, select: { moduleSet: true } }),
   ]);
-  return rows.filter((row) => !row.url || !moduleDenied(row.url, user?.moduleSet ?? null)).map((row) => ({
+  // "Needs you" for something already answered, closed or gone leaves at once, and is marked read.
+  // Loaded here: notifications/needs.ts reads Node's modules, which load the assistant, which loads this file.
+  const stale = await import("../notifications/needs.js").then(({ staleNeeds }) => staleNeeds(db, userId, rows)).catch(() => new Set<string>());
+  if (stale.size) await db.notification.updateMany({ where: { id: { in: [...stale] }, userId, readAt: null }, data: { readAt: new Date() } }).catch(() => undefined);
+  return rows.filter((row) => !stale.has(row.id) && (!row.url || !moduleDenied(row.url, user?.moduleSet ?? null))).map((row) => ({
     id: row.id,
     kind: row.kind,
     title: row.title,

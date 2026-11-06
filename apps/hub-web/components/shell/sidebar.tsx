@@ -14,6 +14,7 @@ import {
   LayoutTemplate,
   ChartSpline,
   PanelLeft,
+  Repeat,
   Workflow,
   ListChecks,
   Settings,
@@ -48,6 +49,7 @@ const GROUPS: Array<Array<{ href: string; label: string; icon: typeof Activity }
   [
     { href: "/context", label: "Context", icon: Users },
     { href: "/meetings", label: "Meeting notes", icon: CalendarCheck },
+    { href: "/routines", label: "Routines", icon: Repeat },
   ],
   [
     { href: "/code", label: "Code", icon: Code2 },
@@ -109,7 +111,7 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       title={label}
     >
-      <Icon size={16} strokeWidth={1.8} className="text-muted" />
+      <Icon size={16} strokeWidth={1.8} className={href === "/code" ? "text-accent" : "text-muted"} />
       <span className="sidebar-label flex-1">{label}</span>
       {badge ? (
         <span className="sidebar-label on-accent rounded-md px-1.5 text-2xs font-semibold">{badge}</span>
@@ -167,10 +169,13 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     };
   }, [client]);
   const modules = shell.data?.modules;
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
   // A space shared with you: Today and Metrics are the owner's own.
   const guest = Boolean(shell.data?.space?.shared);
   const visible = (href: string) => {
     if (guest && (href === "/today" || href === "/metrics")) return false;
+    // Routines are the owner's, and leave the sidebar when Settings turns them off.
+    if (href === "/routines") return !guest && settings.data?.settings.routines?.enabled !== false;
     const gate = href === "/runs" ? runsModule(modules) : moduleForPath(href);
     if (!gate) return true;
     // Optional modules wait for the shell: when it fails, a link the space has

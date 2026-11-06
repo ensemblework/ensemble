@@ -39,6 +39,10 @@ The task page's *Review changes* opens the same review. A repository the agent c
 
 Panel sizes, which panels are open, the selected computer and the theme are kept in this browser (`ensemble.code.*`). Below 768 px the side panel is an overlay (below).
 
+### New files and folders
+
+The Explorer's *Folder* section has *New file*, *New folder*, *Refresh* and *Collapse folders* on its heading, as in VS Code. A new file or folder goes in the folder last clicked (or the open file's): its name is typed in place, Enter makes it and Esc cancels; nothing is asked. A path (`lib/util/new.ts`) makes the folders on the way too. A full path (`/…` or `~/…`) makes it elsewhere, only inside the workspace or a folder Code can use; paths outside the repository are never listed, only typed. Nothing already there is overwritten. A new file opens in the editor. `POST /api/code/create` (`createRepoEntry`, `createInRoots` in `lib/git.ts`); a paired computer answers it from Code API 4 (an older one makes files in folders that exist, not folders).
+
 ### The Welcome
 
 - **Start**: *Open a repository…* (opens the Explorer and its *Find a repository* box), *Review agent changes*, *Open terminal*, and *Folders Code can use* (on the web, *Your computers*).
@@ -50,7 +54,7 @@ Panel sizes, which panels are open, the selected computer and the theme are kept
 
 ### Repository names
 
-`GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use). They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<job id>`) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*. Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`. The Explorer folds run checkouts under *Run checkouts*; the Welcome lists one only when it was used within the review window (14 days) and has a task or an origin.
+`GET /api/code/repos` answers `repos` (paths, for older clients and paired computers) and `details`: per path its `name`, `kind` (`folder`, `workspace` or `run`), `remote` (origin as `owner/repo` or a local folder's name, never the URL), `branch`, `taskTitle` and `at` (last use). They are read from git's own files without running git (`repoLabelInfo` in `lib/git.ts`). A run's checkout (`<workspace>/runs/<job id>`) is named by the task that made it, else its origin, else *Run checkout*, with the muted note *run checkout*; a folder keeps its folder name, with its origin when that differs. A computer that sends no `details` is named from the path (`lib/code-repos.ts`): a folder named by an id is a *Run checkout*. Run checkouts that look alike (same name, origin and branch) fold into one row marked ×n that opens the newest, and branch parts that are ids show as `…`. The Explorer folds run checkouts under *Agent worktrees* (closed until opened, remembered): each row shows the task, its branch and how long ago it was used; the Welcome lists one only when it was used within the review window (14 days) and has a task or an origin.
 
 ### The review
 
@@ -95,7 +99,7 @@ Below 768 CSS pixels Code's window starts with its side panel closed and the Wel
 
 The file **now** against **before the run** plus the agent changes you accepted (`GET /api/code/versions`: `start`, `agent`, `original`, `current`; accepting stores the accepted text as a blob in the repository, `POST /api/code/accept-content`):
 
-- **Green / red** with *Accept · Reject*: an agent change, exactly as the agent made it, not yet decided.
+- **Green / red** with *Accept · Reject*: an agent change, exactly as the agent made it, not yet decided. It is drawn as GitHub and Cursor draw a diff: added lines on a soft green with a tinted line number and a +, the removed lines above them on a soft red with a −, and the words that changed inside a line on a stronger tint (`githubDiff` in `components/code/review-editor.tsx`). The File view keeps only the change bars.
 - **Blue** with *Your edit · Revert*: anything else that differs, including an agent change you typed over (here, in another editor or in the terminal; git cannot tell who typed). Your edits never need review.
 - Accepted and rejected changes leave the diff; a file with nothing left shows *Reviewed — edit freely*.
 

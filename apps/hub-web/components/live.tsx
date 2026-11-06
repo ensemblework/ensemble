@@ -29,15 +29,16 @@ export const useLive = () => useContext(LiveContext);
 
 /** Which cached queries each server event makes stale. */
 const INVALIDATES: Record<string, string[][]> = {
-  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"]],
+  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"], ["notifications"]],
   page: [["page"], ["pages"], ["boards"]],
   board: [["boards"], ["pages"], ["tasks"]],
-  workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"]],
+  workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"]],
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
   deliverable: [["deliverables"], ["graph"]],
-  approval: [["approvals"], ["node-approvals"], ["shell"]],
-  decision: [["decisions"], ["shell"]],
+  // A request answered or closed anywhere also leaves the bell's Needs me (hub-api notifications/needs.ts).
+  approval: [["approvals"], ["node-approvals"], ["shell"], ["notifications"]],
+  decision: [["decisions"], ["shell"], ["notifications"]],
   "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
   notification: [["notifications"]],
   diagram: [["diagrams"]],
@@ -46,6 +47,7 @@ const INVALIDATES: Record<string, string[][]> = {
   "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
+  routine: [["routines"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],
   "undo.changed": [["shell"], ["tasks"], ["assistant-messages"], ["ensemble-replies"]],
   // You did something that can be undone: the top bar's Undo label names it.
   "undo.recorded": [["shell"]],

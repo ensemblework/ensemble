@@ -453,6 +453,18 @@ export function AssistantDock() {
   }, [setOpen]);
 
   useEffect(() => {
+    // A routine's conversation (Routines page) opens here, as one of the person's chats.
+    const onOpenConversation = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      setConversationId(id);
+      setOpen(true);
+    };
+    window.addEventListener("ensemble:assistant-open-conversation", onOpenConversation);
+    return () => window.removeEventListener("ensemble:assistant-open-conversation", onOpenConversation);
+  }, [setOpen, setConversationId]);
+
+  useEffect(() => {
     // The chord is configurable, so the shortcut host owns it and asks the dock to toggle.
     const onToggle = () => setOpen((value) => !value);
     window.addEventListener("ensemble:assistant-toggle", onToggle);

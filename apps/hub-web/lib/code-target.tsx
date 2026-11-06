@@ -8,7 +8,7 @@
  * on it unchanged.
  */
 import { createContext, useContext, useMemo } from "react";
-import { api, type ActionsResult, type CodeFile, type CodeRepos, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
+import { api, type ActionsResult, type CodeCreated, type CodeFile, type CodeRepos, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
 
 export type CodeTarget = { kind: "local" } | { kind: "device"; deviceId: string };
 
@@ -43,6 +43,8 @@ export type CodeApi = {
   restore(review: string, path: string): Promise<unknown>;
   progress(source: Source): Promise<CodeProgress>;
   tree(source: Source, path: string): Promise<CodeTree>;
+  /** A new empty file or folder (folders on the way too); a typed `/…` or `~/…` path may be outside the repository. */
+  create(source: Source, path: string, kind: "file" | "folder"): Promise<CodeCreated>;
   files(source: Source): Promise<{ files: string[]; truncated: boolean }>;
   search(source: Source, q: string, matchCase: boolean): Promise<CodeSearch>;
   commitPlan(source: Source): Promise<CommitPlan>;
@@ -75,6 +77,7 @@ const localApi: CodeApi = {
   restore: (review, path) => api.codeRestore(review, path),
   progress: (source) => api.codeProgress(source),
   tree: (source, path) => api.codeTree(source, path),
+  create: (source, path, kind) => api.codeCreate(source, path, kind),
   files: (source) => api.codeFiles(source),
   search: (source, q, matchCase) => api.codeSearch(source, q, matchCase),
   commitPlan: (source) => api.codeCommitPlan(source),
@@ -111,6 +114,17 @@ export function deviceCodeApi(deviceId: string): CodeApi {
     restore: (review, path) => post("/api/code/restore", { review, path }),
     progress: (source) => get("/api/code/progress", { ...source }),
     tree: (source, path) => get("/api/code/tree", { ...source, path }),
+    create: async (source, path, kind) => {
+      try {
+        return await post<CodeCreated>("/api/code/create", { ...source, path, kind });
+      } catch (error) {
+        // A computer on an older CLI cannot make folders yet; a new file in a folder that is there is a save of an empty file that must not exist.
+        const relativePath = !path.startsWith("/") && !path.startsWith("~");
+        if (kind !== "file" || !relativePath || !(error instanceof Error) || !/^Update Ensemble on/.test(error.message)) throw error;
+        await api.deviceCode(deviceId, "PUT", "/api/code/file", {}, { ...source, path, content: "", expectedHash: null });
+        return { ok: true, kind, path, outside: null };
+      }
+    },
     files: (source) => get("/api/code/files", { ...source }),
     search: (source, q, matchCase) => get("/api/code/search", { ...source, q, case: matchCase ? "1" : "0" }),
     commitPlan: (source) => get("/api/code/commit-plan", { ...source }),

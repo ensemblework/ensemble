@@ -17,8 +17,8 @@
  * F7 / Shift+F7 move between changes; past the last one, `onEdge` moves to the next file.
  */
 import { acceptChunk, Chunk, getChunks, getOriginalDoc, goToNextChunk, goToPreviousChunk, originalDocChangeEffect, rejectChunk, unifiedMergeView } from "@codemirror/merge";
-import { ChangeSet, Compartment, EditorState, Prec, StateEffect, StateField, Text, type Extension } from "@codemirror/state";
-import { Decoration, EditorView, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
+import { ChangeSet, Compartment, EditorState, Prec, RangeSetBuilder, StateEffect, StateField, Text, type Extension, type RangeSet } from "@codemirror/state";
+import { Decoration, EditorView, GutterMarker, gutterLineClass, gutterWidgetClass, keymap, WidgetType, type DecorationSet } from "@codemirror/view";
 import { basicSetup } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
@@ -181,6 +181,81 @@ const reviewChrome = EditorView.baseTheme({
   "&.cm-reviewFile .cm-insertedLine, &.cm-reviewFile .cm-changedLine": { backgroundColor: "transparent !important" },
 });
 
+/** A class on every gutter cell beside a line (its number, its change bar): how a diff tints its line numbers. */
+class DiffCell extends GutterMarker {
+  constructor(readonly elementClass: string) {
+    super();
+  }
+}
+const addedCell = new DiffCell("cm-diffAddCell");
+const removedCell = new DiffCell("cm-diffDelCell");
+
+function addedCells(state: EditorState): RangeSet<GutterMarker> {
+  const out = new RangeSetBuilder<GutterMarker>();
+  const doc = state.doc;
+  for (const chunk of getChunks(state)?.chunks ?? []) {
+    if (chunk.toB <= chunk.fromB) continue;
+    for (let line = doc.lineAt(Math.min(chunk.fromB, doc.length)); ; line = doc.line(line.number + 1)) {
+      out.add(line.from, line.from, addedCell);
+      if (line.number >= doc.lines || line.to + 1 >= chunk.toB) break;
+    }
+  }
+  return out.finish();
+}
+
+/**
+ * The Changes view drawn as GitHub and Cursor draw a diff: added lines on a soft green with a green
+ * line number and a +, removed lines (the original text, shown above) on a soft red with a −, and the
+ * words that changed inside a line on a stronger tint. The File view (`.cm-reviewFile`) keeps only the bars.
+ */
+const githubDiff: Extension = [
+  StateField.define<RangeSet<GutterMarker>>({
+    create: addedCells,
+    update: (cells, tr) => (tr.docChanged || tr.effects.length || tr.reconfigured ? addedCells(tr.state) : cells),
+    provide: (field) => gutterLineClass.from(field),
+  }),
+  // The removed lines are one widget (@codemirror/merge's DeletionWidget, the one built from `buildDOM`).
+  gutterWidgetClass.of((_view, widget) => ("buildDOM" in widget ? removedCell : null)),
+  EditorView.baseTheme({
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-content > .cm-line, &.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine": { position: "relative", paddingLeft: "22px" },
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-changedLine::before, &.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine::before": {
+      position: "absolute",
+      left: "6px",
+      width: "10px",
+      textAlign: "center",
+      pointerEvents: "none",
+      userSelect: "none",
+    },
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-changedLine::before": { content: '"+"' },
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine::before": { content: '"−"' },
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk": { paddingLeft: "0" },
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-changedText, &.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedText": { borderRadius: "2px" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-changedLine": { backgroundColor: "rgba(46, 160, 67, 0.15)" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-changedLine::before": { color: "#3fb950" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-changedLine .cm-changedText": { background: "rgba(46, 160, 67, 0.4)" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk": { backgroundColor: "rgba(248, 81, 73, 0.1)" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine::before": { color: "#f85149" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine .cm-deletedText": { background: "rgba(248, 81, 73, 0.4)" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-gutterElement.cm-diffAddCell": { backgroundColor: "rgba(63, 185, 80, 0.3)", color: "#e6edf3" },
+    "&dark.cm-merge-b:not(.cm-reviewFile) .cm-gutterElement.cm-diffDelCell": { backgroundColor: "rgba(248, 81, 73, 0.3)" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-changedLine": { backgroundColor: "#e6ffec" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-changedLine::before": { color: "#1a7f37" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-changedLine .cm-changedText": { background: "#abf2bc" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk": { backgroundColor: "#ffebe9" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine::before": { color: "#cf222e" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-deletedChunk .cm-deletedLine .cm-deletedText": { background: "rgba(255, 129, 130, 0.4)" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-gutterElement.cm-diffAddCell": { backgroundColor: "#d1f8d9", color: "#1f2328" },
+    "&light.cm-merge-b:not(.cm-reviewFile) .cm-gutterElement.cm-diffDelCell": { backgroundColor: "#ffcecb" },
+    // Your own edits stay blue, marker included.
+    "&.cm-merge-b:not(.cm-reviewFile) .cm-yoursLine::before": { color: "rgb(56, 132, 255)" },
+    // The bar beside a change matches its tint.
+    "&dark .cm-changedLineGutter": { background: "#3fb950" },
+    "&dark .cm-deletedLineGutter": { background: "#f85149" },
+    "&light .cm-changedLineGutter": { background: "#1a7f37" },
+    "&light .cm-deletedLineGutter": { background: "#cf222e" },
+  }),
+];
+
 export const ReviewEditor = forwardRef<ReviewEditorHandle, Props>(function ReviewEditor(props, ref) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -246,6 +321,7 @@ export const ReviewEditor = forwardRef<ReviewEditorHandle, Props>(function Revie
         compartments.mode.of(modeExtension(current.mode, current.original)),
         chunkDecorations(() => sigsRef.current, current.kind, (action, at) => void act(action, at), () => latest.current.mode === "changes" && !latest.current.readOnly),
         reviewChrome,
+        githubDiff,
         remeasureOnFontLoad,
         EditorView.lineWrapping,
         Prec.highest(

@@ -4,7 +4,7 @@
  * Rows Code's Welcome and Explorer share: an agent change to review, a repository (named by
  * `lib/code-repos.ts`, never by a folder id), and a section that folds open and closed.
  */
-import { ChevronRight, FolderGit2, GitBranch, Laptop } from "lucide-react";
+import { Bot, ChevronRight, FolderGit2, GitBranch, Laptop } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { cx } from "@/components/ui";
@@ -55,22 +55,27 @@ export function ReviewItem({ review, repo, href, where, compact = false }: { rev
 export function RepoItem({ repo, href, where, dense = false }: { repo: RepoView; href: string; where?: string | null; dense?: boolean }) {
   const branch = shortBranch(repo.branch);
   const second = repoSecond(repo, where);
+  const run = repo.kind === "run";
+  const age = run && repo.at ? relative(repo.at) : "";
   return (
     <Link
       href={href}
-      title={repo.kind === "run" ? repo.name : repo.path}
-      className={cx("flex min-w-0 items-center gap-2 rounded-md px-2 hover:bg-hover focus-visible:bg-hover", dense ? "py-1" : "py-1.5")}
+      title={run ? `${repo.name}${branch ? ` · ${branch}` : ""}` : repo.path}
+      className={cx("group/repo flex min-w-0 items-center gap-2 rounded-md px-1.5 hover:bg-hover focus-visible:bg-hover", dense ? "py-1" : "py-1.5")}
     >
-      <FolderGit2 size={14} className="shrink-0 text-muted" />
+      <span className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors group-hover/repo:text-ink", run ? "bg-transparent" : "bg-raised")} aria-hidden>
+        {run ? <Bot size={12} /> : <FolderGit2 size={13} />}
+      </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-ink">{repo.name}</span>
+        <span className="block truncate leading-tight text-ink">{repo.name}</span>
         {second ? (
-          <span className="flex min-w-0 items-center gap-1 truncate text-[11.5px] text-muted">
-            {branch && repo.kind !== "run" ? <GitBranch size={10} className="shrink-0" /> : null}
-            <span className="truncate">{second}</span>
+          <span className="flex min-w-0 items-center gap-1 truncate text-[11px] leading-tight text-muted">
+            {branch ? <GitBranch size={10} className="shrink-0 text-faint" /> : null}
+            <span className="truncate">{run && branch ? [branch, repo.note?.replace(/^run checkout( · )?/, "") || null].filter(Boolean).join(" · ") : second}</span>
           </span>
         ) : null}
       </span>
+      {age ? <span className="shrink-0 text-[10.5px] tabular-nums text-faint">{age}</span> : null}
       {repo.others.length ? (
         <span className="shrink-0 rounded bg-raised px-1 text-[10.5px] tabular-nums text-muted" title={`${plural(repo.others.length + 1, "checkout")} like this one; this is the newest`}>
           ×{repo.others.length + 1}
@@ -114,11 +119,15 @@ export function RepoList({ repos, hrefOf, empty }: { repos: RepoView[]; hrefOf: 
         <RepoItem key={repo.path} repo={repo} href={hrefOf(repo.path)} dense />
       ))}
       {runs.length ? (
-        <Fold title="Run checkouts" count={runCount} open={false}>
-          {runs.map((repo) => (
-            <RepoItem key={repo.path} repo={repo} href={hrefOf(repo.path)} dense />
-          ))}
-        </Fold>
+        <div className="pt-1">
+          <Fold title="Agent worktrees" count={runCount} open={false} persist="agent-worktrees" icon={<Bot size={11} className="shrink-0" />}>
+            <div className="ml-2 space-y-0.5 border-l border-line pl-1">
+              {runs.map((repo) => (
+                <RepoItem key={repo.path} repo={repo} href={hrefOf(repo.path)} dense />
+              ))}
+            </div>
+          </Fold>
+        </div>
       ) : null}
     </div>
   );

@@ -165,7 +165,7 @@ export async function noticeAsked(app: Pick<FastifyInstance, "prisma">, row: Age
   const card = detailOf(row).nodeTool;
   const origin = nodeWebOrigin();
   const url = origin ? `${origin}/r/${roomId}${cardId ? `#m-${cardId}` : ""}` : "/needs-me";
-  await app.prisma.notification.create({ data: { userId: row.userId, kind: "decision", title: row.title.slice(0, 200), body: card?.label ?? "", urgent: true, url } });
+  await app.prisma.notification.create({ data: { userId: row.userId, kind: "decision", title: row.title.slice(0, 200), body: card?.label ?? "", subject: `decision:${row.id}`, urgent: true, url } });
   sseHub.publish(row.userId, { event: "decision", data: { id: row.id, status: "pending", title: row.title, source: "ensemble", runnerAccountId: null } });
   await appendLedger({ userId: row.userId, actor: "agent", action: "node.tool.asked", payload: { nodeId: card?.nodeId ?? null, deviceId: card?.deviceId ?? null, capability: card?.capability ?? null, target: card?.label ?? null } });
 }

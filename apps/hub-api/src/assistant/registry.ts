@@ -33,6 +33,7 @@ import { docusignTools } from "./tools/docusign.js";
 import { jiraTools } from "./tools/jira.js";
 import { pageTools } from "./tools/pages.js";
 import { meetingTools } from "./tools/meetings.js";
+import { routineTools } from "./tools/routines.js";
 import { calendarTools } from "./tools/calendar.js";
 import { deskTools } from "./tools/desk.js";
 import { importTools } from "./tools/imports.js";
@@ -82,6 +83,7 @@ const ALL: readonly AnyHubTool[] = [
   ...plotTools,
   ...pageTools,
   ...meetingTools,
+  ...routineTools,
   ...calendarTools,
   ...deskTools,
   ...importTools,
