@@ -23,6 +23,7 @@ const EXACT = new Set([
   "/code/review",
   "/metrics",
   "/meetings",
+  "/routines",
   "/recap",
   "/completed",
   "/trash",
