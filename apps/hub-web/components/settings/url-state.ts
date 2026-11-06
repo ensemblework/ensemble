@@ -49,6 +49,7 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   editors: "connections",
   devices: "connections",
   brief: "notifications",
+  routines: "notifications",
   nudges: "notifications",
   reminders: "notifications",
   capture: "notifications",

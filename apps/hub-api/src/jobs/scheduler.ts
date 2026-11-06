@@ -1,7 +1,7 @@
 /**
  * In-process scheduler (docs/05 §2): the fetch times each person set (paused
  * unless ENSEMBLE_SCHEDULED_FETCH=on), the Today calendar's 30-minute refresh
- * (calendar/sync.ts), a daily retention pass, expiry of
+ * (calendar/sync.ts), the assistant's routines that are due (routines/service.ts), a daily retention pass, expiry of
  * editor decisions nobody answered, and an hourly sweep of blobs nothing uses (jobs/blob-sweep.ts).
  *
  * One minute tick. A slot runs once per user per local day, recorded in
@@ -22,6 +22,7 @@ import { purgeInteractionEvents } from "../analytics/telemetry.js";
 import { claimSlot } from "./claim.js";
 import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
+import { runDueRoutines } from "../routines/service.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -90,6 +91,7 @@ async function tick(app: FastifyInstance): Promise<void> {
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));
+    void runDueRoutines(app, userId, settings.routines.enabled).catch((error: unknown) => app.log.error({ err: error }, "routines failed"));
     if (scheduledFetchDue(settings, now.time)) {
       if (await claimSchedule(app, userId, `fetch@${now.date}T${now.time}`)) {
         app.log.info({ userId, at: now }, "scheduled fetch");

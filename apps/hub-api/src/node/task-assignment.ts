@@ -36,7 +36,7 @@ export function crewLead<T extends Pick<NodeAgent, "id" | "role">>(room: Pick<No
 
 /** `GET /api/node/assignable`: the person's own nodes and crews a task can be given to. */
 export async function assignable(prisma: PrismaClient, accountId: string) {
-  const nodes = await prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" }, select: { id: true, slug: true, name: true, role: true, status: true } });
+  const nodes = await prisma.nodeAgent.findMany({ where: { userId: accountId, parentNodeId: null }, orderBy: { createdAt: "asc" }, select: { id: true, slug: true, name: true, role: true, status: true, avatar: true } });
   if (!nodes.length) return { nodes: [], crews: [] };
   const crews = await prisma.nodeRoom.findMany({
     where: { userId: accountId, kind: "crew", archivedAt: null },
@@ -45,7 +45,8 @@ export async function assignable(prisma: PrismaClient, accountId: string) {
   });
   const byId = new Map(nodes.map((node) => [node.id, node]));
   return {
-    nodes: nodes.map(({ id, slug, name, role }) => ({ id, slug, name, role })),
+    // Each node's face as the Node app draws it (`{ shape, color, eyes }`), and whether it is paused.
+    nodes: nodes.map(({ id, slug, name, role, avatar, status }) => ({ id, slug, name, role, avatar: avatar && typeof avatar === "object" && !Array.isArray(avatar) ? avatar : null, paused: status === "paused" })),
     crews: crews.map((room) => {
       const lead = crewLead(room, room.members.map((row) => byId.get(row.nodeId!)).filter((node): node is (typeof nodes)[number] => Boolean(node)));
       return { roomId: room.id, title: room.title, lead: lead ? { id: lead.id, slug: lead.slug, name: lead.name } : null, members: room.members.length };

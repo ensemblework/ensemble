@@ -805,6 +805,23 @@ export function MorningBriefSection({ settings, patch }: Props) {
   );
 }
 
+/** Routines (docs/02 §3.10): off, none run and the Routines page leaves the sidebar. */
+export function RoutinesSection({ settings, patch }: Props) {
+  const on = settings.routines?.enabled !== false;
+  return (
+    <SectionCard title="Routines" description="Work the assistant does on a schedule, with your apps and your settings. Each result arrives in the bell.">
+      <SettingRow title="Run my routines" description={on ? "Manage them on the Routines page." : "Off: none run, and Routines leaves the sidebar."}>
+        <Toggle label="Routines" checked={on} onChange={(enabled) => patch({ routines: { enabled } })} />
+      </SettingRow>
+      {on ? (
+        <Link href="/routines" className="mt-2 inline-flex items-center gap-1 text-[13px] text-accent hover:underline">
+          Open Routines <ChevronRight size={13} />
+        </Link>
+      ) : null}
+    </SectionCard>
+  );
+}
+
 export function StaleSection({ settings, patch }: Props) {
   return (
     <SectionCard

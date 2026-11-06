@@ -130,7 +130,7 @@ test("the owner field takes only my own nodes and crews, in my space and in a sp
 
   const mine = json(await akash.inject({ method: "GET", url: "/api/node/assignable" }));
   assert.deepEqual(mine.nodes.map((row: { slug: string }) => row.slug), ["assistant", "manager", "tester"]);
-  assert.deepEqual(Object.keys(mine.nodes[0]).sort(), ["id", "name", "role", "slug"]);
+  assert.deepEqual(Object.keys(mine.nodes[0]).sort(), ["avatar", "id", "name", "paused", "role", "slug"]);
   assert.deepEqual(mine.crews, [{ roomId: crew.id, title: "Software team", lead: { id: mine.nodes[1].id, slug: "manager", name: mine.nodes[1].name }, members: 2 }]);
   assert.deepEqual(json(await carol.inject({ method: "GET", url: "/api/node/assignable" })), { nodes: [], crews: [] }, "no nodes, nothing to offer");
   assert.ok(!JSON.stringify(json(await ben.inject({ method: "GET", url: "/api/node/assignable" }))).includes(assistant.id), "never another person's nodes");

@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { hostExecutable, isWithin } from "../workspace/policy.js";
 import { dropWhere, readLru, remember } from "./bounded.js";
@@ -402,6 +402,56 @@ export async function writeRepoBytes(repo: string, path: string, bytes: Buffer):
 export async function removeRepoFile(repo: string, path: string): Promise<void> {
   const target = await realInside(repo, path, true);
   await rm(target, { force: true });
+}
+
+/**
+ * A new empty file or folder at `target` (absolute), with the folders it needs. The deepest folder that
+ * is there already must really be somewhere `allowed` says (a link on the way cannot lead out), git's
+ * own files are never made, and what is already there is never overwritten (409).
+ */
+async function createAt(target: string, kind: "file" | "folder", allowed: (real: string) => boolean): Promise<void> {
+  if (target.split(/[\\/]/).some((part) => part.toLowerCase().replace(/[. ]+$/, "") === ".git")) throw new GitError("Git's own files are not made here.", 403);
+  const name = basename(target);
+  if (!name || name === "." || name === "..") throw new GitError("Give it a name.", 422);
+  const missing: string[] = [];
+  let existing = dirname(target);
+  for (;;) {
+    const real = await realpath(existing).catch(() => null);
+    if (real) {
+      existing = real;
+      break;
+    }
+    missing.unshift(basename(existing));
+    const up = dirname(existing);
+    if (up === existing) throw new GitError("That folder does not exist.", 404);
+    existing = up;
+  }
+  if (!allowed(existing)) throw new GitError("That place is outside the workspace and the folders Code can use (Settings).", 403);
+  if (!(await stat(existing)).isDirectory()) throw new GitError("That is not a folder.", 422);
+  const parent = join(existing, ...missing);
+  if (missing.length) await mkdir(parent, { recursive: true });
+  try {
+    if (kind === "folder") await mkdir(join(parent, name));
+    else await writeFile(join(parent, name), "", { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new GitError(`${name} is already there.`, 409);
+    throw error;
+  }
+}
+
+/** A new empty file or folder in the repository, at a path from its top (`src/new.ts`). */
+export async function createRepoEntry(repo: string, path: string, kind: "file" | "folder"): Promise<void> {
+  const realRepo = await realpath(repo);
+  await createAt(insideRepo(repo, path), kind, (real) => isWithin(realRepo, real, true));
+}
+
+/** A new empty file or folder at a full path the person typed, inside one of `roots` (the workspace, the folders Code can use). */
+export async function createInRoots(roots: string[], absolute: string, kind: "file" | "folder"): Promise<string> {
+  if (!isAbsolute(absolute)) throw new GitError("Type a full path, starting with / or ~/.", 422);
+  const target = resolve(absolute);
+  const allowed = (await Promise.all(roots.filter(Boolean).map((root) => realpath(root).catch(() => null)))).filter((root): root is string => Boolean(root));
+  await createAt(target, kind, (real) => allowed.some((root) => isWithin(root, real, true)));
+  return target;
 }
 
 export type RepoEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null };

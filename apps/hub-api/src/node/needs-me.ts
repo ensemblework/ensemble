@@ -13,6 +13,7 @@
 import type { AgentDecision, Prisma, PrismaClient } from "@prisma/client";
 import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
 import { nodeWebOrigin } from "../lib/node-origin.js";
+import { loadSettings } from "../lib/settings.js";
 import { NODE_TOOL_DECISION } from "./device-tool-decisions.js";
 import { RUN_DECISION_CARD } from "./run-decisions.js";
 
@@ -30,6 +31,30 @@ const text = (value: unknown): string | null => (typeof value === "string" && va
 export function sessionCard(data: unknown): boolean {
   const row = record(data);
   return SESSION_CARD_TYPES.has(String(row.type ?? "")) && Boolean(text(row.jobId));
+}
+
+/**
+ * Whether the Hub shows what this account's nodes' sessions ask (Node's setting `node.needsInEnsemble`,
+ * on unless turned off). Off: those requests are answered in the Node chat only.
+ */
+export async function nodeNeedsInEnsemble(prisma: PrismaClient, userId: string): Promise<boolean> {
+  const settings = await loadSettings(prisma, userId).catch(() => null);
+  return settings?.node?.needsInEnsemble !== false;
+}
+
+/** Of these runs (job ids), the ones a node started. */
+export async function nodeRunJobs(prisma: PrismaClient, jobIds: Array<string | null | undefined>): Promise<Set<string>> {
+  const ids = [...new Set(jobIds.filter((id): id is string => Boolean(id)))];
+  if (!ids.length) return new Set();
+  const rows = await prisma.nodeRun.findMany({ where: { jobId: { in: ids } }, select: { jobId: true } });
+  return new Set(rows.map((row) => row.jobId));
+}
+
+/** The Hub's requests without those of node runs, when the account keeps them on Node. */
+export async function withoutHiddenNodeRequests<T extends { sessionId: string | null }>(prisma: PrismaClient, userId: string, rows: T[]): Promise<T[]> {
+  if (!rows.length || (await nodeNeedsInEnsemble(prisma, userId))) return rows;
+  const node = await nodeRunJobs(prisma, rows.map((row) => row.sessionId));
+  return rows.filter((row) => !row.sessionId || !node.has(row.sessionId));
 }
 
 /** The Hub's Needs me leaves out a node's own computer-tool questions (node/device-tool-decisions.ts). */

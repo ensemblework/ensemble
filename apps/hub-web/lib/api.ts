@@ -249,8 +249,10 @@ export type Owner = "me" | "agent" | "unassigned" | "node";
 export type NodeAssignee = { kind: "node" | "crew"; id: string; name: string; handle: string | null; accountId: string };
 
 /** The person's own Ensemble Node nodes and crews a task's owner field offers (GET /api/node/assignable). */
+/** A node's face as Ensemble Node draws it. Any part may be missing on an older node: the face falls back to the default. */
+export type NodeLook = { shape?: string; color?: string; eyes?: string };
 export type NodeAssignable = {
-  nodes: Array<{ id: string; slug: string; name: string; role: string }>;
+  nodes: Array<{ id: string; slug: string; name: string; role: string; avatar?: NodeLook | null; paused?: boolean }>;
   crews: Array<{ roomId: string; title: string; lead: { id: string; slug: string; name: string } | null; members: number }>;
 };
 export type Complexity = "easy" | "medium" | "high" | "max";
@@ -979,6 +981,8 @@ export type CodeProgress = { files: Array<{ path: string; total: number; pending
 export type CodeTreeEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null; secret?: boolean };
 export type CodeTree = { path: string; entries: CodeTreeEntry[]; truncated: boolean; hidden?: number };
 export type CodeSearch = { results: Array<{ path: string; line: number; text: string }>; truncated: boolean };
+/** A new file or folder from the explorer: `path` from the repository's top, or `outside` (`~/…`) when typed elsewhere. */
+export type CodeCreated = { ok: boolean; kind: "file" | "folder"; path: string | null; outside: string | null };
 
 /** A file as the Code tab opens it. From a paired computer: `readOnly` says why it cannot be edited from the web. */
 export type CodeFile = { path: string; content: string; readOnly?: string; binary?: boolean; truncated?: boolean };
@@ -1704,6 +1708,7 @@ export const api = bindClient({
   codeRestore: (review: string, path: string) => post("/api/code/restore", { review, path }),
   codeProgress: (source: { review?: string; repo?: string }) => get<CodeProgress>(`/api/code/progress${qs(source)}`),
   codeTree: (source: { review?: string; repo?: string }, path: string) => get<CodeTree>(`/api/code/tree${qs({ ...source, path })}`),
+  codeCreate: (source: { review?: string; repo?: string }, path: string, kind: "file" | "folder") => post<CodeCreated>("/api/code/create", { ...source, path, kind }),
   codeFiles: (source: { review?: string; repo?: string }) => get<{ files: string[]; truncated: boolean }>(`/api/code/files${qs(source)}`),
   codeCommitPlan: (source: { review?: string; repo?: string }) => get<CommitPlan>(`/api/code/commit-plan${qs(source)}`),
   codeCommitPaths: (source: { review?: string; repo?: string }, paths: string[], message: string) => post<{ ok: boolean; commit: string; branch: string }>("/api/code/commit-paths", { ...source, paths, message }),
@@ -1829,6 +1834,11 @@ export const api = bindClient({
   deleteGithubGit: () => del<void>(`/api/secrets/github`),
 
   notifications: () => get<{ notifications: HubNotification[] }>("/api/notifications"),
+  routines: () => get<{ routines: Routine[]; enabled: boolean; timezone: string }>("/api/routines"),
+  createRoutine: (body: { title: string; instruction: string; cadence: RoutineCadence; paused?: boolean }) => post<{ routine: Routine }>("/api/routines", body),
+  updateRoutine: (id: string, body: { title?: string; instruction?: string; cadence?: RoutineCadence; status?: "active" | "paused" }) => patch<{ routine: Routine }>(`/api/routines/${id}`, body),
+  deleteRoutine: (id: string) => del<void>(`/api/routines/${id}`),
+  runRoutine: (id: string) => post<{ routine: Routine }>(`/api/routines/${id}/run`),
   readNotification: (id: string) => post<{ updated: number }>(`/api/notifications/${id}/read`),
   readNotifications: (ids?: string[]) => post<{ updated: number }>("/api/notifications/read", ids ? { ids } : undefined),
   capture: (text: string) =>
@@ -2263,6 +2273,27 @@ export type DeskLive = {
 };
 
 export type AskSource = { id: string; kind: string; label: string; excerpt: string; url: string; path: string };
+/** A schedule in words (hub-api routines/service.ts `Cadence`); `cron` wins when set. */
+export type RoutineCadence = { every?: "hour" | "day" | "weekday" | "week" | "month"; time?: string; days?: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat">; dayOfMonth?: number; cron?: string };
+/** Work the assistant does on a schedule (docs/02 §3.10). */
+export type Routine = {
+  id: string;
+  title: string;
+  instruction: string;
+  cron: string;
+  timezone: string;
+  /** "Weekdays at 09:00". */
+  when: string;
+  status: "active" | "paused";
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastStatus: "running" | "ok" | "failed" | null;
+  lastSummary: string | null;
+  conversationId: string | null;
+  runCount: number;
+  createdAt: string;
+};
+
 export type HubNotification = {
   id: string;
   kind: string;

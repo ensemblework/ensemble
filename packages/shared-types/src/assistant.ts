@@ -418,6 +418,12 @@ export const MorningBriefSettings = z.object({
 });
 export type MorningBriefSettings = z.infer<typeof MorningBriefSettings>;
 
+/** Routines: work the assistant does on a schedule. Off, none run and the Routines page is hidden. */
+export const RoutineSettings = z.object({
+  enabled: z.boolean().default(true),
+});
+export type RoutineSettings = z.infer<typeof RoutineSettings>;
+
 /** How long an open item can sit untouched before Ensemble asks if it still matters. */
 export const StaleNudgeSettings = z.object({
   enabled: z.boolean().default(true),
@@ -463,6 +469,12 @@ export const SharingSettings = z.object({
 export const NodeSettings = z.object({
   /** Ask once before a node opens or captures a new website in the browser on the owner's computer (off: public pages need no answer). */
   askBeforeBrowsing: z.boolean().default(false),
+  /**
+   * What a node's agent sessions ask (questions, permissions, sign-ins) also shows in Ensemble's Needs me
+   * and bell, where it can be answered too (on unless turned off in Node's settings). Off: it is answered
+   * in the Node chat only. Either way, what is answered or closed anywhere leaves everywhere.
+   */
+  needsInEnsemble: z.boolean().default(true),
 });
 export type NodeSettings = z.infer<typeof NodeSettings>;
 
@@ -500,6 +512,7 @@ export const Settings = z.object({
   fetch: FetchSettings.default({}),
   quietHours: QuietHours.default({}),
   morningBrief: MorningBriefSettings.default({}),
+  routines: RoutineSettings.default({}),
   staleNudge: StaleNudgeSettings.default({}),
   connections: z.record(ConnectorId, ConnectionSettings).default({}),
   /** Per connector-store entry (e.g. google_workspace), which products are switched on. Missing keys use the catalog default. */

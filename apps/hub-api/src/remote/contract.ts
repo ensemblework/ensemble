@@ -449,13 +449,15 @@ export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: R
   { method: "POST", path: /^\/api\/code\/scm\/(commit|push|pull)$/, write: true, slow: true },
   { method: "POST", path: /^\/api\/code\/(commit-paths|pull-request)$/, write: true, slow: true, since: 2 },
   { method: "PUT", path: /^\/api\/code\/file$/, write: true },
+  { method: "POST", path: /^\/api\/code\/create$/, write: true, since: 4 },
 ];
 
 /**
  * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
- * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request).
+ * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request), 3 a
+ * node's files, 4 making a new file or folder from the explorer.
  */
-export const CODE_API = 3;
+export const CODE_API = 4;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

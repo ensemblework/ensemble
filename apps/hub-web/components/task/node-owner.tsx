@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Bot, Users } from "lucide-react";
 import { api, type NodeAssignable, type TaskRecord } from "@/lib/api";
 import { NO_NODES, nodeOwnerText } from "@/lib/node-owner";
-import { MenuItem } from "../ui";
+import { cx } from "../ui";
+import { NodeFace } from "./node-face";
 
 /** My Ensemble Node nodes and crews for a task's owner field. Ensemble on a computer has no Node: a refusal there is none. */
 export function useNodeAssignable(enabled = true): NodeAssignable {
@@ -30,10 +31,18 @@ export function NodeOwnerItems({ mine, task, onPick }: { mine: NodeAssignable; t
           <div className="mx-2 my-1 border-t border-line" />
           <div className={GROUP}>Nodes</div>
           {mine.nodes.map((node) => (
-            <MenuItem key={node.id} active={held && task.assigneeNodeId === node.id} hint={node.role} onClick={() => onPick({ owner: "node", assigneeNodeId: node.id, assigneeRoomId: null })}>
-              <Bot size={13} aria-hidden />
-              {node.name}
-            </MenuItem>
+            // A long name or role ends in an ellipsis inside the menu; the full name is on hover.
+            <button
+              key={node.id}
+              type="button"
+              title={`${node.name} · @${node.slug}${node.paused ? " · paused" : ""}`}
+              onClick={() => onPick({ owner: "node", assigneeNodeId: node.id, assigneeRoomId: null })}
+              className={cx("node-face-row row-tile flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px]", held && task.assigneeNodeId === node.id && "bg-hover")}
+            >
+              <NodeFace look={node.avatar} paused={node.paused} size={18} />
+              <span className="min-w-0 flex-1 truncate">{node.name}</span>
+              <span className="min-w-0 max-w-[45%] shrink truncate text-2xs text-faint">{node.role}</span>
+            </button>
           ))}
         </div>
       ) : null}
@@ -42,10 +51,19 @@ export function NodeOwnerItems({ mine, task, onPick }: { mine: NodeAssignable; t
           <div className="mx-2 my-1 border-t border-line" />
           <div className={GROUP}>Crews</div>
           {mine.crews.map((crew) => (
-            <MenuItem key={crew.roomId} active={held && task.assigneeRoomId === crew.roomId} hint={crew.lead ? `@${crew.lead.slug} leads` : `${crew.members} nodes`} onClick={() => onPick({ owner: "node", assigneeNodeId: null, assigneeRoomId: crew.roomId })}>
-              <Users size={13} aria-hidden />
-              {crew.title}
-            </MenuItem>
+            <button
+              key={crew.roomId}
+              type="button"
+              title={crew.title}
+              onClick={() => onPick({ owner: "node", assigneeNodeId: null, assigneeRoomId: crew.roomId })}
+              className={cx("row-tile flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px]", held && task.assigneeRoomId === crew.roomId && "bg-hover")}
+            >
+              <span className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full bg-ink/10 text-muted" aria-hidden>
+                <Users size={11} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">{crew.title}</span>
+              <span className="min-w-0 max-w-[45%] shrink truncate text-2xs text-faint">{crew.lead ? `@${crew.lead.slug} leads` : `${crew.members} nodes`}</span>
+            </button>
           ))}
         </div>
       ) : null}
@@ -57,9 +75,12 @@ export function NodeOwnerItems({ mine, task, onPick }: { mine: NodeAssignable; t
 export function NodeOwnerMark({ task }: { task: Pick<TaskRecord, "owner" | "assigneeNodeId" | "assigneeRoomId" | "nodeAssignee"> }) {
   const text = nodeOwnerText(task);
   const crew = Boolean(task.assigneeRoomId);
+  // My own node shows its face; another person's, or a crew, its icon.
+  const mine = useNodeAssignable(!crew && Boolean(task.assigneeNodeId));
+  const node = crew ? undefined : mine.nodes.find((row) => row.id === task.assigneeNodeId);
   return (
     <span title={crew ? `The crew ${text} does it` : `${text} does it`} className="inline-flex h-[18px] max-w-[140px] items-center gap-1 rounded-full bg-ink/10 px-1.5 text-[11px] font-medium leading-none text-ink">
-      {crew ? <Users size={11} aria-hidden /> : <Bot size={11} aria-hidden />}
+      {crew ? <Users size={11} aria-hidden /> : node ? <NodeFace look={node.avatar} paused={node.paused} size={13} /> : <Bot size={11} aria-hidden />}
       <span className="truncate">{text}</span>
     </span>
   );

@@ -16,6 +16,8 @@ import { requireHostAccess } from "../lib/hosted-access.js";
 import {
   allowedRepo,
   changedFiles,
+  createInRoots,
+  createRepoEntry,
   discoverRepos,
   fileDiff,
   git,
@@ -581,6 +583,31 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     progressCache.clear();
     await appendLedger({ userId: request.userId, actor: "me", action: "code.edit", payload: { repo: source.repo, path: body.path } });
     return { ok: true, hash: hashOf(bytes) };
+  });
+
+  /**
+   * A new empty file or folder, as an editor's explorer makes one: at a path from the repository's top
+   * (folders on the way are made too), or at a full path the person typed (`/…`, `~/…`) inside the
+   * workspace or a folder Code can use. Nothing already there is overwritten (409), nothing is asked.
+   */
+  app.post("/api/code/create", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), path: z.string().trim().min(1).max(1000), kind: z.enum(["file", "folder"]) })
+      .parse(request.body);
+    const typed = body.path.startsWith("~") || body.path.startsWith("/");
+    if (typed) {
+      const made = await createInRoots(await roots(request.userId), expandHome(body.path), body.kind);
+      const source = body.repo || body.review ? await resolveSource(request, body).catch(() => null) : null;
+      const inRepo = source && within(source.repo, made) ? relative(source.repo, made).split(sep).join("/") : null;
+      await appendLedger({ userId: request.userId, actor: "me", action: "code.create", payload: { path: made, kind: body.kind } });
+      return { ok: true, kind: body.kind, path: inRepo, outside: inRepo ? null : made.replace(expandHome("~"), "~") };
+    }
+    const source = await resolveSource(request, body);
+    const path = body.path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    await createRepoEntry(source.repo, path, body.kind);
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.create", payload: { repo: source.repo, path, kind: body.kind } });
+    return { ok: true, kind: body.kind, path, outside: null };
   });
 
   // ── source control ──────────────────────────────────────────────────────

@@ -15,14 +15,20 @@ export function useDiagramTheme(): DiagramTheme {
   return theme;
 }
 
+/** The size a glyph's shape is drawn at before it is scaled down: shapes keep their proportions (a cylinder's rims) at any glyph size. */
+const GLYPH_W = 60;
+const GLYPH_H = Math.round(GLYPH_W * 0.72);
+
 /** Toolbar glyph. Kept out of the xyflow module so the palette does not load the canvas. */
 export function ShapeGlyph({ shape, size = 28 }: { shape: ShapeId; size?: number }) {
   const theme = useDiagramTheme();
-  const geometry = shapeGeometry(shape, size, Math.round(size * 0.72));
+  const geometry = shapeGeometry(shape, GLYPH_W, GLYPH_H);
   const paint = paintFor(shape, null, theme);
+  // Room around the shape for its stroke, so no edge is cut off.
+  const pad = 2;
   return (
-    <svg width={size} height={Math.round(size * 0.72)} aria-hidden className="shrink-0">
-      <path d={geometry.outline} fill={geometry.filled ? paint.fill : "none"} stroke={paint.stroke} strokeWidth={1.25} strokeLinejoin="round" />
+    <svg width={size} height={Math.round(size * 0.72)} viewBox={`${-pad} ${-pad} ${GLYPH_W + pad * 2} ${GLYPH_H + pad * 2}`} aria-hidden className="shrink-0">
+      <path d={geometry.outline} fill={geometry.filled ? paint.fill : "none"} stroke={paint.stroke} strokeWidth={1.25} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
     </svg>
   );
 }

@@ -74,6 +74,7 @@ import { fileImportRoutes } from "./routes/file-imports.js";
 import { peopleIdentityRoutes } from "./routes/people-identity.js";
 import { projectLinkRoutes } from "./routes/project-links.js";
 import { meetingNoteRoutes } from "./routes/meeting-notes.js";
+import { routineRoutes } from "./routes/routines.js";
 import { telemetryRoutes } from "./analytics/telemetry.js";
 import { instrument } from "./analytics/prometheus.js";
 import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
@@ -297,6 +298,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     peopleIdentityRoutes,
     projectLinkRoutes,
     meetingNoteRoutes,
+    routineRoutes,
     telemetryRoutes,
   ]) {
     if (routes === authOAuthRoutes) await app.register(authOAuthRoutes, options.authOAuth ?? {});

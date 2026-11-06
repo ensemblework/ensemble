@@ -66,7 +66,7 @@ import { accountLimits } from "../lib/limits.js";
 import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
 import { assignable, registerTaskAssignment } from "./task-assignment.js";
-import { sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
+import { nodeNeedsInEnsemble, sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
 import { answerFromChat } from "./chat-answers.js";
 import { FileQuote, registerFileWorkspace, validateFileQuotes } from "./file-workspace.js";
 
@@ -271,6 +271,8 @@ export function listedOutsideNode(row: { data: unknown }): boolean {
  * Hub's Needs me; otherwise the cards the CLI's Node tab lists.
  */
 export async function approvalCards(prisma: PrismaClient, accountId: string, options: { hub?: boolean } = {}) {
+  // The account keeps its nodes' requests on Node: the Hub lists none of them (node/needs-me.ts).
+  if (options.hub && !(await nodeNeedsInEnsemble(prisma, accountId))) return [];
   const rows = (await pendingApprovals(prisma, accountId)).filter((row) => (options.hub ? sessionCard(row.data) : listedOutsideNode(row)));
   const [nodes, rooms, origins] = await Promise.all([
     prisma.nodeAgent.findMany({ where: { id: { in: rows.map((row) => row.authorNodeId).filter((id): id is string => Boolean(id)) } } }),
@@ -288,6 +290,7 @@ export async function approvalCards(prisma: PrismaClient, accountId: string, opt
 
 /** How many node cards wait in the Hub's Needs me (`GET /api/shell`): the same rows as `GET /api/node/approvals`. */
 export async function hubApprovalCount(prisma: PrismaClient, accountId: string): Promise<number> {
+  if (!(await nodeNeedsInEnsemble(prisma, accountId))) return 0;
   return (await pendingApprovals(prisma, accountId)).filter((row) => sessionCard(row.data)).length;
 }
 
