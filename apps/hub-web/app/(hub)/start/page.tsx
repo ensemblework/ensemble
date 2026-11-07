@@ -9,6 +9,8 @@ import { useToast } from "@/components/toast";
 import { TemplateList, TemplateStage } from "@/components/onboarding/template-picker";
 import { ROLES, roleFromProfession, type Role } from "@/components/onboarding/roles";
 
+// The same answers as Settings → Account; the avatar picker opens on the matching faces.
+const GENDERS = ["Woman", "Man", "Non-binary"];
 const HEARD = ["A friend or colleague", "X", "LinkedIn", "Search", "YouTube", "Somewhere else"];
 
 export default function StartPage() {
@@ -23,6 +25,7 @@ export default function StartPage() {
   const [role, setRole] = useState<Role | null>(null);
   const [org, setOrg] = useState("");
   const [heard, setHeard] = useState("");
+  const [gender, setGender] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [seeded, setSeeded] = useState(false);
 
@@ -32,6 +35,7 @@ export default function StartPage() {
     setName(me.data.user.name && me.data.user.name !== me.data.user.email ? me.data.user.name : "");
     setOrg(me.data.user.profile?.organization ?? "");
     setHeard(me.data.user.profile?.heardFrom ?? "");
+    setGender(me.data.user.profile?.gender ?? null);
     setRole(roleFromProfession(me.data.user.profile?.profession));
   }, [me.data, seeded]);
 
@@ -49,7 +53,7 @@ export default function StartPage() {
     mutationFn: () =>
       api.updateProfile({
         name: name.trim(),
-        gender: me.data?.user.profile?.gender ?? null,
+        gender,
         profession: roleInfo?.profession ?? null,
         organization: org.trim() || null,
         heardFrom: heard || null,
@@ -156,6 +160,18 @@ export default function StartPage() {
             </fieldset>
             {profileDone ? null : (
               <>
+                <div className="onboard-field">
+                  <span>
+                    You are <em>optional</em>
+                  </span>
+                  <div className="onboard-chips" role="group" aria-label="Gender">
+                    {GENDERS.map((item) => (
+                      <button key={item} type="button" aria-pressed={gender === item} onClick={() => setGender(gender === item ? null : item)}>
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <label className="onboard-field">
                   <span>
                     {roleInfo?.org ?? "Where you work or study"} <em>optional</em>
