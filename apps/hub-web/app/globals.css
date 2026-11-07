@@ -271,6 +271,20 @@ select:focus-visible {
   border-color: rgb(var(--accent-rgb));
   box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
 }
+/* One focus edge per control, and it is the outer one (AGENTS.md, "Focus highlight"). A control that sits
+   inside a box never draws a ring of its own: a transparent control, or anything inside .compound-field or
+   one of the named composite boxes. The box draws the edge. */
+:is(input:not([type="checkbox"], [type="radio"]), textarea, select):is(.bg-transparent, .outline-none):not(.border, .field):is(:focus, :focus-visible),
+:is(.compound-field, .dp-type, .cm-search, .picker-search, .remote-link-field, .transcript-search, .meeting-search, .tile-gallery-search, .term-line, .otp-field) :is(input, textarea, select):is(:focus, :focus-visible) {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+}
+.compound-field:focus-within,
+:is(label, div, span, form):is(.border, .field):not(:has(> svg.lucide-search)):has(> :is(input:not([type="checkbox"], [type="radio"]), textarea):is(.bg-transparent, .outline-none):not(.border, .field):focus-visible) {
+  border-color: rgb(var(--accent-rgb)) !important;
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb)) !important;
+}
 #command-list [role="option"] {
   scroll-margin-block: 8px;
 }
@@ -2958,7 +2972,7 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
 .dp-type { display: flex; align-items: center; gap: 6px; padding: 5px 8px; margin-bottom: 6px; border-radius: 8px; background: var(--raised); font-size: 12.5px; }
 .dp-type input { min-width: 0; flex: 1; background: transparent; outline: none; }
 .dp-type input::placeholder { color: var(--faint); }
-.dp-type:focus-within { box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.5); }
+.dp-type:focus-within { box-shadow: 0 0 0 1px rgb(var(--accent-rgb) / 0.8); }
 .dp-guess { flex-shrink: 0; font-size: 11.5px; white-space: nowrap; }
 .dp-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 6px; }
 .dp-title { border-radius: 6px; padding: 2px 8px; font-size: 13px; font-weight: 600; letter-spacing: -0.005em; }

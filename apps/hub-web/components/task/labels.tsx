@@ -89,7 +89,7 @@ export function LabelEditor({ labels, onChange, disabled }: { labels: string[]; 
         aria-describedby={hintId}
         placeholder={full ? "Label limit reached" : labels.length ? "Add…" : "Add a label…"}
         maxLength={MAX_LABEL_LENGTH * 3}
-        className={cx("min-w-[90px] flex-1 rounded bg-transparent px-1.5 py-0.5 text-[13px] outline-none placeholder:text-faint", "focus-visible:ring-1 focus-visible:ring-line-strong")}
+        className="min-w-[90px] flex-1 rounded bg-transparent px-1.5 py-0.5 text-[13px] outline-none placeholder:text-faint"
         onChange={(event) => {
           const value = event.target.value;
           if (/[,;]/.test(value)) {
