@@ -7,46 +7,56 @@ import { createPortal } from "react-dom";
 import { BrandMorph } from "../motion/brand-morph";
 import { usePersistentState } from "@/lib/prefs";
 
+/** `free` was an earlier anywhere-on-screen spot; it is read as the nearer of the two edges. */
 export type LauncherSpot = { edge: "bottom" | "right"; t: number } | { edge: "free"; x: number; y: number };
-export type LauncherBounds = { width: number; height: number; top: number };
+/** The work area in window coordinates: `left` and `top` are where the sidebar and the top bar end, `width` and `height` its right and bottom edges. */
+export type EdgeSpot = { edge: "bottom" | "right"; t: number };
+export type LauncherBounds = { width: number; height: number; top: number; left?: number };
 
 export const LAUNCHER_SIZE = 44;
 const MARGIN = 16;
 const DRAG_THRESHOLD = 4;
-export const DEFAULT_LAUNCHER_SPOT: LauncherSpot = { edge: "bottom", t: 1 };
+export const DEFAULT_LAUNCHER_SPOT: EdgeSpot = { edge: "bottom", t: 1 };
 
 const clamp01 = (value: number) => (Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1);
 
-export function normalizeSpot(value: unknown): LauncherSpot {
+export function normalizeSpot(value: unknown): EdgeSpot {
   const spot = value as Partial<LauncherSpot> | null;
-  if (spot?.edge === "free") return { edge: "free", x: clamp01(Number(spot.x)), y: clamp01(Number(spot.y)) };
+  if (spot?.edge === "free") {
+    const x = clamp01(Number(spot.x));
+    const y = clamp01(Number(spot.y));
+    return 1 - x < 1 - y ? { edge: "right", t: y } : { edge: "bottom", t: x };
+  }
   if (!spot || (spot.edge !== "bottom" && spot.edge !== "right")) return DEFAULT_LAUNCHER_SPOT;
   return { edge: spot.edge, t: clamp01(Number(spot.t)) };
 }
 
 /**
- * Where the launcher sits inside the work area. The area starts below the top bar,
- * so the button can never cover the bar or the sidebar, and a stored spot is a
- * fraction along an edge, so it survives any window size.
+ * Where the launcher sits: along the bottom or the right edge of the work area, which starts after the
+ * sidebar and below the top bar, so the button never covers either. A stored spot is a fraction along its
+ * edge, so it survives any window size.
  */
 export function launcherPosition(spot: LauncherSpot, bounds: LauncherBounds): { x: number; y: number } {
-  const minX = MARGIN;
+  spot = normalizeSpot(spot);
+  const minX = (bounds.left ?? 0) + MARGIN;
   const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
   const minY = bounds.top + MARGIN;
   const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
-  if (spot.edge === "free") return { x: Math.round(minX + spot.x * (maxX-minX)), y: Math.round(minY + spot.y * (maxY-minY)) };
   if (spot.edge === "right") return { x: maxX, y: Math.round(minY + spot.t * (maxY - minY)) };
   return { x: Math.round(minX + spot.t * (maxX - minX)), y: maxY };
 }
 
-/** The nearest allowed spot to a pointer: along the bottom edge or along the right edge. */
+/** The nearest allowed spot to a pointer: on the bottom edge or the right edge, whichever is closer. */
 export function snapLauncher(point: { x: number; y: number }, bounds: LauncherBounds): LauncherSpot {
   const half = LAUNCHER_SIZE / 2;
-  const minX = MARGIN;
+  const minX = (bounds.left ?? 0) + MARGIN;
   const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
   const minY = bounds.top + MARGIN;
   const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
-  return { edge: "free", x: clamp01((point.x-half-minX) / Math.max(1,maxX-minX)), y: clamp01((point.y-half-minY) / Math.max(1,maxY-minY)) };
+  const x = point.x - half;
+  const y = point.y - half;
+  if (maxX - x < maxY - y) return { edge: "right", t: clamp01((y - minY) / Math.max(1, maxY - minY)) };
+  return { edge: "bottom", t: clamp01((x - minX) / Math.max(1, maxX - minX)) };
 }
 
 /**
@@ -64,7 +74,10 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
   const drag = useRef<{ x: number; y: number; moved: boolean; pointer: number } | null>(null);
 
   const measure = useCallback(() => {
-    setBounds({ width: window.innerWidth, height: window.innerHeight, top: 0 });
+    // The work area is the main column: after the sidebar (and a docked Pages panel), below the top bar.
+    const rect = document.getElementById("main-content")?.getBoundingClientRect();
+    if (rect && rect.width > LAUNCHER_SIZE * 2 && rect.height > LAUNCHER_SIZE * 2) setBounds({ left: rect.left, top: rect.top, width: rect.right, height: rect.bottom });
+    else setBounds({ left: 0, width: window.innerWidth, height: window.innerHeight, top: 0 });
   }, []);
 
   useLayoutEffect(() => {
@@ -73,7 +86,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
     if (!area || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(area);
-    const main = area.querySelector("main");
+    const main = document.getElementById("main-content");
     if (main) observer.observe(main);
     return () => observer.disconnect();
   }, [measure]);
@@ -89,12 +102,13 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
 
   const nudge = (edge: LauncherSpot["edge"], delta: number) => {
     if (!bounds) return;
-    const position = launcherPosition(spot,bounds);
-    const next = { x: position.x + LAUNCHER_SIZE/2, y: position.y + LAUNCHER_SIZE/2 };
-    if (edge === "bottom") next.x += delta * bounds.width;
-    else next.y += delta * bounds.height;
+    const current = normalizeSpot(spot);
     setNudged(true);
-    setStored(snapLauncher(next,bounds));
+    if (current.edge === edge) setStored({ edge, t: clamp01(current.t + delta) });
+    // Arrows across the corner move it onto the other edge.
+    else if (edge === "right" && delta < 0 && current.edge === "bottom" && current.t >= 0.999) setStored({ edge: "right", t: 1 + delta });
+    else if (edge === "bottom" && delta < 0 && current.edge === "right" && current.t >= 0.999) setStored({ edge: "bottom", t: 1 + delta });
+
   };
 
   useEffect(() => {
@@ -118,7 +132,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
       type="button"
       className="ask-launcher"
       hidden={hidden}
-      data-ask-launcher={hidden ? undefined : shown.edge}
+      data-ask-launcher={hidden ? undefined : normalizeSpot(shown).edge}
       data-dragging={live ? "1" : undefined}
       data-nudged={nudged ? "1" : undefined}
       aria-label="Ask Ensemble"

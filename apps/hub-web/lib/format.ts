@@ -1,5 +1,6 @@
 import type { Priority, TaskStatus } from "./api";
 import { safeDate } from "./safe-date";
+import { fileKind } from "./file-kinds";
 
 export const PRIORITY: Record<Priority, { label: string; tone: Tone; key: string }> = {
   critical: { label: "Critical", tone: "red", key: "critical" },
@@ -193,7 +194,7 @@ export function languageFor(path: string): string {
     rs: "Rust",
     prisma: "Prisma",
   };
-  return map[ext] ?? "Plain text";
+  return map[ext] ?? fileKind(path).language;
 }
 
 /** Friendly labels for activity; full timestamps remain available where exact dates matter. */

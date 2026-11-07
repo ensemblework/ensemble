@@ -273,7 +273,7 @@ export function ThemePicker({
       aria-label="Choose a theme"
       data-ide-theme-picker=""
       data-modal-owner={modalOwner ?? undefined}
-      className="pop-in fixed z-[60] flex w-[min(22.5rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-line-strong bg-panel text-ink shadow-pop"
+      className={cx("pop-in fixed flex w-[min(22.5rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-line-strong bg-panel text-ink shadow-pop", "z-[130]")}
       style={{ top, right, maxHeight: `min(32rem, calc(100dvh - ${top + 12}px))` }}
     >
       <div className="border-b border-line p-2">

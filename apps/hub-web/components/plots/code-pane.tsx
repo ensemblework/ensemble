@@ -85,7 +85,7 @@ function ThemedPlotCode({ value, onChange, onRun, errorLine = null, errorText = 
         >
           Wrap lines
         </button>
-        <span className="text-[10px] text-muted">Theme shared with Code</span><ThemeControl />
+        <ThemeControl />
       </span>
     </div>
     {phone && <p className="shrink-0 px-3 py-2 text-[11px] text-muted">View code here. Use a larger screen to edit.</p>}

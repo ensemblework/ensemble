@@ -7,7 +7,8 @@
  */
 import type { PageMention } from "@ensemble/shared-types";
 
-export type AttachSource = { kind: "page" | "task" | "meeting" | "project" | "deliverable" | "view" | "reply"; id: string; title: string };
+/** `plot`: a Plots canvas (id is the canvas). `file`: a file in Code (id is the repository, title the path). */
+export type AttachSource = { kind: "page" | "task" | "meeting" | "project" | "deliverable" | "view" | "reply" | "plot" | "file"; id: string; title: string };
 /** `text` empty: the whole page or task. */
 export type AssistantAttachment = { text: string; source: AttachSource };
 export type AttachRequest = { attachment?: AssistantAttachment; mention?: PageMention; prompt?: string; send?: boolean };
@@ -29,7 +30,7 @@ export const ASK_PRESETS: Array<{ id: string; label: string; prompt: string }> =
   { id: "translate", label: "Translate to English", prompt: "Translate this to English." },
 ];
 
-const KIND_WORD: Record<AttachSource["kind"], string> = { page: "page", task: "task", meeting: "meeting notes", project: "project", deliverable: "deliverable", view: "screen", reply: "your earlier reply" };
+const KIND_WORD: Record<AttachSource["kind"], string> = { page: "page", task: "task", meeting: "meeting notes", project: "project", deliverable: "deliverable", view: "screen", reply: "your earlier reply", plot: "plot canvas", file: "file" };
 
 const clean = (title: string) => title.replace(/[“”\n]/g, "").trim() || "Untitled";
 
@@ -48,7 +49,12 @@ export function quoteAttachments(list: AssistantAttachment[]): string {
 export function attachmentContext(list: AssistantAttachment[]): string {
   if (!list.length) return "";
   const lines = list.map((item) => {
-    const where = item.source.kind === "view" || item.source.kind === "reply" ? `the ${KIND_WORD[item.source.kind]} “${clean(item.source.title)}”` : `the ${KIND_WORD[item.source.kind]} “${clean(item.source.title)}” (${item.source.kind} id ${item.source.id})`;
+    const where =
+      item.source.kind === "view" || item.source.kind === "reply"
+        ? `the ${KIND_WORD[item.source.kind]} “${clean(item.source.title)}”`
+        : item.source.kind === "file"
+          ? `the file “${clean(item.source.title)}” (in the Code repository ${item.source.id})`
+          : `the ${KIND_WORD[item.source.kind]} “${clean(item.source.title)}” (${item.source.kind} id ${item.source.id})`;
     return item.text.trim() ? `- A part of ${where}, quoted at the top of the message.` : `- All of ${where}: read it before answering.`;
   });
   return ["The person attached these to their message; read the whole record when you need more than the quoted part:", ...lines].join("\n");

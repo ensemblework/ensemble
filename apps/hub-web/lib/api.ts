@@ -984,6 +984,8 @@ export type CodeTreeEntry = { name: string; kind: "dir" | "file" | "link"; size:
 export type CodeTree = { path: string; entries: CodeTreeEntry[]; truncated: boolean; hidden?: number };
 export type CodeSearch = { results: Array<{ path: string; line: number; text: string }>; truncated: boolean };
 /** A new file or folder from the explorer: `path` from the repository's top, or `outside` (`~/…`) when typed elsewhere. */
+/** A file, or a folder as a zip, from Code (up to 20 MB); `data` is base64. */
+export type CodeDownload = { name: string; kind: "file" | "zip"; size: number; files: number; data: string };
 export type CodeCreated = { ok: boolean; kind: "file" | "folder"; path: string | null; outside: string | null };
 
 /** A file as the Code tab opens it. From a paired computer: `readOnly` says why it cannot be edited from the web. */
@@ -1713,6 +1715,9 @@ export const api = bindClient({
   codeProgress: (source: { review?: string; repo?: string }) => get<CodeProgress>(`/api/code/progress${qs(source)}`),
   codeTree: (source: { review?: string; repo?: string }, path: string) => get<CodeTree>(`/api/code/tree${qs({ ...source, path })}`),
   codeCreate: (source: { review?: string; repo?: string }, path: string, kind: "file" | "folder") => post<CodeCreated>("/api/code/create", { ...source, path, kind }),
+  codeMove: (source: { review?: string; repo?: string }, from: string, to: string) => post<{ ok: boolean; path: string }>("/api/code/move", { ...source, from, to }),
+  codeDelete: (source: { review?: string; repo?: string }, path: string) => post<{ ok: boolean }>("/api/code/delete", { ...source, path }),
+  codeDownload: (source: { review?: string; repo?: string }, path: string) => get<CodeDownload>(`/api/code/download${qs({ ...source, path })}`),
   codeFiles: (source: { review?: string; repo?: string }) => get<{ files: string[]; truncated: boolean }>(`/api/code/files${qs(source)}`),
   codeCommitPlan: (source: { review?: string; repo?: string }) => get<CommitPlan>(`/api/code/commit-plan${qs(source)}`),
   codeCommitPaths: (source: { review?: string; repo?: string }, paths: string[], message: string) => post<{ ok: boolean; commit: string; branch: string }>("/api/code/commit-paths", { ...source, paths, message }),

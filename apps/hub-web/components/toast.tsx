@@ -6,6 +6,8 @@ import { bindToast, TOAST_MS, type ToastOptions, type ToastTone } from "@/lib/to
 
 type Toast = { id: number; text: string; tone: ToastTone; durationMs: number; action?: { label: string; run: () => void } };
 
+const MAX_TOASTS = 2;
+
 const ToastContext = createContext<(text: string, options?: ToastOptions) => void>(() => {});
 
 export function useToast() {
@@ -18,7 +20,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const push = useCallback((text: string, options?: ToastOptions) => {
     const id = Date.now() + Math.random();
     const next = { id, text, tone: options?.tone ?? "info", action: options?.action, durationMs: Math.max(1500, options?.durationMs ?? TOAST_MS) };
-    setToasts((rows) => [...rows, next].slice(-4));
+    // At most two at once, newest last: the same notice again replaces the earlier one (its timer restarts),
+    // and a third pushes out the oldest.
+    setToasts((rows) => [...rows.filter((row) => row.text !== text || row.tone !== next.tone), next].slice(-MAX_TOASTS));
   }, []);
   bindToast(push);
   useEffect(() => () => bindToast(null), []);

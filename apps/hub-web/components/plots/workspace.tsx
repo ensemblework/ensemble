@@ -24,6 +24,9 @@ import { AddTileDialog } from "@/components/plots/add-tile";
 import { UploadDialog } from "@/components/plots/upload-dialog";
 import { ExportDialog } from "@/components/plots/export-dialog";
 import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigureRun } from "@/components/plots/figure-run";
+import { SplitHandle, useSplit } from "@/components/plots/split";
+import { plotTileMenu } from "@/components/plots/tile-menu";
+import { openContextMenu } from "@/components/context-menu/menu-store";
 import { canvasSource } from "@/lib/plots/tile-code";
 import { InfoTip, InlineEdit, Popover } from "@/components/ui";
 import "./plots.css";
@@ -263,6 +266,8 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
   const theme = usePlotTheme();
   const canvasRun = useFigureRun(workspaceId);
   const [figureBeside, setFigureBeside] = useFigureBeside();
+  const codeRow = useRef<HTMLDivElement>(null);
+  const [codeShare, setCodeShare, codeDefault] = useSplit("ensemble.plots.codeShare", 0.55);
   // Only while the Code view or the export is open: the script embeds every tile's table.
   const canvasDefault = useMemo(
     () => (config && (codeOpen || exportOpen) ? canvasSource(config.tiles, { datasets, links: config.links, accent: theme.accent, dark: theme.dark }) : ""),
@@ -495,11 +500,13 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
       </header>
       {codeOpen ? (
         <div
-          className={figureBeside ? "grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:overflow-hidden" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto"}
+          ref={codeRow}
+          className={figureBeside ? "flex min-h-0 flex-1 flex-col gap-3 overflow-auto lg:flex-row lg:gap-0 lg:overflow-hidden" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto"}
+          style={{ "--code-share": `${codeShare * 100}%` } as React.CSSProperties}
           data-plot-code
           data-code-edited={canvasEdited ? "1" : "0"}
         >
-          <div className={`flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3 ${figureBeside ? "" : "flex-[3]"}`}>
+          <div className={`flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3 ${figureBeside ? "lg:w-[var(--code-share)] lg:shrink-0" : "flex-[3]"}`}>
             <p className="flex shrink-0 items-center gap-1.5 text-[12px] leading-4 text-muted">
               {canvasEdited ? "Edited script" : "Script for the whole canvas"}
               <InfoTip
@@ -532,7 +539,8 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
               />
             </div>
           </div>
-          <div className={`flex min-h-[260px] min-w-0 flex-col rounded-xl border border-line bg-panel p-3 ${figureBeside ? "" : "flex-[2]"}`} data-plot-code-preview>
+          {figureBeside ? <SplitHandle container={codeRow} value={codeShare} fallback={codeDefault} side="left" label="Code width" onChange={setCodeShare} className="pl-split-gap hidden lg:block" /> : null}
+          <div className={`flex min-h-[260px] min-w-0 flex-col rounded-xl border border-line bg-panel p-3 ${figureBeside ? "lg:flex-1" : "flex-[2]"}`} data-plot-code-preview>
             <FigureOutput state={canvasRun.state} placeholder="Run the script to draw the figure here." />
           </div>
         </div>
@@ -585,6 +593,18 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                 dragging={ghost?.id === tile.id}
                 onSelect={() => setSelected(tile.id)}
                 onOpen={() => setFocus(tile.id)}
+                menu={{ workspaceId, canvasTitle: title, readOnly }}
+                onDuplicate={() => {
+                  const id = Math.random().toString(36).slice(2, 10);
+                  setConfig((current) => {
+                    if (!current) return current;
+                    const packed = placeNew(packOf(current.tiles), id, tile.w, tile.h);
+                    const spot = packed.find((item) => item.id === id)!;
+                    const copy = tileSchema.parse({ ...tile, id, col: spot.x, row: spot.y, title: tile.title ? `${tile.title} copy` : "" });
+                    return { ...current, tiles: withPack([...current.tiles, copy], packed) };
+                  });
+                  setSelected(id);
+                }}
                 onDelete={() => {
                   setConfig((current) => (current ? { ...current, tiles: current.tiles.filter((item) => item.id !== tile.id) } : current));
                   if (selected === tile.id) setSelected(null);
@@ -693,6 +713,8 @@ function Tile({
   onSelect,
   onOpen,
   onDelete,
+  onDuplicate,
+  menu,
   onChange,
   onLayout,
   onGesture,
@@ -710,14 +732,24 @@ function Tile({
   onSelect: () => void;
   onOpen: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
+  menu: { workspaceId: string | null; canvasTitle: string; readOnly: boolean };
   onChange: (tile: WorkspaceTile) => void;
   onLayout: (packed: Array<{ id: string; x: number; y: number; w: number; h: number }>) => void;
   onGesture: (id: string, mode: "move" | "resize", event: React.PointerEvent) => void;
 }) {
   const theme = usePlotTheme();
+  const toast = useToast();
   const box = place ?? tile;
   return (
     <article
+      data-cm-touch=""
+      onContextMenu={(event) =>
+        openContextMenu(event, () => {
+          onSelect();
+          return plotTileMenu({ tile, datasets, links, theme, ...menu, open: onOpen, duplicate: onDuplicate, remove: onDelete, toast });
+        })
+      }
       className={`plot-tile absolute flex flex-col overflow-hidden ${selected ? "is-selected" : ""}`}
       style={{
         left: box.col * cell + GUTTER / 2,
