@@ -51,7 +51,7 @@ import { PageLoadFailure, inTrash } from "../pages/page-load";
 import { TrashedTask } from "../pages/trashed-page";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
-import { NodeOwnerItems, useNodeAssignable } from "./node-owner";
+import { NodeOwnerItems, NodeWorkNotice, useNodeAssignable, useNodeHandOff } from "./node-owner";
 import { nodeOwnerText } from "@/lib/node-owner";
 import { DueDateField } from "./due-date-field";
 import { FromMeeting } from "../meetings/from-meeting";
@@ -168,6 +168,7 @@ export function TaskPage({
   const others = space.people.filter((person) => person.id !== space.me);
   // My own nodes and crews, offered in the owner field (hosted Ensemble only).
   const mine = useNodeAssignable(whole);
+  const handOff = useNodeHandOff(taskId, task.data?.task.owner ?? "");
   const othersHere = onResource(usePresence(), "task", taskId).length > 0;
   const watching = Boolean(shared) || othersHere;
   const watchingRef = useRef(watching);
@@ -439,19 +440,27 @@ export function TaskPage({
       <div className="mt-5 space-y-0.5" inert={!canEditProperties || undefined}>
         <PropertyRow icon={User} label="Owner">
           <Popover
-            trigger={(_open, toggle) => <ValueButton onClick={toggle}>{ownerText}</ValueButton>}
-            width={220}
+            trigger={(_open, toggle) => (
+              <ValueButton
+                onClick={() => {
+                  handOff.reset();
+                  toggle();
+                }}
+              >
+                {ownerText}
+              </ValueButton>
+            )}
+            width={handOff.asking ? 264 : 220}
           >
-            {(close) => (
-              <>
+            {(close) => handOff.asking ? (
+              <NodeWorkNotice work={handOff.asking.work} mine={mine} onKeep={() => { handOff.reset(); close(); }} onStop={handOff.asking.go} />
+            ) : (
+              <div aria-busy={handOff.checking || undefined} className={handOff.checking ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
                 {(["me", "agent", "unassigned"] as const).map((owner) => (
                   <MenuItem
                     key={owner}
                     active={record.owner === owner && (owner !== "me" || personId === space.me)}
-                    onClick={() => {
-                      close();
-                      update.mutate({ owner });
-                    }}
+                    onClick={() => void handOff.change(() => update.mutate({ owner }), close)}
                   >
                     {OWNER_LABEL[owner]}
                   </MenuItem>
@@ -461,10 +470,7 @@ export function TaskPage({
                   <MenuItem
                     key={person.id}
                     active={record.owner === "me" && personId === person.id}
-                    onClick={() => {
-                      close();
-                      update.mutate({ assignee: person.id });
-                    }}
+                    onClick={() => void handOff.change(() => update.mutate({ assignee: person.id }), close)}
                   >
                     <span className="grid h-[18px] min-w-[22px] place-items-center rounded-full px-1 text-[10.5px] font-semibold text-white" style={{ background: colorFor(person.id) }}>
                       {person.initials}
@@ -476,11 +482,12 @@ export function TaskPage({
                   mine={mine}
                   task={record}
                   onPick={(pick) => {
-                    close();
-                    update.mutate(pick);
+                    // The node that has it already: nothing changes.
+                    if (record.owner === "node" && record.assigneeNodeId === pick.assigneeNodeId && record.assigneeRoomId === pick.assigneeRoomId) return close();
+                    void handOff.change(() => update.mutate(pick), close);
                   }}
                 />
-              </>
+              </div>
             )}
           </Popover>
           {shared ? null : record.owner === "agent" ? (

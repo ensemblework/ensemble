@@ -18,6 +18,7 @@ import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../u
 import { confirmAction } from "@/components/ask-dialog";
 import { isEmailAddress } from "@ensemble/shared-types";
 import { Modal } from "./modal";
+import { TimeInput } from "../date-time";
 import { TimezonePicker } from "./timezone-picker";
 import { NumberField } from "./number-field";
 import { askNotificationPermission, notificationNote, readNotificationState, refreshNotificationPermission, showNotification, type NotificationState } from "./reminders";
@@ -173,9 +174,9 @@ export function QuietHoursSection({ settings, patch }: Props) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
         <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
         <span className="text-muted">From</span>
-        <input type="time" aria-label="Quiet hours start" value={settings.quietHours.from} onChange={(event) => patch({ quietHours: { from: event.target.value } })} className="field [color-scheme:dark]" />
+        <TimeInput label="Quiet hours start" value={settings.quietHours.from} step={30} onChange={(from) => patch({ quietHours: { from } })} className="w-32" />
         <span className="text-muted">until</span>
-        <input type="time" aria-label="Quiet hours end" value={settings.quietHours.until} onChange={(event) => patch({ quietHours: { until: event.target.value } })} className="field [color-scheme:dark]" />
+        <TimeInput label="Quiet hours end" value={settings.quietHours.until} step={30} onChange={(until) => patch({ quietHours: { until } })} className="w-32" />
       </div>
     </SectionCard>
   );
@@ -788,19 +789,10 @@ export function MorningBriefSection({ settings, patch }: Props) {
           onChange={(enabled) => patch({ morningBrief: { enabled } })}
         />
       </SettingRow>
-      <label className="mt-3 flex items-center gap-3 text-[13px]">
-        Time
-        <input
-          type="time"
-          aria-label="Morning brief time"
-          value={settings.morningBrief.time}
-          onChange={(event) => {
-            const value = event.target.value.slice(0, 5);
-            if (/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) patch({ morningBrief: { time: value } });
-          }}
-          className="field"
-        />
-      </label>
+      <div className="mt-3 flex items-center gap-3 text-[13px]">
+        <span>Time</span>
+        <TimeInput label="Morning brief time" value={settings.morningBrief.time} step={15} className="w-32" onChange={(time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && patch({ morningBrief: { time } })} />
+      </div>
     </SectionCard>
   );
 }

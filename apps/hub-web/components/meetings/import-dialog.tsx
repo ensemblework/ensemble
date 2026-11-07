@@ -7,6 +7,7 @@ import type { ImportedMeetingNote } from "@/lib/api-connected";
 import { meetingsApi, type TranscriptPreview, type TranscriptSource } from "@/lib/api-meetings";
 import { Dialog, InfoTip, Segmented, Spinner } from "../ui";
 import { useToast } from "../toast";
+import { DateTimeInput } from "../date-time";
 import { meetingWhen } from "./meeting-time";
 import { speakerTones } from "./transcript-view";
 
@@ -187,10 +188,10 @@ export function TranscriptImportDialog({ target, fileLimit, onClose, onImported 
               <span className="import-label">Title</span>
               <input id={titleId} className="field w-full" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} />
             </label>
-            <label className="block" htmlFor={whenId}>
+            <div className="block">
               <span className="import-label">When{preview.startedAt || target.event ? "" : " (not in the file)"}</span>
-              <input id={whenId} type="datetime-local" className="field w-full" value={when} onChange={(event) => setWhen(event.target.value)} />
-            </label>
+              <DateTimeInput id={whenId} label="When" value={when.slice(0, 16)} onChange={setWhen} />
+            </div>
           </div>
           {preview.speakers.length ? (
             <fieldset className="import-speakers">

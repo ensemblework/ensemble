@@ -65,7 +65,7 @@ import { startOnYes } from "./room-results.js";
 import { accountLimits } from "../lib/limits.js";
 import { dropStewardNodes } from "./steward.js";
 import { followPresence } from "./status-cards.js";
-import { assignable, registerTaskAssignment } from "./task-assignment.js";
+import { assignable, registerTaskAssignment, taskNodeWork } from "./task-assignment.js";
 import { nodeNeedsInEnsemble, sessionCard, sessionOrigins, type SessionOrigin } from "./needs-me.js";
 import { answerFromChat } from "./chat-answers.js";
 import { FileQuote, registerFileWorkspace, validateFileQuotes } from "./file-workspace.js";
@@ -434,6 +434,14 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
 
   // The nodes and crews of mine a task's owner field offers (docs/35 §6.6).
   app.get("/api/node/assignable", async (request) => assignable(prisma, nodeAccount(request)));
+
+  // What a node does for this task now that a change of owner would stop (the owner menu warns first): null when nothing has started.
+  app.get("/api/node/tasks/:id/work", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const task = await prisma.task.findFirst({ where: { id, userId: request.userId, deletedAt: null }, select: { id: true, owner: true } });
+    if (!task) return reply.code(404).send({ error: "Task not found." });
+    return { work: task.owner === "node" ? await taskNodeWork(prisma, task.id) : null };
+  });
 
   app.post("/api/node/nodes", async (request, reply) => {
     const accountId = nodeAccount(request);

@@ -591,6 +591,11 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
     return { status: "coalesced" };
   }
+  if (deps.signal?.aborted && deps.signal.reason === "withdrawn") {
+    // What it was told about was taken away before it did anything (node/task-assignment.ts): it leaves no trace.
+    await prisma.assistantMessage.delete({ where: { id: userRow.id } }).catch(() => undefined);
+    return { status: "skipped", error: "Taken away before it did anything." };
+  }
   if (deps.signal?.aborted && deps.signal.reason === "park") {
     // Waiting for its owner's answer on a card in the chat: the turn ends here and posts nothing. What it
     // did and what it waits for stay in its conversation; the answer wakes it.

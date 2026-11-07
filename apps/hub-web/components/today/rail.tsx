@@ -8,6 +8,7 @@ import { api, type DeliverableRecord } from "@/lib/api";
 import { clockLabel, isoDate, shortDate } from "@/lib/format";
 import { useTodayData } from "@/lib/home";
 import { useToast } from "../toast";
+import { DateInput, TimeInput } from "../date-time";
 
 import { Dialog, Field, InfoTip, SkeletonRows, cx } from "../ui";
 import type { Size } from "@ensemble/shared-types/widgets";
@@ -156,7 +157,7 @@ export function DeliverablesRail({ highlightId, size = "l" }: { highlightId?: st
             </select>
           </Field>
           <Field label="Due (optional)">
-            <input type="date" value={due} onChange={(event) => setDue(event.target.value)} className="field" />
+            <DateInput label="Due" value={due} onChange={setDue} placeholder="No due date" />
           </Field>
           <div className="flex justify-end">
             <button type="button" className="btn-primary" disabled={!title || !projectId} onClick={() => create.mutate()}>
@@ -218,8 +219,8 @@ export function RemindersRail({ timezone, size = "l" }: { timezone: string; size
             className="field w-full min-w-0"
           />
           <div className="flex min-w-0 flex-col gap-2">
-            <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="field min-w-0" />
-            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="field min-w-0" />
+            <DateInput label="Reminder date" value={date} onChange={setDate} clearable={false} />
+            <TimeInput label="Reminder time" value={time} onChange={setTime} />
           </div>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-ghost" onClick={() => setAdding(false)}>
