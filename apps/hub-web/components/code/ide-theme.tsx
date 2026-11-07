@@ -12,9 +12,10 @@ import {
   type IdeTheme,
   type ThemeFavourite,
 } from "@ensemble/ide-theme";
-import { isCycleFavouriteThemesShortcut } from "@ensemble/shared-types";
+import { isCycleFavouriteThemesShortcut, type AppearanceSettings } from "@ensemble/shared-types";
 import { Palette } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { accentChoice, resolveAccent } from "@/lib/accent";
 import { api as hub } from "@/lib/api";
 import { useToast } from "../toast";
 import { cx } from "../ui";
@@ -83,10 +84,29 @@ function writeStore(theme: IdeTheme, favourites: ThemeFavourite[], previous: Sto
   window.localStorage.setItem(STORE_KEY, JSON.stringify(payload));
 }
 
-function surfaceStyle(theme: IdeTheme): CSSProperties {
+/** An editor theme's own accent (its button colour): Code keeps the person's accent instead. */
+const THEME_ACCENT = new Set(["accent", "accent-rgb", "accent-fg", "accent-hover", "accent-soft", "wash"]);
+
+/**
+ * An editor theme colours Code's surfaces, text and status colours, never its accent: icons, the
+ * active tab and selections stay in the accent the person picked (Settings › Appearance), set again
+ * for the theme's light or dark surfaces so it reads on them. Until settings load, the page's accent shows.
+ */
+function surfaceStyle(theme: IdeTheme, appearance: Pick<AppearanceSettings, "accent" | "accentCustom"> | null): CSSProperties {
   if (!Object.keys(theme.cssVars).length) return {};
-  const style: Record<string, string> = { background: "var(--bg)", color: "var(--ink)", colorScheme: theme.kind === "light" ? "light" : "dark" };
-  for (const [key, value] of Object.entries(theme.cssVars)) style[`--${key}`] = value;
+  const kind = theme.kind === "light" ? "light" : "dark";
+  const style: Record<string, string> = { background: "var(--bg)", color: "var(--ink)", colorScheme: kind };
+  for (const [key, value] of Object.entries(theme.cssVars)) if (!THEME_ACCENT.has(key)) style[`--${key}`] = value;
+  if (appearance) {
+    const surfaces = ["bg", "sidebar", "panel", "raised"].map((key) => theme.cssVars[key]).filter((value): value is string => Boolean(value));
+    const accent = resolveAccent(accentChoice(appearance, kind), kind, surfaces);
+    style["--accent"] = accent.hex;
+    style["--accent-rgb"] = accent.rgb;
+    style["--accent-fg"] = accent.fg;
+    style["--accent-hover"] = accent.hover;
+    style["--accent-soft"] = accent.soft;
+    style["--wash"] = accent.wash;
+  }
   return style as CSSProperties;
 }
 
@@ -260,7 +280,7 @@ export function IdeSpace({ className, children, diagram = false, root = false }:
   return (
     <ApiContext.Provider value={controls}>
       <IdeThemeContext.Provider value={shown}>
-        <div className={cx("ide-space", className)} style={surfaceStyle(shown)} data-ide-theme={shown.id} data-ide-kind={shown.kind} {...(diagram ? { "data-diagram-editor": "" } : {})} {...(root ? { "data-ide-root": "" } : {})}>
+        <div className={cx("ide-space", className)} style={surfaceStyle(shown, settings.data?.settings.appearance ?? null)} data-ide-theme={shown.id} data-ide-kind={shown.kind} {...(diagram ? { "data-diagram-editor": "" } : {})} {...(root ? { "data-ide-root": "" } : {})}>
           {children}
         </div>
       </IdeThemeContext.Provider>

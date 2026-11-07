@@ -36,7 +36,7 @@ function PageLink({ href, className, title, current, children }: PageLinkProps) 
 /** Pages is one navigation destination; its tree lives in the separate browser. */
 export function PagesNav() {
   const pathname = usePathname();
-  return <nav className="mt-1 px-2" aria-label="Pages"><Link href="/pages" title="Pages" aria-current={pathname.startsWith("/pages") ? "page" : undefined} data-active={pathname.startsWith("/pages") || undefined} onClick={() => window.dispatchEvent(new CustomEvent("ensemble:pages-open"))} className="nav-link row-tile flex items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px] text-ink/80"><FileText size={16} strokeWidth={1.8} className="text-muted" /><span className="sidebar-label flex-1">Pages</span></Link></nav>;
+  return <nav className="mt-1 px-2" aria-label="Pages"><Link href="/pages" title="Pages" aria-current={pathname.startsWith("/pages") ? "page" : undefined} data-active={pathname.startsWith("/pages") || undefined} onClick={() => window.dispatchEvent(new CustomEvent("ensemble:pages-open"))} className="nav-link row-tile flex items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px] text-ink/80"><FileText size={16} strokeWidth={1.8} className={pathname.startsWith("/pages") ? "text-accent transition-colors" : "text-muted transition-colors"} /><span className="sidebar-label flex-1">Pages</span></Link></nav>;
 }
 
 export function PagesBrowser() {

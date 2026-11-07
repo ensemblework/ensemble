@@ -30,7 +30,7 @@ The task page's *Review changes* opens the same review. A repository the agent c
 
 ### The window
 
-`/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area.
+`/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area. An editor theme colours the surfaces, text and status colours, never the accent: icons, the active tab and selections keep the accent picked in Settings › Appearance, adjusted for the theme's light or dark surfaces.
 
 - **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*. In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and *Folder* sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); what is folded is kept in `ensemble.code.folds`.
 - **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl+B shows or hides it.
