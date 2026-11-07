@@ -111,7 +111,8 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       title={label}
     >
-      <Icon size={16} strokeWidth={1.8} className={href === "/code" ? "text-accent" : "text-muted"} />
+      {/* The open tab's icon takes the accent; its label keeps the text colour. */}
+      <Icon size={16} strokeWidth={1.8} className={cx("transition-colors", active ? "text-accent" : "text-muted")} />
       <span className="sidebar-label flex-1">{label}</span>
       {badge ? (
         <span className="sidebar-label on-accent rounded-md px-1.5 text-2xs font-semibold">{badge}</span>
