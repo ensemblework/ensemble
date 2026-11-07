@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Routine, type RoutineCadence } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { useToast } from "@/components/toast";
+import { TimeInput } from "@/components/date-time";
 import { InfoTip, PageHeader, Segmented, SkeletonRows, Spinner, Toggle, cx } from "@/components/ui";
 
 type Every = "hour" | "day" | "weekday" | "week" | "month" | "custom";
@@ -175,16 +176,7 @@ function Editor({ initial, saving, error, onSave, onCancel, saveLabel }: { initi
           {draft.every === "custom" ? (
             <input value={draft.cron} onChange={(event) => set({ cron: event.target.value })} aria-label="Cron schedule" placeholder="0 9 * * 1-5" spellCheck={false} className="field w-40 py-1 font-mono text-[12.5px]" />
           ) : (
-            <input
-              type="time"
-              aria-label={draft.every === "hour" ? "Minute past the hour" : "Time"}
-              value={draft.time}
-              onChange={(event) => {
-                const value = event.target.value.slice(0, 5);
-                if (/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) set({ time: value });
-              }}
-              className="field py-1 text-[13px]"
-            />
+            <TimeInput label={draft.every === "hour" ? "Minute past the hour" : "Time"} value={draft.time} step={draft.every === "hour" ? 5 : 15} className="w-32" onChange={(time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && set({ time })} />
           )}
         </div>
         {draft.every === "week" ? (

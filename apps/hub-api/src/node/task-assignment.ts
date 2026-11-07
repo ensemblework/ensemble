@@ -5,6 +5,11 @@
  * in the crew's room for its lead, with the task and how to decide. Taking the task away (another owner,
  * another node or crew) tells whoever was told to stop. The node decides the rest itself: do it, run it in
  * an agent session with the profile its owner prefers, or plan it with its crew.
+ *
+ * A task given from Ensemble shows the node thinking at once, but its turn starts `ASSIGN_GRACE_MS` later:
+ * a slip undone in that moment (another owner, another node) drops the turn before any model call and the
+ * node is told nothing. Later, a turn that has not changed anything yet is stopped where it is, silently;
+ * only work already started (a session, a plan, a change) needs the node told to stop.
  */
 import type { FastifyInstance } from "fastify";
 import type { NodeAgent, NodeRoom, NodeTurn, PrismaClient, Task } from "@prisma/client";
@@ -13,11 +18,13 @@ import { truncateText } from "../lib/text.js";
 import { labelPriority, labelStatus } from "../services/tasks.js";
 import { assigneeOf, onTaskAssignment, type TaskAssignee, type TaskAssignment } from "../services/task-assignee.js";
 import { publishTo } from "./events.js";
-import { enqueueTurn, inBackground } from "./queue.js";
+import { enqueueTurn, inBackground, withdrawTurn } from "./queue.js";
 import { addNode, addPerson, roomSettings } from "./store.js";
 
 /** How long a write's transaction may take to commit before its change is taken as rolled back (an Apply allows 30 s). */
 const COMMIT_WAIT_MS = 40_000;
+/** How long a task given from Ensemble waits before its node's first model call. */
+export const ASSIGN_GRACE_MS = 3_000;
 const DESCRIPTION_CHARS = 1_200;
 
 export const TASK_TURN = "task";
@@ -190,6 +197,57 @@ async function toldIn(prisma: PrismaClient, taskId: string, where: { nodeId?: st
   return turns.filter((turn) => turn.nodeId === latest.nodeId && turn.roomId === latest.roomId && taskOfOperation(turn.operationId)?.on);
 }
 
+/** The node's thinking mark in a room, as its turns set it (node/brain.ts). */
+function showStatus(ownerId: string, roomId: string, nodeId: string, state: "thinking" | "idle"): void {
+  publishTo([ownerId], "node.status", { roomId, nodeId, state, private: false, threadRootId: null });
+}
+
+/**
+ * Takes back the turns a node was told a task in: one still waiting (its grace, or its place in line) is
+ * dropped, one running that has not changed anything is stopped; neither leaves a trace. True when work
+ * may have started (a turn that changed something): the node is then told to stop it.
+ */
+async function withdraw(app: FastifyInstance, told: NodeTurn[], ownerId: string): Promise<boolean> {
+  let started = false;
+  for (const turn of told) {
+    const dropped = await app.prisma.nodeTurn.updateMany({ where: { id: turn.id, status: "queued" }, data: { status: "failed", error: "The task was taken away before this turn started.", finishedAt: new Date() } });
+    if (dropped.count) {
+      if (turn.roomId) showStatus(ownerId, turn.roomId, turn.nodeId, "idle");
+      continue;
+    }
+    const state = withdrawTurn(turn.id);
+    if (state === "stopped") continue;
+    if (state === "acted") {
+      started = true;
+      continue;
+    }
+    const after = await app.prisma.nodeTurn.findUnique({ where: { id: turn.id }, select: { sideEffectsAt: true } });
+    if (after?.sideEffectsAt) started = true;
+  }
+  return started;
+}
+
+/**
+ * What a node does for a task now that changing its owner would stop: its turn about it thinking (past the
+ * grace), a plan it leads, or an agent session's run. Null when nothing has started (nothing to warn about).
+ */
+export async function taskNodeWork(prisma: PrismaClient, taskId: string): Promise<{ node: { id: string; name: string; slug: string }; doing: "thinking" | "plan" | "session" } | null> {
+  const told = await toldIn(prisma, taskId, {});
+  const first = told[0];
+  if (!first) return null;
+  const node = await prisma.nodeAgent.findUnique({ where: { id: first.nodeId }, select: { id: true, name: true, slug: true } });
+  if (!node) return null;
+  const now = Date.now();
+  const running = told.some((turn) => turn.status === "running" || (turn.status === "queued" && (!turn.runAfter || turn.runAfter.getTime() <= now)));
+  const [plans, jobs] = await Promise.all([
+    prisma.nodeMission.count({ where: { leadNodeId: node.id, leadTurnId: { in: told.map((turn) => turn.id) }, status: { in: ["draft", "running", "reporting"] } } }),
+    prisma.workspaceJob.findMany({ where: { taskId, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { id: true } }),
+  ]);
+  const sessions = jobs.length ? await prisma.nodeRun.count({ where: { nodeId: node.id, jobId: { in: jobs.map((job) => job.id) } } }) : 0;
+  const doing = sessions ? "session" : plans ? "plan" : running ? "thinking" : null;
+  return doing ? { node, doing } : null;
+}
+
 async function tell(app: FastifyInstance, change: TaskAssignment): Promise<void> {
   const prisma = app.prisma;
   const task = await committed(prisma, change);
@@ -205,18 +263,24 @@ async function tell(app: FastifyInstance, change: TaskAssignment): Promise<void>
     // A node that gave the task back itself, or a member of the crew that had it, needs no word.
     const self = Boolean(change.byNodeId && (change.byNodeId === first?.nodeId || (before.roomId && (await prisma.nodeRoomMember.findFirst({ where: { roomId: before.roomId, nodeId: change.byNodeId }, select: { id: true } })))));
     if (first?.roomId && node && !self && !(target && target.node.id === node.id && target.room.id === first.roomId)) {
-      const queued = await enqueueTurn(app, {
-        nodeId: node.id,
-        roomId: first.roomId,
-        reason: TASK_TURN,
-        operationId: `task:${task.id}:off:${stamp}:${node.id}`,
-        note: await unassignedNote(prisma, task, node, change, told),
-        spaceId: task.userId,
-      });
-      await appendLedger({ userId: node.userId, actor: "me", action: "node.task_unassigned", taskId: task.id, payload: { nodeId: node.id, roomId: first.roomId, spaceId: task.userId, byAccountId: change.byAccountId, told: queued } });
+      // Nothing started yet (within the grace, or a turn that changed nothing): dropped without a word or a model call.
+      const started = await withdraw(app, told, node.userId);
+      const queued = started
+        ? await enqueueTurn(app, {
+            nodeId: node.id,
+            roomId: first.roomId,
+            reason: TASK_TURN,
+            operationId: `task:${task.id}:off:${stamp}:${node.id}`,
+            note: await unassignedNote(prisma, task, node, change, told),
+            spaceId: task.userId,
+          })
+        : false;
+      await appendLedger({ userId: node.userId, actor: "me", action: "node.task_unassigned", taskId: task.id, payload: { nodeId: node.id, roomId: first.roomId, spaceId: task.userId, byAccountId: change.byAccountId, told: queued, withdrawn: !started } });
     }
   }
   if (!target || (change.byNodeId && change.byNodeId === target.node.id)) return;
+  // Given from Ensemble by a person: the node shows it is on it now, and starts a moment later.
+  const grace = !change.byNodeId;
   const queued = await enqueueTurn(app, {
     nodeId: target.node.id,
     roomId: target.room.id,
@@ -224,7 +288,9 @@ async function tell(app: FastifyInstance, change: TaskAssignment): Promise<void>
     operationId: `task:${task.id}:on:${stamp}:${target.node.id}`,
     note: await assignedNote(prisma, task, target),
     spaceId: task.userId,
+    runAfter: grace ? new Date(Date.now() + ASSIGN_GRACE_MS) : null,
   });
+  if (queued && grace) showStatus(target.node.userId, target.room.id, target.node.id, "thinking");
   await appendLedger({ userId: target.node.userId, actor: "me", action: "node.task_assigned", taskId: task.id, payload: { nodeId: target.node.id, roomId: target.room.id, crew: Boolean(target.crew), spaceId: task.userId, byAccountId: change.byAccountId, told: queued } });
 }
 

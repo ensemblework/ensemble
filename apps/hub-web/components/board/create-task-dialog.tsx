@@ -4,6 +4,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { DateTimeInput } from "../date-time";
 import { api, type Priority, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { Dialog, Spinner } from "../ui";
 
@@ -56,10 +57,10 @@ export function CreateTaskDialog({ status = "todo", title: dialogTitle = "New ta
             <option value="critical">Critical</option><option value="p0">High</option><option value="p1">Medium</option><option value="p2">Low</option>
           </select>
         </label>
-        <label className="block text-[13px] font-medium">
-          Due (local time, optional)
-          <input type="datetime-local" value={due} onChange={(event) => setDue(event.target.value)} className="field mt-1 w-full" />
-        </label>
+        <div className="block text-[13px] font-medium">
+          <span className="mb-1 block">Due (optional)</span>
+          <DateTimeInput label="Due" value={due} defaultTime="17:00" onChange={setDue} />
+        </div>
         {save.error ? <p role="alert" className="text-[13px] text-danger">{save.error.message}</p> : null}
         <div className="flex justify-end gap-2">
           <button type="button" className="btn" disabled={save.isPending} onClick={close}>Cancel</button>

@@ -1421,6 +1421,8 @@
   {"method":"POST","path":"/api/node/takeovers/:id/start","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},
   {"method":"GET","path":"/api/node/takeovers/:id/stream","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/takeovers/:id/stream","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
+  {"method":"GET","path":"/api/node/tasks/:id/work","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
+  {"method":"HEAD","path":"/api/node/tasks/:id/work","mode":"hosted","auth":"identity","hasId":true,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"GET","path":"/api/node/themes/current","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"HEAD","path":"/api/node/themes/current","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes"]},
   {"method":"PUT","path":"/api/node/themes/current","mode":"hosted","auth":"identity","hasId":false,"hasTest":false,"checks":["unauthenticated","token-scopes","malformed-json-or-policy-rejection"]},

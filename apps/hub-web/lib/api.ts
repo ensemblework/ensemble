@@ -251,6 +251,8 @@ export type NodeAssignee = { kind: "node" | "crew"; id: string; name: string; ha
 /** The person's own Ensemble Node nodes and crews a task's owner field offers (GET /api/node/assignable). */
 /** A node's face as Ensemble Node draws it. Any part may be missing on an older node: the face falls back to the default. */
 export type NodeLook = { shape?: string; color?: string; eyes?: string };
+/** A node's work on a task under way (hub-api node/task-assignment.ts `taskNodeWork`). */
+export type NodeTaskWork = { node: { id: string; name: string; slug: string }; doing: "thinking" | "plan" | "session" };
 export type NodeAssignable = {
   nodes: Array<{ id: string; slug: string; name: string; role: string; avatar?: NodeLook | null; paused?: boolean }>;
   crews: Array<{ roomId: string; title: string; lead: { id: string; slug: string; name: string } | null; members: number }>;
@@ -1516,6 +1518,8 @@ export const api = bindClient({
     post(`/api/approvals/${id}/decide`, data),
   /** My Ensemble Node nodes and crews a task can be given to (hosted Ensemble only). */
   nodeAssignable: () => get<NodeAssignable>("/api/node/assignable"),
+  /** What a node does for this task that a change of owner would stop; null when it has not started. */
+  nodeTaskWork: (taskId: string) => get<{ work: NodeTaskWork | null }>(`/api/node/tasks/${encodeURIComponent(taskId)}/work`),
   /** Ensemble Node's approval cards: the same Needs me as on Node (hosted Ensemble only). */
   nodeApprovals: () => get<{ approvals: NodeApprovalCard[]; nodeUrl: string | null }>("/api/node/approvals"),
   settleNodeApproval: (id: string, decision: "approve" | "discard") => post(`/api/node/approvals/${id}`, { decision }),

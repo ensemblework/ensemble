@@ -143,6 +143,8 @@ export type TurnRequest = {
   originTurnId?: string | null;
   /** The space its Hub calls act in when they name none (a task's space). Null: the node's home space. */
   spaceId?: string | null;
+  /** Not before then (a task just given from Ensemble waits a moment, so a slip can be undone for free). */
+  runAfter?: Date | null;
 };
 
 /** Rate-limited turns try again quietly this many times, this far apart. */
@@ -227,11 +229,26 @@ export async function enqueueTurn(app: FastifyInstance, request: TurnRequest): P
       principals: (request.principals ?? {}) as Prisma.InputJsonValue,
       originTurnId: request.originTurnId ?? null,
       spaceId: request.spaceId ?? null,
+      runAfter: request.runAfter ?? null,
     },
   });
   coalesce(request, lane, await ownerWrote(app.prisma, request, lane, node.userId));
-  schedule(app, turn);
+  if (turn.runAfter) scheduleLater(app, turn);
+  else schedule(app, turn);
   return true;
+}
+
+/**
+ * A turn about work taken away (a task given to another owner, node/task-assignment.ts): stopped
+ * where it is if it runs and has not changed anything yet ("stopped": it leaves no trace); "acted"
+ * when it already did something; "idle" when it is not running here.
+ */
+export function withdrawTurn(turnId: string): "stopped" | "acted" | "idle" {
+  const entry = live.get(turnId);
+  if (!entry) return "idle";
+  if (entry.acted) return "acted";
+  entry.controller.abort("withdrawn");
+  return "stopped";
 }
 
 function mergedNote(held: string | null, incoming: string | null | undefined): string | null {

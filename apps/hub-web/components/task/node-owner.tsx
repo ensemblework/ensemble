@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Bot, Users } from "lucide-react";
-import { api, type NodeAssignable, type TaskRecord } from "@/lib/api";
+import { useEffect, useId, useRef, useState } from "react";
+import { api, type NodeAssignable, type NodeTaskWork, type TaskRecord } from "@/lib/api";
 import { NO_NODES, nodeOwnerText } from "@/lib/node-owner";
 import { cx } from "../ui";
 import { NodeFace } from "./node-face";
@@ -83,5 +84,68 @@ export function NodeOwnerMark({ task }: { task: Pick<TaskRecord, "owner" | "assi
       {crew ? <Users size={11} aria-hidden /> : node ? <NodeFace look={node.avatar} paused={node.paused} size={13} /> : <Bot size={11} aria-hidden />}
       <span className="truncate">{text}</span>
     </span>
+  );
+}
+
+/**
+ * Changing the owner of a task a node has: at once while the node has not started (a task just given
+ * waits a moment before its node's first model call, so a slip costs nothing), else only after the
+ * person sees what stops (`NodeWorkNotice`). `change` runs the change, or asks first.
+ */
+export function useNodeHandOff(taskId: string, owner: string) {
+  const [asking, setAsking] = useState<{ work: NodeTaskWork; go: () => void } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const change = async (apply: () => void, close: () => void) => {
+    const go = () => {
+      setAsking(null);
+      close();
+      apply();
+    };
+    if (owner !== "node") return go();
+    setChecking(true);
+    const work = await api.nodeTaskWork(taskId).then((answer) => answer.work, () => null);
+    setChecking(false);
+    if (!work) return go();
+    setAsking({ work, go });
+  };
+  return { asking, checking, change, reset: () => setAsking(null) };
+}
+
+const DOING: Record<NodeTaskWork["doing"], string> = {
+  thinking: "is working on this now",
+  plan: "is running a plan for this",
+  session: "has an agent session on this",
+};
+
+/** Inside the owner menu: the node's work under way, and a choice to keep it or stop it with the change. */
+export function NodeWorkNotice({ work, mine, onKeep, onStop }: { work: NodeTaskWork; mine: NodeAssignable; onKeep: () => void; onStop: () => void }) {
+  const id = useId();
+  const keep = useRef<HTMLButtonElement>(null);
+  useEffect(() => keep.current?.focus(), []);
+  const node = mine.nodes.find((row) => row.id === work.node.id);
+  return (
+    <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-body`} className="node-work-notice">
+      <div className="flex items-start gap-2.5">
+        <span className="node-work-face" aria-hidden>
+          <NodeFace look={node?.avatar} size={22} />
+        </span>
+        <div className="min-w-0">
+          <p id={`${id}-title`} className="text-[13px] font-medium leading-5">
+            <span className="break-words">@{work.node.slug}</span> {DOING[work.doing]}
+          </p>
+          <p id={`${id}-body`} className="mt-0.5 text-[12px] leading-[17px] text-muted">
+            Changing the owner stops {work.doing === "thinking" ? "it" : "that work"} where it is.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex justify-end gap-1.5">
+        <button ref={keep} type="button" className="btn-ghost h-7 px-2.5 text-[12.5px]" onClick={onKeep}>
+          Keep working
+        </button>
+        <button type="button" className="node-work-stop h-7 rounded-md px-2.5 text-[12.5px] font-medium" onClick={onStop}>
+          Stop and change
+        </button>
+      </div>
+    </div>
   );
 }
