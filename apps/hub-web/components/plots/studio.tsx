@@ -296,7 +296,6 @@ export function PlotStudio({ plotId }: { plotId: string }) {
                 onBrush={(range) => {
                   if (!range || !config.x) return;
                   update({ filter: { column: config.x, op: "gt", value: range.from } });
-                  toast(`Brushed ${range.from} to ${range.to}. The filter uses the start of that range.`);
                 }}
               />
             </div>
@@ -323,7 +322,6 @@ export function PlotStudio({ plotId }: { plotId: string }) {
                 onCopy={async () => {
                   const blob = await exportChartPng(frame, config, 2);
                   await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-                  toast("Copied the chart.");
                 }}
                 onServer={async (format, source) => {
                   setBusy("Rendering");

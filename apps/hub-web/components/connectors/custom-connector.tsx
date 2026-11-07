@@ -53,7 +53,6 @@ export function CustomConnectorForm({ onAdded, headingRef }: { onAdded: (id: str
         browser.assign(result.authorizeUrl);
         return;
       }
-      toast(`${name.trim()} added.`, { tone: "ok" });
       refresh();
       onAdded(result.id);
     },

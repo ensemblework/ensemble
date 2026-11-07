@@ -341,7 +341,6 @@ export function RoutinesPage() {
     onSuccess: ({ routine }) => {
       setComposing(null);
       setError("");
-      toast(`Added “${routine.title}”: ${routine.when.toLowerCase()}.`, { tone: "ok" });
       void refresh();
     },
     onError: (failure) => setError((failure as Error).message),

@@ -78,7 +78,6 @@ function ProviderPane({ id, settings, patch }: { id: ModelProvider; settings: Se
     onSuccess: () => {
       setChecked(null);
       refresh();
-      toast(`${provider.label} key removed.`, { tone: "ok" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

@@ -35,7 +35,6 @@ function FeedRow({ feed }: { feed: CalendarFeed }) {
   const remove = useMutation({
     mutationFn: () => api.removeCalendarFeed(feed.id),
     onSuccess: () => {
-      toast(`Removed ${feed.name}. Its events left Today.`, { tone: "ok" });
       invalidateCalendar(client);
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

@@ -152,7 +152,6 @@ function LimitsCard({ limits, caps }: { limits: SharingOverview["limits"]; caps:
     mutationFn: () => api.saveSharingLimits(Object.fromEntries(fields.map((field) => [field.key, Number(values[field.key])]))),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["sharing"] });
-      toast("Limits saved.", { tone: "ok" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
@@ -390,7 +389,6 @@ function PublicLinks() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["public-links"] });
       void client.invalidateQueries({ queryKey: ["public-link"] });
-      toast("The link is off. Nobody can open it now.");
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

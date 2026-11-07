@@ -26,7 +26,6 @@ export function DevicesSection() {
   const revoke = useMutation({
     mutationFn: api.revokeDevice,
     onSuccess: () => {
-      toast("Unpaired. That computer can no longer take tasks.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["devices"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

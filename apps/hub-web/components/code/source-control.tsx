@@ -88,7 +88,7 @@ export function SourceControl({ repo, onOpenFile, beforeCommit, commitForm = tru
             void (status.defaultBranch && status.branch === status.defaultBranch
               ? confirmAction({ title: `Push straight to ${status.branch}?`, body: `${status.branch} is this repository's default branch. Most changes go on a branch of their own and arrive through a pull request.`, confirm: `Push to ${status.branch}` })
               : Promise.resolve(true)
-            ).then((yes) => yes && run.mutate(() => code.push(repo).then(() => toast("Pushed.", { tone: "ok" }))))
+            ).then((yes) => yes && run.mutate(() => code.push(repo)))
           }
         >
           <ArrowUp size={13} />

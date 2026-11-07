@@ -346,7 +346,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
       // Review of a code run lives in the code space.
       await setFeature(client, "code", true);
     },
-    onSuccess: () => toast("Agents are on for this space.", { tone: "ok" }),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
@@ -570,7 +569,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
       const list = upsertProfile(savedProfiles, profile);
       saveProfiles.mutate(
         { runProfiles: list, ...(savedProfiles.length === 0 ? { defaultRunProfileId: profile.id } : {}) },
-        { onSuccess: () => (setProfileId(profile.id), toast(id ? `Saved “${name}”.` : `Saved the profile “${name}”.`, { tone: "ok" })) },
+        { onSuccess: () => setProfileId(profile.id) },
       );
     } catch (error) {
       toast((error as Error).message, { tone: "error" });
@@ -836,7 +835,7 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
             saveProfiles.mutate({ runProfiles: list, ...(settings.data?.settings.defaultRunProfileId === id ? { defaultRunProfileId: list[0]?.id ?? null } : {}) });
             setProfileId("");
           }}
-          onDefault={(id) => saveProfiles.mutate({ defaultRunProfileId: id }, { onSuccess: () => toast("This is your default profile now: Quick assign and the assistant use it.", { tone: "ok" }) })}
+          onDefault={(id) => saveProfiles.mutate({ defaultRunProfileId: id })}
         />
 
         <div {...attentionProps("agent")} data-testid="assign-agent">

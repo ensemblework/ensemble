@@ -7,14 +7,12 @@ import { api } from "@/lib/api";
 import { APPS } from "@/lib/connect/catalog";
 import { METHOD_LABELS } from "@/lib/connect/configs";
 import { promptsForProfession } from "@/lib/connect/prompts";
-import { useToast } from "../toast";
 import { PageHeader } from "../ui";
 import { StatusPill } from "./bits";
 import { BridgeKey } from "./bridge-key";
 import { AppMark } from "./logos";
 
 export function ConnectPage() {
-  const toast = useToast();
   const bridge = useQuery({
     queryKey: ["connect-bridge"],
     queryFn: api.connectBridge,
@@ -96,7 +94,6 @@ export function ConnectPage() {
                 className="tile h-full w-full rounded-xl bg-panel p-3 text-left text-[13.5px] leading-5 hover:border-line-strong"
                 onClick={() => {
                   void navigator.clipboard.writeText(prompt);
-                  toast("Copied. Paste it into your app.", { tone: "ok" });
                 }}
               >
                 {prompt}

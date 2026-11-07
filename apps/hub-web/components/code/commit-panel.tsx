@@ -72,7 +72,6 @@ export function CommitPanel({ source, draftKey, beforeCommit, pending = 0 }: { s
     },
     onSuccess: (result) => {
       if (!result) return;
-      toast(`Committed ${result.commit.slice(0, 7)} on ${result.branch}.`, { tone: "ok" });
       update({ subject: "", body: "", ticked: null, prTitle: draft.prTitle || draft.subject });
       refresh();
     },
@@ -89,7 +88,6 @@ export function CommitPanel({ source, draftKey, beforeCommit, pending = 0 }: { s
       return code.push(scm.repo);
     },
     onSuccess: (result) => {
-      if (result) toast("Pushed.", { tone: "ok" });
       refresh();
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

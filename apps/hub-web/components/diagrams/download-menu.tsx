@@ -116,7 +116,7 @@ export function DiagramExportMenu({ model, exporting, onExport }: { model: Diagr
             onClick={() => {
               close();
               void copyDiagramPng(model).then(
-                () => toast("Copied image."),
+                () => undefined,
                 () => toast("Couldn't copy the image.", { tone: "error" }),
               );
             }}
@@ -127,7 +127,7 @@ export function DiagramExportMenu({ model, exporting, onExport }: { model: Diagr
             onClick={() => {
               close();
               void navigator.clipboard.writeText(toMermaid(model)).then(
-                () => toast("Copied Mermaid."),
+                () => undefined,
                 () => toast("Couldn't copy Mermaid.", { tone: "error" }),
               );
             }}

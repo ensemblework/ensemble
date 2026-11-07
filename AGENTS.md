@@ -116,6 +116,11 @@ node --test packaging/render.test.mjs           # CLI release metadata
 cd apps/agent-runtime && .venv/bin/python -m pytest tests   # install pytest into .venv first
 ```
 
+## UI rules
+
+- **Focus highlight: one edge, always the outer one.** When an input, textarea or select sits inside its own box (an icon, chips or a hidden label beside it, a search box, the date picker's type field), only the box shows focus. In `apps/hub-web`, give the box `compound-field` (or a `border`, with the input `bg-transparent`) and `app/globals.css` draws the edge. The inner control never draws a ring, outline or shadow of its own: no `focus:ring-*`, `focus-visible:ring-*` or outline on it. A standalone `.field` shows the edge on itself. The same holds in Ensemble Node (`.compound-field` / `.search-field`).
+- **Notices (toasts) only when they matter.** Show one for a failure, an Undo, a consequence the screen does not show, or the result of a sync or import. Never for saving, copying, moving, assigning, approving, pushing or a toggle the person can see change. Never put ids or hashes in them.
+
 ## Guardrails
 
 - Never run `prisma migrate reset` or anything else that drops data. Schema changes are new migrations under `apps/hub-api/prisma/migrations`.

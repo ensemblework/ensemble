@@ -17,7 +17,6 @@ export function CompletedList({ embedded = false }: { embedded?: boolean }) {
   const reopen = useMutation({
     mutationFn: (item: { kind: string; id: string }) => (item.kind === "deliverable" ? api.reopenDeliverable(item.id) : api.reopenTask(item.id)),
     onSuccess: () => {
-      toast("Reopened.", { tone: "ok" });
       void client.invalidateQueries();
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

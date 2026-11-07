@@ -37,6 +37,7 @@ import { api, type TaskRecord } from "@/lib/api";
 import { ASK_PRESETS, attachToAssistant, type AssistantAttachment } from "@/lib/assistant-attach";
 import { NO_NODES } from "@/lib/node-owner";
 import { PRIORITY, PRIORITY_ORDER, STATUS } from "@/lib/format";
+import type { ToastOptions } from "@/lib/toast-bus";
 import { Calendar, dayKey } from "../date-time";
 import { rememberPick, withRecent, type MenuAction, type MenuSection, type MenuSpec } from "./menu-store";
 
@@ -164,7 +165,7 @@ type TaskDeps = {
   remove?: (id: string) => void;
   /** Applies a change through the place's own update (optimistic); else it saves here. */
   update?: (data: Record<string, unknown>) => unknown;
-  toast: (text: string, options?: { tone?: "ok" | "error" }) => void;
+  toast: (text: string, options?: ToastOptions) => void;
 };
 
 const NODE_DOING: Record<string, string> = { thinking: "is working on this now", plan: "is running a plan for this", session: "has an agent session on this" };
@@ -287,7 +288,7 @@ export function taskMenu(task: TaskRecord, deps: TaskDeps, options: { open?: boo
     {
       items: [
         { id: "task-attach", label: "Attach to assistant", icon: Paperclip, run: () => attachToAssistant({ mention: { kind: "task", id: task.id, label: task.title || "Untitled" } }) },
-        { id: "task-link", label: "Copy link", icon: Link2, run: async () => { await copyText(absolute(`/tasks/${task.id}`)); toast("Link copied.", { tone: "ok" }); } },
+        { id: "task-link", label: "Copy link", icon: Link2, run: () => copyText(absolute(`/tasks/${task.id}`)) },
       ],
     },
     {
@@ -299,9 +300,9 @@ export function taskMenu(task: TaskRecord, deps: TaskDeps, options: { open?: boo
           danger: true,
           run: async () => {
             if (deps.remove) return deps.remove(task.id);
-            await api.deleteTask(task.id);
+            const result = await api.deleteTask(task.id);
             refreshTask(client, task.id);
-            toast("Task moved to Trash.", { tone: "ok" });
+            toast("Moved to Trash.", { action: { label: "Undo", run: () => void api.undo(result?.undoEntryId ?? undefined).then(() => client.invalidateQueries(), (error: Error) => toast(error.message, { tone: "error" })) } });
           },
         },
       ],
@@ -319,7 +320,7 @@ type PageDeps = {
   remove?: () => void;
   /** Saves what is being typed before a duplicate or export reads the page. */
   before?: () => Promise<unknown>;
-  toast: (text: string, options?: { tone?: "ok" | "error" }) => void;
+  toast: (text: string, options?: ToastOptions) => void;
 };
 
 /** "Move to ▸": a board and column, searchable, recent first. */
@@ -342,7 +343,6 @@ export function boardSubmenu(kind: "page" | "task", id: string, client: QueryCli
                 await api.assignPageBoard(kind, id, { boardId: place.boardId, columnId: place.columnId });
                 void client.invalidateQueries({ queryKey: ["boards"] });
                 void client.invalidateQueries({ queryKey: ["pages"] });
-                toast(`Moved to ${place.label}.`, { tone: "ok" });
               },
             }))
           : [{ items: [{ id: "no-boards", label: "No boards yet", disabled: true }] }],
@@ -368,7 +368,7 @@ export function pageMenu(page: { id: string; title: string }, deps: PageDeps, op
     {
       items: [
         { id: "page-attach", label: "Attach to assistant", icon: Paperclip, run: () => attachToAssistant({ attachment }) },
-        { id: "page-link", label: "Copy link", icon: Link2, run: async () => { await copyText(absolute(href)); toast("Link copied.", { tone: "ok" }); } },
+        { id: "page-link", label: "Copy link", icon: Link2, run: () => copyText(absolute(href)) },
       ],
     },
     {
@@ -421,7 +421,7 @@ export function taskMenuFor(row: { id: string; title: string }, deps: TaskDeps):
     {
       items: [
         { id: "task-attach", label: "Attach to assistant", icon: Paperclip, run: () => attachToAssistant({ mention: { kind: "task", id: row.id, label: row.title || "Untitled" } }) },
-        { id: "task-link", label: "Copy link", icon: Link2, run: async () => { await copyText(absolute(`/tasks/${row.id}`)); deps.toast("Link copied.", { tone: "ok" }); } },
+        { id: "task-link", label: "Copy link", icon: Link2, run: () => copyText(absolute(`/tasks/${row.id}`)) },
       ],
     },
     ...(deps.remove ? [{ items: [{ id: "task-delete", label: "Delete", icon: Trash2, danger: true, run: () => deps.remove!(row.id) }] }] : []),

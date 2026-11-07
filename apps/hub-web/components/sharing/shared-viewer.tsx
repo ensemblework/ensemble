@@ -208,7 +208,6 @@ function SharedSkill({ id, role }: { id: string; role: "view" | "edit" }) {
     onSuccess: () => {
       setDraft(null);
       void client.invalidateQueries({ queryKey: ["shared-skill", id] });
-      toast("Saved.", { tone: "ok" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

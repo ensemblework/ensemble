@@ -69,7 +69,6 @@ function SecretForm({ card, onDone }: { card: NodeApprovalCard; onDone: () => vo
           .then((answer) => api.saveNodeSecret(card.id, answer))
           .then(() => {
             setValue("");
-            toast(`Saved ${name} on ${computer}.`);
             onDone();
           })
           .catch((failure: Error) => setError(failure.message))
@@ -135,7 +134,6 @@ function LoginForm({ card, nodeUrl, onDone }: { card: NodeApprovalCard; nodeUrl:
           setTyping(false);
           onDone();
         } else if (done.result.status === "declined") {
-          toast("Not now. The work goes on without it.");
           onDone();
         } else if (done.result.status === "shown") {
           setShown(true);
@@ -244,7 +242,6 @@ function NodeCard({ card, nodeUrl }: { card: NodeApprovalCard; nodeUrl: string |
       if (previous) client.setQueryData(["node-approvals"], { ...previous, approvals: previous.approvals.filter((row) => row.id !== card.id) });
       return { previous };
     },
-    onSuccess: (_result, decision) => toast(decision === "approve" ? (card.data.type === "media_preview" ? "Sent. The captures can be used now." : `Approved. ${asker(card)} goes on.`) : card.data.type === "login" ? "Not now. The work goes on without it." : "Discarded. Nothing was done."),
     onError: (error, _decision, context) => {
       // Already answered or closed on Node: the card stays gone.
       if (error instanceof ApiError && error.status === 409) return toast("This was already settled.");

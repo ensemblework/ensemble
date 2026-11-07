@@ -86,7 +86,6 @@ export function AccountSection() {
   const profileSave = useMutation({
     mutationFn: api.updateProfile,
     onSuccess: async () => {
-      toast("Profile saved.", { tone: "ok" });
       await client.invalidateQueries({ queryKey: ["me"] });
       await client.invalidateQueries({ queryKey: ["shell"] });
     },
@@ -118,7 +117,7 @@ export function AccountSection() {
   const identities = useQuery({ queryKey: ["auth-identities"], queryFn: api.identities, enabled: me.data?.via === "session" });
   const unlink = useMutation({
     mutationFn: (provider: string) => api.unlinkIdentity(provider, securityPassword || undefined),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["auth-identities"] }); setUnlinking(null);setSecurityPassword("");toast("Login method removed.", { tone: "ok" }); },
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["auth-identities"] }); setUnlinking(null);setSecurityPassword(""); },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   const exported = useMutation({

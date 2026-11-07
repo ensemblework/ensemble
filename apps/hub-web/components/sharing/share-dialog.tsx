@@ -239,7 +239,6 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
     onSuccess: (person) => {
       setPending(null);
       refresh();
-      toast(`Shared with ${person.name}. They'll see it under Shared with you.`, { tone: "ok" });
     },
     onError: fail,
   });
@@ -259,7 +258,6 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
     },
     onSuccess: (row) => {
       refresh();
-      toast(`${row.person.name} no longer has access.`);
     },
     onError: fail,
   });
@@ -491,7 +489,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
   };
   const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
   const setLink = useMutation({ mutationFn: (role: ItemRole) => api.setPublicLink({ kind: itemKind as ShareKind, resourceId, role }), onSuccess: () => { refresh(); setLinkLimit(false); }, onError: (error) => { if (error instanceof ApiError && error.code === "PUBLIC_LINK_LIMIT") setLinkLimit(true); else fail(error); } });
-  const remove = useMutation({ mutationFn: (id: string) => api.removePublicLink(id), onSuccess: () => { refresh(); toast("The link is off. Nobody can open it now."); }, onError: fail });
+  const remove = useMutation({ mutationFn: (id: string) => api.removePublicLink(id), onSuccess: refresh, onError: fail });
   const rotate = useMutation({ mutationFn: (id: string) => api.rotatePublicLink(id), onSuccess: () => { refresh(); toast("New link made. The old one stopped working.", { tone: "ok" }); }, onError: fail });
 
   if (target.kind === "space") {
@@ -511,7 +509,6 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
       () => {
         setCopied(true);
         window.setTimeout(() => setCopied(false), 2000);
-        toast(`Link copied. Anyone with it can ${role === "edit" ? "edit" : "view"} this ${KIND_LABEL[target.kind as ShareKind]}.`, { tone: "ok" });
       },
       () => toast("Couldn't copy the link. Select it and copy it yourself.", { tone: "error" }),
     );

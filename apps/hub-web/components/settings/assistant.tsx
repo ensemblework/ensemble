@@ -128,7 +128,6 @@ export function WatchersSection() {
   const cancel = useMutation({
     mutationFn: api.cancelWatcher,
     onSuccess: () => {
-      toast("Stopped watching.");
       void client.invalidateQueries({ queryKey: ["watchers"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

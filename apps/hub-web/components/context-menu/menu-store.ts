@@ -4,8 +4,9 @@
  * `openContextMenu(event, build)` from its `onContextMenu`; the nearest one wins (it prevents the
  * default, so the ones around it and the page-wide menu stand back).
  *
- * The browser's menu stays: in plain form fields (inputs, text areas, code editors), with Shift held,
- * for the one right-click after "Browser menu", and everywhere when Settings › Appearance turns ours off.
+ * The browser's menu stays: in plain form fields (inputs, text areas, code editors), with Shift held, on a
+ * second right-click at the same spot or on the "Browser menu" row while ours is open, for the one
+ * right-click after "Browser menu" is clicked, and everywhere when Settings › Appearance turns ours off.
  */
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -93,9 +94,14 @@ export function setMenusEnabled(value: boolean): void {
 }
 
 let browserNextUntil = 0;
-/** "Browser menu": a page cannot open the browser's own menu, so the next right-click is left to it. */
-export function armBrowserMenu(): void {
-  browserNextUntil = Date.now() + 15_000;
+/** A page cannot open the browser's own menu, so the next right-click (within `ms`) is left to it. */
+export function armBrowserMenu(ms = 15_000): void {
+  browserNextUntil = Date.now() + ms;
+}
+
+/** Within a few pixels of where the open menu was asked for: a second right-click there wants the browser's. */
+export function nearMenuOrigin(x: number, y: number): boolean {
+  return Boolean(current && !current.touch && Math.hypot(x - current.x, y - current.y) <= 24);
 }
 
 let pointer: "mouse" | "touch" | "pen" = "mouse";
