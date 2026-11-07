@@ -41,6 +41,9 @@ test("the picker offers ten faces a group and five backgrounds; a background is 
     const swatches = [...backgrounds.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
     assert.deepEqual(swatches.map((swatch) => swatch.getAttribute("aria-label")), ["Blue", "Green", "Peach", "Rose", "Slate"]);
     assert.equal(backgrounds.querySelector('[aria-checked="true"]')?.getAttribute("aria-label"), "Rose", "a Maker avatar without a background shows the Maker colour");
+    const only = [...host.querySelectorAll('[role="radiogroup"][aria-label^="Maker avatars"]')];
+    assert.deepEqual(only.map((group) => group.getAttribute("aria-label")), ["Maker avatars, Women"], "only the faces for the gender given at sign-up");
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Show all faces")!.click());
     const groups = [...host.querySelectorAll('[role="radiogroup"][aria-label^="Maker avatars"]')];
     assert.equal(groups.length, 3);
     for (const group of groups) assert.equal(group.querySelectorAll('[role="radio"]').length, AVATARS_PER_GROUP);

@@ -31,8 +31,10 @@ import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 import { MentionTextarea } from "../mentions/mention-field";
-import { LinkifiedText } from "../linkified-text";
 import { useModKey } from "@/lib/platform";
+import { toMarkdown } from "@/lib/chat-format";
+import { ChatText } from "../chat-text";
+import { useChatFormat } from "@/lib/use-chat-format";
 import { usePersistentState } from "@/lib/prefs";
 import { useLive } from "../live";
 import { usePeek } from "../shell/peek";
@@ -263,7 +265,7 @@ export function Message({
             <figcaption>{part.whole ? "Attached" : "From"} “{part.from}”</figcaption>
           </figure>
         ))}
-        {rest.trim() ? <div className="assistant-user-message"><LinkifiedText text={rest} mentions={message.mentions} /></div> : null}
+        {rest.trim() ? <div className="assistant-user-message"><ChatText text={rest} mentions={message.mentions} /></div> : null}
         <MessageFiles content={message.content} mentions={message.mentions} />
       </div>
     );
@@ -452,6 +454,7 @@ export function AssistantDock() {
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const mention = useMentionMenu({ value: draft, onValue: setDraft, inputRef: input });
+  const format = useChatFormat(draft, setDraft);
   const attachments = useChatAttachments();
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
@@ -802,7 +805,7 @@ export function AssistantDock() {
   };
 
   const submit = () => {
-    const text = draft.trim();
+    const text = toMarkdown(draft).trim();
     if ((!text && !attachments.ready.length && !attached.length) || pending) return;
     if (send(text, mention.takeMentions(text))) mention.clear();
   };
@@ -962,8 +965,11 @@ export function AssistantDock() {
               menu={mention}
               rows={1}
               value={draft}
+              onChange={format.onChange}
+              onSelect={format.onSelect}
               onKeyDown={(event) => {
                 if (mention.onKeyDown(event)) return;
+                if (format.onKeyDown(event)) return;
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   submit();
@@ -1007,7 +1013,7 @@ export function AssistantDock() {
                 {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
               </div> : null}</div>}
           </Popover>
-          <span className="assistant-key-hint">Enter to send · ⇧ Enter for a new line</span>
+          <span className="assistant-key-hint" aria-live="polite">{format.inList ? `Enter for the next item · ⇧ Enter for a line in it · ${mod === "⌘" ? "⌘" : "Ctrl+"}Enter to send` : "Enter to send · ⇧ Enter for a new line"}</span>
         </div>
       </div>
     </div>
