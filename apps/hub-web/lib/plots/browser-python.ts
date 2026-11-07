@@ -1,10 +1,12 @@
 /**
  * Python in the browser for Plots (Ensemble on the web, docs/02 Plots), with Pyodide from jsDelivr.
  *
- * Two workers. The plot worker runs the person's plot code: it loads what the code imports, then cuts
- * itself off from the network and from storage (fetch, XMLHttpRequest, WebSocket, importScripts,
- * Worker, IndexedDB, caches) before the code runs, and stays that way; code that needs a package it
- * did not load gets a fresh worker. So a plot script, even one someone else wrote, cannot send the
+ * Two module workers (Pyodide 314 runs only as an ES module: `pyodide.mjs`, `pyodide.asm.mjs`). The plot
+ * worker runs the person's plot code: it loads what the code imports, then cuts itself off from the
+ * network and from storage (fetch, XMLHttpRequest, WebSocket, importScripts, Worker, IndexedDB, caches)
+ * and from making new JavaScript (eval and the Function constructors, the only way left to reach
+ * `import()`) before the code runs, and stays that way; code that needs a package it did not load gets
+ * a fresh worker. So a plot script, even one someone else wrote, cannot send the
  * data anywhere or act as you. The parse worker reads spreadsheets and Arrow files with the plot
  * runtime's own reader and runs no one's code but ours.
  *
@@ -146,14 +148,15 @@ function boot(indexes, driver, parseTable) {
     booting = (async () => {
       let py = null;
       let failure = null;
-      // The first place that serves all of Python is used for its packages too.
+      // The first place that serves all of Python is used for its packages too. The first failure is
+      // the one reported: it is this site's own copy, the one that should have worked.
       for (const index of indexes) {
         try {
-          importScripts(index + "pyodide.js");
-          py = await loadPyodide({ indexURL: index });
+          const pyodide = await import(index + "pyodide.mjs");
+          py = await pyodide.loadPyodide({ indexURL: index });
           break;
         } catch (error) {
-          failure = error;
+          failure = failure || error;
         }
       }
       if (!py) throw failure || new Error("Python could not be downloaded.");
@@ -180,6 +183,18 @@ function lockdown() {
   for (const name of NETWORK) {
     try { Object.defineProperty(self, name, { value: undefined, writable: false, configurable: false }); } catch (_) {}
   }
+  // A module worker keeps import(), which cannot be deleted; code reaches it only through new JavaScript,
+  // so eval and every Function constructor refuse from here on (instanceof still works through the proxies).
+  const refuse = () => { throw new Error("Plot code cannot run JavaScript here."); };
+  const kinds = [Function, (async function () {}).constructor, (function* () {}).constructor, (async function* () {}).constructor];
+  for (const Kind of kinds) {
+    const guard = new Proxy(Kind, { apply: refuse, construct: refuse });
+    try { Object.defineProperty(Kind.prototype, "constructor", { value: guard, writable: false, configurable: false }); } catch (_) {}
+    if (Kind === Function) {
+      try { Object.defineProperty(self, "Function", { value: guard, writable: false, configurable: false }); } catch (_) {}
+    }
+  }
+  try { Object.defineProperty(self, "eval", { value: refuse, writable: false, configurable: false }); } catch (_) {}
   locked = true;
 }
 
@@ -253,8 +268,9 @@ function slot(kind: "plot" | "parse"): Slot {
   let current = slots[kind];
   if (!current) {
     const url = URL.createObjectURL(new Blob([WORKER_JS], { type: "text/javascript" }));
-    current = { worker: new Worker(url), used: false, ready: false };
-    URL.revokeObjectURL(url);
+    current = { worker: new Worker(url, { type: "module" }), used: false, ready: false };
+    // A module worker fetches its script after this returns: let it, then free the URL.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
     slots[kind] = current;
   }
   return current;
