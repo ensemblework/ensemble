@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ApiError, api } from "@/lib/api";
-import { DRIVER_PY, pythonFailure } from "./browser-python";
+import { DRIVER_PY, pyodideIndexes, pythonFailure } from "./browser-python";
 import { PARSE_TABLE_PY, PLOT_HELPER } from "./python-sources";
 import { forgetPlotRuntime, PlotScriptError, renderPlot, scriptErrorLine } from "./render";
 
@@ -72,9 +72,13 @@ test("a render runs on the server where it may, and in the browser exactly when 
 });
 
 test("a blocked Python download says where Python comes from; other failures pass through", () => {
-  assert.match(pythonFailure("TypeError: Network response is CORS-cross-origin"), /could not be downloaded from cdn\.jsdelivr\.net.*CORS-cross-origin$/);
+  assert.match(pythonFailure("TypeError: Network response is CORS-cross-origin"), /could not be downloaded in this browser, from Ensemble or from cdn\.jsdelivr\.net.*CORS-cross-origin$/);
   assert.match(pythonFailure("NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope'"), /cdn\.jsdelivr\.net/);
   assert.equal(pythonFailure("Unknown request."), "Unknown request.");
+  const [own, cdn] = pyodideIndexes("https://app.ensemblework.com");
+  assert.match(own!, /^https:\/\/app\.ensemblework\.com\/pyodide\/v[\d.]+\/full\/$/, "this site's proxy first");
+  assert.match(cdn!, /^https:\/\/cdn\.jsdelivr\.net\/pyodide\//);
+  assert.deepEqual(pyodideIndexes("tauri://localhost"), [cdn], "the desktop app goes to the CDN");
 });
 
 const python = join(runtime, ".venv", "bin", "python");

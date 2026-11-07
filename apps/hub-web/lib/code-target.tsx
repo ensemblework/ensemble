@@ -8,7 +8,7 @@
  * on it unchanged.
  */
 import { createContext, useContext, useMemo } from "react";
-import { api, type ActionsResult, type CodeCreated, type CodeFile, type CodeRepos, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
+import { api, type ActionsResult, type CodeCreated, type CodeDownload, type CodeFile, type CodeRepos, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
 
 export type CodeTarget = { kind: "local" } | { kind: "device"; deviceId: string };
 
@@ -45,6 +45,9 @@ export type CodeApi = {
   tree(source: Source, path: string): Promise<CodeTree>;
   /** A new empty file or folder (folders on the way too); a typed `/…` or `~/…` path may be outside the repository. */
   create(source: Source, path: string, kind: "file" | "folder"): Promise<CodeCreated>;
+  move(source: Source, from: string, to: string): Promise<{ ok: boolean; path: string }>;
+  remove(source: Source, path: string): Promise<{ ok: boolean }>;
+  download(source: Source, path: string): Promise<CodeDownload>;
   files(source: Source): Promise<{ files: string[]; truncated: boolean }>;
   search(source: Source, q: string, matchCase: boolean): Promise<CodeSearch>;
   commitPlan(source: Source): Promise<CommitPlan>;
@@ -78,6 +81,9 @@ const localApi: CodeApi = {
   progress: (source) => api.codeProgress(source),
   tree: (source, path) => api.codeTree(source, path),
   create: (source, path, kind) => api.codeCreate(source, path, kind),
+  move: (source, from, to) => api.codeMove(source, from, to),
+  remove: (source, path) => api.codeDelete(source, path),
+  download: (source, path) => api.codeDownload(source, path),
   files: (source) => api.codeFiles(source),
   search: (source, q, matchCase) => api.codeSearch(source, q, matchCase),
   commitPlan: (source) => api.codeCommitPlan(source),
@@ -125,6 +131,9 @@ export function deviceCodeApi(deviceId: string): CodeApi {
         return { ok: true, kind, path, outside: null };
       }
     },
+    move: (source, from, to) => post("/api/code/move", { ...source, from, to }),
+    remove: (source, path) => post("/api/code/delete", { ...source, path }),
+    download: (source, path) => get("/api/code/download", { ...source, path }),
     files: (source) => get("/api/code/files", { ...source }),
     search: (source, q, matchCase) => get("/api/code/search", { ...source, q, case: matchCase ? "1" : "0" }),
     commitPlan: (source) => get("/api/code/commit-plan", { ...source }),

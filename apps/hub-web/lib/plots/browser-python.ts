@@ -16,6 +16,16 @@ import { PARSE_TABLE_PY, PLOT_HELPER } from "./python-sources";
 export const PYODIDE_VERSION = "314.0.7";
 export const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 
+/**
+ * Where Python is downloaded from, in order: this site's own /pyodide (next.config.ts proxies it to the same
+ * CDN files, so a network that blocks cdn.jsdelivr.net, as some ISPs do, or a content blocker still gets
+ * it), then the CDN itself (the desktop app has no proxy).
+ */
+export function pyodideIndexes(origin: string | null = typeof location === "undefined" ? null : location.origin): string[] {
+  const own = origin && /^https?:\/\//.test(origin) ? `${origin}/pyodide/v${PYODIDE_VERSION}/full/` : null;
+  return own ? [own, PYODIDE_INDEX] : [PYODIDE_INDEX];
+}
+
 const FIRST_MS = 180_000;
 const RUN_MS = 60_000;
 
@@ -131,11 +141,22 @@ const NETWORK = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importS
 const PURE = ["seaborn"];
 
 // One start, shared by every request that arrives while Python is still downloading.
-function boot(index, driver, parseTable) {
+function boot(indexes, driver, parseTable) {
   if (!booting) {
     booting = (async () => {
-      importScripts(index + "pyodide.js");
-      const py = await loadPyodide({ indexURL: index });
+      let py = null;
+      let failure = null;
+      // The first place that serves all of Python is used for its packages too.
+      for (const index of indexes) {
+        try {
+          importScripts(index + "pyodide.js");
+          py = await loadPyodide({ indexURL: index });
+          break;
+        } catch (error) {
+          failure = error;
+        }
+      }
+      if (!py) throw failure || new Error("Python could not be downloaded.");
       py.FS.mkdirTree("/ensemble");
       py.FS.writeFile("/ensemble/ensemble_driver.py", driver);
       py.FS.writeFile("/ensemble/ensemble_parse_table.py", parseTable);
@@ -171,7 +192,7 @@ async function handle(event) {
   const msg = event.data;
   const reply = (body) => self.postMessage(Object.assign({ id: msg.id }, body));
   try {
-    const py = await boot(msg.index, msg.driver, msg.parseTable);
+    const py = await boot(msg.indexes, msg.driver, msg.parseTable);
     const driver = py.pyimport("ensemble_driver");
     if (msg.type === "plot") {
       const wanted = driver.imports(msg.job.code);
@@ -277,7 +298,7 @@ function call(kind: "plot" | "parse", message: Record<string, unknown>): Promise
     };
     current.worker.addEventListener("message", onMessage);
     current.worker.addEventListener("error", onError);
-    current.worker.postMessage({ id, index: PYODIDE_INDEX, driver: DRIVER_PY, parseTable: PARSE_TABLE_PY, helper: PLOT_HELPER, ...message });
+    current.worker.postMessage({ id, indexes: pyodideIndexes(), driver: DRIVER_PY, parseTable: PARSE_TABLE_PY, helper: PLOT_HELPER, ...message });
   });
 }
 
@@ -288,7 +309,7 @@ function call(kind: "plot" | "parse", message: Record<string, unknown>): Promise
 export function pythonFailure(message: string): string {
   const text = message.trim();
   if (!/CORS|cross-origin|NetworkError|Failed to fetch|Load failed|importScripts|network/i.test(text)) return text;
-  return `Python for Plots could not be downloaded from cdn.jsdelivr.net in this browser. A content blocker, a network filter or a browser setting may be blocking it. The browser said: ${text.split("\n").filter(Boolean).pop() ?? text}`;
+  return `Python for Plots could not be downloaded in this browser, from Ensemble or from cdn.jsdelivr.net. Check the connection and try again; a network filter or content blocker may be stopping it. The browser said: ${text.split("\n").filter(Boolean).pop() ?? text}`;
 }
 
 export type PlotJob = { code: string; datasets: Array<{ name: string; columns: string[]; rows: Array<Array<string | number | null>> }>; format: "png" | "svg" | "pdf" | "eps"; dpi?: number };

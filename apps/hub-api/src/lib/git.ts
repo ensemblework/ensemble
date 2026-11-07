@@ -7,8 +7,9 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { zipSync } from "fflate";
 import { hostExecutable, isWithin } from "../workspace/policy.js";
 import { dropWhere, readLru, remember } from "./bounded.js";
 
@@ -452,6 +453,89 @@ export async function createInRoots(roots: string[], absolute: string, kind: "fi
   const allowed = (await Promise.all(roots.filter(Boolean).map((root) => realpath(root).catch(() => null)))).filter((root): root is string => Boolean(root));
   await createAt(target, kind, (real) => allowed.some((root) => isWithin(root, real, true)));
   return target;
+}
+
+const isGitName = (name: string) => name.toLowerCase().replace(/[. ]+$/, "") === ".git";
+const cleanPath = (path: string) => path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+
+/**
+ * The entry itself at `path` (a link is the link, not where it leads), inside the repository: its folder
+ * must really be in the repository, and git's own files are never touched.
+ */
+async function entryInside(repo: string, path: string): Promise<string> {
+  const clean = cleanPath(path);
+  if (!clean) throw new GitError("Choose a file or folder.", 422);
+  if (clean.split("/").some(isGitName)) throw new GitError("Git's own files are not changed here.", 403);
+  const folder = clean.includes("/") ? clean.slice(0, clean.lastIndexOf("/")) : "";
+  const parent = folder ? await realInside(repo, folder, false) : await realpath(repo);
+  const full = join(parent, basename(clean));
+  if (!(await lstat(full).catch(() => null))) throw new GitError("That is not in the repository any more.", 404);
+  return full;
+}
+
+/** Renames or moves a file or folder inside the repository, as an explorer does. Nothing there already is overwritten (409). */
+export async function moveRepoEntry(repo: string, from: string, to: string): Promise<void> {
+  const source = await entryInside(repo, from);
+  const clean = cleanPath(to);
+  const name = basename(clean);
+  if (!clean || !name || name === "." || name === "..") throw new GitError("Give it a name.", 422);
+  if (clean.split("/").some(isGitName)) throw new GitError("Git's own files are not made here.", 403);
+  const folder = clean.includes("/") ? clean.slice(0, clean.lastIndexOf("/")) : "";
+  const parent = folder ? await realInside(repo, folder, false) : await realpath(repo);
+  if (!(await stat(parent)).isDirectory()) throw new GitError("That is not a folder.", 422);
+  const target = join(parent, name);
+  if (target === source) return;
+  if ((await lstat(source)).isDirectory() && (target + sep).startsWith(source + sep)) throw new GitError("A folder cannot go inside itself.", 422);
+  // A case-only rename (readme.md → README.md) is the same entry on case-insensitive disks.
+  const there = await lstat(target).catch(() => null);
+  if (there && target.toLowerCase() !== source.toLowerCase()) throw new GitError(`${name} is already there.`, 409);
+  await rename(source, target);
+}
+
+/** Deletes a file or a whole folder from the repository (never the repository itself, never git's own files). */
+export async function deleteRepoEntry(repo: string, path: string): Promise<void> {
+  const full = await entryInside(repo, path);
+  const info = await lstat(full);
+  await rm(full, { recursive: info.isDirectory(), force: true });
+}
+
+/** What a download from Code may weigh: one file, or a folder's files before they are zipped. */
+export const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const DOWNLOAD_MAX_FILES = 5000;
+
+/**
+ * A file's bytes, or a folder (or the whole repository, `path` empty) as a zip of the files git would
+ * show: tracked and new ones, not ignored (no node_modules, no build output), and no files of keys or
+ * secrets (`skip`). Over 20 MB is refused with 413 rather than cut short.
+ */
+export async function packRepoEntry(repo: string, path: string, skip: (path: string) => boolean = () => false): Promise<{ name: string; kind: "file" | "zip"; bytes: Uint8Array; files: number }> {
+  const clean = cleanPath(path);
+  const realRepo = await realpath(repo);
+  const target = clean ? await realInside(repo, clean, false) : realRepo;
+  const info = await stat(target);
+  if (info.isFile()) {
+    if (skip(clean)) throw new GitError("Files of keys or secrets are not downloaded from here.", 403);
+    if (info.size > DOWNLOAD_MAX_BYTES) throw new GitError("Files over 20 MB are not downloaded from here.", 413);
+    return { name: basename(target), kind: "file", bytes: await readFile(target), files: 1 };
+  }
+  if (!info.isDirectory()) throw new GitError("That is not a file or a folder.", 422);
+  const raw = await git(repo, ["-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", clean || "."]);
+  const paths = [...new Set(raw.split("\0").filter(Boolean))].filter((file) => !skip(file));
+  if (paths.length > DOWNLOAD_MAX_FILES) throw new GitError(`That folder has more than ${DOWNLOAD_MAX_FILES.toLocaleString("en")} files; download a smaller one.`, 413);
+  const root = basename(target);
+  const entries: Record<string, Uint8Array> = {};
+  let total = 0;
+  for (const file of paths) {
+    const full = await realInside(repo, file, false).catch(() => null);
+    const fileInfo = full ? await stat(full).catch(() => null) : null;
+    if (!full || !fileInfo?.isFile()) continue;
+    total += fileInfo.size;
+    if (total > DOWNLOAD_MAX_BYTES) throw new GitError("That is over 20 MB; download a smaller folder or one file.", 413);
+    const inside = clean ? file.slice(clean.length).replace(/^\/+/, "") : file;
+    entries[`${root}/${inside}`] = await readFile(full);
+  }
+  if (!Object.keys(entries).length) throw new GitError("There are no files to download there.", 404);
+  return { name: `${root}.zip`, kind: "zip", bytes: zipSync(entries, { level: 6 }), files: Object.keys(entries).length };
 }
 
 export type RepoEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null };

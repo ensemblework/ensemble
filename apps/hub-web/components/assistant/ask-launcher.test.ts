@@ -24,13 +24,19 @@ test("a stored spot is a fraction, so it follows the window when it resizes", ()
   assert.ok(narrow.x + LAUNCHER_SIZE <= 600 - 16);
 });
 
-test("dragging moves freely and clamps inside the viewport", () => {
-  const middle = snapLauncher({ x: 400, y: 300 }, bounds);
-  assert.equal(middle.edge, "free");
-  const placed = launcherPosition(middle, bounds);
-  assert.equal(placed.x, 400 - LAUNCHER_SIZE/2);
-  assert.equal(placed.y, 300 - LAUNCHER_SIZE/2);
-  assert.deepEqual(launcherPosition(snapLauncher({ x: -50, y: -50 }, bounds),bounds),{x:16,y:60});
+test("a drag lands on the nearer of the bottom and right edges, never over the sidebar or the top bar", () => {
+  const area = { ...bounds, left: 240 };
+  const nearBottom = snapLauncher({ x: 500, y: 640 }, area);
+  assert.equal(nearBottom.edge, "bottom");
+  assert.equal(launcherPosition(nearBottom, area).y, 700 - LAUNCHER_SIZE - 16);
+  const nearRight = snapLauncher({ x: 960, y: 300 }, area);
+  assert.equal(nearRight.edge, "right");
+  assert.equal(launcherPosition(nearRight, area).x, 1000 - LAUNCHER_SIZE - 16);
+  const overSidebar = launcherPosition(snapLauncher({ x: 20, y: 690 }, area), area);
+  assert.equal(overSidebar.x, 240 + 16, "stops where the sidebar ends");
+  const overTopBar = launcherPosition(snapLauncher({ x: 990, y: 5 }, area), area);
+  assert.equal(overTopBar.y, 44 + 16, "stops under the top bar");
+  assert.deepEqual(normalizeSpot({ edge: "free", x: 0.2, y: 0.95 }), { edge: "bottom", t: 0.2 }, "an old free spot moves to the nearer edge");
 });
 
 test("unknown stored values fall back to the bottom-right corner", () => {

@@ -22,6 +22,8 @@ import {
   ChevronRight,
   ChevronsDownUp,
   Columns2,
+  Download,
+  Eye,
   FilePlus2,
   Files,
   FileText,
@@ -46,7 +48,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { ActivityBar, BottomPanel, FontSizeControl, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
 import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
@@ -64,6 +66,11 @@ import { dateTime, languageFor } from "@/lib/format";
 import { looksLikeId, repoName, repoViews, shortBranch, viewFor } from "@/lib/code-repos";
 import { usePersistentState } from "@/lib/prefs";
 import { Fold } from "./code-lists";
+import { FileIcon } from "./file-icon";
+import { FilePreview } from "./file-preview";
+import { codeEditorMenu, downloadFromCode, explorerMenu, folderMenu, folderOf, nameOf, tabMenu, type CodeMenuContext } from "./code-menus";
+import { openContextMenu } from "@/components/context-menu/menu-store";
+import { previewOf } from "@/lib/file-kinds";
 
 type EditorModule = typeof import("@/components/code/review-editor");
 let editorModule: EditorModule | null = null;
@@ -123,6 +130,8 @@ const SHORTCUTS: Array<[string, string]> = [
   ["F7 / Shift+F7", "Next / previous change (crosses files)"],
   ["Alt+→ / Alt+←", "Next / previous changed file"],
   ["F4", "Changes ↔ whole file"],
+  ["Ctrl+Shift+V", "Preview ↔ source (Markdown, HTML, SVG, CSV)"],
+  ["F2", "Rename the file or folder picked in the explorer"],
   ["Ctrl+S", "Save now (it also saves by itself)"],
   ["Ctrl+F", "Find and replace in the file"],
   ["Ctrl+B", "Show or hide the explorer"],
@@ -162,6 +171,8 @@ export function CodeIde({ source }: { source: Source }) {
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
   const [reloads, setReloads] = useState<Record<string, number>>({});
   const [reveal, setReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
+  const [previews, setPreviews] = useState<Record<string, boolean>>({});
+  const [revealInTree, setRevealInTree] = useState<{ path: string; nonce: number } | null>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [counts, setCounts] = useState<Record<string, ChunkCounts>>({});
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -273,6 +284,66 @@ export function CodeIde({ source }: { source: Source }) {
     [active, release, save, tabs],
   );
 
+  /** Several tabs at once (Close others, Close all…), each saved first. */
+  const closeMany = useCallback(
+    (paths: string[]) => {
+      const gone = new Set(paths);
+      const next = tabs.filter((row) => !gone.has(row));
+      openTabs.current = next;
+      setTabs(next);
+      if (active && gone.has(active)) setActive(next[Math.max(0, Math.min(tabs.indexOf(active), next.length - 1))] ?? null);
+      for (const path of paths) void save(path).finally(() => release(path));
+    },
+    [active, release, save, tabs],
+  );
+
+  /** A file or folder was renamed or moved: its tabs, and what they hold, follow it. */
+  const moved = useCallback(
+    (from: string, to: string) => {
+      const map = (path: string) => (path === from ? to : path.startsWith(`${from}/`) ? `${to}${path.slice(from.length)}` : path);
+      for (const [path, buffer] of [...buffers.current.entries()]) {
+        const next = map(path);
+        if (next === path) continue;
+        buffers.current.delete(path);
+        buffers.current.set(next, buffer);
+        window.clearTimeout(timers.current.get(path));
+        timers.current.delete(path);
+      }
+      const remap = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).map(([path, value]) => [map(path), value]));
+      setModes(remap);
+      setPreviews(remap);
+      setSaveState(remap);
+      const next = tabs.map(map);
+      openTabs.current = next;
+      setTabs(next);
+      if (active) setActive(map(active));
+      void client.invalidateQueries({ queryKey: ["code-versions", key, source] });
+    },
+    [active, client, key, source, tabs],
+  );
+
+  /** Deleted from disk: its tabs close without saving (there is nothing to save to). */
+  const removed = useCallback(
+    (path: string) => {
+      const gone = (row: string) => row === path || row.startsWith(`${path}/`);
+      for (const row of [...buffers.current.keys()]) if (gone(row)) buffers.current.delete(row);
+      const next = tabs.filter((row) => !gone(row));
+      openTabs.current = next;
+      setTabs(next);
+      if (active && gone(active)) setActive(next[next.length - 1] ?? null);
+    },
+    [active, tabs],
+  );
+
+  const showPreview = useCallback(
+    (path: string, on?: boolean) => {
+      if (!previewOf(path)) return;
+      if (!tabs.includes(path) || active !== path) open(path);
+      setPreviews((current) => ({ ...current, [path]: on ?? !current[path] }));
+    },
+    [active, open, tabs],
+  );
+
   const reload = useCallback(
     async (path: string) => {
       buffers.current.delete(path);
@@ -307,6 +378,9 @@ export function CodeIde({ source }: { source: Source }) {
       if (event.key === "F4") {
         event.preventDefault();
         setMode(mode === "changes" ? "file" : "changes");
+      } else if (mod && event.shiftKey && (event.key === "V" || event.key === "v") && active && previewOf(active)) {
+        event.preventDefault();
+        showPreview(active);
       } else if (event.altKey && !mod && event.key === "ArrowRight" && !typing(event.target)) {
         event.preventDefault();
         goFile(1);
@@ -395,6 +469,22 @@ export function CodeIde({ source }: { source: Source }) {
   const repoLabel = repoName(repoView);
   // A run's checkout is a folder named by its job id: it is shown by its task or origin instead.
   const title = !isReview && looksLikeId(data.title) ? repoView.name : data.title;
+  const menuBase: CodeMenuContext = {
+    code,
+    source,
+    repo: data.repo,
+    repoLabel: repoLabel || title,
+    viewOnly,
+    toast,
+    open: (path) => open(path),
+    text: async (path) => buffers.current.get(path)?.text ?? (await code.codeFile(source, path)).content,
+    preview: (path) => showPreview(path, true),
+    reveal: (path) => {
+      setPanel("files");
+      setSideOpen(true);
+      setRevealInTree({ path, nonce: Date.now() });
+    },
+  };
 
   return (
     <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")} root>
@@ -485,6 +575,10 @@ export function CodeIde({ source }: { source: Source }) {
               progressOf={progressOf}
               onOpen={open}
               canCreate={!viewOnly}
+              menuBase={menuBase}
+              reveal={revealInTree}
+              onMoved={moved}
+              onRemoved={removed}
             />
           ) : panel === "search" ? (
             <SearchPanel source={source} onOpen={open} />
@@ -511,15 +605,17 @@ export function CodeIde({ source }: { source: Source }) {
                   key={path}
                   role="tab"
                   aria-selected={path === active}
-                  className={cx("group flex max-w-[220px] shrink-0 items-center gap-1.5 border-r border-line px-3", path === active ? "bg-bg text-ink" : "text-muted hover:text-ink")}
+                  className={cx("code-tab group flex max-w-[220px] shrink-0 items-center gap-1.5 border-r border-line pl-2.5 pr-2", path === active ? "bg-bg text-ink" : "text-muted hover:text-ink")}
                   onMouseDown={(event) => {
                     if (event.button === 1) {
                       event.preventDefault();
                       close(path);
                     }
                   }}
+                  onContextMenu={(event) => openContextMenu(event, () => tabMenu(menuBase, path, tabs, closeMany))}
                 >
-                  <button type="button" className="min-w-0 truncate" title={path} onClick={() => open(path)}>{name}</button>
+                  <FileIcon name={path} size={14} />
+                  <button type="button" className={cx("min-w-0 truncate", previews[path] && "italic")} title={path} onClick={() => open(path)}>{previews[path] ? `Preview ${name}` : name}</button>
                   <button type="button" className="icon-btn h-4 w-4 shrink-0" title={state === "dirty" || state === "saving" ? "Unsaved changes" : "Close"} onClick={() => close(path)}>
                     {state === "dirty" || state === "saving" ? <span className="block h-2 w-2 rounded-full bg-current" /> : <X size={11} className="opacity-60 group-hover:opacity-100" />}
                   </button>
@@ -567,6 +663,13 @@ export function CodeIde({ source }: { source: Source }) {
               onUseDisk={() => void reload(active)}
               onEdge={(direction) => goFile(direction)}
               onAccepted={() => void client.invalidateQueries({ queryKey: ["code-progress", key, source] })}
+              preview={Boolean(previews[active])}
+              onPreview={() => showPreview(active)}
+              onEditorMenu={(event) => {
+                const handle = editor.current;
+                if (!handle) return;
+                openContextMenu(event, () => codeEditorMenu(menuBase, active, handle, viewOnly), { inFields: true });
+              }}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center p-10 text-center text-[13px] text-muted">
@@ -643,6 +746,32 @@ function ShortcutSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
+type TreeEntryRef = { path: string; dir: boolean };
+
+/** What every row of the explorer's tree shares: open folders, the drag in progress, renaming, menus. */
+type TreeCtx = {
+  source: Source;
+  active: string | null;
+  openDirs: ReadonlySet<string>;
+  onToggle: (path: string) => void;
+  onOpen: (path: string) => void;
+  canEdit: boolean;
+  statusOf: (path: string) => string | null;
+  dragging: string | null;
+  dropDir: string | null;
+  dragStart: (event: React.DragEvent, path: string) => void;
+  dragEnd: () => void;
+  dragOver: (event: React.DragEvent, folder: string) => void;
+  drop: (event: React.DragEvent, folder: string) => void;
+  renaming: string | null;
+  setRenaming: (path: string | null) => void;
+  rename: (from: string, name: string) => Promise<void>;
+  menu: (event: React.MouseEvent, entry: TreeEntryRef) => void;
+};
+
+const TreeContext = createContext<TreeCtx | null>(null);
+const TREE_DRAG = "application/x-ensemble-code-path";
+
 function Explorer({
   source,
   changed,
@@ -652,6 +781,10 @@ function Explorer({
   progressOf,
   onOpen,
   canCreate,
+  menuBase,
+  reveal,
+  onMoved,
+  onRemoved,
 }: {
   source: Source;
   changed: ChangedFile[];
@@ -661,14 +794,24 @@ function Explorer({
   progressOf: (path: string) => { total: number; pending: number; yours: number } | null;
   onOpen: (path: string, line?: number) => void;
   canCreate: boolean;
+  menuBase: CodeMenuContext;
+  reveal: { path: string; nonce: number } | null;
+  onMoved: (from: string, to: string) => void;
+  onRemoved: (path: string) => void;
 }) {
   const { code, key } = useCodeApi();
   const client = useQueryClient();
+  const toast = useToast();
   const [filter, setFilter] = useState("");
   // The folders open in the tree, and the one a new file goes in: the folder last clicked, or the open file's.
   const [openDirs, setOpenDirs] = useState<ReadonlySet<string>>(() => new Set());
   const [here, setHere] = useState<string | null>(null);
   const [creating, setCreatingRow] = useState<"file" | "folder" | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropDir, setDropDir] = useState<string | null>(null);
+  const hover = useRef<{ dir: string; timer: number } | null>(null);
+  const treeBox = useRef<HTMLDivElement>(null);
   const [, setFolds] = usePersistentState<Record<string, boolean>>("ensemble.code.folds", {});
   // Naming something new opens the Folder section, where the name is typed.
   const setCreating = (kind: "file" | "folder" | null) => {
@@ -684,22 +827,155 @@ function Explorer({
       return next;
     });
   }, []);
+  const openFolders = useCallback((paths: string[]) => setOpenDirs((current) => new Set([...current, ...paths.filter(Boolean)])), []);
+  const ancestors = (path: string) => path.split("/").slice(0, -1).map((_, index, parts) => parts.slice(0, index + 1).join("/"));
   const base = here ?? (active && active.includes("/") ? active.slice(0, active.lastIndexOf("/")) : "");
-  const refresh = () => {
+  const refresh = useCallback(() => {
     void client.invalidateQueries({ queryKey: ["code-tree", key] });
     void client.invalidateQueries({ queryKey: ["code-files", key] });
-  };
+    void client.invalidateQueries({ queryKey: ["code-source", key] });
+    void client.invalidateQueries({ queryKey: ["scm"] });
+  }, [client, key]);
   const made = (created: CodeCreated) => {
     setCreating(null);
     refresh();
     if (!created.path) return;
     // Every folder on the way opens, so what was made shows in the tree.
     const parts = created.path.split("/");
-    const folders = parts.slice(0, created.kind === "folder" ? parts.length : -1).map((_, index) => parts.slice(0, index + 1).join("/"));
-    setOpenDirs((current) => new Set([...current, ...folders]));
+    openFolders(parts.slice(0, created.kind === "folder" ? parts.length : -1).map((_, index) => parts.slice(0, index + 1).join("/")));
     if (created.kind === "folder") setHere(created.path);
     else onOpen(created.path);
   };
+
+  // "Reveal in explorer": every folder on the way opens and the row scrolls into view.
+  useEffect(() => {
+    if (!reveal) return;
+    setFilter("");
+    openFolders(ancestors(reveal.path));
+    const timer = window.setTimeout(() => {
+      const row = treeBox.current?.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(reveal.path)}"]`);
+      row?.scrollIntoView({ block: "center" });
+      row?.focus({ preventScroll: true });
+    }, 250);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal?.nonce]);
+
+  const move = useCallback(
+    async (from: string, to: string) => {
+      if (from === to) return;
+      try {
+        await code.move(source, from, to);
+        onMoved(from, to);
+        openFolders(ancestors(to));
+        refresh();
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "That could not be moved.", { tone: "error" });
+      }
+    },
+    [code, source, onMoved, openFolders, refresh, toast],
+  );
+
+  /** Where a dragged entry may go: not where it is already, not into itself. */
+  const canDrop = (from: string | null, folder: string) => Boolean(from && folder !== folderOf(from) && folder !== from && !folder.startsWith(`${from}/`));
+  const stopHover = () => {
+    if (hover.current) window.clearTimeout(hover.current.timer);
+    hover.current = null;
+  };
+
+  const ctx = useMemo<CodeMenuContext>(
+    () => ({
+      ...menuBase,
+      newEntry: (kind, folder) => {
+        setHere(folder);
+        if (folder) openFolders([...ancestors(folder), folder]);
+        setFilter("");
+        setCreating(kind);
+      },
+      rename: (path) => {
+        openFolders(ancestors(path));
+        setRenaming(path);
+      },
+      removed: (path) => {
+        onRemoved(path);
+        refresh();
+      },
+      refresh,
+      collapse: () => {
+        setOpenDirs(new Set());
+        setHere(null);
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [menuBase, onRemoved, refresh, openFolders],
+  );
+
+  const statusOf = useMemo(() => {
+    const map = new Map(changed.map((row) => [row.path, row.status === "U" ? "A" : row.status]));
+    return (path: string) => map.get(path) ?? null;
+  }, [changed]);
+
+  const tree: TreeCtx = {
+    source,
+    active,
+    openDirs,
+    onToggle: toggleDir,
+    onOpen: (path) => {
+      setHere(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+      onOpen(path);
+    },
+    canEdit: canCreate,
+    statusOf,
+    dragging,
+    dropDir,
+    dragStart: (event, path) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData(TREE_DRAG, path);
+      event.dataTransfer.setData("text/plain", path);
+      setDragging(path);
+    },
+    dragEnd: () => {
+      stopHover();
+      setDragging(null);
+      setDropDir(null);
+    },
+    dragOver: (event, folder) => {
+      if (!canDrop(dragging, folder)) {
+        if (dropDir !== null) setDropDir(null);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      if (dropDir !== folder) setDropDir(folder);
+      // Holding over a closed folder opens it, as in VS Code.
+      if (folder && !openDirs.has(folder) && hover.current?.dir !== folder) {
+        stopHover();
+        hover.current = { dir: folder, timer: window.setTimeout(() => openFolders([folder]), 650) };
+      }
+    },
+    drop: (event, folder) => {
+      const from = dragging ?? event.dataTransfer.getData(TREE_DRAG);
+      stopHover();
+      setDragging(null);
+      setDropDir(null);
+      if (!canDrop(from, folder)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void move(from, folder ? `${folder}/${nameOf(from)}` : nameOf(from));
+    },
+    renaming,
+    setRenaming,
+    rename: async (from, name) => {
+      setRenaming(null);
+      const clean = name.trim();
+      if (!clean || clean === nameOf(from)) return;
+      const folder = folderOf(from);
+      await move(from, folder ? `${folder}/${clean}` : clean);
+    },
+    menu: (event, entry) => openContextMenu(event, () => explorerMenu(ctx, entry)),
+  };
+
   const [wantFiles, setWantFiles] = useState(false);
   const all = useQuery({ queryKey: ["code-files", key, source], queryFn: () => code.files(source), enabled: wantFiles, staleTime: 30_000 });
   const matches = filter.trim() ? (all.data?.files ?? []).filter((path) => path.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 50) : [];
@@ -724,14 +1000,14 @@ function Explorer({
           />
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+      <div ref={treeBox} className="min-h-0 flex-1 overflow-y-auto pb-3">
         {filter.trim() ? (
           <ul className="px-1">
             {all.isLoading ? <li className="px-2 py-1"><Spinner size={11} /></li> : null}
             {matches.map((path) => (
               <li key={path}>
-                <button type="button" className="row-tile flex w-full min-w-0 items-center gap-1.5 rounded px-2 py-[3px] text-left" onClick={() => { onOpen(path); setFilter(""); }}>
-                  <FileText size={12} className="shrink-0 text-faint" />
+                <button type="button" className="row-tile flex w-full min-w-0 items-center gap-1.5 rounded px-2 py-[3px] text-left" onClick={() => { onOpen(path); setFilter(""); }} onContextMenu={(event) => tree.menu(event, { path, dir: false })}>
+                  <FileIcon name={path} size={14} />
                   <span className="truncate">{path.split("/").pop()}</span>
                   <span className="truncate text-[11px] text-faint">{path.split("/").slice(0, -1).join("/")}</span>
                 </button>
@@ -750,17 +1026,19 @@ function Explorer({
                     <button
                       type="button"
                       onClick={() => onOpen(row.path)}
+                      onContextMenu={(event) => tree.menu(event, { path: row.path, dir: false })}
                       data-active={row.path === active || undefined}
                       className="row-tile flex min-h-6 w-full items-center gap-1.5 rounded px-2 py-1 text-left"
                       title={row.path}
                     >
-                      <span className={cx("w-3 shrink-0 text-center font-mono text-[11px]", STATUS_COLOR[row.status])}>{row.status === "U" ? "A" : row.status}</span>
-                      <span className="min-w-0 flex-1 truncate">
+                      <FileIcon name={row.path} size={14} />
+                      <span className={cx("min-w-0 flex-1 truncate", STATUS_COLOR[row.status])}>
                         {row.path.split("/").pop()}
                         <span className="ml-1.5 text-[11px] text-faint">{row.path.split("/").slice(0, -1).join("/")}</span>
                       </span>
                       {counts?.pending ? <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[10.5px] font-medium">{counts.pending}</span> : null}
                       {counts ? <Ring done={counts.total - counts.pending} total={counts.total} /> : <span className="shrink-0 text-2xs"><span className="text-ok">+{row.added}</span> <span className="text-danger">−{row.removed}</span></span>}
+                      <span className={cx("w-3 shrink-0 text-center font-mono text-[11px]", STATUS_COLOR[row.status])}>{row.status === "U" ? "A" : row.status}</span>
                     </button>
                   </li>
                 );
@@ -795,15 +1073,74 @@ function Explorer({
                   <button type="button" className="icon-btn h-6 w-6" title="Collapse folders" aria-label="Collapse folders" onClick={() => { setOpenDirs(new Set()); setHere(null); }}>
                     <ChevronsDownUp size={13} />
                   </button>
+                  <button type="button" className="icon-btn h-6 w-6" title="Download the repository as a zip (up to 20 MB)" aria-label="Download the repository" onClick={() => void downloadFromCode(code, source, "", toast)}>
+                    <Download size={13} />
+                  </button>
                 </span>
               }
             >
-              {creating ? <CreateRow kind={creating} base={base} source={source} onDone={made} onCancel={() => setCreating(null)} /> : null}
-              <TreeNode source={source} path="" depth={0} active={active} onOpen={(path) => { setHere(path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""); onOpen(path); }} openDirs={openDirs} onToggle={toggleDir} />
+              <div
+                className={cx("code-tree min-h-16", dropDir === "" && "is-drop-root")}
+                onContextMenu={(event) => openContextMenu(event, () => folderMenu(ctx))}
+                onDragOver={(event) => tree.dragOver(event, "")}
+                onDrop={(event) => tree.drop(event, "")}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDir(null);
+                }}
+              >
+                {creating ? <CreateRow kind={creating} base={base} source={source} onDone={made} onCancel={() => setCreating(null)} /> : null}
+                <TreeContext.Provider value={tree}>
+                  <TreeNode path="" depth={0} />
+                </TreeContext.Provider>
+              </div>
             </Fold>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Renaming in place, as VS Code does: the name without its extension is picked, Enter renames, Esc keeps it. */
+function RenameRow({ path, dir, depth }: { path: string; dir: boolean; depth: number }) {
+  const tree = useContext(TreeContext)!;
+  const input = useRef<HTMLInputElement>(null);
+  const name = nameOf(path);
+  const done = useRef(false);
+  useEffect(() => {
+    const field = input.current;
+    if (!field) return;
+    field.focus();
+    const dot = dir ? -1 : name.lastIndexOf(".");
+    field.setSelectionRange(0, dot > 0 ? dot : name.length);
+  }, [dir, name]);
+  const finish = (value: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    if (value === null) tree.setRenaming(null);
+    else void tree.rename(path, value);
+  };
+  return (
+    <div className="code-tree-row is-renaming" style={{ paddingLeft: 8 + depth * 12 }}>
+      <span className="w-[11px] shrink-0" />
+      {dir ? <Folder size={14} className="shrink-0 text-muted" /> : <FileIcon name={path} size={14} />}
+      <input
+        ref={input}
+        defaultValue={name}
+        aria-label={`Rename ${name}`}
+        spellCheck={false}
+        className="code-tree-rename"
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            finish(event.currentTarget.value);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            finish(null);
+          }
+        }}
+        onBlur={(event) => finish(event.currentTarget.value)}
+      />
     </div>
   );
 }
@@ -870,36 +1207,60 @@ function CreateRow({ kind, base, source, onDone, onCancel }: { kind: "file" | "f
   );
 }
 
-function TreeNode({ source, path, depth, active, onOpen, openDirs, onToggle }: { source: Source; path: string; depth: number; active: string | null; onOpen: (path: string) => void; openDirs: ReadonlySet<string>; onToggle: (path: string) => void }) {
+
+function TreeNode({ path, depth }: { path: string; depth: number }) {
+  const tree = useContext(TreeContext)!;
   const { code, key } = useCodeApi();
-  const listing = useQuery({ queryKey: ["code-tree", key, source, path], queryFn: () => code.tree(source, path), staleTime: 15_000, retry: false });
-  const pad = { paddingLeft: 12 + depth * 12 };
-  if (listing.isLoading) return <div className="py-1" style={pad}><Spinner size={11} /></div>;
+  const listing = useQuery({ queryKey: ["code-tree", key, tree.source, path], queryFn: () => code.tree(tree.source, path), staleTime: 15_000, retry: false });
+  const pad = { paddingLeft: 8 + depth * 12 };
+  if (listing.isLoading) return <div className="py-1" style={{ paddingLeft: 20 + depth * 12 }}><Spinner size={11} /></div>;
   if (listing.error) return <div className="py-1 pr-3 text-[12px] text-danger" style={pad}>{(listing.error as Error).message}</div>;
   const data = listing.data;
   if (!data) return null;
   return (
-    <ul>
+    <ul className="code-tree-level" style={{ "--tree-guide": `${14 + depth * 12}px` } as React.CSSProperties}>
       {data.entries.map((entry: CodeTreeEntry) => {
         const child = path ? `${path}/${entry.name}` : entry.name;
         const dir = entry.kind === "dir";
-        const expanded = openDirs.has(child);
+        const expanded = dir && tree.openDirs.has(child);
+        const status = dir ? null : tree.statusOf(child);
+        const drop = dir && tree.dropDir === child;
         return (
-          <li key={entry.name}>
-            <button
-              type="button"
-              disabled={entry.kind === "link"}
-              title={entry.kind === "link" ? "A link that leads outside the repository" : child}
-              onClick={() => (dir ? onToggle(child) : onOpen(child))}
-              className={cx("flex w-full min-w-0 items-center gap-1 py-[3px] pr-3 text-left hover:bg-hover disabled:cursor-default disabled:opacity-50", active === child && "bg-[var(--accent-soft)]")}
-              style={pad}
-              aria-expanded={dir ? expanded : undefined}
-            >
-              {dir ? <ChevronRight size={11} className={cx("shrink-0 text-faint transition-transform", expanded && "rotate-90")} /> : <span className="w-[11px] shrink-0" />}
-              {dir ? expanded ? <FolderOpen size={12} className="shrink-0 text-muted" /> : <Folder size={12} className="shrink-0 text-muted" /> : <FileText size={12} className="shrink-0 text-faint" />}
-              <span className={cx("min-w-0 flex-1 truncate", entry.secret && "text-faint")}>{entry.name}</span>
-            </button>
-            {dir && expanded ? <TreeNode source={source} path={child} depth={depth + 1} active={active} onOpen={onOpen} openDirs={openDirs} onToggle={onToggle} /> : null}
+          <li key={entry.name} className={cx(drop && "is-drop")}>
+            {tree.renaming === child ? (
+              <RenameRow path={child} dir={dir} depth={depth} />
+            ) : (
+              <button
+                type="button"
+                disabled={entry.kind === "link"}
+                title={entry.kind === "link" ? "A link that leads outside the repository" : child}
+                data-tree-path={child}
+                data-active={tree.active === child || undefined}
+                data-dragging={tree.dragging === child || undefined}
+                draggable={tree.canEdit && entry.kind !== "link"}
+                onDragStart={(event) => tree.dragStart(event, child)}
+                onDragEnd={tree.dragEnd}
+                onDragOver={(event) => tree.dragOver(event, dir ? child : path)}
+                onDrop={(event) => tree.drop(event, dir ? child : path)}
+                onClick={() => (dir ? tree.onToggle(child) : tree.onOpen(child))}
+                onContextMenu={(event) => tree.menu(event, { path: child, dir })}
+                onKeyDown={(event) => {
+                  if (event.key === "F2" && tree.canEdit) {
+                    event.preventDefault();
+                    tree.setRenaming(child);
+                  }
+                }}
+                className="code-tree-row"
+                style={pad}
+                aria-expanded={dir ? expanded : undefined}
+              >
+                {dir ? <ChevronRight size={11} className={cx("shrink-0 text-faint transition-transform", expanded && "rotate-90")} /> : <span className="w-[11px] shrink-0" />}
+                {dir ? expanded ? <FolderOpen size={14} className="code-tree-folder shrink-0" /> : <Folder size={14} className="code-tree-folder shrink-0" /> : <FileIcon name={entry.name} size={14} />}
+                <span className={cx("min-w-0 flex-1 truncate", entry.secret && "text-faint", status && STATUS_COLOR[status])}>{entry.name}</span>
+                {status ? <span className={cx("shrink-0 font-mono text-[10.5px]", STATUS_COLOR[status])}>{status}</span> : null}
+              </button>
+            )}
+            {expanded ? <TreeNode path={child} depth={depth + 1} /> : null}
           </li>
         );
       })}
@@ -981,6 +1342,10 @@ function FilePane(props: {
   onUseDisk: () => void;
   onEdge: (direction: 1 | -1) => void;
   onAccepted: () => void;
+  /** Markdown, HTML, SVG and tables: rendered instead of the source. */
+  preview: boolean;
+  onPreview: () => void;
+  onEditorMenu: (event: React.MouseEvent) => void;
 }) {
   const { code, key } = useCodeApi();
   const client = useQueryClient();
@@ -1028,6 +1393,9 @@ function FilePane(props: {
   const counts = props.counts;
   const readOnlyReason = props.viewOnly ? "View only." : data?.readOnly ?? (data?.tooLarge ? "Files over 5 MB are not opened here." : null);
   const parts = path.split("/");
+  const previewKind = previewOf(path);
+  // An image has nothing to read as text: it shows as the picture itself.
+  const canPreview = Boolean(previewKind && previewKind !== "image");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1036,6 +1404,7 @@ function FilePane(props: {
           {parts.map((part, index) => (
             <span key={index} className="flex items-center gap-1">
               {index ? <ChevronRight size={10} className="text-faint" /> : null}
+              {index === parts.length - 1 ? <FileIcon name={part} size={13} /> : null}
               <span className={index === parts.length - 1 ? "font-medium text-ink" : undefined}>{part}</span>
             </span>
           ))}
@@ -1053,10 +1422,15 @@ function FilePane(props: {
         <button type="button" className="icon-btn h-6 w-6" title="Next change (F7)" onClick={() => props.editorRef.current?.next()}><ArrowDown size={13} /></button>
         <div className="flex overflow-hidden rounded-md border border-line" role="group" aria-label="View">
           {(["changes", "file"] as const).map((value) => (
-            <button key={value} type="button" title={value === "changes" ? "Only the changes (F4)" : "The whole file (F4)"} onClick={() => props.setMode(value)} className={cx("flex items-center gap-1 px-2 py-0.5", props.mode === value ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")}>
+            <button key={value} type="button" title={value === "changes" ? "Only the changes (F4)" : "The whole file (F4)"} onClick={() => { if (props.preview) props.onPreview(); props.setMode(value); }} className={cx("flex items-center gap-1 px-2 py-0.5", !props.preview && props.mode === value ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")}>
               {value === "changes" ? <Columns2 size={11} /> : <FileText size={11} />} {value === "changes" ? "Changes" : "File"}
             </button>
           ))}
+          {canPreview ? (
+            <button type="button" title="Preview (Ctrl+Shift+V)" aria-pressed={props.preview} onClick={props.onPreview} className={cx("flex items-center gap-1 px-2 py-0.5", props.preview ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")} data-testid="ide-preview">
+              <Eye size={11} /> Preview
+            </button>
+          ) : null}
         </div>
         {props.review && props.reviewId && !props.viewOnly && data?.exists.agent !== undefined ? (
           confirmRestore ? (
@@ -1084,8 +1458,12 @@ function FilePane(props: {
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line bg-raised px-3 py-1 text-[12px] text-muted"><Lock size={12} /> {readOnlyReason}</div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {versions.isLoading || !props.Editor ? (
+      <div className="min-h-0 flex-1 overflow-hidden" onContextMenu={(event) => { if ((event.target as HTMLElement).closest(".cm-editor")) props.onEditorMenu(event); }}>
+        {previewKind === "image" ? (
+          <FilePreview path={path} text="" code={code} source={source} />
+        ) : props.preview && canPreview && opened.current && !opened.current.binary && !opened.current.tooLarge ? (
+          <FilePreview path={path} text={buffers.current.get(path)?.text ?? opened.current.current ?? ""} code={code} source={source} />
+        ) : versions.isLoading || !props.Editor ? (
           <div className="p-6"><Spinner /></div>
         ) : versions.error ? (
           <div className="p-6 text-[13px] text-danger">{(versions.error as Error).message}</div>

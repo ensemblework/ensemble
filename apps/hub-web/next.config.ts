@@ -66,6 +66,8 @@ const nextConfig: NextConfig = {
           return [
             { source: "/api/:path*", destination: `${API_ORIGIN}/api/:path*` },
             { source: "/health", destination: `${API_ORIGIN}/health` },
+            // Python for Plots, from this site: some networks block cdn.jsdelivr.net (lib/plots/browser-python.ts).
+            { source: "/pyodide/:path*", destination: "https://cdn.jsdelivr.net/pyodide/:path*" },
             // The metadata file route is /opengraph-image.png and, without metadataBase,
             // Next absolutizes it to localhost. Serve the public preview at the path
             // scrapers request, and keep the explicit /og-image.png metadata.

@@ -123,9 +123,9 @@ export function plainField(target: EventTarget | null): boolean {
 
 const passed = new WeakSet<Event>();
 /** Whether this right-click goes to the browser's menu (answered once per event). */
-export function passesThrough(event: MouseEvent): boolean {
+export function passesThrough(event: MouseEvent, inFields = false): boolean {
   if (passed.has(event)) return true;
-  let pass = !enabled || event.shiftKey || plainField(event.target);
+  let pass = !enabled || event.shiftKey || (!inFields && plainField(event.target));
   if (!pass && Date.now() < browserNextUntil) {
     browserNextUntil = 0;
     pass = true;
@@ -147,9 +147,10 @@ export function menuPoint(event: MouseEvent): { x: number; y: number } {
  * Opens a menu for this right-click unless a nearer one already did, the browser's menu is wanted, or
  * `build` has nothing for here. True when it opened.
  */
-export function openContextMenu(event: { nativeEvent?: MouseEvent; preventDefault: () => void } | MouseEvent, build: () => MenuSpec | null): boolean {
+/** `inFields`: this surface is a text editor that wants Ensemble's menu (the Code editor), not the browser's. */
+export function openContextMenu(event: { nativeEvent?: MouseEvent; preventDefault: () => void } | MouseEvent, build: () => MenuSpec | null, options: { inFields?: boolean } = {}): boolean {
   const native = ("nativeEvent" in event && event.nativeEvent ? event.nativeEvent : event) as MouseEvent;
-  if (!mounted || native.defaultPrevented || passesThrough(native)) return false;
+  if (!mounted || native.defaultPrevented || passesThrough(native, options.inFields)) return false;
   const spec = build();
   if (!spec || !spec.sections.some((section) => section.items.length)) return false;
   event.preventDefault();

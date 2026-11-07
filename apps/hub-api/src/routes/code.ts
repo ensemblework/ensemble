@@ -18,6 +18,7 @@ import {
   changedFiles,
   createInRoots,
   createRepoEntry,
+  deleteRepoEntry,
   discoverRepos,
   fileDiff,
   git,
@@ -26,6 +27,8 @@ import {
   githubActions,
   insideRepo,
   listRepoFolder,
+  moveRepoEntry,
+  packRepoEntry,
   readRepoBytes,
   readRepoFile,
   removeRepoFile,
@@ -608,6 +611,40 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     progressCache.clear();
     await appendLedger({ userId: request.userId, actor: "me", action: "code.create", payload: { repo: source.repo, path, kind: body.kind } });
     return { ok: true, kind: body.kind, path, outside: null };
+  });
+
+  /** Rename or move a file or folder in the repository, as an explorer's drag and drop or rename does. */
+  app.post("/api/code/move", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), from: z.string().trim().min(1).max(1000), to: z.string().trim().min(1).max(1000) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    await moveRepoEntry(source.repo, body.from, body.to);
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.move", payload: { repo: source.repo, from: body.from, to: body.to } });
+    return { ok: true, path: body.to.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") };
+  });
+
+  /** Delete a file or a folder from the repository. The explorer asks first. */
+  app.post("/api/code/delete", async (request) => {
+    const body = z.object({ review: z.string().uuid().optional(), repo: z.string().optional(), path: z.string().trim().min(1).max(1000) }).parse(request.body);
+    const source = await resolveSource(request, body);
+    await deleteRepoEntry(source.repo, body.path);
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.delete", payload: { repo: source.repo, path: body.path } });
+    return { ok: true };
+  });
+
+  /**
+   * One file, or a folder or the whole repository (`path` empty) as a zip of what git would show, up to
+   * 20 MB; base64 in JSON so a paired computer's answer travels the same way.
+   */
+  app.get("/api/code/download", async (request) => {
+    const query = z.object({ path: z.string().max(1000).default("") }).parse(request.query);
+    const source = await resolveSource(request, request.query);
+    const packed = await packRepoEntry(source.repo, query.path, (path) => refusedPath(path) !== null);
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.download", payload: { repo: source.repo, path: query.path, files: packed.files } });
+    return { name: packed.name, kind: packed.kind, size: packed.bytes.length, files: packed.files, data: Buffer.from(packed.bytes).toString("base64") };
   });
 
   // ── source control ──────────────────────────────────────────────────────

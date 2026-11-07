@@ -59,16 +59,27 @@ function ReplyMorph({ waiting }: { waiting: boolean }) {
 }
 
 /** Short, page-aware starters. They never quote a record title, so an Untitled task never shows up here. */
-export function starterPrompts(pathname: string): string[] {
-  if (pathname.startsWith("/board")) return ["What is blocked, and why?", "Which tasks could you take for me?", "Summarize what moved this week."];
-  if (pathname.startsWith("/context")) return ["Who have I not talked to in a while?", "Which project has the most open work?", "Add a person I work with."];
-  if (pathname.startsWith("/needs-me")) return ["What should I approve first?", "Summarize what is waiting on me.", "What can wait until tomorrow?"];
-  if (pathname.startsWith("/pages/") || pathname.startsWith("/tasks/")) return ["Summarize this page.", "Turn this into a checklist.", "What is missing here?"];
-  if (pathname.startsWith("/plots")) return ["Plot one column against another.", "Which chart fits this data?"];
-  if (pathname.startsWith("/diagrams")) return ["Draw a diagram of a project.", "Simplify the diagram I have open."];
-  if (pathname.startsWith("/meetings")) return ["Summarize this meeting note.", "What decisions did we make?", "Find action items across my meeting notes."];
-  if (pathname.startsWith("/code")) return ["What is left to review?", "Summarize the open change."];
-  if (pathname.startsWith("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?"];
+/** Three starters fitted to the screen the assistant is opened on (and, on Today, to the time of day). */
+export function starterPrompts(pathname: string, now = new Date()): string[] {
+  const hour = now.getHours();
+  const on = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+  if (on("/board")) return ["What is blocked, and why?", "Which tasks could an agent take for me?", "What moved this week?"];
+  if (on("/context")) return ["Who have I not talked to in a while?", "Which project has the most open work?", "What changed with my people this week?"];
+  if (on("/needs-me")) return ["What should I answer first?", "Summarize what is waiting on me.", "What can wait until tomorrow?"];
+  if (on("/pages") || on("/tasks")) return pathname.split("/").length > 2 ? ["Summarize this page.", "Turn this into a checklist.", "What is missing here?"] : ["Find the page I wrote about…", "Which pages have I not touched in a month?", "Start a page for a new idea."];
+  if (on("/plots")) return ["Which chart fits this data?", "Plot one column against another.", "Make these charts ready for a paper."];
+  if (on("/diagrams")) return pathname.split("/").length > 2 ? ["Simplify this diagram.", "Explain this diagram in words.", "Add the missing steps."] : ["Draw a diagram of a project.", "Turn a process into a flowchart.", "Map how my systems connect."];
+  if (on("/meetings")) return ["Summarize my last meeting.", "What decisions did we make this week?", "Find action items across my notes."];
+  if (on("/code")) return pathname.split("/").length > 2 ? ["What is left to review here?", "Explain this change.", "Write a commit message for it."] : ["What did agents change today?", "Which runs still need a review?", "Start a coding task."];
+  if (on("/runs")) return ["Which runs failed, and why?", "What is running right now?", "Retry the last failed run."];
+  if (on("/skills")) return ["Which skill fits what I do most?", "Make a skill from my last task.", "What can my skills do?"];
+  if (on("/routines")) return ["Suggest a routine for my mornings.", "What did my routines do this week?", "Pause the routines I do not use."];
+  if (on("/files")) return ["Find a file I uploaded last week.", "Summarize this file.", "Which files are not attached anywhere?"];
+  if (on("/recap")) return ["What went well this week?", "What slipped, and why?", "Draft my update for the team."];
+  if (on("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?", "How can I spend less?"];
+  if (on("/settings")) return ["Which settings should I check?", "Connect my calendar.", "Turn on quiet hours."];
+  if (on("/shared")) return ["What was shared with me lately?", "Summarize what my team shared.", "Which shared pages changed?"];
+  if (hour >= 17) return ["Wrap up my day.", "What is left for tomorrow?", "Turn today's notes into tasks."];
   return ["Plan my day.", "What is due this week?", "Turn a note into tasks."];
 }
 
@@ -323,13 +334,17 @@ export function Message({
 function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: string | null; onPick: (text: string) => void }) {
   return (
     <div className="assistant-welcome" data-assistant-empty>
-      <span className="assistant-welcome-mark"><Mark size={38} /></span>
-      <p className="display text-[26px] leading-tight text-ink">{greeting(name)}</p>
-      <p className="mt-1 text-[14px] text-muted">Bring your thoughts, pages, and connected apps together.</p>
+      <div className="assistant-welcome-head">
+        <span className="assistant-welcome-mark" aria-hidden><Mark size={38} /></span>
+        <div className="min-w-0">
+          <p className="assistant-welcome-title display">{greeting(name)}</p>
+          <p className="assistant-welcome-sub">Bring your thoughts, pages, and connected apps together.</p>
+        </div>
+      </div>
       <div className="assistant-starters">
         {starterPrompts(pathname).map((suggestion) => (
           <button key={suggestion} type="button" onClick={() => onPick(suggestion)} className="assistant-starter">
-            {suggestion}
+            <span className="min-w-0">{suggestion}</span>
           </button>
         ))}
       </div>
@@ -925,7 +940,7 @@ export function AssistantDock() {
       <div className="assistant-composer-area relative shrink-0">
         <MentionPopover menu={mention} />
         {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : retryLast} /> : null}
-        <div className="assistant-composer tile flex flex-col gap-2 px-4 py-3" data-dropping={dropping ? "" : undefined}>
+        <div className="assistant-composer tile flex flex-col gap-2 p-2.5" data-dropping={dropping ? "" : undefined}>
           <AttachmentShelf attachments={attachments} hintId={uploadHint} />
           {attached.length ? (
             <ul className="assistant-handed" aria-label="Attached to this message">
@@ -941,7 +956,7 @@ export function AssistantDock() {
               ))}
             </ul>
           ) : null}
-          <div className="flex items-end gap-2">
+          <div className="assistant-composer-row flex items-end gap-1.5">
             <AttachMenu attachments={attachments} onAttached={() => window.setTimeout(() => input.current?.focus(), 30)} />
             <MentionTextarea
               menu={mention}
@@ -962,7 +977,7 @@ export function AssistantDock() {
               }}
               placeholder="Ask, or tell me what to change. @ to mention…"
               fieldClassName="flex-1"
-              className="box-border min-h-6 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
+              className="box-border min-h-8 resize-none overflow-hidden bg-transparent px-1 py-1 text-[13.5px] leading-6 outline-none placeholder:text-faint"
             />
             <button
               type="button"

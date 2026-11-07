@@ -41,6 +41,10 @@ export type ReviewEditorHandle = {
   focus(): void;
   /** The text now (what a save writes). */
   text(): string;
+  /** What is picked (empty when nothing is) and the line it starts on. */
+  selected(): { text: string; line: number; endLine: number };
+  /** Types `text` over the selection, as a paste does (an empty string deletes it). */
+  insert(text: string): void;
 };
 
 type Props = {
@@ -431,6 +435,18 @@ export const ReviewEditor = forwardRef<ReviewEditorHandle, Props>(function Revie
     },
     focus: () => view.current?.focus(),
     text: () => view.current?.state.doc.toString() ?? latest.current.value,
+    selected: () => {
+      const editor = view.current;
+      if (!editor) return { text: "", line: 1, endLine: 1 };
+      const range = editor.state.selection.main;
+      return { text: editor.state.sliceDoc(range.from, range.to), line: editor.state.doc.lineAt(range.from).number, endLine: editor.state.doc.lineAt(range.to).number };
+    },
+    insert: (text) => {
+      const editor = view.current;
+      if (!editor || editor.state.readOnly) return;
+      editor.dispatch(editor.state.replaceSelection(text), { scrollIntoView: true, userEvent: text ? "input.paste" : "delete.cut" });
+      editor.focus();
+    },
   }));
 
   return <div ref={host} className="h-full min-h-0 overflow-hidden [&_.cm-editor]:h-full" data-testid="review-editor" data-mode={props.mode} />;

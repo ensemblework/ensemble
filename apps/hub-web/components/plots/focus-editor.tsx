@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useMemo, useRef, useId, useState } from "react";
 import { tileSchema, type Frame, type LinkChoice, type PlotConfig, type PoolColumn, type PoolDataset, type WorkspaceTile } from "@ensemble/shared-types";
 import { ChartView } from "@/components/plots/chart-view";
-import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigureRun } from "@/components/plots/figure-run";
+import { FigureOutput, RunButton, useFigureRun } from "@/components/plots/figure-run";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { ColumnSelect } from "@/components/plots/column-select";
 import { StyleTab } from "@/components/plots/studio";
@@ -14,23 +14,13 @@ import { renderPlot } from "@/lib/plots/render";
 import { storedTileCode, tileScript, tileSource } from "@/lib/plots/tile-code";
 import { usePlotTheme } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
-import { ArrowLeft, Download, Maximize2, Minimize2 } from "lucide-react";
+import { Download, X } from "lucide-react";
+import { SplitHandle, useSplit } from "@/components/plots/split";
 
 const Code = dynamic(() => import("./code-pane").then((mod) => mod.PlotCodePane), { ssr: false });
 
 const TABS = ["Encode", "Style", "Code", "Export"] as const;
-const PANEL_KEY = "ensemble.plots.sidePanel";
-const PANEL_MIN = 280;
-const PANEL_MAX = 560;
-
-function readPanelWidth(): number {
-  if (typeof window === "undefined") return 340;
-  const raw = window.localStorage.getItem(PANEL_KEY);
-  // Number(null) is 0, which would clamp a first-time user to the narrowest panel.
-  const stored = raw === null || raw === "" ? Number.NaN : Number(raw);
-  if (!Number.isFinite(stored)) return 340;
-  return Math.min(PANEL_MAX, Math.max(PANEL_MIN, stored));
-}
+const PANEL_KEY = "ensemble.plots.sidePanelShare";
 
 export function FocusEditor({
   tile,
@@ -60,9 +50,8 @@ export function FocusEditor({
   const modalId = useId();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Encode");
   const [closing, setClosing] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(readPanelWidth);
-  const [fullScreen, setFullScreen] = useState(false);
-
+  const panelRow = useRef<HTMLDivElement>(null);
+  const [panelShare, setPanelShare, panelDefault] = useSplit(PANEL_KEY, 0.32);
 
   const theme = usePlotTheme();
   // Typing in the Code tab changes only `tile.code`, which does not change the generated script.
@@ -73,7 +62,6 @@ export function FocusEditor({
   );
   const script = tileScript(tile, generated);
   const figure = useFigureRun(workspaceId);
-  const [figureBeside, setFigureBeside] = useFigureBeside();
   const [preview, setPreview] = useState<"chart" | "output">("output");
   const showOutput = tab === "Code" && preview === "output";
   const runCode = () => {
@@ -103,16 +91,15 @@ export function FocusEditor({
     setClosing(true);
   };
 
-  useModalFocus(ref, true, () => { if (fullScreen) setFullScreen(false); else close(); });
+  useModalFocus(ref, true, close);
   return (
     <ModalScope.Provider value={modalId}>
     <div ref={ref} data-modal-layer={modalId} role="dialog" aria-modal="true" aria-label={`Edit ${tile.title || "chart"}`} tabIndex={-1} className={`plot-focus fixed inset-0 z-[80] flex p-3 ${closing ? "is-closing" : ""}`} data-plot-focus onAnimationEnd={(event) => { if (closing && event.animationName === "plot-focus-out") onClose(); }}>
       <button type="button" className="plot-focus-veil absolute inset-0 border-0" aria-label="Close editor" onClick={close} />
-      <div className="plot-focus-panel relative flex min-h-0 flex-1 overflow-hidden">
-        <div className={`plot-focus-preview min-w-0 flex-1 flex-col ${fullScreen ? "hidden" : "flex"}`}>
+      <div ref={panelRow} className="plot-focus-panel relative flex min-h-0 flex-1 overflow-hidden">
+        <div className="plot-focus-preview flex min-w-0 flex-1 flex-col">
           <div className="pl-focus-head">
-            <button type="button" className="pl-btn" onClick={close}><ArrowLeft size={15} aria-hidden />Back</button>
-            <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{tile.title || "Tile"}</span>
+            <span className="min-w-0 flex-1 truncate pl-1 text-[14px] font-semibold" data-plot-focus-title="">{tile.title || "Tile"}</span>
             {tab === "Code" ? (
               <div className="pl-seg" role="radiogroup" aria-label="Preview">
                 {([["output", "Code output"], ["chart", "Chart"]] as const).map(([value, label]) => (
@@ -132,46 +119,13 @@ export function FocusEditor({
           </div>
         </div>
         <aside
-          className={`flex flex-col ${fullScreen ? "min-w-0 flex-1" : "relative shrink-0 border-l border-line"}`}
-          style={fullScreen ? { background: "var(--panel)" } : { width: panelWidth }}
+          className="relative flex shrink-0 flex-col border-l border-line"
+          style={{ width: `${panelShare * 100}%`, minWidth: "min(280px, 60%)" }}
           data-plot-panel
-          data-panel-width={panelWidth}
+          data-panel-share={Math.round(panelShare * 100)}
         >
-          {fullScreen ? null : (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Panel width"
-              aria-valuemin={PANEL_MIN}
-              aria-valuemax={PANEL_MAX}
-              aria-valuenow={panelWidth}
-              data-plot-panel-resize
-              className="absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                const startX = event.clientX;
-                const start = panelWidth;
-                const move = (ev: PointerEvent) => {
-                  const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, start + (startX - ev.clientX)));
-                  setPanelWidth(next);
-                };
-                const up = (ev: PointerEvent) => {
-                  const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, start + (startX - ev.clientX)));
-                  setPanelWidth(next);
-                  window.localStorage.setItem(PANEL_KEY, String(next));
-                  window.removeEventListener("pointermove", move);
-                  window.removeEventListener("pointerup", up);
-                };
-                window.addEventListener("pointermove", move);
-                window.addEventListener("pointerup", up);
-              }}
-            />
-          )}
+          <SplitHandle container={panelRow} value={panelShare} fallback={panelDefault} side="right" label="Panel width" onChange={setPanelShare} className="pl-split-edge" />
           <div className="pl-focus-head pl-focus-tabs" data-plot-tabs>
-            {fullScreen ? (
-              <button type="button" className="pl-btn shrink-0" data-plot-back onClick={close}><ArrowLeft size={15} aria-hidden />Back</button>
-            ) : null}
-            {fullScreen ? <span className="min-w-0 max-w-[16rem] shrink truncate text-[14px] font-medium" data-plot-focus-title="">{tile.title || "Tile"}</span> : null}
             <div role="tablist" aria-label="Chart settings" className="pl-tabs">
               {TABS.map((name) => (
                 <button key={name} type="button" role="tab" aria-selected={tab === name} aria-controls={`${modalId}-panel`} tabIndex={tab === name ? 0 : -1} onKeyDown={(event) => {
@@ -184,15 +138,8 @@ export function FocusEditor({
                 }} className="pl-tab" onClick={() => setTab(name)}>{name}</button>
               ))}
             </div>
-            <button
-              type="button"
-              className={fullScreen ? "pl-btn ml-auto shrink-0" : "pl-icon-btn ml-auto"}
-              data-plot-fullscreen={fullScreen ? "1" : "0"}
-              aria-label={fullScreen ? "Exit full screen" : "Full screen"}
-              title={fullScreen ? "Exit full screen" : "Full screen"}
-              onClick={() => setFullScreen((value) => !value)}
-            >
-              {fullScreen ? <><Minimize2 size={14} aria-hidden />Exit full screen</> : <Maximize2 size={15} aria-hidden />}
+            <button type="button" className="pl-icon-btn ml-auto" data-plot-close aria-label="Close" title="Close (Esc)" onClick={close}>
+              <X size={16} aria-hidden />
             </button>
           </div>
           <div id={`${modalId}-panel`} role="tabpanel" aria-label={tab} className={`min-h-0 flex-1 ${tab === "Code" ? "flex flex-col overflow-hidden p-3" : "overflow-auto p-3"}`}>
@@ -204,13 +151,11 @@ export function FocusEditor({
             {tab === "Encode" ? <Encode columns={columns} tile={tile} warnings={warnings} onChange={onChange} /> : null}
             {tab === "Style" ? <StyleTab config={config} update={apply} /> : null}
             {tab === "Code" ? (
-              <div className={`flex min-h-0 flex-1 gap-3 ${fullScreen && figureBeside ? "flex-col lg:flex-row" : "flex-col"}`} data-plot-code data-code-edited={script.edited ? "1" : "0"}>
-                <div className={`flex min-h-0 min-w-0 flex-col gap-2 ${fullScreen ? "flex-[3]" : "flex-1"}`}>
-                  <p className="shrink-0 text-[12px] leading-4 text-muted">
-                    {script.edited
-                      ? "Edited. Export draws this code, and changes in Encode and Style no longer reach it."
-                      : "Made from Encode and Style. Once you edit it, export draws your code instead."}
-                  </p>
+              <div className="flex min-h-0 flex-1 flex-col gap-3" data-plot-code data-code-edited={script.edited ? "1" : "0"}>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+                  {script.edited ? (
+                    <p className="shrink-0 text-[12px] leading-4 text-muted">Edited. Export draws this code; Encode and Style no longer change it.</p>
+                  ) : null}
                   <div className="min-h-0 flex-1">
                     <Code
                       value={script.code}
@@ -222,17 +167,11 @@ export function FocusEditor({
                         <>
                           <RunButton running={figure.state.status === "running"} disabled={!workspaceId} onRun={runCode} />
                           {script.edited ? <button type="button" className="btn px-2 py-0.5 text-[12px]" data-plot-code-reset onClick={() => onChange(tileSchema.parse({ ...tile, code: null }))}>Reset to generated</button> : null}
-                          {fullScreen ? <FigureBesideToggle beside={figureBeside} onChange={setFigureBeside} /> : null}
                         </>
                       }
                     />
                   </div>
                 </div>
-                {fullScreen ? (
-                  <div className="flex min-h-[220px] min-w-0 flex-[2] flex-col rounded-xl border border-line p-2">
-                    <FigureOutput state={figure.state} placeholder="Run the code to draw its figure here." />
-                  </div>
-                ) : null}
               </div>
             ) : null}
             {tab === "Export" ? <TileExport workspaceId={workspaceId} code={script.code} edited={script.edited} toast={toast} /> : null}
@@ -256,7 +195,6 @@ function Encode({ columns, tile, warnings, onChange }: { columns: PoolColumn[]; 
   };
   return (
     <div className="space-y-3 text-[13px]" data-plot-encode>
-      <p className="text-[12px] text-muted">Pick the columns to draw. A series that cannot sit on this axis is left off the chart.</p>
       <ColumnSelect label="X axis" columns={columns} selected={tile.xRef ? [tile.xRef] : []} multiple={false} onChange={(ids) => set({ xRef: ids[0] ?? null })} />
       <ColumnSelect
         label="Y series"

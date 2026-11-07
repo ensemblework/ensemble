@@ -9,7 +9,10 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowDown,
+  ArrowUp,
   ArrowUpRight,
+  RotateCcw,
   CalendarDays,
   Columns3,
   Copy,
@@ -68,7 +71,8 @@ export function openPalette(query?: string): void {
 }
 
 /** "Ask Ensemble ▸" and "Attach to assistant" for picked text, a block or a whole record. */
-export function askItems(attachment: AssistantAttachment, extra: Array<{ id: string; label: string; prompt: string }> = []): MenuAction[] {
+/** `only`: these asks instead of the writing ones (a chart or code is not prose to shorten or translate). */
+export function askItems(attachment: AssistantAttachment, extra: Array<{ id: string; label: string; prompt: string }> = [], only = false): MenuAction[] {
   return [
     {
       id: "ask",
@@ -76,7 +80,7 @@ export function askItems(attachment: AssistantAttachment, extra: Array<{ id: str
       icon: Sparkles,
       submenu: () => ({
         sections: [
-          { items: [...extra, ...ASK_PRESETS].map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: () => attachToAssistant({ attachment, prompt: preset.prompt, send: true }) })) },
+          { items: (only ? extra : [...extra, ...ASK_PRESETS]).map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: () => attachToAssistant({ attachment, prompt: preset.prompt, send: true }) })) },
           { items: [{ id: "ask-own", label: "Ask something else…", icon: MessageSquarePlus, run: () => attachToAssistant({ attachment }) }] },
         ],
       }),
@@ -429,7 +433,8 @@ export function taskMenuFor(row: { id: string; title: string }, deps: TaskDeps):
 }
 
 /** A link to a screen (the sidebar's): open it here or in a new tab, or copy its address. */
-export function navMenu(href: string, label: string, navigate: (href: string) => void): MenuSpec {
+/** `move`: the tab's place in the sidebar, for those who do not drag (the keyboard, a touch screen). */
+export function navMenu(href: string, label: string, navigate: (href: string) => void, move?: { up?: () => void; down?: () => void; reset?: () => void }): MenuSpec {
   return {
     title: label,
     sections: [
@@ -440,6 +445,17 @@ export function navMenu(href: string, label: string, navigate: (href: string) =>
           { id: "nav-copy", label: "Copy link", icon: Link2, run: () => copyText(absolute(href)) },
         ],
       },
+      ...(move
+        ? [
+            {
+              items: [
+                ...(move.up ? [{ id: "nav-up", label: "Move up", icon: ArrowUp, run: move.up }] : []),
+                ...(move.down ? [{ id: "nav-down", label: "Move down", icon: ArrowDown, run: move.down }] : []),
+                ...(move.reset ? [{ id: "nav-reset", label: "Reset sidebar order", icon: RotateCcw, run: move.reset }] : []),
+              ],
+            },
+          ]
+        : []),
     ],
   };
 }
