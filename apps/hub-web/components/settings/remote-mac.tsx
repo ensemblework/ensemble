@@ -42,8 +42,6 @@ function RemoteMacSettings() {
   const save = useMutation({
     mutationFn: (body: { enabled?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean }) => api.saveRemote(body),
     onSuccess: (_result, body) => {
-      if (body.enabled === true) toast("Remote tasks are on.", { tone: "ok" });
-      if (body.enabled === false) toast("Remote tasks are off.");
       refresh();
     },
     onError: fail,
@@ -51,7 +49,6 @@ function RemoteMacSettings() {
   const unpair = useMutation({
     mutationFn: api.unpairRemote,
     onSuccess: () => {
-      toast("Unpaired.");
       refresh();
     },
     onError: fail,

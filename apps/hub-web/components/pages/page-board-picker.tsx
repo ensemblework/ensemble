@@ -35,7 +35,6 @@ function BoardPickerDialog({ kind, id, onDefault, onClose }: { kind: "page" | "t
       void client.invalidateQueries({ queryKey: ["boards"] });
       void client.invalidateQueries({ queryKey: ["pages"] });
       void client.invalidateQueries({ queryKey: ["tasks"] });
-      toast(board ? `Moved to ${board.title} · ${board.columns.find((row) => row.id === columnId)?.name}.` : kind === "task" ? "Returned to the Ensemble board." : "Page is now independent.");
       onClose();
     },
   });

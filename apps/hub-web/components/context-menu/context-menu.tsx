@@ -24,6 +24,7 @@ import {
   lastPointer,
   menuPoint,
   menuStore,
+  nearMenuOrigin,
   notePointer,
   passesThrough,
   setHostMounted,
@@ -46,8 +47,10 @@ const LONG_PRESS_MS = 520;
 type Anchor = { x: number; y: number } | DOMRect;
 type Level = { id: string; sections: MenuSection[]; toolbar?: MenuTool[]; search?: string; render?: (close: () => void) => ReactNode; width: number; anchor: Anchor; loading?: boolean; title?: string };
 
+const BROWSER_ID = "browser-menu";
+const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const BROWSER_SECTION = (onArm: () => void): MenuSection => ({
-  items: [{ id: "browser-menu", label: "Browser menu", icon: AppWindow, hint: "⇧ Right-click", run: onArm }],
+  items: [{ id: BROWSER_ID, label: "Browser menu", icon: AppWindow, hint: "Right-click here", run: onArm }],
 });
 
 const matches = (item: MenuAction, query: string) => `${item.label} ${item.keywords ?? ""}`.toLowerCase().includes(query.toLowerCase());
@@ -120,7 +123,9 @@ function Panel({ anchor, width, level, children, onKeyDown, onPointerEnter, labe
       className="cm-panel"
       onKeyDown={onKeyDown}
       onPointerEnter={onPointerEnter}
-      onContextMenu={(event) => event.preventDefault()}
+      onContextMenu={(event) => {
+        if (!passesThrough(event.nativeEvent)) event.preventDefault();
+      }}
       style={{ left: box?.left ?? -9999, top: box?.top ?? -9999, width: box?.width ?? width, maxHeight: box?.maxHeight, visibility: box ? "visible" : "hidden" }}
     >
       {children}
@@ -141,6 +146,7 @@ function ItemButton({ item, open, iconGap, onActivate, onHover }: { item: MenuAc
       aria-disabled={item.disabled || undefined}
       tabIndex={-1}
       data-cm-item=""
+      data-cm-id={item.id}
       data-cm-label={item.label}
       data-open={open || undefined}
       className={cx("cm-item", item.danger && "cm-danger")}
@@ -231,10 +237,7 @@ function ConfirmCard({ ask, onCancel, onGo }: { ask: MenuConfirm; onCancel: () =
 function FloatingMenu({ menu }: { menu: OpenMenu }) {
   const toast = useToast();
   const finish = useFinish(menu);
-  const arm = useCallback(() => {
-    armBrowserMenu();
-    toast("Right-click again for the browser's menu.");
-  }, [toast]);
+  const arm = useCallback(() => armBrowserMenu(), []);
   const [levels, setLevels] = useState<Level[]>(() => [{ id: "root", sections: [...menu.spec.sections, BROWSER_SECTION(arm)], toolbar: menu.spec.toolbar, width: ROOT_WIDTH, anchor: { x: menu.x, y: menu.y } }]);
   const [queries, setQueries] = useState<Record<number, string>>({});
   const [asking, setAsking] = useState<{ ask: MenuConfirm; run?: () => unknown } | null>(null);
@@ -541,8 +544,13 @@ export function ContextMenuHost() {
       notePointer(event.pointerType);
       swallowClick = false;
       cancel();
+      const target = event.target instanceof Element ? event.target : null;
+      // While ours is open, a right-click on its "Browser menu" row or a second one on the same spot opens
+      // the browser's own menu at once (a page cannot open it any other way).
+      const secondary = event.pointerType !== "touch" && (event.button === 2 || (event.button === 0 && event.ctrlKey && MAC));
+      if (secondary && menuStore.get() && (target?.closest(`[data-cm-id="${BROWSER_ID}"]`) || nearMenuOrigin(event.clientX, event.clientY))) armBrowserMenu(1500);
       // A press anywhere but in the menu closes it.
-      if (menuStore.get() && !(event.target instanceof Element && event.target.closest("[data-cm-menu]"))) closeMenu();
+      if (menuStore.get() && !target?.closest("[data-cm-menu]")) closeMenu();
       if (event.pointerType !== "touch" || !(event.target instanceof Element)) return;
       const host = event.target.closest("[data-cm-touch]");
       if (!host) return;
@@ -571,7 +579,12 @@ export function ContextMenuHost() {
         return;
       }
       if (event.isTrusted) cancel();
-      if (event.target instanceof Element && event.target.closest("[data-cm-menu]")) event.preventDefault();
+      if (!(event.target instanceof Element) || !event.target.closest("[data-cm-menu]")) return;
+      if (event.target.closest(`[data-cm-id="${BROWSER_ID}"]`) && passesThrough(event)) {
+        window.setTimeout(closeMenu, 0);
+        return;
+      }
+      event.preventDefault();
     };
     const late = (event: MouseEvent) => {
       if (event.defaultPrevented || passesThrough(event)) return;

@@ -150,7 +150,6 @@ export function SpacesTab() {
         enterSpace("/today");
       }
       else {
-        toast("Space deleted.", { tone: "ok" });
         refresh();
       }
     },

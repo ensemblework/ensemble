@@ -211,7 +211,7 @@ export function NotePage({
       void client.invalidateQueries();
       let needsOptions = false;
       if (result.quick) {
-        try { const run = await quickAssignTask(result.id); toast(`Assigned with ${run.profile}.`, { tone: "ok" }); }
+        try { await quickAssignTask(result.id); }
         catch (error) { needsOptions = true; toast((error as Error).message, { tone: "error" }); }
         void client.invalidateQueries();
       }

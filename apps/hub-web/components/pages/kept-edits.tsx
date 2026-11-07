@@ -30,7 +30,6 @@ export function KeptEdits({ message, title, read, ownCopy }: { message: string; 
     if (!doc) return;
     navigator.clipboard
       .writeText(toMarkdown({ title: title || "Untitled", blocks: blocksFromPage(doc) }))
-      .then(() => toast("Copied as Markdown.", { tone: "ok" }))
       .catch(() => toast("Could not copy. Select the text on the page and copy it instead.", { tone: "error" }));
   };
   const keep = () => {

@@ -63,7 +63,6 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
       return { previous };
     },
     onSuccess: (_result, decision) => {
-      toast(decision === "rejected" ? "Rejected. The agent will not send it." : "Approved. The run continues with exactly this.");
     },
     onError: (error, _vars, context) => {
       if (context?.previous) client.setQueryData(["approvals"], context.previous);

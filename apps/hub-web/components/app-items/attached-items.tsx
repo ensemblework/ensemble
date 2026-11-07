@@ -39,7 +39,6 @@ export function AttachedItems({ taskId, projectId, className }: { taskId?: strin
   const refresh = useMutation({
     mutationFn: (item: AttachedAppItem) => appItemsApi.refresh(item.artifactId),
     onSuccess: ({ item }) => {
-      toast(`Refreshed “${item.title}”.`);
       changed();
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

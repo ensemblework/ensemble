@@ -78,7 +78,7 @@ function StopButton({ job, compact }: { job: AgentJob; compact?: boolean }) {
   const stop = useMutation({
     mutationFn: () => api.stopJob(job.id),
     onSuccess: () => {
-      toast(job.deviceId ? (job.status === "queued" ? "Removed from the queue." : `Asked ${job.deviceName || "your computer"} to stop.`) : job.status === "queued" ? "Removed from the queue." : "Stopping. Its commands were killed.");
+      if (job.status !== "queued") toast(job.deviceId ? `Asked ${job.deviceName || "your computer"} to stop.` : "Stopping. Its commands were killed.");
       void client.invalidateQueries({ queryKey: ["workspace"] });
       void client.invalidateQueries({ queryKey: ["agent-state"] });
       void client.invalidateQueries({ queryKey: ["task-jobs"] });
@@ -107,7 +107,6 @@ function RunAgainButton({ job, compact }: { job: AgentJob; compact?: boolean }) 
   const retry = useMutation({
     mutationFn: () => api.retryJob(job.id),
     onSuccess: () => {
-      toast("Queued again with the same settings.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["workspace"] });
       void client.invalidateQueries({ queryKey: ["agent-state"] });
       void client.invalidateQueries({ queryKey: ["task-jobs"] });
@@ -365,7 +364,6 @@ function RunAgain({ job }: { job: AgentJob }) {
   const again = useMutation({
     mutationFn: () => api.assign(rerunAssignInput(job)),
     onSuccess: () => {
-      toast(job.deviceName ? `Queued again on ${job.deviceName}.` : "Queued again.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["workspace"] });
       void client.invalidateQueries({ queryKey: ["task-jobs"] });
     },

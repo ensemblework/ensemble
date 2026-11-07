@@ -61,7 +61,6 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
       const allowed = input.decision === "allow";
       const scope = input.scope ?? "once";
       const permission = !allowed ? "Denied. The agent was told." : scope === "always" ? "Folder trusted. The agent continues." : scope === "session" ? "Allowed for this run." : "Allowed once.";
-      toast(question ? (allowed ? "Answer sent. The agent continues." : "Skipped. The agent will choose and say what it chose.") : permission, { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["workspace"] });
       void client.invalidateQueries({ queryKey: ["agent-state"] });
     },
@@ -192,7 +191,6 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
     mutationFn: (input: { decision: "allow" | "deny"; reason?: string; confirmed?: boolean }) =>
       api.decideAgent(decision.id, { decision: input.decision, scope: view.scope, reason: input.reason, confirmed: input.confirmed }),
     onSuccess: (_result, input) => {
-      toast(input.decision === "allow" ? `Sent to ${computer}.` : `Refused. ${computer} was told.`, { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["decisions"] });
       void client.invalidateQueries({ queryKey: ["workspace"] });
     },
@@ -333,7 +331,6 @@ function EditorQuestionCard({ decision }: { decision: AgentDecisionRecord }) {
   const decide = useMutation({
     mutationFn: (input: { decision: "allow" | "deny"; reason?: string }) => api.decideAgent(decision.id, { decision: input.decision, scope: "once", reason: input.reason }),
     onSuccess: (_result, input) => {
-      toast(input.decision === "allow" ? `Sent your answer to ${source.label}.` : `${source.label} will ask in its own window.`, { tone: "ok" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
     onSettled: () => void client.invalidateQueries({ queryKey: ["decisions"] }),
@@ -419,7 +416,6 @@ function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
       return { previous };
     },
     onSuccess: (_result, input) => {
-      toast(input.decision === "allow" ? `Sent “allow” back to ${source.label}.` : `Sent “deny” back to ${source.label}.`, { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["decision-rules"] });
     },
     onError: (error, _vars, context) => {

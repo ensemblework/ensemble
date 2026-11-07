@@ -110,7 +110,6 @@ function ExportMenu({ data }: { data: WeeklyRecap }) {
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(data.markdown);
-      toast("Copied the week as Markdown.");
     } catch {
       toast("Could not copy. Download the Markdown instead.", { tone: "error" });
     }

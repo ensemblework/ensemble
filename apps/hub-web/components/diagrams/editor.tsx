@@ -332,7 +332,6 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       setModel(current ? mergeLayout(current, parsed.model, converted) : parsed.model);
       setDiagnostics([]);
       setDirty(true);
-      toast("Converted the Mermaid flowchart.");
       return;
     }
     setModel(current ? mergeLayout(current, parsed.model, value) : parsed.model);

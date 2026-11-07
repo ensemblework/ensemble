@@ -41,7 +41,6 @@ export function AvatarPicker() {
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["me"] });
       void client.invalidateQueries({ queryKey: ["shell"] });
-      toast("Avatar saved. Everyone you share with sees it.", { tone: "ok" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

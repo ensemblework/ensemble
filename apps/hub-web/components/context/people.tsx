@@ -115,7 +115,6 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
   const create = useMutation({
     mutationFn: () => api.createPerson({ name: name.trim(), email: email.trim() || undefined, role: role.trim() || undefined }),
     onSuccess: () => {
-      toast(`Added ${name.trim()}.`, { tone: "ok" });
       close();
       void client.invalidateQueries({ queryKey: ["people"] });
       void client.invalidateQueries({ queryKey: ["entities"] });

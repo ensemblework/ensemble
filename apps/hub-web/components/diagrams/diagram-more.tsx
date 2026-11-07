@@ -60,7 +60,6 @@ export function DiagramMoreMenu({
     onSuccess: (result) => {
       onAdopt(result.diagram.source, result.diagram.version);
       void client.invalidateQueries({ queryKey: ["diagram-revisions", id] });
-      toast("Restored that version.");
     },
     onError: (error) => toast(error instanceof Error ? error.message : "Couldn't restore that version.", { tone: "error" }),
   });

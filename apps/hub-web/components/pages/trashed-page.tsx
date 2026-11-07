@@ -27,7 +27,6 @@ export function TrashBanner({ kind, id, deletedAt, onRestored }: { kind: "page" 
       }
       void client.invalidateQueries({ queryKey: ["deleted"] });
       void client.invalidateQueries({ queryKey: kind === "page" ? ["pages"] : ["tasks"] });
-      toast(kind === "page" ? "Page restored." : "Task restored.", { tone: "ok" });
       onRestored();
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),

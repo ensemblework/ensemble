@@ -786,7 +786,6 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
   const remove = useMutation({
     mutationFn: () => connectorsApi.removeMcp(connection!.id),
     onSuccess: () => {
-      toast(`${entry.name} tools removed.`);
       setConfirming(false);
       refresh();
     },

@@ -1,7 +1,7 @@
 import "../ui-test-dom.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { armBrowserMenu, passesThrough, plainField, rememberPick, setMenusEnabled, withRecent } from "./menu-store.js";
+import { armBrowserMenu, closeMenu, nearMenuOrigin, passesThrough, plainField, rememberPick, setMenusEnabled, showMenu, withRecent } from "./menu-store.js";
 
 const click = (target: Element, init: MouseEventInit = {}) => {
   const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, ...init });
@@ -31,6 +31,17 @@ test("form fields, Shift, the armed Browser menu and the setting keep the browse
   setMenusEnabled(false);
   assert.equal(passesThrough(click(text)), true);
   setMenusEnabled(true);
+});
+
+test("a second right-click on the same spot is the browser's, not on a touch sheet", () => {
+  assert.equal(nearMenuOrigin(100, 100), false, "nothing open");
+  showMenu({ sections: [] }, { x: 100, y: 100 }, false);
+  assert.equal(nearMenuOrigin(110, 106), true);
+  assert.equal(nearMenuOrigin(160, 100), false, "elsewhere opens ours there");
+  closeMenu();
+  showMenu({ sections: [] }, { x: 100, y: 100 }, true);
+  assert.equal(nearMenuOrigin(100, 100), false);
+  closeMenu();
 });
 
 test("a long pick list puts the recent picks first", () => {

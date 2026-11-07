@@ -298,7 +298,6 @@ export function editorMenu(editor: Editor, event: MouseEvent, context: EditorMen
                 const blob = await imageBlob(attrs);
                 const png = blob.type === "image/png" ? blob : await toPng(blob);
                 await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
-                context.toast("Image copied.", { tone: "ok" });
               },
             },
             {

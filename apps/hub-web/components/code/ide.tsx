@@ -346,7 +346,6 @@ export function CodeIde({ source }: { source: Source }) {
   const complete = useMutation({
     mutationFn: () => code.completeReview(source.review!),
     onSuccess: () => {
-      toast("Marked reviewed. Commit and push from Source control when you are ready.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["reviews"] });
     },
   });
@@ -998,7 +997,6 @@ function FilePane(props: {
   const restore = useMutation({
     mutationFn: () => code.restore(props.reviewId!, path),
     onSuccess: () => {
-      toast("Back as the run left it.", { tone: "ok" });
       props.onUseDisk();
       void client.invalidateQueries({ queryKey: ["code-progress", key, source] });
     },
