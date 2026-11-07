@@ -27,7 +27,7 @@ const ACTIONS: Array<{ id: string; label: string; hint: string; run: () => void 
 
 type Item = { id: string; label: string; hint: string; excerpt?: string; run: () => void };
 
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boolean; onClose: () => void; initialQuery?: string }) {
   const router = useRouter();
   const dialog = useRef<HTMLDivElement>(null);
   useModalFocus(dialog, open, onClose);
@@ -116,11 +116,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   useEffect(() => {
     if (!open) return;
-    setQuery("");
+    setQuery(initialQuery);
     setSubmitted(false);
     setIndex(0);
     const frame = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => setIndex(0), [query]);

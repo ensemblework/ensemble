@@ -14,6 +14,9 @@ import { useToast } from "../toast";
 import { standalonePageHref } from "./page-href";
 import { PAGE_DRAG_TYPE, pageIdFromHref } from "@/lib/page-drag";
 import { PageActions } from "./page-actions";
+import { pageMenu, taskMenuFor, navMenu } from "../context-menu/builders";
+import { openContextMenu } from "../context-menu/menu-store";
+import { usePeek } from "../shell/peek";
 import { PagesSection, type PageLinkProps } from "./pages-section";
 import { LoadError } from "../load-error";
 
@@ -36,7 +39,8 @@ function PageLink({ href, className, title, current, children }: PageLinkProps) 
 /** Pages is one navigation destination; its tree lives in the separate browser. */
 export function PagesNav() {
   const pathname = usePathname();
-  return <nav className="mt-1 px-2" aria-label="Pages"><Link href="/pages" title="Pages" aria-current={pathname.startsWith("/pages") ? "page" : undefined} data-active={pathname.startsWith("/pages") || undefined} onClick={() => window.dispatchEvent(new CustomEvent("ensemble:pages-open"))} className="nav-link row-tile flex items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px] text-ink/80"><FileText size={16} strokeWidth={1.8} className={pathname.startsWith("/pages") ? "text-accent transition-colors" : "text-muted transition-colors"} /><span className="sidebar-label flex-1">Pages</span></Link></nav>;
+  const router = useRouter();
+  return <nav className="mt-1 px-2" aria-label="Pages"><Link href="/pages" title="Pages" data-cm-touch="" onContextMenu={(event) => openContextMenu(event, () => navMenu("/pages", "Pages", router.push))} aria-current={pathname.startsWith("/pages") ? "page" : undefined} data-active={pathname.startsWith("/pages") || undefined} onClick={() => window.dispatchEvent(new CustomEvent("ensemble:pages-open"))} className="nav-link row-tile flex items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px] text-ink/80"><FileText size={16} strokeWidth={1.8} className={pathname.startsWith("/pages") ? "text-accent transition-colors" : "text-muted transition-colors"} /><span className="sidebar-label flex-1">Pages</span></Link></nav>;
 }
 
 export function PagesBrowser() {
@@ -46,6 +50,7 @@ export function PagesBrowser() {
   const toast = useToast();
   const pages = useQuery({ queryKey: ["pages", "directory"], queryFn: api.pageDirectory });
   const access = useSpaceAccess();
+  const peek = usePeek();
   const [importing, setImporting] = useState(false);
   const [creating, setCreating] = useState(false);
   const createPending = useRef(false);
@@ -60,6 +65,13 @@ export function PagesBrowser() {
         renderLink={(props) => <PageLink {...props} />}
         onImport={access.guest ? undefined : () => setImporting(true)}
         creating={creating}
+        rowMenu={(page, rename, remove) => ({
+          title: page.title || "Untitled",
+          sections:
+            page.kind === "task"
+              ? taskMenuFor({ id: page.id, title: page.title }, { client, toast, peek: (id) => peek.open(id), remove: remove ? () => remove() : undefined })
+              : pageMenu({ id: page.id, title: page.title }, { client, toast, navigate: router.push, peek: (id) => peek.open(id, "page"), rename: access.guest ? undefined : rename, remove: access.guest ? undefined : remove }),
+        })}
         renderActions={!access.guest ? (page, rename, remove) => page.kind === "task" ? <><button type="button" className="icon-btn" aria-label={`Rename ${page.title}`} onClick={rename}><Pencil size={13} /></button><button type="button" className="icon-btn" aria-label={`Delete ${page.title}`} onClick={remove}><Trash2 size={13} /></button></> : <PageActions id={page.id} title={page.title} onRename={rename} onDelete={remove} /> : undefined}
         onCreate={() => {
           if (createPending.current) return;

@@ -149,6 +149,9 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
       <SettingRow title="Auto-collapse sidebar" info="Keep an icon rail; hover or focus to expand it.">
         <Toggle label="Auto-collapse sidebar" checked={appearance.sidebarAutoCollapse} onChange={(sidebarAutoCollapse) => update({ sidebarAutoCollapse })} />
       </SettingRow>
+      <SettingRow title="Ensemble's right-click menu" info="Actions for what you right-click: text, blocks, cards, pages. Off, the browser's own menu shows instead. Shift + right-click always gives the browser's.">
+        <Toggle label="Ensemble's right-click menu" checked={appearance.contextMenu !== false} onChange={(contextMenu) => update({ contextMenu })} />
+      </SettingRow>
       <SettingRow title="Pages panel position" info="The left position keeps main navigation as an icon rail.">
         <Segmented label="Pages panel position" value={appearance.pagesPanelSide} options={[{ id: "left", label: "Left" }, { id: "right", label: "Right" }]} onChange={(pagesPanelSide) => update({ pagesPanelSide })} />
       </SettingRow>

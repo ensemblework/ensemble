@@ -34,6 +34,9 @@ import { collabStatusText, useCollab } from "./use-collab";
 import { KeptEdits } from "./kept-edits";
 import { PageBoardPicker } from "./page-board-picker";
 import { usePeek } from "../shell/peek";
+import { pageMenu } from "../context-menu/builders";
+import { openContextMenu } from "../context-menu/menu-store";
+import { PageMenuContext, type PageMenuValue } from "../context-menu/page-menu";
 
 function useBlockEditor() {
   const [Editor, setEditor] = useState(() => blockEditor);
@@ -249,8 +252,30 @@ export function NotePage({
   const saveState = sync.status;
   const unsaved = saveState !== "saved";
   const saveText = collabStatusText(saveState, locked);
+  // Right-click on the page (around its text, or "Page ▸" in its editor's menu).
+  const menuValue: PageMenuValue = {
+    label: "Page",
+    title: () => record.title || "Untitled",
+    sections: () =>
+      pageMenu(
+        { id: pageId, title: record.title },
+        {
+          client,
+          navigate: router.push,
+          toast,
+          before: async () => {
+            if (titleSave.current) await titleSave.current;
+            if (!(await flush())) throw new Error("Save the page before using this action.");
+          },
+          remove: !shared && canEdit && !access.guest ? () => remove.mutate() : undefined,
+        },
+        { open: false },
+      ),
+  };
   return (
+    <PageMenuContext.Provider value={menuValue}>
     <div
+      onContextMenu={(event) => openContextMenu(event, () => ({ title: menuValue.title(), sections: menuValue.sections() }))}
       ref={focusMode.layer}
       tabIndex={focusMode.active ? -1 : undefined}
       className={focusMode.active ? PAGE_FOCUS_CLASS : inPeek ? "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-8" : "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10"}
@@ -348,6 +373,7 @@ export function NotePage({
 
       {!shared ? <NestedPages parentPageId={pageId} linked={linked} /> : null}
     </div>
+    </PageMenuContext.Provider>
   );
 }
 

@@ -139,7 +139,8 @@ function clampDay(date: Date, min: Date | null, max: Date | null): Date {
   return date;
 }
 
-function Calendar({ value, min, max, onPick, close }: { value: string; min?: string; max?: string; onPick: (value: string) => void; close: () => void }) {
+/** The calendar the date field opens; also inside menus (a task's Due ▸). `onClear` adds "No date". */
+export function Calendar({ value, min, max, onPick, close, onClear }: { value: string; min?: string; max?: string; onPick: (value: string) => void; close: () => void; onClear?: () => void }) {
   const today = startOfDay(new Date());
   const lower = readDay(min);
   const upper = readDay(max);
@@ -269,6 +270,11 @@ function Calendar({ value, min, max, onPick, close }: { value: string; min?: str
             {label}
           </button>
         ))}
+        {onClear && value ? (
+          <button type="button" className="dp-chip ml-auto" onClick={() => { onClear(); close(); }}>
+            No date
+          </button>
+        ) : null}
       </div>
     </div>
   );
