@@ -31,7 +31,10 @@ export interface Connector {
   sync?: (ctx: SyncContext) => Promise<SyncResult>;
 }
 
-const ALL: readonly Connector[] = [
+// Built on first use: meeting sources import calendar code that imports this module, so a list built
+// at load time would read MEETING_SOURCES before it exists when the meetings modules load first.
+let all: readonly Connector[] | undefined;
+const ALL = (): readonly Connector[] => (all ??= [
   {
     id: "gmail",
     label: "Gmail",
@@ -133,14 +136,14 @@ const ALL: readonly Connector[] = [
     connect: "builtin",
     setupHint: "Always on. Keep notes in Meetings.",
   },
-];
+]);
 
 export function listConnectors(): readonly Connector[] {
-  return ALL;
+  return ALL();
 }
 
 export function getConnector(id: string): Connector | undefined {
-  return ALL.find((connector) => connector.id === id);
+  return ALL().find((connector) => connector.id === id);
 }
 
 const UNCONFIGURED = { configured: false, account: null, source: null, appReady: false } as const;

@@ -202,11 +202,11 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
     "Sending needs a verified Meta business account.",
     "Meta is still rolling out its WhatsApp Business MCP server. If Meta's sign-in says your business has no access, or shows an error page, connect again once Meta has turned it on for you.",
   ]),
-  mcpApp("posthog", "PostHog", "PostHog", "analytics", "https://mcp.posthog.com", "Product analytics, feature flags and errors.", ["Insights, events, flags and errors"], ["Feature flags and annotations"]),
+  mcpApp("posthog", "PostHog", "PostHog", "analytics", "https://mcp.posthog.com/mcp", "Product analytics, feature flags and errors.", ["Insights, events, flags and errors"], ["Feature flags and annotations"]),
   mcpApp("mixpanel", "Mixpanel", "Mixpanel", "analytics", "https://mcp.mixpanel.com/mcp", "Ask questions about your product analytics.", ["Events, reports and cohorts"], []),
   mcpApp("amplitude", "Amplitude", "Amplitude", "analytics", "https://mcp.amplitude.com/mcp", "Charts, dashboards and user behaviour.", ["Charts, cohorts and events"], []),
-  mcpApp("quickbooks", "QuickBooks", "Intuit", "finance", "https://mcp.quickbooks.intuit.com", "Invoices, customers and reports.", ["Invoices, bills, customers and reports"], ["Invoices and customers"], ["Needs a paid QuickBooks Online company."]),
-  mcpApp("paypal", "PayPal", "PayPal", "finance", "https://mcp.paypal.com", "Invoices, orders and transactions.", ["Transactions, invoices and disputes"], ["Invoices"]),
+  mcpApp("quickbooks", "QuickBooks", "Intuit", "finance", "https://ai-inc.quickbooks.intuit.com/v1/mcp", "Invoices, customers and reports.", ["Invoices, bills, customers and reports"], ["Invoices and customers"], ["Needs a paid QuickBooks Online company.", "Intuit may let only apps it has approved sign in. If sign-in is refused, ask Intuit to allow Ensemble."]),
+  mcpApp("paypal", "PayPal", "PayPal", "finance", "https://mcp.paypal.com/mcp", "Invoices, orders and transactions.", ["Transactions, invoices and disputes"], ["Invoices"]),
   mcpApp("greenhouse", "Greenhouse", "Greenhouse", "recruiting", "https://mcp.greenhouse.io/mcp", "Candidates, jobs and interviews.", ["Candidates, applications and jobs"], ["Notes and stages"], ["Needs a Greenhouse Recruiting account."]),
   mcpApp("ashby", "Ashby", "Ashby", "recruiting", "https://mcp.ashbyhq.com/mcp/v1", "Candidates, jobs and interview plans.", ["Candidates, jobs and applications"], ["Notes and stages"], ["Needs an Ashby account."]),
   // Also official remote servers that register clients on their own, or take a pasted key (checked 12 Oct 2026).
@@ -242,7 +242,10 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   publicMcp(mcpApp("exa", "Exa", "Exa", "research", "https://mcp.exa.ai/mcp", "Web search built for AI: pages, papers and companies.", ["Public web pages"], [])),
   mcpApp("perplexity", "Perplexity", "Perplexity", "research", "https://api.perplexity.ai/mcp", "Answers from the web with citations.", ["Public web search"], [], ["Uses your Perplexity API credits."]),
   mcpApp("tavily", "Tavily", "Tavily", "research", "https://mcp.tavily.com/mcp/", "Web search and page extraction.", ["Public web pages"], [], ["Uses your Tavily API credits."]),
-  mcpApp("firecrawl", "Firecrawl", "Firecrawl", "research", "https://mcp.firecrawl.dev/v2/mcp", "Scrape and crawl websites into clean Markdown.", ["Public web pages"], [], ["Uses your Firecrawl credits."]),
+  {
+    ...mcpApp("firecrawl", "Firecrawl", "Firecrawl", "research", "https://mcp.firecrawl.dev/v2/mcp", "Scrape and crawl websites into clean Markdown.", ["Public web pages"], [], ["Uses your Firecrawl credits."]),
+    mcp: MCP("https://mcp.firecrawl.dev/v2/mcp", undefined, { token: { label: "Firecrawl API key", url: "https://www.firecrawl.dev/app/api-keys", hint: "In Firecrawl: API Keys → copy your key.", only: true } }),
+  },
   {
     ...mcpApp("render", "Render", "Render", "developer", "https://mcp.render.com/mcp", "Services, deploys, logs and Postgres.", ["Services, deploys, logs and metrics"], ["Services and environment variables"]),
     mcp: MCP("https://mcp.render.com/mcp", undefined, { token: { label: "Render API key", url: "https://render.com/docs/api", hint: "In Render: Account Settings → API Keys → Create API Key.", only: true } }),

@@ -74,11 +74,45 @@ export async function notionBlocks(ctx: SourceContext, id: string, depth = 0): P
     cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
   } while (cursor && !ctx.signal.aborted);
   for (const block of blocks) {
+    if (block.type === "meeting_notes" || block.type === "transcription") {
+      block.children = await meetingNoteSections(ctx, block, depth);
+      continue;
+    }
     if (!block.has_children || block.type === "child_page" || block.type === "child_database") continue;
     if (depth >= BLOCK_DEPTH) throw new ImportError("This Notion page nests blocks more than 32 levels deep. Import a smaller section.");
     block.children = await notionBlocks(ctx, String(block.id), depth + 1);
   }
   return blocks;
+}
+
+const MEETING_SECTIONS = [
+  ["summary_block_id", "Summary"],
+  ["notes_block_id", "Notes"],
+  ["transcript_block_id", "Transcript"],
+] as const;
+
+/**
+ * Notion AI meeting notes (`meeting_notes`, `transcription` before 2026-03-11) keep their summary, notes and
+ * transcript in blocks the meeting block points to, not as its children: each comes in under its own
+ * heading. A section Notion will not give (not shared with the connection) is left out.
+ */
+async function meetingNoteSections(ctx: SourceContext, block: NotionBlock, depth: number): Promise<NotionBlock[]> {
+  const pointers = ((((block[block.type] ?? {}) as Json).children ?? {}) as Record<string, unknown>);
+  const out: NotionBlock[] = [];
+  for (const [key, label] of MEETING_SECTIONS) {
+    const id = pointers[key];
+    if (typeof id !== "string" || !id) continue;
+    let section: NotionBlock[];
+    try {
+      section = await notionBlocks(ctx, id, depth + 1);
+    } catch (error) {
+      if (error instanceof ImportError && error.upstreamStatus === 404) continue;
+      throw error;
+    }
+    if (!section.length) continue;
+    out.push({ id: `${id}-heading`, type: "heading_3", has_children: false, heading_3: { rich_text: [{ type: "text", plain_text: label, text: { content: label } }] } } as NotionBlock, ...section);
+  }
+  return out;
 }
 
 export function propertyText(property: Json): string {

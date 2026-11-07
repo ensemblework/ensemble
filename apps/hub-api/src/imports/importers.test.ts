@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { notionSource, NOTION_VERSION } from "./api/notion.js";
+import { notionBlocks, notionSource, NOTION_VERSION } from "./api/notion.js";
+import { notionNodes } from "./notion-content.js";
 import { linearSource } from "./api/linear.js";
 import { jiraSource } from "./api/jira.js";
 import { todoistSource } from "./api/todoist.js";
@@ -148,6 +149,34 @@ test("HTTP waits on 429 Retry-After and never echoes the token", async () => {
   assert.equal(attempts, 2);
   const denied = createImportHttp({ signal, label: "Linear", gapMs: 0, fetchImpl: mockFetch(() => new Response("no", { status: 401 })).fetch, headers: { Authorization: "secret-token-value" } });
   await assert.rejects(denied.json("https://api.example.test/x"), (error: Error) => /did not accept the token/.test(error.message) && !error.message.includes("secret"));
+});
+
+test("Notion: AI meeting notes bring their title, time, summary and transcript; an unshared section is left out", async () => {
+  const { fetch } = mockFetch((call) => {
+    if (call.url.includes("/v1/blocks/page-1/children")) return { results: [{
+      id: "m1", type: "meeting_notes", has_children: false,
+      meeting_notes: {
+        title: [{ plain_text: "Weekly sync" }], status: "notes_ready",
+        children: { summary_block_id: "sum-1", notes_block_id: "notes-1", transcript_block_id: "tr-1" },
+        calendar_event: { start_time: "2026-02-24T10:00:00.000Z", end_time: "2026-02-24T10:45:00.000Z" },
+      },
+    }], has_more: false };
+    if (call.url.includes("/v1/blocks/sum-1/children")) return { results: [{ id: "s1", type: "bulleted_list_item", bulleted_list_item: { rich_text: [{ plain_text: "Ship the beta" }] } }], has_more: false };
+    if (call.url.includes("/v1/blocks/notes-1/children")) return new Response(JSON.stringify({ code: "object_not_found" }), { status: 404 });
+    if (call.url.includes("/v1/blocks/tr-1/children")) return { results: [{ id: "t1", type: "paragraph", paragraph: { rich_text: [{ plain_text: "Mira: let's ship." }] } }], has_more: false };
+    return undefined;
+  });
+  const blocks = await notionBlocks(context({ token: "secret_notion", via: "token" }, fetch), "page-1");
+  const nodes = notionNodes(blocks);
+  assert.deepEqual(nodes.map((node) => node.type), ["heading", "paragraph", "heading", "bulletList", "heading", "paragraph"]);
+  assert.equal(nodes[0]!.content![0]!.text, "Weekly sync");
+  assert.equal(nodes[1]!.content![0]!.text, "Tue, 24 Feb 2026, 10:00–10:45 UTC");
+  assert.deepEqual([nodes[2], nodes[4]].map((node) => node!.content![0]!.text), ["Summary", "Transcript"]);
+  const markdown = notionBlocksToMarkdown(blocks);
+  assert.match(markdown, /^## Weekly sync/);
+  assert.match(markdown, /### Summary\n\n- Ship the beta/);
+  assert.match(markdown, /### Transcript\n\nMira: let's ship\./);
+  assert.doesNotMatch(markdown, /### Notes/);
 });
 
 test("Notion: data sources, standalone pages, tables, nested pages and native formatting", async () => {
