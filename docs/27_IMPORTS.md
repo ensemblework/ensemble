@@ -30,7 +30,7 @@ Code: `apps/hub-api/src/imports/` (importers and writer), `apps/hub-api/src/rout
 | GitHub Issues | Connected account or fine-grained token with Issues read | — | Repositories → projects, issues → tasks (pull requests skipped) | Title, body, open/closed (closed as not planned → dropped), labels, milestone as a label and its due date as due, assignees. Containers: "Issues assigned to me" and each repository |
 | CSV or TSV | — | Any spreadsheet | Rows → tasks (or pages) | Column mapping (§3) |
 
-Vendor APIs (`src/imports/api/`): Notion `2026-03-11` (databases read through their data sources, `POST /v1/data_sources/{id}/query`), Jira `POST /rest/api/3/search/jql` with `nextPageToken`, Todoist unified API v1 (`https://api.todoist.com/api/v1`), monday.com GraphQL `API-Version: 2026-07`, GitHub `X-GitHub-Api-Version: 2022-11-28`, Linear GraphQL, Asana 1.0, Trello 1, ClickUp v2.
+Vendor APIs (`src/imports/api/`): Notion `2026-03-11` (databases read through their data sources, `POST /v1/data_sources/{id}/query`; an AI meeting-notes block's summary, notes and transcript are read from the blocks it points to, each under its own heading), Jira `POST /rest/api/3/search/jql` with `nextPageToken`, Todoist unified API v1 (`https://api.todoist.com/api/v1`), monday.com GraphQL `API-Version: 2026-07`, GitHub `X-GitHub-Api-Version: 2022-11-28`, Linear GraphQL, Asana 1.0, Trello 1, ClickUp v2.
 
 ### How to export from each app
 

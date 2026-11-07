@@ -56,6 +56,17 @@ function fileUrl(value: unknown): string {
   return asString(inner.url) || asString(file.url);
 }
 
+/** "Tue 24 Feb 2026, 10:00–10:45 UTC" from a meeting-notes block's calendar event or recording. */
+export function meetingWhen(data: Record<string, unknown>): string {
+  const span = ((data.calendar_event ?? data.recording ?? {}) as Record<string, unknown>);
+  const start = typeof span.start_time === "string" ? new Date(span.start_time) : null;
+  if (!start || Number.isNaN(start.getTime())) return "";
+  const end = typeof span.end_time === "string" ? new Date(span.end_time) : null;
+  const day = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(start);
+  const time = (date: Date) => new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(date);
+  return `${day}, ${time(start)}${end && !Number.isNaN(end.getTime()) ? `–${time(end)}` : ""} UTC`;
+}
+
 /** Notion blocks (with children attached) → Markdown. */
 const LIST_BLOCKS = new Set(["bulleted_list_item", "numbered_list_item", "to_do"]);
 
@@ -161,6 +172,15 @@ export function notionBlocksToMarkdown(blocks: NotionBlock[], depth = 0): string
       case "breadcrumb":
       case "unsupported":
         break;
+      case "meeting_notes":
+      case "transcription": {
+        // Notion AI meeting notes: the title and when, then the summary, notes and transcript the importer fetched.
+        out.push(`## ${notionPlain(data.title).trim() || "Meeting notes"}`);
+        const when = meetingWhen(data);
+        if (when) out.push("", `*${when}*`);
+        if (children.length) out.push("", notionBlocksToMarkdown(children, depth));
+        break;
+      }
       default:
         if (text) out.push(`${indent}${text}`);
         if (children.length) out.push(nested());

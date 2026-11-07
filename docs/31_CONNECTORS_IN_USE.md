@@ -31,7 +31,7 @@ Each turn's prompt lists the apps connected in the open space by catalog name, h
 | `apps_post_update` | Comments on the issue, card or ticket a task came from |
 | `hub_import_meeting_notes` | Imports up to 20 recent notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie or Otter (API-key connections) into Meetings; action items become proposed tasks only if asked. Through MCP these apps are searched live instead |
 | `hub_import_app_file` | Saves a Drive, OneDrive, Dropbox or Box file, or a Gmail or Outlook attachment, in Files |
-| `hub_save_app_item_as_page` | Saves an item as a page that names and links its source. Notion reads keep tables and collapsible sections; a Notion import brings the whole accessible child-page tree with native blocks, and databases become tables with linked row pages (`imports/api/notion.ts`, `imports/notion-content.ts`) |
+| `hub_save_app_item_as_page` | Saves an item as a page that names and links its source. Notion reads keep tables and collapsible sections; a Notion import brings the whole accessible child-page tree with native blocks, and databases become tables with linked row pages; Notion AI meeting notes come in as their title, time, summary, notes and transcript (sections not shared with Ensemble are left out) (`imports/api/notion.ts`, `imports/notion-content.ts`) |
 | `hub_list_app_relationships`, `hub_manage_app_relationship` | Attach, remove, refresh, add as task, add people, project source links and People merges, through the same scoped routes, permissions, limits and deduplication as the Hub (`assistant/tools/relationships.ts`); `hub_run_workflow` can link records made earlier in a workflow |
 
 The two import tools take `source`, `kind` and `id` from an `apps_search` hit. Everything that changes an outside app, and every relationship change, waits for **Apply**; outside changes are written to the ledger. App content is passed to the model as information, not instructions. The relationship tools send no email or chat.
@@ -76,7 +76,7 @@ With Google Calendar or Outlook calendar switched on, or a calendar link added, 
 | Sign in with the app (OAuth) | Whoever runs Ensemble registers one app per vendor (Settings → Connections → the connector → Set up once) | Google, Microsoft, GitHub, Linear, Notion, Atlassian, Slack, Zoom, Docusign, Dropbox, Box, Xero, Discord |
 | Paste a token | The person | GitHub, Slack, Linear, Notion, Jira, Trello, Asana, Todoist, ClickUp, monday.com, Figma, Vercel, Azure DevOps, Zendesk, Front, HubSpot, Zotero, meeting-note apps |
 | Vendor MCP, open sign-in (DCR or CIMD) | Nobody | Most MCP connectors |
-| Vendor MCP with a token | The person | Intercom, Render, Smartsheet, Wrike (token only); Cloudflare, Stripe, Hugging Face (instead of signing in) |
+| Vendor MCP with a token | The person | Intercom, Render, Smartsheet, Wrike, Firecrawl (token only); Cloudflare, Stripe, Hugging Face (instead of signing in) |
 | Vendor MCP needing no account | Nobody | AWS Knowledge, Context7, Exa (`mcp.open`). Another catalog server that answers without an account is sent to its sign-in, or shown as **Connected · public data only** if it has none |
 | Vendor MCP at your account's address | The person types it | Grafana Cloud (stack), AWS (Region) |
 | Vendor MCP with an operator-registered app | Whoever runs Ensemble | HubSpot, Asana, Slack, Dropbox |
@@ -140,10 +140,10 @@ The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types
 | Design | Canva, Miro, Webflow, Gamma, Pitch, Wix |
 | Sales & support | Stripe (or token), Intercom (token), Pipedrive, Attio, Close, Customer.io, Clay, Apollo.io, Klaviyo, Salesforce (your org's app) |
 | Analytics | PostHog, Mixpanel, Amplitude, Datadog, Hex, Typeform |
-| Finance | QuickBooks, PayPal, Square, Ramp, Brex, Mercury, Paddle |
+| Finance | QuickBooks (Intuit may allow only apps it has approved), PayPal, Square, Ramp, Brex, Mercury, Paddle |
 | Recruiting | Greenhouse, Ashby, Deel |
 | Cloud | Cloudflare (or token), Grafana Cloud (your stack), AWS Knowledge (no account), AWS (your Region) |
-| Web & research | Exa (no account), Perplexity, Tavily, Firecrawl |
+| Web & research | Exa (no account), Perplexity, Tavily, Firecrawl (token; keyless use is closed) |
 
 ## 5. Logos
 

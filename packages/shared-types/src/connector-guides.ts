@@ -349,6 +349,20 @@ export const CONNECTOR_GUIDES: Readonly<Record<string, ConnectorGuide>> = {
     scopes: "The key acts as your whole Render account. Tools that change things still wait for your Apply.",
     whereToFind: "Render's docs: https://render.com/docs/api",
   },
+  firecrawl: {
+    term: "API key",
+    title: "Copy your Firecrawl API key",
+    steps: [
+      "Sign in to Firecrawl at https://www.firecrawl.dev/app.",
+      "Open API Keys.",
+      "Copy your key, or create a new one named Ensemble.",
+      "Paste it into Firecrawl API key below and click Connect with token.",
+      "Choose which tools the assistant may use.",
+    ],
+    looksLike: 'Starts with "fc-".',
+    scopes: "Scrapes and crawls use your Firecrawl credits. Firecrawl's server cannot change anything in your accounts.",
+    whereToFind: "Firecrawl's docs: https://docs.firecrawl.dev/mcp-server",
+  },
   smartsheet: {
     term: "API access token",
     title: "Create a Smartsheet API access token",

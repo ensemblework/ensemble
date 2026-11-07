@@ -3125,3 +3125,12 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
 .code-preview-table th, .code-preview-table td { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--line); padding: 3px 8px; text-align: left; }
 .code-preview-table th { position: sticky; top: 0; z-index: 1; background: var(--raised); font-weight: 600; }
 .code-preview-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--raised) 45%, transparent); }
+
+/* What a person wrote in a chat (components/chat-text.tsx): lists as lists, numbers as typed. */
+.chat-text-block { display: block; }
+.chat-li { display: flex; align-items: baseline; gap: 0.45em; }
+.chat-li + .chat-li { margin-top: 0.15em; }
+.chat-li-marker { flex: none; min-width: 0.9em; color: rgb(var(--accent-rgb)); font-variant-numeric: tabular-nums; text-align: center; }
+.chat-li-marker[data-ordered] { min-width: 1.4em; text-align: right; }
+.chat-li-text { min-width: 0; flex: 1; }
+.chat-code { border-radius: 4px; padding: 0.05em 0.3em; background: color-mix(in srgb, var(--ink) 9%, transparent); font-family: var(--font-mono); font-size: 0.9em; }

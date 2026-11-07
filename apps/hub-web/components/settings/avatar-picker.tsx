@@ -44,7 +44,11 @@ export function AvatarPicker() {
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  const genders: AvatarGender[] = [firstGender, ...AVATAR_GENDERS.filter((value) => value !== firstGender)];
+  // The faces for the gender given at sign-up (no answer: all of them), plus the group of the face in use.
+  const answered = user?.profile?.gender ? firstGender : null;
+  const [showAll, setShowAll] = useState(false);
+  const everyGroup: AvatarGender[] = [firstGender, ...AVATAR_GENDERS.filter((value) => value !== firstGender)];
+  const genders = showAll || !answered ? everyGroup : everyGroup.filter((value) => value === answered || value === parseAvatar(current)?.gender);
   const initials = personInitials(user?.name, user?.email);
   const parts = parseAvatar(current);
   // A background picked before any face is kept here until a face is picked.
@@ -134,6 +138,11 @@ export function AvatarPicker() {
             </div>
           </div>
         ))}
+        {answered ? (
+          <button type="button" className="text-2xs text-muted underline-offset-2 hover:text-ink hover:underline" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+            {showAll ? `Show only ${AVATAR_GENDER_LABEL[answered].toLowerCase()}` : "Show all faces"}
+          </button>
+        ) : null}
       </div>
     </SectionCard>
   );

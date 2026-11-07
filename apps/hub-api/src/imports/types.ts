@@ -161,6 +161,8 @@ export const SOURCE_LABEL: Record<ImportSourceId, string> = {
 
 export class ImportError extends Error {
   readonly expose = true;
+  /** The HTTP status the source answered with, when the error came from one. */
+  upstreamStatus?: number;
   constructor(
     message: string,
     readonly statusCode = 400,

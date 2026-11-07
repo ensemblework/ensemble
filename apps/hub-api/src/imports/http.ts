@@ -95,7 +95,9 @@ export function createImportHttp(options: ImportHttpOptions): ImportHttp {
         }
         if (!response.ok) {
           await response.body?.cancel().catch(() => undefined);
-          throw new ImportError(friendlyStatus(options.label, response.status), response.status === 401 || response.status === 403 ? 400 : 502);
+          const error = new ImportError(friendlyStatus(options.label, response.status), response.status === 401 || response.status === 403 ? 400 : 502);
+          error.upstreamStatus = response.status;
+          throw error;
         }
         const text = await response.text();
         try {

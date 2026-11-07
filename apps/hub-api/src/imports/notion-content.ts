@@ -1,5 +1,5 @@
 import type { PageNode } from "@ensemble/shared-types";
-import type { NotionBlock } from "./markdown.js";
+import { meetingWhen, type NotionBlock } from "./markdown.js";
 
 type Json = Record<string, unknown>;
 const list = (value: unknown): Json[] => Array.isArray(value) ? value as Json[] : [];
@@ -77,6 +77,15 @@ export function notionNodes(blocks: NotionBlock[]): PageNode[] {
         break;
       }
       case "table_of_contents": case "breadcrumb": break;
+      case "meeting_notes": case "transcription": {
+        // Notion AI meeting notes: the title and when, then the sections the importer fetched.
+        const title = notionInline(data.title);
+        const when = meetingWhen(data);
+        out.push({ type: "heading", attrs: { level: 2 }, content: title.length ? title : [{ type: "text", text: "Meeting notes" }] });
+        if (when) out.push(paragraph([{ type: "text", text: when, marks: [{ type: "italic" }] }]));
+        out.push(...children);
+        break;
+      }
       default: if (content.length) out.push(paragraph(content)); out.push(...children);
     }
   }
