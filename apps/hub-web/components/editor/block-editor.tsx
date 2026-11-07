@@ -21,6 +21,9 @@ import { MAX_PAGE_DEPTH } from "./nested-page";
 import { usePeek } from "../shell/peek";
 import { markFreshPage } from "../pages/fresh-page";
 import { useToast } from "../toast";
+import { openContextMenu } from "../context-menu/menu-store";
+import { usePageMenu } from "../context-menu/page-menu";
+import { editorMenu } from "./editor-menu";
 
 const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod) => mod.CommentLayer), { ssr: false });
 const InlineEnsemble = dynamic(() => import("../comments/inline-ensemble").then((mod) => mod.InlineEnsemble), { ssr: false });
@@ -86,6 +89,10 @@ export function BlockEditor({
   pageRef.current = page;
   const [live, setLive] = useState<Editor | null>(null);
   const peek = usePeek();
+  const pageMenu = usePageMenu();
+  // Whether the selection was empty when the right button went down: a word the browser picks on a
+  // right-click (macOS) is not text the person picked.
+  const emptyAtRightDown = useRef(false);
   const peekRef = useRef(peek);
   peekRef.current = peek;
   changeRef.current = onChange;
@@ -118,6 +125,8 @@ export function BlockEditor({
         return false;
       },
       handleClick(_view, _pos, event) {
+        // ProseMirror calls this for every button: a right-click opens the menu, not the mention.
+        if (event.button !== 0) return false;
         const anchor = (event.target as HTMLElement).closest("a.mention") as HTMLAnchorElement | null;
         if (!anchor) return false;
         event.preventDefault();
@@ -219,7 +228,31 @@ export function BlockEditor({
   return (
     <div className={page && comments ? "comment-host" : undefined}>
       <div className={page && comments ? "page-with-comments" : undefined}>
-        <div className="block-editor-body">
+        <div
+          className="block-editor-body"
+          onPointerDownCapture={(event) => {
+            if (event.button === 2 && live) emptyAtRightDown.current = live.state.selection.empty;
+          }}
+          onContextMenu={(event) => {
+            if (!live || currentLink()) return;
+            const picked = emptyAtRightDown.current;
+            emptyAtRightDown.current = false;
+            openContextMenu(event, () =>
+              editorMenu(live, event.nativeEvent, {
+                page,
+                title: () => pageMenu?.title() || document.querySelector<HTMLElement>("#main-content h1, [data-page-title]")?.innerText?.trim() || "this page",
+                editable,
+                commentable: Boolean(page && comments && !currentLink()),
+                pageMenu: pageMenu ? { label: pageMenu.label, sections: pageMenu.sections } : null,
+                pickedByClick: picked,
+                openMention: (mention) => clickRef.current?.(mention),
+                navigate: router.push,
+                peek: (id, kind) => peekRef.current.open(id, kind),
+                toast,
+              }),
+            );
+          }}
+        >
           <EditorContent editor={editor} />
           {live && editable ? <BlockControls editor={live} comment={Boolean(page && comments && !currentLink())} /> : null}
         </div>

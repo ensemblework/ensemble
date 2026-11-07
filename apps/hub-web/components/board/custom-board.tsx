@@ -16,6 +16,7 @@ import { BoardDragOverlay, useBoardDragSensors, useBoardMotion, useBoardMoveMoti
 import { LoadError } from "../load-error";
 import { SearchQuery } from "../motion/search-query";
 import { MenuItem, PageHeader, Popover, useOverflowRight } from "../ui";
+import { useRouter } from "next/navigation";
 import { useToast } from "../toast";
 import { usePeek } from "../shell/peek";
 import { BoardSettings } from "./custom-boards";
@@ -24,6 +25,7 @@ import { BoardColumn } from "./board-column";
 import { CardBody, SortableBoardCard } from "./task-card";
 import { PageCardBody } from "./page-card";
 import { markFreshPage } from "../pages/fresh-page";
+import { boardSubmenu, pageMenu, taskMenu, taskMenuFor } from "../context-menu/builders";
 
 type Lanes = Record<string, string[]>;
 
@@ -44,7 +46,7 @@ export function CustomBoard({ id }: { id: string }) {
   // Task pages show the Ensemble board's task card: priority, owner, people, due date, labels.
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
   const taskById = useMemo(() => new Map((tasks.data?.tasks ?? []).map((task) => [task.id, task])), [tasks.data?.tasks]);
-  const access = useSpaceAccess(), client = useQueryClient(), toast = useToast(), peek = usePeek();
+  const access = useSpaceAccess(), client = useQueryClient(), toast = useToast(), peek = usePeek(), router = useRouter();
   useWarmEditors("peek");
   const [settings, setSettings] = useState(false), [search, setSearch] = useState("");
   const [existingSearch, setExistingSearch] = useState("");
@@ -292,7 +294,24 @@ export function CustomBoard({ id }: { id: string }) {
                       const page = byId.get(pageId);
                       const task = page?.kind === "task" ? taskById.get(page.id) : undefined;
                       return page ? (
-                        <SortableBoardCard key={page.id} id={page.id} active={peek.peekId === page.id} disabled={!canMove || busy} motion={motion.sortable} onOpen={openPage} onWarm={page.kind === "task" ? () => warmTask(client, page.id) : undefined}>
+                        <SortableBoardCard
+                          key={page.id}
+                          id={page.id}
+                          active={peek.peekId === page.id}
+                          disabled={!canMove || busy}
+                          motion={motion.sortable}
+                          onOpen={openPage}
+                          onWarm={page.kind === "task" ? () => warmTask(client, page.id) : undefined}
+                          menu={() => ({
+                            title: page.title || "Untitled",
+                            sections:
+                              page.kind === "task"
+                                ? task && editable
+                                  ? taskMenu({ ...task, title: page.title || task.title }, { client, toast, peek: openPage, remove: () => deletePage(page) }, { move: boardSubmenu("task", page.id, client, toast) })
+                                  : taskMenuFor({ id: page.id, title: page.title }, { client, toast, peek: openPage, remove: editable ? () => deletePage(page) : undefined })
+                                : pageMenu({ id: page.id, title: page.title }, { client, toast, navigate: router.push, peek: openPage, remove: editable ? () => deletePage(page) : undefined }),
+                          })}
+                        >
                           {task ? <CardBody task={{ ...task, title: page.title || task.title }} onDelete={editable ? () => deletePage(page) : undefined} /> : <PageCardBody page={page} onDelete={editable ? deletePage : undefined} />}
                         </SortableBoardCard>
                       ) : null;

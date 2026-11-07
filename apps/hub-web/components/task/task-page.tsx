@@ -69,6 +69,9 @@ import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from ".
 import { collabStatusText, useCollab } from "../pages/use-collab";
 import { PageHistory } from "../pages/page-history";
 import { KeptEdits } from "../pages/kept-edits";
+import { taskMenu, taskMenuFor } from "../context-menu/builders";
+import { openContextMenu } from "../context-menu/menu-store";
+import { PageMenuContext, type PageMenuValue } from "../context-menu/page-menu";
 
 function useBlockEditor() {
   const [Editor, setEditor] = useState(() => blockEditor);
@@ -346,9 +349,20 @@ export function TaskPage({
   const saveState = sync.status;
   const unsaved = saveState !== "saved";
   const saveText = collabStatusText(saveState, locked);
+  // Right-click on the task (around its text, or "Task ▸" in its editor's menu). A shared task keeps the basics.
+  const menuValue: PageMenuValue = {
+    label: "Task",
+    title: () => record.title || "Untitled",
+    sections: () =>
+      whole && canEditProperties
+        ? taskMenu(record, { client, toast, update: (data) => update.mutate(data), remove: () => remove.mutate() }, { open: false })
+        : taskMenuFor({ id: record.id, title: record.title }, { client, toast }),
+  };
 
   return (
+    <PageMenuContext.Provider value={menuValue}>
     <div
+      onContextMenu={(event) => openContextMenu(event, () => ({ title: menuValue.title(), sections: menuValue.sections() }))}
       ref={focusMode.layer}
       tabIndex={focusMode.active ? -1 : undefined}
       className={
@@ -805,5 +819,6 @@ export function TaskPage({
 
       <AssignDialog open={assigning} onClose={() => setAssigning(false)} taskId={taskId} />
     </div>
+    </PageMenuContext.Provider>
   );
 }

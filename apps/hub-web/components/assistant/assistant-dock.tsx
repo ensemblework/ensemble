@@ -8,10 +8,10 @@ import { createPortal } from "react-dom";
 import { LayerFloor, Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Unplug, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Unplug, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
 import { asksForIds, assistantErrorText, ASSISTANT_UNAVAILABLE, CHAT_FILES_MAX, CONNECT_COMPUTER_HREF, formatChord, formatEntityText, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type AssistantRef, type PageMention } from "@ensemble/shared-types";
@@ -42,6 +42,10 @@ import { ThinkingStatus } from "@/components/motion/slot";
 import { cx } from "../ui";
 import { pastedFiles } from "@/lib/files/pasted";
 import { AttachMenu, AttachmentShelf, MessageFiles, attachmentMentions, attachmentsOnlyMessage, fileCount, useChatAttachments, withAttachedFiles, type ChatAttachment } from "./chat-attachments";
+import { ATTACH_EVENT, attachmentContext, attachToAssistant, quoteAttachments, splitQuoted, type AssistantAttachment, type AttachRequest } from "@/lib/assistant-attach";
+import { copyText } from "../context-menu/builders";
+import { openContextMenu } from "../context-menu/menu-store";
+import { mentionToken } from "@ensemble/shared-types";
 import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
 /** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
@@ -239,9 +243,16 @@ export function Message({
   context?: ReplyContext;
 }) {
   if (message.role === "user") {
+    const { parts, rest } = splitQuoted(message.content);
     return (
       <div className="assistant-turn assistant-user-turn">
-        <div className="assistant-user-message"><LinkifiedText text={message.content} mentions={message.mentions} /></div>
+        {parts.map((part, index) => (
+          <figure key={index} className="assistant-quote">
+            {part.whole ? null : <blockquote>{part.text}</blockquote>}
+            <figcaption>{part.whole ? "Attached" : "From"} “{part.from}”</figcaption>
+          </figure>
+        ))}
+        {rest.trim() ? <div className="assistant-user-message"><LinkifiedText text={rest} mentions={message.mentions} /></div> : null}
         <MessageFiles content={message.content} mentions={message.mentions} />
       </div>
     );
@@ -257,8 +268,27 @@ export function Message({
   // Replies saved before 18 Oct 2026 named included credits as an API key.
   const included = message.credentialSource === INCLUDED_SOURCE || message.credentialSource === `API key · ${INCLUDED_PROVIDER}`;
   const source = included ? INCLUDED_SOURCE : message.credentialSource;
+  const menu = (event: ReactMouseEvent<HTMLElement>) =>
+    openContextMenu(event, () => {
+      const picked = window.getSelection()?.toString().trim() ?? "";
+      const inside = picked && event.currentTarget.contains(window.getSelection()?.anchorNode ?? null);
+      const text = inside ? picked : plainText;
+      const reply: AssistantAttachment = { text, source: { kind: "reply", id: message.id, title: "Ensemble's reply" } };
+      return {
+        title: inside ? "Selected text" : "Reply",
+        sections: [
+          {
+            items: [
+              { id: "reply-copy", label: inside ? "Copy" : "Copy reply", icon: Copy, run: () => copyText(text) },
+              { id: "reply-quote", label: "Quote in my reply", icon: Quote, run: () => attachToAssistant({ attachment: reply }) },
+            ],
+          },
+          ...(onRetry ? [{ items: [{ id: "reply-retry", label: "Ask again", icon: RotateCcw, run: onRetry }] }] : []),
+        ],
+      };
+    });
   return (
-    <article className="assistant-turn assistant-answer-turn">
+    <article className="assistant-turn assistant-answer-turn" onContextMenu={menu}>
       <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
       {message.toolCalls?.length ? (
         <details className="assistant-activity" open={pending.length > 0 || message.toolCalls.some((call) => call.state === "failed")} >
@@ -452,6 +482,37 @@ export function AssistantDock() {
     return () => window.removeEventListener("ensemble:assistant-prefill", onPrefill);
   }, [setOpen]);
 
+  const attachRef = useRef<(request: AttachRequest) => void>(() => undefined);
+  attachRef.current = (request) => {
+    setOpen(true);
+    const next = request.attachment ? [...attached.filter((item) => !(item.text === request.attachment!.text && item.source.id === request.attachment!.source.id)), request.attachment].slice(-5) : attached;
+    if (request.attachment) setAttached(next);
+    const typed: PageMention[] = [];
+    if (request.mention) {
+      mention.remember(request.mention);
+      typed.push(request.mention);
+    }
+    if (request.send && request.prompt && !abortRef.current) {
+      const token = request.mention ? `${mentionToken(request.mention.kind, request.mention.label)} ` : "";
+      send(`${token}${request.prompt}`, typed, next);
+      return;
+    }
+    if (request.mention) {
+      const token = mentionToken(request.mention.kind, request.mention.label);
+      setDraft((current) => (current.includes(token) ? current : `${current}${current && !/\s$/.test(current) ? " " : ""}${token} `));
+    }
+    if (request.prompt) setDraft((current) => current || request.prompt!);
+    window.setTimeout(() => input.current?.focus(), 40);
+  };
+  useEffect(() => {
+    const onAttach = (event: Event) => {
+      const detail = (event as CustomEvent<AttachRequest>).detail;
+      if (detail) attachRef.current(detail);
+    };
+    window.addEventListener(ATTACH_EVENT, onAttach);
+    return () => window.removeEventListener(ATTACH_EVENT, onAttach);
+  }, []);
+
   useEffect(() => {
     // A routine's conversation (Routines page) opens here, as one of the person's chats.
     const onOpenConversation = (event: Event) => {
@@ -475,7 +536,9 @@ export function AssistantDock() {
     if (open) window.setTimeout(() => input.current?.focus(), 30);
   }, [open]);
 
-  const lastRequest = useRef<{ text: string; mentions: PageMention[]; sent?: { draft: string; files: ChatAttachment[] } } | null>(null);
+  const lastRequest = useRef<{ text: string; mentions: PageMention[]; sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }; context?: string } | null>(null);
+  // What a right-click handed over (a part of a page, a block, a reply): sent quoted, with where it is from.
+  const [attached, setAttached] = useState<AssistantAttachment[]>([]);
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: KeyboardEvent) => {
@@ -487,9 +550,9 @@ export function AssistantDock() {
     return () => window.removeEventListener("keydown", dismiss);
   }, [open, setOpen]);
   /** `sent`: what the person had written and attached, put back when the turn never reached the assistant. */
-  const sendText = async (text: string, mentions: PageMention[] = [], sent?: { draft: string; files: ChatAttachment[] }) => {
+  const sendText = async (text: string, mentions: PageMention[] = [], sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }, context?: string) => {
     if (abortRef.current) return;
-    lastRequest.current = { text, mentions, sent };
+    lastRequest.current = { text, mentions, sent, context };
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
@@ -511,6 +574,7 @@ export function AssistantDock() {
           conversationId: conversationId ?? undefined,
           message: text,
           ...(mentions.length ? { mentions } : {}),
+          ...(context ? { referenceContext: context } : {}),
           ...(picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
           page: {
             path: pathname + (() => { const params = new URLSearchParams(); const current = new URLSearchParams(window.location.search); for (const key of ["q", "search", "who", "ids", "status", "owner", "project", "projectId", "view", "tab", "run", "session", "note", "skill", "item", "space"]) { const value = current.get(key); if (value) params.set(key, value.slice(0, 200)); } return params.size ? `?${params}` : ""; })(),
@@ -658,6 +722,7 @@ export function AssistantDock() {
       } else {
         setDraft((current) => current || (sent ? sent.draft : text));
         if (sent) attachments.restore(sent.files);
+        if (sent?.attached?.length) setAttached((current) => (current.length ? current : sent.attached!));
         setTurnError((error as Error).message);
         setOptimistic([]);
       }
@@ -685,7 +750,7 @@ export function AssistantDock() {
   }, [all.length, pending, streaming]);
 
   /** Sends `text` with the files on the shelf. False when it could not go yet, with the reason on the shelf. */
-  const send = (text: string, typed: PageMention[] = []): boolean => {
+  const send = (text: string, typed: PageMention[] = [], handed: AssistantAttachment[] = attached): boolean => {
     if (abortRef.current) return false;
     if (attachments.uploading) {
       attachments.setNotice("Wait for the uploads to finish, or cancel them, then send.");
@@ -698,9 +763,11 @@ export function AssistantDock() {
       attachments.setNotice(`A message can carry up to ${CHAT_FILES_MAX} files, counting @file mentions. Remove some, then send.`);
       return false;
     }
-    const message = text || (files.length ? attachmentsOnlyMessage(files.length) : "");
+    const head = quoteAttachments(handed);
+    const message = [head, text].filter(Boolean).join("\n\n") || (files.length ? attachmentsOnlyMessage(files.length) : "");
     if (!message) return false;
-    void sendText(message, mentions, { draft: text, files });
+    void sendText(message, mentions, { draft: text, files, attached: handed }, attachmentContext(handed) || undefined);
+    setAttached([]);
     return true;
   };
 
@@ -712,16 +779,16 @@ export function AssistantDock() {
     const request = lastRequest.current;
     if (!request) return;
     const sent = request.sent;
-    if (!sent) return void sendText(request.text, request.mentions);
+    if (!sent) return void sendText(request.text, request.mentions, undefined, request.context);
     const attached = new Set(sent.files.flatMap((file) => (file.fileId ? [file.fileId] : [])));
     const typed = request.mentions.filter((mention) => !(mention.kind === "file" && attached.has(mention.id)));
     const taken = sent.files.length ? attachments.take(sent.files) : [];
-    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken });
+    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken, attached: sent.attached }, request.context);
   };
 
   const submit = () => {
     const text = draft.trim();
-    if ((!text && !attachments.ready.length) || pending) return;
+    if ((!text && !attachments.ready.length && !attached.length) || pending) return;
     if (send(text, mention.takeMentions(text))) mention.clear();
   };
 
@@ -860,6 +927,20 @@ export function AssistantDock() {
         {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : retryLast} /> : null}
         <div className="assistant-composer tile flex flex-col gap-2 px-4 py-3" data-dropping={dropping ? "" : undefined}>
           <AttachmentShelf attachments={attachments} hintId={uploadHint} />
+          {attached.length ? (
+            <ul className="assistant-handed" aria-label="Attached to this message">
+              {attached.map((item, index) => (
+                <li key={`${item.source.kind}-${item.source.id}-${index}`} className="assistant-handed-chip" title={item.text || item.source.title}>
+                  <Quote size={12} className="shrink-0 text-accent" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">{item.text ? `“${item.text.replace(/\s+/g, " ").slice(0, 80)}”` : item.source.title}</span>
+                  <span className="max-w-[40%] shrink-0 truncate text-faint">{item.text ? item.source.title : "whole"}</span>
+                  <button type="button" className="icon-btn h-5 w-5" aria-label="Remove" onClick={() => setAttached((current) => current.filter((_, at) => at !== index))}>
+                    <X size={11} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <div className="flex items-end gap-2">
             <AttachMenu attachments={attachments} onAttached={() => window.setTimeout(() => input.current?.focus(), 30)} />
             <MentionTextarea

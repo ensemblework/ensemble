@@ -12,6 +12,7 @@ import { LiveProvider } from "@/components/live";
 import { PresenceHost } from "@/components/sharing/presence-host";
 import { FollowHost } from "@/components/sharing/people";
 import { CommandPalette, ShortcutSheet } from "@/components/shell/command-palette";
+import { ContextMenuHost } from "@/components/context-menu/context-menu";
 import { QuickCapture } from "@/components/shell/quick-capture";
 import { ShortcutsHost } from "@/components/shell/shortcuts-host";
 import { Notifier } from "@/components/shell/notifier";
@@ -85,6 +86,7 @@ function Frame({ children }: { children: React.ReactNode }) {
   }} /> : null;
   const [Peek, setPeek] = useState<typeof peekPanel>(() => peekPanel);
   const [palette, setPalette] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
   const [shortcuts, setShortcuts] = useState(false);
   const [capture, setCapture] = useState(false);
   useTrackOpen("palette.open", palette);
@@ -117,7 +119,11 @@ function Frame({ children }: { children: React.ReactNode }) {
   }, [peekId, Peek]);
 
   useEffect(() => {
-    const openPalette = () => setPalette(true);
+    const openPalette = (event: Event) => {
+      const query = (event as CustomEvent<{ query?: string } | null>).detail?.query;
+      setPaletteQuery(typeof query === "string" ? query.slice(0, 200) : "");
+      setPalette(true);
+    };
     const openCapture = () => setCapture(true);
     const openHelp = () => setShortcuts(true);
     window.addEventListener("ensemble:palette", openPalette);
@@ -226,7 +232,8 @@ function Frame({ children }: { children: React.ReactNode }) {
         onCapture={() => setCapture(true)}
         onAsk={() => window.dispatchEvent(new CustomEvent("ensemble:ask"))}
       />
-      <CommandPalette open={palette} onClose={() => setPalette(false)} />
+      <CommandPalette open={palette} initialQuery={paletteQuery} onClose={() => setPalette(false)} />
+      <ContextMenuHost />
       <ShortcutSheet open={shortcuts} onClose={() => setShortcuts(false)} />
       <QuickCapture open={capture} onClose={() => setCapture(false)} />
       <FeatureTour />

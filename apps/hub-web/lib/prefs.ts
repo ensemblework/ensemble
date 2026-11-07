@@ -77,6 +77,7 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   reduceMotion: false,
   sidebarAutoCollapse: false,
   pagesPanelSide: "left",
+  contextMenu: true,
   accent: "gold",
   accentCustom: null,
 };

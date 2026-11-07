@@ -136,6 +136,8 @@ export const AppearanceSettings = z.object({
   reduceMotion: z.boolean().default(false),
   sidebarAutoCollapse: z.boolean().default(false),
   pagesPanelSide: z.enum(["left", "right"]).default("left"),
+  /** Ensemble's right-click menu; off, the browser's own menu shows everywhere. */
+  contextMenu: z.boolean().default(true),
   /** Curated accent. Ignored while accentCustom is set. */
   accent: AccentPreset.default("gold"),
   /** User-picked #rrggbb. Null means the preset is in use. */

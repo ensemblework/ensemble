@@ -8,6 +8,7 @@ import { plural } from "@/lib/format";
 import { cx } from "../ui";
 import { titleMatches } from "./pages-list";
 import { boardPageHref, groupBoardPages } from "@/lib/page-boards";
+import { openContextMenu, type MenuSpec } from "../context-menu/menu-store";
 
 export type PageLinkProps = {
   href: string;
@@ -52,8 +53,11 @@ export function PagesSection({
   onDeleteMany,
   renderLink,
   renderActions,
+  rowMenu,
   readOnly = false,
 }: {
+  /** A row's right-click menu; rename and remove are left out where the list is read-only. */
+  rowMenu?: (page: PageListItem, rename?: () => void, remove?: () => void) => MenuSpec | null;
   renderActions?: (page: PageListItem, rename: () => void, remove: () => void) => React.ReactNode;
   readOnly?: boolean;
   pages: PageListItem[];
@@ -125,7 +129,13 @@ export function PagesSection({
           const href = boardPageHref(page);
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <div key={page.id} style={{ marginLeft: Math.min(page.depth, 6) * 12 }} className={cx("group relative flex items-center gap-1 rounded-lg", active && "bg-hover")}>
+            <div
+              key={page.id}
+              style={{ marginLeft: Math.min(page.depth, 6) * 12 }}
+              className={cx("group relative flex items-center gap-1 rounded-lg", active && "bg-hover")}
+              data-cm-touch={rowMenu ? "" : undefined}
+              onContextMenu={rowMenu && editingId !== page.id ? (event) => openContextMenu(event, () => rowMenu(page, readOnly ? undefined : () => { setDraft(page.title); setEditingId(page.id); }, readOnly ? undefined : () => onDelete(page.id))) : undefined}
+            >
               {parents.has(page.id) ? <button type="button" className="icon-btn size-6 shrink-0" aria-label={`${expanded.has(page.id) ? "Collapse" : "Expand"} ${page.title}`} aria-expanded={expanded.has(page.id)} onClick={() => setExpanded((current) => { const next = new Set(current); if (next.has(page.id)) next.delete(page.id); else next.add(page.id); return next; })}><ChevronRight size={13} className={expanded.has(page.id) ? "rotate-90" : undefined} /></button> : <span className="w-6 shrink-0" />}
               {selecting && page.kind !== "task" ? <input type="checkbox" aria-label={`Select ${page.title}`} checked={selected.includes(page.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, page.id] : current.filter((id) => id !== page.id))} /> : null}
               {editingId === page.id ? (

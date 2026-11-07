@@ -12,6 +12,9 @@ import { LabelChips } from "../task/labels";
 import { colorFor } from "@/lib/presence";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { NodeOwnerMark } from "../task/node-owner";
+import { taskMenu } from "../context-menu/builders";
+import { lastPointer, openContextMenu, type MenuSpec } from "../context-menu/menu-store";
+import { useToast } from "../toast";
 
 /**
  * Who does it, as a small pill: "Me", "Agent", a node ("@tester") or crew, or someone's initials in a shared space. "Me" is
@@ -111,6 +114,7 @@ export function SortableBoardCard({
   onOpen,
   onToggleSelect,
   onWarm,
+  menu,
   children,
 }: {
   id: string;
@@ -121,6 +125,8 @@ export function SortableBoardCard({
   onOpen: (id: string) => void;
   onToggleSelect?: (id: string) => void;
   onWarm?: () => void;
+  /** Its right-click menu. A long-press on touch drags the card instead. */
+  menu?: () => MenuSpec | null;
   children: React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -150,7 +156,10 @@ export function SortableBoardCard({
         }
         onOpen(id);
       }}
-      onContextMenu={(event) => event.preventDefault()}
+      onContextMenu={(event) => {
+        if (lastPointer() !== "touch" && menu && openContextMenu(event, menu)) return;
+        event.preventDefault();
+      }}
       data-active={active || undefined}
       {...attributes}
       {...pointerListeners}
@@ -187,8 +196,18 @@ export function SortableCard({
   onDelete?: (id: string) => void;
 }) {
   const client = useQueryClient();
+  const toast = useToast();
   return (
-    <SortableBoardCard id={task.id} active={active} selected={selected} motion={motion} onOpen={onOpen} onToggleSelect={onToggleSelect} onWarm={() => warmTask(client, task.id)}>
+    <SortableBoardCard
+      id={task.id}
+      active={active}
+      selected={selected}
+      motion={motion}
+      onOpen={onOpen}
+      onToggleSelect={onToggleSelect}
+      onWarm={() => warmTask(client, task.id)}
+      menu={() => ({ title: task.title || "Untitled", sections: taskMenu(task, { client, toast, peek: onOpen, remove: onDelete }) })}
+    >
       <CardBody task={task} onDelete={onDelete} />
     </SortableBoardCard>
   );

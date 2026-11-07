@@ -38,6 +38,9 @@ import { SidebarResize } from "./sidebar-resize";
 import { PagesNav } from "@/components/pages/pages-nav";
 import { useLive } from "../live";
 import { cx } from "../ui";
+import { navMenu, sidebarMenu } from "../context-menu/builders";
+import { openContextMenu } from "../context-menu/menu-store";
+import { useToast } from "../toast";
 
 const PRIMARY = [
   { href: "/today", label: "Today", icon: CalendarDays },
@@ -94,6 +97,7 @@ function NavItem({
   badge?: number;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const client = useQueryClient();
   const active = pathname === href || pathname.startsWith(`${href}/`);
   const warm = () => prefetchHref(client, href);
@@ -110,6 +114,8 @@ function NavItem({
       data-active={active || undefined}
       aria-current={active ? "page" : undefined}
       title={label}
+      data-cm-touch=""
+      onContextMenu={(event) => openContextMenu(event, () => navMenu(href, label, router.push))}
     >
       {/* The open tab's icon takes the accent; its label keeps the text colour. */}
       <Icon size={16} strokeWidth={1.8} className={cx("transition-colors", active ? "text-accent" : "text-muted")} />
@@ -137,6 +143,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const mod = useModKey();
   const client = useQueryClient();
   const router = useRouter();
+  const toast = useToast();
   const shell = useQuery({
     queryKey: ["shell"],
     queryFn: api.shell,
@@ -189,7 +196,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const sharedCount = (withMe.data?.spaces.length ?? 0) + (withMe.data?.items.length ?? 0);
   const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;
   return (
-    <aside className={cx("app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90", mobile && "sidebar-mobile")} onPointerEnter={reveal} onPointerLeave={hide} onFocusCapture={reveal} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide(); }}>
+    <aside onContextMenu={(event) => openContextMenu(event, () => sidebarMenu({ client, navigate: router.push, toast }))} className={cx("app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90", mobile && "sidebar-mobile")} onPointerEnter={reveal} onPointerLeave={hide} onFocusCapture={reveal} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide(); }}>
       {mobile ? null : <SidebarResize />}
       <HomeLogoLink size={24} railSize={24} className="sidebar-brand mx-2 mt-3 flex min-h-10 items-center gap-2 rounded-lg px-2 font-semibold" />
       <div className="px-2 pb-2 pt-3">

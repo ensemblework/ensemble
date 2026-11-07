@@ -156,6 +156,8 @@ function imageView(node: ProseMirrorNode, editor: Editor, getPos: () => number |
   let attrs = readAttrs(node);
   const dom = document.createElement("figure");
   dom.className = "page-image-frame page-image-block";
+  // A long-press on touch opens the image's menu (components/context-menu), not the browser's image callout.
+  dom.setAttribute("data-cm-touch", "");
   dom.contentEditable = "false";
   const box = document.createElement("div");
   box.className = "page-image-box";
