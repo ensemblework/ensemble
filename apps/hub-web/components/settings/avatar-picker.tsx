@@ -35,7 +35,6 @@ export function AvatarPicker() {
   const current = user?.avatar ?? null;
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, staleTime: 60_000 });
   const role = avatarRoleFor(spaces.data?.account.role, user?.profile?.profession);
-  const firstGender = avatarGenderFor(user?.profile?.gender);
   const save = useMutation({
     mutationFn: (avatar: string | null) => api.updateMe({ avatar }),
     onSuccess: () => {
@@ -44,11 +43,9 @@ export function AvatarPicker() {
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  // The faces for the gender given at sign-up (no answer: all of them), plus the group of the face in use.
-  const answered = user?.profile?.gender ? firstGender : null;
-  const [showAll, setShowAll] = useState(false);
-  const everyGroup: AvatarGender[] = [firstGender, ...AVATAR_GENDERS.filter((value) => value !== firstGender)];
-  const genders = showAll || !answered ? everyGroup : everyGroup.filter((value) => value === answered || value === parseAvatar(current)?.gender);
+  // One group of faces at a time: the gender given at sign-up, else the group of the face in use.
+  const [viewing, setViewing] = useState<AvatarGender | null>(null);
+  const gender = viewing ?? (user?.profile?.gender ? avatarGenderFor(user.profile.gender) : parseAvatar(current)?.gender ?? "n");
   const initials = personInitials(user?.name, user?.email);
   const parts = parseAvatar(current);
   // A background picked before any face is kept here until a face is picked.
@@ -105,44 +102,50 @@ export function AvatarPicker() {
           })}
         </div>
       </div>
-      <div className="mt-4 space-y-3">
-        {genders.map((gender) => (
-          <div key={gender}>
-            <div className="mb-1.5 text-2xs uppercase tracking-wide text-faint">{AVATAR_GENDER_LABEL[gender]}</div>
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={`${AVATAR_ROLE_LABEL[role]} avatars, ${AVATAR_GENDER_LABEL[gender]}`}>
-              {avatarIds(role, gender, background).map((id) => {
-                const selected = Boolean(current) && avatarFace(id) === avatarFace(current!);
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    aria-label={`${AVATAR_ROLE_LABEL[role]} avatar ${id.split(".")[2]}`}
-                    disabled={save.isPending}
-                    onClick={() => save.mutate(id)}
-                    className={cx(
-                      "relative rounded-full p-0.5 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-                      selected ? "ring-2 ring-accent" : "ring-1 ring-line",
-                    )}
-                  >
-                    <PersonaAvatar id={id} size={48} />
-                    {selected ? (
-                      <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-accent text-white">
-                        <Check size={10} strokeWidth={3} />
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {answered ? (
-          <button type="button" className="text-2xs text-muted underline-offset-2 hover:text-ink hover:underline" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
-            {showAll ? `Show only ${AVATAR_GENDER_LABEL[answered].toLowerCase()}` : "Show all faces"}
-          </button>
-        ) : null}
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center gap-3" role="group" aria-label="Faces to show">
+          {AVATAR_GENDERS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={value === gender}
+              onClick={() => setViewing(value)}
+              className={cx(
+                "text-2xs uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:text-ink",
+                value === gender ? "text-ink" : "text-faint hover:text-muted",
+              )}
+            >
+              {AVATAR_GENDER_LABEL[value]}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={`${AVATAR_ROLE_LABEL[role]} avatars, ${AVATAR_GENDER_LABEL[gender]}`}>
+          {avatarIds(role, gender, background).map((id) => {
+            const selected = Boolean(current) && avatarFace(id) === avatarFace(current!);
+            return (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${AVATAR_ROLE_LABEL[role]} avatar ${id.split(".")[2]}`}
+                disabled={save.isPending}
+                onClick={() => save.mutate(id)}
+                className={cx(
+                  "relative rounded-full p-0.5 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                  selected ? "ring-2 ring-accent" : "ring-1 ring-line",
+                )}
+              >
+                <PersonaAvatar id={id} size={48} />
+                {selected ? (
+                  <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-accent text-white">
+                    <Check size={10} strokeWidth={3} />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </SectionCard>
   );
