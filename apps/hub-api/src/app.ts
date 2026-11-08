@@ -67,6 +67,8 @@ import { marketplaceRoutes } from "./routes/marketplace.js";
 import { widgetRoutes } from "./routes/widgets.js";
 import { deskRoutes } from "./routes/desk.js";
 import { cliAuthRoutes } from "./routes/cli-auth.js";
+import { transferRoutes } from "./transfer/routes.js";
+import { desktopAccountRoutes } from "./desktop/account.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { mcpConnectionRoutes } from "./routes/mcp-connections.js";
 import { importRoutes } from "./routes/imports.js";
@@ -79,7 +81,7 @@ import { meetingNoteRoutes } from "./routes/meeting-notes.js";
 import { routineRoutes } from "./routes/routines.js";
 import { telemetryRoutes } from "./analytics/telemetry.js";
 import { instrument } from "./analytics/prometheus.js";
-import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
+import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected, transferTokenRejected } from "./bridge/auth.js";
 import { deviceCodeRoutes } from "./devices/code-routes.js";
 import { deviceRoutes } from "./devices/routes.js";
 import { subscriptionRoutes } from "./subscriptions/routes.js";
@@ -105,6 +107,8 @@ export function bypassesGlobalAuth(path: string): boolean {
     path === "/api/engine/assistant/tool" ||
     // git's credential helper in a run: the run's own token (credentials/git-credential.ts).
     path === "/api/engine/git-credential" ||
+    // The page a connected app's browser sign-in lands on, on a computer's own runtime (desktop/account.ts).
+    path === "/api/desktop/connected" ||
     // A routine's webhook authenticates with the routine's own token (node/routine-routes.ts).
     /^\/api\/node\/hooks\/routines\/[0-9a-f-]{36}$/.test(path)
   );
@@ -189,7 +193,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenCanUseApps = who.tokenCanUseApps;
       request.modules = who.modules;
       const denied =
-        readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path);
+        readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path) ?? transferTokenRejected(who.tokenScope, request.method, path);
       if (denied) return reply.code(403).send({ error: denied });
       if (moduleDenied(path, who.modules)) return reply.code(404).send({ error: MODULE_DENIED });
       await enforceHostedRequest(request, path);
@@ -295,6 +299,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     widgetRoutes,
     deskRoutes,
     cliAuthRoutes,
+    transferRoutes,
     mcpRoutes,
     mcpConnectionRoutes,
     importRoutes,
@@ -316,6 +321,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   if (desktop) {
     await app.register(remoteRoutes);
+    await app.register(desktopAccountRoutes);
     app.get("/api/desktop/status", async () => {
       const runningJobs = await prisma.workspaceJob
         .count({ where: { status: { in: ["queued", "running", "stopping", "waiting_approval"] } } })

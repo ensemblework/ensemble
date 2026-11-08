@@ -1,15 +1,17 @@
 {
-  "identifier": "hosted-updates",
-  "description": "The official web interface may request the signed Ensemble updater, with no filesystem or shell permissions.",
+  "identifier": "hosted-app",
+  "description": "The official web app may request the signed Ensemble updater, show the app's browser sign-in screen, and open its own pages in the system browser. No filesystem or shell permissions.",
   "windows": [
     "main"
   ],
   "remote": {
     "urls": [
-      "https://app.ensemblework.com"
+      "https://app.ensemblework.com",
+      "https://app.ensemblework.com/*"
     ]
   },
   "permissions": [
-    "release-commands"
+    "release-commands",
+    "account-screen"
   ]
 }

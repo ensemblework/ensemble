@@ -21,6 +21,50 @@
         <span id="loader" class="u-morph" data-motion-slot="brand.morph" data-size="72" data-loader data-delay="180" data-state="idle" aria-hidden="true"></span>
         <p id="loading-status" class="ub-p" role="status">Connecting…</p>
       </div>
+      <div id="welcome" class="ub-card ub-wide" hidden>
+        <p class="ub-code">welcome</p>
+        <h1 class="ub-h">How do you want to use Ensemble?</h1>
+        <p id="welcome-note" class="ub-p ub-p-wide"></p>
+        <div class="ub-choices">
+          <button id="choose-account" class="ub-choice" type="button">
+            <span class="ub-choice-title">With your Ensemble account</span>
+            <span class="ub-choice-text">Pages, tasks and agents stay in sync with the web app and your other devices. This computer runs the tasks you give your agents, and Ensemble's included AI models are available.</span>
+            <span class="ub-choice-action">Sign in with your browser</span>
+          </button>
+          <button id="choose-local" class="ub-choice" type="button">
+            <span class="ub-choice-title">Only on this computer</span>
+            <span class="ub-choice-text">Everything stays in a database on this computer and Ensemble's servers are never used. Use your own AI subscriptions and API keys. You can move to an account later, once.</span>
+            <span class="ub-choice-action">Keep everything local</span>
+          </button>
+        </div>
+        <p id="welcome-status" class="ub-status" role="status"></p>
+      </div>
+      <div id="account" class="ub-card" hidden>
+        <p class="ub-code">account</p>
+        <h1 id="account-heading" class="ub-h">Move to your Ensemble account</h1>
+        <p id="account-text" class="ub-p"></p>
+        <label id="move-row" class="ub-check" hidden>
+          <input id="move" type="checkbox" checked />
+          <span>Move this computer's data into the account<span id="account-counts" class="ub-check-note"></span></span>
+        </label>
+        <div class="ub-row">
+          <button id="account-start" class="ub-btn pri" type="button">Continue in your browser</button>
+          <button id="account-back" class="ub-btn" type="button">Back</button>
+        </div>
+        <p id="account-status" class="ub-status" role="status"></p>
+      </div>
+      <div id="signin" class="ub-card" hidden>
+        <p class="ub-code">sign in</p>
+        <h1 id="signin-heading" class="ub-h">Approve in your browser</h1>
+        <p id="signin-text" class="ub-p">Your browser opened Ensemble. Check that it shows this code, then approve.</p>
+        <p id="signin-code" class="ub-big-code" aria-label="Sign-in code"></p>
+        <div id="signin-progress" class="ub-progress" hidden><span></span></div>
+        <p id="signin-status" class="ub-status" role="status" aria-live="polite"></p>
+        <div class="ub-row">
+          <button id="signin-open" class="ub-btn" type="button">Open the browser again</button>
+          <button id="signin-cancel" class="ub-btn" type="button">Cancel</button>
+        </div>
+      </div>
       <div id="offline" class="ub-card" hidden>
         <img class="ub-art" src="woven-satin.svg" width="160" height="160" alt="Ensemble" />
         <p id="eyebrow" class="ub-code">offline</p>

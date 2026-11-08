@@ -48,6 +48,8 @@ export function checkApiBase(value: string): string {
 export interface HostedClient {
   reportFileChanges?(body: FileChangeReport): Promise<void>;
   unpairSelf(): Promise<void>;
+  /** The account this computer is paired with, or null when the server does not say. */
+  owner?(): Promise<string | null>;
   heartbeat(body: { runningJobIds: string[]; appVersion: string; capabilities: unknown }): Promise<{ cancel: string[] }>;
   claim(): Promise<{ status: number; body: unknown }>;
   progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string }; steps?: UploadedStep[]; observed?: ObservedSettings }): Promise<void>;
@@ -190,6 +192,11 @@ export function hostedClient(base: string, token: string): HostedClient {
     async unpairSelf() {
       const res = await call("DELETE", ROUTES.self);
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "Unpair was refused."));
+    },
+    async owner() {
+      const res = await call("GET", ROUTES.self);
+      const account = (res.body as { accountId?: unknown } | null)?.accountId;
+      return res.status === 200 && typeof account === "string" ? account : null;
     },
     async heartbeat(body) {
       const res = await call("POST", ROUTES.heartbeat, body);

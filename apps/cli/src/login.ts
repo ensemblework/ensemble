@@ -4,12 +4,13 @@
  * tasks assigned to it from the web run here.
  */
 import { hostname } from "node:os";
+import { join } from "node:path";
 import { pollDeviceToken, startDeviceFlow } from "./auth-flow.js";
 import { openBrowser } from "./browser.js";
 import { clearToken, loadConfig, loadToken, normalizeApiBase, saveConfig, saveToken } from "./config.js";
 import { bearerHeaders, fetchJson, HttpError } from "./http.js";
 import { remoteStatus } from "./local-commands.js";
-import { resolveCliPaths, type CliPaths } from "./paths.js";
+import { readJsonFile, resolveCliPaths, type CliPaths } from "./paths.js";
 import { localJson, resolveSidecarDir, sidecarAvailable, withLocalApi } from "./sidecar.js";
 import { channelApp, TESTING } from "./channel.js";
 import { DEFAULT_APP_URL } from "./version.js";
@@ -31,6 +32,11 @@ export async function signIn(options: {
   const sidecarDir = resolveSidecarDir(import.meta.url);
   const hasRunner = await sidecarAvailable(sidecarDir);
   const name = options.name || hostname() || "this computer";
+  // The desktop app's local-only choice (mode.json in the shared data folder) keeps this computer off any account.
+  const mode = await readJsonFile<{ mode?: string }>(join(paths.dataHome, "mode.json"));
+  if (mode?.mode === "local" && hasRunner && !options.mcpOnly) {
+    throw new Error("This computer keeps Ensemble local only (chosen in the Ensemble app), so it is not paired with an account. To use your account here, open the Ensemble app → Settings → Account → Move to your Ensemble account. To connect editors only, run `ensemble login --mcp-only`.");
+  }
   const scopes = options.mcpOnly ? ["mcp"] : hasRunner ? ["mcp", "runner"] : ["mcp"];
   const start = await startDeviceFlow({ apiBase, clientName: name, platform: process.platform, scopes });
   const url = channelApp(start.verificationUriComplete || start.verificationUri);

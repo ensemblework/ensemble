@@ -7,8 +7,10 @@ import { isTestingApi } from "@/lib/connect/configs";
 import { cx, Spinner } from "./ui";
 
 const SCOPE_LABELS: Record<CliAuthScope, string> = {
-  mcp: "Read your Ensemble context in editors (read-only)",
+  mcp: "Use your Ensemble context in editors and agents (MCP)",
   runner: "Run tasks you assign to this computer",
+  web: "Sign the Ensemble app on this computer in to your account",
+  transfer: "Move this computer's local-only data into your account",
 };
 
 function cleanCode(value: string): string {
@@ -37,8 +39,14 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [canWrite, setCanWrite] = useState(true);
   const [canUseApps, setCanUseApps] = useState(true);
+  const [moveData, setMoveData] = useState(true);
+  /** The desktop app asks to sign its window in; the CLI never does. */
+  const fromApp = Boolean(request?.scopes.includes("web"));
+  const approvedScopes = (request?.scopes ?? []).filter((scope) => scope !== "transfer" || moveData);
 
-  const canApproveMcpOnly = useMemo(() => Boolean(request?.scopes.includes("mcp") && request.scopes.includes("runner")), [request]);
+  /** Without a verified email: editor access (CLI) or the window sign-in (app), without running tasks or moving data. */
+  const unverifiedScopes = useMemo<CliAuthScope[]>(() => (request?.scopes ?? []).filter((scope) => scope === "mcp" || scope === "web"), [request]);
+  const canApproveMcpOnly = Boolean(request && unverifiedScopes.length && unverifiedScopes.length < request.scopes.length);
 
   async function load(nextCode = code) {
     const userCode = cleanCode(nextCode);
@@ -58,7 +66,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
       setLoadedCode(userCode);
     } catch (caught) {
       setRequest(null);
-      if (caught instanceof ApiError && caught.status === 404) setError(`That code expired, was already used, or was typed incorrectly. Run \`${loginCommand}\` again.`);
+      if (caught instanceof ApiError && caught.status === 404) setError(`That code expired, was already used, or was typed incorrectly. Start the sign-in again from ${fromApp ? "the Ensemble app" : `\`${loginCommand}\``}.`);
       else setError(caught instanceof Error ? caught.message : "Could not load that code.");
     } finally {
       setLoading(false);
@@ -67,7 +75,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
 
   async function decide(decision: "approve" | "deny", scopes: CliAuthScope[]) {
     if (!loadedCode) return;
-    setActing(decision === "approve" && scopes.length === 1 && scopes[0] === "mcp" ? "mcp" : decision);
+    setActing(decision === "approve" && scopes.length === 1 && (scopes[0] === "mcp" || scopes[0] === "web") ? "mcp" : decision);
     setError(null);
     setEmailUnverified(false);
     try {
@@ -77,7 +85,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 403 && /EMAIL_UNVERIFIED/i.test(caught.message)) {
         setEmailUnverified(true);
-        setError("Verify your email before approving runner access for this computer.");
+        setError(fromApp ? "Verify your email before this computer runs tasks or moves its data into your account. You can sign the app in now and do that later." : "Verify your email before approving runner access for this computer.");
       } else {
         setError(caught instanceof Error ? caught.message : "Could not submit your decision.");
       }
@@ -102,10 +110,16 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
         </Link>
         <section className="tile mt-5 rounded-2xl bg-panel p-5 shadow-lg md:p-7" aria-labelledby="cli-link-title">
           <h1 id="cli-link-title" className="display text-[30px] leading-none">
-            Link the Ensemble {isTestingApi(HUB_API) ? "Testing " : ""}CLI
+            {fromApp ? "Sign in the Ensemble app" : <>Link the Ensemble {isTestingApi(HUB_API) ? "Testing " : ""}CLI</>}
           </h1>
           <p className="mt-3 text-[14px] leading-6 text-muted">
-            Approve a sign-in request from <code>{loginCommand}</code>. You can approve editor context only, or editor context plus the runner when requested.
+            {fromApp ? (
+              "Approve the sign-in the Ensemble app on your computer started. Its window then opens your account, and the computer runs the tasks you assign to it."
+            ) : (
+              <>
+                Approve a sign-in request from <code>{loginCommand}</code>. You can approve editor context only, or editor context plus the runner when requested.
+              </>
+            )}
           </p>
 
           <form
@@ -136,8 +150,8 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
               {emailUnverified ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {canApproveMcpOnly ? (
-                    <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", ["mcp"])}>
-                      {acting === "mcp" ? "Approving…" : "Approve MCP only"}
+                    <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", unverifiedScopes)}>
+                      {acting === "mcp" ? "Approving…" : fromApp ? "Sign in without running tasks" : "Approve MCP only"}
                     </button>
                   ) : null}
                   <Link href="/verify" className="btn">
@@ -151,7 +165,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
           {done ? (
             <div className={cx("mt-5 rounded-xl border px-4 py-4", done.decision === "approved" ? "border-ok/40 bg-ok/10" : "border-line bg-bg/70")} role="status">
               <h2 className="text-[16px] font-semibold">{done.decision === "approved" ? "Approved" : "Denied"}</h2>
-              <p className="mt-1 text-[14px] text-muted">Return to your terminal.</p>
+              <p className="mt-1 text-[14px] text-muted">{done.scopes.includes("web") ? "Return to the Ensemble app. It continues on its own." : "Return to your terminal."}</p>
               {done.scopes.length ? (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] text-muted">
                   {done.scopes.map((scope) => (
@@ -166,14 +180,14 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
             <div className="mt-6 space-y-5">
               <div className="rounded-xl border border-line bg-bg/70 p-4">
                 <div className="text-[12px] uppercase tracking-[0.14em] text-faint">Sign-in request</div>
-                <h2 className="mt-2 text-[18px] font-semibold">Ensemble CLI on {request.clientName || "an unnamed computer"}</h2>
+                <h2 className="mt-2 text-[18px] font-semibold">{fromApp ? "Ensemble app" : "Ensemble CLI"} on {request.clientName || "an unnamed computer"}</h2>
                 <dl className="mt-3 grid gap-2 text-[13px] text-muted sm:grid-cols-2">
                   <div>
                     <dt className="text-faint">Platform</dt>
                     <dd>{platformName(request.platform)}</dd>
                   </div>
                   <div>
-                    <dt className="text-faint">CLI version</dt>
+                    <dt className="text-faint">{fromApp ? "App version" : "CLI version"}</dt>
                     <dd>{request.version || "Unknown"}</dd>
                   </div>
                   <div>
@@ -194,7 +208,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                 {request.sameNetwork === false ? (
                   <p className="mt-3 rounded-lg border border-warn/40 px-3 py-2 text-[13px] leading-5 text-muted" role="note">
                     This login was started from a different network address than this browser. That is normal on a VPN, a phone hotspot or another computer of
-                    yours. If you did not just run <code>{loginCommand}</code> yourself, deny it.
+                    yours. If you did not just start this from {fromApp ? "the Ensemble app" : <code>{loginCommand}</code>} yourself, deny it.
                   </p>
                 ) : null}
               </div>
@@ -202,35 +216,52 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
               <div>
                 <h2 className="text-[15px] font-semibold">Requested access</h2>
                 <ul className="mt-2 space-y-2">
-                  {request.scopes.map((scope) => (
+                  {request.scopes.filter((scope) => scope !== "transfer").map((scope) => (
                     <li key={scope} className="rounded-lg border border-line bg-bg/50 px-3 py-2 text-[13.5px]">
                       {SCOPE_LABELS[scope]}
                     </li>
                   ))}
                 </ul>
-                <label className="mt-3 flex items-start gap-2 text-[13.5px] leading-5">
-                  <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
-                  <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes)</span>
-                </label>
-                <label className="mt-2 flex items-start gap-2 text-[13.5px] leading-5">
-                  <input type="checkbox" className="mt-0.5" checked={canUseApps} onChange={(event) => setCanUseApps(event.target.checked)} />
-                  <span>Let editors and agents use your connected apps through Ensemble</span>
-                </label>
+                {request.scopes.includes("transfer") ? (
+                  <label className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-bg/50 px-3 py-2 text-[13.5px] leading-5">
+                    <input type="checkbox" className="mt-0.5" checked={moveData} onChange={(event) => setMoveData(event.target.checked)} />
+                    <span>
+                      {SCOPE_LABELS.transfer}
+                      <span className="mt-0.5 block text-[12.5px] text-muted">
+                        Pages, tasks, projects, people, files, skills and boards are added once. Where your account already has the same project, person or skill, the
+                        account keeps its version and the computer only fills what is empty. Your appearance settings stay as they are here.
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
+                {request.scopes.includes("mcp") ? (
+                  <>
+                    <label className="mt-3 flex items-start gap-2 text-[13.5px] leading-5">
+                      <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
+                      <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes)</span>
+                    </label>
+                    <label className="mt-2 flex items-start gap-2 text-[13.5px] leading-5">
+                      <input type="checkbox" className="mt-0.5" checked={canUseApps} onChange={(event) => setCanUseApps(event.target.checked)} />
+                      <span>Let editors and agents use your connected apps through Ensemble</span>
+                    </label>
+                  </>
+                ) : null}
               </div>
 
               <div className="rounded-xl border border-warn/40 bg-bg/70 px-4 py-3 text-[13.5px] leading-6 text-muted">
-                <span className="font-semibold text-ink">Security check:</span> Approving gives that terminal access to your Ensemble account. Never approve a
-                code someone sent you.
+                <span className="font-semibold text-ink">Security check:</span> Approving gives that {fromApp ? "app" : "terminal"} access to your Ensemble account. Never
+                approve a code someone sent you.
                 <label className="mt-2 flex items-start gap-2 text-ink">
                   <input type="checkbox" className="mt-1" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
                   <span>
-                    I ran <code>{loginCommand}</code> myself and my terminal shows <span className="font-mono tracking-[0.12em]">{loadedCode}</span>.
+                    {fromApp ? "I started this in the Ensemble app myself and it shows " : <>I ran <code>{loginCommand}</code> myself and my terminal shows </>}
+                    <span className="font-mono tracking-[0.12em]">{loadedCode}</span>.
                   </span>
                 </label>
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", request.scopes)}>
+                <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", approvedScopes)}>
                   {acting === "approve" ? "Approving…" : "Approve"}
                 </button>
                 <button type="button" className="btn" disabled={acting !== null} onClick={() => void decide("deny", [])}>

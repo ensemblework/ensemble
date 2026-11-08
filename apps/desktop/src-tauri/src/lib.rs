@@ -8,6 +8,7 @@
 
 mod assets;
 mod diagnostics;
+mod mode;
 mod sidecar;
 mod site;
 
@@ -23,10 +24,11 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
+use mode::Mode;
 use site::{
     blank_target_script, decide, desktop_init_script, is_shell, local_app_url, motion_probe_script,
-    motion_report_prefix, parse_motion_theme, parse_site_url, resolve_site_url, theme_from_motion_path,
-    NavDecision, ResolvedSite, SiteSource, MOTION_THEME_KEY,
+    motion_report_prefix, parse_motion_theme, parse_site_url, resolve_site_url, shell_page_url,
+    theme_from_motion_path, NavDecision, ResolvedSite, SiteSource, MOTION_THEME_KEY,
 };
 
 const MAIN_WINDOW: &str = "main";
@@ -43,6 +45,10 @@ pub struct AppState {
     trust_navigation_until: Option<Instant>,
     /// Copy of the site's motion style. Absent means the offline page shows the still U.
     motion_theme: Option<String>,
+    /// How this computer uses Ensemble (`mode.json`, written by the local runtime).
+    mode: Mode,
+    /// The local runtime's port and launch token, for the app's own start page.
+    api: Option<(u16, String)>,
 }
 
 struct ProbeFailure {
@@ -59,6 +65,10 @@ struct ShellView {
     hold: bool,
     motion_key: &'static str,
     motion_theme: Option<String>,
+    mode: Mode,
+    /// Only the app's own start page can read this (capabilities/default.json).
+    api_base: Option<String>,
+    api_token: Option<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +103,7 @@ pub fn run() {
         })
         .setup(|app| {
             let hosted = explicit_hosted_url();
+            let mut chosen = mode::ModeFile::default();
             let local = if hosted.is_none() {
                 let root = if cfg!(debug_assertions) {
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../hub-web/out")
@@ -100,7 +111,7 @@ pub fn run() {
                     app.path().resource_dir().map_err(|error| error.to_string())?.join("web")
                 };
                 assets::set_web_root(root);
-                match sidecar::start(app) {
+                let running = match sidecar::start(app) {
                     Ok(running) => {
                         let api = (running.port, running.token.clone());
                         app.manage(Mutex::new(running));
@@ -110,13 +121,33 @@ pub fn run() {
                         eprintln!("ensemble desktop: {error}");
                         None
                     }
+                };
+                if let Ok(data) = app.path().app_data_dir() {
+                    chosen = mode::read(&data);
                 }
+                running
             } else {
                 None
             };
-            let state = load_state(app)?;
+            let mut state = load_state(app)?;
+            state.mode = chosen.mode;
+            state.api = local.clone();
+            if let (Mode::Account, Some(origin)) = (chosen.mode, chosen.app_url.as_ref()) {
+                state.url = account_home(origin);
+                state.source = SiteSource::Saved;
+                state.last_error = None;
+                state.hold_on_shell = false;
+            }
+            let start = if hosted.is_some() {
+                WebviewUrl::External(parse_site_url(&state.url)?)
+            } else if chosen.mode == Mode::Local {
+                WebviewUrl::External(local_app_url())
+            } else {
+                // The start page: the first-run choice, or (with an account) loading the account's web app.
+                WebviewUrl::App("index.html".into())
+            };
             app.manage(Mutex::new(state));
-            let window = build_window(app, hosted.is_none(), local.as_ref())?;
+            let window = build_window(app, start, local.as_ref(), chosen.mode)?;
             if let Ok(current) = window.url() {
                 if is_shell(&current) {
                     if let Ok(mut guard) = app.state::<Mutex<AppState>>().lock() {
@@ -144,7 +175,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![shell_state, connect_to, install_update])
+        .invoke_handler(tauri::generate_handler![shell_state, connect_to, install_update, open_sign_in, open_app, open_local, show_account, open_in_browser])
         .build(tauri::generate_context!())
         .expect("Ensemble desktop failed to start")
         .run(|app, event| {
@@ -184,28 +215,27 @@ fn state_from(config_path: PathBuf, motion_path: PathBuf, resolved: ResolvedSite
         source: resolved.source,
         hold_on_shell: resolved.error.is_some(),
         last_error: resolved.error,
-        shell: Url::parse("http://tauri.localhost/").expect("shell origin"),
+        shell: shell_page_url(""),
         trust_navigation_until: None,
         motion_theme,
+        mode: Mode::Unset,
+        api: None,
     }
+}
+
+/// Where the window opens an account's web app.
+fn account_home(origin: &Url) -> String {
+    origin.join("today").map(|url| url.to_string()).unwrap_or_else(|_| origin.to_string())
 }
 
 fn build_window(
     app: &mut tauri::App,
-    local_mode: bool,
+    start: WebviewUrl,
     local: Option<&(u16, String)>,
+    mode: Mode,
 ) -> Result<tauri::WebviewWindow, String> {
     let navigation = app.handle().clone();
     let popups = app.handle().clone();
-    let start = if local_mode {
-        WebviewUrl::External(local_app_url())
-    } else if explicit_hosted_url().is_some() {
-        let state = app.state::<Mutex<AppState>>();
-        let guard = state.lock().map_err(|error| error.to_string())?;
-        WebviewUrl::External(parse_site_url(&guard.url)?)
-    } else {
-        WebviewUrl::App("index.html".into())
-    };
     let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, start)
         .title("Ensemble")
         .inner_size(1200.0, 800.0)
@@ -217,23 +247,20 @@ fn build_window(
         .icon(tauri::include_image!("icons/128x128.png"))
         .map_err(|error| error.to_string())?;
     builder
-        .initialization_script(initialization_script(local_mode, local))
+        .initialization_script(initialization_script(local, mode))
         .on_navigation(move |url| on_navigation(&navigation, url))
         .on_new_window(move |url, _features| on_new_window(&popups, url))
         .build()
         .map_err(|error| error.to_string())
 }
 
-fn initialization_script(local_mode: bool, local: Option<&(u16, String)>) -> String {
+fn initialization_script(local: Option<&(u16, String)>, mode: Mode) -> String {
     let mut parts = Vec::new();
-    if local_mode {
-        let (base, token) = match local {
-            Some((port, token)) => (format!("http://127.0.0.1:{port}"), token.as_str()),
-            None => (String::new(), ""),
-        };
-        parts.push(desktop_init_script(&base, token));
+    // Guarded inside: it only acts on the bundled Hub's own origin (site.rs).
+    if let Some((port, token)) = local {
+        parts.push(desktop_init_script(&format!("http://127.0.0.1:{port}"), token));
     }
-    parts.push(format!("window.__ENSEMBLE_DESKTOP__=Object.assign({{}},window.__ENSEMBLE_DESKTOP__||{{}},{{version:{},platform:{},arch:{}}});", serde_json::to_string(env!("ENSEMBLE_VERSION")).unwrap(), serde_json::to_string(std::env::consts::OS).unwrap(), serde_json::to_string(std::env::consts::ARCH).unwrap()));
+    parts.push(format!("window.__ENSEMBLE_DESKTOP__=Object.assign({{}},window.__ENSEMBLE_DESKTOP__||{{}},{{version:{},platform:{},arch:{},mode:{}}});", serde_json::to_string(env!("ENSEMBLE_VERSION")).unwrap(), serde_json::to_string(std::env::consts::OS).unwrap(), serde_json::to_string(std::env::consts::ARCH).unwrap(), serde_json::to_string(&mode).unwrap()));
     parts.push(blank_target_script().to_string());
     parts.push(motion_probe_script(motion_report_prefix()));
     parts.join("\n")
@@ -346,7 +373,91 @@ fn shell_state(state: tauri::State<'_, Mutex<AppState>>) -> Result<ShellView, St
         hold: guard.hold_on_shell,
         motion_key: MOTION_THEME_KEY,
         motion_theme: guard.motion_theme.clone(),
+        mode: guard.mode,
+        api_base: guard.api.as_ref().map(|(port, _)| format!("http://127.0.0.1:{port}")),
+        api_token: guard.api.as_ref().map(|(_, token)| token.clone()),
     })
+}
+
+fn main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    app.get_webview_window(MAIN_WINDOW).ok_or_else(|| "The window is not open.".to_string())
+}
+
+fn current_mode(app: &tauri::AppHandle) -> Result<mode::ModeFile, String> {
+    let data = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    Ok(mode::read(&data))
+}
+
+/// The browser page where the person approves this app's sign-in (`/link` on their Ensemble site).
+#[tauri::command]
+fn open_sign_in(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(url.trim()).map_err(|_| "That is not an Ensemble sign-in page.".to_string())?;
+    if !mode::is_sign_in_page(&parsed) {
+        return Err("That is not an Ensemble sign-in page.".into());
+    }
+    app.opener().open_url(parsed.as_str(), None::<&str>).map_err(|error| error.to_string())
+}
+
+/// After sign-in: open the account's web app (or its one-time sign-in link) in this window.
+#[tauri::command]
+async fn open_app(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>, url: String) -> Result<(), String> {
+    let target = parse_site_url(&url)?;
+    let chosen = current_mode(&app)?;
+    let origin = match (chosen.mode, chosen.app_url) {
+        (Mode::Account, Some(origin)) => origin,
+        _ => return Err("Sign in to your Ensemble account first.".into()),
+    };
+    if !mode::same_origin(&target, &origin) {
+        return Err("That address is not your Ensemble account.".into());
+    }
+    {
+        let mut guard = state.lock().map_err(|error| error.to_string())?;
+        guard.mode = Mode::Account;
+        guard.url = account_home(&origin);
+        guard.source = SiteSource::Saved;
+        guard.last_error = None;
+        guard.hold_on_shell = false;
+    }
+    if let Err(failure) = probe(&origin, Duration::from_secs(12)).await {
+        let mut guard = state.lock().map_err(|error| error.to_string())?;
+        guard.last_error = Some(failure.message.clone());
+        guard.hold_on_shell = true;
+        return Err(failure.message);
+    }
+    {
+        let mut guard = state.lock().map_err(|error| error.to_string())?;
+        guard.trust_navigation_until = Some(Instant::now() + Duration::from_secs(3));
+    }
+    main_window(&app)?.navigate(target).map_err(|error| error.to_string())
+}
+
+/// After choosing local-only: open the bundled Hub.
+#[tauri::command]
+fn open_local(app: tauri::AppHandle, state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+    if current_mode(&app)?.mode != Mode::Local {
+        return Err("Choose to keep Ensemble on this computer first.".into());
+    }
+    if let Ok(mut guard) = state.lock() {
+        guard.mode = Mode::Local;
+    }
+    main_window(&app)?.navigate(local_app_url()).map_err(|error| error.to_string())
+}
+
+/// The app's own account screen: sign in with the browser, or move a local-only computer to an account.
+#[tauri::command]
+fn show_account(app: tauri::AppHandle) -> Result<(), String> {
+    main_window(&app)?.navigate(shell_page_url("account")).map_err(|error| error.to_string())
+}
+
+/// One of the account's own pages in the system browser (a connected app's sign-in finishes there).
+#[tauri::command]
+fn open_in_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let target = parse_site_url(&url)?;
+    let origin = current_mode(&app)?.app_url.ok_or("Sign in to your Ensemble account first.")?;
+    if !mode::same_origin(&target, &origin) {
+        return Err("Only your Ensemble account's pages open in the browser from here.".into());
+    }
+    app.opener().open_url(target.as_str(), None::<&str>).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

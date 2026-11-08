@@ -1247,6 +1247,8 @@ export type Me = {
   verificationRequired?: boolean;
   onboardingComplete?: boolean;
   profileComplete?: boolean;
+  /** The desktop app kept local only: no account, no Ensemble servers (docs/DESKTOP.md §1). */
+  localOnly?: boolean;
 };
 
 export type ApiTokenRecord = {
@@ -1272,7 +1274,7 @@ export type ConnectBridge = {
   tokens: Array<{ id: string; name: string; prefix: string; canWrite?: boolean; canUseApps?: boolean; lastUsedAt: string | null; createdAt: string }>;
 };
 
-export type CliAuthScope = "mcp" | "runner";
+export type CliAuthScope = "mcp" | "runner" | "web" | "transfer";
 
 export type CliAuthRequest = {
   clientName: string;
@@ -1364,6 +1366,7 @@ export const api = bindClient({
     get<{
       user: Me["user"];
       via: Me["via"];
+      localOnly?: boolean;
       approvals: number;
       decisions: number;
       /** Ensemble Node approval cards waiting for the signed-in person. */
@@ -1509,6 +1512,8 @@ export const api = bindClient({
   createToken: (name: string) => post<{ id: string; token: string }>("/api/tokens", { name }),
   revokeToken: (id: string) => del<void>(`/api/tokens/${id}`),
   connectBridge: () => get<ConnectBridge>("/api/connect/bridge"),
+  /** The desktop app's own MCP command for editors on this computer (local runtime only). */
+  desktopMcp: () => get<{ command: string; args: string[] }>("/api/desktop/mcp"),
   createBridgeToken: (name?: string, canWrite = true, canUseApps = true) =>
     post<{ id: string; token: string; prefix: string; canWrite: boolean; canUseApps: boolean }>("/api/connect/token", { ...(name ? { name } : {}), canWrite, canUseApps }),
   cliAuthRequest: (code: string) => get<CliAuthRequest>(`/api/cli/auth/request${qs({ code })}`),

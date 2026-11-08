@@ -7,3 +7,13 @@ commands.allow = ["shell_state", "connect_to"]
 identifier = "release-commands"
 description = "Ensemble may install its signed app update. No URL or file path is accepted."
 commands.allow = ["install_update"]
+
+[[permission]]
+identifier = "account-commands"
+description = "The app's own pages may open the browser sign-in page (an Ensemble /link page only), open the signed-in account's web app or the local Hub in the window, and show the account screen."
+commands.allow = ["open_sign_in", "open_app", "open_local", "show_account"]
+
+[[permission]]
+identifier = "account-screen"
+description = "The official web app may show the app's own browser sign-in screen, and open one of the account's own pages in the system browser (a connected app's sign-in finishes there)."
+commands.allow = ["show_account", "open_in_browser"]

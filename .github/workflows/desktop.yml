@@ -174,7 +174,8 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, Windows and Linux. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
           fi
           node scripts/desktop-release.mjs bundles --upload
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          # Marked latest: a local-only app reads releases/latest/download/latest.json (docs/DESKTOP.md §7). CLI releases never take it.
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
 
   recovery-publish:
     name: Publish verified desktop recovery

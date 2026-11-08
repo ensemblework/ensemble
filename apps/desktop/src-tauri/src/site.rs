@@ -163,6 +163,10 @@ pub fn motion_probe_script(report_prefix: &str) -> String {
 
 /// Points the bundled UI at the local API. The launch token stays in this closure.
 ///
+/// The webview runs this on every page it loads, including an Ensemble account's own web app.
+/// It does nothing unless the page is the bundled Hub (`ensemble://localhost`, or
+/// `http://ensemble.localhost` on Windows), so no other page can reach this computer's API.
+///
 /// `fetch` accepts a string, a `URL` or a `Request`. Next's router passes a `URL`
 /// for route data (`/board/index.txt?_rsc=…`), so the wrapper reads its `href`.
 /// A request that is not for the API goes through with the caller's own input
@@ -173,8 +177,18 @@ pub fn desktop_init_script(api_base: &str, token: &str) -> String {
     let api = serde_json::to_string(api_base).expect("api");
     let token = serde_json::to_string(token).expect("token");
     format!(
-        r##"(function(){{var api={api};var token={token};window.__ENSEMBLE_DESKTOP__={{apiBase:api}};var baked=["http://127.0.0.1:4000","http://localhost:4000"];function rewrite(input){{if(typeof input!=="string")return input;if(input.indexOf("/api")===0||input==="/health"||input.indexOf("/health?")===0)return api+input;for(var i=0;i<baked.length;i++){{if(input.indexOf(baked[i])===0)return api+input.slice(baked[i].length);}}return input;}}function target(input){{if(typeof input==="string")return input;if(typeof URL!=="undefined"&&input instanceof URL)return input.href;if(input&&typeof input.url==="string")return input.url;return String(input);}}var orig=window.fetch;window.fetch=function(input,init){{var raw=target(input);var url=rewrite(raw);if(!api||(url===raw&&url.indexOf(api)!==0))return orig.call(this,input,init);var isRequest=typeof Request!=="undefined"&&input instanceof Request;var next=isRequest?new Request(url,input):url;var headers=new Headers((init&&init.headers)||(isRequest?next.headers:undefined));if(token&&!headers.has("Authorization"))headers.set("Authorization","Bearer "+token);var options=Object.assign({{}},init||{{}});options.headers=headers;return orig.call(this,next,options);}};var OrigES=window.EventSource;if(OrigES){{var Wrapped=function(url,opts){{return new OrigES(rewrite(String(url)),opts);}};Wrapped.prototype=OrigES.prototype;window.EventSource=Wrapped;}}var xhr=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url){{var next=rewrite(String(url));this.__ensembleUrl=next;var args=[method,next];for(var i=2;i<arguments.length;i++)args.push(arguments[i]);return xhr.apply(this,args);}};var send=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){{try{{if(this.__ensembleUrl&&String(this.__ensembleUrl).indexOf(api)===0&&token)this.setRequestHeader("Authorization","Bearer "+token);}}catch(e){{}}return send.apply(this,arguments);}};}})();"##
+        r##"(function(){{if(!(location.protocol==="ensemble:"||location.hostname==="ensemble.localhost"))return;var api={api};var token={token};window.__ENSEMBLE_DESKTOP__={{apiBase:api}};var baked=["http://127.0.0.1:4000","http://localhost:4000"];function rewrite(input){{if(typeof input!=="string")return input;if(input.indexOf("/api")===0||input==="/health"||input.indexOf("/health?")===0)return api+input;for(var i=0;i<baked.length;i++){{if(input.indexOf(baked[i])===0)return api+input.slice(baked[i].length);}}return input;}}function target(input){{if(typeof input==="string")return input;if(typeof URL!=="undefined"&&input instanceof URL)return input.href;if(input&&typeof input.url==="string")return input.url;return String(input);}}var orig=window.fetch;window.fetch=function(input,init){{var raw=target(input);var url=rewrite(raw);if(!api||(url===raw&&url.indexOf(api)!==0))return orig.call(this,input,init);var isRequest=typeof Request!=="undefined"&&input instanceof Request;var next=isRequest?new Request(url,input):url;var headers=new Headers((init&&init.headers)||(isRequest?next.headers:undefined));if(token&&!headers.has("Authorization"))headers.set("Authorization","Bearer "+token);var options=Object.assign({{}},init||{{}});options.headers=headers;return orig.call(this,next,options);}};var OrigES=window.EventSource;if(OrigES){{var Wrapped=function(url,opts){{return new OrigES(rewrite(String(url)),opts);}};Wrapped.prototype=OrigES.prototype;window.EventSource=Wrapped;}}var xhr=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url){{var next=rewrite(String(url));this.__ensembleUrl=next;var args=[method,next];for(var i=2;i<arguments.length;i++)args.push(arguments[i]);return xhr.apply(this,args);}};var send=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){{try{{if(this.__ensembleUrl&&String(this.__ensembleUrl).indexOf(api)===0&&token)this.setRequestHeader("Authorization","Bearer "+token);}}catch(e){{}}return send.apply(this,arguments);}};}})();"##
     )
+}
+
+/// The app's own start page (the first-run choice, sign-in and offline screens), with an optional `#screen`.
+pub fn shell_page_url(screen: &str) -> Url {
+    let base = if cfg!(windows) { "http://tauri.localhost/index.html" } else { "tauri://localhost/index.html" };
+    let mut url = Url::parse(base).expect("shell page");
+    if !screen.is_empty() {
+        url.set_fragment(Some(screen));
+    }
+    url
 }
 
 /// `motion://localhost/minimal-quiet` on macOS and Linux, `http://motion.localhost/...` on Windows.
@@ -367,6 +381,12 @@ mod tests {
         assert!(!init.contains("location.assign"), "links switch pages in place");
         assert!(!init.contains("tasks|projects"));
         assert!(!init.contains("setItem"));
+        assert!(
+            init.starts_with(r#"(function(){if(!(location.protocol==="ensemble:"||location.hostname==="ensemble.localhost"))return;"#),
+            "the token is only used on the bundled Hub"
+        );
+        assert!(is_shell(&shell_page_url("welcome")));
+        assert_eq!(shell_page_url("account").fragment(), Some("account"));
         assert!(!script.contains("document.cookie"));
         let blanks = blank_target_script();
         assert!(blanks.contains("window.open"));

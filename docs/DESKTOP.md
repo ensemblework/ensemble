@@ -1,19 +1,63 @@
 # Desktop app
 
-`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker and the scheduler) on an embedded PGlite database. Local use needs no Docker, Postgres, Redis, Python model process or hosted account. Pairing with an account is a separate, explicit step.
+`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) app for macOS, Windows and Linux. It opens the person's Ensemble account in its window, or keeps Ensemble entirely on the computer (§1). Either way it starts one Node sidecar (hub-api, the worker and the scheduler) on an embedded PGlite database; local only, it also serves a static export of `apps/hub-web`. It needs no Docker, Postgres, Redis or Python model process.
 
 Sandboxing: [24](24_DESKTOP_SANDBOXING.md). Pairing, remote tasks, Code tab and terminal: [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md). The CLI runs the same sidecar without a window: [26](26_CLI.md). Hand test: [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md).
 
-## 1. Modes
+## 1. How a computer uses Ensemble
 
-| Mode | What runs where |
-| --- | --- |
-| Bundled (default) | Tauri loads the static Hub; one local Node API owns PGlite, model adapters, jobs and the scheduler |
-| Hosted window | `ENSEMBLE_SITE_URL` opens a hosted or dev UI instead; backend, sign-in and data are that origin's (§9) |
-| Paired to an account | Hosted assignments, AI subscriptions and included-model calls reach the computer through the device protocol ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)) |
-| CLI runner | The same runtime without a window; the desktop app attaches to it (§3.3) |
+The app opens one of two ways, chosen on first launch and kept in `mode.json` in the data folder (§4). The local runtime writes it (`apps/hub-api/src/desktop/mode.ts`); the shell reads it (`src-tauri/src/mode.rs`).
+
+| Mode | Window | Data | Ensemble's servers |
+| --- | --- | --- | --- |
+| With your account (`account`) | The account's web app (`https://app.ensemblework.com`), the same pages as a browser | The account: the web app and every device see the same pages, tasks and settings | Used. This computer is paired for tasks and AI subscriptions ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)) |
+| Only on this computer (`local`) | The bundled Hub, served by the app | PGlite on this computer | Never |
+| Developer site | `ENSEMBLE_SITE_URL` or a build-time URL (§9) | That origin's | That origin's |
+
+Both modes run the same local runtime (hub-api, worker and scheduler on PGlite, §3). With an account it is this computer's runner; local only, it is the whole of Ensemble. The CLI runner ([26](26_CLI.md)) is the same runtime without a window (§3.3).
 
 Local storage does not mean offline inference: model prompts go to the provider the person chose.
+
+### 1.1 First run
+
+With no `mode.json`, the start page (`apps/desktop/ui/`) asks **With your Ensemble account** or **Only on this computer**. It says when this computer is already paired (by the CLI or an earlier version of the app), and how much data an earlier install keeps locally (`GET /api/desktop/account`). Choosing local only on a paired computer unpairs it after a confirmation (`POST /api/desktop/mode`).
+
+### 1.2 Local only
+
+- The runtime answers `localOnly: true` on `GET /api/auth/me` and `/api/shell`. The Hub then offers no included models (own API keys and AI subscriptions only), no pairing (Settings → Account → This computer), and **Move to your Ensemble account** in Settings → Account and the account menu.
+- Nothing reaches Ensemble's servers: pairing (`POST /api/remote/pair`, the remote-task switch) is refused, the remote loop never connects, and `ensemble login` refuses to pair (`--mcp-only` still links editors to an account). Model calls go to the chosen provider; connected apps talk to their own services.
+- Updates come from the newest desktop release on GitHub (`releases/latest/download/latest.json`), not the Ensemble API.
+- Editors use MCP without the CLI. Connect your apps shows a stdio command (`GET /api/desktop/mcp`) for Claude Code, Cursor and other `mcpServers` apps, VS Code with Copilot, and Codex: this app's Node runs the Context Bridge, which finds the runtime through `api.json` and reads it again after the app restarts. The app has to be open.
+- Connected apps: API-key and token apps and remote MCP servers work as on the web; their secrets are encrypted with this computer's `secret.key`. An OAuth app (Google, Microsoft, GitHub…) needs an OAuth app of your own (Settings → Connections), because Ensemble's shared OAuth apps live on its servers. Its redirect URI is `http://127.0.0.1:<port>/api/connectors/<provider>/callback`; register it as a desktop or native client, which accepts any loopback port. The browser then lands on `GET /api/desktop/connected`, a short page served by the runtime.
+- Not available: included models, Ensemble Node, sharing with other people and public links, the web app and other devices.
+
+### 1.3 Moving to an account
+
+Local only becomes an account once; an account never goes back to local only. Start it from Settings → Account (or the account menu), or choose **With your Ensemble account** on first run of a computer that has local data.
+
+1. The start page (`#account`) asks the runtime to sign in: `POST /api/desktop/account/sign-in` starts the browser approval (`/api/cli/auth/start`) with the scopes `web` (sign the window in), `runner` (pair this computer) and `transfer` (when there is local data and **Move this computer's data** stays ticked). It signs in to the server this computer is already paired with, else `https://api.ensemblework.com`. The browser opens `/link`, where any sign-in method works; the person can untick the move there too. Without a verified email, `/link` offers **Sign in without running tasks** (`web` only); a move then stops with *Verify your email in Ensemble first* and nothing changes.
+2. After approval the runtime sends the local data with a one-purpose transfer key, writes `mode.json` (`account`, `switchedAt`), pairs, turns remote tasks on, and leaves the window a one-time link.
+3. The window opens `<app>/api/auth/handoff?code=…` (single use, 30 minutes), which starts a normal session and lands on Today.
+
+What moves is listed in `TRANSFER_TABLES` (`apps/hub-api/src/transfer/schema.ts`): pages, tasks, boards, projects, people, repos, deliverables, meetings and notes, files (with their bytes), datasets, plots, diagrams, skills, chats, routines, reminders, layouts and settings. What stays on the computer: sign-ins, saved model keys, connected apps and calendar feeds (encrypted with this computer's key), agent runs and their logs, undo history and the activity ledger. Re-add keys and reconnect apps in the account.
+
+The account receives rows with `POST /api/transfer/rows` and finishes with `POST /api/transfer/finish` (`transfer/import.ts`, `transfer/routes.ts`):
+
+- Rows keep their ids. Every column naming an account becomes the receiving account, a reference to another row stays only when that row is the account's, and an id another account already uses, or that is not a plain id, gets a new id (the computer rewrites its later rows). Each row is its own savepoint: a row that fails is skipped and counted, and the batch goes on.
+- Files and datasets are measured on the account: size and hash come from the bytes received, a storage key from the computer is never kept, and the bytes go where the account keeps files. The computer asks `GET /api/transfer` for the largest file the account takes and leaves bigger files (and any row over 60 MB) in its local data, saying so.
+- Where the account already has the same thing, its row wins and the computer's values only fill what it left empty: a project with the same name, a person with the same email (or name), a repo, an item from the same connected app, a setting. A skill with the same slug but different text, and a board with the same title, are added beside it, marked *(from this computer)*. Today's tiles the account lacks are added to its layout. Appearance stays the account's.
+- Hosted file and dataset limits apply; what does not fit stays in the local data and the app says so. Scheduled routines arrive paused.
+- A transfer key (`scope: "transfer"`) reaches only `/api/transfer*`, works for 24 hours and is revoked by `/finish`. Retrying is safe: rows already moved are counted, not copied again.
+
+The local database stays on the computer as the runner's.
+
+### 1.4 With an account
+
+- The window opens `appUrl` from `mode.json` (`/today`) after the start page checks it can be reached; otherwise it shows the offline page.
+- On the account's pages `window.__ENSEMBLE_DESKTOP__` carries the version, platform and mode, without `apiBase`. Those pages may call `show_account`, `open_in_browser` and `install_update` (`capabilities/updates.json`), nothing else. The launch token stays on the bundled Hub's own origin (§3.1).
+- Signing in: the login page shows **Continue in your browser**, which opens the start page's sign-in (scope `web` alone once paired). Google, GitHub and Microsoft sign-in do not complete inside an embedded window.
+- Connecting an app (OAuth, or an MCP server's sign-in) opens the same Ensemble page in the system browser, where the connection finishes; the window shows it on return.
+- Pairing follows `ensemble login`: a computer already paired with that server for the same account (by the CLI or an earlier sign-in) keeps its device; another account signing in unpairs it and pairs it for that account. The runtime asks the server whose device it is (`GET /api/devices/self`) and compares it with the `accountId` of the sign-in.
 
 The paired sidecar reports `sessionDelete: 1`: Node's confirmed session deletion stops active jobs and removes the underlying coding agent's saved history, not project files or sign-ins. Its computer-side receipts make retries safe; native errors remain visible. Update and restart the desktop runtime before deleting sessions from the web. Native methods: [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card).
 
@@ -54,7 +98,9 @@ Paired host ← device token / claims / progress / bounded files → local remot
 
 | Path | Owns |
 | --- | --- |
-| `apps/desktop/src-tauri/src/lib.rs` | Window, single-instance lock, site resolution, commands |
+| `apps/desktop/src-tauri/src/lib.rs` | Window, single-instance lock, site resolution, the first screen by mode, commands |
+| `src/mode.rs` | Reads `mode.json`; the local-only update address |
+| `apps/desktop/ui/` | Start page: first-run choice, browser sign-in, the move to an account, offline |
 | `src/desktop.rs` | Menu (Export diagnostics, Check for updates, Reload, Quit; Edit), updater |
 | `src/site.rs` | Navigation rules, `desktop_init_script` (API rewrite and token) |
 | `src/assets.rs` | The `ensemble` protocol serving the static export |
@@ -62,19 +108,21 @@ Paired host ← device token / claims / progress / bounded files → local remot
 | `src/diagnostics.rs` | Redacted diagnostics report |
 | `apps/hub-api/src/desktop/main.ts` | Sidecar entry: environment, runtime lock, secret key, PATH, PGlite, `startHub` |
 | `apps/hub-api/src/desktop/runtime-lock.ts`, `user-path.ts` | One runtime per data folder; the person's PATH |
+| `apps/hub-api/src/desktop/mode.ts`, `account.ts` | `mode.json`; `/api/desktop/account*`, `/api/desktop/mode`, `/api/desktop/mcp`, `/api/desktop/connected` |
+| `apps/hub-api/src/transfer/` | Moving local data into an account: export (computer) and import (account) |
 | `apps/hub-api/src/lib/pglite-engine.ts` | PGlite open, backups, migrations |
 
 Sandboxed commands start from TypeScript (`workspace/runner.ts`, `workspace/sandbox/spawn.ts`); there is no separate Rust execution broker.
 
 ### 3.1 Shell and webview
 
-The window loads `ensemble://localhost` (`http://ensemble.localhost` on Windows). `desktop_init_script` rewrites `/api` and `/health` requests (and baked `http://127.0.0.1:4000` / `http://localhost:4000` URLs) to the sidecar's loopback port and adds the launch token. The webview has no shell or filesystem permission.
+Local only, the window loads the bundled Hub at `ensemble://localhost` (`http://ensemble.localhost` on Windows); with an account, the start page (`tauri://localhost`, `http://tauri.localhost` on Windows) and then the account's site; on first run, the start page. `desktop_init_script` runs on every page but acts only on the bundled Hub's origin: there it rewrites `/api` and `/health` requests (and baked `http://127.0.0.1:4000` / `http://localhost:4000` URLs) to the sidecar's loopback port and adds the launch token. No other page sees the token. The webview has no shell or filesystem permission.
 
 Navigation: in-app URLs stay in the window; other `http`, `https`, `mailto:` and `tel:` URLs open in the system browser; `javascript:`, `file:` and other schemes are dropped. On Linux, `target="_blank"` clicks are turned into `window.open` so the same rule applies.
 
 Links go through Next's router, so pages switch in place. Each dynamic route (`/tasks/<id>`, `/pages/<id>`, `/files/<id>`, `/projects/<id>` and the rest) has one placeholder page in the export, `<route>/_/`; `src/assets.rs` serves it for any id, and `<route>/_/index.txt` for `<route>/<id>/index.txt`. The page reads the real id from the address (`useDesktopParam` in `apps/hub-web/lib/desktop-param.ts`) and is keyed by it.
 
-Capabilities (`src-tauri/capabilities/`): the local page may call `shell_state`, `connect_to` and `install_update`, open the folder dialog (`dialog:allow-open`) and use notifications. The official hosted origin `https://app.ensemblework.com` may call only `install_update`.
+Capabilities (`src-tauri/capabilities/`): the app's own pages (start page and bundled Hub) may call `shell_state` (which gives the start page the local API's port and token), `connect_to`, `install_update`, `open_sign_in` (an Ensemble `/link` page in the system browser), `open_app` (the signed-in account's site), `open_local` and `show_account`, open the folder dialog (`dialog:allow-open`) and use notifications. The official site `https://app.ensemblework.com` may call only `install_update`, `show_account` and `open_in_browser` (its own pages).
 
 ### 3.2 Local API
 
@@ -106,7 +154,7 @@ A GUI app gets the system's bare PATH, so at start the sidecar takes the login s
 
 The remote loop uses a device token and a lease, not inbound shell access. Jobs targeted at a device wait while it is offline; they never fall back to running on the host ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
 
-Connected to an account (Settings → Account → This computer), the app lists the account's included models and runs each call on Ensemble's server on the account's monthly credits ([33 §4](33_INCLUDED_AI.md#4-where-included-models-run)). Local only, it shows *Included models need your Ensemble account* with **Connect this computer**. Credit enforcement lives on the account server; deleting local or hosted data does not renew the allowance.
+With an account, included models run on Ensemble's server on the account's monthly credits ([33 §4](33_INCLUDED_AI.md#4-where-included-models-run)). Local only, the Hub offers none and says why, with **Move to your Ensemble account**. Credit enforcement lives on the account server; deleting local or hosted data does not renew the allowance.
 
 ### 3.7 Dialogs, notifications, install path
 
@@ -120,7 +168,7 @@ The Ensemble menu's **Export diagnostics** writes a redacted report to `diagnost
 
 From the identifier `com.ensemblework.desktop`:
 
-| OS | Data (`api.json`, `runtime.lock`, `pglite/`, `secret.key`, `backups/`, `remote.json`, `logs/sidecar.log`, `diagnostics/`; mode 0700 on Unix) | Config (`site.json`, `motion.json`) |
+| OS | Data (`api.json`, `runtime.lock`, `mode.json`, `pglite/`, `secret.key`, `backups/`, `remote.json`, `logs/sidecar.log`, `diagnostics/`; mode 0700 on Unix) | Config (`site.json`, `motion.json`) |
 |---|---|---|
 | macOS | `~/Library/Application Support/com.ensemblework.desktop` | same |
 | Windows | `%APPDATA%\com.ensemblework.desktop` | same |
@@ -180,7 +228,7 @@ Recovery: a dispatch with `target: macos-x64` rebuilds only the Intel artifact a
 
 OS code signing is not configured: Gatekeeper and SmartScreen may warn on first install. Updater signatures authenticate in-app updates only; they do not replace Apple notarization or Authenticode.
 
-The updater calls `GET https://api.ensemblework.com/api/desktop/update/:target/:arch/:current` (`apps/hub-api/src/routes/misc.ts`), which resolves only the latest published desktop tag, independent of CLI releases. The API validates the manifest version and official asset URLs; Tauri verifies the signature.
+With an account (and on first run) the updater calls `GET https://api.ensemblework.com/api/desktop/update/:target/:arch/:current` (`apps/hub-api/src/routes/misc.ts`), which resolves only the latest published desktop tag, independent of CLI releases. The API validates the manifest version and official asset URLs. Local only, it reads `https://github.com/ensemblework/ensemble/releases/latest/download/latest.json` (`mode::LOCAL_UPDATES_URL`), which works because `desktop.yml` publishes each desktop release as GitHub's latest and CLI releases never take that mark (`--latest=false`). Tauri verifies the signature either way.
 
 Settings → Account → About Ensemble shows the native and interface versions and can check for and install updates (the hosted window shares the same About). `install_update` takes no URL or path. Active local jobs block installation (*Finish or stop your active tasks, then update again*); a successful install restarts the app. Installs older than 0.4.0 cannot update in-app; install the current version once.
 
@@ -194,13 +242,13 @@ The desktop app has no tray or global shortcut; Quick capture is a separate app 
 
 ## 9. Hosted origin override
 
-The window URL is resolved in order: runtime `ENSEMBLE_SITE_URL`, the saved value in `site.json`, then a value baked in at build time. The packaged default is the local bundle.
+For developers and self-hosted builds. When set, the window opens this URL instead of the modes in §1, and no local runtime starts. The URL is resolved in order: runtime `ENSEMBLE_SITE_URL`, the saved value in `site.json`, then a value baked in at build time. Packaged builds bake none.
 
 ```bash
 ENSEMBLE_SITE_URL=https://your-host.example pnpm desktop:build   # bake a hosted origin
 ```
 
-The official hosted UI is `https://app.ensemblework.com`. An override uses that origin's backend and sign-in; local data is not migrated, and the hosted origin's cookies and storage are not the local app's.
+An override uses that origin's backend and sign-in; local data is not moved (§1.3 is how a local-only computer joins an account).
 
 `ENSEMBLE_DESKTOP_EXTERNAL_LOG=/path/to/log` appends each URL handed to the system browser, one per line, for testing the navigation rule.
 
@@ -208,8 +256,9 @@ The official hosted UI is `https://app.ensemblework.com`. An override uses that 
 
 | Check | Command |
 | --- | --- |
-| Shell unit tests (navigation, assets, sidecar, diagnostics) | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` |
+| Shell unit tests (navigation, the init script's origin guard, modes, assets, sidecar, diagnostics) | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` |
 | Sidecar, runtime lock, user PATH | `pnpm --filter @ensemble/hub-api test` |
+| Moving local data into an account (ids, merges, hostile rows, the transfer key) | `cd apps/hub-api && npx tsx --test src/transfer/transfer.integration.test.ts src/routes/cli-auth.integration.test.ts` |
 | WebKit and Chromium clicks against the export | `pnpm desktop:e2e` |
 | Release scripts | `node --test scripts/desktop-release.test.mjs scripts/desktop-targets.test.mjs scripts/package-mac-dmg.test.mjs` |
 | Installed app on a Mac | [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md) |
@@ -218,8 +267,10 @@ Sandbox escape tests on macOS Seatbelt, Linux Landlock, Linux bubblewrap and the
 
 ## 11. Limits
 
-- Local and hosted data are separate; pairing is not full synchronization.
-- Included models need a paired account; other model calls go to the chosen provider.
+- With an account the window needs the network: there is no offline copy of the account. The local runtime keeps running agent tasks already on this computer.
+- Local only: no sync, no other devices, no included models, no Ensemble Node, no sharing. OAuth connected apps need an OAuth app of your own.
+- Local only becomes an account once, and an account does not go back. Sign-ins, model keys, connected apps and agent run history stay behind (§1.3).
+- Google, GitHub and Microsoft sign-in, and connected apps' sign-ins, finish in the system browser, not inside the window.
 - The Python model runtime is not bundled; plot export needs local Python with matplotlib.
 - No OS code signing or notarization.
 - No tray or global capture shortcut in the main app.

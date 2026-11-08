@@ -1,4 +1,4 @@
-import { loadBridgeConfig, type BridgeAuth, type BridgeConfig } from "./config.js";
+import { loadBridgeConfig, rediscover, type BridgeAuth, type BridgeConfig } from "./config.js";
 
 export class HubError extends Error {
   constructor(
@@ -24,8 +24,13 @@ function headersFor(auth: BridgeAuth): Record<string, string> {
   return { "x-ensemble-internal": auth.token, "x-ensemble-user": auth.userId };
 }
 
-export function createHubClient(config: BridgeConfig = loadBridgeConfig()): HubClient {
+export function createHubClient(initial: BridgeConfig = loadBridgeConfig()): HubClient {
+  let config = initial;
   async function send(method: "GET" | "POST" | "PATCH", path: string, query?: HubQuery, body?: unknown): Promise<unknown> {
+    if (config.discovered) {
+      const current = rediscover();
+      if (current) config = { ...config, hubUrl: current.hubUrl, auth: { kind: "bearer", token: current.token } };
+    }
     if (config.auth.kind === "missing") throw new HubError(config.auth.message, "config");
     const url = new URL(path, `${config.hubUrl}/`);
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -49,7 +54,9 @@ export function createHubClient(config: BridgeConfig = loadBridgeConfig()): HubC
       // Connection refused, DNS, or timeout. An empty brief would look like "no context".
       const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(config.hubUrl);
       throw new HubError(
-        local
+        config.discovered
+          ? "The Ensemble app is not running on this computer. Open it, then try again."
+          : local
           ? "Ensemble is not running. Start it with `pnpm dev`."
           : `Ensemble could not be reached at ${config.hubUrl}. Check your connection, or run \`ensemble doctor\`.`,
         "down",

@@ -12,7 +12,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { FULL_MODULE_SET } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { ensembleCookieName, normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
-import { knownTokenScope } from "../bridge/auth.js";
+import { knownTokenScope, TRANSFER_KEY_MS } from "../bridge/auth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "./cookie.js";
 import { prisma } from "./prisma.js";
 import { openableSpace, SPACE_COOKIE } from "../spaces/store.js";
@@ -119,7 +119,7 @@ export function newApiToken(): { token: string; hash: string; prefix: string } {
 }
 
 export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop" | "link" | "node";
-export type TokenScope = "full" | "bridge" | "device" | "hooks";
+export type TokenScope = "full" | "bridge" | "device" | "hooks" | "transfer";
 
 /**
  * `userId` is whose data the request reads and writes: the active Ensemble space.
@@ -293,6 +293,7 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
     if (!row || row.revokedAt) return null;
     const tokenScope = knownTokenScope(row.scope);
     if (!tokenScope) return null;
+    if (tokenScope === "transfer" && Date.now() - row.createdAt.getTime() > TRANSFER_KEY_MS) return null;
     void prisma.apiToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
     return { userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet };
   }

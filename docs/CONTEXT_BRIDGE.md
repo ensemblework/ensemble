@@ -52,7 +52,7 @@ pnpm bridge:verify         # hub-api bridge tests, then typecheck, MCP tests, bu
 
 hub-api has to be up (`pnpm dev`), or every tool returns: ``Ensemble is not running. Start it with `pnpm dev`.``
 
-The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `api.json` ([DESKTOP](DESKTOP.md) §3.2), else `http://$HUB_API_HOST:$HUB_API_PORT` (default `127.0.0.1:4000`).
+The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `api.json` ([DESKTOP](DESKTOP.md) §3.2), else `http://$HUB_API_HOST:$HUB_API_PORT` (default `127.0.0.1:4000`). Found through `api.json`, it uses that file's launch token and reads the file again before each call, so a restarted app (new port and token) keeps working; tools then say *The Ensemble app is not running on this computer* when it is closed. This is how editors use a local-only desktop app without the CLI: Connect your apps there shows the command (`GET /api/desktop/mcp`, [DESKTOP](DESKTOP.md) §1.2).
 
 ## 4. Token
 

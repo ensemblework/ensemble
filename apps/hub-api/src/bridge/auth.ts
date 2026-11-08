@@ -18,8 +18,19 @@ export function requireBrowserSession(request: { authVia?: AuthVia }): void {
  * rejected. `device` is not `full`: `deviceTokenRejected` limits where it can go.
  */
 export function knownTokenScope(scope: string): TokenScope | null {
-  if (scope === "full" || scope === "bridge" || scope === "device" || scope === "hooks") return scope;
+  if (scope === "full" || scope === "bridge" || scope === "device" || scope === "hooks" || scope === "transfer") return scope;
   return null;
+}
+
+/** How long a `transfer` key works: one move of a computer's local data into the account. */
+export const TRANSFER_KEY_MS = 24 * 60 * 60 * 1000;
+
+/** A `transfer` key moves a computer's local data into the account (docs/DESKTOP.md §1.3) and nothing else. */
+export function transferTokenRejected(scope: string | undefined, _method: string, path: string): string | null {
+  if (scope !== "transfer") return null;
+  const clean = (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
+  if (clean === "/api/transfer" || clean.startsWith("/api/transfer/")) return null;
+  return "This key only moves a computer's local data into your account.";
 }
 
 /**

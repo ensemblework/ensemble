@@ -8,6 +8,8 @@ const PUBLIC_AUTH = new Set([
   "/api/auth/reset",
   "/api/cli/auth/start",
   "/api/cli/auth/token",
+  // The desktop app's one-time sign-in for its window (routes/cli-auth.ts): the code is the credential.
+  "/api/auth/handoff",
   // Remote MCP connectors: the OAuth return (bound by single-use state) and the public client metadata document.
   "/api/mcp-connections/callback",
   "/api/mcp-client-metadata.json",

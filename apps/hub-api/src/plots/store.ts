@@ -30,10 +30,15 @@ export function storedTableBytes(table: StoredTable, original?: Uint8Array): num
   return zipSync({ "table.json": new TextEncoder().encode(JSON.stringify(table)) }).byteLength + (original?.byteLength ?? 0);
 }
 
-const tableName = (id: string) => `${id}.json.gz`;
-const binName = (id: string) => `${id}.bin`;
-const blobKey = (userId: string, name: string) => `${DATASETS_PREFIX}${userId}/${name}`;
-const localPath = (userId: string, name: string) => resolve(ROOT, userId, name);
+/** Ids become paths and blob keys: anything that could step out of the account's folder is refused. */
+function safe(value: string): string {
+  if (!SAFE_ID.test(value)) throw Object.assign(new Error("That dataset id is not valid."), { statusCode: 400 });
+  return value;
+}
+const tableName = (id: string) => `${safe(id)}.json.gz`;
+const binName = (id: string) => `${safe(id)}.bin`;
+const blobKey = (userId: string, name: string) => `${DATASETS_PREFIX}${safe(userId)}/${name}`;
+const localPath = (userId: string, name: string) => resolve(ROOT, safe(userId), name);
 const mediaTypeOf = (name: string) => (name.endsWith(".bin") ? "application/octet-stream" : "application/zip");
 
 async function putBytes(userId: string, name: string, bytes: Uint8Array): Promise<void> {

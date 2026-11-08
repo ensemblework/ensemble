@@ -18,6 +18,12 @@ The script prints the path to the unsigned `.dmg`. The app and its Node/Prisma s
 
 - [ ] **Window and icon.** The window opens. The Dock icon is the Satin Gold Woven Chorus mark on its Deep Petrol tile.
 
+- [ ] **First run.** With no `~/Library/Application Support/com.ensemblework.desktop/mode.json`, the start page asks *With your Ensemble account* or *Only on this computer*. For the local-only checks below choose *Only on this computer*; the bundled Hub opens, and Settings → Account offers *Move to your Ensemble account*.
+
+- [ ] **With an account.** On a second user account (or after deleting the data folder), choose *With your Ensemble account*. The browser opens `/link` with a code that matches the app; approve. The window opens Today on the account, and Settings → Connections → Connected computers lists this Mac once. Sign out in the window: the login page shows *Continue in your browser*, which signs it in again without pairing a second computer.
+
+- [ ] **Move to an account.** In local-only mode, add a task and a page, then Settings → Account → Move to your Ensemble account → Continue in your browser, approve with *Move this computer's local-only data* ticked. The window opens the account, which now has the task and the page; quitting and reopening opens the account, not the local Hub.
+
 - [ ] **Model key and a simple task.** Settings → Assistant → Models → Manage API keys → Google Gemini; paste a key from [Google AI Studio](https://aistudio.google.com/apikey). Workspace → Assign task → Research & writing; ask for one sentence. The task finishes in the window.
 
 - [ ] **Folder picker.** Assign task → Code on your computer → Where it works: A folder on this computer → Choose…. The macOS folder dialog opens and the chosen path fills the field.
@@ -27,6 +33,8 @@ The script prints the path to the unsigned `.dmg`. The app and its Node/Prisma s
 - [ ] **Plots export.** Plots → Export → PNG. This uses the Mac's own `python3` with matplotlib. If either is missing the app says: "Plots need Python 3 with matplotlib on this computer. Install it, then try again." After `python3 -m pip install matplotlib`, the export downloads.
 
 ## Pairing
+
+These steps pair an app kept local only from an earlier version; an app with an account pairs when it signs in (above).
 
 - [ ] **Pair with the web app on localhost and run an assigned task.**
   In another terminal at the repo root, run `pnpm dev` (site `http://localhost:3000`, API `http://127.0.0.1:4000`).

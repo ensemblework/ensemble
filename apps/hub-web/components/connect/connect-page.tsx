@@ -10,6 +10,7 @@ import { promptsForProfession } from "@/lib/connect/prompts";
 import { PageHeader } from "../ui";
 import { StatusPill } from "./bits";
 import { BridgeKey } from "./bridge-key";
+import { LocalMcp } from "./local-mcp";
 import { AppMark } from "./logos";
 
 export function ConnectPage() {
@@ -20,6 +21,7 @@ export function ConnectPage() {
     staleTime: 10_000,
   });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const localOnly = Boolean(me.data?.localOnly);
   const prompts = promptsForProfession(me.data?.user.profile?.profession);
   const state = bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running");
 
@@ -27,14 +29,30 @@ export function ConnectPage() {
     <div className="mx-auto max-w-[1040px] px-6 pb-24 pt-8 md:px-10">
       <PageHeader
         title="Connect your apps"
-        description="Let the apps you already use look at your Ensemble, tasks, people, meetings, and today’s plan. They can read. They cannot change anything."
+        description={
+          localOnly
+            ? "Let the editors and agents on this computer use your Ensemble: tasks, people, meetings, pages and today’s plan. Everything stays on this computer."
+            : "Let the apps you already use read your Ensemble: tasks, people, meetings, and today’s plan. With your permission they can also make changes."
+        }
       />
-      {state === "connected" || state === "running" ? (
+      {localOnly ? (
+        <section className="connect-rise tile rounded-xl bg-panel p-4 md:p-5" aria-labelledby="local-mcp-title">
+          <h2 id="local-mcp-title" className="text-[15px] font-semibold tracking-tight">
+            Editors on this computer
+          </h2>
+          <div className="mt-2">
+            <LocalMcp />
+          </div>
+        </section>
+      ) : null}
+      {!localOnly && (state === "connected" || state === "running") ? (
         <div className="mb-6 -mt-3">
           <StatusPill state={state} />
         </div>
       ) : null}
 
+      {localOnly ? null : (
+        <>
       {bridge.isError ? (
         <p className="mb-4 rounded-lg border border-warn/40 bg-panel px-3 py-2 text-[13px] text-muted">{(bridge.error as Error).message}</p>
       ) : null}
@@ -77,6 +95,9 @@ export function ConnectPage() {
           </li>
         ))}
       </ul>
+
+        </>
+      )}
 
       <section className="mt-10" aria-labelledby="ask-title">
         <h2 id="ask-title" className="text-[18px] font-semibold tracking-tight">

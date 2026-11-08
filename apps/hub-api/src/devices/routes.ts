@@ -358,6 +358,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(204).send();
   });
 
+  // Which account this computer is paired with: the desktop app signing in to another account pairs it again.
+  app.get("/api/devices/self", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    return { id: device.id, accountId: device.userId };
+  });
+
   app.delete("/api/devices/self", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;

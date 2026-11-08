@@ -43,7 +43,7 @@ Where a change usually needs a doc update:
 | Plots (`app/(hub)/plots`, `src/plots`, `ensemble_agent/plots`) | [`docs/20_PLOTS_DESIGN.md`](docs/20_PLOTS_DESIGN.md) |
 | Block diagrams (`packages/block-diagrams`) | [`docs/21`](docs/21_BLOCK_DIAGRAMS_DSL.md), [`docs/21` cheat sheet](docs/21_BLOCK_DIAGRAMS_CHEATSHEET.md), [`docs/22`](docs/22_BLOCK_DIAGRAMS_FOR_AGENTS.md) and `.github/skills/block-diagrams/SKILL.md` (22 and the skill are the same text) |
 | Quick capture (`apps/quick-capture`) | [`docs/20_QUICK_CAPTURE.md`](docs/20_QUICK_CAPTURE.md) |
-| Desktop app (`apps/desktop`, `src/desktop`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md) |
+| Desktop app (`apps/desktop`, `src/desktop`, `src/transfer`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md) |
 | Remote tasks and devices (`src/remote`, `src/devices`) | [`docs/25`](docs/25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
 | Ensemble Node (`apps/hub-api/src/node`, `lib/node-origin.ts`, `GET /api/bridge/node`, the CLI's Node tab `apps/cli/src/tui/node.ts`). The website is the separate `ensemblework/ensemble-node` repository | [`docs/35`](docs/35_ENSEMBLE_NODE.md), the API table in `docs/02`, `docs/26` for the CLI tab |
 | The CLI, its installers and releases (`apps/cli`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/install.*`, `.github/workflows/cli-release.yml`, `routes/cli-auth.ts`, `routes/mcp.ts`) | [`docs/26`](docs/26_CLI.md), the download guide in `apps/landing/lib/download.ts`, and the Connect guides in `apps/hub-web/lib/connect/` |
@@ -70,7 +70,7 @@ New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Plan
 | `apps/landing` | Static landing page for ensemblework.com |
 | `apps/hub-api` | Fastify + Prisma API, scheduler, workspace queue, assistant |
 | `apps/agent-runtime` | Python FastAPI service that holds model keys and calls providers (port 5055) |
-| `apps/context-bridge` | Read-only MCP server for editors (hub-api also serves it at `/mcp`) |
+| `apps/context-bridge` | MCP server for editors and agents (hub-api also serves it at `/mcp`) |
 | `apps/cli` | The `ensemble` CLI (npm name `ensemblework`): runner + `ensemble mcp` |
 | `apps/desktop` | Tauri desktop app (local sidecar + PGlite) |
 | `apps/quick-capture` | Tauri tray app with a global shortcut |

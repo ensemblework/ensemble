@@ -5,6 +5,9 @@
 import { CONNECT_COMPUTER_HREF, INCLUDED_PROVIDER, includedModelName, type IncludedUsage } from "@ensemble/shared-types";
 import { CircleAlert, Info, Unplug } from "lucide-react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { showAppAccountScreen } from "@/lib/native-app";
 import { creditAmount, includedBlocked, resetDay, tokenCount, wholeCredits } from "@/lib/included";
 import { ProviderLogo } from "../connectors/provider-logo";
 import { cx, Empty } from "../ui";
@@ -61,6 +64,32 @@ function CreditsPerDay({ usage }: { usage: IncludedUsage }) {
  * `compact`: the assistant's model menu.
  */
 export function IncludedLocalOnly({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 60_000 });
+  if (me.data?.localOnly) {
+    return (
+      <div role="note" data-testid="included-local-only" className={cx("flex items-start gap-2.5 rounded-lg border border-line bg-raised", compact ? "px-3 py-2" : "mt-3 px-3 py-2.5")}>
+        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent/15 text-accent" aria-hidden>
+          <Unplug size={14} />
+        </span>
+        <div className="min-w-0 flex-1 text-[12.5px]">
+          <div className="font-medium text-ink">Your own models only</div>
+          <p className="mt-0.5 text-muted">
+            This app keeps everything on this computer, so it uses your API keys and AI plans. Ensemble&apos;s included models run on Ensemble&apos;s servers and need an account.
+          </p>
+          <button
+            type="button"
+            className="btn mt-2 inline-flex"
+            onClick={() => {
+              onNavigate?.();
+              void showAppAccountScreen();
+            }}
+          >
+            Move to your Ensemble account
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div role="note" data-testid="included-local-only" className={cx("flex items-start gap-2.5 rounded-lg border border-line bg-raised", compact ? "px-3 py-2" : "mt-3 px-3 py-2.5")}>
       <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent/15 text-accent" aria-hidden>

@@ -11,7 +11,9 @@ import { desktopShell } from "@/lib/desktop-param";
 export function RemoteMacSection() {
   const [onMac, setOnMac] = useState(false);
   useEffect(() => setOnMac(desktopShell()), []);
-  if (!onMac) return null;
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, enabled: onMac });
+  // Local only: this computer is never paired (Account above has the one-time move to an account).
+  if (!onMac || !me.data || me.data.localOnly) return null;
   return <RemoteMacSettings />;
 }
 

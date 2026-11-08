@@ -72,7 +72,7 @@ export async function createHttpHarness(options: BuildAppOptions = {}) {
       };
     }
 
-    async function asToken(user: HttpUser, scope: "full" | "device" | "bridge" | "hooks") {
+    async function asToken(user: HttpUser, scope: "full" | "device" | "bridge" | "hooks" | "transfer") {
       const token = newApiToken();
       const row = await prisma.apiToken.create({
         data: { userId: user.id, name: `HTTP ${scope} test`, scope, tokenHash: token.hash, prefix: token.prefix },

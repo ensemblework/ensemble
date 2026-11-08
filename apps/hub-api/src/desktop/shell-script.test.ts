@@ -14,7 +14,7 @@ const PAGE = "ensemble://localhost/board/";
 
 type Call = { input: unknown; init: RequestInit | undefined };
 
-function load(api = API, token = TOKEN) {
+function load(api = API, token = TOKEN, page = PAGE) {
   const calls: Call[] = [];
   const fetch = (input: unknown, init?: RequestInit) => {
     calls.push({ input, init });
@@ -34,12 +34,25 @@ function load(api = API, token = TOKEN) {
     Response,
     XMLHttpRequest: FakeXhr,
     document: { addEventListener() {} },
-    location: { href: PAGE },
+    location: new URL(page),
   });
   vm.runInContext(desktopInitScript(api, token), context);
   const wrapped = window.fetch as (input: unknown, init?: RequestInit) => Promise<Response>;
-  return { calls, fetch: wrapped };
+  return { calls, fetch: wrapped, window };
 }
+
+test("on any page but the bundled Hub, the script leaves fetch and the launch token alone", async () => {
+  for (const page of ["https://app.ensemblework.com/today", "tauri://localhost/index.html", "http://127.0.0.1:3000/today"]) {
+    const { calls, fetch, window } = load(API, TOKEN, page);
+    await fetch("/api/tasks");
+    assert.equal(urlOf(calls[0]!.input), "/api/tasks", page);
+    assert.equal(auth(calls[0]!), null, page);
+    assert.equal(window.__ENSEMBLE_DESKTOP__, undefined, page);
+  }
+  const windows = load(API, TOKEN, "http://ensemble.localhost/today/");
+  await windows.fetch("/api/tasks");
+  assert.equal(urlOf(windows.calls[0]!.input), `${API}/api/tasks`, "Windows serves the bundled Hub on ensemble.localhost");
+});
 
 const urlOf = (input: unknown) => (typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url);
 const auth = (call: Call) => new Headers(call.init?.headers).get("Authorization");

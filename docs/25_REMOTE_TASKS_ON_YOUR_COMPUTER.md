@@ -14,9 +14,9 @@ The host's spec carries task context and execution choices (and `steer`, the cha
 
 ## 2. Pairing and local state
 
-The desktop app's This computer settings or `ensemble login` pairs through a browser approval code. Editor context access and permission to run tasks are separate. A web logout does not unpair a computer; CLI logout, unpair and revocation do.
+Signing the desktop app in to an account ([DESKTOP](DESKTOP.md) §1) or `ensemble login` pairs through a browser approval code (`/link`). Both use the same runtime and data folder, so a computer is one device whichever paired it: the second one keeps the existing pairing when it is with the same server. A desktop app kept local only never pairs, and `ensemble login` there refuses to (`--mcp-only` still works). Editor context access and permission to run tasks are separate. A web logout does not unpair a computer; CLI logout, unpair and revocation do.
 
-The device token is an encrypted `model_credentials` row in the local database (`remote/store.ts`). Each pairing also makes the computer's sealing key pair, which the web encrypts secrets for: the private key in `seal-key.json` (0600, encrypted with the runtime's local key), the public key reported as `capabilities.sealKey` and pinned on the device row (§4.9, [35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). Unpairing deletes it. `remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases. Pairing is not hosted/local workspace replication.
+The device token is an encrypted `model_credentials` row in the local database (`remote/store.ts`). Each pairing also makes the computer's sealing key pair, which the web encrypts secrets for: the private key in `seal-key.json` (0600, encrypted with the runtime's local key), the public key reported as `capabilities.sealKey` and pinned on the device row (§4.9, [35 §8.7](35_ENSEMBLE_NODE.md#87-secrets)). Unpairing deletes it. `remote.json` holds switches, labels, folder mappings and the installation's id (§8); `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases. Pairing does not copy local data to the account; a local-only app's one-time move does ([DESKTOP](DESKTOP.md) §1.3).
 
 ## 3. Lease, heartbeat and interruption
 
@@ -44,6 +44,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | Method | Route | Purpose |
 | --- | --- | --- |
 | POST | `/api/devices/pair`, `/api/devices/register` | Issue / redeem a pairing code |
+| GET | `/api/devices/self` | The paired computer's own id and the account it belongs to (device token) |
 | GET | `/api/devices` | The person's computers and capabilities |
 | PATCH / DELETE | `/api/devices/:id` | Rename / revoke an owned computer |
 | POST, GET | `/api/devices/:id/code`, `/api/devices/:id/terminal`, `/api/devices/:id/terminal/output` | Browser Code and terminal relay (§4.7) |

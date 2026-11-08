@@ -11,7 +11,7 @@ ensemble/
 │   ├── landing/           Static landing page for ensemblework.com (Next.js export, no API calls)
 │   ├── hub-api/           Fastify + Prisma API, scheduler, workspace queue, assistant
 │   ├── agent-runtime/     Python model adapters and plot service (port 5055)
-│   ├── context-bridge/    Read-only MCP server for editors (stdio + loopback HTTP); hub-api also serves it at /mcp
+│   ├── context-bridge/    MCP server for editors and agents (stdio + loopback HTTP); hub-api also serves it at /mcp
 │   ├── cli/               The `ensemble` CLI (npm name ensemblework): runner + MCP
 │   ├── desktop/           Tauri 2 desktop app (static Hub export + local hub-api sidecar)
 │   ├── quick-capture/     Tauri tray app with a global capture shortcut (built with cargo, not a pnpm package)
@@ -149,7 +149,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | Sharing, contacts, presence | `apps/hub-api/src/sharing/` (`policy.ts` classes every route), `apps/hub-web/components/sharing/`, `app/(hub)/shared/`, `app/shared/[id]/`, `app/p/[token]/`, `apps/hub-web/lib/{access,presence}.ts` ([29](29_SHARING.md)) |
 | Live co-editing | `apps/hub-api/src/pages/collab*.ts`, `live.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `components/pages/use-collab.ts`; schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
 | Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
-| Desktop shell | `apps/desktop/` |
+| Desktop app: shell, start page, modes | `apps/desktop/`, `apps/hub-api/src/desktop/` (sidecar entry, `mode.ts`, `account.ts`), `apps/hub-api/src/transfer/` (moving local data into an account) ([DESKTOP](DESKTOP.md)) |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
