@@ -92,6 +92,7 @@ test("a key with changes allowed edits tasks, pages, boards, diagrams and projec
   assert.equal((await act(key, "hub_delete_tasks", { taskIds: [task.id] })).statusCode, 404);
   const guarded = await act(key, "hub_manage_record", { action: "delete_dataset", id: task.id });
   assert.equal(guarded.statusCode, 403);
+  assert.equal((await act(key, "hub_manage_record", { action: "restore", kind: "skill", id: task.id })).statusCode, 403, "skills come back only through the person");
   const wrong = await act(key, "hub_create_page", { heading: "No title" });
   assert.equal(wrong.statusCode, 400);
   assert.ok(wrong.json<{ inputSchema?: unknown }>().inputSchema, "a wrong input returns the schema");
@@ -140,6 +141,12 @@ test("a file from the editor goes into Files and onto the task's page", async ()
   assert.match(JSON.stringify(page.content), new RegExp(body.file.id));
   const missing = await key.inject({ method: "POST", url: "/api/bridge/write/files", payload: { filename: "a.txt", dataBase64: Buffer.from("hi").toString("base64"), attachTo: "ensemble://task/00000000-0000-4000-8000-000000000000" } });
   assert.equal(missing.statusCode, 404);
+  // An untitled standalone page takes the file as well.
+  const untitled = await db.taskPage.create({ data: { userId: user.id, title: "", notesSnapshot: "", searchText: "", content: { type: "doc", content: [] } } });
+  const onPage = await key.inject({ method: "POST", url: "/api/bridge/write/files", payload: { filename: "chart.txt", dataBase64: Buffer.from("p95").toString("base64"), attachTo: `ensemble://page/${untitled.id}` } });
+  assert.equal(onPage.statusCode, 201, onPage.body);
+  assert.ok(onPage.json<{ attached: unknown }>().attached);
+  assert.match(JSON.stringify((await db.taskPage.findUniqueOrThrow({ where: { id: untitled.id } })).content), new RegExp(onPage.json<{ file: { id: string } }>().file.id));
 });
 
 test("connected apps need their own grant; reads run, changes also need the write grant", async () => {
@@ -167,6 +174,12 @@ test("connected apps need their own grant; reads run, changes also need the writ
     const posted = await act(both, "demo_post", { text: "launch" });
     assert.equal(posted.statusCode, 200, posted.body);
     assert.equal(await db.auditLedger.count({ where: { userId: user.id, action: "apps.demo_post" } }), 1);
+    // The person's switch for changes in connected apps holds for keys too.
+    const { saveSettings } = await import("../lib/settings.js");
+    await saveSettings(db, user.id, { assistant: { connectedAppWrites: false } });
+    const off = await act(both, "demo_post", { text: "again" });
+    assert.equal(off.statusCode, 403, off.body);
+    assert.equal((await act(both, "demo_echo", { text: "reads still run" })).statusCode, 200);
   } finally {
     offSource();
     offResolver();

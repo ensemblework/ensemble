@@ -120,10 +120,15 @@ function currentBlocks(content: PageDocument | null, notes: string): PageNode[] 
  * assistant writes about a task lands here; the short description stays the person's.
  */
 export async function appendToTaskPage(tx: Prisma.TransactionClient, userId: string, taskId: string, markdown: string): Promise<{ dropped: string[] }> {
+  return appendToPage(tx, userId, { taskId }, markdown);
+}
+
+/** The same for any page: a task's (by `taskId`) or a standalone one (by `pageId`). */
+export async function appendToPage(tx: Prisma.TransactionClient, userId: string, target: { taskId: string } | { pageId: string }, markdown: string): Promise<{ dropped: string[] }> {
   if (!markdown.trim()) return { dropped: [] };
   const added = await keepOwnMentions(tx, userId, markdownPage(markdown));
-  await writePageContent(tx, userId, { taskId }, (current) => ({ content: { type: "doc", content: [...currentBlocks(current.content, current.notes), ...added.doc.content] } }), "agent");
-  sseHub.publish(userId, { event: "page", data: { taskId, action: "save", by: "agent" } });
+  const saved = await writePageContent(tx, userId, target, (current) => ({ content: { type: "doc", content: [...currentBlocks(current.content, current.notes), ...added.doc.content] } }), "agent");
+  sseHub.publish(userId, { event: "page", data: { id: saved.id, ...(saved.taskId ? { taskId: saved.taskId } : {}), action: "save", by: "agent" } });
   return { dropped: added.dropped };
 }
 

@@ -229,20 +229,25 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
     const file = result.file;
     const key = await keyNameOf(prisma, request);
     let attached: { kind: string; id: string; title: string } | null = null;
+    let attachProblem: string | null = null;
     if (target && (target.kind === "task" || target.kind === "page") && title !== null) {
-      const { getTool } = await import("../assistant/registry.js");
-      const { bridgeContext } = await import("./actions.js");
-      const ctx = await bridgeContext(app, request);
+      // The file at the end of the page, as a mention (files/attached.ts reads it back as the page's file).
       const mention = `[@${file.filename.replace(/[[\]]/g, "")}](ensemble://file/${file.id})`;
-      await getTool("hub_update_page")!.run(ctx, { ...(target.kind === "task" ? { taskId: target.id } : { pageId: target.id }), matchTitle: title || "Untitled", mode: "append", markdown: mention });
+      const { appendToPage } = await import("../assistant/tools/pages.js");
+      try {
+        await prisma.$transaction((tx) => appendToPage(tx, userId, target.kind === "task" ? { taskId: target.id } : { pageId: target.id }, mention));
+      } catch (error) {
+        // The file is saved either way; say what did not happen rather than fail the upload.
+        attachProblem = error instanceof Error ? error.message : "The page could not be changed.";
+      }
     }
-    if (target && title !== null) attached = { kind: target.kind, id: target.id, title: title || "Untitled" };
+    if (target && title !== null && !attachProblem) attached = { kind: target.kind, id: target.id, title: title || "Untitled" };
     await appendLedger({ userId, actor: "agent", action: "bridge.file.upload", ...(target?.kind === "task" ? { taskId: target.id } : {}), payload: { fileId: file.id, filename: file.filename, attachTo: attached ? refOf(attached.kind as ItemRef["kind"], attached.id) : null, key } });
     sseHub.publish(userId, { event: "documents", data: { id: file.id } });
     return reply.code(201).send({
       file: { id: file.id, ref: refOf("file", file.id), filename: file.filename, url: hubUrl(hubPath("file", file.id) ?? "/files") },
       attached: attached ? { ...attached, ref: refOf(attached.kind as ItemRef["kind"], attached.id) } : null,
-      message: `Saved “${file.filename}” in Files${attached ? ` and attached it to “${attached.title}”` : ""}.`,
+      message: `Saved “${file.filename}” in Files${attached ? ` and attached it to “${attached.title}”` : ""}.${attachProblem ? ` It was not added to the page: ${attachProblem}` : ""}`,
     });
   });
 

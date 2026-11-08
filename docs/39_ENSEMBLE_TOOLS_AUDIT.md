@@ -32,7 +32,7 @@ A dash means nothing in that column reaches the area. "Same" means the assistant
 | Repositories | List, link, unlink, describe; read a file or an overview | Same | Allowlist: list, link, unlink, describe; MCP reads a file or overview; a run works in its own checkout |
 | Reminders and watchers | Reminders: list, add, change, dismiss, delete. Watchers: add, list, stop (`hub_list_watchers`, `hub_cancel_watcher`). The space owner's own | Same, in its owner's own spaces | — |
 | Today, recap, profile lists | `hub_list_due`, `hub_weekly_recap`, desk lists, `hub_read_surface` | Same, plus `node_overview` across every space | MCP: `ensemble_today`; allowlist `hub_list_due` |
-| Files | List, open, save from a web link, copy from an app, edit an original, tags, Trash | Same, plus `node_share_file` and `hub_save_file` from the computer or its evidence | MCP: `ensemble_upload_file` from the editor's computer, attached to a task or page; allowlist: list, open, file to page, page to a new file, tags. A run: `attach_evidence` for its own result |
+| Files | List, open, save from a web link, copy from an app, edit an original, tags, Trash | Same, plus `node_share_file` and `hub_save_file` from the computer or its evidence | MCP: `ensemble_upload_file` from the editor's computer, attached to a task or page; allowlist: list, file to page, page to a new file, tags. A run: `attach_evidence` for its own result |
 | Diagrams | List, read, check, make, edit, explain, copy, delete, restore a version | Same | Allowlist: same |
 | Plots and datasets | List, read, make, change; import a dataset; rename, delete | Same | Allowlist: all but deleting a dataset |
 | Personal skills | List, read; make or change (waits for Apply) | Same | MCP reads current skills |

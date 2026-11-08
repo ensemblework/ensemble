@@ -16,7 +16,7 @@ import { sseHub } from "../lib/sse.js";
 import { env } from "../config.js";
 import { describeToolError } from "../assistant/agent.js";
 import { fitList } from "../assistant/agent.js";
-import { appToolsFor, ensureAppAccess, resolveTool } from "../assistant/apps.js";
+import { appToolsFor, ensureAppAccess, resolveTool, writeRefusal } from "../assistant/apps.js";
 import { runOutsideWrite } from "../assistant/apply.js";
 import { loadConnections } from "../assistant/connections.js";
 import { getTool, toolAllowedFor, toolJsonSchema } from "../assistant/registry.js";
@@ -80,8 +80,8 @@ export const BRIDGE_ACTIONS: Readonly<Record<string, Allowed>> = {
   hub_update_plot: { group: "plots" },
   hub_import_dataset: { group: "plots" },
 
+  // hub_view_file is left out: it hands the file to a model as an attachment, and the bridge never sends a file's bytes.
   hub_list_files: { group: "files" },
-  hub_view_file: { group: "files" },
   hub_file_to_page: { group: "files" },
   hub_export_page_file: {
     group: "files",
@@ -115,7 +115,12 @@ export const BRIDGE_ACTIONS: Readonly<Record<string, Allowed>> = {
   hub_read_record_details: { group: "comments" },
   hub_manage_record: {
     group: "comments",
-    guard: (input) => (input.action === "delete_dataset" ? "Deleting a dataset can remove plots that use it; ask the person to do it in Ensemble." : null),
+    guard: (input) =>
+      input.action === "delete_dataset"
+        ? "Deleting a dataset can remove plots that use it; ask the person to do it in Ensemble."
+        : input.action === "restore" && (input.kind === "skill" || input.kind === "reminder")
+          ? "Skills and reminders are restored by the person, in Ensemble."
+          : null,
   },
 };
 
@@ -273,6 +278,9 @@ export async function runAction(app: FastifyInstance, caller: Caller, name: stri
   if (!toolAllowedFor(tool, caller.modules)) throw new BridgeActionError(`${name} belongs to a feature that is off in this space.`, 403);
   const refused = refusalFor(caller, tool, allowed);
   if (refused) throw new BridgeActionError(refused, 403);
+  // The person's own switch for changes in connected apps (Settings › Assistant) holds here too.
+  const switchedOff = tool.area === "apps" ? writeRefusal(tool, ctx.settings) : null;
+  if (switchedOff) throw new BridgeActionError(switchedOff, 403);
 
   const parsed = tool.input.safeParse(rawInput ?? {});
   if (!parsed.success) {

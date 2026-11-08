@@ -62,7 +62,7 @@ The Hub's **Connect your apps** page (`/connect`) creates a key, fills in this c
    - **Let editors and agents make changes** (`canWrite`, `api_tokens.can_write`): the task writes, file uploads and every write action on the allowlist (§5.1).
    - **Let editors and agents use your connected apps** (`canUseApps`, `api_tokens.can_use_apps`): the apps' tools through Ensemble (§5.2); changing something in an app also needs the first grant.
 
-   The key list shows each key's grants. Keys made before a grant existed do not have it: make a new key, or run `ensemble login` again (the `/link` page asks the same two questions). A key made under Settings → Connections → Editors & agents is a full key: it has both and can drive editor hooks.
+   The key list shows each key's grants. Keys made before 0.7.1 only read (their task-update grant was narrower and was reset): make a new key, or run `ensemble login` again (the `/link` page asks the same two questions). A key made under Settings → Connections → Editors & agents is a full key: it has both and can drive editor hooks.
 2. Export it where the editor can see it:
 
 ```bash
@@ -118,7 +118,7 @@ The allowlist (each name is the assistant's tool, [34](34_ASSISTANT_ACTIONS.md))
 | boards | `hub_list_boards`, `hub_read_board` | `hub_create_board`, `hub_update_board`, `hub_move_to_board` (a task or page into a column), `hub_remove_from_board`. Task status columns on the Ensemble board move with `hub_update_task` |
 | diagrams | `hub_list_diagrams`, `hub_get_diagram`, `hub_validate_diagram`, `hub_explain_diagram`, `hub_diagram_context` | `hub_create_diagram`, `hub_update_diagram`, `hub_edit_diagram` |
 | plots | `hub_list_plots`, `hub_get_plot`, `hub_list_datasets`, `hub_get_dataset` | `hub_import_dataset`, `hub_create_plot`, `hub_update_plot` |
-| files | `hub_list_files`, `hub_view_file` | `hub_file_to_page`, `hub_export_page_file` (a new file only), and with apps allowed `hub_save_app_item_as_page`, `hub_import_app_file` |
+| files | `hub_list_files` (a file's bytes and Ensemble's extracted text are never sent, §5) | `hub_file_to_page`, `hub_export_page_file` (a new file only), and with apps allowed `hub_save_app_item_as_page`, `hub_import_app_file` |
 | projects | `hub_list_projects`, `hub_list_deliverables` | `hub_create_project`, `hub_update_project` (name, summary, notes, status, people, repositories), `hub_create_deliverable`, `hub_update_deliverable`, `hub_complete_deliverable` |
 | people | `hub_list_people`, `hub_list_repos` | `hub_create_person`, `hub_update_person` (role, team, relationship to the person), `hub_link_repo`, `hub_unlink_repo`, `hub_update_repo` |
 | meetings | `hub_list_meeting_notes`, `hub_read_meeting_note` | `hub_create_meeting_note`, `hub_update_meeting_note`, `hub_suggest_meeting_tasks` |
@@ -177,7 +177,7 @@ The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine
 
 - **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` from the CLI.
 - **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. A `Bearer ens_` key (bridge or full scope) is required; cookies, device keys and missing keys are refused; `GET` and `DELETE` return 405.
-- **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint. The Hub token stays in the bridge process.
+- **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint; without it, `ensemble_upload_file` does not read a `path` (any process on the computer can reach a loopback port). The Hub token stays in the bridge process.
 
 hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.yml` publishes Postgres (`5432`) and Redis (`6379`) on `127.0.0.1` only, so use `127.0.0.1`, not `localhost`, in `DATABASE_URL` and `REDIS_URL`.
 
