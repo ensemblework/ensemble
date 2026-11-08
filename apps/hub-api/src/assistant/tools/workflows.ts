@@ -23,12 +23,28 @@ export function resolveWorkflowRefs(value: unknown, results: Map<string, unknown
   const row = value as Record<string, unknown>;
   if (Object.keys(row).length === 1 && typeof row.$ref === "string") {
     const [step, ...path] = row.$ref.split(".");
-    let current = results.get(step!);
-    for (const key of path) {
-      if (["__proto__", "prototype", "constructor"].includes(key) || !current || typeof current !== "object" || !Object.hasOwn(current, key)) throw new Error(`No result at ${row.$ref}.`);
-      current = (current as Record<string, unknown>)[key];
+    const result = results.get(step!);
+    let current = result;
+    const missing = () => {
+      const fields = result && typeof result === "object" && !Array.isArray(result) ? Object.keys(result).slice(0, 12) : [];
+      return new Error(`No result at ${row.$ref}.${fields.length ? ` ${step} returned: ${fields.join(", ")}.` : ""}`);
+    };
+    for (const [index, key] of path.entries()) {
+      if (["__proto__", "prototype", "constructor"].includes(key) || !current || typeof current !== "object") throw missing();
+      const here = current as Record<string, unknown>;
+      if (Object.hasOwn(here, key)) {
+        current = here[key];
+        continue;
+      }
+      // A model often guesses a wrapper the tool does not return (page.id for a result that is { id }),
+      // or leaves one out (id for { page: { id } }): skip the guessed key, or step into the one wrapper that has it.
+      const next = path[index + 1];
+      if (next !== undefined && Object.hasOwn(here, next)) continue;
+      const wrappers = Object.values(here).filter((value): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value as object, key));
+      if (wrappers.length !== 1) throw missing();
+      current = wrappers[0]![key];
     }
-    if (current === undefined) throw new Error(`No result at ${row.$ref}.`);
+    if (current === undefined) throw missing();
     return current;
   }
   return Object.fromEntries(Object.entries(row).map(([key, item]) => [key, resolveWorkflowRefs(item, results)]));
