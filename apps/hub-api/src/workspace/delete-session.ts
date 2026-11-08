@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { Prisma } from "@prisma/client";
+import { Prisma, type Actor } from "@prisma/client";
 import { CodeAnswer } from "../remote/contract.js";
 import { deleteLocalJobSessions } from "../remote/session-delete.js";
 import { currentDevice } from "../devices/successor.js";
@@ -15,7 +15,11 @@ import { stopJob } from "./worker.js";
 const fail = (message: string, statusCode = 409) => Object.assign(new Error(message), { statusCode, expose: true });
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-export async function deleteAgentSession(app: FastifyInstance, accountId: string, id: string): Promise<{ deleted: true; sessionId: string }> {
+/**
+ * Deletes an agent session: the agent's own history on the computers it ran on, then Ensemble's record of
+ * it (the runs stay). `actor` "system" with `reason`: Ensemble's own clean-up (session-cleanup.ts).
+ */
+export async function deleteAgentSession(app: FastifyInstance, accountId: string, id: string, options: { actor?: Actor; reason?: string } = {}): Promise<{ deleted: true; sessionId: string }> {
   const scope = { space: accountId, runner: null };
   const session = await resolveSession(app.prisma, scope, id, true);
   if (!session) throw fail("That session is not available to your account.", 404);
@@ -88,7 +92,7 @@ export async function deleteAgentSession(app: FastifyInstance, accountId: string
       const deleted = JSON.stringify({ state: "deleted", at: new Date().toISOString() });
       await tx.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionDeletion', ${deleted}::jsonb) WHERE id IN (${Prisma.join(jobs.map(job => job.id))}) AND user_id = ${accountId} AND runner_account_id IS NULL`);
     });
-    await appendLedger({ userId: accountId, actor: "me", action: "workspace.session.delete", payload: { sessionId: session.id, jobIds: jobs.map(job => job.id), engine: session.agent, projectFilesKept: true } });
+    await appendLedger({ userId: accountId, actor: options.actor ?? "me", action: "workspace.session.delete", payload: { sessionId: session.id, jobIds: jobs.map(job => job.id), engine: session.agent, projectFilesKept: true, ...(options.reason ? { reason: options.reason } : {}) } });
     notify();
     return { deleted: true, sessionId: session.id };
   } catch (error) {
@@ -96,7 +100,7 @@ export async function deleteAgentSession(app: FastifyInstance, accountId: string
     await app.prisma.$transaction(async tx => {
       await lockSession(tx, session.id);
       const current = await tx.workspaceJob.findUniqueOrThrow({ where: { id: session.id } });
-      if (record(record(current.context).sessionDeletion).operation === operation) await tx.workspaceJob.update({ where: { id: session.id }, data: { context: { ...record(current.context), sessionDeletion: { state: "pending", error: message, until: 0 } } } });
+      if (record(record(current.context).sessionDeletion).operation === operation) await tx.workspaceJob.update({ where: { id: session.id }, data: { context: { ...record(current.context), sessionDeletion: { state: "pending", error: message, until: 0, failedAt: Date.now() } } } });
     });
     notify();
     throw fail(message);

@@ -79,13 +79,13 @@ export async function runRetention(
       id: { in: mining?.tasks ?? [] },
       deletedAt: null,
       pinned: false,
-      completedAt: { lt: completedCutoff },
+      completedAt: { lte: completedCutoff },
       status: { in: ["done", "dropped"] },
     },
     include: { project: { select: { name: true } }, repo: { select: { fullName: true } } },
   });
   const deliverables = await app.prisma.deliverable.findMany({
-    where: { userId, id: { in: mining?.deliverables ?? [] }, deletedAt: null, pinned: false, status: "completed", completedAt: { lt: completedCutoff } },
+    where: { userId, id: { in: mining?.deliverables ?? [] }, deletedAt: null, pinned: false, status: "completed", completedAt: { lte: completedCutoff } },
     include: { project: { select: { id: true, name: true } } },
   });
 

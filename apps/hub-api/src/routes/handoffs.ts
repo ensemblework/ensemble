@@ -15,6 +15,8 @@ import { grantedFolderOf } from "../workspace/agent.js";
 import { codexBinary } from "../workspace/engines/codex.js";
 import { agentPresence, bundledCodex, HANDOFF_APPS, handoffOpen, handoffPrompt, handoffTargets, isCliHandoff, newMarker, openLink, type HandoffApp } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
+import { projectBrief, projectFolder, syncProjectFiles } from "../workspace/agent-projects.js";
+import { loadSettings } from "../lib/settings.js";
 
 /** The tool's own command line on this computer (Codex: the CLI, else the ChatGPT app's copy). */
 async function cliProgram(app: Extract<HandoffApp, `${string}-cli`>): Promise<string> {
@@ -62,8 +64,15 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       folder = found;
       if (!external && !within(base, folder)) throw new GuardError("The earlier task's folder is outside the workspace.");
     } else {
-      folder = join(base, "runs", `app-${task.id.slice(0, 8)}-${Date.now().toString(36)}`);
-      await mkdir(folder, { recursive: true });
+      // A project's task opens in the project's folder, so the app lists it with the project's other work (agent-projects.ts).
+      const project = task.projectId && (await loadSettings(prisma, request.userId)).orchestration.projectFolders !== false ? await projectBrief(prisma, request.userId, task.projectId).catch(() => null) : null;
+      if (project) {
+        folder = await projectFolder(base, project);
+        await syncProjectFiles(folder, project).catch((error: unknown) => request.log.warn({ err: error }, "could not write the project's brief"));
+      } else {
+        folder = join(base, "runs", `app-${task.id.slice(0, 8)}-${Date.now().toString(36)}`);
+        await mkdir(folder, { recursive: true });
+      }
     }
     const target = body.app === "copilot-cli" ? "copilot-cli" : body.app.replace(/-cli$/, "");
     await installEditorHook(prisma, request.userId, target, { project: folder });

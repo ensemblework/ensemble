@@ -1,6 +1,6 @@
 "use client";
 
-import type { AutomationTier, Settings } from "@ensemble/shared-types";
+import { SKILL_LEARNING_MIN_ITEMS, SKILL_LEARNING_WAIT_DAYS, type AutomationTier, type Settings } from "@ensemble/shared-types";
 import { tierModelName } from "@/lib/included";
 import { SectionCard, SettingRow, Toggle } from "../ui";
 import { NumberField } from "./number-field";
@@ -53,6 +53,16 @@ export function AutomationsSection({ settings, patch }: { settings: Settings; pa
       </SettingRow>
       <SettingRow title="Meetings of a series share a project" description="A meeting with no project takes the one an earlier meeting of its series has. No model.">
         <Toggle label="Meetings of a series share a project" checked={auto.linkMeetingSeries} onChange={(linkMeetingSeries) => set({ linkMeetingSeries })} />
+      </SettingRow>
+      <SettingRow
+        title="Learn personal skills from completed work"
+        description={`Once at least ${SKILL_LEARNING_MIN_ITEMS} completed tasks and deliverables are past the completed window (Data retention), Ensemble reads them to add or update your skills (how you write PRs, emails, reports…), then moves them to Trash. Off: they move to Trash unread.`}
+        info={`If this model cannot answer (an AI plan on a computer that is offline), learning waits and tells you. After ${SKILL_LEARNING_WAIT_DAYS} days it uses your lower tiers, then a model included with your Ensemble account, and says which.`}
+      >
+        <div className="flex items-center gap-3">
+          <TierPicker label="Model for learning skills" value={auto.skillLearning.tier} settings={settings} disabled={!auto.skillLearning.enabled} onChange={(tier) => set({ skillLearning: { tier } })} />
+          <Toggle label="Learn personal skills from completed work" checked={auto.skillLearning.enabled} onChange={(enabled) => set({ skillLearning: { enabled } })} />
+        </div>
       </SettingRow>
       <SettingRow title="Tell me when agent work waits for review" description="A notification when an agent finishes a task and its work is ready for you. No model.">
         <Toggle label="Tell me when agent work waits for review" checked={auto.reviewNotices} onChange={(reviewNotices) => set({ reviewNotices })} />

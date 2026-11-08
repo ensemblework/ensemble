@@ -907,6 +907,9 @@ export type HandoffRecord = {
 /** Folder trust shared with the person's other AI tools on this computer (desktop and CLI only). */
 export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<{ id: string; name: string; found: boolean; marked: number }> };
 
+/** The agent session a new run would continue because its task names a task done in it. */
+export type LinkedSessionPreview = { sessionId: string; taskId: string; title: string; reason: "mention" | "link" | "depends"; why: string; agentName: string; computer: string | null; lastActiveAt: string; summary: string };
+
 export type AssignInput = {
   taskId: string;
   /** Unset: the server decides from the agent and where it runs. */
@@ -924,6 +927,8 @@ export type AssignInput = {
   repoUrl?: string;
   folder?: string;
   continueFromJobId?: string;
+  /** A new agent session even when a task this one names has one (the server would continue it). */
+  newSession?: boolean;
   branchMode?: "as-is" | "existing" | "new";
   branch?: string;
   delivery?: "local" | "commit" | "push";
@@ -1677,6 +1682,8 @@ export const api = bindClient({
   /** Earlier code runs on this server that a new run can continue in the same folder; the task's own first. */
   checkouts: (taskId?: string) => get<{ checkouts: EarlierRun[] }>(`/api/workspace/checkouts${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`),
   /** The same for a paired computer: runs that ran (or will run) there, under any pairing of it. */
+  linkedSession: (taskId: string, engine: CodeEngine, deviceId?: string) =>
+    get<{ linked: LinkedSessionPreview | null }>(`/api/agent/linked-session?taskId=${encodeURIComponent(taskId)}&engine=${encodeURIComponent(engine)}${deviceId ? `&deviceId=${encodeURIComponent(deviceId)}` : ""}`),
   earlierRuns: (deviceId: string, taskId?: string) =>
     get<{ checkouts: EarlierRun[] }>(`/api/agent/earlier-runs?deviceId=${encodeURIComponent(deviceId)}${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ""}`),
   resolveFolder: (path: string) => post<{ path: string; git: boolean; branch: string | null }>("/api/workspace/resolve-folder", { path }),

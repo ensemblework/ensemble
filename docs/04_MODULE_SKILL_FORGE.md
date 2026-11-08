@@ -36,13 +36,17 @@ Scheduled delivery starts on the local day after account creation and runs at mo
 
 `jobs/skill-mining.ts` runs inside the daily retention pass:
 
-1. Select eligible, unpinned completed tasks and deliverables, at most 50 of each per batch.
-2. Give at least **24 hours' notice** (a notification) before learning from the work and moving it to Trash. Pinning an item in Completed keeps it out.
-3. Call the person's **High** model with bounded evidence (descriptions and notes up to 1,500 characters each) and current skill bodies.
+1. Wait for a batch: nothing starts until at least **10** unpinned completed tasks and deliverables (`SKILL_LEARNING_MIN_ITEMS`) are past the completed window (a day early, for the notice). A batch takes the oldest, at most 50 of each.
+2. Give at least **24 hours' notice** (a notification naming the model) before learning from the work and moving it to Trash. Pinning an item in Completed keeps it out.
+3. Call the model Settings → Automations → *Learn personal skills from completed work* names (`automations.skillLearning.tier`, High by default) with bounded evidence and the current skill bodies. Each item brings its title, type, labels, project, description, notes and page text, the latest finished run's report (its summary and the kinds of results) and what the person wrote for it themselves (their messages, emails or pull request texts linked to the task), within a 90,000-character budget. That is where how they write PR descriptions or emails is learned from.
 4. Validate the structured result. New guidance for an existing skill is appended under `## Learned from completed work` as a new version; new slugs become new skills. The miner never changes `morning-brief`.
-5. Write completion summaries and move the batch to Trash in the same transaction as the skill changes.
+5. Write completion summaries and move the batch to Trash in the same transaction as the skill changes. The notification says how many skills changed and, when a fallback answered, which model.
 
-An empty result is fine. A failed model, a skill edited or deleted meanwhile, a reopened or pinned record, or an active job keeps the work for a later pass. The notice state is the per-space `hub.retention-mining` preference. Trash purge then follows its own retention window ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)).
+**When the model cannot answer.** A model that is an AI plan on the person's computer is checked first (`pickComputer`): offline, not signed in or not installed counts as unavailable, as does any failed call. The batch then waits and says so (one notification, then at most one every 3 days, `waitingSince`/`noticeAt` on the batch). After **5 days** of waiting (`SKILL_LEARNING_WAIT_DAYS`) each pass tries the lower tiers in turn (High → Medium → Easy, skipping ones with the same model), then a model included with the person's Ensemble account (`includedConfig()`, or the paired desktop's included catalogue; none in local-only mode), and the notification names the one that answered. Until one does, the work stays in Completed.
+
+**Off.** With learning off (`skillLearning.enabled: false`), work past the window moves to Trash without any model call, a batch threshold or a notice.
+
+An empty result is fine. A skill edited or deleted meanwhile, a reopened or pinned record, or an active job keeps the work for a later pass. The notice state is the per-space `hub.retention-mining` preference. Trash purge then follows its own retention window ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)). The daily pass runs for each account on its own, so one waiting model never holds up anyone else's.
 
 Learned changes are published directly after the notice; there is no review/accept step. There is no bulk mining of history at first run, no mailbox mining and no automatic creation of scheduled workflows.
 

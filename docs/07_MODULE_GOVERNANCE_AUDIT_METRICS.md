@@ -16,14 +16,14 @@ Account export and deletion use `lib/account-data.ts`. Deletion includes owned s
 
 | Setting / data | Default and behaviour |
 | --- | --- |
-| `completedRetentionDays` | 60 days (1–365). Unpinned completed work gets at least 24 hours' notice and a successful skill-learning pass, then moves to Trash |
+| `completedRetentionDays` | 60 days (1–365). Once at least 10 unpinned completed items are past it, they get 24 hours' notice and a skill-learning pass ([04](04_MODULE_SKILL_FORGE.md)), then move to Trash; with learning off they move without one. The agent sessions of tasks past it are deleted from the person's agents ([30, Cleaning up sessions](30_ENGINES.md)) |
 | `retentionDays` | 30 days (1–365). Trash is purged permanently after this |
 | `historyRetentionDays` | 90 days (30–365). Audit ledger and task status history |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; their snapshots are unpinned |
 
-Pinning, reopening, active jobs, a failed mining pass or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
+Pinning, reopening, active jobs, a learning pass waiting for its model or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
 
 `/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
 

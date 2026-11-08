@@ -8,7 +8,7 @@
  *
  * Kept in `<state>/assistant-sessions.json`. Each session works in its own folder,
  * `<state>/assistant/<key>`, since some agents (Claude Code) find a session by the folder it began
- * in. Sessions unused for 30 days are dropped with their folders.
+ * in. Sessions unused for 30 days are dropped with their folders and the agent's own history of them.
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile, rename } from "node:fs/promises";
@@ -70,20 +70,35 @@ export function findSession(key: string, agent: SubscriptionProvider, instructio
   });
 }
 
-/** Remembers the chat's session after a turn, and drops sessions unused for 30 days. */
-export function saveSession(key: string, agent: SubscriptionProvider, id: string, instructions: string, next?: number): Promise<void> {
-  return serial(async () => {
+/**
+ * Remembers the chat's session after a turn, and drops sessions unused for 30 days: the agent's own
+ * history of each too (its app no longer lists it), then its folder.
+ */
+export async function saveSession(key: string, agent: SubscriptionProvider, id: string, instructions: string, next?: number): Promise<void> {
+  const dropped = await serial(async () => {
     const store = await read();
     const now = Date.now();
+    const old: Array<[string, Entry]> = [];
     for (const [other, entry] of Object.entries(store)) {
       if (other !== key && now - entry.at >= KEEP_MS) {
         delete store[other];
-        await rm(sessionFolder(other), { recursive: true, force: true }).catch(() => undefined);
+        old.push([other, entry]);
       }
     }
     store[key] = { agent, id, instructions: instructionsHash(instructions), at: now, ...(next === undefined ? {} : { next }) };
     await write(store);
+    return old;
   });
+  // After the turn's own write, and never failing it: an agent that cannot delete keeps its history.
+  if (dropped.length) void dropNative(dropped);
+}
+
+async function dropNative(entries: Array<[string, Entry]>): Promise<void> {
+  const { deleteNativeSession } = await import("../workspace/engines/delete-session.js");
+  for (const [key, entry] of entries) {
+    await deleteNativeSession(entry.agent, entry.id, sessionFolder(key)).catch(() => undefined);
+    await rm(sessionFolder(key), { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 /** Forgets a chat's session (it could not be reopened). */
