@@ -25,6 +25,9 @@ import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/
 import { ARTIFACT_SUPPRESSION, artifactOrigin, artifactSuppressionKey, NOT_UPLOADED } from "../context/artifacts.js";
 import { ARTIFACT_KINDS } from "../desk/artifacts.js";
 import { NODE_TASK, ON_BOARD } from "../lib/node-tasks.js";
+import { GraphError, itemNeighbors, relationsOf } from "../context/graph/neighbors.js";
+import { parseItemRef, type GraphKind } from "../context/graph/refs.js";
+import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -842,6 +845,44 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ...files.map((row) => ({ kind: "file", id: row.id, label: row.filename, detail: fileDetail(row.filename, row.byteSize) })),
       ],
     };
+  });
+
+  // ── one record and what it links to (context/graph) ─────────────────────
+
+  app.get("/api/context/item", async (request, reply) => {
+    const query = z
+      .object({
+        ref: z.string().max(400).optional(),
+        kind: z.string().max(40).optional(),
+        id: z.string().max(100).optional(),
+        rel: z.string().max(40).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        offset: z.coerce.number().int().min(0).max(5000).optional(),
+      })
+      .parse(request.query);
+    const ref = parseItemRef(query.ref ?? (query.kind && query.id ? { kind: query.kind, id: query.id } : null));
+    if (!ref) return reply.code(400).send({ error: "Name a record: ref=ensemble://<kind>/<id>, or kind and id." });
+    try {
+      const hood = await itemNeighbors({ db: prisma, userId: request.userId, modules: request.modules }, ref, { rel: query.rel, limit: query.limit, offset: query.offset });
+      if (!hood) return reply.code(404).send({ error: "Not found, or it is in Trash." });
+      return { ...hood, relations: relationsOf(hood.item.kind as GraphKind) };
+    } catch (error) {
+      if (error instanceof GraphError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.get("/api/context/search", async (request) => {
+    const query = z
+      .object({
+        q: z.string().min(1).max(300),
+        kinds: z.string().max(200).optional(),
+        near: z.string().max(400).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+      })
+      .parse(request.query);
+    const kinds = (query.kinds ?? "").split(",").map((kind) => kind.trim()).filter((kind): kind is SearchKind => (SEARCH_KINDS as readonly string[]).includes(kind));
+    return rankedSearch({ db: prisma, userId: request.userId, modules: request.modules }, query.q, { kinds, near: parseItemRef(query.near), limit: query.limit });
   });
 
   // ── the graph ───────────────────────────────────────────────────────────

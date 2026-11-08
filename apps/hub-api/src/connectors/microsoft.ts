@@ -167,6 +167,7 @@ export interface GraphEvent {
   id: string;
   iCalUId?: string | null;
   type?: string;
+  seriesMasterId?: string | null;
   originalStart?: string | null;
   subject?: string | null;
   bodyPreview?: string;
@@ -229,12 +230,14 @@ export function outlookEventInput(event: GraphEvent, calendar: { id: string; nam
       eventId: event.id,
       uid: event.iCalUId ?? null,
       originalStart: original ? original.toISOString() : null,
+      // Graph gives each occurrence its own iCalUId; the series master's id ties them (cowork/series.ts).
+      seriesId: event.seriesMasterId ?? null,
       hasDescription: Boolean(text.trim()),
     },
   };
 }
 
-const EVENT_SELECT = "id,iCalUId,type,originalStart,subject,bodyPreview,body,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,webLink,onlineMeeting,onlineMeetingUrl,attendees,organizer,responseStatus";
+const EVENT_SELECT = "id,iCalUId,type,seriesMasterId,originalStart,subject,bodyPreview,body,start,end,isAllDay,isCancelled,isOrganizer,showAs,location,webLink,onlineMeeting,onlineMeetingUrl,attendees,organizer,responseStatus";
 
 interface GraphCalendar {
   id: string;

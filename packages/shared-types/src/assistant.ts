@@ -420,6 +420,28 @@ export const MorningBriefSettings = z.object({
 });
 export type MorningBriefSettings = z.infer<typeof MorningBriefSettings>;
 
+/** Which of the person's model tiers (Settings › Assistant › Models) an automation runs on. */
+export const AutomationTier = z.enum(["easy", "medium", "high", "max"]);
+export type AutomationTier = z.infer<typeof AutomationTier>;
+
+/**
+ * Work Ensemble does with a model on its own, each with its own switch and model tier
+ * (Settings › Assistant › Automations). Switched off, the same work stays available as a button.
+ */
+export const AutomationSettings = z.object({
+  /** When a meeting's transcript or notes arrive: a summary, decisions and grounded task proposals to review (meetings/ai.ts). */
+  meetingTasks: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy") }).default({}),
+  /** Before a meeting of a series that has notes: a short brief of last time and what is still open. */
+  meetingPrep: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy"), minutesBefore: z.number().int().min(5).max(240).default(45) }).default({}),
+  /** A short summary of each uploaded file (context/enrich-documents.ts). */
+  fileSummaries: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy") }).default({}),
+  /** A meeting with no project takes the one an earlier meeting of its series has. No model. */
+  linkMeetingSeries: z.boolean().default(true),
+  /** A notification when an agent finishes a task and its work waits for your review. No model. */
+  reviewNotices: z.boolean().default(true),
+});
+export type AutomationSettings = z.infer<typeof AutomationSettings>;
+
 /** Routines: work the assistant does on a schedule. Off, none run and the Routines page is hidden. */
 export const RoutineSettings = z.object({
   enabled: z.boolean().default(true),
@@ -516,6 +538,7 @@ export const Settings = z.object({
   morningBrief: MorningBriefSettings.default({}),
   routines: RoutineSettings.default({}),
   staleNudge: StaleNudgeSettings.default({}),
+  automations: AutomationSettings.default({}),
   connections: z.record(ConnectorId, ConnectionSettings).default({}),
   /** Per connector-store entry (e.g. google_workspace), which products are switched on. Missing keys use the catalog default. */
   connectorProducts: z.record(z.string(), z.record(z.string(), z.boolean())).default({}),
