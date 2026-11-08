@@ -8,7 +8,7 @@ The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes ove
 
 | Way | For | How |
 |---|---|---|
-| **Ensemble CLI** | Hosted-site users on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's read-only key ([26](26_CLI.md)) |
+| **Ensemble CLI** | Hosted-site users on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's key: read-only unless task updates were allowed at `ensemble login` (§4, [26](26_CLI.md)) |
 | **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
 | **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (§3) |
 
@@ -57,7 +57,7 @@ The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `
 
 The Hub's **Connect your apps** page (`/connect`) creates a read-only key, fills in this computer's paths and offers one-click install for VS Code and Cursor.
 
-1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge`, call `/mcp` and revoke itself at `/api/cli/logout`. With **Let editors and agents update your tasks** ticked (the default; `canWrite` on `POST /api/connect/token`, stored as `api_tokens.can_write`) it can also call the bridge's write routes (§5.1), and nothing else; unticked, it only reads. The key list shows which each key is. `ensemble login` asks the same on the `/link` page. A key made under Settings → Connections → Editors & agents also works and can drive editor hooks.
+1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge`, call `/mcp` and revoke itself at `/api/cli/logout`. With **Let editors and agents update your tasks** ticked (the default; `canWrite` on `POST /api/connect/token`, stored as `api_tokens.can_write`) it can also call the bridge's write routes (§5.1), and nothing else; unticked, it only reads. The key list shows which each key is; keys made before task updates existed only read, so make a new key or run `ensemble login` again to let agents update tasks. `ensemble login` asks the same on the `/link` page. A key made under Settings → Connections → Editors & agents also works and can drive editor hooks.
 2. Export it where the editor can see it:
 
 ```bash
