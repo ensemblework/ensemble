@@ -32,7 +32,7 @@ export async function assertOwned(db: Db, userId: string, kind: OwnedKind, id: s
 export async function createPerson(
   tx: Tx,
   userId: string,
-  input: { name: string; email?: string | null; role?: string | null; team?: string | null },
+  input: { name: string; email?: string | null; role?: string | null; team?: string | null; relationship?: string | null },
   actor: Actor,
 ) {
   const person = await tx.person.create({
@@ -42,6 +42,7 @@ export async function createPerson(
       email: input.email ?? null,
       role: input.role ?? null,
       team: input.team ?? null,
+      relationship: input.relationship?.trim() || null,
       upn: input.email ?? null,
     },
   });
@@ -62,12 +63,12 @@ export async function updatePerson(
   tx: Tx,
   userId: string,
   id: string,
-  patch: { name?: string; email?: string | null; role?: string | null; team?: string | null },
+  patch: { name?: string; email?: string | null; role?: string | null; team?: string | null; relationship?: string | null },
   actor: Actor,
 ) {
   const existing = await tx.person.findFirst({ where: { id, userId, deletedAt: null } });
   if (!existing) throw notFound("That person was not found.");
-  const person = await tx.person.update({ where: { id }, data: patch });
+  const person = await tx.person.update({ where: { id }, data: { ...patch, ...(patch.relationship !== undefined ? { relationship: patch.relationship?.trim() || null } : {}) } });
   await recordUndoInTransaction(tx, {
     userId,
     label: `Updated ${person.name}`,

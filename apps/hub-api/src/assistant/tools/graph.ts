@@ -25,6 +25,7 @@ export const graphTools = [
       email: z.string().email().optional(),
       role: z.string().optional(),
       team: z.string().optional(),
+      relationship: z.string().max(120).optional().describe("How they relate to the person: my manager, reports to me, client…"),
     }),
     isWrite: true,
     risk: "low",
@@ -33,6 +34,7 @@ export const graphTools = [
       const bits = [input.name];
       if (input.role) bits.push(input.role);
       if (input.team) bits.push(input.team);
+      if (input.relationship) bits.push(`to you: ${input.relationship}`);
       return `Add person ${bits.join(", ")}`;
     },
     async run(ctx, input) {
@@ -43,13 +45,14 @@ export const graphTools = [
   defineTool({
     name: "hub_update_person",
     area: "context",
-    description: "Update a person's name, role, team, or email. The id comes from hub_list_people.",
+    description: "Update a person's name, role, team, email, or how they relate to the person (relationship: my manager, reports to me, client…). The id comes from hub_list_people.",
     input: z.object({
       personId: z.string().uuid(),
       name: z.string().min(1).optional(),
       email: z.string().email().nullable().optional(),
       role: z.string().nullable().optional(),
       team: z.string().nullable().optional(),
+      relationship: z.string().max(120).nullable().optional(),
     }),
     isWrite: true,
     risk: "low",
@@ -59,6 +62,7 @@ export const graphTools = [
       const changes = [
         input.role !== undefined ? `role ${person?.role ?? "—"} → ${input.role ?? "—"}` : null,
         input.team !== undefined ? `team → ${input.team ?? "—"}` : null,
+        input.relationship !== undefined ? `to you → ${input.relationship ?? "—"}` : null,
         input.name ? `name → ${input.name}` : null,
       ].filter(Boolean);
       return `Update ${person?.name ?? "person"}${changes.length ? `: ${changes.join(", ")}` : ""}`;

@@ -75,6 +75,10 @@ test("a key with changes allowed edits tasks, pages, boards, diagrams and projec
   const diagram = await act(key, "hub_create_diagram", { title: "Request path", text: ["title Request path", "", 'node app "Web app"', 'node api "API"', "", "edge app > api", ""].join("\n") });
   assert.equal(diagram.statusCode, 200, diagram.body);
 
+  const related = await act(key, "hub_update_person", { personId: priya.id, relationship: "my manager" });
+  assert.equal(related.statusCode, 200, related.body);
+  assert.equal((await db.person.findUniqueOrThrow({ where: { id: priya.id } })).relationship, "my manager");
+
   const project2 = await act(key, "hub_update_project", { projectId: project.id, summary: "Search latency for the beta", personIds: [priya.id] });
   assert.equal(project2.statusCode, 200, project2.body);
   assert.equal((await db.project.findUniqueOrThrow({ where: { id: project.id } })).summary, "Search latency for the beta");
