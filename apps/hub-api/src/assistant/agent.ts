@@ -602,6 +602,16 @@ async function drive(
         text = "";
         continue;
       }
+      // The same after tools ran: a call written as text, or the next write announced, is work that will not
+      // happen. Once per turn, while a step with tools and one to answer remain.
+      if (!finalAnswer && !nudged && calls.length > 0 && step < maxSteps - 2 && leavesWorkUndone(text)) {
+        nudged = true;
+        messages.push({ role: "assistant", content: turn.text });
+        messages.push({ role: "user", content: NUDGE });
+        args.emit({ type: "status", text: "Finishing what was asked." });
+        text = "";
+        continue;
+      }
       // A model that ran tools and then said nothing has not answered: it is asked once for its reply,
       // so what it did reaches the person (small models end like this now and then).
       if (!finalAnswer && !answerAsked && calls.length > 0 && !text && !turn.text.trim()) {
@@ -1025,6 +1035,20 @@ const PROMISE_RE =
 
 const soundsLikeAPromise = (text: string): boolean => PROMISE_RE.test(text);
 
+/**
+ * A reply that hands work to a later that never comes, after tools have run: a tool call written as text
+ * (`{"call":"hub_create_tasks",…}`, "Calling hub_create_tasks"), or an announcement of the next write
+ * ("Proceeding to create the task", "I'll now add it"). An offer ("If you like, I'll add…") is not one.
+ * Small models end turns like this (scripts/assistant-eval.ts, "look up then act").
+ */
+const TEXT_CALL_RE = /\{\s*"(?:call|name|tool|function)"\s*:\s*"[a-z]+_[a-z_]+"|\b(?:calling|proceeding to call|i(?:['’]ll| will) (?:now )?call)\s+`?(?:hub|apps|mcp)_[a-z_]+/i;
+const ANNOUNCE_RE =
+  /(?:^|[.!?\n]\s*)(?:proceeding to|now i(?:['’]ll| will)|i(?:['’]ll| will) now|next,? i(?:['’]ll| will)|i(?:['’]m| am) (?:now )?going to)\s+(?:go ahead and\s+)?(?:create|add|update|save|set|write|edit|move|delete|search|read|check|look|fetch|open|make|put|schedule|record)\b/i;
+
+export function leavesWorkUndone(text: string): boolean {
+  return TEXT_CALL_RE.test(text) || ANNOUNCE_RE.test(text);
+}
+
 const ANSWER_NUDGE = "Your tools have answered, but you wrote nothing. Write your reply to the person now, from what they returned.";
 
 /** A `verify` hook's feedback, or null when it has none or fails (a check never breaks a turn). */
@@ -1055,6 +1079,8 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     settings: args.settings,
     modules: args.modules,
     ...(args.code ? { code: args.code } : {}),
+    // A node's turn may research at length; the Hub chat's searches are counted (graph.ts, hub_web_search).
+    ...(args.agentPersona === undefined ? { turn: { webSearches: 0 } } : {}),
   };
 }
 
