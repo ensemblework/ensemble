@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type SessionChoicePost, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
@@ -95,6 +95,8 @@ export interface HostedClient {
   jobContext?(jobId: string, leaseToken: string, body: { name: string; args: Record<string, unknown> }): Promise<string>;
   /** A run's Ensemble action (ensemble_actions or ensemble_act) answered on the web for the job's space. */
   jobAct?(jobId: string, leaseToken: string, body: { name: string; args: Record<string, unknown> }): Promise<string>;
+  /** How this computer chose a claimed run's agent session; the run the web linked it to, or null. False: the web has no such route. */
+  sessionChoice?(jobId: string, leaseToken: string, body: SessionChoicePost): Promise<{ continues: string | null } | false>;
   /** A file of the owner's Files a node puts on this computer (files `save`), by the download id the web gave; at most `maxBytes`. */
   downloadNodeFile?(downloadId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
@@ -258,6 +260,19 @@ export function hostedClient(base: string, token: string): HostedClient {
       const answer = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;
       if (!response.ok) return typeof answer?.error === "string" ? answer.error : `Ensemble on the web refused the question (${response.status}).`;
       return typeof answer?.text === "string" ? answer.text : "No answer.";
+    },
+    async sessionChoice(jobId, leaseToken, body) {
+      const response = await fetch(`${base}${ROUTES.sessionChoice(jobId)}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "x-ensemble-job-lease": leaseToken, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+        redirect: "error",
+      });
+      if (response.status === 404 && !response.headers.get("content-type")?.includes("json")) return false;
+      const answer = (await response.json().catch(() => null)) as { continues?: unknown; error?: unknown } | null;
+      if (!response.ok) throw new RemoteError(response.status, typeof answer?.error === "string" ? answer.error : "The web did not take the session choice.");
+      return { continues: typeof answer?.continues === "string" ? answer.continues : null };
     },
     async jobAct(jobId, leaseToken, body) {
       const response = await fetch(`${base}${ROUTES.act(jobId)}`, {

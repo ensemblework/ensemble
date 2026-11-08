@@ -162,7 +162,9 @@ export async function runRetention(
       app.prisma.auditLedger.deleteMany({ where: { userId, ts: { lt: historyCutoff } } }),
       app.prisma.taskTransition.deleteMany({ where: { userId, at: { lt: historyCutoff } } }),
     ]);
-    counts.historyPurged = ledger.count + transitions.count;
+    // How runs chose their agent sessions (workspace/session-choice) is history too.
+    const choices = await app.prisma.sessionChoice.deleteMany({ where: { userId, createdAt: { lt: historyCutoff } } });
+    counts.historyPurged = ledger.count + transitions.count + choices.count;
   }
   const logCutoff = new Date(now.getTime() - LOG_CHUNK_RETENTION_DAYS * 86_400_000);
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);

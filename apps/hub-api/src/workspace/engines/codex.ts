@@ -194,6 +194,7 @@ export async function runCodex(
   let threadId: string | null = null;
   let turnId: string | null = null;
   let reportedWindow: number | null = null;
+  let lastInput = 0;
   let finished: (status: { status: string; error?: string }) => void = () => {};
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
 
@@ -254,8 +255,10 @@ export async function runCodex(
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));
         }
       } else if (method === "thread/tokenUsage/updated") {
-        const usage = (params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number }; modelContextWindow?: number | null };
+        const usage = (params.tokenUsage ?? {}) as { total?: { inputTokens?: number; outputTokens?: number }; last?: { inputTokens?: number }; modelContextWindow?: number | null };
         const total = usage.total ?? {};
+        // The last request's input (the conversation so far): how full the thread's context is (session-choice).
+        if (typeof usage.last?.inputTokens === "number" && usage.last.inputTokens > 0) lastInput = usage.last.inputTokens;
         result.tokensIn = total.inputTokens ?? result.tokensIn;
         result.tokensOut = total.outputTokens ?? result.tokensOut;
         // The window Codex reports for the model (node/settings.ts observed), once: Codex models have one window.
@@ -264,6 +267,7 @@ export async function runCodex(
           await ctx.event("engine_context", { size: usage.modelContextWindow, context: "default" });
         }
       } else if (method === "turn/completed") {
+        if (lastInput && reportedWindow) await ctx.event("engine_context", { size: reportedWindow, context: "default", used: lastInput });
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null };
         // Bounded: a handler stuck writing an event must not hold the turn open.
         await Promise.race([Promise.all(earlier), new Promise((resolve) => setTimeout(resolve, 10_000).unref())]);

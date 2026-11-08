@@ -14,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
+import { recordChoiceOutcome } from "./session-choice/outcome.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -1451,6 +1452,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   });
   dropLive(job.id);
   await endActivity(redis, userId, activityId);
+  await recordChoiceOutcome(prisma, job.id).catch(() => undefined);
   await appendLedger({
     userId,
     actor: "agent",

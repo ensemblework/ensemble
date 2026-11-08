@@ -477,16 +477,8 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
   const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: open && codeRun && hostCode && pullRequest !== null });
   const folderKinds = selectedDevice ? sharedFolderKinds(selectedDevice.capabilities) : {};
   const prOn = codeRun && pullRequest !== null;
-  // A new run in its own checkout continues the session of a task this one names, by the same agent (the server decides; this says so).
+  // A run in its own checkout may continue a fitting agent session on its computer (decided there); this asks for a new one instead.
   const [newSession, setNewSession] = useState(false);
-  const linkable = open && codeRun && place === "fresh" && !prOn && Boolean(codeEngine && taskId) && settings.data?.settings.orchestration.linkedSessions !== false;
-  const linked = useQuery({
-    queryKey: ["linked-session", taskId, codeEngine, selectedDevice?.id ?? null],
-    queryFn: () => api.linkedSession(taskId, codeEngine!, selectedDevice?.id),
-    enabled: linkable,
-    staleTime: 30_000,
-  });
-  const link = linkable ? (linked.data?.linked ?? null) : null;
   useEffect(() => setNewSession(false), [open, taskId]);
   const prNotices = prOn
     ? pullRequestNotices({
@@ -936,20 +928,6 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                 { id: "folder", label: folderPlace(selectedDevice?.name) },
               ]}
             />
-            {place === "fresh" && link ? (
-              <div className="mt-2 rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-muted">
-                {newSession ? (
-                  <>A new {link.agentName} session. {link.why}, whose session it could continue instead.</>
-                ) : (
-                  <>
-                    Continues {link.agentName}'s session from “{link.title}”{link.computer ? ` on ${computerName(link.computer)}` : ""}: {link.why.charAt(0).toLowerCase() + link.why.slice(1)}, so the agent keeps that work in mind and reuses its cached context.
-                  </>
-                )}{" "}
-                <button type="button" className="font-medium text-accent hover:underline" onClick={() => setNewSession((value) => !value)}>
-                  {newSession ? "Continue it instead" : "Start a new session"}
-                </button>
-              </div>
-            ) : null}
             {place === "continue" ? (
               <div className="mt-2">
                 <select aria-label="Earlier task" value={continueFrom} onChange={(event) => setContinueFrom(event.target.value)} className="field w-full" disabled={!earlier?.length}>
@@ -1064,6 +1042,13 @@ export function AssignDialog({ open, onClose, taskId: fixedTaskId }: { open: boo
                   className="field w-full"
                 />
               </div>
+
+              {codeRun && !appMode && codeEngine && place === "fresh" && !prOn ? (
+                <label className="flex items-center gap-2 text-[12.5px] text-muted" title="Without it, the agent may continue one of its sessions on that computer when the task fits it (same project, a task it mentions, the same files or topic).">
+                  <input type="checkbox" checked={newSession} onChange={(event) => setNewSession(event.target.checked)} />
+                  Always start a new agent session
+                </label>
+              ) : null}
 
               {codeRun && !appMode ? (
                 <>

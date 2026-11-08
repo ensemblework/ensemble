@@ -18,7 +18,7 @@ Account export and deletion use `lib/account-data.ts`. Deletion includes owned s
 | --- | --- |
 | `completedRetentionDays` | 60 days (1–365). Once at least 10 unpinned completed items are past it, they get 24 hours' notice and a skill-learning pass ([04](04_MODULE_SKILL_FORGE.md)), then move to Trash; with learning off they move without one. The agent sessions of tasks past it are deleted from the person's agents ([30, Cleaning up sessions](30_ENGINES.md)) |
 | `retentionDays` | 30 days (1–365). Trash is purged permanently after this |
-| `historyRetentionDays` | 90 days (30–365). Audit ledger and task status history |
+| `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, and how runs chose their agent sessions (`session_choices`, [30](30_ENGINES.md), Choosing a session) |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; their snapshots are unpinned |

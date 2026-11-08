@@ -51,7 +51,7 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -59,6 +59,10 @@ import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
 import { isCodeEngine, PageDocument } from "@ensemble/shared-types";
 import { projectBrief } from "../workspace/agent-projects.js";
+import { activeConfig } from "../workspace/session-choice/config.js";
+import { factsOf } from "../workspace/session-choice/related.js";
+import { recordChoiceOutcome } from "../workspace/session-choice/outcome.js";
+import { pairingsOf } from "./earlier.js";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
@@ -483,12 +487,14 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const known = await workContext({ db: prisma, userId: next.userId, modules: owner?.moduleSet ?? null }, { kind: "task", id: next.taskId }, { budget: 5000, moreTool: "ensemble_context" }).catch(() => null);
       // The page goes first and is at most 16,000 characters, so the cut below never splits it: older
       // computers read all of it, and newer ones find the whole section to take out.
-      // A project's task by the person's own agent: the project's brief for its folder on the computer (agent-projects.ts).
-      const runContext = (typeof next.context === "object" && next.context !== null ? next.context : {}) as { chat?: unknown; node?: unknown };
-      const project =
-        next.kind === "code" && isCodeEngine(next.provider) && next.task.projectId && runContext.chat !== true && !runContext.node && !missionOf(next.context) && (await loadSettings(prisma, next.userId)).orchestration.projectFolders !== false
-          ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null)
-          : null;
+      // A run by the person's own agent: the project's brief for its folder on the computer (agent-projects.ts), and
+      // what the computer chooses the agent session with (session-choice): the task's facts, the config, the person's choice.
+      const runContext = (typeof next.context === "object" && next.context !== null ? next.context : {}) as { chat?: unknown; node?: unknown; newSession?: unknown };
+      const ownAgent = next.kind === "code" && isCodeEngine(next.provider) && runContext.chat !== true && !runContext.node && !missionOf(next.context);
+      const runSettings = ownAgent ? await loadSettings(prisma, next.userId) : null;
+      const project = runSettings && next.task.projectId && runSettings.orchestration.projectFolders !== false ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null) : null;
+      const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions, { space: next.userId, runner: next.runnerAccountId }).catch(() => null) : null;
+      const choiceConfig = runSettings ? await activeConfig(app.log) : null;
       const description = [
         page ? `${PAGE_HEADING}\n${page}` : "",
         next.task.description,
@@ -548,6 +554,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(missionOf(next.context) ? { mission: missionOf(next.context) } : {}),
         // Older computers ignore it and work in a new folder, as before.
         ...(project ? { project } : {}),
+        // Older computers ignore these and start a new session, as before.
+        ...(related ? { related } : {}),
+        ...(choiceConfig && runSettings ? { sessionChoice: { ...choiceConfig, enabled: choiceConfig.enabled && runSettings.orchestration.linkedSessions !== false } } : {}),
+        ...(runContext.newSession === true ? { newSession: true } : {}),
       };
     }
     return reply.code(204).send();
@@ -589,6 +599,57 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       if (error instanceof GraphError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
+  });
+
+  /**
+   * How the computer chose this run's agent session (workspace/session-choice), under the job's lease: the
+   * decision is kept (`SessionChoice`, to calibrate the weights), and a run that continues one of this
+   * computer's sessions is linked to it here too, so the web's sessions, queue and clean-up see one session.
+   */
+  app.post("/api/devices/self/jobs/:id/session-choice", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const lease = z.string().min(1).max(200).parse(request.headers["x-ensemble-job-lease"]);
+    const held = await holdLease(app, device, id, lease);
+    if (!held.ok) return reply.code(held.status).send({ error: held.message });
+    const body = SessionChoicePost.parse(request.body);
+    const job = held.job;
+    let continues: string | null = null;
+    if (body.decision === "continue" && body.continues && body.continues !== job.id) {
+      const target = await prisma.workspaceJob.findFirst({
+        where: { id: body.continues, userId: job.userId, runnerAccountId: job.runnerAccountId, kind: "code", provider: job.provider },
+        select: { id: true, deviceId: true },
+      });
+      if (target?.deviceId && (await pairingsOf(prisma, device)).includes(target.deviceId)) continues = target.id;
+    }
+    const summary = { decision: continues ? "continue" : "new", band: body.band, title: continues ? body.title : null, why: body.why, note: body.note };
+    const context = typeof job.context === "object" && job.context !== null && !Array.isArray(job.context) ? (job.context as Record<string, unknown>) : {};
+    await prisma.workspaceJob.update({
+      where: { id: job.id },
+      data: { context: { ...context, sessionChoice: summary } as Prisma.InputJsonValue, ...(continues && !job.continueFromJobId ? { continueFromJobId: continues } : {}) },
+    });
+    const task = await prisma.task.findUnique({ where: { id: job.taskId }, select: { projectId: true } });
+    const record = {
+      taskId: job.taskId,
+      engine: job.provider ?? "",
+      deviceId: device.id,
+      projectId: task?.projectId ?? null,
+      decision: summary.decision,
+      band: body.band,
+      sessionId: body.sessionId,
+      continuedJobId: continues,
+      score: body.score,
+      why: body.why,
+      note: body.decision === "continue" && !continues ? "not-linked" : body.note,
+      configVersion: body.configVersion,
+      configHash: body.configHash,
+      candidates: body.candidates as Prisma.InputJsonValue,
+      elapsedMs: body.elapsedMs,
+    };
+    await prisma.sessionChoice.upsert({ where: { jobId: job.id }, create: { ...record, userId: job.userId, jobId: job.id }, update: record });
+    sseHub.publish(job.userId, { event: "workspace", data: { id: job.id } });
+    return { continues };
   });
 
   /**
@@ -797,6 +858,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (body.report !== undefined && !report) request.log.warn({ jobId: id }, "a computer sent a report that is not a valid StepReport; it was not kept");
     const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals, report });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
+    void recordChoiceOutcome(prisma, id).catch((error: unknown) => request.log.warn({ err: error, jobId: id }, "could not record how the session choice went"));
     return { status: body.outcome };
   });
 

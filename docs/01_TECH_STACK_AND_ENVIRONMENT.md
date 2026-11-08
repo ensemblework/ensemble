@@ -61,6 +61,7 @@ pnpm dev
 | Included AI | `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_MODELS`, `ENSEMBLE_INCLUDED_WEB_SEARCH`, `ENSEMBLE_INCLUDED_MONTHLY_CREDITS`, `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD`, `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` ([33](33_INCLUDED_AI.md)) |
 | Model calls | `ENSEMBLE_MODEL_CALL_TIMEOUT_MS`: how long one model call may take, 900000 (15 minutes) by default, 30 s to 30 min; hub-api and agent-runtime read it ([11 §5](11_HOW_THE_ASSISTANT_WORKS.md#5-provider-and-credential-paths)) |
 | Workspace and local runtime | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_DATA_DIR`, state directories, queue/remote-loop/scheduler switches |
+| Agent sessions | `ENSEMBLE_SESSION_CHOICE_CONFIG`: a JSON file overriding the weights, bands and limits a computer chooses a run's agent session with; the server sends it with every claim ([30](30_ENGINES.md), Choosing a session) |
 | Hosted quotas | `ENSEMBLE_MAX_CONNECTORS`, `ENSEMBLE_MAX_JOBS_PER_DAY`, `ENSEMBLE_MAX_DATASET_BYTES`, `ENSEMBLE_MAX_DOCUMENTS`, `ENSEMBLE_MAX_DOCUMENT_BYTES`, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` |
 | Server storage and monitoring | `ENSEMBLE_FILE_STORAGE`, `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_CONTAINER`, `ENSEMBLE_BACKUP_CONTAINER`, `ENSEMBLE_METRICS_PORT`, `ENSEMBLE_INTERACTION_RETENTION_DAYS` |
 | Extraction and plots | Enrichment switch, file-store ceiling, plot worker concurrency and memory ([32](32_FILES.md), [20](20_PLOTS_DESIGN.md)) |

@@ -607,6 +607,7 @@ model WorkspaceJob {
   review               CodeReview?
   evidenceFiles        JobEvidence[]
 
+  sessionChoices       SessionChoice[]
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
   @@index([deviceId, status, sequence])
@@ -654,6 +655,45 @@ model DevicePairing {
 }
 
 /// Redacted run output a device uploaded, in batches. 64 KB per chunk, 2 MB per job.
+/// How a new run by the person's own coding agent chose its agent session (workspace/session-choice,
+/// docs/30 Choosing a session): every candidate's signals and score, the decision, what the person asked
+/// for, and how the run went. Decided on the computer that runs it; that computer sends it to the web for
+/// runs claimed from there. Kept for the history window (`historyRetentionDays`), to calibrate the weights.
+model SessionChoice {
+  id             String        @id @default(uuid())
+  userId         String        @map("user_id")
+  jobId          String?       @unique @map("job_id")
+  taskId         String?       @map("task_id")
+  engine         String
+  deviceId       String?       @map("device_id")
+  projectId      String?       @map("project_id")
+  /// continue | new
+  decision       String
+  /// confident | unsure | none | off
+  band           String
+  /// The session continued, or the best candidate when none was (its first run's id).
+  sessionId      String?       @map("session_id")
+  continuedJobId String?       @map("continued_job_id")
+  score          Float?
+  why            String?
+  /// new-session: the person asked for a new session; too-full: the best session was too full to continue.
+  note           String?
+  configVersion  String        @map("config_version")
+  configHash     String        @map("config_hash")
+  /// [{ sessionId, score, parts, signals }], best first.
+  candidates     Json          @default("[]")
+  elapsedMs      Int?          @map("elapsed_ms")
+  /// { status, durationMs, tokensIn, tokensOut, resumed } when the run ended.
+  outcome        Json?
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job            WorkspaceJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("session_choices")
+}
+
 /// Retention deletes chunks by `createdAt`; WorkspaceEvent stays the place for milestones.
 /// The text of a file a device run changed, sent when the run ended (docs/25 §4.6). Kept 30 days; Ensemble on the web keeps none.
 model JobFile {
@@ -1818,6 +1858,7 @@ model User {
   widgetLayouts         WidgetLayout[]
   templateApplications  TemplateApplication[]
   includedUsage         IncludedUsage[]
+  sessionChoices        SessionChoice[]
 
   @@index([ownerId])
   @@map("users")

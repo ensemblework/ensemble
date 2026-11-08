@@ -16,6 +16,8 @@ import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { prepareWorktree, type MadeWorktree } from "../workspace/worktrees.js";
 import { webContext } from "./origin.js";
 import { agentProjectOf } from "../workspace/agent-projects.js";
+import { parseConfig } from "../workspace/session-choice/config.js";
+import { parseFacts } from "../workspace/session-choice/related.js";
 import { isRefusal, planLocalJob, sharedFolder, type LocalPlan, type Refusal } from "./policy.js";
 import { authRejected, type HostedClient } from "./client.js";
 import { parseMission, type JobSpec, type MissionSpec, type ResultLink } from "./contract.js";
@@ -86,6 +88,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     // A run carrying on one this computer lost when it restarted runs in that run's folder and agent session (agent.ts).
     // A secret scope from the web (an Ensemble Node run) limits the saved secrets the run gets (lib/run-secrets.ts).
     const mission = parseMission(spec.mission);
+    const facts = parseFacts(spec.related);
     // An Ensemble Node build that works apart gets its own git worktree of the shared folder (B13).
     const tree = mission ? await intoWorktree(app, spec, resolved, mission) : null;
     const context = {
@@ -97,10 +100,18 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       ...(mission ? { mission: { ...mission, ...(tree?.folder ? { root: tree.folder } : {}) } } : {}),
       // The project's brief: createJob puts a new session in the project's folder here (agent-projects.ts).
       ...(agentProjectOf(spec.project) ? { agentProject: agentProjectOf(spec.project) } : {}),
+      // The task's facts as the web knows them, kept so later runs here can be matched against this one (session-choice).
+      ...(facts ? { taskFacts: facts } : {}),
     } as Prisma.InputJsonValue;
-    const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context, actor: "system" });
+    const choiceConfig = parseConfig(spec.sessionChoice);
+    const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, {
+      context,
+      actor: "system",
+      ...(facts && choiceConfig ? { sessionChoice: { facts, config: choiceConfig, newSession: spec.newSession === true } } : {}),
+    });
     if (!created) throw new Error("The task could not be queued.");
     held.localJobId = created.jobId;
+    await reportChoice(app, client, spec, created.jobId).catch((error: unknown) => app.log.warn({ err: error, hostedJobId: spec.id }, "could not send how the agent session was chosen"));
     // Commits in a worktree land in the repository's own git folder, which every worktree shares.
     if (tree?.made) await app.prisma.decisionRule.create({ data: { userId, source: RUN_RULE_SOURCE, toolName: OUTSIDE_TOOL, pattern: tree.made.gitDir, decision: "allow", sessionId: created.jobId } });
     await appendLedger({ userId, actor: "system", action: "remote.claim", payload: { hostedJobId: spec.id, jobId: created.jobId, ...(tree?.made ? { worktree: tree.made.path, branch: tree.made.branch } : {}), ...(tree?.error ? { worktreeError: tree.error } : {}) } });
@@ -110,6 +121,37 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     await refuse(app, client, userId, spec, held, { code, message });
   }
   return held;
+}
+
+/**
+ * How this computer chose the run's agent session, sent to the web in its ids (session-choice): the web
+ * keeps it and links the run to the session it continues there too. Runs made here before are known to
+ * the web by the ids they were claimed under (`context.hostedJobId`); one it never knew stays unnamed.
+ */
+async function reportChoice(app: FastifyInstance, client: HostedClient, spec: JobSpec, localJobId: string): Promise<void> {
+  if (!client.sessionChoice) return;
+  const row = await app.prisma.sessionChoice.findUnique({ where: { jobId: localJobId } });
+  if (!row) return;
+  const candidates = Array.isArray(row.candidates) ? (row.candidates as Array<Record<string, unknown>>) : [];
+  const local = [row.continuedJobId, row.sessionId, ...candidates.flatMap((candidate) => [candidate.sessionId, candidate.lastJobId])].filter((value): value is string => typeof value === "string");
+  const jobs = local.length ? await app.prisma.workspaceJob.findMany({ where: { id: { in: [...new Set(local)] } }, select: { id: true, context: true } }) : [];
+  const hosted = new Map(jobs.map((job) => [job.id, (job.context as { hostedJobId?: unknown } | null)?.hostedJobId]).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const web = (value: unknown) => (typeof value === "string" ? (hosted.get(value) ?? null) : null);
+  const context = (await app.prisma.workspaceJob.findUnique({ where: { id: localJobId }, select: { context: true } }))?.context as { sessionChoice?: { title?: unknown } } | null;
+  await client.sessionChoice(spec.id, spec.leaseToken, {
+    decision: row.decision === "continue" ? "continue" : "new",
+    band: row.band === "confident" || row.band === "unsure" ? row.band : "none",
+    continues: web(row.continuedJobId),
+    sessionId: web(row.sessionId),
+    score: row.score,
+    title: typeof context?.sessionChoice?.title === "string" ? context.sessionChoice.title.slice(0, 500) : null,
+    why: row.why?.slice(0, 600) ?? null,
+    note: row.note?.slice(0, 40) ?? null,
+    configVersion: row.configVersion,
+    configHash: row.configHash,
+    candidates: candidates.slice(0, 100).map((candidate) => ({ ...candidate, sessionId: web(candidate.sessionId), lastJobId: web(candidate.lastJobId) })),
+    elapsedMs: row.elapsedMs,
+  });
 }
 
 /**

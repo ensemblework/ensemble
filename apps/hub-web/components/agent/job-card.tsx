@@ -266,6 +266,11 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
           )}
         </div>
       ) : null}
+      {job.sessionChoice ? (
+        <div className="mt-1.5 text-[12px] leading-[17px] text-muted" data-testid="job-session-choice">
+          Continued the agent's session{job.sessionChoice.why ? `: ${job.sessionChoice.why}` : job.sessionChoice.title ? ` from “${job.sessionChoice.title}”` : ""}. To start fresh, assign it again with “Always start a new agent session”.
+        </div>
+      ) : null}
       {!live && job.error ? <div className="mt-1.5 break-words text-muted"><LinkifiedText text={job.error} /></div> : null}
       {!live && job.summary && job.summary !== job.error ? <AgentOutput key={job.id} job={job} /> : null}
       {live && detail.data?.log ? (
