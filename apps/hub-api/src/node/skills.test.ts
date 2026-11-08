@@ -37,6 +37,12 @@ test("a skill needs its tools: without them it is not offered, and its lines fol
   assert.match(signIn, /^Skills for this request:\nSign-in and human checks:\n/);
   assert.match(signIn, /try the page again/);
   assert.doesNotMatch(signIn, /browser_login_check/);
+  const shopping = (has: (tool: string) => boolean) => NODE_SKILLS.find((skill) => skill.name === "shopping")!.lines(has).join("\n");
+  assert.match(shopping(every), /A store browser_shop could not read: one hub_web_search .* browser_extract on its product page/);
+  assert.doesNotMatch(shopping((tool) => tool !== "browser_extract"), /could not read/, "the fallback needs browser_extract");
+  const research = skillsBlock(skillsFor("compare the Pixel 10 and iPhone 17 reviews", every), every);
+  assert.match(research, /one search per part, all in the same reply/);
+  assert.match(research, /Prefer primary sources/);
 });
 
 test("conversation turns offer the advanced browser and capture tools only for app or video work", () => {

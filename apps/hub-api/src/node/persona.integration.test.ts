@@ -148,7 +148,7 @@ test("a node does simple work itself and keeps its owner's coding agents for rea
   assert.match(lead.persona, /Not in this crew \(node_crew_add asks your owner\): @assistant \(assistant\), @researcher \(researcher\)\./);
   assert.match(persona, /Your owner's work \(tasks, boards, Ensemble links\) and apps: your tools; you are in Ensemble already, never sign in to it in a browser\./);
   // 6,582 and 7,995 before the Ensemble row (about 80 characters each).
-  assert.ok(lead.persona.length < 8_100 && persona.length < 6_800, `as short as before (6,479 and 7,892 characters before the web routing rows; now ${persona.length} and ${lead.persona.length})`);
+  assert.ok(lead.persona.length < 8_350 && persona.length < 7_100, `as short as before (6,479 and 7,892 characters before the web routing rows, 6,788 and 7,978 before the conduct rows; now ${persona.length} and ${lead.persona.length})`);
 });
 
 test("a node's own run profile is what its sessions use and what it says they use; the run card names the agent, model, thinking and context", async () => {
