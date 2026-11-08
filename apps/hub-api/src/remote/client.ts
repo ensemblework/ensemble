@@ -91,6 +91,8 @@ export interface HostedClient {
   downloadAttachment?(jobId: string, leaseToken: string, fileId: string, maxBytes: number): Promise<Uint8Array>;
   /** A run's context tool answered on the web for the job's space (workspace/context-tools.ts). */
   jobContext?(jobId: string, leaseToken: string, body: { name: string; args: Record<string, unknown> }): Promise<string>;
+  /** A run's Ensemble action (ensemble_actions or ensemble_act) answered on the web for the job's space. */
+  jobAct?(jobId: string, leaseToken: string, body: { name: string; args: Record<string, unknown> }): Promise<string>;
   /** A file of the owner's Files a node puts on this computer (files `save`), by the download id the web gave; at most `maxBytes`. */
   downloadNodeFile?(downloadId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
@@ -248,6 +250,20 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (response.status === 404) return "Ensemble on the web does not answer context questions for runs yet. Work from the brief.";
       const answer = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;
       if (!response.ok) return typeof answer?.error === "string" ? answer.error : `Ensemble on the web refused the question (${response.status}).`;
+      return typeof answer?.text === "string" ? answer.text : "No answer.";
+    },
+    async jobAct(jobId, leaseToken, body) {
+      const response = await fetch(`${base}${ROUTES.act(jobId)}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "x-ensemble-job-lease": leaseToken, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(180_000),
+        redirect: "error",
+      }).catch(() => null);
+      if (!response) return "Ensemble on the web could not be reached, so nothing was changed.";
+      if (response.status === 404 && !response.headers.get("content-type")?.includes("json")) return "Ensemble on the web does not take actions from runs yet.";
+      const answer = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;
+      if (!response.ok) return typeof answer?.error === "string" ? answer.error : `Ensemble on the web refused the action (${response.status}).`;
       return typeof answer?.text === "string" ? answer.text : "No answer.";
     },
     async downloadAttachment(jobId, leaseToken, fileId, maxBytes) {

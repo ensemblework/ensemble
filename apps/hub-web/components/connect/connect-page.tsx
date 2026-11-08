@@ -42,9 +42,8 @@ export function ConnectPage() {
       <section className="connect-rise tile rounded-xl bg-panel p-4 md:p-5" aria-labelledby="bridge-key-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h2 id="bridge-key-title" className="text-[15px] font-semibold tracking-tight">
-            Your read-only key
+            Your key
           </h2>
-          <span className="rounded-md bg-accent-soft px-1.5 py-0.5 text-[11.5px] font-medium text-ink">Read only</span>
         </div>
         <div className="mt-2">
           <BridgeKey tokens={bridge.data?.tokens ?? []} />

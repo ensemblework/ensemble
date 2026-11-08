@@ -32,6 +32,8 @@ export const ROUTES = {
   attachment: (jobId: string, fileId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(fileId)}`,
   /** A run's question about the account's records (workspace/context-tools.ts), under the job's lease. */
   context: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/context`,
+  /** A run's Ensemble action (bridge/actions.ts: list them, or run one), under the job's lease. */
+  act: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/act`,
   /** The account's model keys, for this computer's own model calls. */
   modelKeys: "/api/devices/self/model-keys",
   /** The text of the files a run changed, sent before complete (protocol 3). */

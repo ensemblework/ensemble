@@ -3,15 +3,16 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PrismaClient, TaskStatus } from "@prisma/client";
 import { env } from "../config.js";
-import { parseItemRef, refOf, type ItemRef } from "../context/graph/refs.js";
+import { hubPath, parseItemRef, refOf, type ItemRef } from "../context/graph/refs.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { canTransition } from "../lib/state-machine.js";
 import { writeAgentBlock } from "../pages/markdown.js";
 import { createTask, titlesMatch, updateTask } from "../services/tasks.js";
 import { defaultSpaceName } from "../spaces/store.js";
-import { bridgeAuthRejected, bridgeWriteRejected } from "./auth.js";
+import { bridgeAppsRejected, bridgeAuthRejected, bridgeWriteRejected } from "./auth.js";
 import { hubUrl, isUuid } from "./text.js";
+import { maxFileBytes } from "../files/store.js";
 
 const STATUSES: TaskStatus[] = ["proposed", "todo", "in_progress", "waiting_approval", "blocked", "done", "dropped"];
 
@@ -30,6 +31,14 @@ const CreateBody = z.object({
   from: z.string().max(400).optional(),
 });
 
+const UploadBody = z.object({
+  filename: z.string().trim().min(1, "filename is required.").max(255),
+  dataBase64: z.string().min(1, "dataBase64 is the file's bytes in base64."),
+  mediaType: z.string().max(255).optional(),
+  attachTo: z.string().max(400).optional(),
+  summarize: z.boolean().optional(),
+});
+
 const UpdateBody = z
   .object({
     status: z.enum(["in_progress", "waiting_approval", "done", "blocked", "todo"]).optional(),
@@ -37,6 +46,13 @@ const UpdateBody = z
     matchTitle: z.string().trim().min(1).max(200).optional(),
   })
   .refine((body) => Boolean(body.status || body.note), "Pass status, note, or both.");
+
+async function connectedAppNames(app: FastifyInstance, request: FastifyRequest): Promise<string[]> {
+  const [{ bridgeContext }, { appToolsFor }, { loadConnections }] = await Promise.all([import("./actions.js"), import("../assistant/apps.js"), import("../assistant/connections.js")]);
+  const ctx = await bridgeContext(app, request);
+  const connections = await loadConnections(ctx, await appToolsFor(ctx));
+  return connections.connected.map((row) => row.name).slice(0, 40);
+}
 
 function fail(reply: FastifyReply, error: unknown) {
   const statusCode = (error as { statusCode?: number }).statusCode;
@@ -112,6 +128,7 @@ const taskOut = (task: { id: string; title: string; status: string; projectId: s
  */
 export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+  const fileBodyLimit = Math.ceil((maxFileBytes() * 4) / 3) + 64 * 1024;
 
   app.addHook("preHandler", async (request, reply) => {
     const message = bridgeAuthRejected(request.authVia, env.ENSEMBLE_INTERNAL_TOKEN);
@@ -126,8 +143,13 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
       prisma.user.findUnique({ where: { id: request.userId }, select: { name: true, spaceName: true, ownerId: true } }),
       request.tokenId ? keyNameOf(prisma, request) : Promise.resolve(undefined),
     ]);
+    const canUseApps = bridgeAppsRejected(request) === null;
+    // The connected apps by name, so an editor's tool descriptions can say what it may reach.
+    const apps = canUseApps ? await connectedAppNames(app, request).catch(() => []) : [];
     return {
       canWrite: bridgeWriteRejected(request) === null,
+      canUseApps,
+      apps,
       spaceName: space ? space.spaceName || (space.ownerId ? "Untitled space" : defaultSpaceName(space.name)) : undefined,
       keyName,
     };
@@ -173,6 +195,60 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       return fail(reply, error);
     }
+  });
+
+  /**
+   * A file from the editor's computer into Files (the same checks and limits as an upload in the Hub),
+   * attached to a task or page (a file mention at the end of its page; a task's file is also tagged with
+   * it), or tagged with a project, person or repository.
+   */
+  app.post("/api/bridge/write/files", { bodyLimit: fileBodyLimit }, async (request, reply) => {
+    const body = UploadBody.parse(request.body ?? {});
+    const userId = request.userId;
+    const target = body.attachTo ? parseItemRef(body.attachTo) : null;
+    if (body.attachTo && (!target || !["task", "page", "project", "person", "repo"].includes(target.kind))) {
+      return reply.code(400).send({ error: "attachTo names a task, page, project, person or repository: ensemble://<kind>/<id> or a Hub link." });
+    }
+    const title = target ? await recordTitle(prisma, userId, target) : null;
+    if (target && title === null) return reply.code(404).send({ error: "attachTo is not in this Ensemble space, or it is in Trash." });
+    const tags = {
+      taskIds: target?.kind === "task" ? [target.id] : [],
+      projectIds: target?.kind === "project" ? [target.id] : [],
+      personIds: target?.kind === "person" ? [target.id] : [],
+      repoIds: target?.kind === "repo" ? [target.id] : [],
+    };
+    const internal = { "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN, "x-ensemble-user": userId };
+    const saved = await app.inject({
+      method: "POST",
+      url: "/api/documents",
+      headers: { ...internal, "content-type": "application/json" },
+      payload: { filename: body.filename, dataBase64: body.dataBase64, ...(body.mediaType ? { mediaType: body.mediaType } : {}), summarize: body.summarize ?? true, tags },
+    });
+    const result = saved.json<{ file?: { id: string; filename: string; byteSize?: number }; error?: string }>();
+    if (saved.statusCode >= 400 || !result.file) return reply.code(saved.statusCode >= 400 ? saved.statusCode : 500).send({ error: result.error ?? "The file could not be saved." });
+    const file = result.file;
+    const key = await keyNameOf(prisma, request);
+    let attached: { kind: string; id: string; title: string } | null = null;
+    let attachProblem: string | null = null;
+    if (target && (target.kind === "task" || target.kind === "page") && title !== null) {
+      // The file at the end of the page, as a mention (files/attached.ts reads it back as the page's file).
+      const mention = `[@${file.filename.replace(/[[\]]/g, "")}](ensemble://file/${file.id})`;
+      const { appendToPage } = await import("../assistant/tools/pages.js");
+      try {
+        await prisma.$transaction((tx) => appendToPage(tx, userId, target.kind === "task" ? { taskId: target.id } : { pageId: target.id }, mention));
+      } catch (error) {
+        // The file is saved either way; say what did not happen rather than fail the upload.
+        attachProblem = error instanceof Error ? error.message : "The page could not be changed.";
+      }
+    }
+    if (target && title !== null && !attachProblem) attached = { kind: target.kind, id: target.id, title: title || "Untitled" };
+    await appendLedger({ userId, actor: "agent", action: "bridge.file.upload", ...(target?.kind === "task" ? { taskId: target.id } : {}), payload: { fileId: file.id, filename: file.filename, attachTo: attached ? refOf(attached.kind as ItemRef["kind"], attached.id) : null, key } });
+    sseHub.publish(userId, { event: "documents", data: { id: file.id } });
+    return reply.code(201).send({
+      file: { id: file.id, ref: refOf("file", file.id), filename: file.filename, url: hubUrl(hubPath("file", file.id) ?? "/files") },
+      attached: attached ? { ...attached, ref: refOf(attached.kind as ItemRef["kind"], attached.id) } : null,
+      message: `Saved “${file.filename}” in Files${attached ? ` and attached it to “${attached.title}”` : ""}.${attachProblem ? ` It was not added to the page: ${attachProblem}` : ""}`,
+    });
   });
 
   app.patch("/api/bridge/write/tasks/:id", async (request, reply) => {

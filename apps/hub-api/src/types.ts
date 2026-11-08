@@ -22,6 +22,8 @@ declare module "fastify" {
     tokenId?: string;
     /** A `bridge` key made with task updates allowed (`ApiToken.canWrite`). */
     tokenCanWrite?: boolean;
+    /** A `bridge` key made with connected apps allowed (`ApiToken.canUseApps`). */
+    tokenCanUseApps?: boolean;
     /** Null means no optional modules. */
     modules: string | null;
   }

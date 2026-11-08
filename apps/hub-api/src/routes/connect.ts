@@ -33,7 +33,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
     const tokens = await prisma.apiToken.findMany({
       where: { userId: request.userId, revokedAt: null, scope: "bridge" },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, prefix: true, canWrite: true, lastUsedAt: true, createdAt: true },
+      select: { id: true, name: true, prefix: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });
     const httpUp = await httpBridgeUp();
     const latest = tokens.reduce((max, row) => Math.max(max, row.lastUsedAt?.getTime() ?? 0), 0);
@@ -57,7 +57,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/connect/token", async (request) => {
     requireBrowserSession(request);
     const body = z
-      .object({ name: z.string().trim().min(1).max(60).optional(), canWrite: z.boolean().default(true) })
+      .object({ name: z.string().trim().min(1).max(60).optional(), canWrite: z.boolean().default(true), canUseApps: z.boolean().default(true) })
       .parse(request.body ?? {});
     if (request.authVia === "bypass") {
       await prisma.user.upsert({
@@ -67,16 +67,17 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
       });
     }
     const name = body.name ?? (body.canWrite ? "Editor connection" : "Read-only connection");
+    const canUseApps = body.canUseApps;
     const { token, hash, prefix } = newApiToken();
     const row = await prisma.apiToken.create({
-      data: { userId: request.userId, name, tokenHash: hash, prefix, scope: "bridge", canWrite: body.canWrite },
+      data: { userId: request.userId, name, tokenHash: hash, prefix, scope: "bridge", canWrite: body.canWrite, canUseApps },
     });
     await appendLedger({
       userId: request.userId,
       actor: "me",
       action: "token.create",
-      payload: { name, prefix, scope: "bridge", canWrite: body.canWrite },
+      payload: { name, prefix, scope: "bridge", canWrite: body.canWrite, canUseApps },
     });
-    return { id: row.id, token, prefix, canWrite: row.canWrite };
+    return { id: row.id, token, prefix, canWrite: row.canWrite, canUseApps: row.canUseApps };
   });
 }

@@ -13,7 +13,7 @@ export type HubQuery = Record<string, string | number | undefined>;
 
 export interface HubClient {
   get(path: string, query?: HubQuery): Promise<unknown>;
-  /** Writes are only under /api/bridge/write/ (docs/CONTEXT_BRIDGE.md §5). */
+  /** Writes are only under /api/bridge/write/ and /api/bridge/act/ (docs/CONTEXT_BRIDGE.md §5). */
   post?(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
 }
@@ -42,7 +42,8 @@ export function createHubClient(config: BridgeConfig = loadBridgeConfig()): HubC
           ...headersFor(config.auth),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(8000),
+        // An action (a meeting read by a model, a connected app, a file) can take a while; a read cannot.
+        signal: AbortSignal.timeout(method === "GET" ? 15_000 : 180_000),
       });
     } catch {
       // Connection refused, DNS, or timeout. An empty brief would look like "no context".

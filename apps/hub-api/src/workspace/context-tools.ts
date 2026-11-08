@@ -9,6 +9,7 @@
  * (`POST /api/devices/self/jobs/:id/context`), answered for the job's own space only.
  */
 import type { PrismaClient } from "@prisma/client";
+import type { FastifyInstance } from "fastify";
 import { itemNeighbors, GraphError, type GraphCtx } from "../context/graph/neighbors.js";
 import { workContext } from "../context/graph/packet.js";
 import { parseItemRef } from "../context/graph/refs.js";
@@ -54,6 +55,22 @@ export const CONTEXT_TOOL_SPECS = [
   },
 ] as const;
 
+/** The run MCP server's specs for the action tools (scripts/ensemble-ask-mcp.mjs keeps its own copy). */
+export const RUN_ACTION_TOOL_SPECS = [
+  {
+    name: "ensemble_actions",
+    description:
+      "List what you can do in the person's Ensemble with ensemble_act: tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes, comments. With names: each action's full description and inputSchema.",
+    parameters: { type: "object", properties: { groups: str("Comma list of groups."), names: str("Comma list of action names to describe in full.") } },
+  },
+  {
+    name: "ensemble_act",
+    description:
+      "Change the person's Ensemble records around your work: update a task (status, owner, due, labels, people), add a page, put a task or page on a board, make a diagram or plot, link people and projects, add a meeting note. action is a name from ensemble_actions; input matches its inputSchema. Changes run at once and appear in Ensemble's Undo. Your own result still goes through report_result.",
+    parameters: { type: "object", properties: { action: str("An action name, e.g. hub_update_task."), input: { type: "object", description: "The action's arguments." } }, required: ["action"] },
+  },
+] as const;
+
 const asText = (value: unknown) => (typeof value === "string" ? value : value == null ? "" : String(value));
 
 /** The answer to one context tool call, as Markdown, for the task's own space. */
@@ -92,6 +109,55 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Ensemble actions for an agent run (bridge/actions.ts): the same allowlist an editor's key has, as a
+ * key made with changes allowed and without the connected apps. Offered to coding agents through the
+ * run's MCP server; Ensemble's own agent has the assistant's tools instead.
+ */
+export const RUN_ACTION_TOOLS = ["ensemble_actions", "ensemble_act"] as const;
+export type RunActionToolName = (typeof RUN_ACTION_TOOLS)[number];
+export const isRunActionTool = (name: string): name is RunActionToolName => (RUN_ACTION_TOOLS as readonly string[]).includes(name);
+
+/** What a run may do in its job's space: change Ensemble's records on the allowlist, never use the apps. */
+export const runActionCaller = (userId: string, modules: string | null | undefined) =>
+  ({ userId, modules: modules ?? null, authVia: "token" as const, tokenScope: "bridge" as const, tokenCanWrite: true, tokenCanUseApps: false, tokenId: undefined });
+
+/** The answer to ensemble_actions or ensemble_act for a run, as text for the agent. */
+export async function answerRunAction(app: FastifyInstance, userId: string, modules: string | null | undefined, name: RunActionToolName, args: Record<string, unknown>): Promise<string> {
+  const { BridgeActionError, listActions, runAction } = await import("../bridge/actions.js");
+  const caller = runActionCaller(userId, modules);
+  const strings = (value: unknown) => (Array.isArray(value) ? value : asText(value).split(",")).map((item) => asText(item).trim()).filter(Boolean);
+  if (name === "ensemble_actions") {
+    const names = strings(args.names);
+    const actions = listActions(caller, { groups: strings(args.groups), names }).map((row) => (names.length ? row : { name: row.name, group: row.group, write: row.write, description: row.description.split(/\.(\s|$)/)[0] }));
+    return JSON.stringify({ actions, notes: "Run one with ensemble_act {action, input}. Changes run at once and appear in Ensemble's Undo; read a record first (most changes ask for its current title as matchTitle). Pass names to get an action's inputSchema." }, null, 2);
+  }
+  const action = asText(args.action).trim();
+  if (!action) return "Pass action (a name from ensemble_actions) and input.";
+  const input = args.input && typeof args.input === "object" && !Array.isArray(args.input) ? args.input : {};
+  try {
+    return JSON.stringify(await runAction(app, caller, action, input), null, 2);
+  } catch (error) {
+    if (error instanceof BridgeActionError) return JSON.stringify({ error: error.message, ...(error.detail ?? {}) }, null, 2);
+    throw error;
+  }
+}
+
+/** Runs an Ensemble action for a job: on the web for a job claimed from there (under its lease), else on this Ensemble. */
+export async function runRunAction(input: { app: FastifyInstance; userId: string; jobContext: unknown; modules?: string | null }, name: RunActionToolName, args: Record<string, unknown>): Promise<string> {
+  const hosted = await hostedLease(input.jobContext);
+  if (hosted) {
+    const [{ loadSettings, readDeviceToken }, { hostedClient, remoteApiBase }] = await Promise.all([import("../remote/store.js"), import("../remote/client.js")]);
+    const base = remoteApiBase() ?? loadSettings().apiBase;
+    const token = await readDeviceToken();
+    if (!base || !token) return "This computer is not connected to Ensemble on the web right now, so nothing was changed.";
+    const client = hostedClient(base, token);
+    if (!client.jobAct) return "This Ensemble cannot act on the web's records.";
+    return client.jobAct(hosted.hostedId, hosted.leaseToken, { name, args });
+  }
+  return answerRunAction(input.app, input.userId, input.modules, name, args);
 }
 
 /** The hosted job a local run mirrors, and its lease, when this computer runs work for an account on the web. */

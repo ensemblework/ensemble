@@ -42,8 +42,8 @@ export type Trouble = { problem: string; fix: string };
 
 const KEY: GuideStep = {
   kind: "key",
-  title: "Create your read-only key",
-  body: "This key is how an app proves it is you. It can look at your tasks, people, and notes. It cannot add, edit, or send anything. Ensemble shows the key once. Copy it before you move on.",
+  title: "Create your key",
+  body: "This key is how an app proves it is you. It can look at your tasks, people, and notes. Tick what else it may do: make changes in Ensemble (tasks, pages, boards, diagrams, files), and use the apps you connected. It can never change your settings. Ensemble shows the key once. Copy it before you move on.",
   scene: "key",
   hotspot: "Create key",
 };

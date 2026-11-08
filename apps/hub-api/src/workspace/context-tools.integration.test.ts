@@ -56,6 +56,19 @@ test("a paired computer's claim carries the task's context, and its run asks for
   assert.equal((await ask("wrong-lease", { name: "ensemble_context", args: {} })).statusCode, 409);
   assert.equal((await ask(spec.leaseToken, { name: "drop_tables", args: {} })).statusCode, 400);
   assert.equal((await user.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/context`, headers: { "x-ensemble-job-lease": spec.leaseToken }, payload: { name: "ensemble_context" } })).statusCode, 403);
+
+  // The run changes Ensemble around its task through the editors' allowlist, under the same lease; never the apps.
+  const act = (body: unknown) => token.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/act`, headers: { "x-ensemble-job-lease": spec.leaseToken }, payload: body as Record<string, unknown> });
+  const listed = await act({ name: "ensemble_actions", args: { groups: "tasks" } });
+  assert.equal(listed.statusCode, 200, listed.body);
+  assert.match((listed.json() as { text: string }).text, /hub_update_task/);
+  const changed = await act({ name: "ensemble_act", args: { action: "hub_update_task", input: { taskId: w.task.id, matchTitle: w.task.title, labels: ["from-run"] } } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.deepEqual((await db.task.findUniqueOrThrow({ where: { id: w.task.id } })).labels, ["from-run"]);
+  const settings = await act({ name: "ensemble_act", args: { action: "hub_update_settings", input: {} } });
+  assert.match((settings.json() as { text: string }).text, /assistant and Ensemble Node/);
+  const apps = await act({ name: "ensemble_act", args: { action: "gmail_search", input: { query: "x" } } });
+  assert.match((apps.json() as { text: string }).text, /connected apps/);
 });
 
 test("ready-for-review notices follow the automation switch", async () => {

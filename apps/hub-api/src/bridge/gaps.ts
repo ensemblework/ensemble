@@ -49,12 +49,13 @@ export const DATA_GAPS: readonly DataGap[] = [
     requested: "writes (create, update, delete, send, approve)",
     status: "partial",
     detail:
-      "A key made with task updates allowed can add a task (proposed or to do), move a task's status, and add a progress note to its page (ensemble_create_task, ensemble_update_task); each write is in the ledger. Nothing else: the bridge cannot delete, send mail, answer a Needs-me card, or create a diagram or a plot. Those go through the Hub assistant, which waits for Apply.",
+      "A key made with changes allowed runs Ensemble's own actions on an allowlist (ensemble_actions lists them, ensemble_act runs one): tasks (any field, one delete to Trash), pages (create, append, rewrite, block edits, move, one delete to Trash), custom boards (create, change, put a task or page in a column), diagrams, plots and datasets, files (upload with ensemble_upload_file, a file to a page, a page to a file), projects, deliverables, people, repositories, meeting notes and comments. Each runs at once, is in the ledger, and Ensemble's Undo has the changes it supports. Settings, skills, reminders, routines, imports, layouts, bulk deletes, Needs-me answers and assigning work to agents stay with the Hub assistant and Ensemble Node.",
   },
   {
-    requested: "diagram writes",
-    status: "excluded",
-    detail: "ensemble_diagrams and ensemble_read kind diagram are read-only. Creating or editing a diagram is a Hub assistant write (hub_create_diagram, hub_update_diagram). ensemble_repo_overview and ensemble_repo_file only read a checkout the person already allowed, and they skip secrets.",
+    requested: "connected apps (mail, calendars, Notion, GitHub, Slack…)",
+    status: "partial",
+    detail:
+      "A key made with apps allowed reaches the apps the person connected to Ensemble with their own sign-in (ensemble_apps, ensemble_app_call): the built-in Google, Microsoft 365, Zoom, DocuSign and Jira tools, search and read across connected apps, and each app's own MCP tools. Changes in an app also need changes allowed and follow the person's connected-app writes switch; Ensemble's Undo cannot reverse them.",
   },
 ];
 

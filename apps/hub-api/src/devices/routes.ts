@@ -6,7 +6,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  */
 import { workContext } from "../context/graph/packet.js";
 import { GraphError } from "../context/graph/neighbors.js";
-import { answerContextTool, isContextTool, type ContextToolName } from "../workspace/context-tools.js";
+import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
 import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 import { randomBytes } from "node:crypto";
@@ -573,6 +573,26 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       if (error instanceof GraphError) return reply.code(error.statusCode).send({ error: error.message });
       throw error;
     }
+  });
+
+  /**
+   * An agent run's Ensemble action (workspace/context-tools.ts runRunAction), under the job's lease:
+   * the editors' allowlist (bridge/actions.ts) without the connected apps, in the job's space. Only in
+   * the computer owner's own space: in a space shared with them a run reads, and the node or the person acts.
+   */
+  app.post("/api/devices/self/jobs/:id/act", { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const lease = z.string().min(1).max(200).parse(request.headers["x-ensemble-job-lease"]);
+    const held = await holdLease(app, device, id, lease);
+    if (!held.ok) return reply.code(held.status).send({ error: held.message });
+    const body = z.object({ name: z.string().refine(isRunActionTool, "Unknown tool."), args: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    if (held.job.userId !== device.userId && body.name === "ensemble_act") {
+      return reply.code(403).send({ error: "In a space shared with you, an agent run reads Ensemble but does not change it. Report your result with report_result." });
+    }
+    const space = await prisma.user.findUnique({ where: { id: held.job.userId }, select: { moduleSet: true } });
+    return { text: await answerRunAction(app, held.job.userId, space?.moduleSet ?? null, body.name as RunActionToolName, body.args) };
   });
 
   app.post("/api/devices/self/jobs/:id/progress", async (request, reply) => {

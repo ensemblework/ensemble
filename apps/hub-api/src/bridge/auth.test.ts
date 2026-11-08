@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bridgeWriteRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./auth.js";
+import { bridgeAppsRejected, bridgeWriteRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./auth.js";
 
 test("bridge-scope tokens may reach only bridge reads, hosted MCP, and CLI logout", () => {
   assert.equal(readOnlyTokenRejected("bridge", "GET", "/api/bridge/today"), null);
@@ -31,6 +31,16 @@ test("bridge writes accept a signed-in page, a full key or a writing bridge key"
   assert.ok(bridgeWriteRejected({ authVia: "token", tokenScope: "device", tokenCanWrite: true }));
   assert.ok(bridgeWriteRejected({ authVia: "token", tokenScope: "hooks", tokenCanWrite: true }));
   assert.ok(bridgeWriteRejected({ authVia: "link" }));
+});
+
+test("any bridge key may POST an action; the action checks its grants; apps need their own grant", () => {
+  assert.equal(readOnlyTokenRejected("bridge", "POST", "/api/bridge/act/hub_create_page"), null);
+  assert.match(readOnlyTokenRejected("bridge", "PUT", "/api/bridge/act/hub_create_page") ?? "", /read-only/i);
+  assert.match(readOnlyTokenRejected("bridge", "POST", "/api/bridge/actions") ?? "", /read-only/i);
+  assert.equal(bridgeAppsRejected({ authVia: "token", tokenScope: "bridge", tokenCanUseApps: true }), null);
+  assert.match(bridgeAppsRejected({ authVia: "token", tokenScope: "bridge", tokenCanUseApps: false }) ?? "", /connected apps/);
+  assert.equal(bridgeAppsRejected({ authVia: "token", tokenScope: "full" }), null);
+  assert.ok(bridgeAppsRejected({ authVia: "token", tokenScope: "device", tokenCanUseApps: true }));
 });
 
 test("device-scope tokens stay limited to their own device routes", () => {

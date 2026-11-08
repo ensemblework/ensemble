@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -10,7 +13,7 @@ import { repoFromRemote } from "../src/git.js";
 import { createHubClient } from "../src/hub.js";
 import { startHttpServer } from "../src/http.js";
 import { assertReadOnlyNames } from "../src/read-only.js";
-import { buildServer, buildServerForKey, TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/server.js";
+import { ACTION_TOOL_NAMES, APP_TOOL_NAMES, buildServer, buildServerForKey, TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/server.js";
 import { IDS, startMockHub } from "./mock-hub.js";
 
 function textOf(result: unknown): string {
@@ -106,6 +109,59 @@ describe("task updates through the bridge", () => {
   });
 });
 
+describe("actions, files and apps through the bridge", () => {
+  const connect = async (server: Awaited<ReturnType<typeof buildServerForKey>>) => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: "ensemble-bridge-test", version: "0.0.0" });
+    await client.connect(clientTransport);
+    return client;
+  };
+
+  it("runs actions, uploads a local file by path, and offers apps only to a key with apps allowed", async () => {
+    const writer = await startMockHub({ canWrite: true, canUseApps: true });
+    const dir = await mkdtemp(join(tmpdir(), "ensemble-upload-"));
+    try {
+      await writeFile(join(dir, "deck.pdf"), Buffer.from("%PDF-1.4 tiny"));
+      const client = await connect(await buildServerForKey({ hub: hubFor(writer.url) }));
+      const names = (await client.listTools()).tools.map((tool) => tool.name);
+      for (const name of [...ACTION_TOOL_NAMES, ...APP_TOOL_NAMES, ...WRITE_TOOL_NAMES]) assert.ok(names.includes(name), name);
+      const apps = (await client.listTools()).tools.find((tool) => tool.name === "ensemble_apps");
+      assert.match(apps?.description ?? "", /Connected now: Notion, GitHub/);
+
+      const listed = await client.callTool({ name: "ensemble_actions", arguments: {} });
+      assert.match(textOf(listed), /"description": "Make a page\."/, "a short list gives each action's first sentence");
+      const acted = await client.callTool({ name: "ensemble_act", arguments: { action: "hub_create_page", input: { title: "Notes" } } });
+      assert.notEqual(acted.isError, true, textOf(acted));
+      const uploaded = await client.callTool({ name: "ensemble_upload_file", arguments: { path: join(dir, "deck.pdf"), attachTo: `ensemble://task/${IDS.task}` } });
+      assert.notEqual(uploaded.isError, true, textOf(uploaded));
+      const called = await client.callTool({ name: "ensemble_app_call", arguments: { tool: "apps_search", input: { query: "roadmap" } } });
+      assert.notEqual(called.isError, true, textOf(called));
+      assert.deepEqual(writer.writes.map((row) => row.path), ["/api/bridge/act/hub_create_page", "/api/bridge/write/files", "/api/bridge/act/apps_search"]);
+      assert.deepEqual(writer.writes[0]!.body, { input: { title: "Notes" } });
+      const file = writer.writes[1]!.body as { filename: string; dataBase64: string; attachTo: string };
+      assert.equal(file.filename, "deck.pdf");
+      assert.equal(Buffer.from(file.dataBase64, "base64").toString(), "%PDF-1.4 tiny");
+      assert.equal(file.attachTo, `ensemble://task/${IDS.task}`);
+
+      // Ensemble on the web cannot read the editor's disk.
+      const hosted = await connect(buildServer({ hub: hubFor(writer.url), canWrite: true, localFiles: false }));
+      const refused = await hosted.callTool({ name: "ensemble_upload_file", arguments: { path: join(dir, "deck.pdf") } });
+      assert.equal(refused.isError, true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await writer.close();
+    }
+    const plain = await startMockHub({ canWrite: true });
+    try {
+      const names = (await (await connect(await buildServerForKey({ hub: hubFor(plain.url) }))).listTools()).tools.map((tool) => tool.name);
+      for (const name of APP_TOOL_NAMES) assert.ok(!names.includes(name), name);
+    } finally {
+      await plain.close();
+    }
+  });
+});
+
 describe("MCP client against a mocked hub-api", () => {
   it("lists every tool and calls each one", async () => {
     const mock = await startMockHub();
@@ -121,9 +177,10 @@ describe("MCP client against a mocked hub-api", () => {
     const listed = await client.listTools();
     assert.deepEqual(
       listed.tools.map((tool) => tool.name).sort(),
-      [...TOOL_NAMES].sort(),
+      [...TOOL_NAMES, ...ACTION_TOOL_NAMES].sort(),
     );
     for (const tool of listed.tools) {
+      if (tool.name === "ensemble_act") continue;
       assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
       assert.equal(tool.annotations?.destructiveHint, false, tool.name);
     }
@@ -248,7 +305,7 @@ describe("stdio and streamable http", () => {
     const client = new Client({ name: "stdio-smoke", version: "0.0.0" });
     await client.connect(transport);
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, TOOL_NAMES.length);
+    assert.equal(listed.tools.length, TOOL_NAMES.length + ACTION_TOOL_NAMES.length);
     const today = await client.callTool({ name: "ensemble_today", arguments: {} });
     assert.notEqual(today.isError, true, textOf(today));
     assert.match(textOf(today), /Ship the bridge/);

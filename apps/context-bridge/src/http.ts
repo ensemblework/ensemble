@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { assertLoopbackHost, loadBridgeConfig } from "./config.js";
-import { buildServer, keyCanWrite, type BridgeDeps } from "./server.js";
+import { buildServer, keyGrants, type BridgeDeps } from "./server.js";
 import { createHubClient } from "./hub.js";
 
 export interface HttpBridge {
@@ -23,8 +23,17 @@ export async function startHttpServer(deps: BridgeDeps = {}, env = process.env):
   const config = loadBridgeConfig(env);
   assertLoopbackHost(config.httpHost);
   const hub = deps.hub ?? createHubClient(config);
-  // Asked once: a key's task-update permission is set when it is made.
-  const ready = { ...deps, hub, canWrite: deps.canWrite ?? (await keyCanWrite(hub)) };
+  // Asked once: a key's grants are set when it is made.
+  const grants = deps.canWrite === undefined || deps.canUseApps === undefined ? await keyGrants(hub) : null;
+  const ready: BridgeDeps = {
+    ...deps,
+    hub,
+    canWrite: deps.canWrite ?? grants!.canWrite,
+    canUseApps: deps.canUseApps ?? grants!.canUseApps,
+    apps: deps.apps ?? grants?.apps ?? [],
+    // Any process on this computer can reach a loopback port: a file path is read only behind the HTTP token.
+    localFiles: Boolean(config.httpToken) && deps.localFiles !== false,
+  };
   const server = createServer(async (req, res) => {
     try {
       await handle(req, res, config.httpToken, ready);

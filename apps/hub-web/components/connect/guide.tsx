@@ -541,7 +541,7 @@ function TestStep({
   const [pending, setPending] = useState(false);
   const ready = hasKey && built && (!requiresHttp || httpUp);
   const lines = [
-    hasKey ? "Your key is saved." : "Create your read-only key on the first step.",
+    hasKey ? "Your key is saved." : "Create your key on the first step.",
     built ? "The connector program is ready." : "Run the prepare command, then test again.",
     state === "connected"
       ? "An app has already used your key."

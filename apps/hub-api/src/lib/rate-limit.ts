@@ -175,6 +175,8 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "POST" && path === "/api/cli/auth/token") return "cliToken";
   if ((method === "GET" && path === "/api/cli/auth/request") || (method === "POST" && path === "/api/cli/auth/approve")) return "cliApprove";
   if (method === "POST" && path === "/mcp") return "mcp";
+  // Editors calling the bridge directly (the CLI's MCP server): the same allowance as hosted MCP.
+  if (method === "POST" && (path.startsWith("/api/bridge/act/") || path.startsWith("/api/bridge/write/"))) return "mcp";
   if (method === "POST" && (path === "/api/assistant/turn" || path === "/api/models/test")) return "model";
   if (method === "GET" && path === "/api/models") return "model";
   if (method === "PUT" && /^\/api\/model-keys\/[^/]+$/.test(path)) return "model";
