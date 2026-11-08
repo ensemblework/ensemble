@@ -2361,6 +2361,10 @@ export type MeetingSessionRecord = {
   attachState: string;
   personIds: string[];
   projectId?: string | null;
+  /** The meeting note these notes are kept as once the meeting ends: its AI read and tasks hang off it. */
+  meetingNoteId?: string | null;
+  /** Another meeting of the same series (a weekly sync) can be found. */
+  inSeries?: boolean;
   startedAt: string;
   endedAt: string | null;
   href: string;
@@ -2389,7 +2393,26 @@ export type MeetingCue = {
   decisions: Array<{ text: string }>;
   openTasks: Array<{ id: string; title: string; status: string; due: string | null; href: string }>;
   attachState: string;
+  /** The last meeting of this one's series, with what it decided and left open. */
+  previous?: PreviousMeeting | null;
+  /** A prep brief written before this meeting (Settings › Automations, or Prepare). */
+  prep?: MeetingPrep | null;
 };
+
+export type PreviousMeeting = {
+  ref: string;
+  id: string;
+  kind: "note" | "session";
+  title: string;
+  at: string;
+  summary: string;
+  decisions: string[];
+  openTasks: Array<{ id: string; title: string; status: string }>;
+  waitingOn: string[];
+  nextTime: string[];
+};
+
+export type MeetingPrep = { text: string; at: string; model: string | null; previousId: string };
 
 export type PageComment = {
   id: string;

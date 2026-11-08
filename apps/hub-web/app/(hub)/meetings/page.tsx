@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CalendarDays, ChevronLeft, ClipboardPaste, FileText, ListChecks, MessageSquare, Plus, Search, Trash2, Upload, Users, X } from "lucide-react";
 import { Dialog, InfoTip, PageHeader, SkeletonRows, Spinner } from "@/components/ui";
+import { MeetingAiPanel } from "@/components/meetings/meeting-ai";
 import { MeetingNoteDetail, personHref } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
 import { connectedApi, type ImportedMeetingNote } from "@/lib/api-connected";
@@ -282,6 +283,12 @@ function MeetingsBody() {
     if (!active && shelf[0]) setActive({ kind: shelf[0].kind, id: shelf[0].id });
   }, [active, shelf, loaded]);
   const note = active?.kind === "note" ? importedNotes.find((row) => row.id === active.id) : undefined;
+  // A link to notes typed in Ensemble names their meeting note (a notification, the graph, an agent's ensemble:// link): open the notes.
+  const ownerSession = active?.kind === "note" && !note ? (list.data?.sessions ?? []).find((row) => row.meetingNoteId === active.id) : undefined;
+  useEffect(() => {
+    if (ownerSession) choose({ kind: "session", id: ownerSession.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerSession?.id]);
   const fileLimit = sources.data?.fileLimitBytes ?? TEN_MB;
   const eventOf = (event: CalendarEvent) => ({ id: event.id, title: event.title, start: event.start });
   const linked = (eventId: string) => ({
@@ -432,6 +439,7 @@ function MeetingsBody() {
                   </div>
                 </div>
               ) : null}
+              {session.status === "ended" || session.meetingNoteId ? <MeetingAiPanel key={session.id} noteId={session.meetingNoteId ?? null} sessionId={session.id} /> : null}
               {session.recap ? (
                 <section className="meeting-recap mt-5">
                   <h3 className="text-[13px] font-semibold">Recap</h3>

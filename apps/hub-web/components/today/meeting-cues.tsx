@@ -4,7 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, type MeetingCue } from "@/lib/api";
+import { meetingsApi } from "@/lib/api-meetings";
+import { MarkdownText } from "@/components/markdown-text";
 import { useToast } from "../toast";
+import { Spinner } from "../ui";
 
 function whenLabel(start: string): string {
   const date = new Date(start);
@@ -85,6 +88,14 @@ function CueCard({
     onError: (error) => onError((error as Error).message),
   });
 
+  const prepare = useMutation({
+    mutationFn: () => meetingsApi.prepEvent(cue.artifactId!),
+    onSuccess: () => onChange(),
+    onError: (error) => onError((error as Error).message),
+  });
+  const previous = cue.previous ?? null;
+  const previousHref = previous ? `/meetings?${previous.kind === "session" ? "session" : "note"}=${previous.id}` : null;
+
   const label = cue.kind === "follow_up" ? "Follow-up" : cue.kind === "live" ? "Happening now" : "Coming up";
   const pending = cue.session?.attachState === "pending";
 
@@ -104,6 +115,35 @@ function CueCard({
               <span className="text-muted">With </span>
               {cue.attendees.map((person) => person.name).join(", ")}
             </p>
+          ) : null}
+          {cue.prep ? (
+            <div className="rounded-lg border border-line bg-bg px-3 py-2" data-meeting-prep>
+              <div className="text-[12px] font-medium text-muted">Prep</div>
+              <div className="mt-1 text-[13px] leading-5"><MarkdownText text={cue.prep.text} /></div>
+            </div>
+          ) : null}
+          {previous ? (
+            <div data-meeting-previous={previous.id}>
+              <div className="flex items-center gap-2 text-[12px] font-medium text-muted">
+                <span>Last time</span>
+                {previousHref ? <Link href={previousHref} className="font-normal hover:underline">{previous.title} · {new Date(previous.at).toLocaleDateString()}</Link> : null}
+                {!cue.prep && cue.artifactId && cue.kind !== "follow_up" ? (
+                  <button type="button" className="btn-ghost ml-auto h-6 px-2 text-[12px]" disabled={prepare.isPending} onClick={() => prepare.mutate()}>
+                    {prepare.isPending ? <Spinner size={11} /> : null}Prepare
+                  </button>
+                ) : null}
+              </div>
+              {previous.summary ? <p className="mt-1 text-muted">{previous.summary}</p> : null}
+              {previous.openTasks.length ? (
+                <ul className="mt-1 space-y-1">
+                  {previous.openTasks.map((task) => (
+                    <li key={task.id}><Link href={`/tasks/${task.id}`} className="hover:underline">{task.title}</Link></li>
+                  ))}
+                </ul>
+              ) : null}
+              {previous.waitingOn.length ? <p className="mt-1 text-muted">Waiting on: {previous.waitingOn.join("; ")}</p> : null}
+              {previous.nextTime.length ? <p className="mt-1 text-muted">Raise: {previous.nextTime.join("; ")}</p> : null}
+            </div>
           ) : null}
           <div>
             <div className="text-[12px] font-medium text-muted">Past decisions</div>

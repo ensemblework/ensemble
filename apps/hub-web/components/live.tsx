@@ -36,6 +36,8 @@ const INVALIDATES: Record<string, string[][]> = {
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
   deliverable: [["deliverables"], ["graph"]],
+  // A meeting's AI read, project or prep brief changed (connectors/meetings/ai.ts, cowork/prep.ts).
+  meetings: [["meeting-note"], ["meetings-imported"], ["meeting-sessions"], ["meeting-session"], ["meeting-cues"], ["meeting-calendar"], ["graph"]],
   // A request answered or closed anywhere also leaves the bell's Needs me (hub-api notifications/needs.ts).
   approval: [["approvals"], ["node-approvals"], ["shell"], ["notifications"]],
   decision: [["decisions"], ["shell"], ["notifications"]],

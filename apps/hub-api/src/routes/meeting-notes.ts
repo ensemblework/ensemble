@@ -141,7 +141,8 @@ function aiView(value: unknown, tasks: NoteRow["tasks"]) {
       mine: item.mine === true,
       grounded: item.grounded === true,
       task: task(item.taskId),
-      alreadyTracked: task(item.alreadyTracked),
+      // Usually a task from elsewhere, so only its id is known here.
+      alreadyTracked: typeof item.alreadyTracked === "string" ? (task(item.alreadyTracked) ?? { id: item.alreadyTracked, title: text(item.existingTask), status: null }) : null,
     })),
     model: text(ai.model),
     at: text(ai.at),

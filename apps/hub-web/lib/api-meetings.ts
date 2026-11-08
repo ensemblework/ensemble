@@ -1,5 +1,7 @@
 import type { CalendarEvent } from "./api";
-import { del, get, post } from "./api";
+import { del, get, patch, post } from "./api";
+import type { MeetingPrep, PreviousMeeting } from "./api";
+import type { MeetingAiStatus } from "./api-connected";
 import { toBase64 } from "./api-files";
 import type { ImportedMeetingNote } from "./api-connected";
 
@@ -79,6 +81,13 @@ export const meetingsApi = {
   importTranscript: async (source: TranscriptSource, choices: { title?: string; occurredAt?: string | null; eventId?: string | null; addPeople?: string[] }) =>
     (await post<{ note: ImportedMeetingNote }>("/api/meetings/transcripts", { ...(await body(source)), ...choices })).note,
   deleteNote: (id: string) => del<{ deleted: boolean }>(`/api/meetings/notes/${encode(id)}`),
+  /** Read a meeting with a model now and propose its tasks, whatever Settings › Automations says. */
+  suggestNote: (id: string) => post<{ aiStatus: MeetingAiStatus }>(`/api/meetings/notes/${encode(id)}/suggest`),
+  suggestSession: (id: string) => post<{ aiStatus: MeetingAiStatus; meetingNoteId: string }>(`/api/meetings/sessions/${encode(id)}/suggest`),
+  /** The project a meeting belongs to; its open tasks follow. */
+  setNoteProject: (id: string, projectId: string | null) => patch<{ note: ImportedMeetingNote }>(`/api/meetings/notes/${encode(id)}`, { projectId }),
+  /** A prep brief for a meeting of a series, written now from last time. */
+  prepEvent: (eventId: string) => post<{ prep: MeetingPrep; previous: PreviousMeeting }>(`/api/meetings/events/${encode(eventId)}/prep`),
   restoreNote: (id: string) => post<{ note: ImportedMeetingNote }>(`/api/meetings/notes/${encode(id)}/restore`),
   makeTask: (id: string, text: string, owner?: string | null) =>
     post<{ task: { id: string; title: string; status: string }; created: boolean; undoEntryId?: string | null }>(`/api/meetings/notes/${encode(id)}/tasks`, { text, ...(owner ? { owner } : {}) }),

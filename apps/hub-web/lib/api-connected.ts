@@ -48,6 +48,44 @@ export type ImportedMeetingNote = {
   project: { id: string; name: string } | null;
   people: Array<{ id: string; name: string | null }>;
   tasks: Array<{ id: string; title: string; status: string }>;
+  /** Another meeting of the same series can be found. */
+  inSeries?: boolean;
+  /** The model's read of the meeting (Settings › Automations › Suggest tasks from meetings, or Suggest tasks). */
+  aiStatus?: MeetingAiStatus | null;
+  aiError?: string | null;
+  ai?: MeetingAiRead | null;
+};
+
+export type MeetingAiStatus = "queued" | "running" | "done" | "failed" | "skipped";
+
+export type MeetingAiItem = {
+  title: string;
+  kind: "task" | "deliverable" | "follow_up" | string;
+  owner: string | null;
+  requestedBy: string | null;
+  due: string | null;
+  dueText: string | null;
+  why: string | null;
+  quote: string | null;
+  at: string | null;
+  details: string | null;
+  mine: boolean;
+  /** Its quote was found in the meeting; only these become proposed tasks. */
+  grounded: boolean;
+  task: { id: string; title: string; status: string } | null;
+  alreadyTracked: { id: string; title: string | null; status: string | null } | null;
+};
+
+export type MeetingAiRead = {
+  summary: string;
+  decisions: string[];
+  openQuestions: string[];
+  nextTime: string[];
+  newPeople: Array<{ name: string; role: string | null }>;
+  project: { name: string; id: string | null; applied: boolean } | null;
+  items: MeetingAiItem[];
+  model: string | null;
+  at: string | null;
 };
 
 export type IdentitySuggestion = {

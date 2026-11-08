@@ -13,6 +13,7 @@ import { useToast } from "../toast";
 import { NoteSourceMark } from "./note-source";
 import { meetingWhen } from "./meeting-time";
 import { TranscriptView } from "./transcript-view";
+import { MeetingAiPanel } from "./meeting-ai";
 
 const ownerLabel = (owner: { name: string | null; email: string | null } | null) => owner?.name ?? owner?.email ?? "Someone";
 export const personHref = (name: string) => `/context?tab=people&search=${encodeURIComponent(name)}`;
@@ -110,12 +111,10 @@ export function MeetingNoteDetail({ note: listed, onDelete }: { note: ImportedMe
             {!note.people.length && !others.length ? <span className="text-faint">No one recorded</span> : null}
           </dd>
         </div>
-        {note.project ? (
-          <div>
-            <dt><FolderKanban size={14} aria-hidden />Project</dt>
-            <dd><Link href={`/projects/${note.project.id}`} className="note-link">{note.project.name}</Link></dd>
-          </div>
-        ) : null}
+        <div>
+          <dt><FolderKanban size={14} aria-hidden />Project</dt>
+          <dd><NoteProject noteId={note.id} project={note.project} /></dd>
+        </div>
         {note.transcriptUrl ? (
           <div>
             <dt><ExternalLink size={14} aria-hidden />Source</dt>
@@ -174,6 +173,8 @@ export function MeetingNoteDetail({ note: listed, onDelete }: { note: ImportedMe
         </section>
       ) : null}
 
+      <MeetingAiPanel noteId={note.id} initial={full.data?.note} />
+
       {full.isPending && (note.lineCount ?? 0) > 0 ? (
         <p className="mt-5 inline-flex items-center gap-2 text-[13px] text-muted"><Spinner size={13} />Loading the transcript…</p>
       ) : transcript.length ? (
@@ -182,6 +183,40 @@ export function MeetingNoteDetail({ note: listed, onDelete }: { note: ImportedMe
         <p className="empty-state mt-5"><FileText size={14} className="mr-1 inline" aria-hidden />{note.sourceLabel} sent no transcript for this meeting.</p>
       ) : null}
     </div>
+  );
+}
+
+/** The project this meeting was about. Changing it moves the meeting's open tasks too. */
+function NoteProject({ noteId, project }: { noteId: string; project: { id: string; name: string } | null }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects, staleTime: 60_000 });
+  const save = useMutation({
+    mutationFn: (projectId: string | null) => meetingsApi.setNoteProject(noteId, projectId),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: MEETING_QUERY.note(noteId) });
+      void client.invalidateQueries({ queryKey: ["meetings-imported"] });
+      void client.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  const active = (projects.data?.projects ?? []).filter((row) => row.status === "active" || row.id === project?.id);
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      {project ? <Link href={`/projects/${project.id}`} className="note-link">{project.name}</Link> : null}
+      <select
+        aria-label="Project this meeting was about"
+        className="field max-w-[200px] py-0.5 text-[12.5px]"
+        value={project?.id ?? ""}
+        disabled={save.isPending}
+        onChange={(event) => save.mutate(event.target.value || null)}
+      >
+        <option value="">{project ? "No project" : "Add to a project…"}</option>
+        {active.map((row) => (
+          <option key={row.id} value={row.id}>{row.name}</option>
+        ))}
+      </select>
+    </span>
   );
 }
 
