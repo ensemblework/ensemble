@@ -16,6 +16,8 @@ const EXPIRES_IN_SECONDS = 600;
 const INTERVAL_SECONDS = 5;
 const SCOPES = ["mcp", "runner"] as const;
 type CliScope = (typeof SCOPES)[number];
+/** Kept with the approved scopes: the key minted at the exchange may also update tasks through the bridge. */
+const WRITE_GRANT = "write";
 
 const StartBody = z.object({
   clientName: z.string().trim().min(1).max(80),
@@ -28,6 +30,7 @@ const UserCodeBody = z.object({
   userCode: z.string().min(1).max(32),
   scopes: z.array(z.enum(SCOPES)).max(2).default([]),
   decision: z.enum(["approve", "deny"]),
+  canWrite: z.boolean().default(true),
 });
 
 const TokenBody = z.object({
@@ -163,14 +166,14 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
     // Secrets are minted at the one-time exchange, so nothing usable is stored here.
     const won = await app.prisma.cliAuthRequest.updateMany({
       where: { id: row.id, status: "pending", consumedAt: null, expiresAt: { gt: now } },
-      data: { status: "approved", userId: request.userId, approvedScopes: scopes, decidedAt: now },
+      data: { status: "approved", userId: request.userId, approvedScopes: body.canWrite ? [...scopes, WRITE_GRANT] : scopes, decidedAt: now },
     });
     if (won.count !== 1) return reply.code(404).send({ error: "Login request not found." });
     await appendLedger({
       userId: request.userId,
       actor: "me",
       action: "cli.auth.approve",
-      payload: { requestId: row.id, clientName: row.clientName, platform: row.platform, scopes },
+      payload: { requestId: row.id, clientName: row.clientName, platform: row.platform, scopes, canWrite: body.canWrite },
     });
     return { ok: true, scopes };
   });
@@ -196,6 +199,7 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
     const userId = row.userId;
     if (row.status !== "approved" || !userId || !row.user) return reply.code(400).send(tokenError("expired_token"));
     const runner = row.approvedScopes.includes("runner");
+    const canWrite = row.approvedScopes.includes(WRITE_GRANT);
     if (runner) await requireVerifiedUser(userId);
 
     const minted = newApiToken();
@@ -212,6 +216,7 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
           tokenHash: minted.hash,
           prefix: minted.prefix,
           scope: "bridge",
+          canWrite,
         },
       });
       const pairing = runner ? await createDevicePairing(tx, userId, now) : null;
@@ -223,7 +228,8 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
     return {
       token: minted.token,
       tokenId: issued.tokenId,
-      scopes: row.approvedScopes,
+      scopes: uniqueScopes(row.approvedScopes.filter((scope): scope is CliScope => (SCOPES as readonly string[]).includes(scope))),
+      canWrite,
       account: { email: row.user.email, name: row.user.name },
       apiBase: requestedOrigin(request),
       appUrl: authWebOrigin(),

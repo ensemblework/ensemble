@@ -14,6 +14,8 @@ import { SecretUseError } from "../credentials/secret-http.js";
 import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { isChatTurn } from "../workspace/trust.js";
+import { CONTEXT_TOOLS, isContextTool, runContextTool } from "../workspace/context-tools.js";
+import { GraphError } from "../context/graph/neighbors.js";
 
 export async function engineRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/engine/ask", async (request, reply) => {
@@ -83,9 +85,20 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     if (!run) return reply.code(401).send({ error: "This run has ended." });
     // Loaded on the computer only: the hosted server never runs a browser.
     const { CAPTURE_RUN_TOOLS, isRunCaptureTool, runRunCaptureTool } = await import("../evidence/capture-tools.js");
-    const known = new Set<string>([...CHAT_TOOLS, ...RUN_TOOLS, ...CREDENTIAL_TOOLS, ...CAPTURE_RUN_TOOLS]);
+    const known = new Set<string>([...CHAT_TOOLS, ...RUN_TOOLS, ...CREDENTIAL_TOOLS, ...CAPTURE_RUN_TOOLS, ...CONTEXT_TOOLS]);
     const body = z.object({ name: z.string().refine((name) => known.has(name), "Unknown tool."), input: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     const chat = isChatTurn(run.ctx.job.context);
+    // The person's records around the task; in Chat, ensemble_search stays the board's own search.
+    if (isContextTool(body.name) && (body.name === "ensemble_context" || !chat)) {
+      try {
+        const space = await app.prisma.user.findUnique({ where: { id: run.ctx.userId }, select: { moduleSet: true } });
+        return { text: await runContextTool({ prisma: app.prisma, userId: run.ctx.userId, taskId: run.ctx.taskId, jobContext: run.ctx.job.context, modules: space?.moduleSet ?? null }, body.name, body.input) };
+      } catch (error) {
+        if (error instanceof GraphError) return reply.code(400).send({ error: error.message });
+        request.log.error({ err: error }, "context tool failed");
+        return reply.code(500).send({ error: "The context tool failed." });
+      }
+    }
     // A saved secret used by reference (credentials/secret-http.ts), in task runs and Chat alike.
     if ((CREDENTIAL_TOOLS as readonly string[]).includes(body.name)) {
       try {

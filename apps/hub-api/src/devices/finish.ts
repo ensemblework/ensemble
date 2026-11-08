@@ -2,6 +2,7 @@
  * Finish a device job the way `executeJob` finishes a server job:
  * Run, Task, TaskTransition, ledger, and a notification. No model call.
  */
+import { noticeReadyForReview } from "../workspace/review-notice.js";
 import type { Prisma, PrismaClient, WorkspaceJob } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
@@ -139,6 +140,7 @@ export async function finishDeviceJob(
     // A finished or stopped run is already on the board and in Runs; only work that needs the person notifies.
     // A node's run reports in its chat, where the node goes on (retries, asks): it does not notify here.
     const nodeRun = await tx.nodeRun.findUnique({ where: { jobId: job.id }, select: { id: true } });
+    if (outcome === "succeeded" && !job.markDone && !nodeRun) await noticeReadyForReview(tx, { userId: job.userId, taskId: job.taskId, title: job.task.title, summary, runId });
     if (outcome !== "succeeded" && outcome !== "cancelled" && !nodeRun) await tx.notification.create({
       data: {
         userId: job.userId,

@@ -2,7 +2,7 @@
 name: tasks
 title: Tasks, todos, projects and deliverables
 when: create, change, move, finish, delete or restore tasks, todos, projects and deliverables; what is due or overdue
-tools: hub_list_tasks, hub_get_task, hub_create_tasks, hub_update_task, hub_delete_task, hub_delete_tasks, hub_assign_to_agent, hub_list_agent_options, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher, hub_list_watchers, hub_cancel_watcher, hub_update_project, hub_run_workflow, hub_manage_record, hub_read_record_details
+tools: hub_list_tasks, hub_get_task, hub_item_context, hub_search_work, hub_create_tasks, hub_update_task, hub_delete_task, hub_delete_tasks, hub_assign_to_agent, hub_list_agent_options, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher, hub_list_watchers, hub_cancel_watcher, hub_update_project, hub_run_workflow, hub_manage_record, hub_read_record_details
 match: \b(tasks?|todos?|to-dos?|deliverables?|projects?|board|backlog|kanban|clear (it|everything|all)|due|overdue|priorit(y|ies)|assign(ed)?|mark(ed)? .{0,30}(done|complete)|move .{0,40} to|in progress|blocked)\b
 paths: /board, /tasks, /projects, /completed, /today
 mentions: task, project, deliverable
@@ -13,6 +13,7 @@ Find before you write
 - By words: hub_list_tasks with query (title, description, notes). Use status/owner/label to narrow. Use offset when total is larger than what came back.
 - By id from the board list in this prompt, a mention, or the open page. Never invent an id; never reuse a similar task's id.
 - Projects: hub_list_projects. Deliverables: hub_list_deliverables with the projectId. People: hub_list_people.
+- Everything around one task (the meeting and words it came from, people, dependencies, related and earlier work): hub_item_context with its handle. Use it before preparing, explaining or assigning a task.
 
 Do the request
 - Add one or several: hub_create_tasks with every task in one call. Title is a short action ("Send Q3 deck to Mira"). Put detail, steps and context in page (Markdown for the task's page). Use status "proposed" for work you inferred, "todo" when they asked for it.

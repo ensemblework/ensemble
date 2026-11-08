@@ -3,6 +3,7 @@
  * again, whatever the prompt said. A refusal comes back to the model as a
  * plain result, so it can report it instead of retrying around it.
  */
+import { CONTEXT_TOOL_SPECS, runContextTool } from "./context-tools.js";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -244,10 +245,12 @@ const CODE: ToolSpec[] = [
  * `opens`: Ensemble's own model loop, so view_attachment is offered. read_attachment (a file's
  * extracted text) is off while EXTRACTED_TEXT_TO_MODELS is off (files/extracted-text-policy.ts).
  */
+const CONTEXT: ToolSpec[] = CONTEXT_TOOL_SPECS.map((spec) => ({ name: spec.name, description: spec.description, parameters: spec.parameters as unknown as Record<string, unknown> }));
+
 export function toolSpecs(kind: string, network: boolean, opens = false): ToolSpec[] {
   const files = [...(EXTRACTED_TEXT_TO_MODELS ? [READ_ATTACHMENT] : []), ...(opens ? [VIEW_ATTACHMENT] : [])];
-  if (kind === "research") return [...RESEARCH, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, ...files, ...COMMON];
-  return [...CODE, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, ...files, ...(network ? RESEARCH : []), ...COMMON];
+  if (kind === "research") return [...RESEARCH, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, ...files, ...CONTEXT, ...COMMON];
+  return [...CODE, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, ...files, ...CONTEXT, ...(network ? RESEARCH : []), ...COMMON];
 }
 
 export const chatSpecs = (specs: ToolSpec[]) => specs.map((spec) => ({ type: "function", function: spec }));
@@ -823,6 +826,13 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
   }
   try {
     switch (name) {
+      case "ensemble_context":
+      case "ensemble_search": {
+        await ctx.progress(name === "ensemble_search" ? `Searching Ensemble: ${s("query")}` : "Reading context from Ensemble");
+        const space = await ctx.prisma.user.findUnique({ where: { id: ctx.userId }, select: { moduleSet: true } });
+        const text = await runContextTool({ prisma: ctx.prisma, userId: ctx.userId, taskId: ctx.taskId, jobContext: ctx.job?.context, modules: space?.moduleSet ?? null }, name, raw);
+        return { ok: true, result: { text }, summary: name === "ensemble_search" ? `Searched Ensemble for “${s("query")}”` : "Read context from Ensemble" };
+      }
       case "search_papers": {
         await ctx.progress(`Searching papers: ${s("query")}`);
         const found = await searchPapers(s("query"), { limit: n("limit", 8), fromYear: raw.from_year as number | undefined, toYear: raw.to_year as number | undefined, signal: ctx.signal });

@@ -7,7 +7,6 @@ import { PageDocument } from "@ensemble/shared-types";
 import {
   actOnNudge,
   askEnsemble,
-  searchWorkspace,
   attachMeetingNotes,
   commitQuickCapture,
   declineMeetingAttach,
@@ -155,10 +154,7 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
     return summarizeMeetings(db, request.userId, body.question);
   });
 
-  app.get("/api/context/search", async (request) => {
-    const { q } = z.object({ q: z.string().trim().min(1).max(500) }).parse(request.query);
-    return searchWorkspace(db, request.userId, q);
-  });
+  // GET /api/context/search lives in routes/context.ts: one route answers the search box and ranked search.
 
   app.post("/api/ask", async (request) => {
     const body = z.object({ question: z.string().min(1).max(500) }).parse(request.body);

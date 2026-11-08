@@ -70,18 +70,53 @@ export function bridgeAuthRejected(
   return null;
 }
 
+/** Task writes an editor makes through the Context Bridge (bridge/write-routes.ts). */
+export const BRIDGE_WRITE_PREFIX = "/api/bridge/write/";
+
+function cleanPath(path: string): string {
+  return (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
+}
+
+function isBridgeWrite(method: string, path: string): boolean {
+  return (method === "POST" || method === "PATCH") && `${cleanPath(path)}/`.startsWith(BRIDGE_WRITE_PREFIX);
+}
+
 export function bridgeMethodRejected(method: string, path: string): boolean {
   if (!path.startsWith("/api/bridge")) return false;
+  if (isBridgeWrite(method, path)) return false;
   return method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 }
 
-/** A `bridge`-scoped key may only read the Context Bridge. It cannot mint tokens or change data. */
-export function readOnlyTokenRejected(scope: string | undefined, method: string, path: string): string | null {
+export const READ_ONLY_KEY = "This key is read-only. It can only look at Ensemble.";
+
+/**
+ * A `bridge`-scoped key may read the Context Bridge. A key made with task updates allowed may also
+ * write under /api/bridge/write/. It cannot mint tokens or change anything else.
+ */
+export function readOnlyTokenRejected(scope: string | undefined, method: string, path: string, canWrite = false): string | null {
   if (scope !== "bridge") return null;
-  const clean = (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
+  const clean = cleanPath(path);
   const read = method === "GET" || method === "HEAD" || method === "OPTIONS";
   if (read && (clean === "/api/bridge" || clean.startsWith("/api/bridge/"))) return null;
   if (clean === "/mcp" && (method === "POST" || method === "GET" || method === "DELETE")) return null;
   if (clean === "/api/cli/logout" && method === "POST") return null;
-  return "This key is read-only. It can only look at Ensemble.";
+  if (canWrite && isBridgeWrite(method, path)) return null;
+  return READ_ONLY_KEY;
+}
+
+/**
+ * Who may use the bridge's write routes: a signed-in page, the desktop shell, a full key, the internal
+ * service token, or a bridge key made with task updates allowed. Device and hook keys never.
+ */
+export function bridgeWriteRejected(request: { authVia?: AuthVia; tokenScope?: TokenScope; tokenCanWrite?: boolean }): string | null {
+  const via = request.authVia;
+  if (via === "session" || via === "desktop" || via === "internal") return null;
+  if (via !== "token") return "Sign in to Ensemble first.";
+  if (request.tokenScope === "full") return null;
+  if (request.tokenScope === "bridge") {
+    return request.tokenCanWrite
+      ? null
+      : `${READ_ONLY_KEY} To let an editor update tasks, make a key with “Let editors and agents update your tasks” ticked (Connect your apps, or ensemble login).`;
+  }
+  return "This key cannot change tasks.";
 }

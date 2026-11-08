@@ -12,6 +12,8 @@ import { ShareButton } from "../sharing/share-dialog";
 import { TaskExportMenu } from "../task/task-export";
 import { NotePage } from "../pages/note-page";
 import { isFreshPage } from "../pages/fresh-page";
+import { PersonPanel, personRef } from "../context/person-panel";
+import { useContextItem } from "../context/item-relations";
 
 
 export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }) {
@@ -25,9 +27,10 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
     enabled: kind === "deliverable",
   });
   const project = useQuery({ queryKey: ["project", id], queryFn: () => api.project(id).then(result => result.project), enabled: kind === "project" });
+  const person = useContextItem(kind === "person" ? personRef(id) : null);
   const deliverable = (deliverables.data?.deliverables ?? []).find((row) => row.id === id);
   const title =
-    kind === "task" ? (task.data?.task.title ?? "Page") : kind === "page" ? (page.data?.title || "Page") : kind === "deliverable" ? (deliverable?.title ?? "Deliverable") : (project.data?.name ?? "Project");
+    kind === "task" ? (task.data?.task.title ?? "Page") : kind === "page" ? (page.data?.title || "Page") : kind === "deliverable" ? (deliverable?.title ?? "Deliverable") : kind === "person" ? (person.data?.item.title ?? "Person") : (project.data?.name ?? "Project");
   const fullHref = kind === "project" ? `/projects/${id}` : kind === "task" ? `/tasks/${id}` : kind === "page" ? `/pages/${id}` : null;
 
   return (
@@ -60,6 +63,7 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
         {kind === "deliverable" ? <DeliverablePeek row={deliverable} onOpenProject={(projectId) => open(projectId, "project")} /> : null}
         {kind === "project" ? <ProjectPage key={id} id={id} variant="peek" /> : null}
         {kind === "page" ? <PagePeek key={id} id={id} /> : null}
+        {kind === "person" ? <PersonPanel key={id} id={id} /> : null}
       </div>
     </div>
   );

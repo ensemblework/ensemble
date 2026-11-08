@@ -125,7 +125,7 @@ export type TokenScope = "full" | "bridge" | "device" | "hooks";
  * `userId` is whose data the request reads and writes: the active Ensemble space.
  * `accountId` is who signed in. They differ only inside a space other than the account's own.
  */
-export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; modules: string | null; access?: Access };
+export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; tokenCanWrite?: boolean; modules: string | null; access?: Access };
 
 export const SHARE_HEADER = "x-ensemble-share";
 
@@ -294,7 +294,7 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
     const tokenScope = knownTokenScope(row.scope);
     if (!tokenScope) return null;
     void prisma.apiToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
-    return { userId: row.userId, via: "token", tokenScope, tokenId: row.id, modules: row.user.moduleSet };
+    return { userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, modules: row.user.moduleSet };
   }
   const cookie = readCookie(request, SESSION_COOKIE);
   if (cookie) {

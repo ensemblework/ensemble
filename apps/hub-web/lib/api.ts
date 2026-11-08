@@ -319,7 +319,8 @@ export type ProjectDetail = {
   summary: string;
   notes: string;
   status: "active" | "done";
-  people: Array<{ person: { id: string; name: string; email: string | null } }>;
+  /** `role`: their role on this project. */
+  people: Array<{ person: { id: string; name: string; email: string | null }; role?: string | null; addedBy?: string }>;
   repoLinks: Array<{ repo: { id: string; fullName: string; url: string | null } }>;
   deliverables: Array<{ id: string; title: string; status: string; due: string | null }>;
   tasks: Array<{ id: string; title: string; status: TaskStatus; priority: Priority }>;
@@ -497,9 +498,12 @@ export type PersonRecord = {
   email: string | null;
   role: string | null;
   team: string | null;
+  /** How they relate to you: "my manager", "client"… */
+  relationship?: string | null;
   lastInteraction: string | null;
   confidence: number;
-  projects: Array<{ id: string; name: string }>;
+  /** `role`: their role on that project. */
+  projects: Array<{ id: string; name: string; role?: string | null }>;
   openTasks: number;
   recentTitle: string | null;
   recentAt: string | null;
@@ -513,7 +517,7 @@ export type ProjectRecord = {
   status: "active" | "done";
   aliases: string[];
   repos: Array<{ id: string; fullName: string }>;
-  people: Array<{ id: string; name: string }>;
+  people: Array<{ id: string; name: string; role?: string | null }>;
   deliverableCount: number;
   taskCount: number;
 };
@@ -582,8 +586,34 @@ export type ArtifactRecord = {
 
 export type Entity = { kind: string; id: string; label: string; detail: string; parentId?: string; parentLabel?: string; tileId?: string; isSpace?: boolean };
 
-export type GraphNode = { id: string; kind: string; label: string; sub: string };
-export type GraphEdge = { source: string; target: string; kind: string };
+/** `path`: where a meeting or page node opens, when its kind alone does not say. */
+export type GraphNode = { id: string; kind: string; label: string; sub: string; path?: string };
+/** `label`: a person's role on a project, on `member` links. */
+export type GraphEdge = { source: string; target: string; kind: string; label?: string };
+
+/** One record in the context graph (`GET /api/context/item`), as a row. `ref` is `ensemble://<kind>/<id>`. */
+export type ContextItemCard = {
+  ref: string | null;
+  kind: string;
+  id: string;
+  title: string;
+  status?: string | null;
+  due?: string | null;
+  when?: string | null;
+  /** A person's role on a project, or a project's role for a person. */
+  role?: string | null;
+  detail?: string | null;
+  /** Where it opens in the Hub. */
+  path: string | null;
+};
+
+export type ContextRelationGroup = { rel: string; label: string; items: ContextItemCard[]; more: boolean };
+
+export type ContextItemResponse = {
+  item: ContextItemCard & { summary: string; facts: Record<string, unknown> };
+  groups: ContextRelationGroup[];
+  relations: Array<{ rel: string; label: string }>;
+};
 
 export type SkillRecord = {
   id: string;
@@ -1540,7 +1570,7 @@ export const api = bindClient({
   saveContextOrder: (body: Pick<BoardPayload, "view" | "group" | "groups"> & { lanes: Record<string, string[]> }) =>
     put<{ ok: boolean }>("/api/context/order", body),
   people: () => get<{ people: PersonRecord[] }>("/api/people"),
-  createPerson: (data: { name: string; email?: string; role?: string }) => post("/api/people", data),
+  createPerson: (data: { name: string; email?: string; role?: string; relationship?: string }) => post("/api/people", data),
   patchPerson: (id: string, data: Record<string, unknown>) => patch(`/api/people/${id}`, data),
   deletePerson: (id: string) => del(`/api/people/${id}`),
   projects: () => get<{ projects: ProjectRecord[] }>("/api/projects"),
@@ -1565,8 +1595,13 @@ export const api = bindClient({
       sync: Array<{ connector: string; lastSyncAt: string | null; itemCount: number; lastError: string | null }>;
       nextCursor: string | null;
     }>(`/api/artifacts${qs(params)}`),
-  graph: (includeCompleted = false) =>
-    get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(`/api/context/graph${qs({ includeCompleted })}`),
+  graph: (includeCompleted = false, around?: { focus: string; depth?: 1 | 2 }) =>
+    get<{ nodes: GraphNode[]; edges: GraphEdge[]; focus?: { id: string; depth: number } }>(
+      `/api/context/graph${qs({ includeCompleted, focus: around?.focus, depth: around?.depth })}`,
+    ),
+  /** One record and what links to it. `rel` with `offset` pages one relation. */
+  contextItem: (ref: string, page: { rel?: string; limit?: number; offset?: number } = {}) =>
+    get<ContextItemResponse>(`/api/context/item${qs({ ref, ...page })}`),
 
   // skills
   skills: () => get<{ skills: SkillRecord[] }>("/api/skills"),

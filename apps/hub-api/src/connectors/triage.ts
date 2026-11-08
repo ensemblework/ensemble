@@ -116,6 +116,7 @@ export async function createProposals(userId: string, proposals: Proposal[], via
         priority: proposal.priority,
         due: proposal.due ?? null,
         people: proposal.people ?? [],
+        labels: proposal.labels ?? [],
         repoId: proposal.repoId ?? null,
         projectId,
         meetingNoteId: proposal.meetingNoteId ?? null,

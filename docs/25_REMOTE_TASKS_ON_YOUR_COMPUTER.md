@@ -87,7 +87,7 @@ Assign offers available computers with their shared labels and capabilities. The
 
 ### 4.5 Attachments and task context
 
-Claims carry bounded task, page, source and skill context; embedded owned diagrams come as source. `remote/accept.ts` downloads only the attached originals the current lease authorizes, at most **100 MB total**, then remaps hosted page references to the local copies.
+Claims carry bounded task, page, source and skill context; embedded owned diagrams come as source. The description also has a **Context from Ensemble** section (`workContext` in `context/graph/packet.ts`, at most 5,000 characters, inside the description's 20,000): the meeting the task came from with the words asked, the project, people and their roles, dependencies, related open work and how similar work went. While the job holds its lease, the run's `ensemble_context` and `ensemble_search` ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)) ask the web for more with `POST /api/devices/self/jobs/:id/context` (`{name, args}` → `{text}`; the device token and `x-ensemble-job-lease`), answered for the job's space only; a wrong or expired lease is a 409. `remote/accept.ts` downloads only the attached originals the current lease authorizes, at most **100 MB total**, then remaps hosted page references to the local copies.
 
 ### 4.6 A task's files on the web
 

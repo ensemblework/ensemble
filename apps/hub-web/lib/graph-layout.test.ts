@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { layoutGraph, partitionGraph } from "./graph-layout";
+import { edgesAmong, graphItemRef, layoutGraph, linkLabel, matchingNodeIds, partitionGraph, withinHops } from "./graph-layout";
 import { footprintFor, footprintsOverlap, measureLabelBox } from "./graph-readability";
 
 describe("graph layout", () => {
@@ -71,5 +71,46 @@ describe("graph layout", () => {
     const maxX = Math.max(...points.map((point) => point.x));
     const minX = Math.min(...points.map((point) => point.x));
     assert.ok(maxX - minX < 700);
+  });
+});
+
+describe("graph focus and filters", () => {
+  const edges = [
+    { source: "project", target: "priya", kind: "member", label: "Lead" },
+    { source: "priya", target: "other-project", kind: "member" },
+    { source: "other-project", target: "far", kind: "project" },
+    { source: "meeting", target: "task", kind: "from_meeting" },
+    { source: "project", target: "meeting", kind: "note" },
+  ];
+
+  it("keeps what is within the given links of a record, in either direction", () => {
+    assert.deepEqual([...withinHops("priya", edges, 1)].sort(), ["other-project", "priya", "project"]);
+    assert.deepEqual([...withinHops("project", edges, 2)].sort(), ["meeting", "other-project", "priya", "project", "task"]);
+    assert.deepEqual([...withinHops("alone", edges, 2)], ["alone"]);
+  });
+
+  it("keeps only links between kept nodes", () => {
+    const kept = edgesAmong(edges, withinHops("project", edges, 1));
+    assert.deepEqual(kept.map((edge) => edge.kind), ["member", "note"]);
+  });
+
+  it("finds nodes by every word of a search, in name or subtitle", () => {
+    const nodes = [
+      { id: "a", label: "Priya Shah", sub: "PM · my manager" },
+      { id: "b", label: "Send the budget to Priya", sub: "task · todo" },
+      { id: "c", label: "Atlas", sub: "project · active" },
+    ];
+    assert.deepEqual([...matchingNodeIds(nodes, "priya")].sort(), ["a", "b"]);
+    assert.deepEqual([...matchingNodeIds(nodes, "  PRIYA manager ")], ["a"]);
+    assert.equal(matchingNodeIds(nodes, "   ").size, 0);
+  });
+
+  it("names records the item panel can open, and reads links with roles", () => {
+    assert.equal(graphItemRef({ id: "x", kind: "people" }), "ensemble://person/x");
+    assert.equal(graphItemRef({ id: "x", kind: "note" }), "ensemble://meeting/x");
+    assert.equal(graphItemRef({ id: "x", kind: "skill" }), null);
+    assert.equal(linkLabel(edges[0]!), "On the project · Lead");
+    assert.equal(linkLabel({ kind: "from_meeting" }), "From a meeting");
+    assert.equal(linkLabel({ kind: "something_new" }), "something new");
   });
 });

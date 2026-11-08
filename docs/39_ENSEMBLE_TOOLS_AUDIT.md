@@ -8,7 +8,7 @@ What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub 
 | --- | --- | --- |
 | Hub assistant | The registry's Hub tools (`assistant/registry.ts`), routed by playbooks ([11 §3](11_HOW_THE_ASSISTANT_WORKS.md#playbook-routing)) | The space the chat is in, with the person's access there |
 | Ensemble Node | The same Hub tools, each with an optional `space` (`node/spaces.ts`), plus the node tools (`node/tools.ts`, `node/device-tools.ts`) | Every space its owner can open, with their current role in each; only the room's shared space where other people read ([35 §5.4](35_ENSEMBLE_NODE.md#54-every-space-its-owner-can-open)) |
-| A node's agent run | Its brief (the task's title, description, page and files) and the run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) | The run's folder on the computer. The MCP server answers on the computer's loopback (`/api/engine/*`) from that computer's own Ensemble |
+| A node's agent run | Its brief (the task's title, description, page, files and the context around it) and the run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) | The run's folder on the computer. The MCP server answers on the computer's loopback (`/api/engine/*`); `ensemble_context` and `ensemble_search` are answered by Ensemble on the web for a task claimed from there, under the job's lease |
 
 Each one is already signed in as its owner. None of them opens Ensemble's web app in a browser (§4).
 
@@ -19,6 +19,7 @@ A dash means nothing in that column reaches the area. "Same" means the assistant
 | Area | Hub assistant | Ensemble Node | Node's agent run |
 | --- | --- | --- | --- |
 | Tasks on the Ensemble board | List, read, create, update, delete, restore; what is due (`hub_list_tasks`, `hub_create_tasks`, `hub_update_task`, `hub_delete_tasks`, `hub_list_due`) | Same | Its own task, from the brief. In Chat: `ensemble_list_tasks`, `ensemble_create_task`, `ensemble_search` on that computer's Ensemble |
+| Context around a record (the graph) | `hub_item_context`, `hub_search_work` | Same | `ensemble_context`, `ensemble_search`: read only, for the job's space |
 | Custom boards (`/board?board=<id>`) | List; read by link, id or title; make, change (title, description, tiles, columns), delete; put, place, move and take off tasks and notes (`hub_list_boards`, `hub_read_board`, `hub_create_board`, `hub_update_board`, `hub_delete_board`, `hub_move_to_board`, `hub_remove_from_board`); `hub_read_surface` reads the open one | Same | — |
 | Board overview and layouts | `hub_read_layout`; `hub_edit_layout` (the space owner's only) | Same | — |
 | Projects and deliverables | List, create, update, complete, delete | Same | From the brief |
@@ -59,7 +60,7 @@ Not offered, and why:
 
 | Not offered | Why |
 | --- | --- |
-| Ensemble's records in a node's agent run (tasks, boards, pages from Claude Code, Codex, Copilot…) | The run's MCP server answers on the computer's loopback from that computer's own Ensemble; a hosted account's records are not there. It needs a relay to the hosted API that acts for the job's owner in the job's space, checked as the space gateway checks a node. Until then the brief carries the task, and the node does the Ensemble work around a run itself |
+| Changing Ensemble's records from a node's agent run (tasks, boards, pages from Claude Code, Codex, Copilot…) | A run reads the account's records through `ensemble_context` and `ensemble_search` (relayed to the web under the job's lease), but writes only its own result (`report_result`, `attach_evidence`); the node does the Ensemble changes around a run itself |
 | Chat's board tools reaching a hosted account | For the same reason, `ensemble_list_tasks`, `ensemble_create_task` and `ensemble_search` work on the computer's own Ensemble |
 | Undo for custom-board changes | `PageBoard` is not an undo model, and a card's move changes page rows whose Trash undo depends on them. Deleting a board always waits for Apply instead |
 | Page history, private templates, page copies | Owner-only routes with their own flows on the page (restore a version, save as a template) |

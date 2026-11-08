@@ -54,6 +54,7 @@ import { commentRoutes } from "./routes/comments.js";
 import { completedRoutes } from "./routes/completed.js";
 import { ensembleRoutes } from "./routes/ensemble.js";
 import { bridgeRoutes } from "./bridge/routes.js";
+import { bridgeWriteRoutes } from "./bridge/write-routes.js";
 import { connectRoutes } from "./routes/connect.js";
 import { coworkRoutes } from "./routes/cowork.js";
 import { themeRoutes } from "./routes/themes.js";
@@ -183,9 +184,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.authVia = who.via;
       request.tokenScope = who.tokenScope;
       request.tokenId = who.tokenId;
+      request.tokenCanWrite = who.tokenCanWrite;
       request.modules = who.modules;
       const denied =
-        readOnlyTokenRejected(who.tokenScope, request.method, path) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path);
+        readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path);
       if (denied) return reply.code(403).send({ error: denied });
       if (moduleDenied(path, who.modules)) return reply.code(404).send({ error: MODULE_DENIED });
       await enforceHostedRequest(request, path);
@@ -277,6 +279,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     completedRoutes,
     ensembleRoutes,
     bridgeRoutes,
+    bridgeWriteRoutes,
     connectRoutes,
     coworkRoutes,
     themeRoutes,

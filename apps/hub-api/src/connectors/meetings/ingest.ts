@@ -1,17 +1,21 @@
 /**
  * The same steps for every meeting-notes vendor (docs/03 §2.3):
  * transcript → Artifact(transcript); people from attendees and speakers;
- * calendar event match; MeetingNote with the vendor's summary, decisions and
- * action items; my action items → proposed todos that cite the meeting;
- * everyone else's → "waiting on" lines on the note.
+ * calendar event match; series key and, from the series, a project; MeetingNote
+ * with the vendor's summary, decisions and action items; my action items →
+ * proposed todos that cite the meeting (when the caller asks); everyone else's
+ * → "waiting on" lines on the note; then the meeting AI pass is queued (ai.ts).
  * Re-running a sync updates in place and never proposes the same item twice.
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { seriesKeyFor } from "../../cowork/series.js";
 import { normalisedName } from "../../people/identity.js";
 import { upsertArtifact, upsertPerson } from "../ingest.js";
 import type { Proposal, SyncContext, SyncResult } from "../types.js";
 import { decisionsFromMarkdown, dueDate, isMine, itemKey, meFrom, transcriptText, type Me } from "./actions.js";
+import { kickMeetingAi, queueMeetingAi } from "./ai.js";
+import { seriesProject } from "./links.js";
 import { matchEvent, type MatchResult } from "./match.js";
 import { MAX_TRANSCRIPT_CHARS, transcriptDocument } from "./transcript-parse.js";
 import { isMeetingVendor, originLabel, type MeetingOrigin, type MeetingRecord } from "./types.js";
@@ -39,6 +43,10 @@ export interface NoteExtraction {
   speakers?: string[];
   lineCount?: number;
   durationSeconds?: number | null;
+  /** What the meeting AI pass wrote (ai.ts). */
+  ai?: unknown;
+  /** "series": the project came from an earlier meeting of the series. */
+  projectFrom?: string;
 }
 
 /** How one explicit import differs from a vendor batch. */
@@ -94,7 +102,7 @@ export async function ingestMeetings(
   for (const record of records) {
     const existing = await prisma.meetingNote.findUnique({
       where: { userId_externalSource_externalId: { userId: ctx.userId, externalSource: vendor, externalId: record.id } },
-      select: { id: true, deletedAt: true, projectId: true, eventArtifactId: true },
+      select: { id: true, deletedAt: true, projectId: true, eventArtifactId: true, seriesKey: true, extraction: true },
     });
     // A note the person deleted stays deleted, and its action items are not proposed again.
     if (existing?.deletedAt && !options.revive) continue;
@@ -154,7 +162,17 @@ export async function ingestMeetings(
       ? await chosenEvent(ctx.userId, options.eventArtifactId)
       : await matchEvent(ctx.userId, { start: record.start, end: record.end, title: record.title, emails, calendarEventId: record.calendarEventId }, me.emails);
     const eventArtifactId = match.event?.id ?? existing?.eventArtifactId ?? null;
-    const projectId = existing?.projectId ?? match.event?.projectId ?? stored.projectId ?? null;
+    const eventRow = eventArtifactId ? await prisma.artifact.findFirst({ where: { id: eventArtifactId, userId: ctx.userId }, select: { metadata: true, title: true } }) : null;
+    // "" is a meeting with no series, so it is not looked at again.
+    const seriesKey = seriesKeyFor({ eventMetadata: eventRow?.metadata, title: record.title, eventTitle: eventRow?.title }) ?? "";
+    const kept = existing?.extraction && typeof existing.extraction === "object" && !Array.isArray(existing.extraction) ? (existing.extraction as Record<string, unknown>) : {};
+    let projectId = existing?.projectId ?? match.event?.projectId ?? stored.projectId ?? null;
+    let projectFrom = typeof kept.projectFrom === "string" ? kept.projectFrom : null;
+    // Only when the meeting's series is first known: a project the person removed later is not put back.
+    if (!projectId && (!existing || existing.seriesKey === null)) {
+      projectId = await seriesProject(prisma, ctx.userId, { seriesKey, before: record.start, excludeIds: [existing?.id], personIds }, ctx.settings.automations.linkMeetingSeries);
+      if (projectId) projectFrom = "series";
+    }
 
     const items = record.actionItems
       .filter((item) => item.text.trim().length >= 3)
@@ -183,6 +201,8 @@ export async function ingestMeetings(
       lineCount: lines.length,
       durationSeconds: duration !== null ? duration * 60 : null,
       ...(options.extraction ?? {}),
+      ...(kept.ai ? { ai: kept.ai } : {}),
+      ...(projectFrom ? { projectFrom } : {}),
     };
     // The whole transcript, as "[mm:ss] Speaker: words" lines; the artifact keeps only the start for search.
     const transcript = transcriptDocument(lines).slice(0, MAX_TRANSCRIPT_CHARS);
@@ -202,12 +222,14 @@ export async function ingestMeetings(
       artifactId: eventArtifactId,
       transcriptArtifactId: stored.id,
       projectId,
+      seriesKey,
       ...(existing?.deletedAt ? { deletedAt: null } : {}),
     };
     const note = existing
       ? await prisma.meetingNote.update({ where: { id: existing.id }, data, select: { id: true } })
       : await prisma.meetingNote.create({ data: { userId: ctx.userId, externalSource: vendor, externalId: record.id, ...data }, select: { id: true } });
     result.noteIds.push(note.id);
+    await queueMeetingAi(prisma, ctx.userId, note.id);
 
     for (const item of items) {
       if (!item.mine || item.completed || !item.sourceRef) continue;
@@ -233,6 +255,7 @@ export async function ingestMeetings(
   }
 
   await rematchRecent(ctx.userId, vendor, me);
+  if (result.noteIds.length) kickMeetingAi();
   return result;
 }
 

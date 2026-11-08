@@ -767,7 +767,7 @@ export async function searchWorkspace(db: Db, userId: string, query: string) {
     db.meetingSession.findMany({ where: { userId, deletedAt: null, OR: [{ title: { contains: q, mode: "insensitive" } }, { notes: { contains: q, mode: "insensitive" } }, { recap: { contains: q, mode: "insensitive" } }] }, take: 8, orderBy: { startedAt: "desc" } }),
   ]);
   const hits = [
-    ...found.results.map((hit) => ({ id: hit.id, kind: hit.kind, label: hit.label, excerpt: hit.excerpt, path: pathFromHubUrl(hit.url) })),
+    ...found.results.map((hit) => ({ id: hit.id, kind: hit.kind, label: hit.label, excerpt: hit.excerpt, path: pathFromHubUrl(hit.url ?? "") })),
     ...sessions.map((session) => ({ id: session.id, kind: "meeting", label: session.title, excerpt: matchExcerpt(`${session.notes} ${session.recap ?? ""}`, q).excerpt, path: `/meetings?session=${session.id}` })),
   ];
   const seen = new Set<string>();

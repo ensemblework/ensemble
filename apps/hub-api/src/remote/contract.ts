@@ -30,6 +30,8 @@ export const ROUTES = {
   resume: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/resume`,
   events: "/api/devices/self/events",
   attachment: (jobId: string, fileId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(fileId)}`,
+  /** A run's question about the account's records (workspace/context-tools.ts), under the job's lease. */
+  context: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/context`,
   /** The account's model keys, for this computer's own model calls. */
   modelKeys: "/api/devices/self/model-keys",
   /** The text of the files a run changed, sent before complete (protocol 3). */

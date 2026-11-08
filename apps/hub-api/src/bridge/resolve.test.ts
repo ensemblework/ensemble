@@ -10,7 +10,7 @@ import {
   requireBrowserSession,
   DEFAULT_INTERNAL_TOKEN,
 } from "./auth.js";
-import { resolveBriefAnchor, type TaskRef } from "./resolve.js";
+import { branchIdPrefixes, resolveBriefAnchor, type TaskRef } from "./resolve.js";
 import { normalizeRepoName, zonedDayRange } from "./text.js";
 
 const task = (id: string, status = "in_progress", updatedAt = "2026-09-20T00:00:00.000Z"): TaskRef => ({
@@ -185,12 +185,26 @@ describe("bridge auth and methods", () => {
     assert.match(deviceTokenRejected("device", "DELETE", "/api/devices/abc") ?? "", /your computer/);
   });
 
-  it("rejects every write method on /api/bridge", () => {
+  it("rejects every write method on /api/bridge except POST and PATCH under /api/bridge/write/", () => {
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
       assert.equal(bridgeMethodRejected(method, "/api/bridge/brief"), true);
       assert.equal(bridgeMethodRejected(method, "/api/tasks"), false);
     }
     assert.equal(bridgeMethodRejected("GET", "/api/bridge/tasks"), false);
+    assert.equal(bridgeMethodRejected("POST", "/api/bridge/write/tasks"), false);
+    assert.equal(bridgeMethodRejected("PATCH", "/api/bridge/write/tasks/abc"), false);
+    assert.equal(bridgeMethodRejected("DELETE", "/api/bridge/write/tasks/abc"), true);
+    assert.equal(bridgeMethodRejected("PUT", "/api/bridge/write/tasks/abc"), true);
+    assert.equal(bridgeMethodRejected("POST", "/api/bridge/writer"), true);
+  });
+});
+
+describe("branchIdPrefixes", () => {
+  it("finds the start of a task id among a branch's segments", () => {
+    assert.deepEqual(branchIdPrefixes("fix/3f2a9c1d-latency"), ["3f2a9c1d"]);
+    assert.deepEqual(branchIdPrefixes("task/3F2A9C1D-0b1c-4d2e-8f3a-123456789abc"), ["3f2a9c1d"]);
+    assert.deepEqual(branchIdPrefixes("feature/retry-helper"), []);
+    assert.deepEqual(branchIdPrefixes("fix/3f2a9c1d0-too-long"), []);
   });
 });
 

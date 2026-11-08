@@ -10,7 +10,7 @@ Context is the work a person explicitly keeps in Ensemble: people, projects, rep
 - Provide bounded retrieval, task briefs, source citations and saved entity/mention links.
 - Keep removals removed through soft deletion, suppressions and identity tombstones.
 
-No background graph crawler, nightly relationship inference or semantic ranker runs. Schema fields alone do not mean a pipeline exists.
+No background graph crawler, nightly relationship inference or embedding ranker runs; the graph is derived from saved records when it is read (§5). Schema fields alone do not mean a pipeline exists.
 
 ## 2. Connectors
 
@@ -333,11 +333,25 @@ Each write path applies its own suppression check: `connectors/ingest.ts`, `cont
 
 ## 5. Shared retrieval and briefs
 
-`bridge/service.ts` implements bounded task/project/people/skill search and reads using case-insensitive matching on stored fields. `Artifact.searchVector`, `ArtifactChunk.embedding` and `ContextPack` exist in the schema but nothing fills or queries them: there is no semantic retrieval.
+**The context graph** (`context/graph/`). There is no graph store: `neighbors.ts` derives every link from the tables that hold it, in both directions, one bounded indexed query per relation. A record is named by a handle, `ensemble://<kind>/<id>` (`refs.ts` `parseItemRef` also takes Hub links and `{kind, id}`); kinds are task, project, person, repo, deliverable, meeting (a meeting note or a notes session), file, page and event.
 
-Workspace briefs (`workspace/agent.ts`, `pages/agent-context.ts`) assemble the task, its page, linked context, selected skills, attached items and attached files (the files themselves: [38](38_AGENT_READABLE_FILES.md)) under fixed limits. Citations keep IDs/URLs, and tools read longer content in parts. The assistant starts from a small snapshot and uses its typed readers. These consumers share data and access rules, not one context-pack algorithm.
+| Kind | Relations (`rel`) |
+| --- | --- |
+| task | `project`, `meeting` (the note it came from), `people` (with their project role and relationship to the person), `deliverable`, `repos` (its own and the project's), `depends_on`, `blocks`, `related` (open tasks of the same project, repository, meeting, deliverable or people, scored by shared people, labels and title words), `done_before` (finished tasks of the project or repository with similar titles, with their last successful run's result), `files`, `mentions`, `mentioned_in`, `items` (saved app items), `runs` |
+| project | `open_tasks`, `deliverables`, `people` (with roles), `repos`, `meetings`, `done_tasks`, `files`, `items`, `sources` (linked app containers), `mentioned_in` |
+| person | `projects` (with roles), `open_tasks`, `waiting_on` (open tasks labelled `waiting-on` that name them), `meetings`, `done_tasks`, `files`, `mentioned_in` |
+| meeting | `project`, `people`, `tasks` (made from it), `earlier` and `later` (its series, `cowork/series.ts`), `event`, `repo`; its card carries the summary, decisions, my action items, what others owe and open questions |
+| deliverable, repo, file, page, event | their tasks, projects, people, meetings, files and mentions |
 
-`bridge/gaps.ts` (`DATA_GAPS`, returned by the bridge) is out of date: it still reports redaction, Outlook, Teams and Microsoft 365 as missing. Its semantic-retrieval gap is accurate.
+`itemNeighbors(ctx, ref, {rel?, limit?, offset?})` returns the record (title, status, summary, facts) and its relations, `limit` each (default 6), or one relation paged; a task page resolves to its task, and a record in Trash or another space is not found. `Task.people` holds person ids or, from older rows and free names, exact names; both are matched (GIN indexes on `tasks.people`, `tasks.depends_on`, `meeting_notes.person_ids`, `meeting_sessions.person_ids`, migration `20261123100000_context_graph`).
+
+**The work packet** (`packet.ts` `workContext`). A record's context as Markdown for a model, trimmed to a character budget from the least important section: for a task, its facts; where it came from (the meeting with the words asked, why, the meeting's summary and decisions, other work from that meeting, what others owe from it); the project; people; dependencies; related open work; done before; repositories, files, mentions, saved items and earlier runs; then how to ask for more. Every row carries its handle. Consumers: Ensemble's own agent and a coding agent's brief (`workspace/agent.ts`, 5,000 characters), a paired computer's claim (`devices/routes.ts`), Ensemble Node's task note (`node/task-assignment.ts`), the assistant's `hub_item_context`, a run's `ensemble_context`, and the Context Bridge's brief and `ensemble_context` ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)).
+
+**Ranked search** (`search.ts` `rankedSearch`). The query is split into up to six words (a quoted phrase stays whole; stop words are dropped unless nothing else is left). Each kind (tasks, projects, people, repositories, deliverables, meeting notes with their transcripts, notes sessions, standalone pages, files by name, saved app items, and with their modules skills, diagrams and plots) returns up to 30 rows matching any word; each row scores 3 per word in its title, its field weight per word in its body, 2 when every word matched, 4 for the whole phrase in the title, up to 1 for recency (over 120 days) and 0.5 for open work, scaled by the share of words matched. `near` (a record) adds 3 for a record it links to directly, 1.5 for one its scored relations name, and 1.5 for one in the same project. There are no embeddings: `Artifact.searchVector`, `ArtifactChunk.embedding` and `ContextPack` exist in the schema but nothing fills or queries them.
+
+Routes: `GET /api/context/item?ref=` (or `kind`, `id`; `rel`, `limit`, `offset`) and `GET /api/context/search?q=&kinds=&near=&limit=` (`routes/context.ts`, shared-space readable). Agents: `hub_item_context` and `hub_search_work` for the assistant and Ensemble Node ([34](34_ASSISTANT_ACTIONS.md)), `ensemble_context` and `ensemble_search` in an agent's task run ([30 §9](30_ENGINES.md#9-the-workers-report-and-evidence)) and in the Context Bridge.
+
+Workspace briefs also carry the task page, selected skills, attached items and attached files (the files themselves: [38](38_AGENT_READABLE_FILES.md)) under fixed limits. Citations keep IDs/URLs, and tools read longer content in parts. The assistant starts from a small snapshot and uses its typed readers.
 
 ## 6. Profile and preferences in context
 

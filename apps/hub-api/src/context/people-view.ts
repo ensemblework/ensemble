@@ -7,9 +7,12 @@ export type PeopleInput = {
     email: string | null;
     role: string | null;
     team: string | null;
+    /** How they relate to the account owner: "my manager", "client"… */
+    relationship?: string | null;
     lastInteraction: string | null;
     confidence: number;
-    projects: Array<{ id: string; name: string }>;
+    /** `role`: their role on that project. */
+    projects: Array<{ id: string; name: string; role?: string | null }>;
   }>;
   tasks: Array<{ title: string; status: string; people: string[]; updatedAt: string }>;
   notes: Array<{ title: string; personIds: string[]; askedAt: string }>;
@@ -88,7 +91,7 @@ export function peopleCards(input: PeopleInput): PeopleCard[] {
   const cards: PeopleCard[] = [];
   for (const person of input.people) {
     if (isBlankClient(person)) continue;
-    cards.push({ ...person, ...summarize(hits.get(person.id)), derived: false });
+    cards.push({ ...person, relationship: person.relationship ?? null, ...summarize(hits.get(person.id)), derived: false });
   }
   for (const [key, name] of derived) {
     if (isBlankClient({ name, role: null, email: null })) continue;
@@ -98,6 +101,7 @@ export function peopleCards(input: PeopleInput): PeopleCard[] {
       email: null,
       role: "Assignee",
       team: null,
+      relationship: null,
       lastInteraction: null,
       confidence: 0.5,
       projects: [],

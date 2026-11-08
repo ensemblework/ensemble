@@ -29,6 +29,8 @@ export interface Proposal {
   meetingNoteId?: string | null;
   /** False when one artifact backs several proposals (a transcript's action items); the artifact then keeps no single task. */
   linkArtifact?: boolean;
+  /** Task labels, such as `waiting-on` for work asked of someone else. */
+  labels?: string[];
 }
 
 export interface SyncResult {

@@ -6,9 +6,15 @@ import { DATA_GAPS } from "./gaps.js";
 import { nodeOverview } from "../node/routes.js";
 import { fileFor, overviewFor } from "../repo/locate.js";
 import { RepoReadError } from "../repo/read.js";
+import { GraphError } from "../context/graph/neighbors.js";
+import { GRAPH_KINDS, parseItemRef } from "../context/graph/refs.js";
+import { SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
 import {
   buildBrief,
-  isReadKind,
+  itemContext,
+  itemPacket,
+  READ_KIND_LIST,
+  readKindOf,
   listDecisions,
   listDiagrams,
   listPlots,
@@ -30,10 +36,9 @@ const listLimit = z.coerce.number().int().min(1).max(50).default(20);
 const briefLimit = z.coerce.number().int().min(1).max(20).default(8);
 
 /**
- * Read-only HTTP surface for the Context Bridge.
- * Every route is GET. The process-wide guard in index.ts rejects other methods
- * before they reach a handler. There is no Prisma client in the bridge process;
- * this is the only way it reads.
+ * Read surface for the Context Bridge. Every route here is GET; the process-wide guard
+ * (`bridgeMethodRejected`, app.ts) rejects other methods outside /api/bridge/write/
+ * (write-routes.ts). There is no Prisma client in the bridge process; this is the only way it reads.
  */
 export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -55,7 +60,8 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
       "people",
       "decisions (Needs me)",
       "today",
-      "artifacts and meeting notes via search, brief, and read",
+      "context (one record and everything linked to it)",
+      "artifacts and meeting notes via search, brief, read, and context",
     ],
   }));
 
@@ -205,9 +211,46 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/bridge/search", async (request, reply) => {
-    const query = z.object({ q: z.string().min(1), limit: briefLimit }).parse(request.query);
+    const query = z
+      .object({ q: z.string().min(1).max(300), limit: briefLimit, kinds: z.string().max(200).optional(), near: z.string().max(400).optional() })
+      .parse(request.query);
     if (!query.q.trim()) return reply.code(400).send({ error: "Pass ?q= with the text to search for." });
-    return searchHub(prisma, request.userId, query.q.trim(), query.limit, request.modules);
+    const asked = (query.kinds ?? "").split(",").map((kind) => kind.trim().toLowerCase()).filter(Boolean);
+    const unknown = asked.filter((kind) => !(SEARCH_KINDS as readonly string[]).includes(kind));
+    if (unknown.length) return reply.code(400).send({ error: `Unknown kind ${unknown.join(", ")}. kinds is a comma list of: ${SEARCH_KINDS.join(", ")}.` });
+    const near = query.near ? parseItemRef(query.near) : null;
+    if (query.near && !near) return reply.code(400).send({ error: "near must name a record: ensemble://<kind>/<id> or a Hub link." });
+    return searchHub(prisma, request.userId, query.q.trim(), { limit: query.limit, kinds: asked as SearchKind[], near }, request.modules);
+  });
+
+  app.get("/api/bridge/context", async (request, reply) => {
+    const query = z
+      .object({
+        item: z.string().min(1).max(400),
+        kind: z.string().max(40).optional(),
+        rel: z.string().max(40).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        offset: z.coerce.number().int().min(0).max(5000).optional(),
+        format: z.enum(["json", "packet"]).default("json"),
+      })
+      .parse(request.query);
+    const ref = parseItemRef(query.item, query.kind);
+    if (!ref) {
+      return reply.code(400).send({
+        error: `Name a record: ensemble://<kind>/<id> (kind is one of ${GRAPH_KINDS.join(", ")}), a Hub link, or an id with kind.`,
+      });
+    }
+    try {
+      const result =
+        query.format === "packet"
+          ? await itemPacket(prisma, request.userId, ref, request.modules)
+          : await itemContext(prisma, request.userId, ref, { rel: query.rel, limit: query.limit, offset: query.offset }, request.modules);
+      if (!result) return reply.code(404).send({ error: "Not found in this Ensemble space, or it is in Trash." });
+      return result;
+    } catch (error) {
+      if (error instanceof GraphError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
   });
 
   app.get("/api/bridge/read", async (request, reply) => {
@@ -219,12 +262,11 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
         limit: z.coerce.number().int().min(1).max(8000).default(4000),
       })
       .parse(request.query);
-    if (!isReadKind(query.kind)) {
-      return reply.code(400).send({
-        error: "kind must be one of: task, project, repo, skill, deliverable, person, artifact, document, meeting_note, approval, decision, page.",
-      });
+    const kind = readKindOf(query.kind);
+    if (!kind) {
+      return reply.code(400).send({ error: `kind must be one of: ${READ_KIND_LIST} (meeting and file also work).` });
     }
-    const item = await readItem(prisma, request.userId, query.kind, query.id, query.offset, query.limit, request.modules);
+    const item = await readItem(prisma, request.userId, kind, query.id, query.offset, query.limit, request.modules);
     if (!item.found) return reply.code(404).send({ error: "Not found, or it was deleted." });
     return item.item;
   });
@@ -235,6 +277,7 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
         query: z.string().optional(),
         repo: z.string().optional(),
         branch: z.string().optional(),
+        task: z.string().max(400).optional(),
         limit: briefLimit,
       })
       .parse(request.query);
