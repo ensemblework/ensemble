@@ -36,6 +36,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
   const [done, setDone] = useState<{ decision: "approved" | "denied"; scopes: CliAuthScope[] } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [canWrite, setCanWrite] = useState(true);
+  const [canUseApps, setCanUseApps] = useState(true);
 
   const canApproveMcpOnly = useMemo(() => Boolean(request?.scopes.includes("mcp") && request.scopes.includes("runner")), [request]);
 
@@ -70,7 +71,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
     setError(null);
     setEmailUnverified(false);
     try {
-      const result = await api.approveCliAuth({ userCode: loadedCode, scopes, decision, ...(decision === "approve" ? { canWrite } : {}) });
+      const result = await api.approveCliAuth({ userCode: loadedCode, scopes, decision, ...(decision === "approve" ? { canWrite, canUseApps } : {}) });
       setDone({ decision: decision === "approve" ? "approved" : "denied", scopes: result.scopes ?? scopes });
       setRequest(null);
     } catch (caught) {
@@ -209,7 +210,11 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                 </ul>
                 <label className="mt-3 flex items-start gap-2 text-[13.5px] leading-5">
                   <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
-                  <span>Let editors and agents update your tasks (status, progress notes, new proposed tasks)</span>
+                  <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes)</span>
+                </label>
+                <label className="mt-2 flex items-start gap-2 text-[13.5px] leading-5">
+                  <input type="checkbox" className="mt-0.5" checked={canUseApps} onChange={(event) => setCanUseApps(event.target.checked)} />
+                  <span>Let editors and agents use your connected apps through Ensemble</span>
                 </label>
               </div>
 

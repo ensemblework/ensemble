@@ -376,7 +376,7 @@ function authHeader(facts: ConnectFacts): { Authorization: string } {
 }
 
 function vscodeHostedConfig(url: string, facts: ConnectFacts): string {
-  // ${input:…} secrets drop the server from VS Code's Agent Host, so the user profile file holds the read-only key.
+  // ${input:…} secrets drop the server from VS Code's Agent Host, so the user profile file holds the key.
   return pretty({ servers: { ensemble: { type: "http", url, headers: authHeader(facts) } } });
 }
 

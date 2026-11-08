@@ -166,7 +166,7 @@ export interface MockHub {
   close: () => Promise<void>;
 }
 
-export function startMockHub(options: { canWrite?: boolean } = {}): Promise<MockHub> {
+export function startMockHub(options: { canWrite?: boolean; canUseApps?: boolean } = {}): Promise<MockHub> {
   const hits: string[] = [];
   const writes: MockHub["writes"] = [];
   const server: Server = createServer((req, res) => {
@@ -179,7 +179,27 @@ export function startMockHub(options: { canWrite?: boolean } = {}): Promise<Mock
     }
     if (req.method === "GET" && url.pathname === "/api/bridge/whoami") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ canWrite: Boolean(options.canWrite), keyName: "Test editor" }));
+      res.end(JSON.stringify({ canWrite: Boolean(options.canWrite), canUseApps: Boolean(options.canUseApps), apps: options.canUseApps ? ["Notion", "GitHub"] : [], keyName: "Test editor" }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/bridge/actions") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ actions: [{ name: "hub_create_page", group: "pages", description: "Make a page. It can sit inside another page.", write: true, allowed: Boolean(options.canWrite), ...(url.searchParams.get("schema") ? { inputSchema: { type: "object" } } : {}) }] }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/bridge/apps") {
+      res.writeHead(options.canUseApps ? 200 : 403, { "content-type": "application/json" });
+      res.end(JSON.stringify(options.canUseApps ? { apps: [{ id: "notion", name: "Notion" }], tools: [{ name: "apps_search", group: "apps", write: false, allowed: true }] } : { error: "This key cannot use your connected apps." }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/bridge/act/")) {
+      let raw = "";
+      req.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+      req.on("end", () => {
+        writes.push({ method: "POST", path: url.pathname, body: raw ? (JSON.parse(raw) as unknown) : null });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, action: decodeURIComponent(url.pathname.split("/").pop() ?? ""), summary: "Done." }));
+      });
       return;
     }
     if ((req.method === "POST" || req.method === "PATCH") && url.pathname.startsWith("/api/bridge/write/") && options.canWrite) {

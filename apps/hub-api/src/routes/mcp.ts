@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildServer } from "@ensemble/context-bridge/server";
 import { HubError, type HubClient } from "@ensemble/context-bridge/hub";
+import { maxFileBytes } from "../files/store.js";
 
 function bearerRejected(request: FastifyRequest): boolean {
   const authorization = request.headers.authorization;
@@ -57,14 +58,18 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
   app.get("/mcp", async (_request, reply) => reply.header("Allow", "POST").code(405).send({ error: "Method not allowed." }));
   app.delete("/mcp", async (_request, reply) => reply.header("Allow", "POST").code(405).send({ error: "Method not allowed." }));
 
-  app.post("/mcp", async (request, reply) => {
+  // A file from ensemble_upload_file comes inside the JSON-RPC body as base64.
+  app.post("/mcp", { bodyLimit: Math.ceil((maxFileBytes() * 4) / 3) + 256 * 1024 }, async (request, reply) => {
     const authorization = request.headers.authorization;
     if (bearerRejected(request) || !authorization) return bearerRequired(reply);
     const server = buildServer({
       hub: hubFor(app, authorization),
       detect: async () => ({}),
-      // Task updates: a full key, or a bridge key made with them allowed (bridge/auth.ts).
+      // Changes: a full key, or a bridge key made with them allowed (bridge/auth.ts). Apps likewise.
       canWrite: request.tokenScope === "full" || (request.tokenScope === "bridge" && request.tokenCanWrite === true),
+      canUseApps: request.tokenScope === "full" || (request.tokenScope === "bridge" && request.tokenCanUseApps === true),
+      // Ensemble on the web cannot read the editor's disk: uploads come as base64.
+      localFiles: false,
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

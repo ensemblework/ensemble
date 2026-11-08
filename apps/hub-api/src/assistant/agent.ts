@@ -1105,3 +1105,6 @@ function usedOtherSpace(toolCalls: unknown, reachable: ReadonlySet<string>): boo
 }
 
 export { randomUUID as newId };
+
+/** For callers outside a turn (the Context Bridge, bridge/actions.ts): the same error wording. */
+export { describe as describeToolError };

@@ -167,7 +167,7 @@ function serverValue(editor: EditorName, mode: SetupMode): unknown {
   switch (editor) {
     case "vscode":
     case "vscode-insiders":
-      // ${input:…} secrets drop the server from VS Code's Agent Host; the user profile file holds the read-only key.
+      // ${input:…} secrets drop the server from VS Code's Agent Host; the user profile file holds the MCP key.
       return { type: "http", url, headers: hostedHeaders(mode) };
     case "cursor":
       return { url, headers: hostedHeaders(mode) };

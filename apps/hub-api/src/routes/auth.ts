@@ -386,7 +386,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const tokens = await prisma.apiToken.findMany({
       where: { userId: request.userId, revokedAt: null, scope: { not: "device" } },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, prefix: true, scope: true, canWrite: true, lastUsedAt: true, createdAt: true },
+      select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });
     return { tokens };
   });

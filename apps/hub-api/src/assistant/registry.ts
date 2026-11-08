@@ -164,6 +164,11 @@ export function toolsFor(allowedWriteAreas: readonly AssistantToolArea[], module
   });
 }
 
+/** A tool's input as JSON Schema: a remote MCP server's own, else converted from its zod input. */
+export function toolJsonSchema(tool: AnyHubTool): Record<string, unknown> {
+  return parameters(tool);
+}
+
 function parameters(tool: AnyHubTool): Record<string, unknown> {
   if (tool.jsonSchema && typeof tool.jsonSchema === "object") return structuredClone(tool.jsonSchema);
   const schema = zodToJsonSchema(tool.input, {

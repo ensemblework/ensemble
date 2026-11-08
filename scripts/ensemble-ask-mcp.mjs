@@ -121,6 +121,38 @@ const CONTEXT_SEARCH_TOOL = {
   },
 };
 
+/**
+ * Ensemble actions around the task (hub-api bridge/actions.ts): the same allowlist an editor's key has,
+ * without the connected apps, in the job's own space. Answered by this computer's Ensemble, or by
+ * Ensemble on the web for a task claimed from there.
+ */
+const ACTIONS_TOOL = {
+  name: "ensemble_actions",
+  description:
+    "List what you can do in the person's Ensemble with ensemble_act: tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes, comments. With names: each action's full description and inputSchema.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      groups: { type: "string", description: "Comma list of groups." },
+      names: { type: "string", description: "Comma list of action names to describe in full." },
+    },
+  },
+};
+
+const ACT_TOOL = {
+  name: "ensemble_act",
+  description:
+    "Change the person's Ensemble records around your work when the task asks for it: update a task (status, owner, due, labels, people), add or edit a page, put a task or page on a board, make a diagram or plot, link people and projects, add a meeting note. action is a name from ensemble_actions; input matches its inputSchema. Changes run at once and appear in Ensemble's Undo. Your own result still goes through report_result.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: { type: "string", description: "An action name, e.g. hub_update_task." },
+      input: { type: "object", description: "The action's arguments, matching its inputSchema." },
+    },
+    required: ["action"],
+  },
+};
+
 const EVIDENCE_KINDS = ["screenshot", "image", "video", "trace", "report", "log", "file"];
 
 /** The worker's result, in the shape of hub-api src/node/report.ts (StepReport). */
@@ -233,11 +265,11 @@ export function instructionsFor(env = process.env) {
   const never = "You already act in Ensemble through this server: never open Ensemble's web app (app.ensemblework.com, test.ensemblework.com or a board, task or page link) in a browser to sign in or to read the person's work, and never ask the person to sign in to it.";
   if (env.ENSEMBLE_ASSISTANT_TURN) return `This server's tools are the person's Ensemble: their tasks, boards, pages, files and settings, in the space this chat works in. ${never}`;
   if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search; ensemble_context opens any ensemble:// record and what it links to. ${never}`;
-  return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. ${never}`;
+  return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. When the task asks you to change Ensemble itself (pages, boards, diagrams, plots, the task's fields), use ensemble_actions and ensemble_act. ${never}`;
 }
 
 export function toolsFor(env = process.env) {
-  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, SECRET_HTTP_TOOL];
+  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, ACT_TOOL, SECRET_HTTP_TOOL];
 }
 
 /** The browser and capture tools this computer offers a task run, as Ensemble listed them (none in Chat). */

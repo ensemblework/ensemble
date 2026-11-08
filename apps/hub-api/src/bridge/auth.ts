@@ -73,6 +73,13 @@ export function bridgeAuthRejected(
 /** Task writes an editor makes through the Context Bridge (bridge/write-routes.ts). */
 export const BRIDGE_WRITE_PREFIX = "/api/bridge/write/";
 
+/**
+ * Actions an editor runs through the Context Bridge (bridge/actions.ts): Ensemble's own tools on an
+ * allowlist and the connected apps' tools. Any bridge key may call them; each action checks the key's
+ * grants itself (writes need canWrite, apps need canUseApps).
+ */
+export const BRIDGE_ACT_PREFIX = "/api/bridge/act/";
+
 function cleanPath(path: string): string {
   return (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
 }
@@ -81,9 +88,13 @@ function isBridgeWrite(method: string, path: string): boolean {
   return (method === "POST" || method === "PATCH") && `${cleanPath(path)}/`.startsWith(BRIDGE_WRITE_PREFIX);
 }
 
+function isBridgeAct(method: string, path: string): boolean {
+  return method === "POST" && cleanPath(path).startsWith(BRIDGE_ACT_PREFIX);
+}
+
 export function bridgeMethodRejected(method: string, path: string): boolean {
   if (!path.startsWith("/api/bridge")) return false;
-  if (isBridgeWrite(method, path)) return false;
+  if (isBridgeWrite(method, path) || isBridgeAct(method, path)) return false;
   return method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 }
 
@@ -100,6 +111,7 @@ export function readOnlyTokenRejected(scope: string | undefined, method: string,
   if (read && (clean === "/api/bridge" || clean.startsWith("/api/bridge/"))) return null;
   if (clean === "/mcp" && (method === "POST" || method === "GET" || method === "DELETE")) return null;
   if (clean === "/api/cli/logout" && method === "POST") return null;
+  if (isBridgeAct(method, path)) return null;
   if (canWrite && isBridgeWrite(method, path)) return null;
   return READ_ONLY_KEY;
 }
@@ -116,7 +128,24 @@ export function bridgeWriteRejected(request: { authVia?: AuthVia; tokenScope?: T
   if (request.tokenScope === "bridge") {
     return request.tokenCanWrite
       ? null
-      : `${READ_ONLY_KEY} To let an editor update tasks, make a key with “Let editors and agents update your tasks” ticked (Connect your apps, or ensemble login).`;
+      : `${READ_ONLY_KEY} To let editors and agents make changes, make a key with “Let editors and agents make changes” ticked (Connect your apps, or run ensemble login again).`;
   }
-  return "This key cannot change tasks.";
+  return "This key cannot change anything in Ensemble.";
+}
+
+/**
+ * Who may use the connected apps through the bridge (Gmail, Outlook, Notion, GitHub, an app's MCP
+ * server…): the same callers as writes, and a bridge key only when made with apps allowed.
+ */
+export function bridgeAppsRejected(request: { authVia?: AuthVia; tokenScope?: TokenScope; tokenCanUseApps?: boolean }): string | null {
+  const via = request.authVia;
+  if (via === "session" || via === "desktop" || via === "internal") return null;
+  if (via !== "token") return "Sign in to Ensemble first.";
+  if (request.tokenScope === "full") return null;
+  if (request.tokenScope === "bridge") {
+    return request.tokenCanUseApps
+      ? null
+      : "This key cannot use your connected apps. To let editors and agents use them through Ensemble, make a key with “Let editors and agents use your connected apps” ticked (Connect your apps, or run ensemble login again).";
+  }
+  return "This key cannot use your connected apps.";
 }

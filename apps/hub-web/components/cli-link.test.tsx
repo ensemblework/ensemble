@@ -85,7 +85,7 @@ test("CLI link approves the loaded device request", async () => {
     });
     assert.deepEqual(calls.at(-1), {
       url: "/api/cli/auth/approve",
-      body: { userCode: "ABCD-EFGH", scopes: ["mcp", "runner"], decision: "approve", canWrite: true },
+      body: { userCode: "ABCD-EFGH", scopes: ["mcp", "runner"], decision: "approve", canWrite: true, canUseApps: true },
     });
     assert.match(host.textContent ?? "", /Return to your terminal/);
   } finally {
@@ -123,7 +123,7 @@ test("CLI link offers MCP-only approval when runner needs email verification", a
     });
     assert.deepEqual(calls.at(-1), {
       url: "/api/cli/auth/approve",
-      body: { userCode: "WXYZ-1234", scopes: ["mcp"], decision: "approve", canWrite: true },
+      body: { userCode: "WXYZ-1234", scopes: ["mcp"], decision: "approve", canWrite: true, canUseApps: true },
     });
   } finally {
     await act(async () => root.unmount());

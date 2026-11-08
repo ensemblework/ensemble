@@ -55,6 +55,7 @@ import { completedRoutes } from "./routes/completed.js";
 import { ensembleRoutes } from "./routes/ensemble.js";
 import { bridgeRoutes } from "./bridge/routes.js";
 import { bridgeWriteRoutes } from "./bridge/write-routes.js";
+import { bridgeActionRoutes } from "./bridge/action-routes.js";
 import { connectRoutes } from "./routes/connect.js";
 import { coworkRoutes } from "./routes/cowork.js";
 import { themeRoutes } from "./routes/themes.js";
@@ -185,6 +186,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenScope = who.tokenScope;
       request.tokenId = who.tokenId;
       request.tokenCanWrite = who.tokenCanWrite;
+      request.tokenCanUseApps = who.tokenCanUseApps;
       request.modules = who.modules;
       const denied =
         readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path);
@@ -280,6 +282,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     ensembleRoutes,
     bridgeRoutes,
     bridgeWriteRoutes,
+    bridgeActionRoutes,
     connectRoutes,
     coworkRoutes,
     themeRoutes,
