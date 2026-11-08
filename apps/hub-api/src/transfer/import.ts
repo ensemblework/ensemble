@@ -11,13 +11,15 @@
  *
  * Each batch is one transaction; a row that still fails is skipped and counted, not fatal.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { fileTypeProblem } from "@ensemble/shared-types";
 import { validateLayout } from "@ensemble/shared-types/widgets";
 import { isHosted } from "../lib/hosted-access.js";
 import { assertFileRoom, checkDatasetBytes, HostedLimitError } from "../lib/hosted-limits.js";
 import { maxFileBytes } from "../files/store.js";
-import { writeTable, type StoredTable } from "../plots/store.js";
+import { storeOriginal } from "../files/originals.js";
+import { storedTableBytes, writeTable, type StoredTable } from "../plots/store.js";
 import { isTransferTable, quoteIdent, remapIds, shapeOf, type TableShape, type TransferTable } from "./schema.js";
 
 export type TransferRow = Record<string, unknown>;
@@ -60,7 +62,8 @@ function columnsOf(db: Tx | PrismaClient, table: TransferTable): Promise<Map<str
   return found;
 }
 
-const SKIP_FILL = new Set(["id", "created_at", "updated_at", "deleted_at", "revision"]);
+/** Never filled into a row the account already has: identity, times, and a file's own bytes and storage. */
+const SKIP_FILL = new Set(["id", "created_at", "updated_at", "deleted_at", "revision", "original", "blob_key", "byte_size", "sha256", "content_hash", "lease_token", "lease_expires_at"]);
 
 function empty(value: unknown): boolean {
   return value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0) || (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0);
@@ -115,8 +118,9 @@ async function update(tx: Tx, table: TransferTable, shape: TableShape, existing:
 /** The account's row wins; the computer's values fill what it left empty. */
 async function fillEmpty(tx: Tx, table: TransferTable, shape: TableShape, existing: TransferRow, incoming: TransferRow): Promise<void> {
   const fills: TransferRow = {};
+  const unique = new Set(shape.uniques.flat());
   for (const [column, value] of Object.entries(incoming)) {
-    if (SKIP_FILL.has(column) || shape.key.includes(column) || shape.accountColumns.includes(column)) continue;
+    if (SKIP_FILL.has(column) || unique.has(column) || shape.key.includes(column) || shape.accountColumns.includes(column)) continue;
     if (empty(existing[column]) && !empty(value)) fills[column] = value;
   }
   await update(tx, table, shape, existing, fills);
@@ -226,6 +230,106 @@ async function roomFor(tx: Tx, table: TransferTable, row: TransferRow, accountId
   }
 }
 
+/** Ids become storage paths (a dataset's files) and links: anything but a plain id gets a new one. */
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const HEX_BYTES = /^\\x([0-9a-f]*)$/i;
+
+type RowOutcome =
+  | { kind: "added" | "merged"; ids: Array<[string, string]>; patches: TransferPatch[] }
+  | { kind: "skipped" };
+
+/**
+ * A file's bytes are what counts: its size and hash are worked out here, never taken from the row, and a
+ * storage key from the computer is never kept (it could name another account's file).
+ */
+function documentBytes(row: TransferRow): Buffer | null {
+  const match = typeof row.original === "string" ? HEX_BYTES.exec(row.original) : null;
+  if (!match || match[1]!.length % 2) return null;
+  return Buffer.from(match[1]!, "hex");
+}
+
+/** One row, inside its own savepoint: whatever fails, the batch goes on and the row is counted as skipped. */
+async function importRow(tx: Tx, table: TransferTable, shape: TableShape, columns: Map<string, Column>, source: TransferRow, accountId: string, known: Map<string, string>, result: TransferResult): Promise<RowOutcome> {
+  const extras = { table: source[DATASET_TABLE], original: source[DATASET_ORIGINAL] };
+  const ids: Array<[string, string]> = [];
+  const patches: TransferPatch[] = [];
+  let row: TransferRow = {};
+  for (const [column, value] of Object.entries(remapIds(source, known))) if (columns.has(column)) row[column] = value;
+  for (const column of shape.accountColumns) if (column in row && row[column] !== null) row[column] = accountId;
+  if (shape.account) row[shape.account] = accountId;
+  // A required time the database does not fill itself (Prisma's @updatedAt), missing from an older computer's row.
+  for (const column of columns.values()) if (!column.nullable && !column.hasDefault && !(column.name in row) && column.type.startsWith("timestamp")) row[column.name] = new Date().toISOString();
+  const singleId = shape.key.length === 1 && shape.key[0] === "id";
+  const sourceId = typeof row.id === "string" ? row.id : null;
+  if (singleId && sourceId && !SAFE_ID.test(sourceId)) {
+    row.id = randomUUID();
+    ids.push([sourceId, String(row.id)]);
+  }
+
+  let bytes: Buffer | null = null;
+  let datasetOriginal: Buffer | undefined;
+  if (table === "context_documents") {
+    bytes = documentBytes(row);
+    if (!bytes) return { kind: "skipped" };
+    if (fileTypeProblem(String(row.filename ?? ""), { imported: true })) return { kind: "skipped" };
+    row.byte_size = bytes.byteLength;
+    row.sha256 = createHash("sha256").update(bytes).digest("hex");
+    row.blob_key = null;
+    row.lease_token = null;
+    row.lease_expires_at = null;
+  }
+  if (table === "plot_datasets") {
+    const stored = extras.table as StoredTable | undefined;
+    if (!stored || !Array.isArray(stored.columns) || !Array.isArray(stored.rows) || !stored.rows.every(Array.isArray)) return { kind: "skipped" };
+    datasetOriginal = typeof extras.original === "string" ? Buffer.from(extras.original, "base64") : undefined;
+    row.byte_size = storedTableBytes(stored, datasetOriginal);
+  }
+
+  const id = typeof row.id === "string" ? row.id : null;
+  for (const reference of shape.references) {
+    const value = row[reference.column];
+    if (value === null || value === undefined) continue;
+    const where = await ownerOf(tx, reference.table, value, accountId);
+    if (where === "mine") continue;
+    if (!reference.nullable) return { kind: "skipped" };
+    row[reference.column] = null;
+    if (where === "missing" && isTransferTable(reference.table) && id) patches.push({ table, id, column: reference.column, value: String(value) });
+  }
+  if (singleId && id) {
+    const where = await ownerOf(tx, table, id, accountId);
+    // Already moved by an earlier attempt: counted, not copied again.
+    if (where === "mine") return { kind: "merged", ids, patches: [] };
+    if (where === "other") {
+      const fresh = randomUUID();
+      row.id = fresh;
+      ids.push([sourceId ?? id, fresh]);
+      for (const patch of patches) patch.id = fresh;
+    }
+  }
+  const custom = await customMerge(tx, table, row, accountId, columns);
+  if (custom && "rename" in custom) row = { ...row, ...custom.rename };
+  const into = custom && "into" in custom ? custom.into : await uniqueMerge(tx, table, shape, row, columns);
+  if (into) {
+    if (!(custom && "into" in custom && (table === "preferences" || table === "widget_layouts"))) await fillEmpty(tx, table, shape, into, row);
+    const target = typeof into.id === "string" ? into.id : null;
+    if (target && sourceId && target !== sourceId) ids.push([sourceId, target]);
+    return { kind: "merged", ids, patches: [] };
+  }
+  if (!(await roomFor(tx, table, row, accountId, result))) return { kind: "skipped" };
+  if (table === "assistant_routines" && row.status === "active") {
+    row.status = "paused";
+    note(result, "Scheduled routines were moved paused. Turn them back on in Settings → Assistant once the account's models are set.");
+  }
+  if (table === "context_documents" && bytes) {
+    const stored = await storeOriginal(accountId, String(row.id), String(row.sha256), Buffer.from(bytes), String(row.media_type ?? "application/octet-stream"));
+    row.original = stored.original ? `\\x${stored.original.toString("hex")}` : null;
+    row.blob_key = stored.blobKey;
+  }
+  if (table === "plot_datasets") row.content_hash = await writeTable(accountId, String(row.id), extras.table as StoredTable, datasetOriginal);
+  await insert(tx, table, row);
+  return { kind: "added", ids, patches };
+}
+
 /** One batch of rows, in one transaction. */
 export async function importBatch(db: PrismaClient, accountId: string, batch: TransferBatch[]): Promise<TransferResult> {
   const result: TransferResult = { counts: {}, ids: {}, patches: [], notes: [] };
@@ -237,81 +341,27 @@ export async function importBatch(db: PrismaClient, accountId: string, batch: Tr
         const table = part.table as TransferTable;
         const shape = shapeOf(table);
         const columns = await columnsOf(tx, table);
-        rows: for (const source of part.rows) {
+        for (const source of part.rows) {
           const tally = count(result, table);
-          const extras = { table: source[DATASET_TABLE], original: source[DATASET_ORIGINAL] };
-          let row: TransferRow = {};
-          for (const [column, value] of Object.entries(remapIds(source, known))) if (columns.has(column)) row[column] = value;
-          for (const column of shape.accountColumns) if (column in row && row[column] !== null) row[column] = accountId;
-          if (shape.account) row[shape.account] = accountId;
-          // A required time the database does not fill itself (Prisma's @updatedAt), missing from an older computer's row.
-          for (const column of columns.values()) if (!column.nullable && !column.hasDefault && !(column.name in row) && column.type.startsWith("timestamp")) row[column.name] = new Date().toISOString();
-          const sourceId = typeof row.id === "string" ? row.id : null;
-          for (const reference of shape.references) {
-            const value = row[reference.column];
-            if (value === null || value === undefined) continue;
-            const where = await ownerOf(tx, reference.table, value, accountId);
-            if (where === "mine") continue;
-            if (!reference.nullable) {
-              tally.skipped += 1;
-              continue rows;
-            }
-            row[reference.column] = null;
-            if (where === "missing" && isTransferTable(reference.table) && sourceId) result.patches.push({ table, id: sourceId, column: reference.column, value: String(value) });
-          }
-          if (shape.key.length === 1 && shape.key[0] === "id" && sourceId) {
-            const where = await ownerOf(tx, table, sourceId, accountId);
-            if (where === "mine") {
-              tally.merged += 1;
-              continue;
-            }
-            if (where === "other") {
-              const id = randomUUID();
-              row.id = id;
-              known.set(sourceId.toLowerCase(), id);
-              result.ids[sourceId] = id;
-              for (const patch of result.patches) if (patch.id === sourceId && patch.table === table) patch.id = id;
-            }
-          }
-          const custom = await customMerge(tx, table, row, accountId, columns);
-          if (custom && "rename" in custom) row = { ...row, ...custom.rename };
-          const into = custom && "into" in custom ? custom.into : await uniqueMerge(tx, table, shape, row, columns);
-          if (into) {
-            if (!(custom && "into" in custom && (table === "preferences" || table === "widget_layouts"))) await fillEmpty(tx, table, shape, into, row);
-            const target = typeof into.id === "string" ? into.id : null;
-            if (target && typeof row.id === "string" && target !== row.id) {
-              known.set(String(sourceId ?? row.id).toLowerCase(), target);
-              result.ids[String(sourceId ?? row.id)] = target;
-            }
-            tally.merged += 1;
-            continue;
-          }
-          if (!(await roomFor(tx, table, row, accountId, result))) {
-            tally.skipped += 1;
-            continue;
-          }
-          if (table === "assistant_routines" && row.status === "active") {
-            row.status = "paused";
-            note(result, "Scheduled routines were moved paused. Turn them back on in Settings → Assistant once the account's models are set.");
-          }
-          if (table === "plot_datasets") {
-            const stored = extras.table as StoredTable | undefined;
-            if (!stored || !Array.isArray(stored.columns) || !Array.isArray(stored.rows)) {
-              tally.skipped += 1;
-              continue;
-            }
-            const original = typeof extras.original === "string" ? Buffer.from(extras.original, "base64") : undefined;
-            row.content_hash = await writeTable(accountId, String(row.id), stored, original);
-          }
           await tx.$executeRawUnsafe("SAVEPOINT transfer_row");
+          let outcome: RowOutcome;
           try {
-            await insert(tx, table, row);
+            outcome = await importRow(tx, table, shape, columns, source, accountId, known, result);
             await tx.$executeRawUnsafe("RELEASE SAVEPOINT transfer_row");
-            tally.added += 1;
           } catch {
             await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT transfer_row");
-            tally.skipped += 1;
+            outcome = { kind: "skipped" };
           }
+          if (outcome.kind === "skipped") {
+            tally.skipped += 1;
+            continue;
+          }
+          tally[outcome.kind] += 1;
+          for (const [from, to] of outcome.ids) {
+            known.set(from.toLowerCase(), to);
+            result.ids[from] = to;
+          }
+          result.patches.push(...outcome.patches);
         }
       }
     },

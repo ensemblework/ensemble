@@ -44,6 +44,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | Method | Route | Purpose |
 | --- | --- | --- |
 | POST | `/api/devices/pair`, `/api/devices/register` | Issue / redeem a pairing code |
+| GET | `/api/devices/self` | The paired computer's own id and the account it belongs to (device token) |
 | GET | `/api/devices` | The person's computers and capabilities |
 | PATCH / DELETE | `/api/devices/:id` | Rename / revoke an owned computer |
 | POST, GET | `/api/devices/:id/code`, `/api/devices/:id/terminal`, `/api/devices/:id/terminal/output` | Browser Code and terminal relay (§4.7) |

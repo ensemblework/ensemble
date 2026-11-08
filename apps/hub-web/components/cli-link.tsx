@@ -44,7 +44,9 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
   const fromApp = Boolean(request?.scopes.includes("web"));
   const approvedScopes = (request?.scopes ?? []).filter((scope) => scope !== "transfer" || moveData);
 
-  const canApproveMcpOnly = useMemo(() => Boolean(request?.scopes.includes("mcp") && request.scopes.includes("runner")), [request]);
+  /** Without a verified email: editor access (CLI) or the window sign-in (app), without running tasks or moving data. */
+  const unverifiedScopes = useMemo<CliAuthScope[]>(() => (request?.scopes ?? []).filter((scope) => scope === "mcp" || scope === "web"), [request]);
+  const canApproveMcpOnly = Boolean(request && unverifiedScopes.length && unverifiedScopes.length < request.scopes.length);
 
   async function load(nextCode = code) {
     const userCode = cleanCode(nextCode);
@@ -73,7 +75,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
 
   async function decide(decision: "approve" | "deny", scopes: CliAuthScope[]) {
     if (!loadedCode) return;
-    setActing(decision === "approve" && scopes.length === 1 && scopes[0] === "mcp" ? "mcp" : decision);
+    setActing(decision === "approve" && scopes.length === 1 && (scopes[0] === "mcp" || scopes[0] === "web") ? "mcp" : decision);
     setError(null);
     setEmailUnverified(false);
     try {
@@ -83,7 +85,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 403 && /EMAIL_UNVERIFIED/i.test(caught.message)) {
         setEmailUnverified(true);
-        setError("Verify your email before approving runner access for this computer.");
+        setError(fromApp ? "Verify your email before this computer runs tasks or moves its data into your account. You can sign the app in now and do that later." : "Verify your email before approving runner access for this computer.");
       } else {
         setError(caught instanceof Error ? caught.message : "Could not submit your decision.");
       }
@@ -148,8 +150,8 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
               {emailUnverified ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {canApproveMcpOnly ? (
-                    <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", ["mcp"])}>
-                      {acting === "mcp" ? "Approving…" : "Approve MCP only"}
+                    <button type="button" className="btn-primary" disabled={acting !== null || !confirmed} onClick={() => void decide("approve", unverifiedScopes)}>
+                      {acting === "mcp" ? "Approving…" : fromApp ? "Sign in without running tasks" : "Approve MCP only"}
                     </button>
                   ) : null}
                   <Link href="/verify" className="btn">

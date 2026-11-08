@@ -20,7 +20,7 @@ Local storage does not mean offline inference: model prompts go to the provider 
 
 ### 1.1 First run
 
-With no `mode.json`, the start page (`apps/desktop/ui/`) asks **With your Ensemble account** or **Only on this computer**. It says when the CLI already paired this computer, and how much data an earlier install keeps locally (`GET /api/desktop/account`). Choosing local only on a paired computer unpairs it after a confirmation (`POST /api/desktop/mode`).
+With no `mode.json`, the start page (`apps/desktop/ui/`) asks **With your Ensemble account** or **Only on this computer**. It says when this computer is already paired (by the CLI or an earlier version of the app), and how much data an earlier install keeps locally (`GET /api/desktop/account`). Choosing local only on a paired computer unpairs it after a confirmation (`POST /api/desktop/mode`).
 
 ### 1.2 Local only
 
@@ -35,7 +35,7 @@ With no `mode.json`, the start page (`apps/desktop/ui/`) asks **With your Ensemb
 
 Local only becomes an account once; an account never goes back to local only. Start it from Settings → Account (or the account menu), or choose **With your Ensemble account** on first run of a computer that has local data.
 
-1. The start page (`#account`) asks the runtime to sign in: `POST /api/desktop/account/sign-in` starts the browser approval (`/api/cli/auth/start`) with the scopes `web` (sign the window in), `runner` (pair, unless already paired with that server) and `transfer` (when there is local data and **Move this computer's data** stays ticked). The browser opens `/link`, where any sign-in method works; the person can untick the move there too.
+1. The start page (`#account`) asks the runtime to sign in: `POST /api/desktop/account/sign-in` starts the browser approval (`/api/cli/auth/start`) with the scopes `web` (sign the window in), `runner` (pair this computer) and `transfer` (when there is local data and **Move this computer's data** stays ticked). It signs in to the server this computer is already paired with, else `https://api.ensemblework.com`. The browser opens `/link`, where any sign-in method works; the person can untick the move there too. Without a verified email, `/link` offers **Sign in without running tasks** (`web` only); a move then stops with *Verify your email in Ensemble first* and nothing changes.
 2. After approval the runtime sends the local data with a one-purpose transfer key, writes `mode.json` (`account`, `switchedAt`), pairs, turns remote tasks on, and leaves the window a one-time link.
 3. The window opens `<app>/api/auth/handoff?code=…` (single use, 30 minutes), which starts a normal session and lands on Today.
 
@@ -43,7 +43,8 @@ What moves is listed in `TRANSFER_TABLES` (`apps/hub-api/src/transfer/schema.ts`
 
 The account receives rows with `POST /api/transfer/rows` and finishes with `POST /api/transfer/finish` (`transfer/import.ts`, `transfer/routes.ts`):
 
-- Rows keep their ids. Every column naming an account becomes the receiving account, a reference to another row stays only when that row is the account's, and an id another account already uses gets a new id (the computer rewrites its later rows).
+- Rows keep their ids. Every column naming an account becomes the receiving account, a reference to another row stays only when that row is the account's, and an id another account already uses, or that is not a plain id, gets a new id (the computer rewrites its later rows). Each row is its own savepoint: a row that fails is skipped and counted, and the batch goes on.
+- Files and datasets are measured on the account: size and hash come from the bytes received, a storage key from the computer is never kept, and the bytes go where the account keeps files. The computer asks `GET /api/transfer` for the largest file the account takes and leaves bigger files (and any row over 60 MB) in its local data, saying so.
 - Where the account already has the same thing, its row wins and the computer's values only fill what it left empty: a project with the same name, a person with the same email (or name), a repo, an item from the same connected app, a setting. A skill with the same slug but different text, and a board with the same title, are added beside it, marked *(from this computer)*. Today's tiles the account lacks are added to its layout. Appearance stays the account's.
 - Hosted file and dataset limits apply; what does not fit stays in the local data and the app says so. Scheduled routines arrive paused.
 - A transfer key (`scope: "transfer"`) reaches only `/api/transfer*`, works for 24 hours and is revoked by `/finish`. Retrying is safe: rows already moved are counted, not copied again.
@@ -56,7 +57,7 @@ The local database stays on the computer as the runner's.
 - On the account's pages `window.__ENSEMBLE_DESKTOP__` carries the version, platform and mode, without `apiBase`. Those pages may call `show_account`, `open_in_browser` and `install_update` (`capabilities/updates.json`), nothing else. The launch token stays on the bundled Hub's own origin (§3.1).
 - Signing in: the login page shows **Continue in your browser**, which opens the start page's sign-in (scope `web` alone once paired). Google, GitHub and Microsoft sign-in do not complete inside an embedded window.
 - Connecting an app (OAuth, or an MCP server's sign-in) opens the same Ensemble page in the system browser, where the connection finishes; the window shows it on return.
-- Pairing follows `ensemble login`: a computer already paired with that server (by the CLI or an earlier sign-in) keeps its device; another account signing in pairs it again for that account.
+- Pairing follows `ensemble login`: a computer already paired with that server for the same account (by the CLI or an earlier sign-in) keeps its device; another account signing in unpairs it and pairs it for that account. The runtime asks the server whose device it is (`GET /api/devices/self`) and compares it with the `accountId` of the sign-in.
 
 The paired sidecar reports `sessionDelete: 1`: Node's confirmed session deletion stops active jobs and removes the underlying coding agent's saved history, not project files or sign-ins. Its computer-side receipts make retries safe; native errors remain visible. Update and restart the desktop runtime before deleting sessions from the web. Native methods: [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card).
 

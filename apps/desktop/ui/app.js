@@ -153,7 +153,7 @@ async function showWelcome() {
   try {
     const account = await local("/api/desktop/account");
     const data = describeCounts(account.local);
-    if (account.paired) note.textContent = "This computer is already connected to Ensemble (the CLI paired it). Sign in to open your account here; tasks keep running on this computer either way.";
+    if (account.paired) note.textContent = `This computer is already connected to an Ensemble account (by the CLI or an earlier version of this app)${data ? `, and keeps some data locally: ${data}` : ""}. Sign in to open your account here; it stays one computer.`;
     else if (data) note.textContent = `This computer already has Ensemble data: ${data}. With an account you can move it in; local-only keeps it here.`;
   } catch (error) {
     status.textContent = messageOf(error);
@@ -323,7 +323,16 @@ async function leaveAccount() {
     account = null;
   }
   if (account && account.mode === "local") return invoke("open_local").catch((error) => showOffline(shell, messageOf(error)));
-  if (account && account.mode === "account" && shell) return connect(shell.url, false);
+  if (account && account.mode === "account") {
+    // The account's address, not the one this page started with: the first sign-in may have just set it.
+    if (account.appUrl) return invoke("open_app", { url: account.appUrl + "/today" }).catch((error) => showOffline({ ...(shell || {}), url: account.appUrl }, messageOf(error)));
+    try {
+      shell = await invoke("shell_state");
+    } catch (_) {
+      // keep the earlier state
+    }
+    if (shell) return connect(shell.url, false);
+  }
   return showWelcome();
 }
 

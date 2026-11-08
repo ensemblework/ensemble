@@ -263,6 +263,8 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
       canWrite,
       canUseApps,
       account: { email: row.user.email, name: row.user.name },
+      // The account a pairing from this exchange belongs to (the desktop app compares it with its current pairing).
+      accountId: userId,
       apiBase: requestedOrigin(request),
       appUrl: authWebOrigin(),
       ...(issued.pairing ? { pairingCode: issued.pairing.code, pairingExpiresAt: issued.pairing.expiresAt.toISOString() } : {}),

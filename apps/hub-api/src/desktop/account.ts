@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
+import { hostedClient } from "../remote/client.js";
 import { enableRemote, pairComputer, unpairComputer } from "../remote/routes.js";
 import { readDeviceToken, loadSettings } from "../remote/store.js";
 import { localDataCounts, sendLocalData, type TransferProgress } from "../transfer/export.js";
@@ -39,6 +40,8 @@ const TokenResponse = z.object({
   apiBase: z.string().optional(),
   appUrl: z.string().optional(),
   account: z.object({ email: z.string().nullable(), name: z.string().nullable() }).nullable().optional(),
+  accountId: z.string().optional(),
+  scopes: z.array(z.string()).optional(),
   pairingCode: z.string().optional(),
   webHandoff: z.string().optional(),
   transferToken: z.string().optional(),
@@ -106,6 +109,11 @@ async function accountState(app: FastifyInstance) {
 /** After the browser approves: move the data (when asked), remember the account, pair, and leave the window a sign-in link. */
 async function finishSignIn(app: FastifyInstance, base: string, token: z.infer<typeof TokenResponse>, signal: AbortSignal): Promise<void> {
   const previous = readMode();
+  const approved = token.scopes ?? [];
+  // Approved without running tasks (an unverified email): the move needs a verified account too. Nothing changes here yet.
+  if (previous.mode === "local" && current.move && !token.transferToken && !approved.includes("runner")) {
+    throw new Error("Verify your email in Ensemble first, then move this computer again. Nothing has changed here.");
+  }
   const apiBase = token.apiBase ? cleanBase(token.apiBase) : base;
   const appUrl = cleanBase(token.appUrl || apiBase.replace("://api.", "://app."));
   let moved: RuntimeMode["moved"] = previous.moved;
@@ -135,14 +143,22 @@ async function finishSignIn(app: FastifyInstance, base: string, token: z.infer<t
     ...(email ? { accountEmail: email } : {}),
     ...(moved ? { moved } : {}),
   });
+  if (!token.pairingCode && !approved.includes("runner")) {
+    current = { ...current, notes: [...(current.notes ?? []), "This computer is not running tasks for your account yet. Verify your email, then sign in again from the app."] };
+  }
   if (token.pairingCode) {
     current = { ...current, state: "pairing" };
     const settings = loadSettings();
-    const paired = Boolean((await readDeviceToken()) && settings.pairedAt);
-    const sameAccount = !previous.accountEmail || !email || previous.accountEmail.toLowerCase() === email.toLowerCase();
+    const deviceToken = await readDeviceToken();
+    const paired = Boolean(deviceToken && settings.pairedAt);
+    let sameAccount = !previous.accountEmail || !email || previous.accountEmail.toLowerCase() === email.toLowerCase();
+    if (paired && deviceToken && settings.apiBase === apiBase && token.accountId) {
+      const owner = await hostedClient(apiBase, deviceToken).owner?.().catch(() => null);
+      if (owner) sameAccount = owner === token.accountId;
+    }
     try {
       if (paired && settings.apiBase === apiBase && sameAccount) {
-        // The CLI runner (same data folder) already paired this computer: it is the same device.
+        // The CLI runner (same data folder) or an earlier sign-in already paired this computer with this account: it is the same device.
       } else {
         if (paired) await unpairComputer(app, app.log);
         await pairComputer(app, { apiBase, code: token.pairingCode, name: settings.deviceName || hostname() });
@@ -217,17 +233,19 @@ export async function desktopAccountRoutes(app: FastifyInstance): Promise<void> 
     requireApp(request.authVia);
     const body = z.object({ move: z.boolean().default(true), apiBase: z.string().max(300).optional() }).parse(request.body ?? {});
     if (["waiting", "moving", "pairing"].includes(current.state)) return accountState(app);
+    const settings = loadSettings();
+    // A computer the CLI already paired signs in to that same server.
+    const pairedBase = (await readDeviceToken()) && settings.pairedAt ? settings.apiBase : null;
     let base: string;
     try {
-      base = cleanBase(body.apiBase?.trim() || readMode().apiBase || process.env.ENSEMBLE_ACCOUNT_API?.trim() || DEFAULT_ACCOUNT_API);
+      base = cleanBase(body.apiBase?.trim() || readMode().apiBase || pairedBase || process.env.ENSEMBLE_ACCOUNT_API?.trim() || DEFAULT_ACCOUNT_API);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : "Use an https Ensemble address." });
     }
     const mode = readMode();
-    const settings = loadSettings();
-    const paired = Boolean((await readDeviceToken()) && settings.pairedAt && settings.apiBase === base);
     const move = body.move && mode.mode !== "account" && (await hasLocalData(app));
-    const scopes = ["web", ...(paired ? [] : ["runner"]), ...(move ? ["transfer"] : [])];
+    // Runner every time: the account signing in may not be the one this computer is paired with (finishSignIn keeps a matching pairing).
+    const scopes = ["web", "runner", ...(move ? ["transfer"] : [])];
     abort?.abort();
     abort = new AbortController();
     handoff = null;

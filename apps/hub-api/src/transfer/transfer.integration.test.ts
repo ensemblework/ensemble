@@ -154,6 +154,61 @@ test("a transfer refuses rows that reach into another account", async () => {
   assert.equal(unknown.statusCode, 400);
 });
 
+test("a transfer never trusts a row's storage: ids that are not plain get new ones, file sizes and keys come from the bytes", async () => {
+  const victim = await h.asUser();
+  const account = await h.asUser();
+  const key = await h.asToken(account, "transfer");
+  const hex = Buffer.from("hello").toString("hex");
+  const response = await key.inject({
+    method: "POST",
+    url: "/api/transfer/rows",
+    payload: {
+      batch: [
+        { table: "plot_datasets", rows: [{ id: `../${victim.id}/escape`, user_id: account.id, name: "d", format: "csv", columns: [], row_count: 1, byte_size: 0, content_hash: "x", sheet: "", sheets: [], $table: { columns: [{ name: "a", type: "number" }], rows: [[1]] } }] },
+        {
+          table: "context_documents",
+          rows: [
+            { id: "3f1e2d4c-5b6a-4789-8abc-def012345678", filename: "note.txt", media_type: "text/plain", byte_size: 0, sha256: "fake", format: "text", original: `\\x${hex}`, blob_key: `documents/${victim.id}/x/y` },
+            { id: "4f1e2d4c-5b6a-4789-8abc-def012345678", filename: "theirs.txt", media_type: "text/plain", byte_size: 5, sha256: "x", format: "text", original: null, blob_key: `documents/${victim.id}/x/y` },
+          ],
+        },
+        { table: "people", rows: [{ id: "5f1e2d4c-5b6a-4789-8abc-def012345678", name: "Fails later", email: "fails@fieldnote.dev" }] },
+      ],
+    },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const body = response.json<{ ids: Record<string, string>; counts: Record<string, { added: number; skipped: number }> }>();
+  const datasetId = body.ids[`../${victim.id}/escape`];
+  assert.match(datasetId ?? "", /^[0-9a-f-]{36}$/, "a path-like id is replaced");
+  const dataset = await db.plotDataset.findUniqueOrThrow({ where: { id: datasetId } });
+  assert.equal(dataset.userId, account.id);
+  assert.ok(dataset.byteSize > 0, "the dataset's size is measured here");
+  const file = await db.document.findUniqueOrThrow({ where: { id: "3f1e2d4c-5b6a-4789-8abc-def012345678" } });
+  assert.equal(file.blobKey, null, "a storage key from the computer is never kept");
+  assert.equal(file.byteSize, 5);
+  assert.equal(file.sha256, createHash("sha256").update("hello").digest("hex"));
+  assert.equal(body.counts.context_documents?.skipped, 1, "a file without its bytes stays behind");
+  assert.equal(body.counts.people?.added, 1, "the rest of the batch goes on");
+});
+
+test("a merge that cannot fill a value does not stop the batch", async () => {
+  const account = await h.asUser();
+  await db.person.create({ data: { userId: account.id, name: "Mira Chen", email: "mira@fieldnote.dev" } });
+  await db.person.create({ data: { userId: account.id, name: "Someone else", upn: "mira@corp" } });
+  const key = await h.asToken(account, "transfer");
+  const response = await key.inject({
+    method: "POST",
+    url: "/api/transfer/rows",
+    payload: { batch: [{ table: "people", rows: [{ id: "6f1e2d4c-5b6a-4789-8abc-def012345678", name: "Mira", email: "mira@fieldnote.dev", upn: "mira@corp", role: "Lead" }, { id: "7f1e2d4c-5b6a-4789-8abc-def012345678", name: "Rafa" }] }] },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  const counts = response.json<{ counts: Record<string, { added: number; merged: number }> }>().counts.people;
+  assert.deepEqual([counts?.merged, counts?.added], [1, 1]);
+  const mira = await db.person.findFirstOrThrow({ where: { userId: account.id, email: "mira@fieldnote.dev" } });
+  assert.equal(mira.upn, null, "a value another of the account's rows already holds is not copied");
+  assert.equal(mira.role, "Lead");
+});
+
 test("a transfer key reaches only the transfer routes, and nothing else reaches them", async () => {
   const account = await h.asUser();
   const key = await h.asToken(account, "transfer");

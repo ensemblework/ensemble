@@ -10,6 +10,15 @@ import { quoteIdent, remapIds, shapeOf, TRANSFER_TABLES, type TableShape, type T
 
 const BATCH_BYTES = 4 * 1024 * 1024;
 const BATCH_ROWS = 400;
+/** Under the account's request limit for one batch (routes.ts), with room for the rest of the request. */
+export const MAX_ROW_JSON = 60 * 1024 * 1024;
+
+export type ExportLimits = {
+  /** The account's largest file; bigger files stay on the computer. */
+  maxFileBytes?: number;
+  /** Called once per row that stays behind, with a sentence for the person. */
+  onLeftBehind?: (note: string) => void;
+};
 
 /** `FROM <table> t` and the condition that keeps one account's rows, through the parent when the table has no account column. */
 function scope(shape: TableShape): { joins: string; where: string } {
@@ -58,7 +67,7 @@ export async function localDataCounts(db: PrismaClient, userId: string): Promise
 }
 
 /** Every moved row, table by table, in request-sized batches. A dataset row carries its table and original. */
-export async function* exportBatches(db: PrismaClient, userId: string): AsyncGenerator<TransferBatch[]> {
+export async function* exportBatches(db: PrismaClient, userId: string, limits: ExportLimits = {}): AsyncGenerator<TransferBatch[]> {
   let batch: TransferBatch[] = [];
   let bytes = 0;
   let rows = 0;
@@ -74,7 +83,15 @@ export async function* exportBatches(db: PrismaClient, userId: string): AsyncGen
           continue;
         }
       }
+      if (table === "context_documents" && limits.maxFileBytes && Number(row.byte_size ?? 0) > limits.maxFileBytes) {
+        limits.onLeftBehind?.(`Files larger than ${Math.round(limits.maxFileBytes / (1024 * 1024))} MB stay in this computer's local data; your account does not take them.`);
+        continue;
+      }
       const size = JSON.stringify(row).length;
+      if (size > MAX_ROW_JSON) {
+        limits.onLeftBehind?.(table === "context_documents" ? "Some very large files stay in this computer's local data." : "Some very large items stay in this computer's local data.");
+        continue;
+      }
       if (rows && (bytes + size > BATCH_BYTES || rows >= BATCH_ROWS)) {
         yield batch;
         batch = [];
@@ -137,7 +154,19 @@ export async function sendLocalData(input: {
     }
     throw lastError instanceof Error ? lastError : new Error("Could not reach your Ensemble account.");
   };
-  for await (const batch of exportBatches(input.db, input.userId)) {
+  const accountLimits = async () => {
+    try {
+      const response = await send(`${input.apiBase}/api/transfer`, { headers: { authorization: `Bearer ${input.token}` }, signal: AbortSignal.timeout(30_000) });
+      return response.ok ? ((await response.json()) as { maxFileBytes?: number }) : {};
+    } catch {
+      return {};
+    }
+  };
+  const limits = await accountLimits();
+  const leftBehind = (text: string) => {
+    if (!progress.notes.includes(text)) progress.notes.push(text);
+  };
+  for await (const batch of exportBatches(input.db, input.userId, { maxFileBytes: typeof limits.maxFileBytes === "number" ? limits.maxFileBytes : undefined, onLeftBehind: leftBehind })) {
     const body = { batch: batch.map((part) => ({ table: part.table, rows: part.rows.map((row) => remapIds(row, ids)) })) };
     const result = (await post("/api/transfer/rows", body)) as TransferResult;
     for (const [from, to] of Object.entries(result.ids ?? {})) ids.set(from.toLowerCase(), to);
