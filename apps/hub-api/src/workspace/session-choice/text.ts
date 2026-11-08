@@ -121,10 +121,13 @@ const PATH_RE = new RegExp(`(?:[\\w.@-]+\\/)+[\\w.@-]+|\\b[\\w-]+\\.(?:${FILE_EX
 const CODE_RE = /\b[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)+\b|\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
 const REF_RE = /(?:^|[^\w&])#(\d{1,7})\b|\b([A-Z][A-Z0-9]{1,9}-\d{1,7})\b/g;
 const SEGMENT = /[.!?;:\n\r]+/;
+/** Unbroken runs this long (pasted data, base64) are no path or word, and would make the patterns slow. */
+const LONG_TOKEN = /\S{300,}/g;
 
 /** Exact things in a text another text can share, in one lower-case form. */
-export function anchorsOf(text: string): Set<string> {
+export function anchorsOf(input: string): Set<string> {
   const out = new Set<string>();
+  const text = input.replace(LONG_TOKEN, " ");
   for (const match of text.matchAll(URL_RE)) {
     const url = match[0].replace(/[.,]+$/, "");
     try {
@@ -152,7 +155,7 @@ export function anchorsOf(text: string): Set<string> {
  * add their words too (rateLimiter is about rate and limiting).
  */
 function wordsText(text: string): string {
-  return text.replace(URL_RE, " ").replace(PATH_RE, " ").replace(REF_RE, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
+  return text.replace(LONG_TOKEN, " ").replace(URL_RE, " ").replace(PATH_RE, " ").replace(REF_RE, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ");
 }
 
 /** Stems of a text's meaningful words, with each two neighbours as a phrase (`a b`). */

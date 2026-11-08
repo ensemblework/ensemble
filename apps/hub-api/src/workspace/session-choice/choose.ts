@@ -1,8 +1,8 @@
 /**
  * Choosing a session (docs/30, Choosing a session), on the computer that runs the agent: which of this
  * computer's agent sessions, if any, a new run continues. Candidates are the sessions of the same agent
- * here that are idle, resumable, not chats, active within `maxAgeDays`, and whose every task is in the new
- * task's project (or all in none): sessions never cross projects. Each gets signals (links, structure,
+ * here that are idle, resumable, not chats, active within `maxAgeDays`, and whose every task is of the new
+ * task's space and account and in its project (or all in none): sessions never cross spaces or projects. Each gets signals (links, structure,
  * anchors, topic, wording, cache, size: score.ts), a score and a band; the best confident one is
  * continued. Every decision is recorded with all candidates' signals (`SessionChoice`).
  *
@@ -14,7 +14,7 @@ import type { CodeEngine } from "@ensemble/shared-types";
 import { jobOrigin } from "../../remote/origin.js";
 import { listSessionGroups, type AgentSession, type SessionScope } from "../sessions.js";
 import { configHash, type SessionChoiceConfig } from "./config.js";
-import { parseFacts, type TaskFacts } from "./related.js";
+import { LOCAL_SPACE, parseFacts, type TaskFacts } from "./related.js";
 import { decide, scoreCandidate, type Band, type LinkReason, type Scored, type Signals } from "./score.js";
 import { buildCorpus, featuresOf, similarity, surfaceForms, type Corpus, type TextFeatures } from "./text.js";
 
@@ -95,7 +95,7 @@ function runFacts(row: RunRow): TaskFacts | null {
   const kept = parseFacts((row.context as { taskFacts?: unknown } | null)?.taskFacts);
   if (kept) return kept;
   if (jobOrigin(row.context) === "web") return null;
-  return { key: row.task.id, projectId: row.task.projectId, deliverableId: row.task.deliverableId, meetingId: row.task.meetingNoteId, parentPageId: row.task.page?.parentId ?? null, labels: row.task.labels, named: [] };
+  return { key: row.task.id, space: LOCAL_SPACE, runner: null, projectId: row.task.projectId, deliverableId: row.task.deliverableId, meetingId: row.task.meetingNoteId, parentPageId: row.task.page?.parentId ?? null, labels: row.task.labels, named: [] };
 }
 
 const filesOf = (evidence: unknown): string[] => {
@@ -156,8 +156,9 @@ export async function chooseSession(
   const prepared: Array<{ session: AgentSession; runs: Array<{ row: RunRow; facts: TaskFacts }>; text: TextFeatures }> = [];
   for (const { session, runIds: ids } of groups) {
     const runs = ids.map((id) => byId.get(id)).filter((row): row is RunRow => Boolean(row)).map((row) => ({ row, facts: runFacts(row) }));
-    // Never across projects, and not with runs whose project is unknown here.
-    if (!runs.length || runs.some((run) => !run.facts || run.facts.projectId !== task.facts.projectId)) continue;
+    // Never across spaces, accounts or projects, and not with runs whose owner or project is unknown here.
+    const foreign = (facts: TaskFacts | null) => !facts || !facts.space || facts.space !== task.facts.space || facts.runner !== task.facts.runner || facts.projectId !== task.facts.projectId;
+    if (!task.facts.space || !runs.length || runs.some((run) => foreign(run.facts))) continue;
     let budget = config.limits.sessionChars;
     const fields: Array<{ text: string; weight: number }> = [];
     const push = (text: string, weight: number) => {

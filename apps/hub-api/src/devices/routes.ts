@@ -493,7 +493,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const ownAgent = next.kind === "code" && isCodeEngine(next.provider) && runContext.chat !== true && !runContext.node && !missionOf(next.context);
       const runSettings = ownAgent ? await loadSettings(prisma, next.userId) : null;
       const project = runSettings && next.task.projectId && runSettings.orchestration.projectFolders !== false ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null) : null;
-      const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions).catch(() => null) : null;
+      const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions, { space: next.userId, runner: next.runnerAccountId }).catch(() => null) : null;
       const choiceConfig = runSettings ? await activeConfig(app.log) : null;
       const description = [
         page ? `${PAGE_HEADING}\n${page}` : "",

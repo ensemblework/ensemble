@@ -14,6 +14,12 @@ const id = z.string().min(1).max(100);
 export const TaskFacts = z.object({
   /** The task's id where links to it point: the web's for a run claimed from there. */
   key: id,
+  /**
+   * Whose records it is: the web space a claimed run came from, and the account it runs for there (in a space
+   * shared with the computer's owner); `local` for this computer's own tasks. Sessions never cross them.
+   */
+  space: id.nullable().default(null),
+  runner: id.nullable().default(null),
   projectId: id.nullable().default(null),
   deliverableId: id.nullable().default(null),
   meetingId: id.nullable().default(null),
@@ -49,8 +55,14 @@ export async function namedTasks(prisma: PrismaClient, userId: string, task: { i
   return [...found.entries()].filter(([value]) => ids.has(value)).map(([value, reason]) => ({ id: value, reason })).slice(0, 100);
 }
 
-/** A task's facts from this database (the web's for a claim, or this computer's own task). */
-export async function factsOf(prisma: PrismaClient, userId: string, taskId: string, instructions = ""): Promise<TaskFacts | null> {
+/** This computer's own tasks are one space of their own: never matched with runs claimed from the web. */
+export const LOCAL_SPACE = "local";
+
+/**
+ * A task's facts from this database: the web's for a claim (`owner`: the space and the account the run is
+ * for), or this computer's own task (`LOCAL_SPACE`).
+ */
+export async function factsOf(prisma: PrismaClient, userId: string, taskId: string, instructions = "", owner: { space: string; runner: string | null } = { space: userId, runner: null }): Promise<TaskFacts | null> {
   const task = await prisma.task.findFirst({
     where: { id: taskId, userId },
     select: { id: true, projectId: true, deliverableId: true, meetingNoteId: true, labels: true, dependsOn: true, description: true, notes: true, page: { select: { parentId: true } } },
@@ -58,6 +70,8 @@ export async function factsOf(prisma: PrismaClient, userId: string, taskId: stri
   if (!task) return null;
   return {
     key: task.id,
+    space: owner.space,
+    runner: owner.runner,
     projectId: task.projectId,
     deliverableId: task.deliverableId,
     meetingId: task.meetingNoteId,

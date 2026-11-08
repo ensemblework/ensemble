@@ -106,7 +106,7 @@ test("on the computer, a new run continues the session that fits it: a link, sha
   await db.workspaceJob.update({ where: { id: first.id }, data: { summary: "Built the ranking API with BM25: rankResults in src/ranking/api.ts.", evidence: { files: [{ path: "src/ranking/api.ts" }, { path: "package.json" }] } } });
   const choose = async (taskId: string, extra: { newSession?: boolean } = {}) => {
     const task = await db.task.findUniqueOrThrow({ where: { id: taskId } });
-    return chooseSession(db, scope, { task: { facts: (await factsOf(db, user.id, taskId))!, title: task.title, description: task.description, notes: task.notes, instructions: "" }, engine: "claude-code", config, ...extra });
+    return chooseSession(db, scope, { task: { facts: (await factsOf(db, user.id, taskId, "", { space: "local", runner: null }))!, title: task.title, description: task.description, notes: task.notes, instructions: "" }, engine: "claude-code", config, ...extra });
   };
 
   const a = await db.task.create({ data: { userId: user.id, title: "Add paging", description: `Page the results of ensemble://task/${b.id}.`, createdBy: "me", projectId: atlas.id } });
@@ -145,6 +145,20 @@ test("on the computer, a new run continues the session that fits it: a link, sha
   assert.equal(fresh.note, "new-session");
   assert.equal(fresh.band, "confident", "what it would have chosen is still recorded");
 
+  // Runs claimed from one web space never match a task of another space, or this computer's own tasks.
+  const claimedTask = await db.task.create({ data: { userId: user.id, title: "Ship the invoice export", createdBy: "me" } });
+  const claimedRun = await ranOn(user.id, claimedTask.id, null);
+  await db.workspaceJob.update({ where: { id: claimedRun.id }, data: { context: { origin: "web", hostedJobId: randomUUID(), taskFacts: { key: "web-task-1", space: "space-a", runner: null, projectId: null } } } });
+  const fromSpace = (space: string) =>
+    chooseSession(db, scope, { task: { facts: { key: "web-task-2", space, runner: null, projectId: null, deliverableId: null, meetingId: null, parentPageId: null, labels: [], named: [{ id: "web-task-1", reason: "mention" }] }, title: "Add CSV to the invoice export", description: "", notes: "", instructions: "" }, engine: "claude-code", config });
+  assert.equal((await fromSpace("space-a")).session?.id, claimedRun.id, "the same space continues it");
+  const otherSpace = await fromSpace("space-b");
+  assert.equal(otherSpace.decision, "new", "another space never does");
+  assert.equal((otherSpace.record.candidates as unknown[]).length, 0);
+  const local = await db.task.create({ data: { userId: user.id, title: "Add CSV to the invoice export", description: "Mentions ensemble://task/web-task-1", createdBy: "me" } });
+  assert.notEqual((await choose(local.id)).session?.id, claimedRun.id, "nor this computer's own tasks");
+  await db.workspaceJob.update({ where: { id: claimedRun.id }, data: { status: "cancelled" } });
+
   await db.workspaceEvent.create({ data: { jobId: first.id, kind: "engine_context", data: { size: 200_000, used: 170_000 } } });
   const full = await choose(a.id);
   assert.equal(full.decision, "new");
@@ -171,6 +185,7 @@ test("a claim carries what the computer chooses with, and its report links the r
   assert.equal(spec.continueFromJobId, null, "the web leaves the session to the computer");
   assert.deepEqual(spec.related?.named, [{ id: b.id, reason: "link" }]);
   assert.equal(spec.related?.projectId, project.id);
+  assert.equal((spec.related as { space?: string } | undefined)?.space, user.id, "the claim says whose records the task is");
   assert.equal(spec.sessionChoice?.enabled, true);
   assert.equal(spec.newSession, undefined);
 

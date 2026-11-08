@@ -22,7 +22,7 @@ import { trustChanged } from "./trust-share.js";
 import { resolveSession } from "./sessions.js";
 import { chooseSession, type Choice } from "./session-choice/choose.js";
 import { activeConfig, type SessionChoiceConfig } from "./session-choice/config.js";
-import { factsOf, type TaskFacts } from "./session-choice/related.js";
+import { factsOf, LOCAL_SPACE, type TaskFacts } from "./session-choice/related.js";
 import { jobOrigin } from "../remote/origin.js";
 import { agentProjectOf, projectBrief, projectFolder, type AgentProject } from "./agent-projects.js";
 import { currentDevice } from "../devices/successor.js";
@@ -436,7 +436,7 @@ async function chooseFor(prisma: PrismaClient, userId: string, task: AssignTask,
   // A claim carries the web's setting in its config; a run of this computer's own follows its settings.
   if (!config.enabled || (!claimed && !linkedSessions)) return null;
   // A claim's facts are the web's (this computer has no copy of the account's records); without them, no choice.
-  const facts = claimed ? claimed.facts : jobOrigin(options.context) === "web" ? null : await factsOf(prisma, userId, task.id, input.instructions);
+  const facts = claimed ? claimed.facts : jobOrigin(options.context) === "web" ? null : await factsOf(prisma, userId, task.id, input.instructions, { space: LOCAL_SPACE, runner: null });
   if (!facts) return null;
   return chooseSession(prisma, { space: userId, runner: actorFor(userId) }, {
     task: { facts, title: task.title, description: task.description, notes: task.notes, instructions: input.instructions },
