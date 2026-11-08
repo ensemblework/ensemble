@@ -112,7 +112,7 @@ export async function createProposals(userId: string, proposals: Proposal[], via
         sourceUrl: proposal.sourceUrl ?? null,
         excerpt: proposal.excerpt ?? null,
         status: "proposed",
-        owner: "unassigned",
+        owner: proposal.owner ?? "unassigned",
         priority: proposal.priority,
         due: proposal.due ?? null,
         people: proposal.people ?? [],
@@ -130,7 +130,7 @@ export async function createProposals(userId: string, proposals: Proposal[], via
       await prisma.artifact.update({ where: { id: proposal.artifactId }, data: { taskId: task.id } }).catch(() => undefined);
     }
     await prisma.taskTransition.create({
-      data: { userId, taskId: task.id, toStatus: "proposed", toOwner: "unassigned", actor: "agent", reason: `fetch:${via}` },
+      data: { userId, taskId: task.id, toStatus: "proposed", toOwner: proposal.owner ?? "unassigned", actor: "agent", reason: `fetch:${via}` },
     });
     created += 1;
   }
