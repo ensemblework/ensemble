@@ -7,6 +7,7 @@
  *
  * `queueMeetingAi` marks a note; the worker (`startMeetingAi`) claims queued notes a few at a time.
  */
+import { writeAgentBlock } from "../../pages/markdown.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -552,6 +553,8 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
   const items: AiItem[] = [];
   const proposals: Proposal[] = [];
   const refs = new Map<AiItem, string>();
+  // Existing work the meeting asked about again: the new ask goes on that task's page.
+  const reasked: Array<{ taskId: string; key: string; markdown: string }> = [];
   const asked = parsed.decisions;
   for (const item of parsed.items) {
     const mine = !item.owner || isMe(item.owner, me);
@@ -570,8 +573,10 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
       : undefined;
     const twin = made.find((task) => overlap(task.words, words(title)) >= 0.6 || overlap(task.words, words(item.title)) >= 0.6);
     const already = tracked ?? twin;
+    const askerName = asker?.name ?? (item.requestedBy && isMe(item.requestedBy, me) ? "me" : null);
     if (already) {
       row.alreadyTracked = already.id;
+      if (tracked && !twin && grounded) reasked.push({ taskId: tracked.id, key: itemKey(item.title), markdown: description({ noteId: note.id, title: note.title, date: context.date, item: row, asker: askerName, decisions: asked }) });
       continue;
     }
     const key = itemKey(item.title);
@@ -579,7 +584,6 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
     seen.add(key);
     const sourceRef = `meeting-ai:${note.id}:${key}`;
     refs.set(row, sourceRef);
-    const askerName = asker?.name ?? (item.requestedBy && isMe(item.requestedBy, me) ? "me" : null);
     const peopleIds = [owner, asker].flatMap((person) => (person ? [person.id ?? person.name] : []));
     proposals.push({
       sourceRef,
@@ -592,6 +596,8 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
       due: triageDueInstant(item.due, null, settings.timezone),
       people: [...new Set(peopleIds)],
       labels: kind === "follow_up" ? ["waiting-on"] : kind === "deliverable" ? ["deliverable"] : [],
+      // The meeting asked me: my work. Someone else's stays unassigned, labelled waiting-on.
+      owner: mine ? "me" : "unassigned",
       artifactId: note.transcriptArtifactId ?? note.eventArtifactId ?? note.id,
       linkArtifact: false,
       meetingNoteId: note.id,
@@ -601,6 +607,10 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
   }
 
   const created = proposals.length ? await createProposals(note.userId, proposals, "model") : 0;
+  for (const update of reasked) {
+    // One block per meeting and item, replaced when the meeting is read again (pages/markdown.ts).
+    await writeAgentBlock(db, note.userId, update.taskId, update.markdown, { jobId: `meeting-ai:${note.id}:${update.key}`, runId: null, model: reply.model ?? "", title: `Asked again in ${note.title}` }).catch(() => undefined);
+  }
   if (refs.size) {
     const tasks = await db.task.findMany({ where: { userId: note.userId, deletedAt: null, sourceRef: { in: [...refs.values()] } }, select: { id: true, sourceRef: true } });
     const byRef = new Map(tasks.map((task) => [task.sourceRef, task.id]));

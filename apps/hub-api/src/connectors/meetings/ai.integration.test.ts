@@ -74,6 +74,8 @@ test("a meeting's AI pass proposes only grounded, untracked work, carrying who a
   assert.deepEqual(tasks.map((task) => task.title), ["Omar: Share the load-test numbers", "Send Priya the latency budget"]);
   const [follow, mine] = tasks;
   assert.equal(mine!.status, "proposed");
+  assert.equal(mine!.owner, "me");
+  assert.equal(follow!.owner, "unassigned");
   assert.equal(mine!.projectId, atlas.id, "the model's project applies to a meeting with none");
   assert.ok(mine!.people.includes(priya.id), "the person who asked is on the task");
   assert.match(mine!.page?.notesSnapshot ?? "", /could you send me the latency budget by Friday/);
@@ -88,6 +90,9 @@ test("a meeting's AI pass proposes only grounded, untracked work, carrying who a
   assert.equal(ai.items.length, 4);
   assert.equal(ai.items.find((item) => item.title.startsWith("Book"))!.grounded, false, "an unquoted item is kept for review but not proposed");
   assert.equal(ai.items.find((item) => item.title.startsWith("Write"))!.alreadyTracked, report.id);
+  // The existing task hears about it: the new ask, with its words, goes on its page.
+  const reportPage = await db.taskPage.findFirst({ where: { taskId: report.id }, select: { searchText: true } });
+  assert.match(reportPage?.searchText ?? "", /I will also write the Atlas latency report/);
   assert.equal(ai.newPeople.length, 1);
   assert.equal(await db.notification.count({ where: { userId, kind: "meeting_tasks" } }), 1);
 

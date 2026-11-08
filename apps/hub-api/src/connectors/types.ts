@@ -31,6 +31,8 @@ export interface Proposal {
   linkArtifact?: boolean;
   /** Task labels, such as `waiting-on` for work asked of someone else. */
   labels?: string[];
+  /** `me` when the source says the work is the person's own (a meeting asked them). Default unassigned. */
+  owner?: "me" | "unassigned";
 }
 
 export interface SyncResult {
