@@ -10,6 +10,7 @@ import { ProfileForm } from "@/components/profile-form";
 import { useToast } from "@/components/toast";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
+import { showAppAccountScreen } from "@/lib/native-app";
 import { Modal } from "./modal";
 import { BrandLogo } from "../connectors/brand-logo";
 import { InfoTip, SectionCard } from "../ui";
@@ -134,12 +135,23 @@ export function AccountSection() {
   });
   if (!me.data) return null;
   const local = me.data.via === "bypass" || me.data.via === "desktop";
+  const localOnly = Boolean(me.data.localOnly);
   return (
     <SectionCard
       title="Account"
-      description={local ? "You’re using Ensemble on this computer." : `Signed in as ${me.data.user.email}.`}
+      description={
+        localOnly
+          ? "Ensemble keeps everything on this computer: no account, and Ensemble's servers are never used. Moving to your Ensemble account adds this computer's data to it and keeps it in sync with the web app and your other devices. That move happens once."
+          : local
+            ? "You’re using Ensemble on this computer."
+            : `Signed in as ${me.data.user.email}.`
+      }
       actions={
-        local ? (
+        localOnly ? (
+          <button type="button" className="btn-primary" onClick={() => void showAppAccountScreen()}>
+            Move to your Ensemble account
+          </button>
+        ) : local ? (
           <a className="btn-primary" href="/signup">
             Create account
           </a>

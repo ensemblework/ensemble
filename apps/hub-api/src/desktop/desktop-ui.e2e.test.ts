@@ -62,7 +62,8 @@ async function serveExport(root: string): Promise<{ origin: string; close: () =>
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
-    origin: `http://127.0.0.1:${port}`,
+    // The init script only runs on the bundled Hub's own origin; Chromium sends *.localhost to loopback.
+    origin: `http://ensemble.localhost:${port}`,
     close: () => new Promise((resolve) => {
       server.closeAllConnections();
       server.close(() => resolve());

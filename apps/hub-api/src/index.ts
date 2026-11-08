@@ -115,6 +115,8 @@ export async function startHub(): Promise<HubServer> {
   const bound = app.server.address();
   const port = bound && typeof bound === "object" ? bound.port : env.HUB_API_PORT;
   setLocalPort(port);
+  // A computer's runtime listens on a random port: connected apps' sign-ins return here (loopback redirect).
+  if (desktop && !process.env.HUB_API_PUBLIC_URL?.trim()) process.env.HUB_API_PUBLIC_URL = `http://127.0.0.1:${port}`;
   // Folders trusted here are trusted in the person's other AI tools too (on their own computer only).
   trustChanged(prisma, app.log);
   const token = process.env.ENSEMBLE_DESKTOP_TOKEN;

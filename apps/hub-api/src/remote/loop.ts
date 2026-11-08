@@ -8,6 +8,7 @@
  * fallback while the stream is down.
  * Quit and sleep do not start a job again.
  */
+import { localOnly } from "../desktop/mode.js";
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { env } from "../config.js";
@@ -214,7 +215,7 @@ async function run(app: FastifyInstance, signal: AbortSignal): Promise<void> {
     const settings = loadSettings();
     const token = await readDeviceToken();
     const base = activeBase(settings);
-    if (!settings.enabled || settings.disconnected || !token || !base) {
+    if (!settings.enabled || settings.disconnected || !token || !base || localOnly()) {
       await sleep(400, signal);
       continue;
     }

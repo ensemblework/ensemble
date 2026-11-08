@@ -10,6 +10,8 @@ export type BridgeAuth =
 const DEFAULT_INTERNAL = "dev-internal-token";
 
 export interface BridgeConfig {
+  /** The URL and token came from the desktop app's discovery file: read it again before each call (a restarted app has a new port and token). */
+  discovered?: boolean;
   hubUrl: string;
   auth: BridgeAuth;
   httpHost: string;
@@ -45,10 +47,13 @@ export function loadBridgeConfig(env: NodeJS.ProcessEnv = process.env): BridgeCo
         : `http://${env.HUB_API_HOST ?? "127.0.0.1"}:${env.HUB_API_PORT ?? "4000"}`
   ).replace(/\/$/, "");
   let auth = resolveAuth(env);
+  let discovered = false;
   if (auth.kind === "missing" && discovery && !env.ENSEMBLE_BRIDGE_TOKEN?.trim() && !explicit) {
     auth = { kind: "bearer", token: discovery.token };
+    discovered = true;
   }
   return {
+    ...(discovered ? { discovered } : {}),
     hubUrl,
     auth,
     httpHost: env.CONTEXT_BRIDGE_HOST ?? "127.0.0.1",
@@ -102,4 +107,10 @@ export function assertLoopbackHost(host: string): void {
       `Context Bridge HTTP transport only binds to loopback (127.0.0.1, localhost, ::1). Refusing "${host}".`,
     );
   }
+}
+
+/** The desktop app's current port and launch token, for a bridge that found it through the discovery file. */
+export function rediscover(env: NodeJS.ProcessEnv = process.env): { hubUrl: string; token: string } | null {
+  const discovery = readDiscovery(env);
+  return discovery ? { hubUrl: `http://127.0.0.1:${discovery.port}`, token: discovery.token } : null;
 }

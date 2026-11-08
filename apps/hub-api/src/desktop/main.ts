@@ -35,6 +35,7 @@ process.env.REDIS_URL ??= "memory://desktop";
 const dataDir =
   process.env.ENSEMBLE_DATA_DIR?.trim() || join(desktopDataDir({ platform: process.platform, home: homedir(), env: process.env }), "pglite");
 mkdirSync(dataDir, { recursive: true });
+process.env.ENSEMBLE_APP_DATA_DIR ||= dirname(dataDir);
 // The workspace is the same for both too. /tmp is cleared on reboot, so it is never the default here.
 process.env.ENSEMBLE_WORKSPACE_ROOT ||= join(homedir(), "ensemble-workspace");
 

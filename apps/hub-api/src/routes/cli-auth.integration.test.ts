@@ -44,7 +44,7 @@ async function inject(method: InjectOptions["method"], url: string, check: Route
   return response;
 }
 
-async function start(scopes: Array<"mcp" | "runner">, clientName = "VS Code") {
+async function start(scopes: Array<"mcp" | "runner" | "web" | "transfer">, clientName = "VS Code") {
   const response = await inject("POST", "/api/cli/auth/start", "happy-path", {
     payload: { clientName, platform: "darwin", version: "0.1.0", scopes },
   });
@@ -59,7 +59,7 @@ async function start(scopes: Array<"mcp" | "runner">, clientName = "VS Code") {
   }>();
 }
 
-async function approve(user: HttpUser, userCode: string, scopes: Array<"mcp" | "runner">, decision: "approve" | "deny" = "approve", check: RouteCheck = "happy-path") {
+async function approve(user: HttpUser, userCode: string, scopes: Array<"mcp" | "runner" | "web" | "transfer">, decision: "approve" | "deny" = "approve", check: RouteCheck = "happy-path") {
   const response = await inject("POST", "/api/cli/auth/approve", check, {
     headers: { cookie: user.cookie },
     payload: { userCode, scopes, decision },
@@ -213,4 +213,40 @@ test("bearer tokens cannot approve a CLI login request", async () => {
   });
   assert.equal(rejected.statusCode, 403, rejected.body);
   assert.equal(rejected.json().error, BROWSER_SESSION_REQUIRED);
+});
+
+test("the desktop app's sign-in: pairing, a one-time window handoff and a transfer key, but no editor key", async () => {
+  const user = await harness.asUser("cli-desktop@example.test");
+  await harness.prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+  const started = await start(["runner", "web", "transfer"], "Mira's laptop");
+  assert.equal((await approve(user, started.userCode, ["runner", "web", "transfer"])).statusCode, 200);
+  const exchanged = await token(started.deviceCode);
+  assert.equal(exchanged.statusCode, 200, exchanged.body);
+  const body = exchanged.json<{ token: string | null; pairingCode?: string; webHandoff?: string; transferToken?: string }>();
+  assert.equal(body.token, null, "no editor key unless editor access was asked for");
+  assert.ok(body.pairingCode);
+  assert.ok(body.webHandoff && body.transferToken);
+  assert.equal(await harness.prisma.apiToken.count({ where: { userId: user.id, scope: "bridge" } }), 0);
+
+  const handed = await harness.app.inject({ method: "GET", url: `/api/auth/handoff?code=${encodeURIComponent(body.webHandoff)}&to=/pages` });
+  assert.equal(handed.statusCode, 302);
+  assert.equal(handed.headers.location, "http://hub.example.test/pages");
+  const cookies = ([] as string[]).concat(handed.headers["set-cookie"] ?? []);
+  const session = cookies.find((cookie) => /session/.test(cookie))!.split(";")[0]!;
+  const me = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: session } });
+  assert.equal(me.json<{ user: { email: string } }>().user.email, "cli-desktop@example.test");
+  const reused = await harness.app.inject({ method: "GET", url: `/api/auth/handoff?code=${encodeURIComponent(body.webHandoff)}` });
+  assert.equal(reused.statusCode, 302);
+  assert.match(String(reused.headers.location), /\/login\?expired=desktop$/);
+  assert.equal(([] as string[]).concat(reused.headers["set-cookie"] ?? []).length, 0, "a handoff code works once");
+  const offsite = await start(["web"], "Other");
+  await approve(user, offsite.userCode, ["web"]);
+  const second = (await token(offsite.deviceCode)).json<{ webHandoff: string }>();
+  const away = await harness.app.inject({ method: "GET", url: `/api/auth/handoff?code=${encodeURIComponent(second.webHandoff)}&to=//evil.example` });
+  assert.equal(away.headers.location, "http://hub.example.test/today", "only a path on the Ensemble site");
+
+  const moving = await harness.app.inject({ method: "GET", url: "/api/transfer", headers: { authorization: `Bearer ${body.transferToken}` } });
+  assert.equal(moving.statusCode, 200, moving.body);
+  const elsewhere = await harness.app.inject({ method: "GET", url: "/api/tasks", headers: { authorization: `Bearer ${body.transferToken}` } });
+  assert.equal(elsewhere.statusCode, 403);
 });

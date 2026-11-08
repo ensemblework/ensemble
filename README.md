@@ -82,7 +82,7 @@ apps/landing            static site for ensemblework.com (port 3100)
 apps/hub-api            Fastify + Prisma API: data, assistant, scheduler, workspace queue, SSE
 apps/agent-runtime      Python FastAPI: model adapters and plot export (port 5055)
 apps/skill-forge        Python package (stub)
-apps/context-bridge     read-only MCP server; hub-api also serves it at /mcp
+apps/context-bridge     MCP server for editors and agents; hub-api also serves it at /mcp
 apps/cli                the `ensemble` CLI, runner and `ensemble mcp` (npm name ensemblework)
 apps/quick-capture      Tauri tray app with a global shortcut
 apps/desktop            Tauri desktop app with a local API sidecar

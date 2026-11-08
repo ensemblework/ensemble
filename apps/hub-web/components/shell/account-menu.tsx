@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
+import { showAppAccountScreen } from "@/lib/native-app";
 import { personInitials } from "@/lib/initials";
 import { PersonaAvatar } from "@/components/avatars/persona";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
@@ -109,7 +110,7 @@ export function AccountMenu() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13.5px] font-semibold">{name || "Your account"}</div>
-              <div className="truncate text-[12px] text-muted">{local ? "No-login mode" : user?.email ?? ""}</div>
+              <div className="truncate text-[12px] text-muted">{shell.data?.localOnly ? "Only on this computer" : local ? "No-login mode" : user?.email ?? ""}</div>
             </div>
             {!local ? <button type="button" role="menuitem" className="icon-btn shrink-0 text-danger" title="Sign out" aria-label="Sign out" onClick={() => { close(); setConfirmLogout(true); }}><LogOut size={17} /></button> : null}
           </div>
@@ -135,7 +136,9 @@ export function AccountMenu() {
             {dark ? "Light theme" : "Dark theme"}
           </Row>
           <div className="my-1 h-px bg-line" />
-          {local ? (
+          {shell.data?.localOnly ? (
+            <Row icon={UserRound} onSelect={() => { close(); void showAppAccountScreen(); }}>Move to your Ensemble account</Row>
+          ) : local ? (
             <Row icon={UserRound} onSelect={() => go(close, "/signup")}>Create an account</Row>
           ) : null}
         </div>

@@ -3,18 +3,24 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
-import { newApiToken, sha256 } from "../lib/auth.js";
+import { newApiToken, sha256, startSession } from "../lib/auth.js";
 import { authWebOrigin } from "../lib/auth-email.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
 import { clientAddress } from "../lib/rate-limit.js";
 import { createDevicePairing } from "../devices/pairing.js";
+import { redis } from "../lib/redis.js";
 
 const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 const USER_CODE = new RegExp(`^[${USER_CODE_ALPHABET}]{8}$`);
 const EXPIRES_IN_SECONDS = 600;
 const INTERVAL_SECONDS = 5;
-const SCOPES = ["mcp", "runner"] as const;
+/**
+ * `mcp`: a key for editors. `runner`: pair this computer for tasks. `web`: sign the desktop app's window in
+ * (a one-time handoff, never a stored key). `transfer`: move this computer's local-only data into the
+ * account (a one-purpose key, docs/DESKTOP.md §1.3).
+ */
+const SCOPES = ["mcp", "runner", "web", "transfer"] as const;
 type CliScope = (typeof SCOPES)[number];
 /** Kept with the approved scopes: the key minted at the exchange may also update tasks through the bridge. */
 const WRITE_GRANT = "write";
@@ -25,12 +31,12 @@ const StartBody = z.object({
   clientName: z.string().trim().min(1).max(80),
   platform: z.string().trim().max(32).default(""),
   version: z.string().trim().max(32).default(""),
-  scopes: z.array(z.enum(SCOPES)).min(1).max(2),
+  scopes: z.array(z.enum(SCOPES)).min(1).max(4),
 });
 
 const UserCodeBody = z.object({
   userCode: z.string().min(1).max(32),
-  scopes: z.array(z.enum(SCOPES)).max(2).default([]),
+  scopes: z.array(z.enum(SCOPES)).max(4).default([]),
   decision: z.enum(["approve", "deny"]),
   canWrite: z.boolean().default(true),
   canUseApps: z.boolean().default(true),
@@ -95,6 +101,15 @@ async function createStartRow(app: FastifyInstance, body: z.infer<typeof StartBo
     }
   }
   throw Object.assign(new Error("Could not create a login code. Try again."), { statusCode: 503 });
+}
+
+const HANDOFF_SECONDS = 30 * 60;
+const handoffKey = (code: string) => `ensemble:auth:handoff:${sha256(code)}`;
+
+async function webHandoff(userId: string): Promise<string> {
+  const code = randomBytes(32).toString("base64url");
+  await redis.set(handoffKey(code), userId, "EX", HANDOFF_SECONDS);
+  return code;
 }
 
 export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
@@ -165,7 +180,7 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true, scopes: [] };
     }
 
-    if (scopes.includes("runner")) await requireVerifiedUser(request.userId);
+    if (scopes.includes("runner") || scopes.includes("transfer")) await requireVerifiedUser(request.userId);
     // Secrets are minted at the one-time exchange, so nothing usable is stored here.
     const won = await app.prisma.cliAuthRequest.updateMany({
       where: { id: row.id, status: "pending", consumedAt: null, expiresAt: { gt: now } },
@@ -202,36 +217,47 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
     const userId = row.userId;
     if (row.status !== "approved" || !userId || !row.user) return reply.code(400).send(tokenError("expired_token"));
     const runner = row.approvedScopes.includes("runner");
+    const mcp = row.approvedScopes.includes("mcp");
+    const web = row.approvedScopes.includes("web");
+    const transfer = row.approvedScopes.includes("transfer");
     const canWrite = row.approvedScopes.includes(WRITE_GRANT);
     const canUseApps = row.approvedScopes.includes(APPS_GRANT);
-    if (runner) await requireVerifiedUser(userId);
+    if (runner || transfer) await requireVerifiedUser(userId);
 
     const minted = newApiToken();
+    const movingKey = newApiToken();
     const issued = await app.prisma.$transaction(async (tx) => {
       const claimed = await tx.cliAuthRequest.updateMany({
         where: { id: row.id, status: "approved", consumedAt: null, expiresAt: { gt: now } },
         data: { consumedAt: now, requestIp: null },
       });
       if (claimed.count !== 1) return null;
-      const token = await tx.apiToken.create({
-        data: {
-          userId,
-          name: `Ensemble CLI on ${row.clientName}`.slice(0, 80),
-          tokenHash: minted.hash,
-          prefix: minted.prefix,
-          scope: "bridge",
-          canWrite,
-          canUseApps,
-        },
-      });
+      const token = mcp
+        ? await tx.apiToken.create({
+            data: {
+              userId,
+              name: `Ensemble CLI on ${row.clientName}`.slice(0, 80),
+              tokenHash: minted.hash,
+              prefix: minted.prefix,
+              scope: "bridge",
+              canWrite,
+              canUseApps,
+            },
+          })
+        : null;
+      if (transfer) {
+        await tx.apiToken.create({ data: { userId, name: `Moving data from ${row.clientName}`.slice(0, 80), tokenHash: movingKey.hash, prefix: movingKey.prefix, scope: "transfer" } });
+      }
       const pairing = runner ? await createDevicePairing(tx, userId, now) : null;
-      await tx.cliAuthRequest.update({ where: { id: row.id }, data: { tokenId: token.id, pairingId: pairing?.pairing.id ?? null } });
-      return { tokenId: token.id, pairing };
+      await tx.cliAuthRequest.update({ where: { id: row.id }, data: { tokenId: token?.id ?? null, pairingId: pairing?.pairing.id ?? null } });
+      return { tokenId: token?.id ?? null, pairing };
     });
     if (!issued) return reply.code(400).send(tokenError("expired_token"));
+    const handoff = web ? await webHandoff(userId) : null;
+    if (transfer || web) await appendLedger({ userId, actor: "me", action: "cli.auth.desktop", payload: { requestId: row.id, clientName: row.clientName, web, transfer } });
 
     return {
-      token: minted.token,
+      token: mcp ? minted.token : null,
       tokenId: issued.tokenId,
       scopes: uniqueScopes(row.approvedScopes.filter((scope): scope is CliScope => (SCOPES as readonly string[]).includes(scope))),
       canWrite,
@@ -240,7 +266,25 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
       apiBase: requestedOrigin(request),
       appUrl: authWebOrigin(),
       ...(issued.pairing ? { pairingCode: issued.pairing.code, pairingExpiresAt: issued.pairing.expiresAt.toISOString() } : {}),
+      ...(handoff ? { webHandoff: handoff } : {}),
+      ...(transfer ? { transferToken: movingKey.token } : {}),
     };
+  });
+
+  // The desktop app's window opens this once with the code from the exchange above; it becomes a normal
+  // signed-in session in that window. The code is single use and lasts 30 minutes (a large move of local data comes first).
+  app.get("/api/auth/handoff", async (request, reply) => {
+    const query = z.object({ code: z.string().min(20).max(200), to: z.string().max(300).optional() }).parse(request.query);
+    const key = handoffKey(query.code);
+    const userId = await redis.get(key);
+    await redis.del(key);
+    const to = query.to && /^\/(?!\/)[^\s\\]*$/.test(query.to) ? query.to : "/today";
+    if (!userId) return reply.redirect(`${authWebOrigin()}/login?expired=desktop`, 302);
+    const user = await app.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) return reply.redirect(`${authWebOrigin()}/login`, 302);
+    await startSession(reply, userId, request);
+    await appendLedger({ userId, actor: "me", action: "auth.desktop_handoff", payload: {} });
+    return reply.redirect(`${authWebOrigin()}${to}`, 302);
   });
 
   app.post("/api/cli/logout", async (request, reply) => {

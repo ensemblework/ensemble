@@ -1,5 +1,6 @@
 "use client";
 
+import { browser } from "../connectors/browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Copy, ExternalLink, KeyRound, Plug, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -444,7 +445,7 @@ export function ConnectionsPanel({ settings, patch, returnTo = "/settings?tab=co
     },
   });
   const connect = useMutation({
-    mutationFn: async (provider: string) => (window.location.href = (await api.startConnect(provider, returnTo)).url),
+    mutationFn: async (provider: string) => browser.assign((await api.startConnect(provider, returnTo)).url),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const disconnect = useMutation({

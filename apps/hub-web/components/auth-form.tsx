@@ -13,6 +13,7 @@ import { Spinner } from "./ui";
 import { AuthTurnstile } from "./auth-turnstile";
 import { AuthBackdrop } from "./auth-backdrop";
 import { PasswordField } from "./password-field";
+import { inAccountApp, showAppAccountScreen } from "@/lib/native-app";
 
 export function authRedirectTarget(mode: "login" | "signup", result: { verificationSent?: boolean; user?: unknown }, next: string | null): string {
   if (mode === "signup") return result.verificationSent ? "/verify?next=/start" : "/start";
@@ -29,8 +30,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [providerError, setProviderError] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  /** The desktop app's window: Google, GitHub and Microsoft sign-in only work in the browser, so the app signs in there. */
+  const [appWindow, setAppWindow] = useState(false);
+  const [handoffExpired, setHandoffExpired] = useState(false);
   useEffect(() => {
-    setProviderError(new URLSearchParams(window.location.search).get("error") ?? "");
+    const query = new URLSearchParams(window.location.search);
+    setProviderError(query.get("error") ?? "");
+    setAppWindow(inAccountApp());
+    setHandoffExpired(query.get("expired") === "desktop");
   }, []);
   const submit = useMutation({
     mutationFn: async () => (mode === "signup" ? api.signup({ email, password, name, turnstileToken: turnstileToken || undefined }) : api.login({ email, password })),
@@ -98,7 +105,19 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </p>
         ) : null}
         {providerError ? <p role="alert" className="mt-3 text-[13px] text-[#ffb4ae]">{providerError}</p> : null}
-        {!closed && status.data?.providers.length ? (
+        {appWindow ? (
+          <div className="mt-5">
+            <button type="button" className="btn-primary flex w-full justify-center py-2" onClick={() => void showAppAccountScreen()}>
+              Continue in your browser
+            </button>
+            <p className="mt-2 text-center text-[12px] text-muted">
+              {handoffExpired ? "That sign-in took too long. " : ""}
+              {mode === "signup" ? "Create your account there; every sign-in method works." : "Every sign-in method works there."}
+              {emailAvailable && !closed ? " Or use your email below." : ""}
+            </p>
+          </div>
+        ) : null}
+        {!appWindow && !closed && status.data?.providers.length ? (
           <div className="mt-5 space-y-2">
             {status.data.providers.map((provider) => (
               <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start`} className="btn flex w-full justify-center py-2">

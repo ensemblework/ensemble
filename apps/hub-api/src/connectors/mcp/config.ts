@@ -7,6 +7,7 @@
  * MCP_CLIENT_METADATA_PATH; otherwise (desktop, localhost) it registers itself
  * with Dynamic Client Registration.
  */
+import { desktopReturnUrl } from "../../lib/desktop-return.js";
 import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { ENSEMBLE_VERSION } from "@ensemble/shared-types";
 
@@ -74,6 +75,8 @@ export function safeReturnTo(raw: string | undefined | null): string {
 
 /** `${HUB_WEB_ORIGIN}${returnTo}` with query parameters added before any #hash. */
 export function hubReturnUrl(returnTo: string, params: Record<string, string>): string {
+  const local = desktopReturnUrl(params.mcp !== "error", "The app's MCP server");
+  if (local) return local;
   const [base, hash] = safeReturnTo(returnTo).split("#");
   const joiner = base!.includes("?") ? "&" : "?";
   const origin = (process.env.HUB_WEB_ORIGIN?.trim() || "http://localhost:3000").replace(/\/+$/, "");

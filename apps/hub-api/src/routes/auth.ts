@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { localOnly } from "../desktop/mode.js";
 import { fromNodeSite } from "../lib/node-origin.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
@@ -197,6 +198,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       onboardingComplete: request.authVia === "bypass" || Boolean((space ?? user)?.onboardingCompletedAt),
       modules: request.modules,
       devTools: envDevTools() || Boolean(user?.tester),
+      // A computer's own runtime: whether it keeps everything local (no account, no Ensemble servers).
+      ...(request.authVia === "desktop" ? { localOnly: localOnly() } : {}),
     };
   });
 
@@ -384,7 +387,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/tokens", async (request) => {
     const tokens = await prisma.apiToken.findMany({
-      where: { userId: request.userId, revokedAt: null, scope: { not: "device" } },
+      where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] } },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });

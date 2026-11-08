@@ -4,6 +4,7 @@
  * The individual routes stay. These exist so the first paint is one round trip
  * instead of a fan of them. Nothing here is cached on the server.
  */
+import { localOnly } from "../desktop/mode.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { connectionState, listConnectors } from "../connectors/base.js";
@@ -102,6 +103,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
             : null,
       },
       via: request.authVia,
+      ...(request.authVia === "desktop" ? { localOnly: localOnly() } : {}),
       verificationRequired: isHosted() && !account?.emailVerifiedAt,
       approvals,
       decisions,

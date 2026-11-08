@@ -66,8 +66,9 @@ export default function DownloadPage() {
               One download, <em>no setup.</em>
             </h2>
             <p className="section-lede">
-              Your board, Needs me and the agents, running on your computer inside its own sandbox. Sign in when you want tasks you assign on
-              ensemblework.com or from your phone to run here.
+              Sign in and it is your Ensemble account in its own window, in sync with the web and your other devices, with this computer running the
+              agent tasks you assign. Or keep everything on this computer: no account, Ensemble&apos;s servers never used, your own AI subscriptions and
+              keys. A local-only app can move into an account later, once.
             </p>
           </div>
           <DesktopDownloads />

@@ -14,6 +14,7 @@ import { deviceCapabilities, devicePlatform, REMOTE_NOTICE, remotePresence, stop
 import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type CaptureSites, type SharedFolder } from "./store.js";
 import { loadSealKey, makeSealKey, saveSealKey } from "../credentials/seal-key.js";
 import { MAX_SITES, siteLists } from "../browser/privacy.js";
+import { localOnly, LOCAL_ONLY_REFUSAL } from "../desktop/mode.js";
 
 const CODE = /^[A-Za-z0-9]{8}$/;
 
@@ -51,6 +52,60 @@ async function status(app: FastifyInstance) {
   };
 }
 
+/** Registers this computer with an account using a one-time pairing code, and keeps its device token. */
+export async function pairComputer(app: FastifyInstance, body: { apiBase: string; code: string; name?: string }): Promise<void> {
+  const settings = loadSettings();
+  // Each pairing has its own key pair (B12): the web pins this one for the new pairing; the old one goes once it is accepted.
+  const sealKey = makeSealKey();
+  const base = checkApiBase(body.apiBase);
+  const registered = await registerDevice(base, {
+    code: body.code.trim().toUpperCase(),
+    name: body.name?.trim() || settings.deviceName,
+    platform: devicePlatform(),
+    appVersion: process.env.ENSEMBLE_APP_VERSION ?? "0.1.0",
+    capabilities: { ...(await deviceCapabilities(app)), sealKey: sealKey.info },
+  });
+  const parsed = parseRegistered(registered);
+  await saveDeviceToken(parsed.token, base);
+  saveSealKey(sealKey, parsed.deviceId);
+  saveSettings({
+    ...loadSettings(),
+    apiBase: base,
+    deviceId: parsed.deviceId,
+    deviceName: body.name?.trim() || parsed.name || settings.deviceName,
+    pairedAt: new Date().toISOString(),
+    enabled: false,
+    disconnected: null,
+    unreachable: null,
+  });
+  await appendLedger({ userId: env.ENSEMBLE_DEV_USER_ID, actor: "me", action: "remote.pair", payload: { apiBase: base, deviceId: parsed.deviceId, name: body.name ?? settings.deviceName } });
+}
+
+/** Turns remote tasks on for a paired computer (what "Run tasks" in the app and `ensemble login` do). */
+export function enableRemote(): void {
+  saveSettings({ ...loadSettings(), enabled: true, disconnected: null, unreachable: null });
+  wakeRemote();
+}
+
+/** Revokes this computer's pairing on the account (best effort) and forgets it here. */
+export async function unpairComputer(app: FastifyInstance, log: { warn: (input: unknown, message: string) => void }): Promise<void> {
+  await stopRemoteWork(app, "This Mac was unpaired. Remote tasks were turned off.", "cancelled");
+  const settings = loadSettings();
+  const token = await readDeviceToken();
+  const baseValue = process.env.ENSEMBLE_REMOTE_API?.trim() || settings.apiBase;
+  if (token && baseValue) {
+    try {
+      await hostedClient(checkApiBase(baseValue), token).unpairSelf();
+    } catch (error) {
+      log.warn({ err: error }, "could not revoke hosted device during local unpair");
+    }
+  }
+  await dropDeviceToken();
+  updateSettings({ enabled: false, pairedAt: null, deviceId: null, disconnected: null, unreachable: null });
+  wakeRemote();
+  await appendLedger({ userId: env.ENSEMBLE_DEV_USER_ID, actor: "me", action: "remote.unpair", payload: {} });
+}
+
 export async function remoteRoutes(app: FastifyInstance): Promise<void> {
   const userId = env.ENSEMBLE_DEV_USER_ID;
 
@@ -82,6 +137,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
     let apiBase = current.apiBase;
     if (body.apiBase !== undefined) apiBase = body.apiBase ? checkApiBase(body.apiBase) : null;
     if (body.enabled === true) {
+      if (localOnly()) return reply.code(409).send({ error: LOCAL_ONLY_REFUSAL });
       const token = await readDeviceToken();
       const base = process.env.ENSEMBLE_REMOTE_API?.trim() || apiBase;
       if (!token || !base) return reply.code(400).send({ error: "Pair this Mac with Ensemble on the web first." });
@@ -130,60 +186,21 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/remote/pair", async (request, reply) => {
     if (!loopback(request.ip)) return reply.code(403).send({ error: "Pairing can only be done on this Mac." });
+    if (localOnly()) return reply.code(409).send({ error: LOCAL_ONLY_REFUSAL });
     const body = z.object({ apiBase: z.string().min(1).max(300), code: z.string(), name: z.string().min(1).max(60).optional() }).parse(request.body);
     if (!CODE.test(body.code.trim())) return reply.code(400).send({ error: "The pairing code is 8 letters or numbers." });
-    const settings = loadSettings();
-    let registered: unknown;
-    let base: string;
-    // Each pairing has its own key pair (B12): the web pins this one for the new pairing; the old one goes once it is accepted.
-    const sealKey = makeSealKey();
     try {
-      base = checkApiBase(body.apiBase);
-      registered = await registerDevice(base, {
-        code: body.code.trim().toUpperCase(),
-        name: body.name?.trim() || settings.deviceName,
-        platform: devicePlatform(),
-        appVersion: process.env.ENSEMBLE_APP_VERSION ?? "0.1.0",
-        capabilities: { ...(await deviceCapabilities(app)), sealKey: sealKey.info },
-      });
+      await pairComputer(app, body);
     } catch (error) {
       if (error instanceof RemoteError) return reply.code(error.status || 502).send({ error: error.message });
       throw error;
     }
-    const parsed = parseRegistered(registered);
-    await saveDeviceToken(parsed.token, base);
-    saveSealKey(sealKey, parsed.deviceId);
-    saveSettings({
-      ...loadSettings(),
-      apiBase: base,
-      deviceId: parsed.deviceId,
-      deviceName: body.name?.trim() || parsed.name || settings.deviceName,
-      pairedAt: new Date().toISOString(),
-      enabled: false,
-      disconnected: null,
-      unreachable: null,
-    });
-    await appendLedger({ userId, actor: "me", action: "remote.pair", payload: { apiBase: base, deviceId: parsed.deviceId, name: body.name ?? settings.deviceName } });
     return status(app);
   });
 
   app.post("/api/remote/unpair", async (request, reply) => {
     if (!loopback(request.ip)) return reply.code(403).send({ error: "Unpair can only be done on this Mac." });
-    await stopRemoteWork(app, "This Mac was unpaired. Remote tasks were turned off.", "cancelled");
-    const settings = loadSettings();
-    const token = await readDeviceToken();
-    const baseValue = process.env.ENSEMBLE_REMOTE_API?.trim() || settings.apiBase;
-    if (token && baseValue) {
-      try {
-        await hostedClient(checkApiBase(baseValue), token).unpairSelf();
-      } catch (error) {
-        request.log.warn({ err: error }, "could not revoke hosted device during local unpair");
-      }
-    }
-    await dropDeviceToken();
-    updateSettings({ enabled: false, pairedAt: null, deviceId: null, disconnected: null, unreachable: null });
-    wakeRemote();
-    await appendLedger({ userId, actor: "me", action: "remote.unpair", payload: {} });
+    await unpairComputer(app, request.log);
     return reply.code(200).send(await status(app));
   });
 

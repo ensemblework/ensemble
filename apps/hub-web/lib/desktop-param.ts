@@ -5,8 +5,9 @@ import { useEffect, useState } from "react";
 
 type DesktopWindow = Window & { __ENSEMBLE_DESKTOP__?: { apiBase?: string } };
 
+/** The bundled Hub on this computer's own runtime. The desktop app showing an account's web app is not this. */
 export function desktopShell(): boolean {
-  return typeof window !== "undefined" && Boolean((window as DesktopWindow).__ENSEMBLE_DESKTOP__);
+  return typeof window !== "undefined" && Boolean((window as DesktopWindow).__ENSEMBLE_DESKTOP__?.apiBase);
 }
 
 /** The id the static export bakes into a dynamic route's one HTML file. */

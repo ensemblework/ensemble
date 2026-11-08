@@ -3,6 +3,7 @@
  * state, OAuth sign-in with per-product scopes, pasted tokens, disconnect,
  * and the one-time OAuth app setup that whoever runs the instance does once.
  */
+import { desktopReturnUrl } from "../lib/desktop-return.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { catalogEntry } from "@ensemble/shared-types";
@@ -252,6 +253,8 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
       .object({ code: z.string().optional(), state: z.string().default(""), error: z.string().optional(), error_description: z.string().optional() })
       .parse(request.query);
     const back = (path: string, params: Record<string, string>) => {
+      const local = desktopReturnUrl(!params.connectError, providerLabel(provider as Parameters<typeof providerLabel>[0]));
+      if (local) return reply.redirect(local);
       const [base, hash] = path.split("#");
       const joiner = base!.includes("?") ? "&" : "?";
       return reply.redirect(`${env.HUB_WEB_ORIGIN}${base}${joiner}${new URLSearchParams(params)}${hash ? `#${hash}` : ""}`);

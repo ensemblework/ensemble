@@ -269,7 +269,18 @@ pub async fn check_for_updates(app: &AppHandle, install: bool) -> String {
         Some(UpdateGuard)
     } else { None };
     use tauri_plugin_updater::UpdaterExt;
-    let updater = match app.updater() {
+    // A local-only computer never asks an Ensemble server: it reads the newest desktop release on GitHub.
+    let local_only = app
+        .try_state::<std::sync::Mutex<crate::AppState>>()
+        .and_then(|state| state.lock().ok().map(|guard| guard.mode == crate::mode::Mode::Local))
+        .unwrap_or(false);
+    let updater = if local_only {
+        let endpoint = url::Url::parse(crate::mode::LOCAL_UPDATES_URL).expect("local updates URL");
+        app.updater_builder().endpoints(vec![endpoint]).and_then(|builder| builder.build())
+    } else {
+        app.updater()
+    };
+    let updater = match updater {
         Ok(updater) => updater,
         Err(error) => { eprintln!("updater unavailable: {error}"); return "Updates are unavailable right now. Try again in a moment.".into(); },
     };
