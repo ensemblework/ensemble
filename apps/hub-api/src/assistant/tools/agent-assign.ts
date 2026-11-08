@@ -110,6 +110,7 @@ export const AssignInput = z
       .uuid()
       .optional()
       .describe("An agent session's id from hub_list_agent_sessions, when the person wants the work done in that session (“continue in the session where Claude fixed the login”, “give it to that Copilot session”). The task then goes to that session's agent, computer and folder, and the agent continues its own conversation; leave agent, computer and folder out."),
+    newSession: z.boolean().optional().describe("true only when the person asks for a fresh session. Without it, a task that mentions or depends on another task the same agent worked on (in the same project) continues that task's session."),
     pullRequest: z
       .object({
         base: z.string().max(200).default("").describe("The branch the pull request goes into, as the person says (any branch, e.g. testing or main). Empty: the repository's default branch."),
@@ -154,6 +155,7 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
     kind,
     engine,
     ...(session ? { session: session.id } : {}),
+    ...(input.newSession ? { newSession: true } : {}),
     ...(model && fromProfile ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
     ...(profile.effort !== "default" && fromProfile ? { reasoningEffort: profile.effort } : {}),
     ...(engine !== "ensemble" && fromProfile && profile.context ? { contextTier: profile.context } : {}),

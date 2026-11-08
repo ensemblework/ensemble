@@ -252,6 +252,16 @@ export const OrchestrationSettings = z.object({
    */
   editorRequests: z.enum(["ensemble", "all"]).default("ensemble").transform(() => "ensemble" as const),
   defaultDelivery: z.enum(["review-first", "unattended"]).default("review-first"),
+  /**
+   * A task of a project, given to the person's own coding agent with no folder: it works in the project's
+   * own folder, which the agent's app shows as that project, with the project's brief in AGENTS.md,
+   * CLAUDE.md and GEMINI.md (workspace/agent-projects.ts). Off: a new folder per run.
+   */
+  projectFolders: z.boolean().default(true),
+  /** A task that mentions (or depends on) another task continues that task's agent session when it can (workspace/linked-session.ts). */
+  linkedSessions: z.boolean().default(true),
+  /** Delete the agent's saved session when its tasks are deleted, or retired after the completed window (workspace/session-cleanup.ts). */
+  cleanSessions: z.boolean().default(true),
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
 
@@ -424,6 +434,11 @@ export type MorningBriefSettings = z.infer<typeof MorningBriefSettings>;
 export const AutomationTier = z.enum(["easy", "medium", "high", "max"]);
 export type AutomationTier = z.infer<typeof AutomationTier>;
 
+/** Skill learning waits until at least this many completed tasks and deliverables are past the completed window. */
+export const SKILL_LEARNING_MIN_ITEMS = 10;
+/** Days skill learning waits for its model (an AI plan on an offline computer) before trying lower tiers, then an included model. */
+export const SKILL_LEARNING_WAIT_DAYS = 5;
+
 /**
  * Work Ensemble does with a model on its own, each with its own switch and model tier
  * (Settings › Assistant › Automations). Switched off, the same work stays available as a button.
@@ -439,6 +454,11 @@ export const AutomationSettings = z.object({
   linkMeetingSeries: z.boolean().default(true),
   /** A notification when an agent finishes a task and its work waits for your review. No model. */
   reviewNotices: z.boolean().default(true),
+  /**
+   * Personal skills learned from completed work before it moves to Trash (jobs/skill-mining.ts): once at
+   * least `SKILL_LEARNING_MIN_ITEMS` items are past their window. Off, completed work moves to Trash unread.
+   */
+  skillLearning: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("high") }).default({}),
 });
 export type AutomationSettings = z.infer<typeof AutomationSettings>;
 

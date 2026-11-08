@@ -57,7 +57,8 @@ import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
-import { PageDocument } from "@ensemble/shared-types";
+import { isCodeEngine, PageDocument } from "@ensemble/shared-types";
+import { projectBrief } from "../workspace/agent-projects.js";
 import { parseReport } from "../node/report.js";
 import { evidenceRoutes } from "../evidence/routes.js";
 import { nodeToolRoutes } from "./tool-runs.js";
@@ -482,6 +483,12 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const known = await workContext({ db: prisma, userId: next.userId, modules: owner?.moduleSet ?? null }, { kind: "task", id: next.taskId }, { budget: 5000, moreTool: "ensemble_context" }).catch(() => null);
       // The page goes first and is at most 16,000 characters, so the cut below never splits it: older
       // computers read all of it, and newer ones find the whole section to take out.
+      // A project's task by the person's own agent: the project's brief for its folder on the computer (agent-projects.ts).
+      const runContext = (typeof next.context === "object" && next.context !== null ? next.context : {}) as { chat?: unknown; node?: unknown };
+      const project =
+        next.kind === "code" && isCodeEngine(next.provider) && next.task.projectId && runContext.chat !== true && !runContext.node && !missionOf(next.context) && (await loadSettings(prisma, next.userId)).orchestration.projectFolders !== false
+          ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null)
+          : null;
       const description = [
         page ? `${PAGE_HEADING}\n${page}` : "",
         next.task.description,
@@ -539,6 +546,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         ...(secretScopeOf(next.context) !== "all" ? { secrets: secretScopeOf(next.context) } : {}),
         // An Ensemble Node plan step's place: its worktree of the folder, its port (B13). Older computers ignore it.
         ...(missionOf(next.context) ? { mission: missionOf(next.context) } : {}),
+        // Older computers ignore it and work in a new folder, as before.
+        ...(project ? { project } : {}),
       };
     }
     return reply.code(204).send();

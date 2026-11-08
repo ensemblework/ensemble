@@ -25,13 +25,13 @@ function checkFloor(path: string): void {
 }
 
 /**
- * Whether a folder is Ensemble's own work folder for agents: a run's (`<workspace>/runs/<job>`) or a
- * node's (`<workspace>/nodes/<handle>`), or a folder inside one. A node's tools work there without
+ * Whether a folder is Ensemble's own work folder for agents: a run's (`<workspace>/runs/<job>`), a
+ * project's (`<workspace>/projects/<name>`) or a node's (`<workspace>/nodes/<handle>`), or a folder inside one. A node's tools work there without
  * asking, as in its own folder (the floor still applies).
  */
 export async function isEnsembleWorkFolder(path: string): Promise<boolean> {
   const root = await workspaceRoot();
-  for (const area of ["runs", "nodes"]) {
+  for (const area of ["runs", "nodes", "projects"]) {
     const rel = relative(join(root, area), path);
     if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return true;
   }

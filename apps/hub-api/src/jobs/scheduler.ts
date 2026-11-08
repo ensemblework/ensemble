@@ -24,6 +24,7 @@ import { claimSlot } from "./claim.js";
 import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
 import { runDueRoutines } from "../routines/service.js";
+import { sweepWhenDue } from "../workspace/session-cleanup.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -94,6 +95,8 @@ async function tick(app: FastifyInstance): Promise<void> {
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));
     if (settings.automations.meetingPrep.enabled) void runMeetingPreps(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "meeting prep failed"));
     void runDueRoutines(app, userId, settings.routines.enabled).catch((error: unknown) => app.log.error({ err: error }, "routines failed"));
+    // The agent sessions of deleted and long-finished work, deleted from the person's agents (workspace/session-cleanup.ts).
+    if (settings.orchestration.cleanSessions !== false) sweepWhenDue(app, userId, settings.completedRetentionDays);
     if (scheduledFetchDue(settings, now.time)) {
       if (await claimSchedule(app, userId, `fetch@${now.date}T${now.time}`)) {
         app.log.info({ userId, at: now }, "scheduled fetch");
@@ -103,15 +106,23 @@ async function tick(app: FastifyInstance): Promise<void> {
     const slot = await app.prisma.syncState.findUnique({ where: { userId_connector: { userId, connector: "schedule:retention" } } });
     const lastDate = slot?.cursor?.split("@")[1] ?? null;
     const dueNow = retentionDue(lastDate, now, RETENTION_TIME);
-    if (dueNow && (await claimSchedule(app, userId, `retention@${now.date}`))) {
-      await runRetention(app, userId, {
+    if (dueNow && !retaining.has(userId) && (await claimSchedule(app, userId, `retention@${now.date}`))) {
+      // Learning from completed work can wait minutes on a model (an AI plan on the person's computer):
+      // it must not hold up the tick for everyone else.
+      retaining.add(userId);
+      void runRetention(app, userId, {
         deletedDays: settings.retentionDays,
         completedDays: settings.completedRetentionDays,
         historyDays: settings.historyRetentionDays,
-      });
+      })
+        .catch((error: unknown) => app.log.error({ err: error, userId }, "retention failed"))
+        .finally(() => retaining.delete(userId));
     }
   }
 }
+
+/** Accounts whose daily retention pass is still running. */
+const retaining = new Set<string>();
 
 function runTick(app: FastifyInstance, label: string): Promise<void> {
   return tick(app)

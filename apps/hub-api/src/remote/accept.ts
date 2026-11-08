@@ -15,6 +15,7 @@ import { workspaceRoot } from "../workspace/guard.js";
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { prepareWorktree, type MadeWorktree } from "../workspace/worktrees.js";
 import { webContext } from "./origin.js";
+import { agentProjectOf } from "../workspace/agent-projects.js";
 import { isRefusal, planLocalJob, sharedFolder, type LocalPlan, type Refusal } from "./policy.js";
 import { authRejected, type HostedClient } from "./client.js";
 import { parseMission, type JobSpec, type MissionSpec, type ResultLink } from "./contract.js";
@@ -94,6 +95,8 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
       ...(Array.isArray(spec.secrets) ? { secrets: spec.secrets } : {}),
       // The shared folder's path stays on this computer: for the folder claims (one mission's runs wait for each other) and removing worktrees.
       ...(mission ? { mission: { ...mission, ...(tree?.folder ? { root: tree.folder } : {}) } } : {}),
+      // The project's brief: createJob puts a new session in the project's folder here (agent-projects.ts).
+      ...(agentProjectOf(spec.project) ? { agentProject: agentProjectOf(spec.project) } : {}),
     } as Prisma.InputJsonValue;
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context, actor: "system" });
     if (!created) throw new Error("The task could not be queued.");

@@ -118,7 +118,10 @@ test("retention records a completion, skips pinned rows, purges old trash, and f
   let reminderId = "";
   try {
     await runRetention(app, user.id, { deletedDays: 30, completedDays: 60 });
-    await prisma.preference.update({ where: { userId_key: { userId: user.id, key: "hub.retention-mining" } }, data: { value: { after: new Date(Date.now() - 1).toISOString(), tasks: [task.id], deliverables: [] } } });
+    // Fewer than ten completed items start no batch; a batch the notice already started still runs.
+    assert.equal(await prisma.preference.count({ where: { userId: user.id, key: "hub.retention-mining" } }), 0);
+    const batch = { after: new Date(Date.now() - 1).toISOString(), tasks: [task.id], deliverables: [] };
+    await prisma.preference.create({ data: { userId: user.id, key: "hub.retention-mining", value: batch, source: "system" } });
     const first = await runRetention(app, user.id, { deletedDays: 30, completedDays: 60, miningRun: async () => ({ text: '{"skills":[]}', json: { skills: [] }, model: "fixture", tokensIn: 0, tokensOut: 0 }) });
     assert.equal(first.completionRecords, 1);
     assert.equal(first.completedSoftDeleted, 1);

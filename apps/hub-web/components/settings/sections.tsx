@@ -5,7 +5,7 @@ import { AlertTriangle, ChevronRight, RotateCcw, Trash2, X } from "lucide-react"
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { SHORTCUTS, formatBinding } from "@ensemble/shared-types";
+import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useHostCode, useModuleOn } from "@/lib/use-module";
 import { isApplePlatform } from "@/lib/platform";
@@ -115,6 +115,24 @@ export function OrchestrationSection({ settings, patch }: Props) {
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
         <SettingRow
+          title="A project's tasks share the project's folder"
+          description="Your own agent (Claude Code, Codex, Cursor, Copilot…) works on a project's tasks in one folder named after the project, so its app shows them together as that project. The project's brief is kept in the folder's AGENTS.md and CLAUDE.md and rewritten when you change the project."
+        >
+          <Toggle label="A project's tasks share the project's folder" checked={orchestration.projectFolders} onChange={(projectFolders) => set({ projectFolders })} />
+        </SettingRow>
+        <SettingRow
+          title="Continue the session of a task this one mentions"
+          description="A task that mentions or depends on another task the same agent worked on continues that conversation: the agent keeps what it learned and its cached context. Only within the same project. You can start a new session when you assign."
+        >
+          <Toggle label="Continue the session of a task this one mentions" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
+        </SettingRow>
+        <SettingRow
+          title="Clean up agent sessions"
+          description="Delete the agent's saved conversation once all its tasks are deleted, or retired after the completed window (Data retention). Project files stay."
+        >
+          <Toggle label="Clean up agent sessions" checked={orchestration.cleanSessions} onChange={(cleanSessions) => set({ cleanSessions })} />
+        </SettingRow>
+        <SettingRow
           title="Outside the Ensemble workspace"
           info="Inside the workspace a task may read any folder, and asks once before changing one (Run unattended does not ask). Beyond it: Read only reads freely and asks once per folder before changing it; Read and write permits both; No access asks before reading too. Keys, system files and Ensemble's own code stay off limits."
         >
@@ -189,8 +207,10 @@ export { FetchSection } from "./fetching";
 // ── retention, reminders, terminal ─────────────────────────────────────────
 
 export function RetentionSection({ settings, patch }: Props) {
-  const trash = [30, 60, 90].includes(settings.retentionDays) ? settings.retentionDays : 30;
-  const completed = [30, 60, 90].includes(settings.completedRetentionDays) ? settings.completedRetentionDays : 60;
+  // A value saved elsewhere (the assistant, an import) is shown as it is, not as the nearest choice.
+  const trash = settings.retentionDays;
+  const completed = settings.completedRetentionDays;
+  const choices = (value: number) => [...new Set([30, 60, 90, value])].sort((a, b) => a - b);
   return (
     <SectionCard title="Data retention" info="Two clocks. Trash and completed work are purged on different schedules, and a missed night is caught up the next time Ensemble starts.">
       <div className="space-y-3 text-[13.5px]">
@@ -202,7 +222,7 @@ export function RetentionSection({ settings, patch }: Props) {
             onChange={(event) => patch({ retentionDays: Number(event.target.value) })}
             className="field"
           >
-            {[30, 60, 90].map((days) => (
+            {choices(trash).map((days) => (
               <option key={days} value={days}>
                 {days} days
               </option>
@@ -217,7 +237,7 @@ export function RetentionSection({ settings, patch }: Props) {
             onChange={(event) => patch({ completedRetentionDays: Number(event.target.value) })}
             className="field"
           >
-            {[30, 60, 90].map((days) => (
+            {choices(completed).map((days) => (
               <option key={days} value={days}>
                 {days} days
               </option>
@@ -256,7 +276,7 @@ export function RetentionSection({ settings, patch }: Props) {
         </div>
       </div>
       <p className="mt-2 text-[12.5px] text-muted">
-        Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged. Before older completed work moves to Trash, Ensemble gives at least a day’s notice and uses your High model to learn personal skills. If learning fails, the work stays in Completed.
+        Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged. Once at least {SKILL_LEARNING_MIN_ITEMS} completed items are past their window, Ensemble gives a day’s notice and learns personal skills from them with the model Settings → Automations names (High by default), then moves them to Trash. If learning cannot run, the work stays in Completed; turn learning off there to move it without reading it. Agent sessions of retired or deleted tasks are deleted from your agents (Settings → Orchestration).
       </p>
     </SectionCard>
   );

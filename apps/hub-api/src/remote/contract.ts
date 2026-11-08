@@ -243,6 +243,13 @@ export const JobSpec = z
      * value this computer does not understand never refuses the whole job.
      */
     mission: z.unknown().optional(),
+    /**
+     * The Ensemble project of a task for the person's own coding agent: its id, name, brief (Markdown)
+     * and the brief's hash (workspace/agent-projects.ts). The computer runs the task in the project's
+     * folder and keeps AGENTS.md there current. Older servers omit it; read with `agentProjectOf`, so a
+     * value this computer does not understand never refuses the whole job.
+     */
+    project: z.unknown().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;

@@ -20,6 +20,9 @@ import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL, storedMode, type RunMode } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { resolveSession } from "./sessions.js";
+import { linkedSessionFor, linkWords, type LinkedSession } from "./linked-session.js";
+import { jobOrigin } from "../remote/origin.js";
+import { agentProjectOf, projectBrief, projectFolder, type AgentProject } from "./agent-projects.js";
 import { currentDevice } from "../devices/successor.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
@@ -83,6 +86,11 @@ export const Assign = z.object({
    * the agent's own conversation, continued from the session's latest run.
    */
   session: z.string().uuid().optional(),
+  /**
+   * A new agent session even when a task this one names has one with the same agent
+   * (workspace/linked-session.ts): without it, the run continues that session.
+   */
+  newSession: z.boolean().optional(),
   /**
    * The saved secrets this run may have (their names), from its run profile: the run gets only those
    * on the computer. Left out: the computer's mode decides (`ensemble secrets mode`, docs/35 §8.7).
@@ -387,13 +395,66 @@ async function createDeviceJob(
   return { jobId: job.id };
 }
 
+/** A run Ensemble Node plans (its own sessions and folders), not one a person or the assistant assigns. */
+function nodeRun(context: unknown): boolean {
+  const value = typeof context === "object" && context !== null ? (context as { node?: unknown; mission?: unknown }) : {};
+  return Boolean(value.node || value.mission);
+}
+
+/**
+ * The session a new run continues because its task names a task done in it (linked-session.ts): only
+ * for a run that would otherwise start a new session in a new folder, by one of the person's own agents.
+ */
+async function linkedSession(prisma: PrismaClient, userId: string, task: AssignTask, input: AssignInput, tier: ModelTier, options: CreateJobOptions, enabled: boolean): Promise<LinkedSession | null> {
+  if (!enabled || input.newSession || input.session || input.continueFromJobId || input.chat || input.pullRequest || input.kind === "research") return null;
+  // A claim from the web was linked there already (it arrives continuing the session, or not).
+  if (input.folder?.trim() || input.folderLabel?.trim() || input.repoUrl?.trim() || nodeRun(options.context) || options.retryOf || jobOrigin(options.context) === "web") return null;
+  const engine = withTierAgent(input, tier).engine;
+  if (!isCodeEngine(engine)) return null;
+  const scope = { space: userId, runner: actorFor(userId) };
+  return linkedSessionFor(prisma, scope, { task, engine, deviceId: input.deviceId ?? null, anyDevice: !input.deviceId && process.env.ENSEMBLE_DESKTOP !== "1", instructions: input.instructions }).catch(() => null);
+}
+
+/**
+ * The project brief a run by the person's own agent brings to its project's folder (agent-projects.ts):
+ * the one a claim from the web carries, else this database's, when the task is in a project.
+ */
+async function projectFor(prisma: PrismaClient, userId: string, task: AssignTask, options: CreateJobOptions, enabled: boolean): Promise<Omit<AgentProject, "folder"> | null> {
+  if (nodeRun(options.context)) return null;
+  const claimed = agentProjectOf(options.context);
+  if (claimed) return { id: claimed.id, name: claimed.name, brief: claimed.brief, hash: claimed.hash };
+  return enabled && task.projectId ? projectBrief(prisma, userId, task.projectId).catch(() => null) : null;
+}
+
+/** The job's context with what was decided for it here: the session it continues and why, its project. */
+function withDecided(context: Prisma.InputJsonValue | undefined, linked: LinkedSession | null, project: AgentProject | null): Prisma.InputJsonValue | undefined {
+  if (!linked && !project) return context;
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return {
+    ...base,
+    ...(linked ? { linkedSession: { sessionId: linked.session.id, taskId: linked.taskId, title: linked.title, reason: linked.reason } } : {}),
+    ...(project ? { agentProject: project } : {}),
+  } as Prisma.InputJsonValue;
+}
+
 export async function createJob(prisma: PrismaClient, userId: string, input: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
   await requireVerifiedUser(keysFor(userId));
   const task = await prisma.task.findFirst({ where: { id: input.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
-  const tiered = withTierAgent(input.session ? await inSession(prisma, userId, input) : input, tier);
+  const linked = await linkedSession(prisma, userId, task, input, tier, options, settings.orchestration.linkedSessions !== false);
+  let requested: AssignInput = input;
+  if (linked) {
+    // A session that can no longer take the run (its computer unpaired since) leaves it to start a new one.
+    requested = await inSession(prisma, userId, { ...input, session: linked.session.id }).catch(() => input);
+  }
+  const continuesLink = Boolean(linked && requested !== input);
+  if (linked && continuesLink) {
+    options = { ...options, context: withDecided(options.context, linked, null) };
+    await appendLedger({ userId, actor: options.actor ?? "me", action: "task.session_linked", taskId: task.id, payload: { sessionId: linked.session.id, linkedTaskId: linked.taskId, reason: linked.reason, why: linkWords(linked) } });
+  }
+  const tiered = withTierAgent(input.session ? await inSession(prisma, userId, input) : requested, tier);
   const body: ResolvedAssign = { ...withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) }) };
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
@@ -410,7 +471,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   }
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
   // A run in an agent session keeps the session's settings (or the ones named): the tier adds none.
-  const sessionRun = Boolean(input.session) || options.keepSettings === true;
+  const sessionRun = Boolean(input.session) || continuesLink || options.keepSettings === true;
   // A job on the tier's own model takes the tier's context window as it takes its thinking level (Settings → Models).
   if (!sessionRun && !body.contextTier && !body.model && provider === tier.provider && model === tier.model && tier.context === "long_context") body.contextTier = "long_context";
   // The tier's thinking level belongs to its own provider: another engine or model family does not take it.
@@ -473,6 +534,19 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
     }
   }
 
+  // A project's task by the person's own agent works in the project's folder when it would get a new one,
+  // and brings the project's brief to whichever folder it works in (agent-projects.ts).
+  let project: AgentProject | null = null;
+  if (body.kind === "code" && isCodeEngine(body.engine) && !body.chat) {
+    const brief = await projectFor(prisma, userId, task, options, settings.orchestration.projectFolders !== false);
+    if (brief) {
+      const fresh = !continueFrom && !externalRoot && !repoUrl;
+      project = { ...brief, ...(fresh ? { folder: await projectFolder(await workspaceRoot(), brief) } : {}) };
+      // Runs in one project's folder take turns, as runs continuing one session do.
+      if (project.folder) resourceKeys.push(`dir:${project.folder}`);
+    }
+  }
+
   const { accessMode, unattended } = requestedMode(body);
   const review = accessMode === "review";
 
@@ -504,7 +578,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withSecrets(options.context, body.secrets), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
+      context: contextWith(withDecided(withSecrets(options.context, body.secrets), null, project), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   if (externalRoot && body.trust === "always") {

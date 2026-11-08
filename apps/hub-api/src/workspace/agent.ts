@@ -14,6 +14,7 @@ import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
+import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
 import { recordMetric } from "../lib/metrics.js";
@@ -304,6 +305,11 @@ function baseEngineRules(ctx: JobContext): string[] {
         : "Some commands and edits wait for the person's approval. Ask real decisions with ask_person from the ensemble MCP server: 2–5 options and the one you recommend.";
   return [
     `- You're in ${ctx.root}. ${outsideRule(ctx)} Keys, sign-ins, system folders and Ensemble's own code are off limits.`,
+    ...(ctx.project
+      ? [
+          `- This is the folder of the Ensemble project “${ctx.project.name}”: its other tasks are worked on here too. AGENTS.md has the project's brief${ctx.project.changed ? " (it changed since the last task here: read it again)" : ""}. Keep files only this task needs in a folder named for the task, and leave other tasks' files as they are unless this task is about them.`,
+        ]
+      : []),
     ...(ctx.accessMode === "review" ? ["- This run is read-only: no file changes and no network."] : !ctx.network ? ["- There is no internet in this run."] : []),
     ...(git ? [`- ${git}`] : []),
     ...(pull ? [`- ${pull}`] : []),
@@ -502,9 +508,25 @@ export async function grantedFolderOf(prisma: PrismaClient, jobId: string | null
 }
 
 /** Chooses and prepares the folder: a fresh checkout, a folder the person granted, or an earlier job's. */
+/**
+ * The project's brief, brought up to date in its folder (AGENTS.md, agent-projects.ts) before the agent
+ * starts: a folder is the project's when the projects index says so, so a continued run there gets it too.
+ */
+async function bringProject(ctx: JobContext, base: string, root: string, project: AgentProject): Promise<void> {
+  if ((await folderProject(base, root)) !== project.id) return;
+  try {
+    const synced = await syncProjectFiles(base, root, project);
+    ctx.project = { name: project.name, changed: synced.changed };
+    await ctx.event("project_context", { project: project.name, projectId: project.id, hash: project.hash, changed: synced.changed });
+  } catch (error) {
+    await ctx.event("engine_note", { note: `The project's brief could not be written to its folder (${error instanceof Error ? error.message : String(error)}); the run goes on without it.` });
+  }
+}
+
 async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ root: string; git: boolean }> {
   const job = ctx.job;
   const base = await workspaceRoot();
+  const project = agentProjectOf(job.context);
   if (job.externalRoot) return { root: await resolveWorkFolder(job.externalRoot), git: await isGitRepo(job.externalRoot) };
   if (job.continueFromJobId) {
     const previous = await app.prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { repoPath: true, externalRoot: true, continueFromJobId: true } });
@@ -519,6 +541,7 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
     await stat(root).catch(() => {
       throw new GuardError("The earlier task's folder no longer exists.");
     });
+    if (project && !external) await bringProject(ctx, base, root, project);
     const git = await isGitRepo(root);
     // An Ensemble folder created before the empty-commit fix has a repo and no HEAD.
     // User-attached folders and clones (anything with a remote or an existing commit) stay as they are.
@@ -527,6 +550,19 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
       if (remote.exitCode !== 0 || !remote.output.trim()) await commitUnbornHead({ ...ctx, root });
     }
     return { root, git };
+  }
+  if (project?.folder) {
+    // The project's folder as the index has it now (made again if it was removed since the run was queued).
+    const root = await projectFolder(base, project);
+    if (!within(base, root)) throw new GuardError("The project's folder is outside the workspace.");
+    const prep = { ...ctx, root };
+    if (!(await isGitRepo(root))) {
+      const init = await gitIn(prep, ["init", "--quiet", "--template="]);
+      if (init.exitCode !== 0) throw new GuardError(`Could not prepare the project's folder: ${init.output.trim().slice(-300)}`);
+    }
+    await bringProject(ctx, base, root, project);
+    await commitUnbornHead(prep);
+    return { root, git: true };
   }
   const root = join(base, "runs", job.id);
   await mkdir(root, { recursive: true });

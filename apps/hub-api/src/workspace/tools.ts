@@ -81,6 +81,8 @@ export interface JobContext {
   blockedOutside: string[];
   /** The Ensemble workspace folder on this computer (`workspaceRoot()`). */
   workspace?: string;
+  /** The run works in its Ensemble project's folder (agent-projects.ts); `changed`: the project's brief changed since the folder's last run. */
+  project?: { name: string; changed: boolean };
   /** Folders beyond its own the person let this run change (asked once each), and an earlier task's it continues. */
   grants?: string[];
   /** Folders the person let this run read where reading asks (Settings → No access). Never writable. */
@@ -395,7 +397,7 @@ export function granted(ctx: Pick<JobContext, "root" | "grants" | "readGrants">,
 export async function grantFolder(real: string, workspace: string, home = homedir()): Promise<string> {
   if (within(workspace, real, false)) {
     const parts = relative(workspace, real).split(/[\\/]/);
-    const folder = join(workspace, ...parts.slice(0, parts[0] === "runs" || parts[0] === "files" ? 2 : 1));
+    const folder = join(workspace, ...parts.slice(0, parts[0] === "runs" || parts[0] === "files" || parts[0] === "projects" ? 2 : 1));
     return holdsProtected(folder, home) ? real : folder;
   }
   const own = (await stat(real).catch(() => null))?.isDirectory() ? real : dirname(real);
