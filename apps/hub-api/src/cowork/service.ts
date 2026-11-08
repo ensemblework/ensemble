@@ -1,5 +1,5 @@
 import { dataErasureVersion } from "../lib/workspace-data.js";
-import { seriesKeyFor, seriesKeyOf } from "./series.js";
+import { seriesKeyOf } from "./series.js";
 import { previousMeeting, prepOf } from "./prep.js";
 import { kickMeetingAi, queueMeetingAi } from "../connectors/meetings/ai.js";
 import { propagateMeetingProject, seriesProject } from "../connectors/meetings/links.js";
@@ -492,13 +492,13 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
       sessions
         .filter((row) => row.artifactId !== null && event.memberIds.includes(row.artifactId))
         .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())[0] ?? null;
-    if (names.length === 0 && !session && !seriesKeyFor({ eventMetadata: event.metadata, title: event.title })) continue;
     if (phase === "follow_up" && session && session.attachState !== "pending" && session.status === "ended") continue;
     const attendees = matchAttendees(names, people);
-    if (phase !== "follow_up" && attendees.length === 0 && !session && !seriesKeyFor({ eventMetadata: event.metadata, title: event.title })) continue;
-    const prep = attendees.length ? await prepBundle(db, userId, attendees) : { openTasks: [], decisions: [] };
-    // Last time, for a meeting of a series (cowork/prep.ts): its notes, decisions and the work it left open.
+    // Last time, for an upcoming meeting of a series with earlier notes (cowork/prep.ts): it earns a cue even
+    // with no one from People in it. Any other event needs people or notes.
     const previous = phase === "follow_up" ? null : await previousMeeting(db as PrismaClient, userId, event).catch(() => null);
+    if (!session && !previous && (names.length === 0 || (phase !== "follow_up" && attendees.length === 0))) continue;
+    const prep = attendees.length ? await prepBundle(db, userId, attendees) : { openTasks: [], decisions: [] };
     cues.push({
       kind: phase === "follow_up" ? "follow_up" : phase === "live" ? "live" : "prep",
       artifactId: event.id,

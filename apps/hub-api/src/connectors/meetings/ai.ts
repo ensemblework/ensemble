@@ -685,7 +685,11 @@ export async function drainMeetingAi(db: PrismaClient = prisma, options: { ask?:
   let ran = 0;
   for (const row of await queuedNotes(db)) {
     if (ran >= 2) break;
-    if (await isPaused(redis, row.userId)) continue;
+    if (await isPaused(redis, row.userId)) {
+      // To the back of the queue, so one paused account's notes never hold up everyone else's.
+      await db.meetingNote.updateMany({ where: { id: row.id, aiStatus: "queued" }, data: { updatedAt: new Date() } });
+      continue;
+    }
     if (await runMeetingAi(row.id, { db, ask: options.ask })) ran += 1;
   }
   return ran;

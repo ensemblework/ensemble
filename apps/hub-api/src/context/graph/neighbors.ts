@@ -677,7 +677,7 @@ const meetingSpec: KindSpec<MeetingAnchor> = {
       label: "Calendar event",
       run: async (ctx, meeting) => {
         if (!meeting.eventId) return [];
-        const event = await ctx.db.artifact.findFirst({ where: { id: meeting.eventId, userId: ctx.userId, kind: "event" }, select: { id: true, title: true, ts: true } });
+        const event = await ctx.db.artifact.findFirst({ where: { id: meeting.eventId, userId: ctx.userId, kind: "event", AND: [visibleArtifacts(ctx.userId)] }, select: { id: true, title: true, ts: true } });
         return event ? [card("event", event.id, event.title || "Event", { when: iso(event.ts) })] : [];
       },
     },
@@ -780,7 +780,8 @@ const pageSpec: KindSpec<PageAnchor> = {
 type EventAnchor = NonNullable<Awaited<ReturnType<typeof loadEvent>>>;
 
 function loadEvent(ctx: GraphCtx, id: string) {
-  return ctx.db.artifact.findFirst({ where: { id, userId: ctx.userId, kind: "event", deletedAt: null }, select: { id: true, title: true, ts: true, participants: true, metadata: true, projectId: true, url: true } });
+  // A member of a shared space never sees the owner's calendar (sharing/context.ts PRIVATE_ARTIFACT_KINDS).
+  return ctx.db.artifact.findFirst({ where: { id, userId: ctx.userId, kind: "event", deletedAt: null, AND: [visibleArtifacts(ctx.userId)] }, select: { id: true, title: true, ts: true, participants: true, metadata: true, projectId: true, url: true } });
 }
 
 const eventSpec: KindSpec<EventAnchor> = {

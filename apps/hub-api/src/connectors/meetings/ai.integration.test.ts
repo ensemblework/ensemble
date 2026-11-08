@@ -11,6 +11,9 @@ const { saveSettings } = await import("../../lib/settings.js");
 const { startMeetingSession, saveMeetingNotes, endMeetingSession } = await import("../../cowork/service.js");
 const { runMeetingPreps, prepareMeeting } = await import("../../cowork/prep.js");
 const { eventSeriesKey } = await import("../../cowork/series.js");
+const { listMeetingCues } = await import("../../cowork/service.js");
+const { itemNeighbors } = await import("../../context/graph/neighbors.js");
+const { runInScope } = await import("../../sharing/context.js");
 
 const TRANSCRIPT = [
   "[00:12] Priya Shah: Thanks all. The beta is on the 20th, so latency is the priority this week.",
@@ -141,6 +144,18 @@ test("a recurring meeting gets a prep brief from last time, once", async () => {
   assert.equal(meta.ensemblePrep?.previousId, note.id);
   assert.equal(await db.notification.count({ where: { userId, kind: "meeting_prep" } }), 1);
   assert.equal(await runMeetingPreps(db, userId, { ask }), 0, "a brief is written once");
+
+  // Today's cue carries last time; a titled event with no one from People and no series history gets none.
+  await db.artifact.create({ data: { userId, kind: "event", externalId: "dentist-1", title: "Dentist", ts: new Date(Date.now() + 60 * 60_000), metadata: {} } });
+  const { cues } = await listMeetingCues(db, userId);
+  assert.deepEqual(cues.map((cue) => cue.title), ["Atlas weekly sync"]);
+  assert.equal(cues[0]!.previous?.id, note.id);
+  assert.match(cues[0]!.prep?.text ?? "", /latency review/);
+
+  // The owner's calendar stays theirs: a member of the shared space cannot open the event through the graph.
+  assert.ok(await itemNeighbors({ db, userId }, { kind: "event", id: event.id }));
+  const member = { spaceId: userId, accountId: "member-account", access: { kind: "member" as const, role: "viewer" as const, ownerId: userId } };
+  assert.equal(await runInScope(member, () => itemNeighbors({ db, userId }, { kind: "event", id: event.id })), null);
 
   const asked = await prepareMeeting(db, userId, event.id, { ask });
   assert.deepEqual(asked.previous.openTasks.map((task) => task.title), ["Write the Atlas latency report"]);
