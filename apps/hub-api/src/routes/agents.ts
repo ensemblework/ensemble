@@ -5,7 +5,6 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { CODE_ENGINES } from "@ensemble/shared-types";
 import type { FastifyInstance } from "fastify";
 import { isPaused, listActivities, requestCancel } from "../lib/activity.js";
 import { git } from "../lib/git.js";
@@ -27,7 +26,6 @@ import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox
 import { contextTierOf, fastOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
 import { listSessions, resolveSession, sessionOfJob } from "../workspace/sessions.js";
-import { linkedSessionFor, linkWords } from "../workspace/linked-session.js";
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
@@ -83,6 +81,13 @@ function evidenceOf(job: JobRow): { modelUsed: string | null; costUsd: number | 
     // The run's review on the computer that ran it (protocol 4): the web's Code tab opens it through that computer.
     deviceReviewId: job.deviceId && typeof evidence.reviewId === "string" ? evidence.reviewId : null,
   };
+}
+
+/** The session a run continued because it fit the task (workspace/session-choice), when one was. */
+function continuedSession(context: unknown): { title: string | null; why: string | null } | null {
+  const choice = (context as { sessionChoice?: { decision?: unknown; title?: unknown; why?: unknown } } | null)?.sessionChoice;
+  if (!choice || choice.decision !== "continue") return null;
+  return { title: typeof choice.title === "string" ? choice.title : null, why: typeof choice.why === "string" ? choice.why : null };
 }
 
 function card(job: JobRow, position?: number, options: { paths?: boolean } = {}) {
@@ -141,6 +146,8 @@ function card(job: JobRow, position?: number, options: { paths?: boolean } = {})
     continueFromJobId: job.continueFromJobId,
     // Carrying on a run cut off when its computer restarted (devices/recover.ts).
     resume: resumeOf(job.context) ? { ...resumeOf(job.context)!, of: MAX_AUTO_RESUMES } : null,
+    // The agent session the computer chose to continue, and why (workspace/session-choice).
+    sessionChoice: continuedSession(job.context),
     createdAt: job.createdAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,
     finishedAt: job.finishedAt?.toISOString() ?? null,
@@ -349,21 +356,6 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const session = await resolveSession(prisma, { space: request.userId, runner: actorFor(request.userId) }, id);
     return session ? { session } : reply.code(404).send({ error: "Session not found." });
-  });
-
-  // Assign → "Its own checkout": the session a new run would continue because the task names a task done
-  // in it (workspace/linked-session.ts), so the dialog can say so and offer a new session instead.
-  app.get("/api/agent/linked-session", async (request) => {
-    const query = z.object({ taskId: z.string().uuid(), engine: z.enum(CODE_ENGINES), deviceId: z.string().uuid().optional() }).parse(request.query);
-    if ((await loadSettings(prisma, request.userId)).orchestration.linkedSessions === false) return { linked: null };
-    const task = await prisma.task.findFirst({ where: { id: query.taskId, userId: request.userId, deletedAt: null }, select: { id: true, projectId: true, dependsOn: true, description: true, notes: true } });
-    if (!task) return { linked: null };
-    const link = await linkedSessionFor(prisma, { space: request.userId, runner: actorFor(request.userId) }, { task, engine: query.engine, deviceId: query.deviceId ?? null, anyDevice: !query.deviceId && process.env.ENSEMBLE_DESKTOP !== "1" });
-    return {
-      linked: link
-        ? { sessionId: link.session.id, taskId: link.taskId, title: link.title, reason: link.reason, why: linkWords(link), agentName: link.session.agentName, computer: link.session.computer, lastActiveAt: link.session.lastActiveAt, summary: link.session.summary }
-        : null,
-    };
   });
 
   // Assign → "Continue an earlier task" on a paired computer (devices/earlier.ts). Not under

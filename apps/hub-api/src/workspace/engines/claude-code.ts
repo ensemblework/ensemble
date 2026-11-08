@@ -256,6 +256,8 @@ export async function runClaudeCode(
   // The caller may hold the trace, to close it if the run stops before the engine returns.
   const trace = options.trace ?? new EngineTrace(ctx, "claude-code");
   const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };
+  /** The last request's input (the conversation so far): how full the session's context is (session-choice). */
+  let lastInput = 0;
   let failure: string | null = null;
   let started = false;
   let stderr = "";
@@ -300,6 +302,7 @@ export async function runClaudeCode(
           tokensIn: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) || null,
           tokensOut: usage.output_tokens ?? null,
         };
+        if (totals.tokensIn) lastInput = totals.tokensIn;
         for (const part of body.content ?? []) {
           if (part.type === "thinking" && typeof part.thinking === "string") {
             await trace.thinking(part.thinking);
@@ -334,7 +337,7 @@ export async function runClaudeCode(
         result.tokensIn = (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
         result.tokensOut = usage.output_tokens ?? 0;
         const window = claudeWindow(message.modelUsage, result.model);
-        if (window) await ctx.event("engine_context", window);
+        if (window) await ctx.event("engine_context", { ...window, ...(lastInput ? { used: lastInput } : {}) });
         if (message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success")) {
           failure =
             message.subtype === "error_max_turns"

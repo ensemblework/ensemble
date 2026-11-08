@@ -34,6 +34,8 @@ export const ROUTES = {
   context: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/context`,
   /** A run's Ensemble action (bridge/actions.ts: list them, or run one), under the job's lease. */
   act: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/act`,
+  /** How the computer chose the run's agent session (workspace/session-choice), under the job's lease. */
+  sessionChoice: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/session-choice`,
   /** The account's model keys, for this computer's own model calls. */
   modelKeys: "/api/devices/self/model-keys",
   /** The text of the files a run changed, sent before complete (protocol 3). */
@@ -250,9 +252,39 @@ export const JobSpec = z
      * value this computer does not understand never refuses the whole job.
      */
     project: z.unknown().optional(),
+    /**
+     * What the computer chooses the run's agent session with (workspace/session-choice, docs/30 Choosing a
+     * session): the task's facts as the web knows them (`TaskFacts`: its project, deliverable, meeting,
+     * parent page, labels and the tasks it names), the config the web decides with (`SessionChoiceConfig`,
+     * the person's setting in `enabled`), and `newSession` when the person asked for a new session. Older
+     * servers omit them; read with `parseFacts` and `parseConfig`.
+     */
+    related: z.unknown().optional(),
+    sessionChoice: z.unknown().optional(),
+    newSession: z.boolean().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
+
+/**
+ * How a computer chose a claimed run's agent session, in the web's ids: the run it continues (`continues`,
+ * then the web links the run to it), the best candidate session, and every candidate's signals and score.
+ */
+export const SessionChoicePost = z.object({
+  decision: z.enum(["continue", "new"]),
+  band: z.enum(["confident", "unsure", "none"]),
+  continues: z.string().uuid().nullable(),
+  sessionId: z.string().uuid().nullable(),
+  score: z.number().finite().nullable(),
+  title: text(500).nullable(),
+  why: text(600).nullable(),
+  note: text(40).nullable(),
+  configVersion: text(40),
+  configHash: text(64),
+  candidates: z.array(z.record(z.string(), z.unknown())).max(100),
+  elapsedMs: z.number().int().min(0).max(600_000).nullable(),
+});
+export type SessionChoicePost = z.infer<typeof SessionChoicePost>;
 
 /** A claim's (or a job context's) `mission`, when it is a valid one. */
 export function parseMission(value: unknown): MissionSpec | null {

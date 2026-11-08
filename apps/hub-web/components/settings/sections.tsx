@@ -121,10 +121,10 @@ export function OrchestrationSection({ settings, patch }: Props) {
           <Toggle label="A project's tasks share the project's folder" checked={orchestration.projectFolders} onChange={(projectFolders) => set({ projectFolders })} />
         </SettingRow>
         <SettingRow
-          title="Continue the session of a task this one mentions"
-          description="A task that mentions or depends on another task the same agent worked on continues that conversation: the agent keeps what it learned and its cached context. Only within the same project. You can start a new session when you assign."
+          title="Continue a fitting agent session"
+          description="A new task goes on in one of the agent's sessions on that computer when it clearly fits: it mentions or depends on a task done there, shares its deliverable or meeting, or names the same files and topic. The agent keeps what it learned and its cached context. Only within one project; never when the session is nearly full. Assign → More options starts a new session instead."
         >
-          <Toggle label="Continue the session of a task this one mentions" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
+          <Toggle label="Continue a fitting agent session" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
         </SettingRow>
         <SettingRow
           title="Clean up agent sessions"

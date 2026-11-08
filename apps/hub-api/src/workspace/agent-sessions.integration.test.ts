@@ -1,8 +1,9 @@
 /**
- * Agent projects, linked sessions and session clean-up (docs/30, Agent projects, Linked sessions and Cleaning up sessions) against an in-memory database:
- * a project's folder kept by the projects index and its brief kept current by hash, never through a link; a task that depends on
- * or mentions another continues that task's session with the same agent, never across projects and
- * not when a new session is asked for; and the sweep deleting only sessions whose tasks are all retired.
+ * Agent projects, choosing a session and session clean-up (docs/30) against an in-memory database: a
+ * project's folder kept by the projects index and its brief kept current by hash, never through a link;
+ * choosing a session on the computer (a link or shared files continue one; never across projects, not when
+ * too full or when a new one is asked for); the claim carrying what the computer chooses with and its report
+ * linking the run on the web; and the sweep deleting only sessions whose tasks are all retired.
  */
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
@@ -17,6 +18,9 @@ const h = await createHttpHarness();
 const db = h.prisma;
 const { projectBrief, projectFolder, syncProjectFiles } = await import("./agent-projects.js");
 const { sweepAgentSessions } = await import("./session-cleanup.js");
+const { chooseSession } = await import("./session-choice/choose.js");
+const { factsOf } = await import("./session-choice/related.js");
+const { DEFAULT_SESSION_CHOICE } = await import("./session-choice/config.js");
 const scratch = await mkdtemp(join(tmpdir(), "ensemble-agent-projects-"));
 after(async () => {
   await h.close();
@@ -32,7 +36,7 @@ async function laptopFor(user: HttpUser, online = true) {
 }
 
 /** A finished Claude Code run of the task on the laptop, with the agent's session id recorded. */
-async function ranOn(userId: string, taskId: string, deviceId: string, options: { continueFrom?: string; at?: Date; provider?: string } = {}) {
+async function ranOn(userId: string, taskId: string, deviceId: string | null, options: { continueFrom?: string; at?: Date; provider?: string } = {}) {
   const at = options.at ?? new Date();
   const job = await db.workspaceJob.create({
     data: { userId, taskId, kind: "code", status: "succeeded", executionMode: "sandbox", provider: options.provider ?? "claude-code", model: "default", deviceId, continueFromJobId: options.continueFrom ?? null, startedAt: at, claimedAt: at, finishedAt: at, createdAt: at, summary: "Done." },
@@ -91,48 +95,121 @@ test("a project's folder is kept by the index and its brief is rewritten only wh
   assert.equal(await projectFolder(workspace, (await projectBrief(db, user.id, other.id))!), join(workspace, "projects", `atlas-search-${other.id.slice(0, 8)}`), "another project with the name gets its own folder");
 });
 
-test("a task that depends on or mentions another continues its session with the same agent, within one project", async () => {
+test("on the computer, a new run continues the session that fits it: a link, shared files; never across projects or when too full", async () => {
   const user = await h.asUser();
-  const laptop = await laptopFor(user);
+  const scope = { space: user.id, runner: null };
+  const config = DEFAULT_SESSION_CHOICE;
   const atlas = await db.project.create({ data: { userId: user.id, name: "Atlas", createdBy: "me" } });
   const other = await db.project.create({ data: { userId: user.id, name: "Other", createdBy: "me" } });
-  const b = await db.task.create({ data: { userId: user.id, title: "Build the ranking API", status: "done", completedAt: new Date(), createdBy: "me", projectId: atlas.id } });
-  const first = await ranOn(user.id, b.id, laptop.id, { at: new Date(Date.now() - 2 * DAY) });
+  const b = await db.task.create({ data: { userId: user.id, title: "Build the ranking API", description: "BM25 scoring for search results.", status: "done", completedAt: new Date(), createdBy: "me", projectId: atlas.id } });
+  const first = await ranOn(user.id, b.id, null, { at: new Date(Date.now() - 2 * DAY) });
+  await db.workspaceJob.update({ where: { id: first.id }, data: { summary: "Built the ranking API with BM25: rankResults in src/ranking/api.ts.", evidence: { files: [{ path: "src/ranking/api.ts" }, { path: "package.json" }] } } });
+  const choose = async (taskId: string, extra: { newSession?: boolean } = {}) => {
+    const task = await db.task.findUniqueOrThrow({ where: { id: taskId } });
+    return chooseSession(db, scope, { task: { facts: (await factsOf(db, user.id, taskId))!, title: task.title, description: task.description, notes: task.notes, instructions: "" }, engine: "claude-code", config, ...extra });
+  };
 
-  const a = await db.task.create({ data: { userId: user.id, title: "Add paging to the ranking API", createdBy: "me", projectId: atlas.id, dependsOn: [b.id] } });
-  const preview = await user.inject({ method: "GET", url: `/api/agent/linked-session?taskId=${a.id}&engine=claude-code&deviceId=${laptop.id}` });
-  assert.equal(preview.statusCode, 200, preview.body);
-  assert.equal(preview.json().linked.sessionId, first.id);
-  assert.equal(preview.json().linked.why, "This task depends on “Build the ranking API”");
+  const a = await db.task.create({ data: { userId: user.id, title: "Add paging", description: `Page the results of ensemble://task/${b.id}.`, createdBy: "me", projectId: atlas.id } });
+  const linked = await choose(a.id);
+  assert.equal(linked.decision, "continue");
+  assert.equal(linked.band, "confident");
+  assert.equal(linked.session?.id, first.id);
+  assert.equal(linked.why, "it links to “Build the ranking API”");
+  const candidate = (linked.record.candidates as Array<{ sessionId: string; parts: Record<string, number>; signals: { link: string } }>)[0]!;
+  assert.equal(candidate.sessionId, first.id);
+  assert.equal(candidate.signals.link, "link");
+  assert.equal(candidate.parts.link, 10, "every candidate's signals and parts are kept for calibration");
+  assert.match(linked.record.configHash as string, /^[a-f0-9]{12}$/);
 
-  const assigned = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: a.id, engine: "claude-code", deviceId: laptop.id, mode: "unattended" } });
-  assert.equal(assigned.statusCode, 201, assigned.body);
-  const job = await db.workspaceJob.findUniqueOrThrow({ where: { id: assigned.json().jobId } });
-  assert.equal(job.continueFromJobId, first.id, "the run continues the linked session");
-  assert.equal((job.context as { linkedSession?: { taskId?: string; reason?: string } }).linkedSession?.taskId, b.id);
-  await db.workspaceJob.update({ where: { id: job.id }, data: { status: "cancelled", finishedAt: new Date() } });
+  const c = await db.task.create({ data: { userId: user.id, title: "Fix the page size of rankResults in src/ranking/api.ts", createdBy: "me", projectId: atlas.id } });
+  const anchored = await choose(c.id);
+  assert.equal(anchored.decision, "continue", "a task naming the file and code the session changed continues it");
+  assert.equal(anchored.why, "like “Build the ranking API”: both name src/ranking/api.ts and rankResults");
+  const one = await db.task.create({ data: { userId: user.id, title: "Tidy up src/ranking/api.ts", createdBy: "me", projectId: atlas.id } });
+  const unsure = await choose(one.id);
+  assert.equal(unsure.decision, "new", "one shared file alone is not enough");
+  assert.equal(unsure.band, "unsure", "but it is recorded as a near miss");
 
-  const fresh = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: a.id, engine: "claude-code", deviceId: laptop.id, mode: "unattended", newSession: true } });
-  assert.equal(fresh.statusCode, 201, fresh.body);
-  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: fresh.json().jobId } })).continueFromJobId, null, "a new session when asked");
-  await db.workspaceJob.update({ where: { id: fresh.json().jobId }, data: { status: "cancelled", finishedAt: new Date() } });
+  const elsewhere = await db.task.create({ data: { userId: user.id, title: "Fix the page size in src/ranking/api.ts", description: `See ensemble://task/${b.id}`, createdBy: "me", projectId: other.id } });
+  const crossed = await choose(elsewhere.id);
+  assert.equal(crossed.decision, "new");
+  assert.equal(crossed.record.candidates && (crossed.record.candidates as unknown[]).length, 0, "a session of another project is not even a candidate");
 
-  const codex = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: a.id, engine: "codex", deviceId: laptop.id, mode: "unattended" } });
-  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: codex.json().jobId } })).continueFromJobId, null, "another agent starts its own session");
-  await db.workspaceJob.update({ where: { id: codex.json().jobId }, data: { status: "cancelled", finishedAt: new Date() } });
+  const unrelated = await db.task.create({ data: { userId: user.id, title: "Write the quarterly budget memo", createdBy: "me", projectId: atlas.id } });
+  const none = await choose(unrelated.id);
+  assert.equal(none.decision, "new");
+  assert.equal(none.band, "none");
 
-  // A task in another project that links to B does not reuse B's session.
-  const c = await db.task.create({ data: { userId: user.id, title: "Reuse the ranking client", description: `See ensemble://task/${b.id}`, createdBy: "me", projectId: other.id } });
-  const crossed = await user.inject({ method: "GET", url: `/api/agent/linked-session?taskId=${c.id}&engine=claude-code&deviceId=${laptop.id}` });
-  assert.equal(crossed.json().linked, null, "never across projects");
-  const d = await db.task.create({ data: { userId: user.id, title: "Document the ranking API", description: `Follows /tasks/${b.id}`, createdBy: "me", projectId: atlas.id } });
-  const same = await user.inject({ method: "GET", url: `/api/agent/linked-session?taskId=${d.id}&engine=claude-code&deviceId=${laptop.id}` });
-  assert.equal(same.json().linked?.reason, "link");
+  const fresh = await choose(a.id, { newSession: true });
+  assert.equal(fresh.decision, "new");
+  assert.equal(fresh.note, "new-session");
+  assert.equal(fresh.band, "confident", "what it would have chosen is still recorded");
 
+  await db.workspaceEvent.create({ data: { jobId: first.id, kind: "engine_context", data: { size: 200_000, used: 170_000 } } });
+  const full = await choose(a.id);
+  assert.equal(full.decision, "new");
+  assert.equal(full.note, "too-full");
+  assert.equal(full.handover?.title, "Build the ranking API");
+});
+
+test("a claim carries what the computer chooses with, and its report links the run to the session it continued", async () => {
+  const user = await h.asUser();
+  const key = await h.asToken(user, "device");
+  const laptop = await db.device.create({ data: { userId: user.id, name: "Desk", platform: "linux", appVersion: "cli-0.7.4", tokenId: key.id, capabilities: { engines: ["claude-code"], sessions: 1 } as never, lastSeenAt: new Date() } });
+  const project = await db.project.create({ data: { userId: user.id, name: "Atlas", createdBy: "me" } });
+  const b = await db.task.create({ data: { userId: user.id, title: "Build the ranking API", status: "done", completedAt: new Date(), createdBy: "me", projectId: project.id } });
+  const earlier = await ranOn(user.id, b.id, laptop.id);
+  const a = await db.task.create({ data: { userId: user.id, title: "Add paging", description: `Follows ensemble://task/${b.id}`, createdBy: "me", projectId: project.id } });
+  const claim = async (payload: Record<string, unknown> = {}) => {
+    const assigned = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: a.id, engine: "claude-code", deviceId: laptop.id, mode: "unattended", ...payload } });
+    assert.equal(assigned.statusCode, 201, assigned.body);
+    const claimed = await key.inject({ method: "POST", url: "/api/devices/self/claim" });
+    assert.equal(claimed.statusCode, 200, claimed.body);
+    return claimed.json() as { id: string; leaseToken: string; continueFromJobId: string | null; related?: { key: string; projectId: string; named: Array<{ id: string; reason: string }> }; sessionChoice?: { enabled: boolean; version: string }; newSession?: boolean };
+  };
+  const spec = await claim();
+  assert.equal(spec.continueFromJobId, null, "the web leaves the session to the computer");
+  assert.deepEqual(spec.related?.named, [{ id: b.id, reason: "link" }]);
+  assert.equal(spec.related?.projectId, project.id);
+  assert.equal(spec.sessionChoice?.enabled, true);
+  assert.equal(spec.newSession, undefined);
+
+  const report = (id: string, lease: string, continues: string) =>
+    key.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${id}/session-choice`,
+      headers: { "x-ensemble-job-lease": lease },
+      payload: { decision: "continue", band: "confident", continues, sessionId: continues, score: 11, title: "Build the ranking API", why: "it links to “Build the ranking API”", note: null, configVersion: "2026-11-09.1", configHash: "abcdef123456", candidates: [{ sessionId: continues, score: 11, parts: { link: 10, warm: 1 } }], elapsedMs: 40 },
+    });
+  const reported = await report(spec.id, spec.leaseToken, earlier.id);
+  assert.equal(reported.statusCode, 200, reported.body);
+  assert.equal(reported.json().continues, earlier.id);
+  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: spec.id } })).continueFromJobId, earlier.id, "the web's session has the run too");
+  const row = await db.sessionChoice.findUniqueOrThrow({ where: { jobId: spec.id } });
+  assert.equal(row.decision, "continue");
+  assert.equal(row.deviceId, laptop.id);
+  assert.equal(row.projectId, project.id);
+  const detail = await user.inject({ method: "GET", url: `/api/agent/jobs/${spec.id}` });
+  assert.equal(detail.json().job.sessionChoice.why, "it links to “Build the ranking API”");
+  await db.workspaceJob.update({ where: { id: spec.id }, data: { status: "succeeded", finishedAt: new Date() } });
+
+  // A run another account made is never linked, whatever the computer says.
+  const stranger = await h.asUser();
+  const theirs = await ranOn(stranger.id, (await db.task.create({ data: { userId: stranger.id, title: "Theirs", createdBy: "me" } })).id, null);
+  const second = await claim();
+  const refused = await report(second.id, second.leaseToken, theirs.id);
+  assert.equal(refused.json().continues, null);
+  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: second.id } })).continueFromJobId, null);
+  assert.equal((await db.sessionChoice.findUniqueOrThrow({ where: { jobId: second.id } })).note, "not-linked");
+  await db.workspaceJob.update({ where: { id: second.id }, data: { status: "succeeded", finishedAt: new Date() } });
+
+  const asked = await claim({ newSession: true });
+  assert.equal(asked.newSession, true, "the person's new session goes with the claim");
+  await db.workspaceJob.update({ where: { id: asked.id }, data: { status: "succeeded", finishedAt: new Date() } });
   assert.equal((await user.inject({ method: "PATCH", url: "/api/settings", payload: { orchestration: { linkedSessions: false } } })).statusCode, 200);
-  const off = await user.inject({ method: "POST", url: "/api/agent/assign", payload: { taskId: a.id, engine: "claude-code", deviceId: laptop.id, mode: "unattended" } });
-  assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: off.json().jobId } })).continueFromJobId, null, "off in Settings");
-  await db.workspaceJob.update({ where: { id: off.json().jobId }, data: { status: "cancelled", finishedAt: new Date() } });
+  const off = await claim();
+  assert.equal(off.sessionChoice?.enabled, false, "the setting goes with the claim");
+  await db.workspaceJob.update({ where: { id: off.id }, data: { status: "succeeded", finishedAt: new Date() } });
 });
 
 test("the sweep deletes a session only when every task in it is retired and its computer can delete it", async () => {

@@ -52,7 +52,7 @@ Complexity picks the Low/Medium/High/Max model profile; a complexity the person 
 
 Runs of one agent session ([30](30_ENGINES.md), Agent sessions) run one at a time, in the order of the session's queue (`queue_position`: a queued message last, a steer first, as the owner reorders it), not of `continueFromJobId`. A claim of a session's run and every change to its queue hold the session's lock (an advisory transaction lock), and the claim sets the run's `continueFromJobId` to the session's run that actually ran last (`sessionTurn` in `workspace/sessions.ts`), so resume ancestry is always one true line ([35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card)).
 
-A project's tasks done by the person's own agent share the project's folder (`orchestration.projectFolders`), a task that names another continues that task's session with the same agent within one project (`orchestration.linkedSessions`), and the sessions of retired work are deleted from the agents (`orchestration.cleanSessions`); all three are on by default ([30](30_ENGINES.md), Agent projects, Linked sessions and Cleaning up sessions).
+A project's tasks done by the person's own agent share the project's folder (`orchestration.projectFolders`), a new run may continue one of the agent's sessions on its computer that fits the task, within one project (`orchestration.linkedSessions`), and the sessions of retired work are deleted from the agents (`orchestration.cleanSessions`); all three are on by default ([30](30_ENGINES.md), Agent projects, Choosing a session and Cleaning up sessions).
 
 Minutes, model turns and tool calls are separate per-run budgets; waiting on a person does not use minutes. Provider request concurrency has its own limiter.
 

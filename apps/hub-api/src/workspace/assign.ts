@@ -20,7 +20,9 @@ import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL, storedMode, type RunMode } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { resolveSession } from "./sessions.js";
-import { linkedSessionFor, linkWords, type LinkedSession } from "./linked-session.js";
+import { chooseSession, type Choice } from "./session-choice/choose.js";
+import { activeConfig, type SessionChoiceConfig } from "./session-choice/config.js";
+import { factsOf, type TaskFacts } from "./session-choice/related.js";
 import { jobOrigin } from "../remote/origin.js";
 import { agentProjectOf, projectBrief, projectFolder, type AgentProject } from "./agent-projects.js";
 import { currentDevice } from "../devices/successor.js";
@@ -87,8 +89,8 @@ export const Assign = z.object({
    */
   session: z.string().uuid().optional(),
   /**
-   * A new agent session even when a task this one names has one with the same agent
-   * (workspace/linked-session.ts): without it, the run continues that session.
+   * A new agent session even when one of this computer's sessions fits the task (session-choice):
+   * without it, the computer that runs it may continue that session.
    */
   newSession: z.boolean().optional(),
   /**
@@ -112,6 +114,11 @@ function withSecrets(context: Prisma.InputJsonValue | undefined, secrets: readon
 function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
   return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
+}
+
+function withNewSession(context: Prisma.InputJsonValue | undefined): Prisma.InputJsonValue {
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return { ...base, newSession: true } as Prisma.InputJsonValue;
 }
 
 /** A request that ends in a pull request, made consistent: a code task with commits, pushes and the internet. */
@@ -262,6 +269,11 @@ export interface CreateJobOptions {
    * session, already resolved by `inSession`): the task's model tier adds none of its own.
    */
   keepSettings?: boolean;
+  /**
+   * A job claimed from the web (remote/accept.ts): the task's facts as the web knows them, the config the
+   * web decides with (its setting included), and whether the person asked for a new agent session.
+   */
+  sessionChoice?: { facts: TaskFacts | null; config: SessionChoiceConfig | null; newSession: boolean };
 }
 
 type AssignTask = NonNullable<Awaited<ReturnType<PrismaClient["task"]["findFirst"]>>>;
@@ -357,7 +369,8 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(withSecrets(options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
+      // The computer decides the session when it takes the job; the person's "new session" goes with it.
+      context: contextWith(withSecrets(body.newSession ? withNewSession(options.context) : options.context, body.secrets), body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -402,17 +415,41 @@ function nodeRun(context: unknown): boolean {
 }
 
 /**
- * The session a new run continues because its task names a task done in it (linked-session.ts): only
- * for a run that would otherwise start a new session in a new folder, by one of the person's own agents.
+ * Whether a new run may continue a session it was not told to (session-choice/choose.ts): a run by the
+ * person's own agent on this computer that would otherwise start a new session in a new folder. Decided
+ * where the run happens, so never for a job made here for a paired computer: that computer decides when it
+ * takes the job.
  */
-async function linkedSession(prisma: PrismaClient, userId: string, task: AssignTask, input: AssignInput, tier: ModelTier, options: CreateJobOptions, enabled: boolean): Promise<LinkedSession | null> {
-  if (!enabled || input.newSession || input.session || input.continueFromJobId || input.chat || input.pullRequest || input.kind === "research") return null;
-  // A claim from the web was linked there already (it arrives continuing the session, or not).
-  if (input.folder?.trim() || input.folderLabel?.trim() || input.repoUrl?.trim() || nodeRun(options.context) || options.retryOf || jobOrigin(options.context) === "web") return null;
+function mayChoose(input: AssignInput, options: CreateJobOptions): boolean {
+  if (input.deviceId || process.env.ENSEMBLE_DESKTOP !== "1") return false;
+  if (input.session || input.continueFromJobId || input.chat || input.pullRequest || input.kind === "research") return false;
+  return !(input.folder?.trim() || input.folderLabel?.trim() || input.repoUrl?.trim() || nodeRun(options.context) || options.retryOf);
+}
+
+/** The session choice for a new run here, or null when none is made (not eligible, turned off, a failure). */
+async function chooseFor(prisma: PrismaClient, userId: string, task: AssignTask, input: AssignInput, tier: ModelTier, options: CreateJobOptions, linkedSessions: boolean): Promise<Choice | null> {
+  if (!mayChoose(input, options)) return null;
   const engine = withTierAgent(input, tier).engine;
   if (!isCodeEngine(engine)) return null;
-  const scope = { space: userId, runner: actorFor(userId) };
-  return linkedSessionFor(prisma, scope, { task, engine, deviceId: input.deviceId ?? null, anyDevice: !input.deviceId && process.env.ENSEMBLE_DESKTOP !== "1", instructions: input.instructions }).catch(() => null);
+  const claimed = options.sessionChoice;
+  const config = claimed?.config ?? (await activeConfig());
+  // A claim carries the web's setting in its config; a run of this computer's own follows its settings.
+  if (!config.enabled || (!claimed && !linkedSessions)) return null;
+  // A claim's facts are the web's (this computer has no copy of the account's records); without them, no choice.
+  const facts = claimed ? claimed.facts : jobOrigin(options.context) === "web" ? null : await factsOf(prisma, userId, task.id, input.instructions);
+  if (!facts) return null;
+  return chooseSession(prisma, { space: userId, runner: actorFor(userId) }, {
+    task: { facts, title: task.title, description: task.description, notes: task.notes, instructions: input.instructions },
+    engine,
+    config,
+    newSession: Boolean(input.newSession || claimed?.newSession),
+  }).catch(() => null);
+}
+
+/** The earlier work a new session gets when the session it would continue is too full to (session-choice). */
+function withHandover(instructions: string, handover: NonNullable<Choice["handover"]>): string {
+  const note = `(Related earlier work, “${handover.title.slice(0, 120)}”, done in another session: ${handover.summary.slice(0, 1500)})`;
+  return [instructions.trim(), note].filter(Boolean).join("\n\n").slice(0, 8000);
 }
 
 /**
@@ -426,13 +463,13 @@ async function projectFor(prisma: PrismaClient, userId: string, task: AssignTask
   return enabled && task.projectId ? projectBrief(prisma, userId, task.projectId).catch(() => null) : null;
 }
 
-/** The job's context with what was decided for it here: the session it continues and why, its project. */
-function withDecided(context: Prisma.InputJsonValue | undefined, linked: LinkedSession | null, project: AgentProject | null): Prisma.InputJsonValue | undefined {
-  if (!linked && !project) return context;
+/** The job's context with what was decided for it here: how it chose its session, its project. */
+function withDecided(context: Prisma.InputJsonValue | undefined, choice: Choice | null, project: AgentProject | null): Prisma.InputJsonValue | undefined {
+  if (!choice && !project) return context;
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
   return {
     ...base,
-    ...(linked ? { linkedSession: { sessionId: linked.session.id, taskId: linked.taskId, title: linked.title, reason: linked.reason } } : {}),
+    ...(choice ? { sessionChoice: { decision: choice.decision, band: choice.band, sessionId: choice.session?.id ?? null, title: choice.title, why: choice.why, note: choice.note } } : {}),
     ...(project ? { agentProject: project } : {}),
   } as Prisma.InputJsonValue;
 }
@@ -443,16 +480,24 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
-  const linked = await linkedSession(prisma, userId, task, input, tier, options, settings.orchestration.linkedSessions !== false);
+  const choice = await chooseFor(prisma, userId, task, input, tier, options, settings.orchestration.linkedSessions !== false);
   let requested: AssignInput = input;
-  if (linked) {
-    // A session that can no longer take the run (its computer unpaired since) leaves it to start a new one.
-    requested = await inSession(prisma, userId, { ...input, session: linked.session.id }).catch(() => input);
+  if (choice?.decision === "continue" && choice.session) {
+    // A session that can no longer take the run leaves it to start a new one.
+    requested = await inSession(prisma, userId, { ...input, session: choice.session.id }).catch(() => input);
+    if (requested === input) {
+      choice.decision = "new";
+      choice.session = null;
+      choice.title = null;
+      choice.note = "unavailable";
+      choice.record = { ...choice.record, decision: "new", continuedJobId: null, note: "unavailable" };
+    }
   }
-  const continuesLink = Boolean(linked && requested !== input);
-  if (linked && continuesLink) {
-    options = { ...options, context: withDecided(options.context, linked, null) };
-    await appendLedger({ userId, actor: options.actor ?? "me", action: "task.session_linked", taskId: task.id, payload: { sessionId: linked.session.id, linkedTaskId: linked.taskId, reason: linked.reason, why: linkWords(linked) } });
+  const continuesLink = requested !== input;
+  if (choice?.handover) requested = { ...requested, instructions: withHandover(requested.instructions, choice.handover) };
+  if (choice) options = { ...options, context: withDecided(options.context, choice, null) };
+  if (choice && continuesLink) {
+    await appendLedger({ userId, actor: options.actor ?? "me", action: "task.session_linked", taskId: task.id, payload: { sessionId: choice.session!.id, band: choice.band, why: choice.why } });
   }
   const tiered = withTierAgent(input.session ? await inSession(prisma, userId, input) : requested, tier);
   const body: ResolvedAssign = { ...withPullRequest({ ...tiered, kind: autoKind(tiered, serverRunnerEnabled() && !actorFor(userId)) }) };
@@ -581,6 +626,8 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       context: contextWith(withDecided(withSecrets(options.context, body.secrets), null, project), body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
+  // The decision and every candidate's signals, kept to calibrate the weights (session-choice/config.ts).
+  if (choice) await prisma.sessionChoice.create({ data: { ...choice.record, userId, jobId: job.id } }).catch(() => undefined);
   if (externalRoot && body.trust === "always") {
     await prisma.decisionRule.create({
       data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: externalRoot, decision: "allow", sessionId: null },
