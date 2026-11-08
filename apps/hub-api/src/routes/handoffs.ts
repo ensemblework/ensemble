@@ -68,7 +68,7 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       const project = task.projectId && (await loadSettings(prisma, request.userId)).orchestration.projectFolders !== false ? await projectBrief(prisma, request.userId, task.projectId).catch(() => null) : null;
       if (project) {
         folder = await projectFolder(base, project);
-        await syncProjectFiles(folder, project).catch((error: unknown) => request.log.warn({ err: error }, "could not write the project's brief"));
+        await syncProjectFiles(base, folder, project).catch((error: unknown) => request.log.warn({ err: error }, "could not write the project's brief"));
       } else {
         folder = join(base, "runs", `app-${task.id.slice(0, 8)}-${Date.now().toString(36)}`);
         await mkdir(folder, { recursive: true });

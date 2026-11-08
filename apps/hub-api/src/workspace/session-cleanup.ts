@@ -9,7 +9,7 @@
  * goes (`deleteAgentSession`). Off with Settings → Orchestration → cleanSessions.
  */
 import type { FastifyInstance } from "fastify";
-import { Prisma } from "@prisma/client";
+import { Prisma, type WorkspaceJobStatus } from "@prisma/client";
 import { CODE_ENGINES } from "@ensemble/shared-types";
 import { currentDevice } from "../devices/successor.js";
 import { deviceOnline } from "../devices/constants.js";
@@ -25,17 +25,36 @@ const MAX_PER_SWEEP = 20;
 const LIVE = ["queued", "claimed", "running", "waiting_approval", "stopping"];
 
 export type SweepResult = { deleted: string[]; waiting: number; failed: number };
+/** Why a session must not be deleted now (`deleteAgentSession`'s guard). */
+type Guard = (tx: Prisma.TransactionClient, runIds: string[]) => Promise<string | null>;
+
+/** Sessions looked at per sweep: each is read in full. */
+const MAX_CHECKED = 60;
+/** A session one of whose tasks is still in use is looked at again after this long; one whose computer is away, after this. */
+const IN_USE_AGAIN_MS = 6 * 3_600_000;
+const AWAY_AGAIN_MS = 3_600_000;
+
+/** Tasks among these still in use: not deleted long enough, or not finished long enough ago, or pinned. */
+const inUse = (taskIds: string[], deletedBefore: Date, completedBefore: Date): Prisma.TaskWhereInput => ({
+  id: { in: taskIds },
+  OR: [
+    { deletedAt: { gt: deletedBefore } },
+    { deletedAt: null, OR: [{ pinned: true }, { status: { notIn: ["done", "dropped"] } }, { completedAt: null }, { completedAt: { gt: completedBefore } }] },
+  ],
+});
 
 /**
  * Deletes the agent sessions of the person's retired work. `completedDays`: the completed window. Runs
- * that came from the web (this computer's copy of a claimed job) are the web's to clean up.
+ * that came from the web (this computer's copy of a claimed job) are the web's to clean up. A session
+ * that has to wait (a task still in use, its computer away) is not looked at again for a while, so it
+ * never holds up the sessions behind it.
  */
 export async function sweepAgentSessions(
   app: FastifyInstance,
   userId: string,
-  options: { completedDays: number; now?: Date; max?: number; remove?: (sessionId: string) => Promise<unknown> },
+  options: { completedDays: number; now?: Date; max?: number; remove?: (sessionId: string, guard: Guard) => Promise<unknown> },
 ): Promise<SweepResult> {
-  const remove = options.remove ?? ((sessionId: string) => deleteAgentSession(app, userId, sessionId, { actor: "system", reason: "retired" }));
+  const remove = options.remove ?? ((sessionId: string, guard: Guard) => deleteAgentSession(app, userId, sessionId, { actor: "system", reason: "retired", guard }));
   const now = options.now ?? new Date();
   const deletedBefore = new Date(now.getTime() - DELETED_GRACE_MS);
   const completedBefore = new Date(now.getTime() - options.completedDays * 86_400_000);
@@ -46,6 +65,7 @@ export async function sweepAgentSessions(
       AND j.provider IN (${Prisma.join([...CODE_ENGINES])})
       AND (j.started_at IS NOT NULL OR j.claimed_at IS NOT NULL)
       AND COALESCE(j.context->>'origin', '') <> 'web'
+      AND COALESCE((j.context->'sessionCleanup'->>'nextAt')::bigint, 0) < ${now.getTime()}
       AND (
         j.context->'sessionDeletion' IS NULL
         OR (j.context->'sessionDeletion'->>'state' = 'pending'
@@ -58,40 +78,57 @@ export async function sweepAgentSessions(
     ORDER BY j.created_at ASC
     LIMIT 300`);
   const scope = { space: userId, runner: null };
-  const seen = new Set<string>();
+  // Runs of sessions already looked at in this sweep: a session is read once, however many of its runs matched.
+  const covered = new Set<string>();
   const result: SweepResult = { deleted: [], waiting: 0, failed: 0 };
+  let checked = 0;
+  const later = (ids: string[], ms: number) => {
+    const mark = JSON.stringify({ nextAt: now.getTime() + ms });
+    return app.prisma.$executeRaw(Prisma.sql`UPDATE workspace_jobs SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('sessionCleanup', ${mark}::jsonb) WHERE id IN (${Prisma.join(ids)}) AND user_id = ${userId}`);
+  };
   for (const { id } of rows) {
-    if (result.deleted.length + result.failed >= (options.max ?? MAX_PER_SWEEP)) break;
+    if (covered.has(id)) continue;
+    if (result.deleted.length + result.failed >= (options.max ?? MAX_PER_SWEEP) || checked >= MAX_CHECKED) break;
+    checked += 1;
     const session = await resolveSession(app.prisma, scope, id, true);
-    if (!session || seen.has(session.id)) continue;
-    seen.add(session.id);
-    if (session.deletion?.state === "deleted") continue;
+    if (!session) {
+      covered.add(id);
+      continue;
+    }
     const runs = await runsOfSession(app.prisma, scope, session.id, true);
+    const ids = runs.map((run) => run.id);
+    for (const run of ids) covered.add(run);
+    covered.add(id);
+    if (session.deletion?.state === "deleted") continue;
     if (runs.some((run) => LIVE.includes(run.status))) {
       result.waiting += 1;
       continue;
     }
     // Every task the session worked on is retired; one still in use keeps it.
     const taskIds = [...new Set(runs.map((run) => run.taskId))];
-    const inUse = await app.prisma.task.count({
-      where: {
-        id: { in: taskIds },
-        OR: [
-          { deletedAt: { gt: deletedBefore } },
-          { deletedAt: null, OR: [{ pinned: true }, { status: { notIn: ["done", "dropped"] } }, { completedAt: null }, { completedAt: { gt: completedBefore } }] },
-        ],
-      },
-    });
-    if (inUse) continue;
-    if (!(await reachable(app, userId, runs.map((run) => run.id)))) {
+    if (await app.prisma.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) })) {
+      await later(ids, IN_USE_AGAIN_MS);
+      continue;
+    }
+    if (!(await reachable(app, userId, ids))) {
+      await later(ids, AWAY_AGAIN_MS);
       result.waiting += 1;
       continue;
     }
+    // Checked again under the session's lock, just before anything changes: the same runs, none going, every task still retired.
+    const expected = new Set(ids);
+    const guard: Guard = async (tx, current) => {
+      if (current.length !== expected.size || current.some((run) => !expected.has(run))) return "The session gained a run since it was checked.";
+      if (await tx.workspaceJob.count({ where: { id: { in: current }, status: { in: LIVE as WorkspaceJobStatus[] } } })) return "The session is working.";
+      if (await tx.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) })) return "A task of the session is in use again.";
+      return null;
+    };
     try {
-      await remove(session.id);
+      await remove(session.id, guard);
       result.deleted.push(session.id);
     } catch (error) {
-      result.failed += 1;
+      if ((error as { code?: unknown }).code === "SESSION_IN_USE") result.waiting += 1;
+      else result.failed += 1;
       app.log?.info({ err: error, userId, sessionId: session.id }, "agent session clean-up will try again later");
     }
   }

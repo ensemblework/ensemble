@@ -14,7 +14,7 @@ import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
-import { agentProjectOf, ensureMarker, folderProjectId, syncProjectFiles, type AgentProject } from "./agent-projects.js";
+import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
 import { recordMetric } from "../lib/metrics.js";
@@ -510,12 +510,12 @@ export async function grantedFolderOf(prisma: PrismaClient, jobId: string | null
 /** Chooses and prepares the folder: a fresh checkout, a folder the person granted, or an earlier job's. */
 /**
  * The project's brief, brought up to date in its folder (AGENTS.md, agent-projects.ts) before the agent
- * starts: a folder is the project's when its marker says so, so a continued run there gets it too.
+ * starts: a folder is the project's when the projects index says so, so a continued run there gets it too.
  */
-async function bringProject(ctx: JobContext, root: string, project: AgentProject): Promise<void> {
-  if ((await folderProjectId(root)) !== project.id) return;
+async function bringProject(ctx: JobContext, base: string, root: string, project: AgentProject): Promise<void> {
+  if ((await folderProject(base, root)) !== project.id) return;
   try {
-    const synced = await syncProjectFiles(root, project);
+    const synced = await syncProjectFiles(base, root, project);
     ctx.project = { name: project.name, changed: synced.changed };
     await ctx.event("project_context", { project: project.name, projectId: project.id, hash: project.hash, changed: synced.changed });
   } catch (error) {
@@ -541,7 +541,7 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
     await stat(root).catch(() => {
       throw new GuardError("The earlier task's folder no longer exists.");
     });
-    if (project && !external) await bringProject(ctx, root, project);
+    if (project && !external) await bringProject(ctx, base, root, project);
     const git = await isGitRepo(root);
     // An Ensemble folder created before the empty-commit fix has a repo and no HEAD.
     // User-attached folders and clones (anything with a remote or an existing commit) stay as they are.
@@ -552,16 +552,15 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
     return { root, git };
   }
   if (project?.folder) {
-    const root = project.folder;
+    // The project's folder as the index has it now (made again if it was removed since the run was queued).
+    const root = await projectFolder(base, project);
     if (!within(base, root)) throw new GuardError("The project's folder is outside the workspace.");
-    await mkdir(root, { recursive: true });
     const prep = { ...ctx, root };
     if (!(await isGitRepo(root))) {
       const init = await gitIn(prep, ["init", "--quiet", "--template="]);
       if (init.exitCode !== 0) throw new GuardError(`Could not prepare the project's folder: ${init.output.trim().slice(-300)}`);
     }
-    await ensureMarker(root, project);
-    await bringProject(ctx, root, project);
+    await bringProject(ctx, base, root, project);
     await commitUnbornHead(prep);
     return { root, git: true };
   }

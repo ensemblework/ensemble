@@ -9,23 +9,24 @@
  *
  * The brief is built where the project is (`projectBrief`: the web server at claim time, or this
  * computer's own database), and the folder is found or made on the computer that runs the task
- * (`projectFolder`), marked with `.ensemble-project.json` so a renamed project keeps its folder and its
- * agents' sessions.
+ * (`projectFolder`). Which folder is which project's is kept in `projects/.ensemble-projects.json`,
+ * beside the folders, so a renamed project keeps its folder and its agents' sessions, and nothing a run
+ * writes inside a project folder can point Ensemble at another.
  */
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { PageDocument } from "@ensemble/shared-types";
 import { pageText } from "../pages/markdown.js";
 
-export const PROJECT_MARKER = ".ensemble-project.json";
 const BLOCK_START = "<!-- ensemble:project — Ensemble keeps this part current from the project; edit the project in Ensemble instead -->";
 const BLOCK_END = "<!-- /ensemble:project -->";
 const POINTER = "@AGENTS.md";
 /** Files that are Ensemble's, not the project's work: kept out of git, so no run's review shows them. */
-const OWN_FILES = [PROJECT_MARKER, "AGENTS.md", "CLAUDE.md", "GEMINI.md"];
+const OWN_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"];
 const MAX_BRIEF = 10_000;
 
 export const AgentProject = z.object({
@@ -97,25 +98,66 @@ export async function projectBrief(prisma: PrismaClient, userId: string, project
   return { id: project.id, name: project.name, brief, hash: createHash("sha256").update(brief).digest("hex").slice(0, 16) };
 }
 
-async function markerOf(folder: string): Promise<{ projectId?: string; hash?: string } | null> {
+/** Which project has which folder, kept beside the project folders where no run in one can change it. */
+type Index = Record<string, { folder: string; name: string; hash: string | null }>;
+const INDEX = ".ensemble-projects.json";
+const NAME = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/** A real folder (never a link to one). */
+const isFolder = (path: string) => lstat(path).then((info) => info.isDirectory() && !info.isSymbolicLink(), () => false);
+
+async function projectsBase(workspace: string): Promise<string> {
+  const base = join(workspace, "projects");
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  if (!(await isFolder(base))) throw new Error("The workspace's projects folder is not a folder.");
+  return base;
+}
+
+async function readIndex(base: string): Promise<Index> {
+  const text = await readRegular(join(base, INDEX));
+  if (!text) return {};
   try {
-    const value = JSON.parse(await readFile(join(folder, PROJECT_MARKER), "utf8")) as unknown;
-    return typeof value === "object" && value !== null ? (value as { projectId?: string; hash?: string }) : null;
+    const value = JSON.parse(text) as unknown;
+    if (typeof value !== "object" || value === null) return {};
+    const index: Index = {};
+    for (const [id, row] of Object.entries(value as Record<string, unknown>)) {
+      const entry = row as { folder?: unknown; name?: unknown; hash?: unknown } | null;
+      if (entry && typeof entry.folder === "string" && NAME.test(entry.folder)) index[id] = { folder: entry.folder, name: typeof entry.name === "string" ? entry.name : "", hash: typeof entry.hash === "string" ? entry.hash : null };
+    }
+    return index;
   } catch {
-    return null;
+    return {};
   }
 }
 
-/** The folder's project, from its marker. */
-export async function folderProjectId(folder: string): Promise<string | null> {
-  const marker = await markerOf(folder);
-  return typeof marker?.projectId === "string" ? marker.projectId : null;
+const writeIndex = (base: string, index: Index) => writeSafely(base, INDEX, `${JSON.stringify(index, null, 2)}\n`);
+
+/**
+ * A file's text without following a link: null when it is missing, a link, or not a plain file. A run
+ * in the folder could have put a link there to make Ensemble read or write something outside it.
+ */
+async function readRegular(path: string): Promise<string | null> {
+  const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => null);
+  if (!handle) return null;
+  try {
+    if (!(await handle.stat()).isFile()) return null;
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
-/** Marks a folder made for the project (one removed since its run was queued, made again) as the project's. */
-export async function ensureMarker(folder: string, project: Pick<AgentProject, "id" | "name">): Promise<void> {
-  if (await folderProjectId(folder)) return;
-  await writeFile(join(folder, PROJECT_MARKER), `${JSON.stringify({ projectId: project.id, name: project.name, hash: null }, null, 2)}\n`);
+/** Writes a file in a real folder through a new file renamed over it, so a link in its place is replaced, never followed. */
+async function writeSafely(dir: string, name: string, text: string): Promise<void> {
+  if (!(await isFolder(dir))) throw new Error(`${dir} is not a folder.`);
+  const temporary = join(dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
+  await writeFile(temporary, text, { flag: "wx", mode: 0o600 });
+  try {
+    await rename(temporary, join(dir, name));
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
 }
 
 function slugOf(name: string): string {
@@ -132,9 +174,10 @@ function slugOf(name: string): string {
 }
 
 /**
- * The project's folder in the workspace (`<workspace>/projects/<name>`), made and marked when it is new.
- * One already marked with the project wins, so a renamed project keeps its folder; a name another
- * folder has gets the project's short id after it.
+ * The project's folder in the workspace (`<workspace>/projects/<name>`), made when it is new. The index
+ * beside the folders keeps each project's own, so a renamed project keeps its folder and its agents'
+ * sessions, and one removed is made again under its name; a name another folder has gets the
+ * project's short id after it.
  */
 export function projectFolder(workspace: string, project: Pick<AgentProject, "id" | "name">): Promise<string> {
   // One at a time, so two runs of a new project queued together find one folder, not make two.
@@ -146,21 +189,35 @@ export function projectFolder(workspace: string, project: Pick<AgentProject, "id
 let making: Promise<unknown> = Promise.resolve();
 
 async function findOrMake(workspace: string, project: Pick<AgentProject, "id" | "name">): Promise<string> {
-  const base = join(workspace, "projects");
-  await mkdir(base, { recursive: true, mode: 0o700 });
-  for (const entry of await readdir(base, { withFileTypes: true }).catch(() => [])) {
-    if (!entry.isDirectory()) continue;
-    if ((await folderProjectId(join(base, entry.name))) === project.id) return join(base, entry.name);
+  const base = await projectsBase(workspace);
+  const index = await readIndex(base);
+  const known = index[project.id];
+  if (known) {
+    const folder = join(base, known.folder);
+    if (await isFolder(folder)) return folder;
+    const made = await mkdir(folder, { mode: 0o700 }).then(() => true, () => false);
+    if (made) return folder;
   }
+  const taken = new Set(Object.entries(index).filter(([id]) => id !== project.id).map(([, row]) => row.folder));
   const slug = slugOf(project.name);
-  for (const name of [slug, `${slug}-${project.id.slice(0, 8)}`, project.id]) {
+  for (const name of [slug, `${slug}-${project.id.slice(0, 8)}`, project.id.toLowerCase()]) {
+    if (taken.has(name) || !NAME.test(name)) continue;
     const folder = join(base, name);
     const made = await mkdir(folder, { mode: 0o700 }).then(() => true, (error: NodeJS.ErrnoException) => (error.code === "EEXIST" ? false : Promise.reject(error)));
     if (!made) continue;
-    await writeFile(join(folder, PROJECT_MARKER), `${JSON.stringify({ projectId: project.id, name: project.name, hash: null }, null, 2)}\n`);
+    await writeIndex(base, { ...index, [project.id]: { folder: name, name: project.name, hash: null } });
     return folder;
   }
   throw new Error("Could not make the project's folder.");
+}
+
+/** The project whose folder this is, by the index (null: not a project's folder). */
+export async function folderProject(workspace: string, folder: string): Promise<string | null> {
+  const base = join(workspace, "projects");
+  if (dirname(folder) !== base) return null;
+  const name = basename(folder);
+  const index = await readIndex(base);
+  return Object.entries(index).find(([, row]) => row.folder === name)?.[0] ?? null;
 }
 
 /** The text with Ensemble's block replaced, or added at the top; the rest of the file is the folder's own. */
@@ -172,39 +229,41 @@ export function withBlock(text: string, brief: string): string {
   return text.trim() ? `${block}\n\n${text.trimStart()}` : `${block}\n`;
 }
 
-const read = (path: string) => readFile(path, "utf8").catch(() => null);
-
 /**
- * Brings the folder's project files up to date with the brief: AGENTS.md's Ensemble block, CLAUDE.md
- * and GEMINI.md pointing at it, the marker's hash, and git keeping them out of the project's changes.
- * `changed`: the brief differs from the one the folder had (the project changed since its last run there).
+ * Brings the project folder's files up to date with the brief: AGENTS.md's Ensemble block, CLAUDE.md
+ * and GEMINI.md pointing at it, and git keeping them out of the project's changes. `changed`: the brief
+ * differs from the one the folder had (the project changed since its last run there). Runs in the folder
+ * can change these files, so none is read or written through a link.
  */
-export async function syncProjectFiles(folder: string, project: Omit<AgentProject, "folder">): Promise<{ changed: boolean }> {
-  const marker = await markerOf(folder);
-  const agents = join(folder, "AGENTS.md");
-  const current = (await read(agents)) ?? "";
-  const changed = marker?.hash !== project.hash;
-  if (changed || !current.includes(BLOCK_START)) await writeFile(agents, withBlock(current, project.brief));
+export async function syncProjectFiles(workspace: string, folder: string, project: Omit<AgentProject, "folder">): Promise<{ changed: boolean }> {
+  const base = await projectsBase(workspace);
+  if ((await folderProject(workspace, folder)) !== project.id || !(await isFolder(folder))) throw new Error("That folder is not the project's.");
+  const index = await readIndex(base);
+  const before = index[project.id]?.hash ?? null;
+  const current = (await readRegular(join(folder, "AGENTS.md"))) ?? "";
+  const changed = before !== project.hash;
+  if (changed || !current.includes(BLOCK_START)) await writeSafely(folder, "AGENTS.md", withBlock(current, project.brief));
   for (const name of ["CLAUDE.md", "GEMINI.md"]) {
-    const path = join(folder, name);
-    const text = await read(path);
-    if (text === null) await writeFile(path, `${POINTER}\n`);
-    else if (!text.split("\n").some((line) => line.trim() === POINTER)) await writeFile(path, `${POINTER}\n\n${text}`);
+    const text = await readRegular(join(folder, name));
+    if (text === null) await writeSafely(folder, name, `${POINTER}\n`);
+    else if (!text.split("\n").some((line) => line.trim() === POINTER)) await writeSafely(folder, name, `${POINTER}\n\n${text}`);
   }
-  if (changed) await writeFile(join(folder, PROJECT_MARKER), `${JSON.stringify({ projectId: project.id, name: project.name, hash: project.hash }, null, 2)}\n`);
+  if (changed) await writeIndex(base, { ...index, [project.id]: { folder: basename(folder), name: project.name, hash: project.hash } });
   await excludeFromGit(folder);
-  return { changed: Boolean(marker?.hash) && changed };
+  return { changed: before !== null && changed };
 }
 
 async function excludeFromGit(folder: string): Promise<void> {
-  if (!(await stat(join(folder, ".git")).then((info) => info.isDirectory(), () => false))) return;
-  const info = join(folder, ".git", "info");
-  const exclude = join(info, "exclude");
-  const text = (await read(exclude)) ?? "";
+  const git = join(folder, ".git");
+  if (!(await isFolder(git))) return;
+  const info = join(git, "info");
+  if (!(await isFolder(info))) {
+    if (await lstat(info).then(() => true, () => false)) return;
+    await mkdir(info).catch(() => undefined);
+  }
+  const text = (await readRegular(join(info, "exclude"))) ?? "";
   const lines = new Set(text.split("\n").map((line) => line.trim()));
   const missing = OWN_FILES.map((name) => `/${name}`).filter((line) => !lines.has(line));
   if (!missing.length) return;
-  const ok = await mkdir(info, { recursive: true }).then(() => true, () => false);
-  if (!ok) return;
-  await writeFile(exclude, `${text}${text && !text.endsWith("\n") ? "\n" : ""}# Ensemble's project files\n${missing.join("\n")}\n`).catch(() => undefined);
+  await writeSafely(info, "exclude", `${text}${text && !text.endsWith("\n") ? "\n" : ""}# Ensemble's project files\n${missing.join("\n")}\n`).catch(() => undefined);
 }
