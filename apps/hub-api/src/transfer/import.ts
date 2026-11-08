@@ -286,19 +286,24 @@ async function importRow(tx: Tx, table: TransferTable, shape: TableShape, column
   }
 
   const id = typeof row.id === "string" ? row.id : null;
+  /** References already in the account: an earlier, interrupted attempt may have cleared them on a row it moved. */
+  const settled: TransferPatch[] = [];
   for (const reference of shape.references) {
     const value = row[reference.column];
     if (value === null || value === undefined) continue;
     const where = await ownerOf(tx, reference.table, value, accountId);
-    if (where === "mine") continue;
+    if (where === "mine") {
+      if (id && isTransferTable(reference.table)) settled.push({ table, id, column: reference.column, value: String(value) });
+      continue;
+    }
     if (!reference.nullable) return { kind: "skipped" };
     row[reference.column] = null;
     if (where === "missing" && isTransferTable(reference.table) && id) patches.push({ table, id, column: reference.column, value: String(value) });
   }
   if (singleId && id) {
     const where = await ownerOf(tx, table, id, accountId);
-    // Already moved by an earlier attempt: counted, not copied again.
-    if (where === "mine") return { kind: "merged", ids, patches: [] };
+    // Already moved by an earlier attempt: counted, not copied again. Its links are set again where that attempt left them empty.
+    if (where === "mine") return { kind: "merged", ids, patches: [...patches, ...settled] };
     if (where === "other") {
       const fresh = randomUUID();
       row.id = fresh;

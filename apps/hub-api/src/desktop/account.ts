@@ -111,7 +111,7 @@ async function finishSignIn(app: FastifyInstance, base: string, token: z.infer<t
   const previous = readMode();
   const approved = token.scopes ?? [];
   // Approved without running tasks (an unverified email): the move needs a verified account too. Nothing changes here yet.
-  if (previous.mode === "local" && current.move && !token.transferToken && !approved.includes("runner")) {
+  if (previous.mode !== "account" && current.move && !token.transferToken && !approved.includes("runner")) {
     throw new Error("Verify your email in Ensemble first, then move this computer again. Nothing has changed here.");
   }
   const apiBase = token.apiBase ? cleanBase(token.apiBase) : base;

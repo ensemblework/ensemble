@@ -38,5 +38,5 @@ execFileSync(process.execPath,['scripts/verify-desktop-signatures.mjs','apps/des
 const notes=join(dir,'notes.md');await writeFile(notes,`Ensemble ${releaseVersion} for Apple silicon and Intel Macs, Windows and Linux. Includes the real-world testing fixes and signed in-app updates. Intel disk-image packaging was recovered without changing application source or version. OS code-signing certificates remain unconfigured.\n`);
 if(!existing)execFileSync('gh',['release','create',tag,'--repo',repo,'--verify-tag','--draft','--title',`Ensemble desktop ${releaseVersion}`,'--notes-file',notes],{stdio:'inherit'});
 execFileSync(process.execPath,['scripts/desktop-release.mjs',bundles,'--upload'],{stdio:'inherit'});
-execFileSync('gh',['release','edit',tag,'--repo',repo,'--draft=false'],{stdio:'inherit'});
+execFileSync('gh',['release','edit',tag,'--repo',repo,'--draft=false','--latest'],{stdio:'inherit'});
 console.log(`Published ${tag} after validating source parity and every updater signature.`);

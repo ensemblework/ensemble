@@ -209,6 +209,23 @@ test("a merge that cannot fill a value does not stop the batch", async () => {
   assert.equal(mira.role, "Lead");
 });
 
+test("retrying after an interrupted move keeps links to rows that arrive later", async () => {
+  const account = await h.asUser();
+  const key = await h.asToken(account, "transfer");
+  const taskId = "8f1e2d4c-5b6a-4789-8abc-def012345678";
+  const artifact = { id: "9f1e2d4c-5b6a-4789-8abc-def012345678", kind: "email", external_id: "m-1", ts: new Date().toISOString(), title: "Kickoff notes", text: "", task_id: taskId };
+  const send = (batch: unknown) => key.inject({ method: "POST", url: "/api/transfer/rows", payload: { batch } });
+  // The first attempt moved the artifact and stopped before its task.
+  assert.equal((await send([{ table: "artifacts", rows: [artifact] }])).statusCode, 200);
+  const retry = await send([{ table: "artifacts", rows: [artifact] }]);
+  const patches = retry.json<{ patches: unknown[] }>().patches;
+  assert.equal(patches.length, 1, "the already-moved row still reports its link");
+  await send([{ table: "tasks", rows: [{ id: taskId, title: "Follow up on kickoff" }] }]);
+  const finished = await key.inject({ method: "POST", url: "/api/transfer/finish", payload: { patches, counts: {} } });
+  assert.equal(finished.statusCode, 200, finished.body);
+  assert.equal((await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).taskId, taskId);
+});
+
 test("a transfer key reaches only the transfer routes, and nothing else reaches them", async () => {
   const account = await h.asUser();
   const key = await h.asToken(account, "transfer");
