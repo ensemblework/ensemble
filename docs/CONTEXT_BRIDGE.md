@@ -1,8 +1,8 @@
 # Context Bridge
 
-The Context Bridge is Ensemble's read-only MCP server. A coding agent in an editor uses it to read Ensemble: tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files, diagrams, plots and a cited brief for the current branch.
+The Context Bridge is Ensemble's MCP server for editors and agents. An agent uses it to read Ensemble: a brief for its task (where the task came from, who asked, the people and their roles, related work), any record and what it links to (the context graph, [03 §5](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs)), ranked search, tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files, diagrams and plots. A key made with task updates allowed can also move a task's status, add a progress note to its page and propose new tasks (§5.1); nothing else is ever written.
 
-The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model keys, and it has no tool that creates, updates, deletes, sends or approves anything. The editor runs its own model; Ensemble supplies reference material.
+The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model keys, and it cannot delete, send or approve anything. The editor runs its own model; Ensemble supplies reference material.
 
 ## 1. Three ways to reach it
 
@@ -12,7 +12,7 @@ The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes ove
 | **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
 | **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (§3) |
 
-All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tools are the same. The hosted endpoint cannot see the editor's folder, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the working directory (`git rev-parse` and `origin`).
+All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tools are the same. The write tools are registered when the key may update tasks: the hosted endpoint reads that from the request's key, the CLI and the source build ask `GET /api/bridge/whoami` once at start (`buildServerForKey`). The hosted endpoint cannot see the editor's folder, so `ensemble_brief` needs `task`, or `repo` and `branch`, there; the CLI and the source build read the repository and branch from the working directory (`git rev-parse` and `origin`).
 
 ## 2. Architecture
 
@@ -26,14 +26,15 @@ Editor / MCP client
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/context-bridge/src/server.ts` | MCP tools and resources, read-only annotations |
+| `apps/context-bridge/src/server.ts` | MCP tools and resources, their annotations; the write tools only for a key that may update tasks |
 | `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors |
 | `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
 | `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
-| `apps/hub-api/src/bridge/routes.ts` | Read-only bridge routes |
-| `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination |
+| `apps/hub-api/src/bridge/routes.ts` | Read routes |
+| `apps/hub-api/src/bridge/write-routes.ts` | `whoami` and the task writes (§5.1) |
+| `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination; context and search over `context/graph/` |
 | `apps/hub-api/src/bridge/resolve.ts` | Repository, branch and task resolution |
-| `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts |
+| `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts, and which may write |
 | `apps/hub-api/src/bridge/gaps.ts` | Exclusion and missing-data text for `ensemble_gaps` (§7) |
 | `apps/hub-api/src/routes/mcp.ts` | Hosted Streamable HTTP |
 
@@ -56,7 +57,7 @@ The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `
 
 The Hub's **Connect your apps** page (`/connect`) creates a read-only key, fills in this computer's paths and offers one-click install for VS Code and Cursor.
 
-1. **Connect your apps → Create a read-only key.** The value starts with `ens_` and is shown once. It can only read `/api/bridge`, call `/mcp` and revoke itself at `/api/cli/logout`. A key made under Settings → Connections → Editors & agents also works and can drive editor hooks.
+1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge`, call `/mcp` and revoke itself at `/api/cli/logout`. With **Let editors and agents update your tasks** ticked (the default; `canWrite` on `POST /api/connect/token`, stored as `api_tokens.can_write`) it can also call the bridge's write routes (§5.1), and nothing else; unticked, it only reads. The key list shows which each key is. `ensemble login` asks the same on the `/link` page. A key made under Settings → Connections → Editors & agents also works and can drive editor hooks.
 2. Export it where the editor can see it:
 
 ```bash
@@ -73,9 +74,10 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 
 | Tool | Resource | Data |
 |---|---|---|
-| `ensemble_brief` | — | Current task from repo + branch, project, people, deliverables, files attached to the task, current skills (`howIWork`), cited excerpts |
-| `ensemble_search` | — | Case-insensitive substring search across tasks, projects, people, skills, repos, artifacts, meeting notes and files (kind `document`, by name and text) |
-| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task, project, repo, skill, deliverable, person, artifact, document, meeting_note, approval, decision, diagram, plot, page |
+| `ensemble_brief` | — | The task: `task` (an `ensemble://task/<id>` handle, a Hub link, its id or its exact open title), else repository + branch. `workContext` is the task's context packet (`context/graph/packet.ts`, at most 7,000 characters: where it came from with the words asked, project, people with roles and relationship, dependencies, related open work, done before, each with a handle) and `contextRef` its handle; plus project, people, deliverables, files attached to the task, current skills (`howIWork`) and cited excerpts (`context`) |
+| `ensemble_context` | — | One record and what it links to (`GET /api/bridge/context`): `item` is a handle, a Hub link, or an id with `kind` (task, project, person, repo, deliverable, meeting, file, page, event). Returns the record and its relations, 6 each, every card with a `ref` to call again; `rel` lists one relation in full, paged with `offset` and `limit` (≤50); `format=packet` returns the Markdown packet (8,000 characters) |
+| `ensemble_search` | — | Ranked word search (`context/graph/search.ts`) across tasks, projects, people, repositories, deliverables, meeting notes with transcripts, standalone pages, files (by name, kind `document`), saved app items, skills, diagrams and plots; `kinds` filters, `near` (a handle) ranks what links to it first. Up to `limit` × 3 hits (at most 40), each with `ref`, `score` and `why` |
+| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task (with its meeting, dependencies, labels and deliverable), project, repo, skill, deliverable, person, artifact, document, meeting_note or meeting (the whole transcript, its people and the tasks made from it; a notes session's id reads its notes), approval, decision, diagram, plot, page |
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
 | `ensemble_repos` | `ensemble://repos`, `ensemble://repos/{id}` | Repositories |
@@ -83,11 +85,22 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 | `ensemble_diagrams`, `ensemble_plots` | — | Saved diagrams and plot context |
 | `ensemble_skills` | `ensemble://skills`, `ensemble://skills/{id}` | Current enabled skills; one skill's current body |
 | `ensemble_deliverables` | `ensemble://deliverables` | Deliverables |
-| `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) from Google Calendar, Outlook and calendar links, one row per event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)) |
+| `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) from Google Calendar, Outlook and calendar links, one row per event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)), each with `previous`: the latest earlier meeting of its series ([03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)) |
 | `ensemble_people` | `ensemble://people`, `ensemble://people/{id}` | Engineer Graph people |
 | `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts (read only) |
-| `ensemble_today` | `ensemble://today` | Focus, proposed todos, deliverables, meetings, Needs-me counts |
+| `ensemble_today` | `ensemble://today` | In the person's time zone: focus, proposed todos, tasks ready for review (`waiting_approval`), what others owe (open tasks labelled `waiting-on`), deliverables, meetings, Needs-me counts |
 | `ensemble_gaps` | `ensemble://gaps` | What the bridge cannot see or refuses to expose |
+
+### 5.1 Task updates
+
+`ensemble_create_task` and `ensemble_update_task` exist only for a key that may update tasks (§4), and are annotated `readOnlyHint: false`, `destructiveHint: false`. `read-only.ts` refuses to start with any other write-shaped tool name.
+
+| Tool | Route | What it does |
+|---|---|---|
+| `ensemble_create_task` | `POST /api/bridge/write/tasks` | `{title, page?, projectId? \| projectName?, due? (YYYY-MM-DD), people? (names or ids), status? (proposed, default, or todo), from? (a handle)}`. Adds a task through `createTask` with actor `agent`: `page` becomes its page, `from` adds a `Related:` link to that record, names become person ids where one person has that name |
+| `ensemble_update_task` | `PATCH /api/bridge/write/tasks/:id` | `{status? (in_progress, waiting_approval, done, blocked, todo), note?, matchTitle?}`. A status follows the task state machine (a refused move lists the allowed ones); `note` is added to the task's page as an agent block titled "Update from <key name>"; a `matchTitle` that differs is a 409 |
+
+`GET /api/bridge/whoami` answers `{canWrite, spaceName, keyName}`. Writes are refused (403) for a key without task updates, device and hook keys, and every other route; a signed-in page and a full key may use them. Each write is in the ledger (`bridge.task.create`, `bridge.task.update`, with the key's name) and refreshes open pages.
 
 A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the key's account and space ([28](28_ENSEMBLE_SPACES.md)), and module and sharing checks still apply.
 
@@ -99,8 +112,8 @@ A resource URI is an MCP identifier, not permission to open local files. Reads a
 
 ## 6. Limits
 
-- Search is bounded substring matching. `Artifact.searchVector` and `ArtifactChunk.embedding` exist in the schema but nothing fills or queries them; enabling an embedding provider does not change this.
-- Excluded: private reminders, widget layouts, older skill bodies, and every write or approval.
+- Search is ranked word matching plus graph links, not semantic: `Artifact.searchVector` and `ArtifactChunk.embedding` exist in the schema but nothing fills or queries them; enabling an embedding provider does not change this.
+- Excluded: private reminders, widget layouts, older skill bodies, approvals and every write other than §5.1.
 - Files return supported extracted text only, not original bytes, OCR, audio or video.
 - Connected-app copies can be stale until refreshed; bridge reads do not call vendor search.
 - The bridge returns stored text without a new redaction pass; ingest and file paths have their own redaction.
@@ -108,9 +121,9 @@ A resource URI is an MCP identifier, not permission to open local files. Reads a
 
 The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine runs can ask questions for its run. It is not the Context Bridge and does not widen an editor's `ens_` key ([30](30_ENGINES.md)).
 
-## 7. Known diagnostics limitation
+## 7. What `ensemble_gaps` says
 
-`apps/hub-api/src/bridge/gaps.ts` still says a secret-redaction helper is missing. That string is stale: `lib/redact.ts` exists ([03](03_MODULE_CONTEXT_ENGINE.md)). Do not treat `ensemble_gaps` as the connector inventory ([31](31_CONNECTORS_IN_USE.md)). Its calendar, semantic-retrieval, private-reminder, layout, skill-history and read-only entries are accurate.
+`apps/hub-api/src/bridge/gaps.ts` lists what the bridge does not have or will not give, so a model does not invent it: no embedding search (retrieval is ranked words plus graph links), no redaction pass on bridge reads (ingest and file paths redact), mail, chats and transcripts only when the person saved or imported them, and no layouts, private reminders, older skill bodies or writes beyond §5.1. It is not the connector inventory ([31](31_CONNECTORS_IN_USE.md)).
 
 ## 8. Transports
 
@@ -161,7 +174,7 @@ The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ens
 ## 11. Tests
 
 ```bash
-pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, no write methods
+pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, write gating; context, brief by task, ranked search and task writes on PGlite
 pnpm --filter @ensemble/context-bridge test    # in-memory MCP client, stdio, Streamable HTTP, mocked hub-api
 pnpm bridge:verify                             # both, plus typecheck, build and dist smoke
 pnpm bridge:e2e                                # live Postgres, hub-api, both transports, security

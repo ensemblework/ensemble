@@ -958,8 +958,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * One route for both readers: the Hub's search box reads `query` and `results` (cowork/service.ts
-   * `searchWorkspace`); agents and the graph read the ranked `terms` and `hits`, which `kinds`, `near`
-   * and `limit` narrow.
+   * `searchWorkspace`); with `kinds`, `near` or `limit` it adds the ranked `terms` and `hits`
+   * (context/graph/search.ts) for the graph and agents.
    */
   app.get("/api/context/search", async (request) => {
     const query = z
@@ -971,10 +971,9 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       })
       .parse(request.query);
     const kinds = (query.kinds ?? "").split(",").map((kind) => kind.trim()).filter((kind): kind is SearchKind => (SEARCH_KINDS as readonly string[]).includes(kind));
-    const [box, ranked] = await Promise.all([
-      searchWorkspace(prisma, request.userId, query.q),
-      rankedSearch({ db: prisma, userId: request.userId, modules: request.modules }, query.q, { kinds, near: parseItemRef(query.near), limit: query.limit }),
-    ]);
+    const box = await searchWorkspace(prisma, request.userId, query.q);
+    if (!kinds.length && !query.near && !query.limit) return box;
+    const ranked = await rankedSearch({ db: prisma, userId: request.userId, modules: request.modules }, query.q, { kinds, near: parseItemRef(query.near), limit: query.limit });
     return { ...box, ...ranked };
   });
 
