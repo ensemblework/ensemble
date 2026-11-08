@@ -17,7 +17,7 @@ const KIND: Record<string, { icon: LucideIcon; tone: string }> = {
   morning_brief: { icon: Sun, tone: "teal" }, stale_nudge: { icon: Timer, tone: "blue" },
   reminder: { icon: CalendarClock, tone: "blue" }, share: { icon: Share2, tone: "teal" },
   watcher: { icon: Eye, tone: "blue" }, skill_mining: { icon: Sparkles, tone: "violet" }, routine: { icon: Repeat, tone: "violet" },
-  review: { icon: ClipboardCheck, tone: "teal" }, meeting: { icon: NotebookPen, tone: "violet" }, default: { icon: Bell, tone: "blue" },
+  review: { icon: ClipboardCheck, tone: "teal" }, meeting_tasks: { icon: NotebookPen, tone: "violet" }, meeting_prep: { icon: NotebookPen, tone: "violet" }, default: { icon: Bell, tone: "blue" },
 };
 
 /** The bell lists unread notifications only; reading one removes it. */

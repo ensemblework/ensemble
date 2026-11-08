@@ -298,7 +298,7 @@ export async function queueMeetingAi(db: Db, userId: string, noteId: string, opt
   if (current === "queued" || current === "running") return current;
   const chars = note.prompt.trim().length + note.answer.trim().length;
   if (options.force) {
-    if (!meetingAiEnabled()) throw Object.assign(new Error("Meeting suggestions are switched off on this server."), { statusCode: 503 });
+    if (!meetingAiEnabled()) throw Object.assign(new Error("Meeting suggestions are switched off on this server."), { statusCode: 503, expose: true });
     if (!chars) throw Object.assign(new Error("This meeting has no transcript, summary or notes to read yet."), { statusCode: 422 });
   } else {
     if (current === "done" || !meetingAiEnabled()) return current;
@@ -437,11 +437,12 @@ async function gather(db: Db, note: AiNote, settings: Settings) {
   const attendees = people.filter((row) => attendeeIds.has(row.id));
   const project = note.projectId ? ((await db.project.findFirst({ where: { id: note.projectId, userId, deletedAt: null }, select: { id: true, name: true, summary: true, aliases: true } })) ?? null) : null;
   const open = { status: { notIn: ["done", "dropped"] as Array<"done" | "dropped"> }, deletedAt: null, userId };
-  const openTasks = project
-    ? await db.task.findMany({ where: { ...open, projectId: project.id }, select: { id: true, title: true }, orderBy: { updatedAt: "desc" }, take: 30 })
-    : attendees.length
-      ? await db.task.findMany({ where: { ...open, people: { hasSome: attendees.map((row) => row.id) } }, select: { id: true, title: true }, orderBy: { updatedAt: "desc" }, take: 30 })
-      : [];
+  // The project's open work and the attendees': the model names one of these when an item is already tracked.
+  const around: Prisma.TaskWhereInput[] = [
+    ...(project ? [{ projectId: project.id }] : []),
+    ...(attendees.length ? [{ people: { hasSome: attendees.map((row) => row.id) } }] : []),
+  ];
+  const openTasks = around.length ? await db.task.findMany({ where: { ...open, OR: around }, select: { id: true, title: true }, orderBy: { updatedAt: "desc" }, take: 40 }) : [];
   const live = note.source === "live";
   const notes = live ? (session?.notes ?? note.answer) : "";
   const vendorSummary = live ? "" : note.answer;
@@ -460,7 +461,7 @@ async function gather(db: Db, note: AiNote, settings: Settings) {
     attendees: attendees.slice(0, 40).map((row) => ({ name: row.name, email: row.email, role: row.role, relationship: row.relationship })),
     project: project ? { name: project.name, summary: project.summary } : null,
     projects: projects.slice(0, 30).map((row) => (row.aliases.length ? `${row.name} (also: ${row.aliases.slice(0, 3).join(", ")})` : row.name)),
-    openTasks: { label: project ? `Open tasks in ${project.name}` : "Open tasks with these attendees", titles: openTasks.map((row) => row.title) },
+    openTasks: { label: project ? `Open tasks in ${project.name} or with these attendees` : "Open tasks with these attendees", titles: openTasks.map((row) => row.title) },
     made: made.map((row) => row.title),
     vendor: { label: live ? "Ensemble" : sourceLabel(note, extraction), summary: vendorSummary, items: vendorItems },
     notes,
@@ -562,7 +563,11 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
     items.push(row);
     const prefix = owner && !normalise(item.title).startsWith(normalise(owner.name.split(/\s+/)[0] ?? "")) ? `${owner.name.split(/\s+/)[0]}: ` : "";
     const title = `${prefix}${item.title.replace(/[.\s]+$/, "")}`.slice(0, 200);
-    const tracked = item.existingTask ? context.openTasks.find((task) => sameTitle(task.title, item.existingTask!)) : undefined;
+    const tracked = item.existingTask
+      ? (context.openTasks.find((task) => sameTitle(task.title, item.existingTask!)) ??
+        (await db.task.findFirst({ where: { userId: note.userId, deletedAt: null, status: { notIn: ["done", "dropped"] }, title: { equals: item.existingTask, mode: "insensitive" } }, select: { id: true, title: true } })) ??
+        undefined)
+      : undefined;
     const twin = made.find((task) => overlap(task.words, words(title)) >= 0.6 || overlap(task.words, words(item.title)) >= 0.6);
     const already = tracked ?? twin;
     if (already) {

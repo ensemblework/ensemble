@@ -7,6 +7,10 @@ export interface BriefSlice {
   proposed: Array<{ title: string }>;
   deliverables: Array<{ title: string; due?: string | null; project?: string }>;
   meetings: Array<{ title: string; start?: string | null }>;
+  /** Agent work finished and waiting for your review. */
+  readyForReview?: Array<{ title: string }>;
+  /** Open follow-ups you are waiting on from someone else (label waiting-on). */
+  waitingOn?: Array<{ title: string }>;
   needsMe: { pendingApprovals: number; pendingEditorDecisions: number };
 }
 
@@ -61,6 +65,8 @@ export function formatMorningBrief(brief: BriefSlice): { title: string; body: st
     "Coming up",
     line(deliverables, "No deliverables due soon."),
     "",
+    ...(brief.readyForReview?.length ? ["Ready for your review", line(brief.readyForReview.slice(0, 6).map((row) => row.title), ""), ""] : []),
+    ...(brief.waitingOn?.length ? ["Waiting on others", line(brief.waitingOn.slice(0, 6).map((row) => row.title), ""), ""] : []),
     waiting === 0 ? "Nothing is waiting on a decision from you." : `Needs you: ${waiting} item${waiting === 1 ? "" : "s"}.`,
   ].join("\n");
   return { title: `Morning brief · ${pretty}`, body };

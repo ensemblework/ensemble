@@ -22,6 +22,7 @@ import {
   markNotificationRead,
   previewQuickCapture,
   refreshMeetingRecap,
+  suggestFromSession,
   saveMeetingNotes,
   startMeetingSession,
   summarizeMeetings,
@@ -137,6 +138,11 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/meetings/sessions/:id/decline", async (request) => {
     const { id } = request.params as { id: string };
     return declineMeetingAttach(db, request.userId, id);
+  });
+
+  app.post("/api/meetings/sessions/:id/suggest", async (request) => {
+    const { id } = request.params as { id: string };
+    return suggestFromSession(db, request.userId, id);
   });
 
   app.post("/api/meetings/sessions/:id/recap", async (request) => {

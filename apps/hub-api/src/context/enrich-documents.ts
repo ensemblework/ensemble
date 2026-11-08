@@ -23,6 +23,13 @@ export async function enrichDocument(app: FastifyInstance, id: string): Promise<
     app.log.info({ userId: document.userId, reason: error.message }, "summary skipped unverified account");
     return null;
   }
+  // Settings › Assistant › Automations › Summarize files: off, a queued file keeps no summary and no model runs.
+  const settings = await loadSettings(app.prisma, document.userId);
+  if (!settings.automations.fileSummaries.enabled) {
+    const skipped = await app.prisma.document.updateMany({ where: { id, enrichmentStatus: "queued" }, data: { enrichmentStatus: "skipped" } });
+    if (skipped.count) sseHub.publish(document.userId, { event: "documents", data: { id } });
+    return null;
+  }
   const outcome = await enrichOne(prismaStore(app), id, (prompt) => ask(app, id, prompt));
   if (outcome) {
     const row = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
@@ -126,7 +133,7 @@ async function ask(app: FastifyInstance, id: string, prompt: string): Promise<st
   const answer = await complete({
     userId: row.userId,
     settings,
-    tier: "easy",
+    tier: settings.automations.fileSummaries.tier,
     prompt,
     purpose: "Document summary",
   });

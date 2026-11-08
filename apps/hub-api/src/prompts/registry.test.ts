@@ -7,7 +7,7 @@ const byId = (id: string) => promptCatalog().find((entry) => entry.id === id)!.b
 
 test("Settings → Prompts lists only prompts Ensemble sends, each built by the code that sends it", () => {
   const ids = promptCatalog().map((entry) => entry.id);
-  assert.deepEqual(ids, ["assistant.instructions", "assistant.context", "assistant.subscription", "agent.brief", "agent.chat", "agent.ensemble", "agent.research", "classifier", "skill.miner"]);
+  assert.deepEqual(ids, ["assistant.instructions", "assistant.context", "assistant.subscription", "agent.brief", "agent.chat", "agent.ensemble", "agent.research", "classifier", "meeting.tasks", "meeting.prep", "skill.miner"]);
   for (const entry of promptCatalog()) assert.ok(entry.body.trim() && entry.when && entry.purpose, entry.id);
 });
 

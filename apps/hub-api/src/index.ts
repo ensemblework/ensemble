@@ -4,6 +4,7 @@ import { buildApp } from "./app.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
 import { startScheduler } from "./jobs/scheduler.js";
 import { startDocumentEnrichment } from "./context/enrich-documents.js";
+import { startMeetingAi } from "./connectors/meetings/ai.js";
 import { prisma } from "./lib/prisma.js";
 import { redis } from "./lib/redis.js";
 import { DEFAULT_INTERNAL_TOKEN } from "./bridge/auth.js";
@@ -40,6 +41,7 @@ export async function startHub(): Promise<HubServer> {
 
   const stopScheduler = startScheduler(app);
   const stopEnrichment = startDocumentEnrichment(app);
+  const stopMeetingAi = startMeetingAi(app);
   const stopQueue = process.env.ENSEMBLE_AGENT_QUEUE === "off" ? async () => {} : startAgentQueue(app);
   // Saved run secrets are hidden from everything this computer sends or logs, from the start.
   if (desktop) await rememberRunSecrets(app.prisma, env.ENSEMBLE_DEV_USER_ID).catch((error: unknown) => app.log.error({ err: error }, "could not load saved run secrets for redaction"));
@@ -61,6 +63,7 @@ export async function startHub(): Promise<HubServer> {
     stopNode();
     stopScheduler();
     stopEnrichment();
+    stopMeetingAi();
     await stopRemote();
     await stopQueue();
     await stopCapture();

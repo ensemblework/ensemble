@@ -1,4 +1,8 @@
 import { dataErasureVersion } from "../lib/workspace-data.js";
+import { seriesKeyFor, seriesKeyOf } from "./series.js";
+import { previousMeeting, prepOf } from "./prep.js";
+import { kickMeetingAi, queueMeetingAi } from "../connectors/meetings/ai.js";
+import { propagateMeetingProject, seriesProject } from "../connectors/meetings/links.js";
 import { matchExcerpt } from "../bridge/text.js";
 /**
  * Database side of the cowork surfaces. Pure wording lives next to this file.
@@ -355,6 +359,8 @@ function sessionJson(row: {
   attachState: string;
   personIds: string[];
   projectId?: string | null;
+  meetingNoteId?: string | null;
+  seriesKey?: string | null;
   startedAt: Date;
   endedAt: Date | null;
 }, withContent = true) {
@@ -369,6 +375,9 @@ function sessionJson(row: {
     attachState: row.attachState,
     personIds: row.personIds,
     projectId: row.projectId ?? null,
+    /** The meeting note these notes are kept as (suggestions and tasks hang off it). */
+    meetingNoteId: row.meetingNoteId ?? null,
+    inSeries: Boolean(row.seriesKey),
     startedAt: row.startedAt.toISOString(),
     endedAt: row.endedAt?.toISOString() ?? null,
     href: `/meetings?session=${row.id}`,
@@ -384,13 +393,16 @@ async function ownedSession(db: Tx, userId: string, id: string) {
 async function syncNote(
   db: Tx,
   userId: string,
-  session: { id: string; meetingNoteId: string | null; title: string; notes: string; personIds: string[]; artifactId: string | null; startedAt: Date },
+  session: { id: string; meetingNoteId: string | null; title: string; notes: string; personIds: string[]; artifactId: string | null; startedAt: Date; projectId?: string | null; seriesKey?: string | null },
 ) {
   const data = {
     title: session.title,
     answer: session.notes,
     personIds: session.personIds,
     artifactId: session.artifactId,
+    eventArtifactId: session.artifactId,
+    projectId: session.projectId ?? null,
+    ...(session.seriesKey != null ? { seriesKey: session.seriesKey } : {}),
     source: "live",
     status: "ready",
     occurredAt: session.startedAt,
@@ -480,11 +492,13 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
       sessions
         .filter((row) => row.artifactId !== null && event.memberIds.includes(row.artifactId))
         .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())[0] ?? null;
-    if (names.length === 0 && !session) continue;
+    if (names.length === 0 && !session && !seriesKeyFor({ eventMetadata: event.metadata, title: event.title })) continue;
     if (phase === "follow_up" && session && session.attachState !== "pending" && session.status === "ended") continue;
     const attendees = matchAttendees(names, people);
-    if (phase !== "follow_up" && attendees.length === 0 && !session) continue;
+    if (phase !== "follow_up" && attendees.length === 0 && !session && !seriesKeyFor({ eventMetadata: event.metadata, title: event.title })) continue;
     const prep = attendees.length ? await prepBundle(db, userId, attendees) : { openTasks: [], decisions: [] };
+    // Last time, for a meeting of a series (cowork/prep.ts): its notes, decisions and the work it left open.
+    const previous = phase === "follow_up" ? null : await previousMeeting(db as PrismaClient, userId, event).catch(() => null);
     cues.push({
       kind: phase === "follow_up" ? "follow_up" : phase === "live" ? "live" : "prep",
       artifactId: event.id,
@@ -496,6 +510,8 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
       decisions: prep.decisions,
       openTasks: prep.openTasks,
       attachState: session?.attachState ?? "none",
+      previous,
+      prep: prepOf(event.metadata),
     });
   }
   for (const session of sessions) {
@@ -514,6 +530,8 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
       decisions: prep.decisions,
       openTasks: prep.openTasks,
       attachState: session.attachState,
+      previous: null,
+      prep: null,
     });
   }
   return {
@@ -523,6 +541,18 @@ export async function listMeetingCues(db: Db, userId: string, now = new Date()) 
     calendarWriteReason: CALENDAR_WRITE_MESSAGE,
   };
 }
+
+/** Reads a notes session with a model now (connectors/meetings/ai.ts): its note is brought up to date first. */
+export async function suggestFromSession(db: Db, userId: string, id: string) {
+  const session = await ownedSession(db, userId, id);
+  const noteId = await syncNote(db, userId, session);
+  const aiStatus = await queueMeetingAi(db, userId, noteId, { force: true });
+  kickMeetingAi();
+  return { aiStatus, meetingNoteId: noteId };
+}
+
+/** Typed notes this long are worth reading for tasks; shorter ones are a heading or two. */
+const TYPED_NOTES_FOR_AI = 80;
 
 export async function listMeetingSessions(db: Db, userId: string) {
   const rows = await db.meetingSession.findMany({
@@ -556,8 +586,11 @@ export async function startMeetingSession(db: Db, userId: string, input: { artif
       .map((person) => person.id)
       .filter((id): id is string => Boolean(id));
   }
+  // "" is a meeting with no series (cowork/series.ts).
+  const seriesKey = (await seriesKeyOf(db, userId, { artifactId: input.artifactId ?? null, title })) ?? "";
+  const projectId = input.projectId ?? (await seriesProject(db, userId, { seriesKey, before: new Date(), personIds }));
   const session = await db.meetingSession.create({
-    data: { userId, title, artifactId: input.artifactId ?? null, personIds, status: "live", attachState: "none", projectId: input.projectId ?? null },
+    data: { userId, title, artifactId: input.artifactId ?? null, personIds, status: "live", attachState: "none", projectId: projectId ?? null, seriesKey },
   });
   return { session: sessionJson(session) };
 }
@@ -571,6 +604,8 @@ export async function setMeetingProject(db: Tx, userId: string, id: string, proj
   const session = await ownedSession(db, userId, id);
   if (projectId) await ownedProject(db, userId, projectId);
   const updated = await db.meetingSession.update({ where: { id: session.id }, data: { projectId } });
+  // The note and the open tasks made from it follow the meeting's project.
+  await propagateMeetingProject(db, userId, { noteId: session.meetingNoteId, sessionId: session.id, projectId });
   return { session: sessionJson(updated) };
 }
 
@@ -611,7 +646,12 @@ async function finishSession(db: Tx, userId: string, id: string) {
       attachState: session.artifactId ? "pending" : "none",
     },
   });
-  await syncNote(db, userId, ended);
+  const noteId = await syncNote(db, userId, ended);
+  // Typed notes are read for tasks when the meeting ends (connectors/meetings/ai.ts), if the person keeps that on.
+  if (ended.notes.trim().length >= TYPED_NOTES_FOR_AI) {
+    const status = await queueMeetingAi(db, userId, noteId, { minChars: TYPED_NOTES_FOR_AI }).catch(() => null);
+    if (status === "queued") kickMeetingAi();
+  }
   return ended;
 }
 
