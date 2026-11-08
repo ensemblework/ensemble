@@ -29,9 +29,10 @@ Task / deliverable / assistant / CLI assignment
 | Stale notices, watchers | Built-in conditions only, not user programs |
 | Retention | Daily at/after 03:30 local time; a missed day catches up ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)) |
 | Scheduled fetch | Due only with `ENSEMBLE_SCHEDULED_FETCH=on`; even then `fetchAll(..., "schedule")` in `connectors/sync.ts` reads no provider |
+| Meeting prep | With Settings › Automations › Prepare for recurring meetings on: a prep brief for each event of a series starting within `minutesBefore` that has earlier notes, at most 3 a tick and once per event (`cowork/prep.ts` `runMeetingPreps`, [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context)) |
 | Calendar refresh | Every 30 minutes per person with a calendar on Today (`calendar/sync.ts` `refreshCalendarsIfDue`, one claim per 30-minute slot): reads Google Calendar, Outlook and calendar links and merges copies of one event ([03 §2.5](03_MODULE_CONTEXT_ENGINE.md#25-the-today-calendar)). `ENSEMBLE_CALENDAR_REFRESH=off` stops it |
 
-Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler, mail-to-task pipeline or user-defined routine. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
+Two in-process workers run beside the scheduler: file summaries (`context/enrich-documents.ts`, every 1.5 s) and the meeting AI pass (`connectors/meetings/ai.ts`, every 3 s, `ENSEMBLE_MEETING_AI=off` stops it, [03 §4.3](03_MODULE_CONTEXT_ENGINE.md#43-meeting-processing)); each honours its switch in `settings.automations`. Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler, mail-to-task pipeline or user-defined routine. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
 
 ## 3. Task state and model selection
 
