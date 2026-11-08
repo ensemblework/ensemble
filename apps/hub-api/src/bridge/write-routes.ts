@@ -116,7 +116,7 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", async (request, reply) => {
     const message = bridgeAuthRejected(request.authVia, env.ENSEMBLE_INTERNAL_TOKEN);
     if (message) return reply.code(401).send({ error: message });
-    if (request.method === "GET") return;
+    if (request.method === "GET" || request.method === "HEAD") return;
     const refused = bridgeWriteRejected(request);
     if (refused) return reply.code(403).send({ error: refused });
   });

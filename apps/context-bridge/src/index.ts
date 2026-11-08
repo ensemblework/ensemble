@@ -1,19 +1,19 @@
 /**
- * Read-only MCP server (docs/CONTEXT_BRIDGE.md).
+ * The Context Bridge MCP server (docs/CONTEXT_BRIDGE.md): reads, plus task updates for a key that allows them.
  * Talks to hub-api over HTTP. Never opens a database connection.
  * Stdio is the default. `--http` serves Streamable HTTP on loopback.
  * Logs go to stderr. Stdout is JSON-RPC.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { startHttpServer } from "./http.js";
-import { buildServer } from "./server.js";
+import { buildServerForKey } from "./server.js";
 
 async function main(): Promise<void> {
   if (process.argv.includes("--http")) {
     await startHttpServer();
     return;
   }
-  const server = buildServer();
+  const server = await buildServerForKey();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("ensemble context-bridge listening on stdio");

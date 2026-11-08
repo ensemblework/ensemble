@@ -1269,7 +1269,7 @@ export type ConnectBridge = {
   built: boolean;
   httpUp: boolean;
   state: "connected" | "running" | "not_running";
-  tokens: Array<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }>;
+  tokens: Array<{ id: string; name: string; prefix: string; canWrite?: boolean; lastUsedAt: string | null; createdAt: string }>;
 };
 
 export type CliAuthScope = "mcp" | "runner";
@@ -1509,9 +1509,9 @@ export const api = bindClient({
   createToken: (name: string) => post<{ id: string; token: string }>("/api/tokens", { name }),
   revokeToken: (id: string) => del<void>(`/api/tokens/${id}`),
   connectBridge: () => get<ConnectBridge>("/api/connect/bridge"),
-  createBridgeToken: (name?: string) => post<{ id: string; token: string; prefix: string }>("/api/connect/token", name ? { name } : {}),
+  createBridgeToken: (name?: string, canWrite = true) => post<{ id: string; token: string; prefix: string; canWrite: boolean }>("/api/connect/token", { ...(name ? { name } : {}), canWrite }),
   cliAuthRequest: (code: string) => get<CliAuthRequest>(`/api/cli/auth/request${qs({ code })}`),
-  approveCliAuth: (body: { userCode: string; scopes: CliAuthScope[]; decision: CliAuthDecision }) =>
+  approveCliAuth: (body: { userCode: string; scopes: CliAuthScope[]; decision: CliAuthDecision; canWrite?: boolean }) =>
     post<{ ok: true; scopes: CliAuthScope[] }>("/api/cli/auth/approve", body),
 
   // editor decisions (Needs me router). The Hub's list: a node's own requests stay on Node (hub-api node/needs-me.ts).

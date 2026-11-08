@@ -137,6 +137,14 @@ function bodyFor(path: string, search: URLSearchParams): unknown {
       omitted: ["Private reminders are stored in the Hub and shown on Today. They are not included here."],
     };
   }
+  if (path === "/api/bridge/context") {
+    return {
+      item: { ref: `ensemble://task/${IDS.task}`, kind: "task", id: IDS.task, title: "Add retry helper", summary: "Retries with backoff.", facts: {} },
+      groups: [{ rel: "people", label: "People", items: [{ ref: `ensemble://person/${IDS.person}`, kind: "person", id: IDS.person, title: "Priya", role: "Reviewer" }], more: false }],
+      relations: [{ rel: "people", label: "People" }],
+      asked: search.get("item"),
+    };
+  }
   if (path === "/api/bridge/gaps") {
     return {
       gaps: [
@@ -153,17 +161,36 @@ function bodyFor(path: string, search: URLSearchParams): unknown {
 export interface MockHub {
   url: string;
   hits: string[];
+  /** Bodies of write requests, in order. */
+  writes: Array<{ method: string; path: string; body: unknown }>;
   close: () => Promise<void>;
 }
 
-export function startMockHub(): Promise<MockHub> {
+export function startMockHub(options: { canWrite?: boolean } = {}): Promise<MockHub> {
   const hits: string[] = [];
+  const writes: MockHub["writes"] = [];
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     hits.push(`${req.method} ${url.pathname}`);
     if (req.headers.authorization !== "Bearer ens_test") {
       res.writeHead(401, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "Sign in to Ensemble first." }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/bridge/whoami") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ canWrite: Boolean(options.canWrite), keyName: "Test editor" }));
+      return;
+    }
+    if ((req.method === "POST" || req.method === "PATCH") && url.pathname.startsWith("/api/bridge/write/") && options.canWrite) {
+      let raw = "";
+      req.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+      req.on("end", () => {
+        const body = raw ? (JSON.parse(raw) as unknown) : null;
+        writes.push({ method: req.method!, path: url.pathname, body });
+        res.writeHead(req.method === "POST" ? 201 : 200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ task: { id: IDS.task, ref: `ensemble://task/${IDS.task}`, title: "Add retry helper", status: "in_progress" }, message: "ok" }));
+      });
       return;
     }
     if (req.method !== "GET") {
@@ -188,6 +215,7 @@ export function startMockHub(): Promise<MockHub> {
       resolve({
         url: `http://127.0.0.1:${port}`,
         hits,
+        writes,
         close: () =>
           new Promise((done, fail) => {
             server.close((error) => (error ? fail(error) : done()));

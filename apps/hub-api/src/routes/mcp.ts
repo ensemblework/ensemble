@@ -26,12 +26,12 @@ function bridgePath(path: string, query?: Record<string, string | number | undef
 }
 
 function hubFor(app: FastifyInstance, authorization: string): HubClient {
-  return {
-    async get(path, query) {
+  const send = async (method: "GET" | "POST" | "PATCH", path: string, query?: Record<string, string | number | undefined>, body?: unknown) => {
       const response = await app.inject({
-        method: "GET",
+        method,
         url: bridgePath(path, query),
-        headers: { authorization, accept: "application/json" },
+        headers: { authorization, accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
       });
       if (response.statusCode >= 400) {
         let message = response.statusMessage || "HTTP error";
@@ -45,7 +45,11 @@ function hubFor(app: FastifyInstance, authorization: string): HubClient {
         throw new HubError(`Ensemble hub-api returned ${response.statusCode}: ${message}`, "http");
       }
       return response.json() as unknown;
-    },
+  };
+  return {
+    get: (path, query) => send("GET", path, query),
+    post: (path, body) => send("POST", path, undefined, body),
+    patch: (path, body) => send("PATCH", path, undefined, body),
   };
 }
 
@@ -59,6 +63,8 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
     const server = buildServer({
       hub: hubFor(app, authorization),
       detect: async () => ({}),
+      // Task updates: a full key, or a bridge key made with them allowed (bridge/auth.ts).
+      canWrite: request.tokenScope === "full" || (request.tokenScope === "bridge" && request.tokenCanWrite === true),
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

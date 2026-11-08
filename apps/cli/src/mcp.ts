@@ -1,5 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { buildServer } from "@ensemble/context-bridge/server";
+import { buildServerForKey } from "@ensemble/context-bridge/server";
 import { createHubClient } from "@ensemble/context-bridge/hub";
 import { loadConfig, loadToken, normalizeApiBase } from "./config.js";
 import { resolveCliPaths } from "./paths.js";
@@ -17,7 +17,7 @@ export async function runMcp(input: { api?: string } = {}): Promise<void> {
     httpPort: 0,
     httpToken: null,
   });
-  const server = buildServer({ hub });
+  const server = await buildServerForKey({ hub });
   await server.connect(new StdioServerTransport());
   console.error("ensemble MCP server listening on stdio");
 }
