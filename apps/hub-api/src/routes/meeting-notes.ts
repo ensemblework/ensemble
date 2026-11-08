@@ -4,6 +4,10 @@
  * Zoom. Each has the source's summary, decisions, action items, the calendar event it matched,
  * the people in it, the whole transcript, and the tasks made from it.
  */
+import { sseHub } from "../lib/sse.js";
+import { kickMeetingAi, queueMeetingAi } from "../connectors/meetings/ai.js";
+import { propagateMeetingProject } from "../connectors/meetings/links.js";
+import { prepareMeeting, PrepError } from "../cowork/prep.js";
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -34,6 +38,9 @@ export const NOTE_SELECT = {
   personIds: true,
   projectId: true,
   extraction: true,
+  aiStatus: true,
+  aiError: true,
+  seriesKey: true,
   eventArtifact: { select: { id: true, title: true, url: true, ts: true, deletedAt: true } },
   transcriptArtifact: { select: { id: true, url: true } },
   project: { select: { id: true, name: true } },
@@ -96,6 +103,49 @@ export function importedNoteView(row: NoteRow, people: Map<string, string>) {
     project: row.project,
     people: row.personIds.map((id) => ({ id, name: people.get(id) ?? null })).filter((row) => row.name),
     tasks: row.tasks.map(({ id, title, status }) => ({ id, title, status })),
+    inSeries: Boolean(row.seriesKey),
+    /** The meeting AI pass (connectors/meetings/ai.ts): null when it was never asked for. */
+    aiStatus: row.aiStatus,
+    aiError: row.aiError,
+    ai: aiView(extraction.ai, row.tasks),
+  };
+}
+
+/** What the AI pass wrote, with each proposal's task as it is now (moved, accepted or dropped). */
+function aiView(value: unknown, tasks: NoteRow["tasks"]) {
+  if (!value || typeof value !== "object") return null;
+  const ai = value as Record<string, unknown>;
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const task = (id: unknown) => {
+    const row = typeof id === "string" ? byId.get(id) : undefined;
+    return row ? { id: row.id, title: row.title, status: row.status } : null;
+  };
+  return {
+    summary: text(ai.summary) ?? "",
+    decisions: list<unknown>(ai.decisions).map(text).filter((row): row is string => Boolean(row)),
+    openQuestions: list<unknown>(ai.openQuestions).map(text).filter((row): row is string => Boolean(row)),
+    nextTime: list<unknown>(ai.nextTime).map(text).filter((row): row is string => Boolean(row)),
+    newPeople: list<{ name?: unknown; role?: unknown }>(ai.newPeople).filter((row) => text(row.name)).map((row) => ({ name: String(row.name), role: text(row.role) })),
+    project: ai.project && typeof ai.project === "object" ? (ai.project as { name: string; id: string | null; applied: boolean }) : null,
+    items: list<Record<string, unknown>>(ai.items).map((item) => ({
+      title: text(item.title) ?? "",
+      kind: text(item.kind) ?? "task",
+      owner: text(item.owner),
+      requestedBy: text(item.requestedBy),
+      due: text(item.due),
+      dueText: text(item.dueText),
+      why: text(item.why),
+      quote: text(item.quote),
+      at: text(item.at),
+      details: text(item.details),
+      mine: item.mine === true,
+      grounded: item.grounded === true,
+      task: task(item.taskId),
+      // Usually a task from elsewhere, so only its id is known here.
+      alreadyTracked: typeof item.alreadyTracked === "string" ? (task(item.alreadyTracked) ?? { id: item.alreadyTracked, title: text(item.existingTask), status: null }) : null,
+    })),
+    model: text(ai.model),
+    at: text(ai.at),
   };
 }
 
@@ -203,6 +253,41 @@ export async function meetingNoteRoutes(app: FastifyInstance): Promise<void> {
       ...(row.transcriptArtifactId ? [prisma.artifact.updateMany({ where: { id: row.transcriptArtifactId, userId: request.userId, deletedAt: row.deletedAt }, data: { deletedAt: null } })] : []),
     ]);
     return { note: await noteById(request.userId, row.id) };
+  });
+
+  /** Read the meeting with a model now, whatever Settings › Automations says (connectors/meetings/ai.ts). */
+  app.post("/api/meetings/notes/:id/suggest", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const aiStatus = await queueMeetingAi(prisma, request.userId, id, { force: true });
+    if (!aiStatus) return reply.code(404).send({ error: "Meeting note not found." });
+    kickMeetingAi();
+    return { aiStatus };
+  });
+
+  /** A prep brief for a meeting of a series, written now from last time (cowork/prep.ts). */
+  app.post("/api/meetings/events/:id/prep", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    try {
+      return await prepareMeeting(prisma, request.userId, id);
+    } catch (error) {
+      if (error instanceof PrepError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /** The project a meeting belongs to: its note, its notes session and the open tasks made from it follow. */
+  app.patch("/api/meetings/notes/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ projectId: z.string().uuid().nullable() }).strict().parse(request.body);
+    const note = await prisma.meetingNote.findFirst({ where: { id, userId: request.userId, deletedAt: null }, select: { id: true } });
+    if (!note) return reply.code(404).send({ error: "Meeting note not found." });
+    if (body.projectId && !(await prisma.project.findFirst({ where: { id: body.projectId, userId: request.userId, deletedAt: null }, select: { id: true } }))) {
+      return reply.code(404).send({ error: "That project was not found." });
+    }
+    const moved = await prisma.$transaction((tx) => propagateMeetingProject(tx, request.userId, { noteId: note.id, projectId: body.projectId }));
+    sseHub.publish(request.userId, { event: "meetings", data: { id: note.id } });
+    if (moved) sseHub.publish(request.userId, { event: "task", data: { meetingNoteId: note.id } });
+    return { note: await noteById(request.userId, note.id), tasksMoved: moved };
   });
 
   /** One action item → a task on the board that cites the meeting. Asking twice returns the same task. */

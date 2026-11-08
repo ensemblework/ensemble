@@ -1,5 +1,5 @@
 /**
- * What the design asked the bridge to read, against what this tree actually stores.
+ * What an editor may ask the bridge for that it does not have or will not give.
  * Returned on purpose so a model does not invent the missing pieces.
  */
 export interface DataGap {
@@ -10,28 +10,22 @@ export interface DataGap {
 
 export const DATA_GAPS: readonly DataGap[] = [
   {
-    requested: "semantic retrieval / context-pack ranking",
+    requested: "semantic retrieval / embeddings",
     status: "missing",
     detail:
-      "The schema has Artifact.searchVector (tsvector) and ArtifactChunk.embedding, but nothing in this tree fills or queries them. Search is a case-insensitive substring match on stored title and text. The pack ranker described in docs/13 (seed, expand, embed, compress) is not implemented.",
+      "Retrieval is ranked word search plus graph links. ensemble_search looks for each word of the query in titles and text and ranks by where the words are, how many match, recency, open work and closeness to a record (near). ensemble_context follows stored links between records. Artifact.searchVector and ArtifactChunk.embedding exist in the schema, but nothing fills or queries them; there is no embedding or semantic search.",
   },
   {
-    requested: "secret redaction helper",
-    status: "missing",
-    detail:
-      "Design docs describe redactSecrets applied on ingest. No such helper exists in this tree. The bridge returns stored text unchanged and labels third-party bodies as untrusted.",
-  },
-  {
-    requested: "Outlook, Outlook calendar, and Teams",
+    requested: "secret redaction on bridge reads",
     status: "partial",
     detail:
-      "Calendar entries are Artifact rows with kind \"event\" from Google Calendar, Outlook (Teams meetings included) and calendar links, one row per event however many calendars have it. Outlook mail and Teams chats are saved only when the person asks.",
+      "lib/redact.ts masks secret-shaped values (API keys, bearer tokens, private keys, secret .env lines) in logs, error messages, agent traces and evidence. Bridge reads return stored text without a redaction pass and label third-party bodies as untrusted.",
   },
   {
-    requested: "saved M365 answers",
-    status: "missing",
+    requested: "Outlook mail, Teams chats and meeting transcripts",
+    status: "partial",
     detail:
-      "There is no M365 connector. MeetingNote rows (pasted notes, or a connector when one wrote them) are the meeting-notes entity the bridge can read.",
+      "Calendar entries are Artifact rows with kind \"event\" from Google Calendar, Outlook (Teams meetings included) and calendar links, one row per event however many calendars have it. Outlook mail, Teams chats and attachments are saved only when the person attaches them, and meeting transcripts (Google Meet, Teams, Zoom) only when imported. Meeting notes are MeetingNote rows: pasted, written live in Ensemble, or imported.",
   },
   {
     requested: "widget layouts",
@@ -52,9 +46,10 @@ export const DATA_GAPS: readonly DataGap[] = [
       "SkillVersion keeps older bodies for the Hub UI. The bridge returns only the current skill body. Disabled skills are omitted from briefs.",
   },
   {
-    requested: "write tools (create, update, delete, send, approve)",
-    status: "excluded",
-    detail: "The bridge is read-only. It cannot change tasks, send mail, answer a Needs-me card, or create a diagram or a plot. Those writes go through the Hub assistant, which waits for Apply.",
+    requested: "writes (create, update, delete, send, approve)",
+    status: "partial",
+    detail:
+      "A key made with task updates allowed can add a task (proposed or to do), move a task's status, and add a progress note to its page (ensemble_create_task, ensemble_update_task); each write is in the ledger. Nothing else: the bridge cannot delete, send mail, answer a Needs-me card, or create a diagram or a plot. Those go through the Hub assistant, which waits for Apply.",
   },
   {
     requested: "diagram writes",

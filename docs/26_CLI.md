@@ -156,12 +156,12 @@ A data folder from an early CLI (`~/Library/Application Support/Ensemble CLI`, `
 
 ## 5. MCP: local CLI or hosted URL
 
-Both expose the same 17 read-only tools from `apps/context-bridge` (`buildServer` in `src/server.ts`; [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)).
+Both expose the same 18 read tools from `apps/context-bridge` (`buildServer` in `src/server.ts`; [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)), with `ensemble_brief`, `ensemble_context` and `ensemble_search` reading the task's context and the graph around it, plus `ensemble_create_task` and `ensemble_update_task` when the key may update tasks ([CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-task-updates)).
 
-- **Local:** `ensemble mcp` runs on stdio and reads `https://api.ensemblework.com/api/bridge/*` with the saved key. It reads the git repository from the editor's working folder for `ensemble_brief`.
-- **Hosted:** `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…`. Streamable HTTP, stateless, JSON responses (`apps/hub-api/src/routes/mcp.ts`). Each tool call goes through the normal `/api/bridge` routes with the caller's key, so every bridge check applies. Requests without a bearer key (including cookie-only requests) get 401 with `WWW-Authenticate: Bearer realm="Ensemble"`. Device keys get 403. `GET` and `DELETE` return 405. The hosted server never runs git, so `ensemble_brief` needs the repository and branch passed in. Rate limit: `ENSEMBLE_RATE_MCP_LIMIT` per user per `ENSEMBLE_RATE_MCP_WINDOW_SEC` (240 per 60 s).
+- **Local:** `ensemble mcp` runs on stdio and reads `https://api.ensemblework.com/api/bridge/*` with the saved key, asking `GET /api/bridge/whoami` once at start whether to offer the task-update tools. It reads the git repository from the editor's working folder for `ensemble_brief`.
+- **Hosted:** `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…`. Streamable HTTP, stateless, JSON responses (`apps/hub-api/src/routes/mcp.ts`). Each tool call goes through the normal `/api/bridge` routes with the caller's key, so every bridge check applies. Requests without a bearer key (including cookie-only requests) get 401 with `WWW-Authenticate: Bearer realm="Ensemble"`. Device keys get 403. `GET` and `DELETE` return 405. The hosted server never runs git, so `ensemble_brief` needs `task`, or the repository and branch, passed in. The task-update tools are offered when the request's key allows them. Rate limit: `ENSEMBLE_RATE_MCP_LIMIT` per user per `ENSEMBLE_RATE_MCP_WINDOW_SEC` (240 per 60 s).
 
-Keys for the hosted URL come from Connect your apps (`POST /api/connect/token`) or `ensemble login`. A bridge key can only read `/api/bridge`, call `/mcp`, and revoke itself at `/api/cli/logout`.
+Keys for the hosted URL come from Connect your apps (`POST /api/connect/token`) or `ensemble login`. A bridge key can read `/api/bridge`, call `/mcp`, revoke itself at `/api/cli/logout`, and, when **Let editors and agents update your tasks** was ticked as it was made (Connect your apps, or the `/link` page; on by default), call `/api/bridge/write/*` ([CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-task-updates)).
 
 There is no OAuth authorization-server flow for external MCP clients; clients that require one must use local stdio or a bearer-header configuration. Claude Desktop uses the local CLI setup.
 

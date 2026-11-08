@@ -184,6 +184,8 @@ export function googleEventInput(event: CalendarEvent, calendar: { id: string; n
       eventId: event.id,
       uid: event.iCalUID ?? null,
       originalStart: original?.toISOString() ?? null,
+      // Every occurrence of a recurring meeting names its series (cowork/series.ts).
+      seriesId: event.recurringEventId ?? null,
       end: end?.toISOString() ?? null,
       allDay,
       startDate: allDay ? event.start!.date! : null,

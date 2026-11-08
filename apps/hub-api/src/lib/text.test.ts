@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chunkText, hasLoneSurrogate, persistAssistantText, safePublicError, truncateText } from "./text.js";
+import { chunkText, hasLoneSurrogate, headAndTail, persistAssistantText, safePublicError, truncateText } from "./text.js";
 
 const emoji = "😀";
 
@@ -20,6 +20,20 @@ test("a model reply cut on an emoji boundary stays valid", () => {
   assert.equal(hasLoneSurrogate(cut), false);
   const fitting = truncateText(`${"a".repeat(78)}${emoji}`, 80);
   assert.equal(fitting, `${"a".repeat(78)}${emoji}`);
+});
+
+test("a long result keeps its start and its end, says how much was cut, and never splits an emoji", () => {
+  const output = `{"exitCode":1,"stdout":"${"line of output\\n".repeat(800)}","stderr":"Error: disk full ${emoji}"}`;
+  const cut = headAndTail(output, 6000);
+  assert.ok(cut.length <= 6000, String(cut.length));
+  assert.ok(cut.startsWith('{"exitCode":1,"stdout":"line of output'));
+  assert.ok(cut.endsWith(`"stderr":"Error: disk full ${emoji}"}`), "the error at the end survives");
+  const [, count] = /\n… \[(\d+) characters cut\] …\n/.exec(cut)!;
+  assert.equal(cut.length - `\n… [${count} characters cut] …\n`.length + Number(count), output.length);
+  assert.equal(hasLoneSurrogate(cut), false);
+  assert.equal(headAndTail("short", 6000), "short");
+  const emojis = emoji.repeat(100);
+  assert.equal(hasLoneSurrogate(headAndTail(emojis, 61)), false);
 });
 
 test("chunks do not stop inside an emoji", () => {

@@ -18,13 +18,16 @@ import { arrange, CARD_CAP, emptyOrder, ORDER_KEY, OrderError, readOrder, saniti
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { peopleCards } from "../context/people-view.js";
 import { assertOwned } from "../services/records.js";
-import { meetingNotesFields } from "../cowork/service.js";
+import { meetingNotesFields, searchWorkspace } from "../cowork/service.js";
 import { fileDetail } from "../files/store.js";
 import { mirrorSettings } from "../spaces/store.js";
 import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/context.js";
 import { ARTIFACT_SUPPRESSION, artifactOrigin, artifactSuppressionKey, NOT_UPLOADED } from "../context/artifacts.js";
 import { ARTIFACT_KINDS } from "../desk/artifacts.js";
 import { NODE_TASK, ON_BOARD } from "../lib/node-tasks.js";
+import { GraphError, itemNeighbors, relationsOf } from "../context/graph/neighbors.js";
+import { parseItemRef, type GraphKind } from "../context/graph/refs.js";
+import { rankedSearch, SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -81,11 +84,69 @@ async function existingPerson(prisma: FastifyInstance["prisma"], userId: string,
   return prisma.person.findFirst({ where: { userId, deletedAt: null, ...match }, select: { id: true, name: true, email: true } });
 }
 
+/** How a person relates to the account owner ("my manager", "client"). Blank clears it. */
+const Relationship = z
+  .string()
+  .trim()
+  .max(80)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
+/** A person's role on a project. Blank clears it; omitted keeps the saved role. */
+const ProjectRole = z
+  .string()
+  .trim()
+  .max(80)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 /** "<ISO time>|<id>" of the last item on a page. */
 function artifactCursor(value: string): { ts: Date; id: string } | null {
   const [when, id] = value.split("|");
   const ts = new Date(when ?? "");
   return id && !Number.isNaN(ts.getTime()) ? { ts, id } : null;
+}
+
+/** Newest page mentions the graph reads; standalone pages it shows. */
+const GRAPH_MENTION_CAP = 3000;
+const GRAPH_PAGE_CAP = 80;
+
+type GraphEdge = { source: string; target: string; kind: string; label?: string };
+
+/** The record id in a graph `focus`: a handle (`ensemble://<kind>/<id>`, also skill, diagram…), a Hub link, or an id. */
+function graphNodeId(value: string): string | null {
+  const ref = parseItemRef(value);
+  if (ref) return ref.id;
+  const id = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(value.trim())?.[1];
+  return id ? id.toLowerCase() : null;
+}
+
+/** Ids within `depth` links of `focus`, either direction. */
+function withinHops(focus: string, edges: readonly GraphEdge[], depth: number): Set<string> {
+  const near = new Map<string, string[]>();
+  const add = (from: string, to: string) => {
+    const list = near.get(from);
+    if (list) list.push(to);
+    else near.set(from, [to]);
+  };
+  for (const edge of edges) {
+    add(edge.source, edge.target);
+    add(edge.target, edge.source);
+  }
+  const keep = new Set([focus]);
+  let frontier = [focus];
+  for (let hop = 0; hop < depth && frontier.length; hop += 1) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const other of near.get(id) ?? []) {
+        if (keep.has(other)) continue;
+        keep.add(other);
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return keep;
 }
 
 export async function contextRoutes(app: FastifyInstance): Promise<void> {
@@ -128,9 +189,10 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
           email: person.email,
           role: person.role,
           team: person.team,
+          relationship: person.relationship,
           lastInteraction: person.lastInteraction?.toISOString() ?? null,
           confidence: person.confidence,
-          projects: person.projects.map((link) => link.project),
+          projects: person.projects.map((link) => ({ ...link.project, role: link.role })),
         })),
         tasks: tasks.map((task) => ({
           title: task.title,
@@ -146,7 +208,12 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/people", async (request, reply) => {
     const body = z
-      .object({ name: z.string().trim().min(1).transform((name) => name.replace(/\s+/g, " ")), email: z.string().trim().email().optional(), role: z.string().optional() })
+      .object({
+        name: z.string().trim().min(1).transform((name) => name.replace(/\s+/g, " ")),
+        email: z.string().trim().email().optional(),
+        role: z.string().optional(),
+        relationship: Relationship,
+      })
       .parse(request.body);
     const email = body.email || null;
     const existing = await existingPerson(prisma, request.userId, body.name, email);
@@ -157,7 +224,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     // Someone removed earlier keeps their address, which would clash with the unique key.
     const removed = upn ? await prisma.person.findFirst({ where: { userId: request.userId, upn, deletedAt: { not: null } }, select: { id: true } }) : null;
     const person = await prisma.person.create({
-      data: { userId: request.userId, name: body.name, email, role: body.role, upn: removed ? null : upn },
+      data: { userId: request.userId, name: body.name, email, role: body.role, relationship: body.relationship ?? null, upn: removed ? null : upn },
     });
     return reply.code(201).send({ person });
   });
@@ -170,6 +237,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         email: z.string().nullish(),
         role: z.string().nullish(),
         team: z.string().nullish(),
+        relationship: Relationship,
       })
       .parse(request.body);
     const found = await prisma.person.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
@@ -215,7 +283,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         status: project.status,
         aliases: project.aliases,
         repos: project.repoLinks.map((link) => link.repo),
-        people: project.people.map((link) => link.person),
+        people: project.people.map((link) => ({ ...link.person, role: link.role })),
         deliverableCount: project._count.deliverables,
         taskCount: project._count.tasks,
       })),
@@ -228,7 +296,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       where: { id, userId: request.userId, deletedAt: null },
       include: {
         repoLinks: { include: { repo: true } },
-        people: { include: { person: true } },
+        // Each row carries `role` (their role on this project) and `addedBy`.
+        people: { include: { person: true }, orderBy: { createdAt: "asc" } },
         deliverables: { where: { deletedAt: null }, orderBy: { due: "asc" } },
         tasks: { where: { deletedAt: null }, orderBy: { boardOrder: "asc" }, take: 50 },
         meetingNotes: { where: { deletedAt: null }, orderBy: { askedAt: "desc" }, take: 20 },
@@ -259,25 +328,43 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         /** The project page body (the block editor). Its Markdown becomes `notes`, for search and the assistant. */
         content: z.unknown().optional(),
         status: z.enum(["active", "done"]).optional(),
-        personIds: z.array(z.string().uuid()).optional(),
+        /** Everyone on the project. Saved people keep their role and who added them. */
+        personIds: z.array(z.string().uuid()).max(500).optional(),
+        /** Everyone on the project, with roles: a role sets it, null or "" clears it, no `role` keeps it. */
+        people: z.array(z.object({ id: z.string().uuid(), role: ProjectRole })).max(500).optional(),
         repoIds: z.array(z.string().uuid()).optional(),
       })
       .parse(request.body);
+    if (body.personIds && body.people) return reply.code(400).send({ error: "Send people or personIds, not both." });
     const found = await prisma.project.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!found) return reply.code(404).send({ error: "Project not found." });
-    const { personIds, repoIds, content, ...fields } = body;
+    const { personIds, people, repoIds, content, ...fields } = body;
+    const members = people
+      ? new Map(people.map((row) => [row.id, row.role]))
+      : personIds
+        ? new Map(personIds.map((personId) => [personId, undefined as string | null | undefined]))
+        : null;
     const page = content !== undefined ? meetingNotesFields({ content }) : null;
     const data = { ...fields, ...(page ? { notes: page.notes, content: page.content } : {}) };
     await prisma.$transaction(async (tx) => {
-      for (const personId of personIds ?? []) await assertOwned(tx, request.userId, "person", personId);
+      for (const personId of members?.keys() ?? []) await assertOwned(tx, request.userId, "person", personId);
       for (const repoId of repoIds ?? []) await assertOwned(tx, request.userId, "repo", repoId);
       await tx.project.update({
         where: { id },
         data: { ...data, completedAt: data.status === "done" ? new Date() : data.status === "active" ? null : undefined },
       });
-      if (personIds) {
-        await tx.projectPerson.deleteMany({ where: { projectId: id } });
-        await tx.projectPerson.createMany({ data: personIds.map((personId) => ({ projectId: id, personId, addedBy: "me" })) });
+      if (members) {
+        const saved = new Map((await tx.projectPerson.findMany({ where: { projectId: id }, select: { personId: true, role: true } })).map((row) => [row.personId, row.role]));
+        const removed = [...saved.keys()].filter((personId) => !members.has(personId));
+        if (removed.length) await tx.projectPerson.deleteMany({ where: { projectId: id, personId: { in: removed } } });
+        const added = [...members].filter(([personId]) => !saved.has(personId));
+        if (added.length) {
+          await tx.projectPerson.createMany({ data: added.map(([personId, role]) => ({ projectId: id, personId, role: role ?? null, addedBy: "me" as const })), skipDuplicates: true });
+        }
+        for (const [personId, role] of members) {
+          if (role === undefined || !saved.has(personId) || saved.get(personId) === role) continue;
+          await tx.projectPerson.update({ where: { projectId_personId: { projectId: id, personId } }, data: { role } });
+        }
       }
       if (repoIds) {
         await tx.projectRepo.deleteMany({ where: { projectId: id } });
@@ -844,18 +931,78 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  // ── one record and what it links to (context/graph) ─────────────────────
+
+  app.get("/api/context/item", async (request, reply) => {
+    const query = z
+      .object({
+        ref: z.string().max(400).optional(),
+        kind: z.string().max(40).optional(),
+        id: z.string().max(100).optional(),
+        rel: z.string().max(40).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+        offset: z.coerce.number().int().min(0).max(5000).optional(),
+      })
+      .parse(request.query);
+    const ref = parseItemRef(query.ref ?? (query.kind && query.id ? { kind: query.kind, id: query.id } : null));
+    if (!ref) return reply.code(400).send({ error: "Name a record: ref=ensemble://<kind>/<id>, or kind and id." });
+    try {
+      const hood = await itemNeighbors({ db: prisma, userId: request.userId, modules: request.modules }, ref, { rel: query.rel, limit: query.limit, offset: query.offset });
+      if (!hood) return reply.code(404).send({ error: "Not found, or it is in Trash." });
+      return { ...hood, relations: relationsOf(hood.item.kind as GraphKind) };
+    } catch (error) {
+      if (error instanceof GraphError) return reply.code(error.statusCode).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * One route for both readers: the Hub's search box reads `query` and `results` (cowork/service.ts
+   * `searchWorkspace`); with `kinds`, `near` or `limit` it adds the ranked `terms` and `hits`
+   * (context/graph/search.ts) for the graph and agents.
+   */
+  app.get("/api/context/search", async (request) => {
+    const query = z
+      .object({
+        q: z.string().trim().min(1).max(500),
+        kinds: z.string().max(200).optional(),
+        near: z.string().max(400).optional(),
+        limit: z.coerce.number().int().min(1).max(50).optional(),
+      })
+      .parse(request.query);
+    const kinds = (query.kinds ?? "").split(",").map((kind) => kind.trim()).filter((kind): kind is SearchKind => (SEARCH_KINDS as readonly string[]).includes(kind));
+    const box = await searchWorkspace(prisma, request.userId, query.q);
+    if (!kinds.length && !query.near && !query.limit) return box;
+    const ranked = await rankedSearch({ db: prisma, userId: request.userId, modules: request.modules }, query.q, { kinds, near: parseItemRef(query.near), limit: query.limit });
+    return { ...box, ...ranked };
+  });
+
   // ── the graph ───────────────────────────────────────────────────────────
 
-  app.get("/api/context/graph", async (request) => {
-    const { includeCompleted } = request.query as { includeCompleted?: string };
+  /**
+   * Every saved link between records, for the Graph tab (docs/03 §4.4). Edge kinds: member (person →
+   * project, `label` is their role on it), repo, project, deliverable, person, waiting (person → a task
+   * waiting on them), skill, depends, mention (task page → record), page (standalone page → record),
+   * note (project, repo or person → meeting), from_meeting (meeting → a task it produced), diagram,
+   * artifact, attendee. `focus` (a record handle or id) with `depth` 1–2 keeps only what is that many
+   * links from that record.
+   */
+  app.get("/api/context/graph", async (request, reply) => {
+    const query = z
+      .object({
+        includeCompleted: z.string().optional(),
+        focus: z.string().max(400).optional(),
+        depth: z.coerce.number().int().min(1).max(2).optional(),
+      })
+      .parse(request.query);
     const userId = request.userId;
-    const recentDone = includeCompleted === "true";
+    const recentDone = query.includeCompleted === "true";
     const settings = await loadSettings(prisma, userId);
     const reviewDays = settings.contextReviewDays;
     const reviewSince = new Date(Date.now() - reviewDays * 86_400_000);
     const [people, projects, repos, tasks, deliverables, skills, projectPeople, projectRepos, mentions, notes, diagrams, diagramLinks, plots, artifacts, sessions, documents] =
       await Promise.all([
-        prisma.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, role: true } }),
+        prisma.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, role: true, relationship: true } }),
         prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, status: true } }),
         prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true } }),
         prisma.task.findMany({
@@ -872,7 +1019,20 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
                   : []),
             ],
           },
-          select: { id: true, title: true, status: true, projectId: true, repoId: true, deliverableId: true, people: true, skillIds: true, completedAt: true, dependsOn: true },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            projectId: true,
+            repoId: true,
+            deliverableId: true,
+            meetingNoteId: true,
+            people: true,
+            labels: true,
+            skillIds: true,
+            completedAt: true,
+            dependsOn: true,
+          },
           orderBy: { updatedAt: "desc" },
           take: 200,
         }),
@@ -883,11 +1043,13 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         hasModule(request.modules, "skills")
           ? prisma.skill.findMany({ where: { userId, deletedAt: null, enabled: true }, select: { id: true, name: true } })
           : Promise.resolve([]),
-        prisma.projectPerson.findMany({ where: { project: { userId } }, select: { projectId: true, personId: true } }),
+        prisma.projectPerson.findMany({ where: { project: { userId } }, select: { projectId: true, personId: true, role: true } }),
         prisma.projectRepo.findMany({ where: { project: { userId } }, select: { projectId: true, repoId: true } }),
         prisma.taskPageMention.findMany({
           where: { page: { userId, deletedAt: null, OR: [{ taskId: null }, { task: { deletedAt: null } }] } },
-          select: { kind: true, entityId: true, page: { select: { taskId: true } } },
+          select: { kind: true, entityId: true, page: { select: { id: true, taskId: true, title: true } } },
+          orderBy: { page: { updatedAt: "desc" } },
+          take: GRAPH_MENTION_CAP,
         }),
         prisma.meetingNote.findMany({
           where: { userId, deletedAt: null },
@@ -916,7 +1078,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         }),
         prisma.meetingSession.findMany({
           where: { userId, deletedAt: null },
-          select: { personIds: true, artifactId: true, meetingNoteId: true },
+          select: { id: true, title: true, personIds: true, artifactId: true, meetingNoteId: true, projectId: true },
           orderBy: { startedAt: "desc" },
           take: 40,
         }),
@@ -927,36 +1089,60 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         }),
       ]);
 
-    const nodes = [
-      ...people.map((row) => ({ id: row.id, kind: "people", label: row.name, sub: row.role ?? "people" })),
+    const nodes: Array<{ id: string; kind: string; label: string; sub: string; path?: string }> = [
+      ...people.map((row) => ({ id: row.id, kind: "people", label: row.name, sub: [row.role, row.relationship].filter(Boolean).join(" · ") || "people" })),
       ...projects.map((row) => ({ id: row.id, kind: "project", label: row.name, sub: `project · ${row.status}` })),
       ...repos.map((row) => ({ id: row.id, kind: "repo", label: row.fullName, sub: "repo" })),
       ...tasks.map((row) => ({ id: row.id, kind: "task", label: row.title, sub: `task · ${row.status.replace("_", " ")}` })),
       ...deliverables.map((row) => ({ id: row.id, kind: "deliverable", label: row.title, sub: `deliverable · ${row.status}` })),
       ...skills.map((row) => ({ id: row.id, kind: "skill", label: row.name, sub: "skill" })),
-      ...notes.map((row) => ({ id: row.id, kind: "note", label: row.title, sub: "meeting note" })),
+      ...notes.map((row) => ({ id: row.id, kind: "note", label: row.title, sub: "meeting note", path: `/meetings?note=${row.id}` })),
+      // Notes written in Ensemble for an imported meeting are that meeting; the rest are meetings of their own.
+      ...sessions
+        .filter((row) => !row.meetingNoteId)
+        .map((row) => ({ id: row.id, kind: "note", label: row.title || "Meeting", sub: "meeting notes", path: `/meetings?session=${row.id}` })),
       ...diagrams.map((row) => ({ id: row.id, kind: "diagram", label: row.title, sub: "diagram" })),
       ...plots.map((row) => ({ id: row.id, kind: "plot", label: row.title, sub: "plot" })),
       ...artifacts.map((row) => ({ id: row.id, kind: "artifact", label: row.title || "Untitled artifact", sub: `artifact · ${row.kind.replaceAll("_", " ")}` })),
     ];
     const ids = new Set(nodes.map((node) => node.id));
+    // Standalone pages join the graph when they mention something on it; newest pages first.
+    const pages = new Map<string, string>();
+    for (const mention of mentions) {
+      if (mention.page.taskId || pages.has(mention.page.id) || pages.size >= GRAPH_PAGE_CAP || !ids.has(mention.entityId)) continue;
+      pages.set(mention.page.id, mention.page.title || "Untitled page");
+    }
+    for (const [id, title] of pages) {
+      nodes.push({ id, kind: "page", label: title, sub: "page", path: `/pages/${id}` });
+      ids.add(id);
+    }
     const byName = new Map(people.map((row) => [row.name.toLowerCase(), row.id]));
-    const edges: Array<{ source: string; target: string; kind: string }> = [];
-    const link = (source: string | null | undefined, target: string | null | undefined, kind: string) => {
-      if (source && target && ids.has(source) && ids.has(target)) edges.push({ source, target, kind });
+    const edges: GraphEdge[] = [];
+    const seen = new Set<string>();
+    const link = (source: string | null | undefined, target: string | null | undefined, kind: string, label?: string | null) => {
+      if (!source || !target || source === target || !ids.has(source) || !ids.has(target)) return;
+      const key = `${source}|${target}|${kind}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push(label ? { source, target, kind, label } : { source, target, kind });
     };
-    for (const row of projectPeople) link(row.personId, row.projectId, "member");
+    for (const row of projectPeople) link(row.personId, row.projectId, "member", row.role);
     for (const row of projectRepos) link(row.projectId, row.repoId, "repo");
     for (const task of tasks) {
+      const waiting = task.labels.includes("waiting-on");
       link(task.projectId, task.id, "project");
       link(task.repoId, task.id, "repo");
       link(task.id, task.deliverableId, "deliverable");
-      for (const person of task.people) link(byName.get(person.toLowerCase()) ?? person, task.id, "person");
+      link(task.meetingNoteId, task.id, "from_meeting");
+      for (const person of task.people) link(byName.get(person.toLowerCase()) ?? person, task.id, waiting ? "waiting" : "person");
       for (const skillId of task.skillIds) link(task.id, skillId, "skill");
       for (const dependency of task.dependsOn) link(task.id, dependency, "depends");
     }
     for (const row of deliverables) link(row.projectId, row.id, "deliverable");
-    for (const mention of mentions) link(mention.page.taskId, mention.entityId, "mention");
+    for (const mention of mentions) {
+      if (mention.page.taskId) link(mention.page.taskId, mention.entityId, "mention");
+      else link(mention.page.id, mention.entityId, "page");
+    }
     for (const note of notes) {
       link(note.projectId, note.id, "note");
       link(note.repoId, note.id, "note");
@@ -968,9 +1154,13 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       link(row.repoId, row.id, "artifact");
       link(row.taskId, row.id, "artifact");
     }
+    const sameMeeting = new Map<string, string>();
     for (const session of sessions) {
+      const meeting = session.meetingNoteId ?? session.id;
+      if (session.meetingNoteId) sameMeeting.set(session.id, session.meetingNoteId);
+      link(session.projectId, meeting, "note");
       for (const personId of session.personIds) {
-        link(personId, session.meetingNoteId, "attendee");
+        link(personId, meeting, "attendee");
         link(personId, session.artifactId, "attendee");
       }
     }
@@ -982,6 +1172,18 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       for (const id of document.repoIds) link(id, document.artifactId, "artifact");
       for (const id of document.deliverableIds) link(id, document.artifactId, "artifact");
     }
-    return { nodes, edges };
+    if (query.focus === undefined) return { nodes, edges };
+    const named = graphNodeId(query.focus);
+    const focus = named ? (sameMeeting.get(named) ?? named) : null;
+    if (!focus || !ids.has(focus)) {
+      return reply.code(404).send({ error: "That record is not on the graph: it may be done, in Trash, or past the graph's limits." });
+    }
+    const depth = query.depth ?? 1;
+    const keep = withinHops(focus, edges, depth);
+    return {
+      nodes: nodes.filter((node) => keep.has(node.id)),
+      edges: edges.filter((edge) => keep.has(edge.source) && keep.has(edge.target)),
+      focus: { id: focus, depth },
+    };
   });
 }

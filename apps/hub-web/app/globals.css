@@ -37,6 +37,7 @@
   --kind-note: #a39e96;
   --kind-diagram: #7eb8c9;
   --kind-artifact: #e08b6a;
+  --kind-page: #9fb0d4;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-weave: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-snap: cubic-bezier(0.3, 1.4, 0.5, 1);
@@ -136,6 +137,7 @@
   --kind-note: #5c564e;
   --kind-diagram: #2f7d93;
   --kind-artifact: #b85a38;
+  --kind-page: #4a5d8c;
   --ink-2: #3a342c;
   --ghost: #8a8175;
   --tile: #fffdf9;

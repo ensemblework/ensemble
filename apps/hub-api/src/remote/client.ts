@@ -89,6 +89,8 @@ export interface HostedClient {
   /** Protocol 5: carry on a run this computer lost by restarting; the new run comes with the next claim. */
   resume?(jobId: string, body: { leaseToken: string; reason: string }): Promise<{ jobId: string } | { refused: string }>;
   downloadAttachment?(jobId: string, leaseToken: string, fileId: string, maxBytes: number): Promise<Uint8Array>;
+  /** A run's context tool answered on the web for the job's space (workspace/context-tools.ts). */
+  jobContext?(jobId: string, leaseToken: string, body: { name: string; args: Record<string, unknown> }): Promise<string>;
   /** A file of the owner's Files a node puts on this computer (files `save`), by the download id the web gave; at most `maxBytes`. */
   downloadNodeFile?(downloadId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
@@ -233,6 +235,20 @@ export function hostedClient(base: string, token: string): HostedClient {
       if (res.status < 300 && typeof id === "string" && id) return { jobId: id };
       if (res.status >= 500 || res.status === 0) throw new RemoteError(res.status, messageOf(res.body, "Carrying the run on failed."));
       return { refused: messageOf(res.body, "Ensemble on the web did not carry the run on.") };
+    },
+    async jobContext(jobId, leaseToken, body) {
+      const response = await fetch(`${base}${ROUTES.context(jobId)}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "x-ensemble-job-lease": leaseToken, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+        redirect: "error",
+      }).catch(() => null);
+      if (!response) return "Ensemble on the web could not be reached. Work from the brief.";
+      if (response.status === 404) return "Ensemble on the web does not answer context questions for runs yet. Work from the brief.";
+      const answer = (await response.json().catch(() => null)) as { text?: unknown; error?: unknown } | null;
+      if (!response.ok) return typeof answer?.error === "string" ? answer.error : `Ensemble on the web refused the question (${response.status}).`;
+      return typeof answer?.text === "string" ? answer.text : "No answer.";
     },
     async downloadAttachment(jobId, leaseToken, fileId, maxBytes) {
       const response = await fetch(`${base}${ROUTES.attachment(jobId, fileId)}`, { headers: { authorization: `Bearer ${token}`, "x-ensemble-job-lease": leaseToken }, signal: AbortSignal.timeout(60_000), redirect: "error" });

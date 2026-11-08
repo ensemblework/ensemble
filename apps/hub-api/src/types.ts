@@ -20,6 +20,8 @@ declare module "fastify" {
     tokenScope?: import("./lib/auth.js").TokenScope;
     /** Set when the caller presented a personal `ens_` token. */
     tokenId?: string;
+    /** A `bridge` key made with task updates allowed (`ApiToken.canWrite`). */
+    tokenCanWrite?: boolean;
     /** Null means no optional modules. */
     modules: string | null;
   }

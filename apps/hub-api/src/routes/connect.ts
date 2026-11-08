@@ -33,7 +33,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
     const tokens = await prisma.apiToken.findMany({
       where: { userId: request.userId, revokedAt: null, scope: "bridge" },
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, prefix: true, lastUsedAt: true, createdAt: true },
+      select: { id: true, name: true, prefix: true, canWrite: true, lastUsedAt: true, createdAt: true },
     });
     const httpUp = await httpBridgeUp();
     const latest = tokens.reduce((max, row) => Math.max(max, row.lastUsedAt?.getTime() ?? 0), 0);
@@ -56,7 +56,9 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
   /** A leaked key must not mint another key. Session, no-login bypass, or the desktop shell. */
   app.post("/api/connect/token", async (request) => {
     requireBrowserSession(request);
-    const body = z.object({ name: z.string().trim().min(1).max(60).optional() }).parse(request.body ?? {});
+    const body = z
+      .object({ name: z.string().trim().min(1).max(60).optional(), canWrite: z.boolean().default(true) })
+      .parse(request.body ?? {});
     if (request.authVia === "bypass") {
       await prisma.user.upsert({
         where: { id: request.userId },
@@ -64,17 +66,17 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
         update: {},
       });
     }
-    const name = body.name ?? "Read-only connection";
+    const name = body.name ?? (body.canWrite ? "Editor connection" : "Read-only connection");
     const { token, hash, prefix } = newApiToken();
     const row = await prisma.apiToken.create({
-      data: { userId: request.userId, name, tokenHash: hash, prefix, scope: "bridge" },
+      data: { userId: request.userId, name, tokenHash: hash, prefix, scope: "bridge", canWrite: body.canWrite },
     });
     await appendLedger({
       userId: request.userId,
       actor: "me",
       action: "token.create",
-      payload: { name, prefix, scope: "bridge" },
+      payload: { name, prefix, scope: "bridge", canWrite: body.canWrite },
     });
-    return { id: row.id, token, prefix };
+    return { id: row.id, token, prefix, canWrite: row.canWrite };
   });
 }

@@ -10,7 +10,7 @@ import { repoFromRemote } from "../src/git.js";
 import { createHubClient } from "../src/hub.js";
 import { startHttpServer } from "../src/http.js";
 import { assertReadOnlyNames } from "../src/read-only.js";
-import { buildServer, TOOL_NAMES } from "../src/server.js";
+import { buildServer, buildServerForKey, TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/server.js";
 import { IDS, startMockHub } from "./mock-hub.js";
 
 function textOf(result: unknown): string {
@@ -66,6 +66,46 @@ describe("bridge config", () => {
   });
 });
 
+describe("task updates through the bridge", () => {
+  it("offers the write tools only to a key that may update tasks, and sends them as writes", async () => {
+    const readOnly = await startMockHub();
+    const writer = await startMockHub({ canWrite: true });
+    try {
+      const connect = async (server: Awaited<ReturnType<typeof buildServerForKey>>) => {
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverTransport);
+        const client = new Client({ name: "ensemble-bridge-test", version: "0.0.0" });
+        await client.connect(clientTransport);
+        return client;
+      };
+      const plain = await connect(await buildServerForKey({ hub: hubFor(readOnly.url) }));
+      const names = (await plain.listTools()).tools.map((tool) => tool.name);
+      for (const name of WRITE_TOOL_NAMES) assert.ok(!names.includes(name), name);
+
+      const client = await connect(await buildServerForKey({ hub: hubFor(writer.url) }));
+      const tools = (await client.listTools()).tools;
+      for (const name of WRITE_TOOL_NAMES) {
+        const tool = tools.find((row) => row.name === name);
+        assert.ok(tool, name);
+        assert.equal(tool.annotations?.readOnlyHint, false, name);
+        assert.equal(tool.annotations?.destructiveHint, false, name);
+      }
+      const updated = await client.callTool({ name: "ensemble_update_task", arguments: { task: `ensemble://task/${IDS.task}`, status: "in_progress", note: "Started on the retry helper." } });
+      assert.notEqual(updated.isError, true, textOf(updated));
+      const created = await client.callTool({ name: "ensemble_create_task", arguments: { title: "Document the retry helper", from: `ensemble://task/${IDS.task}` } });
+      assert.notEqual(created.isError, true, textOf(created));
+      assert.deepEqual(writer.writes.map((row) => [row.method, row.path]), [
+        ["PATCH", `/api/bridge/write/tasks/${encodeURIComponent(`ensemble://task/${IDS.task}`)}`],
+        ["POST", "/api/bridge/write/tasks"],
+      ]);
+      assert.deepEqual(writer.writes[0]!.body, { status: "in_progress", note: "Started on the retry helper." });
+    } finally {
+      await readOnly.close();
+      await writer.close();
+    }
+  });
+});
+
 describe("MCP client against a mocked hub-api", () => {
   it("lists every tool and calls each one", async () => {
     const mock = await startMockHub();
@@ -90,6 +130,7 @@ describe("MCP client against a mocked hub-api", () => {
 
     const calls: Record<(typeof TOOL_NAMES)[number], Record<string, unknown>> = {
       ensemble_brief: {},
+      ensemble_context: { item: `ensemble://task/${IDS.task}` },
       ensemble_search: { query: "retry" },
       ensemble_read: { kind: "task", id: IDS.task },
       ensemble_tasks: { status: "in_progress" },

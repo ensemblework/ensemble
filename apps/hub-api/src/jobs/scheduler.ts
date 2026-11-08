@@ -7,6 +7,7 @@
  * One minute tick. A slot runs once per user per local day, recorded in
  * sync_state so a restart inside the same minute does not run it twice.
  */
+import { runMeetingPreps } from "../cowork/prep.js";
 import type { FastifyInstance } from "fastify";
 import { refreshCalendarsIfDue } from "../calendar/sync.js";
 import { fetchAll } from "../connectors/sync.js";
@@ -91,6 +92,7 @@ async function tick(app: FastifyInstance): Promise<void> {
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));
+    if (settings.automations.meetingPrep.enabled) void runMeetingPreps(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "meeting prep failed"));
     void runDueRoutines(app, userId, settings.routines.enabled).catch((error: unknown) => app.log.error({ err: error }, "routines failed"));
     if (scheduledFetchDue(settings, now.time)) {
       if (await claimSchedule(app, userId, `fetch@${now.date}T${now.time}`)) {

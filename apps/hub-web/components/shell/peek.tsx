@@ -17,8 +17,8 @@ import {
 } from "@/lib/page-width";
 import { usePersistentState } from "@/lib/prefs";
 
-/** `page`: a standalone page, as on custom boards. */
-export type PeekKind = "task" | "deliverable" | "project" | "page";
+/** `page`: a standalone page, as on custom boards. `person`: someone in Context › People. */
+export type PeekKind = "task" | "deliverable" | "project" | "page" | "person";
 
 type PeekState = {
   peekId: string | null;
@@ -41,7 +41,7 @@ const PeekContext = createContext<PeekState>({
 export const usePeek = () => useContext(PeekContext);
 
 function asKind(value: string | null): PeekKind {
-  if (value === "deliverable" || value === "project" || value === "task" || value === "page") return value;
+  if (value === "deliverable" || value === "project" || value === "task" || value === "page" || value === "person") return value;
   return "task";
 }
 

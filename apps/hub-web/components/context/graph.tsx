@@ -1,14 +1,14 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Maximize2, Minimize2, Minus, Plus, RefreshCw, RotateCcw, Scan } from "lucide-react";
+import { Crosshair, ExternalLink, Maximize2, Minimize2, Minus, Plus, RefreshCw, RotateCcw, Scan, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type GraphEdge, type GraphNode } from "@/lib/api";
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { plural } from "@/lib/format";
-import { layoutGraph, partitionGraph } from "@/lib/graph-layout";
+import { LINK_KINDS, graphItemRef, layoutGraph, linkLabel, matchingNodeIds, partitionGraph, withinHops } from "@/lib/graph-layout";
 import {
   directNeighbourIds,
   eligibleLabelIds,
@@ -29,6 +29,8 @@ import { usePersistentState } from "@/lib/prefs";
 import { filesHref } from "@/lib/files/links";
 import { useFullscreen } from "@/lib/fullscreen";
 import { usePeek } from "../shell/peek";
+import { RelationGroups, useContextItem, useOpenCard } from "./item-relations";
+import type { ContextItemCard } from "@/lib/api";
 
 import { MobileGraph } from "./mobile-graph";
 import type { MockService } from "../desk/context-customize";
@@ -45,7 +47,8 @@ const KINDS: Array<{ kind: string; label: string }> = [
   { kind: "task", label: "Tasks" },
   { kind: "deliverable", label: "Deliverables" },
   { kind: "skill", label: "Skills" },
-  { kind: "note", label: "Notes" },
+  { kind: "note", label: "Meetings" },
+  { kind: "page", label: "Pages" },
   { kind: "diagram", label: "Diagrams" },
   { kind: "plot", label: "Plots" },
   { kind: "artifact", label: "Artifacts" },
@@ -107,27 +110,6 @@ function hubNeighbourhood(nodes: GraphNode[], edges: GraphEdge[], cap: number): 
     keep.add(node.id);
   }
   return { ids: keep, more: nodes.length - keep.size };
-}
-
-function neighbourhood(focus: string, edges: GraphEdge[], depth = 2): Set<string> {
-  const keep = new Set([focus]);
-  let frontier = [focus];
-  for (let level = 0; level < depth; level += 1) {
-    const next: string[] = [];
-    for (const edge of edges) {
-      for (const [from, to] of [
-        [edge.source, edge.target],
-        [edge.target, edge.source],
-      ] as const) {
-        if (frontier.includes(from) && !keep.has(to)) {
-          keep.add(to);
-          next.push(to);
-        }
-      }
-    }
-    frontier = next;
-  }
-  return keep;
 }
 
 function markerRadius(kind: string, compact: boolean): number {
@@ -224,6 +206,8 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
   const [pins, setPins] = usePersistentState<Record<string, Pin>>("ensemble.graph.pins", {});
   const [focusKind, setFocusKind] = useState<"project" | "people">("project");
   const [focus, setFocus] = useState("");
+  const [focusDepth, setFocusDepth] = useState<1 | 2>(2);
+  const [query, setQuery] = useState("");
   // Esc is handled below: it clears the highlight before it leaves full screen.
   const { active: fullscreen, enter: enterFullscreen, exit: exitFullscreen, layer: fullscreenLayer } = useFullscreen({ escape: false });
   const [tools, setTools] = useState(false);
@@ -279,17 +263,27 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
     const combined = [...base, ...contextNodes.filter(node => !base.some(row => row.id === node.id)), ...mockServices.map(row => ({ id: `mock:${row.id}`, kind: "mock", label: row.name, sub: row.detail }))];
     return [...new Map(combined.map(node => [node.id, node])).values()];
   }, [devGraph, apiNodes, contextTabs, contextNodes, mockServices]);
-  const edges = useMemo(() => (devGraph?.edges ?? apiEdges).filter(edge => nodes.some(node => node.id === edge.source) && nodes.some(node => node.id === edge.target)), [devGraph, apiEdges, nodes]);
+  const edges = useMemo(() => {
+    const known = new Set(nodes.map((node) => node.id));
+    return (devGraph?.edges ?? apiEdges).filter((edge) => known.has(edge.source) && known.has(edge.target));
+  }, [devGraph, apiEdges, nodes]);
   const scoped = useMemo(() => {
-    const kept = focus ? neighbourhood(focus, edges) : null;
+    const kept = focus ? withinHops(focus, edges, focusDepth) : null;
     return filterByNodeType(nodes, hidden).filter((node) => !kept || kept.has(node.id));
-  }, [nodes, edges, hidden, focus]);
+  }, [nodes, edges, hidden, focus, focusDepth]);
   const parts = useMemo(() => partitionGraph(scoped, edges), [scoped, edges]);
   const unlinked = focus || parts.linked.length === 0 ? 0 : parts.isolated.length;
   const linked = useMemo(() => (focus || parts.linked.length === 0 ? scoped : parts.linked), [focus, parts, scoped]);
   const compactPick = useMemo(() => (compact && !focus ? hubNeighbourhood(linked, edges, COMPACT_CAP) : null), [compact, focus, linked, edges]);
   const visible = useMemo(() => (compactPick ? linked.filter((node) => compactPick.ids.has(node.id)) : linked), [linked, compactPick]);
   labelById.current = new Map(visible.map((node) => [node.id, node.label]));
+  // Search lights the matching nodes and dims the rest, like a selection does.
+  const matches = useMemo(() => matchingNodeIds(visible, query), [visible, query]);
+  citedRef.current = matches.size ? matches : new Set(cited);
+  const matchesRef = useRef<Set<string> | null>(null);
+  matchesRef.current = matches.size ? matches : null;
+  const selectedNode = selected ? (visible.find((node) => node.id === selected) ?? null) : null;
+  const focusNode = focus ? (nodes.find((node) => node.id === focus) ?? null) : null;
   const moreNodes = compactPick?.more ?? 0;
   const positions = useMemo(() => layout(visible, edges, pins, compact), [visible, edges, pins, compact]);
   const idsKey = visible.map((node) => node.id).join("\0");
@@ -303,7 +297,8 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
     else if (node.kind.startsWith("context-")) router.push(`/context?tab=${node.kind.slice(8)}`);
     else if (node.kind === "task") peek.open(node.id, "task");
     else if (node.kind === "project") peek.open(node.id, "project");
-    else if (node.kind === "people") router.push(`/context?tab=people&search=${encodeURIComponent(node.label)}`);
+    else if (node.kind === "people") peek.open(node.id, "person");
+    else if ((node.kind === "note" || node.kind === "page") && node.path) router.push(node.path);
     else if (node.kind === "repo") router.push("/context?tab=repos");
     else if (node.kind === "skill") router.push(`/skills?skill=${node.id}`);
     else if (node.kind === "deliverable") peek.open(node.id, "deliverable");
@@ -340,7 +335,7 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
     if (drag.current?.mode === "node" && drag.current.id && live.current) pos.set(drag.current.id, live.current);
     const hov = hover.current;
     const focusId = selectedRef.current;
-    const related = focusId ? directNeighbourIds(focusId, edges) : hov ? directNeighbourIds(hov, edges) : null;
+    const related = focusId ? directNeighbourIds(focusId, edges) : hov ? directNeighbourIds(hov, edges) : matchesRef.current;
     const dragging = Boolean(drag.current);
     ctx.save();
     ctx.translate(v.x, v.y);
@@ -365,10 +360,12 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.quadraticCurveTo((ax + bx) / 2 + (-dy / len) * bend, (ay + by) / 2 + (dx / len) * bend, bx, by);
-      ctx.strokeStyle = lit ? accent : edgeColor;
-      ctx.globalAlpha = dim ? 0.12 : lit ? 1 : 0.42;
+      const style = LINK_KINDS[edge.kind];
+      const tint = style?.color ? styles.getPropertyValue(style.color).trim() : "";
+      ctx.strokeStyle = lit ? accent : tint || edgeColor;
+      ctx.globalAlpha = dim ? 0.12 : lit ? 1 : tint ? 0.6 : 0.42;
       ctx.lineWidth = lit ? 2.2 : 1.15;
-      ctx.setLineDash(edge.kind === "mention" ? [3, 4] : []);
+      ctx.setLineDash(style?.dash ?? []);
       ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -557,7 +554,7 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
 
   useEffect(() => {
     drawRef.current();
-  }, [positions, view, fullscreen, cited, selected, hidden]);
+  }, [positions, view, fullscreen, cited, selected, hidden, matches]);
 
   useEffect(() => {
     const observer = new MutationObserver(() => drawRef.current());
@@ -790,6 +787,39 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
       {compact ? null : (
       <>
       <div className="graph-toolbar relative mb-2 flex min-w-0 flex-wrap items-center gap-1.5 text-[13px]" aria-label="Graph legend">
+        <label className="flex h-7 min-w-0 shrink-0 items-center gap-1 rounded-full border border-line bg-panel px-2" data-graph-search>
+          <Search size={13} className="shrink-0 text-muted" aria-hidden />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                const first = visible.find((node) => matches.has(node.id));
+                if (first) setSelected(first.id);
+              } else if (event.key === "Escape" && query) {
+                event.stopPropagation();
+                setQuery("");
+              }
+            }}
+            placeholder="Find in graph"
+            aria-label="Find in graph"
+            className="w-28 min-w-0 bg-transparent text-[12.5px] outline-none"
+          />
+          {query ? <span className="shrink-0 text-[11.5px] text-muted" aria-live="polite">{matches.size}</span> : null}
+        </label>
+        {focusNode ? (
+          <span className="inline-flex h-7 min-w-0 shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 text-[12px]" data-graph-focus={focusNode.id}>
+            <Crosshair size={12} aria-hidden />
+            <span className="max-w-[140px] truncate" title={focusNode.label}>{focusNode.label}</span>
+            <select value={focusDepth} onChange={(event) => setFocusDepth(Number(event.target.value) as 1 | 2)} className="bg-transparent text-[12px] outline-none" aria-label="How far from the focus">
+              <option value={1}>1 hop</option>
+              <option value={2}>2 hops</option>
+            </select>
+            <button type="button" className="icon-btn h-5 w-5" aria-label="Show the whole graph" onClick={() => setFocus("")}>
+              <X size={12} />
+            </button>
+          </span>
+        ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-0.5">
           {kinds.map((column) => {
             const on = !hidden.includes(column.kind);
@@ -986,6 +1016,20 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
               {tip.text}
             </div>
           ) : null}
+          {!compact && selectedNode ? (
+            <GraphSidePanel
+              key={selectedNode.id}
+              node={selectedNode}
+              edges={edges}
+              labelOf={(id) => labelById.current.get(id) ?? null}
+              focused={focus === selectedNode.id}
+              onClose={() => setSelected(null)}
+              onOpen={() => open(selectedNode)}
+              onFocus={() => setFocus(selectedNode.id)}
+              onPick={(id) => setSelected(id)}
+              isVisible={(id) => labelById.current.has(id)}
+            />
+          ) : null}
           <ul className="sr-only">
             {visible.map((node) => (
               <li key={node.id}>
@@ -1008,8 +1052,87 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
       )}
       </Held>
       {compact ? null : (
-      <div className="mt-2 flex justify-end"><InfoTip label="Graph controls" text="Click to highlight; double-click to open. Drag to pan or move nodes. Scroll or pinch to zoom; Fit resets the view. Arrow keys pan, +/− zoom, Esc clears. Dashed links are mentions." /></div>
+      <div className="mt-2 flex justify-end"><InfoTip label="Graph controls" text="Click a node to see what links to it and walk from there; double-click to open it. Focus here shows only what is within one or two links. Find lights matching nodes. Drag to pan or move nodes. Scroll or pinch to zoom; Fit resets the view. Arrow keys pan, +/− zoom, Esc clears. Dashed links are mentions; dashed people-coloured links are work you wait on someone for." /></div>
       )}
     </div>
   </>);
+}
+
+/** The selected node and everything that links to it: walk the graph from here, focus on it, or open it. */
+function GraphSidePanel({
+  node,
+  edges,
+  labelOf,
+  focused,
+  onClose,
+  onOpen,
+  onFocus,
+  onPick,
+  isVisible,
+}: {
+  node: GraphNode;
+  edges: GraphEdge[];
+  labelOf: (id: string) => string | null;
+  focused: boolean;
+  onClose: () => void;
+  onOpen: () => void;
+  onFocus: () => void;
+  onPick: (id: string) => void;
+  isVisible: (id: string) => boolean;
+}) {
+  const ref = graphItemRef(node);
+  const item = useContextItem(ref);
+  const openCard = useOpenCard();
+  // A linked record on the graph is selected in place, so the panel walks the graph; anything else opens.
+  const pick = (card: ContextItemCard) => (isVisible(card.id) ? onPick(card.id) : openCard(card));
+  const links = useMemo(
+    () =>
+      edges.flatMap((edge) => {
+        const other = edge.source === node.id ? edge.target : edge.target === node.id ? edge.source : null;
+        return other ? [{ id: other, label: labelOf(other) ?? "", how: linkLabel(edge) }] : [];
+      }),
+    [edges, node.id, labelOf],
+  );
+  return (
+    <aside className="absolute bottom-2 right-2 top-2 z-10 flex w-[300px] max-w-[calc(100%-16px)] flex-col overflow-hidden rounded-xl border border-line bg-bg shadow-pop" aria-label={`${node.label}: what links to it`} data-graph-panel={node.id}>
+      <header className="flex items-start gap-2 border-b border-line px-3 py-2">
+        <span className="kind-dot mt-1.5 shrink-0" data-shape={shapeFor(node.kind)} style={{ ["--kind" as string]: `var(--kind-${node.kind})` }} />
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-[13.5px] font-semibold" title={node.label}>{node.label}</h3>
+          <p className="truncate text-[11.5px] text-muted">{item.data?.item.summary || node.sub}</p>
+        </div>
+        <button type="button" className="icon-btn h-6 w-6 shrink-0" aria-label="Close" onClick={onClose}>
+          <X size={13} />
+        </button>
+      </header>
+      <div className="flex gap-1.5 px-3 py-2">
+        <button type="button" className="btn h-7 gap-1 px-2 text-[12px]" onClick={onOpen}>
+          <ExternalLink size={12} aria-hidden /> Open
+        </button>
+        <button type="button" className="btn h-7 gap-1 px-2 text-[12px]" onClick={onFocus} disabled={focused} aria-pressed={focused}>
+          <Crosshair size={12} aria-hidden /> {focused ? "Focused" : "Focus here"}
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-3">
+        {ref && item.data ? (
+          <RelationGroups data={item.data} onOpen={pick} />
+        ) : ref && item.isPending ? (
+          <p className="px-2 text-[12.5px] text-muted">Loading what links here…</p>
+        ) : links.length ? (
+          <ul className="linked-rows">
+            {links.map((link, index) => (
+              <li key={`${link.id}:${index}`} className="linked-row">
+                <button type="button" className="linked-main !gap-2 !py-1.5 !text-[13px]" onClick={() => onPick(link.id)}>
+                  <span className="linked-title min-w-0 flex-1 truncate">{link.label || "Untitled"}</span>
+                  <span className="max-w-[45%] shrink-0 truncate text-[12px] text-muted">{link.how}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="linked-empty">Nothing links to this yet.</p>
+        )}
+      </div>
+    </aside>
+  );
 }

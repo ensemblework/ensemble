@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { assertLoopbackHost, loadBridgeConfig } from "./config.js";
-import { buildServer, type BridgeDeps } from "./server.js";
+import { buildServer, keyCanWrite, type BridgeDeps } from "./server.js";
+import { createHubClient } from "./hub.js";
 
 export interface HttpBridge {
   url: string;
@@ -21,9 +22,12 @@ function authorized(req: IncomingMessage, token: string | null): boolean {
 export async function startHttpServer(deps: BridgeDeps = {}, env = process.env): Promise<HttpBridge> {
   const config = loadBridgeConfig(env);
   assertLoopbackHost(config.httpHost);
+  const hub = deps.hub ?? createHubClient(config);
+  // Asked once: a key's task-update permission is set when it is made.
+  const ready = { ...deps, hub, canWrite: deps.canWrite ?? (await keyCanWrite(hub)) };
   const server = createServer(async (req, res) => {
     try {
-      await handle(req, res, config.httpToken, deps);
+      await handle(req, res, config.httpToken, ready);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`context-bridge http error: ${message}`);

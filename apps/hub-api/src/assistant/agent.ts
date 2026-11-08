@@ -69,7 +69,7 @@ import {
   type ModelMessage,
 } from "../lib/model-turn.js";
 import { zonedParts } from "../lib/clock.js";
-import { safePublicError, truncateText } from "../lib/text.js";
+import { headAndTail, safePublicError, truncateText } from "../lib/text.js";
 import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
@@ -983,8 +983,8 @@ function trim(data: unknown): Record<string, unknown> {
   if (fitted) return fitted;
   return {
     truncated: true,
-    note: "The full result was too long to return. This is the first part of it, as text. Narrow your query and call again if you need the rest.",
-    preview: truncateText(json, MAX_TOOL_RESULT_CHARS),
+    note: "The full result was too long to return. This is its start and its end, as text, with the middle cut out. Narrow your query and call again if you need the rest.",
+    preview: headAndTail(json, MAX_TOOL_RESULT_CHARS),
   };
 }
 

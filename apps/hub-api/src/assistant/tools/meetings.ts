@@ -7,7 +7,10 @@
 import { z } from "zod";
 import type { MeetingNote, MeetingSession, Prisma } from "@prisma/client";
 import { decisionLines, participantNames } from "../../cowork/meetings.js";
-import { endMeetingSession, matchAttendees, meetingContent, meetingNotesFields, notesDocument, saveMeetingNotes } from "../../cowork/service.js";
+import { endMeetingSession, matchAttendees, meetingContent, meetingNotesFields, notesDocument, saveMeetingNotes, setMeetingProject, suggestFromSession } from "../../cowork/service.js";
+import { kickMeetingAi, queueMeetingAi } from "../../connectors/meetings/ai.js";
+import { seriesKeyOf } from "../../cowork/series.js";
+import { seriesProject } from "../../connectors/meetings/links.js";
 import { importRequestedMeetings } from "../../connectors/meetings/requested-import.js";
 import { MEETING_VENDORS, isMeetingVendor, VENDOR_LABEL } from "../../connectors/meetings/types.js";
 import { zonedDateTimeToUtc } from "../../lib/clock.js";
@@ -95,8 +98,8 @@ function startOf(timeZone: string, input: { date?: string; time?: string }, fall
 
 /** Session and mirror-note snapshots as one undo step. */
 function pair(before: { session: MeetingSession; note: MeetingNote | null }, after: { session: MeetingSession; note: MeetingNote | null }): UndoOp {
-  const sessionFields = (row: MeetingSession) => ({ title: row.title, notes: row.notes, content: row.content, recap: row.recap, artifactId: row.artifactId, personIds: row.personIds, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
-  const noteFields = (row: MeetingNote) => ({ title: row.title, answer: row.answer, artifactId: row.artifactId, personIds: row.personIds, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
+  const sessionFields = (row: MeetingSession) => ({ title: row.title, notes: row.notes, content: row.content, recap: row.recap, artifactId: row.artifactId, personIds: row.personIds, projectId: row.projectId, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
+  const noteFields = (row: MeetingNote) => ({ title: row.title, answer: row.answer, artifactId: row.artifactId, personIds: row.personIds, projectId: row.projectId, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
   const ops: UndoOp[] = [{ op: "update", model: "meetingSession", id: after.session.id, before: sessionFields(before.session), after: sessionFields(after.session) }];
   if (before.note && after.note) ops.push({ op: "update", model: "meetingNote", id: after.note.id, before: noteFields(before.note), after: noteFields(after.note) });
   return { op: "batch", ops };
@@ -245,6 +248,31 @@ export const meetingTools = [
     },
   }),
   defineTool({
+    name: "hub_suggest_meeting_tasks",
+    area: "projects",
+    description:
+      "Read one meeting (id from hub_list_meeting_notes) with a model now and propose the work it asked for as tasks, each with the exact words it was asked in, plus a summary and decisions. Runs in the background; the proposals land on Today › Proposed and on the meeting for the person to accept. Use when the person asks for tasks from a meeting, even with Settings › Automations › Suggest tasks from meetings off.",
+    input: z.object({ meetingId: z.string().uuid() }),
+    isWrite: true,
+    risk: "low",
+    undoable: false,
+    outsideTransaction: true,
+    async preview(ctx, input) {
+      const found = await findMeeting(ctx.prisma, ctx.userId, input.meetingId);
+      return `Read “${found.kind === "session" ? found.session.title : found.note.title}” with a model and propose its tasks`;
+    },
+    async run(ctx, input) {
+      const found = await findMeeting(ctx.prisma, ctx.userId, input.meetingId);
+      const { aiStatus, meetingNoteId } = found.kind === "session"
+        ? await suggestFromSession(ctx.prisma, ctx.userId, found.session.id)
+        : { aiStatus: await queueMeetingAi(ctx.prisma, ctx.userId, found.note.id, { force: true }), meetingNoteId: found.note.id };
+      if (!aiStatus) throw fail(404, "No meeting note with that id. Call hub_list_meeting_notes and use an id it returns.");
+      kickMeetingAi();
+      const title = found.kind === "session" ? found.session.title : found.note.title;
+      return toolOk(`Reading “${title}” for tasks. Proposed tasks appear on Today and on the meeting in a minute.`, { meetingId: input.meetingId, aiStatus }, { href: `/meetings?note=${meetingNoteId}`, invalidate: ["meetings"] });
+    },
+  }),
+  defineTool({
     name: "hub_create_meeting_note",
     area: "projects",
     description:
@@ -256,6 +284,7 @@ export const meetingTools = [
       notes: z.string().max(MAX_NOTES).default("").describe("The notes in Markdown."),
       attendeeIds: z.array(z.string().uuid()).max(40).optional().describe("Person ids from hub_list_people."),
       eventId: z.string().uuid().optional().describe("A calendar event id from hub_list_events."),
+      projectId: z.string().uuid().optional().describe("The project the meeting was about, from hub_list_projects. Left out, an earlier meeting of the same series lends its project."),
     }),
     isWrite: true,
     risk: "low",
@@ -276,16 +305,23 @@ export const meetingTools = [
         const event = input.eventId ? await ownedEvent(tx, ctx.userId, input.eventId) : null;
         if (!input.title && !event) throw fail(400, "Give the note a title, or pass the calendar eventId.");
         const personIds = input.attendeeIds?.length ? (await ownedPeople(tx, ctx.userId, input.attendeeIds)).map((row) => row.id) : event ? await eventPeople(tx, ctx.userId, event.participants) : [];
+        if (input.projectId && !(await tx.project.findFirst({ where: { id: input.projectId, userId: ctx.userId, deletedAt: null }, select: { id: true } }))) throw fail(404, "That project was not found. Call hub_list_projects for its id.");
+        const title = (input.title ?? event?.title ?? "Meeting notes").slice(0, 200);
+        const startedAt = startOf(ctx.settings.timezone, input, event?.ts ?? new Date());
+        const seriesKey = (await seriesKeyOf(tx, ctx.userId, { artifactId: event?.id ?? null, title })) ?? "";
+        const projectId = input.projectId ?? (await seriesProject(tx, ctx.userId, { seriesKey, before: startedAt, personIds }));
         const created = await tx.meetingSession.create({
           data: {
             userId: ctx.userId,
-            title: (input.title ?? event?.title ?? "Meeting notes").slice(0, 200),
+            title,
             ...meetingNotesFields({ notes: input.notes }),
             artifactId: event?.id ?? null,
             personIds,
+            projectId: projectId ?? null,
+            seriesKey,
             status: "live",
             attachState: "none",
-            startedAt: startOf(ctx.settings.timezone, input, event?.ts ?? new Date()),
+            startedAt,
           },
         });
         await endMeetingSession(tx, ctx.userId, created.id);
@@ -317,12 +353,13 @@ export const meetingTools = [
       notes: z.string().min(1).max(MAX_NOTES).optional().describe("Markdown to add or the new notes."),
       title: z.string().trim().min(1).max(200).optional(),
       eventId: z.string().uuid().optional(),
+      projectId: z.string().uuid().nullable().optional().describe("Link the meeting to a project from hub_list_projects, or null to unlink. Its note and the open tasks made from it follow."),
     }),
     isWrite: true,
     risk: "medium",
     undoable: true,
     async preview(ctx, input) {
-      if (!input.notes && !input.title && !input.eventId) throw fail(400, "Send notes, title or eventId to change.");
+      if (!input.notes && !input.title && !input.eventId && input.projectId === undefined) throw fail(400, "Send notes, title, eventId or projectId to change.");
       const session = await writable(ctx.prisma, ctx.userId, input.meetingId);
       if (!titlesMatch(input.matchTitle, session.title)) throw fail(409, `That note is “${session.title}”, not “${input.matchTitle}”. Call hub_list_meeting_notes and use the id it returns.`);
       const event = input.eventId ? await ownedEvent(ctx.prisma, ctx.userId, input.eventId) : null;
@@ -330,10 +367,15 @@ export const meetingTools = [
       if (input.notes) parts.push(input.mode === "replace" ? "rewrite the notes" : `add: ${input.notes.trim().split("\n")[0]!.slice(0, 80)}`);
       if (input.title && input.title !== session.title) parts.push(`rename to “${input.title}”`);
       if (event) parts.push(`attach the event “${event.title}”`);
+      if (input.projectId !== undefined) {
+        const project = input.projectId ? await ctx.prisma.project.findFirst({ where: { id: input.projectId, userId: ctx.userId, deletedAt: null }, select: { name: true } }) : null;
+        if (input.projectId && !project) throw fail(404, "That project was not found. Call hub_list_projects for its id.");
+        parts.push(project ? `link to the project “${project.name}”` : "unlink its project");
+      }
       return `Meeting notes “${session.title}”: ${parts.join("; ")}`;
     },
     async run(ctx, input) {
-      if (!input.notes && !input.title && !input.eventId) throw fail(400, "Send notes, title or eventId to change.");
+      if (!input.notes && !input.title && !input.eventId && input.projectId === undefined) throw fail(400, "Send notes, title, eventId or projectId to change.");
       const result = await inTransaction(ctx, async (tx) => {
         const current = await writable(tx, ctx.userId, input.meetingId);
         if (!titlesMatch(input.matchTitle, current.title)) throw fail(409, `That note is “${current.title}”, not “${input.matchTitle}”. Call hub_list_meeting_notes and use the id it returns.`);
@@ -350,7 +392,8 @@ export const meetingTools = [
           : input.mode === "replace"
             ? { notes: input.notes }
             : { content: { type: "doc", content: [...existing, ...notesDocument(input.notes).content] } };
-        await saveMeetingNotes(tx, ctx.userId, current.id, { ...change, title: input.title });
+        if (input.notes !== undefined || input.title || input.eventId) await saveMeetingNotes(tx, ctx.userId, current.id, { ...change, title: input.title });
+        if (input.projectId !== undefined) await setMeetingProject(tx, ctx.userId, current.id, input.projectId);
         const after = await withMirror(tx, await tx.meetingSession.findUniqueOrThrow({ where: { id: current.id } }));
         const op = pair(before, after);
         await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Updated meeting notes “${after.session.title}”`, kind: "update", actor: "agent", subject: "meeting", href: sessionHref(current.id), inverse: op, forward: op });

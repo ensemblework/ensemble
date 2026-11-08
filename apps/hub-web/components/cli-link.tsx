@@ -35,6 +35,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
   const [emailUnverified, setEmailUnverified] = useState(false);
   const [done, setDone] = useState<{ decision: "approved" | "denied"; scopes: CliAuthScope[] } | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [canWrite, setCanWrite] = useState(true);
 
   const canApproveMcpOnly = useMemo(() => Boolean(request?.scopes.includes("mcp") && request.scopes.includes("runner")), [request]);
 
@@ -69,7 +70,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
     setError(null);
     setEmailUnverified(false);
     try {
-      const result = await api.approveCliAuth({ userCode: loadedCode, scopes, decision });
+      const result = await api.approveCliAuth({ userCode: loadedCode, scopes, decision, ...(decision === "approve" ? { canWrite } : {}) });
       setDone({ decision: decision === "approve" ? "approved" : "denied", scopes: result.scopes ?? scopes });
       setRequest(null);
     } catch (caught) {
@@ -206,6 +207,10 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                     </li>
                   ))}
                 </ul>
+                <label className="mt-3 flex items-start gap-2 text-[13.5px] leading-5">
+                  <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
+                  <span>Let editors and agents update your tasks (status, progress notes, new proposed tasks)</span>
+                </label>
               </div>
 
               <div className="rounded-xl border border-warn/40 bg-bg/70 px-4 py-3 text-[13.5px] leading-6 text-muted">

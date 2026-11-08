@@ -15,6 +15,8 @@ import type { AppConnection } from "../assistant/connections.js";
 import { playbooksFor } from "../assistant/skills/index.js";
 import { assistantInstructions, turnContext } from "../assistant/state.js";
 import { TRIAGE_PROMPT } from "../connectors/triage.js";
+import { MEETING_AI_PROMPT } from "../connectors/meetings/ai.js";
+import { MEETING_PREP_PROMPT } from "../cowork/prep.js";
 import { SKILL_MINING_PROMPT } from "../jobs/skill-mining.js";
 import { howYouRun } from "../subscriptions/turn.js";
 import { chatPrompt, ownAgentPrompt, workingNotes } from "../workspace/agent.js";
@@ -109,6 +111,20 @@ export function promptCatalog(): PromptEntry[] {
       when: "When an item you chose is passed to triage. Contact sync does not run it.",
       purpose: "Decide whether an email, chat or pull request needs a todo, and who should own it.",
       body: TRIAGE_PROMPT.split("<<ITEMS>>")[0]?.trim() ?? "",
+    },
+    {
+      id: "meeting.tasks",
+      title: "Meeting: summary and tasks",
+      when: "When a meeting's transcript, a meeting app's notes or notes you typed arrive (Settings › Assistant › Automations › Suggest tasks from meetings), or when you press Suggest tasks on a meeting.",
+      purpose: "Write the meeting's summary, decisions and open questions, and the work it asked for, each with the exact words it was asked in. Only items whose words are found in the meeting become proposed tasks.",
+      body: MEETING_AI_PROMPT,
+    },
+    {
+      id: "meeting.prep",
+      title: "Meeting: prep for the next one",
+      when: "Before a meeting of a series that has notes from last time (Settings › Assistant › Automations › Prepare for recurring meetings), or when you press Prepare on a meeting.",
+      purpose: "A short brief: what happened last time, your open work from it, what others owe, and a suggested agenda.",
+      body: MEETING_PREP_PROMPT,
     },
     {
       id: "skill.miner",

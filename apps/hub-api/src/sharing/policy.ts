@@ -123,6 +123,8 @@ const RULES: Rule[] = [
   ["*", "/api/documents*", "shared"],
   // Repositories are connected with the owner's GitHub key: members read them, only the owner links them.
   ["GET", "/api/repos*", "shared"],
+  // Asking a model to read a meeting spends the owner's model credits: the owner's alone.
+  ["POST", "/api/meetings/sessions/:id/suggest", "owner"],
   ["*", "/api/meetings/sessions*", "shared"],
   ["GET", "/api/context/*", "shared"],
   ["PUT", "/api/context/order", "shared"],

@@ -197,3 +197,83 @@ export function layoutGraph(
   for (const point of relaxed) mapped.set(point.id, { x: point.x, y: point.y });
   return translateFree(mapped, pins);
 }
+
+/** Ids within `depth` links of `focus`, in either direction. Linear in nodes and edges. */
+export function withinHops(focus: string, edges: readonly GraphLink[], depth: number): Set<string> {
+  const near = new Map<string, string[]>();
+  const add = (from: string, to: string) => {
+    const list = near.get(from);
+    if (list) list.push(to);
+    else near.set(from, [to]);
+  };
+  for (const edge of edges) {
+    add(edge.source, edge.target);
+    add(edge.target, edge.source);
+  }
+  const keep = new Set([focus]);
+  let frontier = [focus];
+  for (let hop = 0; hop < depth && frontier.length; hop += 1) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const other of near.get(id) ?? []) {
+        if (keep.has(other)) continue;
+        keep.add(other);
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return keep;
+}
+
+/** Edges whose two ends are both in `ids`. */
+export function edgesAmong<T extends GraphLink>(edges: readonly T[], ids: ReadonlySet<string>): T[] {
+  return edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+}
+
+/** Nodes whose name or subtitle holds every word of `query`, in any case. A blank query matches none. */
+export function matchingNodeIds(nodes: readonly { id: string; label: string; sub?: string }[], query: string): Set<string> {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return new Set();
+  const hits = new Set<string>();
+  for (const node of nodes) {
+    const text = `${node.label} ${node.sub ?? ""}`.toLowerCase();
+    if (words.every((word) => text.includes(word))) hits.add(node.id);
+  }
+  return hits;
+}
+
+const ITEM_KINDS: Record<string, string> = { people: "person", project: "project", repo: "repo", task: "task", deliverable: "deliverable", note: "meeting", page: "page" };
+
+/** The handle `/api/context/item` opens for a graph node, or null for kinds it does not describe. */
+export function graphItemRef(node: { id: string; kind: string }): string | null {
+  const kind = ITEM_KINDS[node.kind];
+  return kind ? `ensemble://${kind}/${node.id}` : null;
+}
+
+export type LinkStyle = { label: string; color?: string; dash?: number[] };
+
+/** How each link kind reads and draws. `color` is a CSS variable; links without one use `--edge`. */
+export const LINK_KINDS: Record<string, LinkStyle> = {
+  member: { label: "On the project" },
+  repo: { label: "Repository" },
+  project: { label: "In the project" },
+  deliverable: { label: "Deliverable" },
+  person: { label: "With them" },
+  waiting: { label: "Waiting on them", color: "--kind-people", dash: [6, 4] },
+  skill: { label: "Skill" },
+  depends: { label: "Depends on" },
+  mention: { label: "Mentioned on its page", dash: [3, 4] },
+  page: { label: "Mentioned on a page", color: "--kind-page", dash: [3, 4] },
+  note: { label: "Meeting" },
+  from_meeting: { label: "From a meeting", color: "--kind-note" },
+  diagram: { label: "Diagram" },
+  artifact: { label: "Saved item" },
+  attendee: { label: "Attended" },
+};
+
+/** What a link says, with a person's role on a project when there is one. */
+export function linkLabel(edge: { kind: string; label?: string }): string {
+  const base = LINK_KINDS[edge.kind]?.label ?? edge.kind.replaceAll("_", " ");
+  return edge.label ? `${base} · ${edge.label}` : base;
+}

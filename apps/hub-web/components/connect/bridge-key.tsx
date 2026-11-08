@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { api, type ConnectBridge } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { clearBridgeToken, readBridgeToken, saveBridgeToken, useBridgeToken } from "@/lib/connect/session-token";
@@ -18,8 +19,9 @@ export function BridgeKey({
   const client = useQueryClient();
   const toast = useToast();
   const fresh = useBridgeToken();
+  const [canWrite, setCanWrite] = useState(true);
   const create = useMutation({
-    mutationFn: () => api.createBridgeToken(`Read-only · ${new Date().toLocaleDateString()}`),
+    mutationFn: () => api.createBridgeToken(`${canWrite ? "Editor" : "Read-only"} · ${new Date().toLocaleDateString()}`, canWrite),
     onSuccess: (result) => {
       saveBridgeToken(result.token);
       toast("Key created. Copy it now, Ensemble will not show it again.", { tone: "ok" });
@@ -44,15 +46,23 @@ export function BridgeKey({
       <p className="text-[13.5px] leading-5 text-muted">
         {compact
           ? "Create the key here if you have not already. It is filled into the later steps."
-          : "One key for every app on this page. It starts with ens_ and can only read. Editor hooks in Settings use a different key that is allowed to ask you questions."}
+          : "One key for every app on this page. It starts with ens_ and reads your tasks, projects, people and meetings; with task updates allowed it can also move a task's status, add a progress note to its page and propose new tasks, nothing else. Editor hooks in Settings use a different key that is allowed to ask you questions."}
       </p>
       <div className="mt-3">
         {fresh ? (
           <CopyBlock text={fresh} label="Your key, copy it now" />
         ) : (
-          <button type="button" className="btn-primary" onClick={() => create.mutate()} disabled={create.isPending}>
-            <KeyRound size={14} /> {create.isPending ? "Creating…" : "Create a read-only key"}
-          </button>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-start gap-2 text-[13px] leading-5">
+              <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
+              <span>Let editors and agents update your tasks (status, progress notes, new proposed tasks)</span>
+            </label>
+            <div>
+              <button type="button" className="btn-primary" onClick={() => create.mutate()} disabled={create.isPending}>
+                <KeyRound size={14} /> {create.isPending ? "Creating…" : canWrite ? "Create a key" : "Create a read-only key"}
+              </button>
+            </div>
+          </div>
         )}
       </div>
       {fresh ? <p className="mt-2 text-[12.5px] text-muted">Kept in this browser tab so the guides can fill it in. Closing the tab hides it.</p> : null}
@@ -62,6 +72,7 @@ export function BridgeKey({
             <li key={token.id} className="flex items-center justify-between gap-3 text-[12.5px]">
               <span className="min-w-0 truncate">
                 <span className="font-mono">{token.prefix}…</span> {token.name}{" "}
+                <span className="text-faint">· {token.canWrite ? "reads, updates tasks" : "read only"}</span>{" "}
                 <span className="text-faint">· {token.lastUsedAt ? `used ${relative(token.lastUsedAt)}` : "not used yet"}</span>
               </span>
               <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => revoke.mutate(token.id)}>

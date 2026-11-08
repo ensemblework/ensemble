@@ -9,7 +9,7 @@ import { DiagramCard } from "@/components/diagrams/diagram-card";
 import { LinkedSources } from "@/components/project/linked-sources";
 import { AttachedItems } from "@/components/app-items/attached-items";
 import { useModuleOn } from "@/lib/use-module";
-import { MenuItem, Popover, Spinner, Tag } from "@/components/ui";
+import { InlineEdit, MenuItem, Popover, Spinner, Tag } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { useToast } from "@/components/toast";
@@ -77,21 +77,35 @@ export function ProjectPage({ id, variant = "page" }: { id: string; variant?: "p
           <Popover
             trigger={(_open, toggle) => (
               <button type="button" onClick={toggle} className="row-tile -mx-1.5 flex min-w-0 flex-wrap gap-1.5 rounded px-1.5 py-0.5">
-                {data.people.length ? data.people.map((row) => <Tag key={row.person.id} tone="pink">{row.person.name}</Tag>) : <span className="text-faint">Add people</span>}
+                {data.people.length ? data.people.map((row) => <Tag key={row.person.id} tone="pink">{row.person.name}{row.role ? <span className="opacity-70"> · {row.role}</span> : null}</Tag>) : <span className="text-faint">Add people</span>}
               </button>
             )}
           >
-            {() =>
-              (people.data?.people ?? []).length ? (people.data?.people ?? []).map((person) => {
-                const on = personIds.includes(person.id);
-                return (
-                  <MenuItem key={person.id} active={on} hint={on ? "✓" : undefined}
-                    onClick={() => save.mutate({ personIds: on ? personIds.filter((value) => value !== person.id) : [...personIds, person.id] })}>
-                    {person.name}
-                  </MenuItem>
-                );
-              }) : <p className="px-2 py-2 text-[12.5px] text-muted">No people yet. Add them in Context › People.</p>
-            }
+            {() => (
+              <>
+                {(people.data?.people ?? []).length ? (people.data?.people ?? []).map((person) => {
+                  const on = personIds.includes(person.id);
+                  return (
+                    <MenuItem key={person.id} active={on} hint={on ? "✓" : undefined}
+                      onClick={() => save.mutate({ personIds: on ? personIds.filter((value) => value !== person.id) : [...personIds, person.id] })}>
+                      {person.name}
+                    </MenuItem>
+                  );
+                }) : <p className="px-2 py-2 text-[12.5px] text-muted">No people yet. Add them in Context › People.</p>}
+                {data.people.length ? (
+                  <div className="mt-1 border-t border-line px-2 pb-1 pt-2" onClick={(event) => event.stopPropagation()}>
+                    <p className="mb-1 text-[11.5px] font-medium text-muted">Role on this project</p>
+                    {data.people.map((row) => (
+                      <div key={row.person.id} className="flex items-center gap-2 py-0.5 text-[12.5px]">
+                        <span className="w-28 shrink-0 truncate" title={row.person.name}>{row.person.name}</span>
+                        <InlineEdit className="min-w-0 flex-1 truncate" value={row.role ?? ""} placeholder="Lead, reviewer, sponsor…"
+                          onSave={(role) => save.mutate({ people: data.people.map((member) => ({ id: member.person.id, role: member.person.id === row.person.id ? role.trim() || null : (member.role ?? null) })) })} />
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
           </Popover>
         </div>
         <div className="project-prop">

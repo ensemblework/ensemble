@@ -11,14 +11,16 @@ export interface TaskRef {
 
 export type BriefResolution =
   | { kind: "untracked_repo"; repoName: string; message: string }
-  | { kind: "ambiguous"; branch: string; candidates: TaskRef[]; message: string }
+  | { kind: "ambiguous"; branch: string | null; candidates: TaskRef[]; message: string }
   | {
       kind: "task";
       task: TaskRef;
-      via: "branch" | "recent";
+      /** `task`: asked for by handle, link, id or title. `branch_id`: the branch name holds the start of its id. */
+      via: "branch" | "recent" | "task" | "branch_id";
       otherOpen: TaskRef[];
       message: string;
     }
+  | { kind: "task_not_found"; requested: string; message: string }
   | {
       kind: "branch_unmatched";
       branch: string;
@@ -27,6 +29,12 @@ export type BriefResolution =
     }
   | { kind: "repo_only"; message: string }
   | { kind: "no_anchor"; message: string };
+
+/** Up to three 8-character hex segments of a branch name (`fix/3f2a9c1d-latency` → `3f2a9c1d`): the start of a task id. */
+export function branchIdPrefixes(branch: string): string[] {
+  const segments = branch.toLowerCase().split(/[^0-9a-z]+/).filter((segment) => /^[0-9a-f]{8}$/.test(segment));
+  return [...new Set(segments)].slice(0, 3);
+}
 
 export function distinctById(tasks: TaskRef[]): TaskRef[] {
   const map = new Map<string, TaskRef>();

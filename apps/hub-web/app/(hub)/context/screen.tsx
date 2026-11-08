@@ -14,6 +14,7 @@ import { api, type BoardPayload } from "@/lib/api";
 import type { LayoutPayload } from "@/lib/server-layout";
 
 const noSubscribe = () => () => undefined;
+const PERSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** False on the server and while hydrating, true after. */
 function useHydrated(): boolean {
@@ -36,6 +37,16 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   useEffect(() => {
     if (moved) router.replace(filesHref("apps"));
   }, [moved, router]);
+  // A link to someone (`?tab=people&person=<id>`, the context graph's path for a person) opens them in the side peek.
+  const person = params.get("person");
+  useEffect(() => {
+    if (!person || !PERSON_ID.test(person)) return;
+    const next = new URLSearchParams(params.toString());
+    next.delete("person");
+    next.set("peek", person);
+    next.set("kind", "person");
+    router.replace(`/context?${next.toString()}`, { scroll: false });
+  }, [person, params, router]);
   if (moved) return null;
   if (view === "widgets") return <WidgetLayout initialLayout={initialLayout} />;
   // board, grid, list, and graph force that view. desk opens the old surface and keeps the saved view.

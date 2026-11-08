@@ -10,10 +10,12 @@ import { Dialog, Empty, Field, InlineEdit, Spinner } from "../ui";
 import { AddPeopleFromApps } from "../app-items/people-from-apps";
 import { LoadError } from "../load-error";
 import { emailProblem, findSamePerson } from "./person-match";
+import { usePeek } from "../shell/peek";
 
 function PersonCard({ person, focused = false }: { person: PersonRecord; focused?: boolean }) {
   const client = useQueryClient();
   const toast = useToast();
+  const peek = usePeek();
   const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focused) card.current?.scrollIntoView?.({ block: "nearest" });
@@ -63,6 +65,12 @@ function PersonCard({ person, focused = false }: { person: PersonRecord; focused
           </>
         )}
       </div>
+      {person.derived ? null : (
+        <div className="mt-1 flex min-w-0 items-center gap-1 text-[12.5px] text-muted" title="How they relate to you. Agents read this when they work on tasks with them.">
+          <span className="shrink-0 text-faint">To you:</span>
+          <InlineEdit className="min-w-0 truncate" value={person.relationship ?? ""} placeholder="my manager, a client…" onSave={(relationship) => save.mutate({ relationship: relationship || null })} />
+        </div>
+      )}
       <div className="mt-2 truncate text-[12px] text-muted">
         {person.openTasks ? `${person.openTasks} open` : "No open tasks"}
         {person.recentTitle ? ` · ${person.recentTitle}` : ""}
@@ -70,8 +78,9 @@ function PersonCard({ person, focused = false }: { person: PersonRecord; focused
       <div className="mt-3 flex flex-wrap gap-1.5">
         {person.projects.length ? (
           person.projects.map((project) => (
-            <span key={project.id} className="chip" style={{ ["--chip" as string]: "var(--kind-project)" }}>
+            <span key={project.id} className="chip" style={{ ["--chip" as string]: "var(--kind-project)" }} title={project.role ? `${project.role} on ${project.name}` : project.name}>
               {project.name}
+              {project.role ? <span className="text-faint"> · {project.role}</span> : null}
             </span>
           ))
         ) : (
@@ -81,6 +90,11 @@ function PersonCard({ person, focused = false }: { person: PersonRecord; focused
       <div className="mt-3 flex items-center gap-1 text-[11.5px] text-faint">
         <Clock3 size={12} />
         {person.lastInteraction ? shortDate(person.lastInteraction) : "No interaction yet"}
+        {person.derived ? null : (
+          <button type="button" className="linked-action ml-auto" onClick={() => peek.open(person.id, "person")} aria-label={`Open ${person.name}: projects, tasks and meetings`}>
+            Open
+          </button>
+        )}
       </div>
     </div>
   );

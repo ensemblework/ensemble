@@ -1019,7 +1019,7 @@ test("a node makes a lasting node and a crew when its owner asks; its thinking l
   assert.equal(patched.statusCode, 200, patched.body);
   assert.equal(json(patched).node.effort, "high");
   assert.equal((await mira.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { effort: "max" } })).statusCode, 400);
-  assert.ok(seen.length >= 2 && seen.every((turn) => turn.effort === "low"), "a node thinks briefly by default");
+  assert.ok(seen.length >= 2 && seen.every((turn) => turn.effort === "medium"), "a node thinks at medium by default (at low, small models announced work instead of doing it)");
   seen.length = 0;
   await say(mira, room.id, "hello");
   assert.deepEqual(seen.map((turn) => turn.effort), ["high"], "until its owner turns it up");

@@ -6,9 +6,14 @@ import { fileFormat, hasModule, PageDocument } from "@ensemble/shared-types";
 import { describeFile, filesOnPage, filesOnTask, type AttachedFile } from "../files/attached.js";
 import { pageAgentText } from "../pages/agent-context.js";
 import { pageText as pageDocumentText } from "../pages/markdown.js";
-import { env } from "../config.js";
+import { loadSettings } from "../lib/settings.js";
+import { meetingsInSeries, seriesKeyFor } from "../cowork/series.js";
+import { itemNeighbors, relationsOf, type ItemCard, type Neighborhood } from "../context/graph/neighbors.js";
+import { workContext } from "../context/graph/packet.js";
+import { parseItemRef, refOf, type GraphKind, type ItemRef } from "../context/graph/refs.js";
+import { rankedSearch, type SearchHit, type SearchKind } from "../context/graph/search.js";
 import { DATA_GAPS, REFERENCE_NOTE, UNTRUSTED_NOTE } from "./gaps.js";
-import { distinctById, OPEN_STATUSES, resolveBriefAnchor, type TaskRef } from "./resolve.js";
+import { branchIdPrefixes, distinctById, OPEN_STATUSES, resolveBriefAnchor, type BriefResolution, type TaskRef } from "./resolve.js";
 import {
   excerpt,
   hubUrl,
@@ -52,6 +57,12 @@ const TASK_PUBLIC = {
 
 function iso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
+}
+
+/** Notes pasted or written live in Ensemble are the person's; a connector's notes and transcripts are not. */
+function meetingNoteTrust(source: string | null | undefined): { trust: "untrusted" | "hub"; trustLabel: string } {
+  if (source === "paste" || source === "live") return { trust: "hub", trustLabel: "A meeting note written in your Hub. Quoted words from others are still reference data." };
+  return trustForIngested("meeting note");
 }
 
 function taskCard(task: {
@@ -181,6 +192,7 @@ export async function listDiagrams(db: Db, userId: string, query: { q?: string; 
   const rows = await db.blockDiagram.findMany({
     where: {
       userId,
+      deletedAt: null,
       ...(query.q ? { title: { contains: query.q, mode: "insensitive" } } : {}),
     },
     orderBy: { updatedAt: "desc" },
@@ -372,6 +384,23 @@ function eventCard(event: { id: string; title: string; ts: Date; url: string | n
   };
 }
 
+type PreviousMeeting = { ref: string; title: string; when: string } | null;
+
+/** The latest meeting of an event's series that started before it (cowork/series.ts). */
+function previousInSeries(db: Db, userId: string, event: { title: string; ts: Date; metadata: Prisma.JsonValue }, seen: Map<string, Promise<PreviousMeeting>>): Promise<PreviousMeeting> {
+  const seriesKey = seriesKeyFor({ eventMetadata: event.metadata, title: event.title });
+  if (!seriesKey) return Promise.resolve(null);
+  const key = `${seriesKey}|${event.ts.toISOString()}`;
+  let found = seen.get(key);
+  if (!found) {
+    found = meetingsInSeries(db, userId, { seriesKey, before: event.ts, limit: 1 }).then(([row]) =>
+      row ? { ref: refOf("meeting", row.id), title: row.title, when: row.at.toISOString() } : null,
+    );
+    seen.set(key, found);
+  }
+  return found;
+}
+
 export async function listMeetings(db: Db, userId: string, query: { from?: string; to?: string; limit: number }) {
   const now = new Date();
   const from = query.from ? new Date(query.from) : now;
@@ -382,11 +411,14 @@ export async function listMeetings(db: Db, userId: string, query: { from?: strin
     take: query.limit * 3,
     select: EVENT_ROW_SELECT,
   });
+  // One row per event, however many calendars it came from (calendar/dedupe.ts).
+  const rows = collapseEventRows(events).slice(0, query.limit);
+  const seen = new Map<string, Promise<PreviousMeeting>>();
+  const meetings = await Promise.all(rows.map(async (row) => ({ ...eventCard(row), previous: await previousInSeries(db, userId, row, seen) })));
   return {
-    // One row per event, however many calendars it came from (calendar/dedupe.ts).
-    meetings: collapseEventRows(events).slice(0, query.limit).map(eventCard),
+    meetings,
     window: { from: from.toISOString(), to: to.toISOString() },
-    notes: `${UNTRUSTED_NOTE} Events from the person's connected calendars (Google, Outlook, calendar links), one row per event even when several calendars have it; Artifact kind "event".`,
+    notes: `${UNTRUSTED_NOTE} Events from the person's connected calendars (Google, Outlook, calendar links), one row per event even when several calendars have it; Artifact kind "event". previous is the latest earlier meeting of the same series (its notes, decisions and tasks: ensemble_context with its ref).`,
     gaps: DATA_GAPS,
   };
 }
@@ -447,14 +479,15 @@ function isFocus(task: { status: string; todayFocus: string; priority: string; d
 }
 
 export async function todayBriefing(db: Db, userId: string) {
-  const zone = env.ENSEMBLE_TIMEZONE;
+  const zone = (await loadSettings(db, userId)).timezone;
   const day = zonedDayRange(zone);
-  const [tasks, deliverables, meetings, approvals, decisions] = await Promise.all([
+  const taskSelect = { ...TASK_PUBLIC, project: { select: { name: true } }, repo: { select: { fullName: true } } } satisfies Prisma.TaskSelect;
+  const [tasks, deliverables, meetings, approvals, decisions, review, waiting] = await Promise.all([
     db.task.findMany({
       where: { userId, deletedAt: null, ...ON_BOARD },
       orderBy: { updatedAt: "desc" },
       take: 200,
-      select: { ...TASK_PUBLIC, project: { select: { name: true } }, repo: { select: { fullName: true } } },
+      select: taskSelect,
     }),
     db.deliverable.findMany({
       where: { userId, deletedAt: null, status: "upcoming" },
@@ -470,15 +503,30 @@ export async function todayBriefing(db: Db, userId: string) {
     }),
     db.approval.count({ where: { userId, decision: null } }),
     db.agentDecision.count({ where: { userId, status: "pending" } }),
+    db.task.findMany({
+      where: { userId, deletedAt: null, ...ON_BOARD, status: "waiting_approval" },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+      select: taskSelect,
+    }),
+    db.task.findMany({
+      where: { userId, deletedAt: null, ...ON_BOARD, status: { in: [...OPEN_STATUSES] }, labels: { has: "waiting-on" } },
+      orderBy: { updatedAt: "desc" },
+      take: 10,
+      select: taskSelect,
+    }),
   ]);
   const now = new Date();
   const proposed = tasks.filter((task) => task.status === "proposed" && (!task.snoozedUntil || task.snoozedUntil <= now));
   const focus = tasks.filter((task) => isFocus(task, day.to));
+  const cardOf = (task: (typeof tasks)[number]) => taskCard(task, { project: task.project?.name, repo: task.repo?.fullName });
   return {
     date: day.date,
     timezone: zone,
-    focus: focus.slice(0, 20).map((task) => taskCard(task, { project: task.project?.name, repo: task.repo?.fullName })),
-    proposed: proposed.slice(0, 20).map((task) => taskCard(task, { project: task.project?.name, repo: task.repo?.fullName })),
+    focus: focus.slice(0, 20).map(cardOf),
+    proposed: proposed.slice(0, 20).map(cardOf),
+    readyForReview: review.map(cardOf),
+    waitingOn: waiting.map(cardOf),
     deliverables: deliverables.map((row) => ({
       id: row.id,
       title: row.title,
@@ -516,8 +564,18 @@ const READ_KINDS = [
 
 export type ReadKind = (typeof READ_KINDS)[number];
 
+export const READ_KIND_LIST = READ_KINDS.join(", ");
+
+const READ_ALIASES: Record<string, ReadKind> = { meeting: "meeting_note", file: "document" };
+
 export function isReadKind(value: string): value is ReadKind {
   return (READ_KINDS as readonly string[]).includes(value);
+}
+
+/** A kind as an agent passes it (`meeting` and `file` are the graph's names) → the read kind, or null. */
+export function readKindOf(value: string): ReadKind | null {
+  const lower = value.trim().toLowerCase();
+  return isReadKind(lower) ? lower : (READ_ALIASES[lower] ?? null);
 }
 
 export async function readItem(
@@ -541,14 +599,19 @@ export async function readItem(
           project: { select: { id: true, name: true } },
           repo: { select: { id: true, fullName: true, url: true } },
           page: { select: { content: true, notesSnapshot: true } },
+          deliverable: { select: { id: true, title: true, due: true, deletedAt: true } },
+          meetingNote: { select: { id: true, title: true, deletedAt: true } },
         },
       });
       if (!task) return { found: false };
       const page = await pageAgentText(db, userId, task.page?.content, task.notes, 15_000, 20_000);
+      const fromMeeting = task.meetingNote && !task.meetingNote.deletedAt ? task.meetingNote : null;
+      const deliverable = task.deliverable && !task.deliverable.deletedAt ? task.deliverable : null;
       return {
         found: true,
         item: {
           id: task.id,
+          ref: refOf("task", task.id),
           kind,
           title: task.title,
           status: task.status,
@@ -556,10 +619,14 @@ export async function readItem(
           owner: task.owner,
           description: task.description,
           due: iso(task.due),
+          labels: task.labels,
           sourceKind: task.sourceKind,
           sourceUrl: task.sourceUrl,
           project: task.project,
           repo: task.repo,
+          deliverable: deliverable ? { id: deliverable.id, title: deliverable.title, due: iso(deliverable.due) } : null,
+          fromMeeting: fromMeeting ? { ref: refOf("meeting", fromMeeting.id), title: fromMeeting.title } : null,
+          dependsOn: task.dependsOn.filter(isUuid).map((dependency) => refOf("task", dependency)),
           people: task.people,
           url: hubUrl(`/tasks/${task.id}`),
           body: body(`${task.description}\n\n${page}`.trim()),
@@ -750,22 +817,58 @@ export async function readItem(
       };
     }
     case "meeting_note": {
-      const note = await db.meetingNote.findFirst({ where: { id, userId, deletedAt: null } });
-      if (!note) return { found: false };
-      const ingested = note.source !== "paste";
+      let note = await db.meetingNote.findFirst({ where: { id, userId, deletedAt: null } });
+      if (!note) {
+        // A meeting's id may be its notes session's: a session synced to a note reads as that note.
+        const session = await db.meetingSession.findFirst({ where: { id, userId, deletedAt: null } });
+        if (!session) return { found: false };
+        if (session.meetingNoteId) note = await db.meetingNote.findFirst({ where: { id: session.meetingNoteId, userId, deletedAt: null } });
+        if (!note) {
+          return {
+            found: true,
+            item: {
+              id: session.id,
+              ref: refOf("meeting", session.id),
+              kind,
+              title: session.title,
+              source: "live",
+              occurredAt: iso(session.startedAt),
+              projectId: session.projectId,
+              url: hubUrl(`/meetings?session=${session.id}`),
+              body: body(`${session.notes}\n\n${session.recap}`.trim()),
+              trust: "hub" as const,
+              trustLabel: "Meeting notes taken in your Hub.",
+            },
+          };
+        }
+      }
+      const [tasks, people] = await Promise.all([
+        db.task.findMany({
+          where: { userId, deletedAt: null, ...ON_BOARD, meetingNoteId: note.id },
+          orderBy: { createdAt: "asc" },
+          take: 30,
+          select: { id: true, title: true, status: true },
+        }),
+        note.personIds.length
+          ? db.person.findMany({ where: { userId, deletedAt: null, id: { in: note.personIds.filter(isUuid).slice(0, 50) } }, select: { id: true, name: true } })
+          : Promise.resolve([]),
+      ]);
       return {
         found: true,
         item: {
           id: note.id,
+          ref: refOf("meeting", note.id),
           kind,
           title: note.title,
           source: note.source,
           occurredAt: iso(note.occurredAt),
           projectId: note.projectId,
           repoId: note.repoId,
-          url: hubUrl(`/context?meeting_note=${note.id}`),
+          people: people.map((person) => person.name),
+          tasks: tasks.map((task) => ({ ref: refOf("task", task.id), title: task.title, status: task.status })),
+          url: hubUrl(`/meetings?note=${note.id}`),
           body: body(`${note.prompt}\n\n${note.answer}\n\n${note.comment ?? ""}`.trim()),
-          ...(ingested ? trustForIngested("meeting note") : { trust: "hub" as const, trustLabel: "A meeting note stored in your Hub." }),
+          ...meetingNoteTrust(note.source),
         },
       };
     }
@@ -805,7 +908,7 @@ export async function readItem(
       };
     }
     case "diagram": {
-      const row = await db.blockDiagram.findFirst({ where: { id, userId } });
+      const row = await db.blockDiagram.findFirst({ where: { id, userId, deletedAt: null } });
       if (!row) return { found: false };
       return {
         found: true,
@@ -884,238 +987,112 @@ export async function readItem(
   }
 }
 
-export async function searchHub(db: Db, userId: string, q: string, limit: number, modules?: string | null) {
-  const skillsOn = hasModule(modules, "skills");
-  const plotsOn = hasModule(modules, "plots");
-  const diagramsOn = hasModule(modules, "diagrams");
-  const [tasks, projects, people, skills, repos, artifacts, notes, plots, pages, diagrams, documents] = await Promise.all([
-    db.task.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        ...ON_BOARD,
-        OR: [{ title: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }, { notes: { contains: q, mode: "insensitive" } }],
-      },
-      take: limit,
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, title: true, description: true, notes: true, status: true },
-    }),
-    db.project.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [{ name: { contains: q, mode: "insensitive" } }, { summary: { contains: q, mode: "insensitive" } }],
-      },
-      take: limit,
-      select: { id: true, name: true, summary: true },
-    }),
-    db.person.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [{ name: { contains: q, mode: "insensitive" } }, { email: { contains: q, mode: "insensitive" } }],
-      },
-      take: limit,
-      select: { id: true, name: true, email: true, role: true },
-    }),
-    skillsOn
-      ? db.skill.findMany({
-          where: {
-            userId,
-            deletedAt: null,
-            enabled: true,
-            OR: [{ name: { contains: q, mode: "insensitive" } }, { description: { contains: q, mode: "insensitive" } }, { body: { contains: q, mode: "insensitive" } }],
-          },
-          take: limit,
-          select: { id: true, name: true, description: true },
-        })
-      : Promise.resolve([]),
-    db.repo.findMany({
-      where: { userId, deletedAt: null, fullName: { contains: q, mode: "insensitive" } },
-      take: limit,
-      select: { id: true, fullName: true, url: true, description: true },
-    }),
-    db.artifact.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        AND: [visibleArtifacts(userId), ...(EXTRACTED_TEXT_TO_MODELS ? [] : [NOT_UPLOADED])],
-        OR: [{ title: { contains: q, mode: "insensitive" } }, { text: { contains: q, mode: "insensitive" } }],
-      },
-      take: limit,
-      orderBy: { ts: "desc" },
-      select: { id: true, kind: true, title: true, text: true, url: true, ts: true, authoredByMe: true },
-    }),
-    db.meetingNote.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [{ title: { contains: q, mode: "insensitive" } }, { answer: { contains: q, mode: "insensitive" } }],
-      },
-      take: limit,
-      orderBy: { askedAt: "desc" },
-      select: { id: true, title: true, answer: true, source: true, askedAt: true },
-    }),
-    plotsOn
-      ? db.plot.findMany({
-          where: { userId, deletedAt: null, title: { contains: q, mode: "insensitive" } },
-          take: limit,
-          orderBy: { updatedAt: "desc" },
-          select: { id: true, title: true },
-        })
-      : Promise.resolve([]),
-    db.taskPage.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [
-          { title: { contains: q, mode: "insensitive" } },
-          { searchText: { contains: q, mode: "insensitive" } },
-        ],
-        AND: [{ OR: [{ taskId: null }, { task: { deletedAt: null } }] }],
-      },
-      take: limit,
-      orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        title: true,
-        taskId: true,
-        searchText: true,
-        updatedAt: true,
-        task: { select: { title: true } },
-      },
-    }),
-    diagramsOn ? db.blockDiagram.findMany({
-      where: { userId, deletedAt:null, OR:[{title:{contains:q,mode:"insensitive"}},{source:{contains:q,mode:"insensitive"}}] },
-      take:limit, orderBy:{updatedAt:"desc"}, select:{id:true,title:true,source:true,updatedAt:true},
-    }) : Promise.resolve([]),
-    db.document.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [{ filename: { contains: q, mode: "insensitive" } }, { artifact: { text: { contains: q, mode: "insensitive" } } }],
-      },
-      take: limit,
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, filename: true, artifactId: true, updatedAt: true, artifact: { select: { text: true } } },
-    }),
-  ]);
-  // A file's text lives on its artifact too; the file is the one to cite.
-  const fileArtifacts = new Set(documents.map((row) => row.artifactId).filter(Boolean));
-  const results = [
-    ...diagrams.map(diagram => ({ id:diagram.id, kind:"diagram", label:diagram.title, when:diagram.updatedAt.toISOString(), url:hubUrl(`/diagrams/${diagram.id}`), ...matchExcerpt(diagram.title.toLowerCase().includes(q.toLowerCase()) ? diagram.title : diagram.source, q), trust:"hub" as const, trustLabel:"A diagram stored in your Ensemble Hub." })),
-    ...tasks.map((task) => ({
-      id: task.id,
-      kind: "task",
-      label: task.title,
-      when: null as string | null,
-      url: hubUrl(`/tasks/${task.id}`),
-      ...matchExcerpt([task.description, task.notes].filter(Boolean).join(" ") || task.title, q),
-      trust: "hub" as const,
-      trustLabel: "A task stored in your Ensemble Hub.",
-    })),
-    ...projects.map((project) => ({
-      id: project.id,
-      kind: "project",
-      label: project.name,
-      when: null,
-      url: hubUrl(`/projects/${project.id}`),
-      ...matchExcerpt(project.summary || project.name, q),
-      trust: "hub" as const,
-      trustLabel: "A project page stored in your Ensemble Hub.",
-    })),
-    ...people.map((person) => ({
-      id: person.id,
-      kind: "person",
-      label: person.name,
-      when: null,
-      url: hubUrl(`/context?person=${person.id}`),
-      excerpt: [person.email, person.role].filter(Boolean).join(" · "),
-      truncated: false,
-      trust: "hub" as const,
-      trustLabel: "A person in your Engineer Graph.",
-    })),
-    ...skills.map((skill) => ({
-      id: skill.id,
-      kind: "skill",
-      label: skill.name,
-      when: null,
-      url: hubUrl(`/skills?skill=${skill.id}`),
-      ...matchExcerpt(skill.description || skill.name, q),
-      trust: "trusted" as const,
-      trustLabel: "One of your current skills.",
-    })),
-    ...repos.map((repo) => ({
-      id: repo.id,
-      kind: "repo",
-      label: repo.fullName,
-      when: null,
-      url: hubUrl(`/context?repo=${repo.id}`),
-      sourceUrl: repo.url,
-      ...matchExcerpt(repo.description || repo.fullName, q),
-      trust: "hub" as const,
-      trustLabel: "A repository row in your Engineer Graph.",
-    })),
-    ...artifacts.filter((artifact) => !fileArtifacts.has(artifact.id)).map((artifact) => ({
-      id: artifact.id,
-      kind: "artifact",
-      artifactKind: artifact.kind,
-      label: artifact.title || artifact.kind,
-      when: artifact.ts.toISOString(),
-      url: hubUrl(`/files?view=apps&item=${artifact.id}`),
-      sourceUrl: artifact.url,
-      ...matchExcerpt(artifact.text || artifact.title, q),
-      ...trustForIngested(artifact.kind, artifact.authoredByMe),
-    })),
-    ...documents.map((document) => ({
-      id: document.id,
-      kind: "document",
-      label: document.filename,
-      when: document.updatedAt.toISOString(),
-      url: hubUrl(`/files/${document.id}`),
-      ...matchExcerpt(!EXTRACTED_TEXT_TO_MODELS || document.filename.toLowerCase().includes(q.toLowerCase()) || !document.artifact?.text ? document.filename : document.artifact.text, q),
-      ...trustForIngested("file"),
-    })),
-    ...notes.map((note) => ({
-      id: note.id,
-      kind: "meeting_note",
-      label: note.title,
-      when: note.askedAt.toISOString(),
-      url: hubUrl(`/context?meeting_note=${note.id}`),
-      ...matchExcerpt(note.answer || note.title, q),
-      ...(note.source === "paste"
-        ? { trust: "hub" as const, trustLabel: "A meeting note stored in your Hub." }
-        : trustForIngested("meeting note")),
-    })),
-    ...plots.map((plot) => ({
-      id: plot.id,
-      kind: "plot",
-      label: plot.title,
-      when: null,
-      url: hubUrl(`/plots/${plot.id}`),
-      excerpt: plot.title,
-      truncated: false,
-      trust: "hub" as const,
-      trustLabel: "A plot stored in your Ensemble Hub.",
-    })),
-    ...pages.map((page) => ({
-      id: page.id,
-      kind: "page" as const,
-      label: page.taskId ? page.task?.title || page.title || "Page" : page.title || "Untitled",
-      when: page.updatedAt.toISOString(),
-      url: page.taskId ? hubUrl(`/tasks/${page.taskId}`) : hubUrl(`/pages/${page.id}`),
-      ...matchExcerpt(page.searchText || page.title || "Untitled", q),
-      trust: "hub" as const,
-      trustLabel: page.taskId ? "A page on a task stored in your Ensemble Hub." : "A note stored in your Ensemble Hub.",
-    })),
-  ];
+type Trust = { trust: "untrusted" | "hub" | "trusted"; trustLabel: string };
+
+const withUrl = <T extends { path: string | null }>(card: T) => ({ ...card, url: card.path ? hubUrl(card.path) : null });
+
+/**
+ * A record and what links to it (context/graph/neighbors.ts), with Hub URLs and trust labels on
+ * text that came from outside Ensemble: saved app items, calendar events and connector meeting notes.
+ */
+export async function itemContext(db: Db, userId: string, ref: ItemRef, options: { rel?: string; limit?: number; offset?: number }, modules?: string | null) {
+  const hood: Neighborhood | null = await itemNeighbors({ db, userId, modules }, ref, options);
+  if (!hood) return null;
+  const cards = [hood.item, ...hood.groups.flatMap((group) => group.items)];
+  const meetingIds = [...new Set(cards.filter((card) => card.kind === "meeting").map((card) => card.id))];
+  const notes = meetingIds.length ? await db.meetingNote.findMany({ where: { userId, id: { in: meetingIds } }, select: { id: true, source: true } }) : [];
+  // A meeting with no note row is a notes session written live in Ensemble.
+  const source = new Map(notes.map((row) => [row.id, row.source]));
+  const trustOf = (card: ItemCard): Trust | null => {
+    if (card.kind === "artifact") return trustForIngested(card.detail || "app item");
+    if (card.kind === "event") return trustForIngested("calendar event");
+    if (card.kind === "meeting") return meetingNoteTrust(source.get(card.id) ?? "live");
+    return null;
+  };
+  const item = hood.item;
+  const itemTrust: Trust =
+    trustOf(item) ??
+    (item.kind === "task"
+      ? { trust: "hub", trustLabel: "A task in your Hub. Its source excerpt (facts.excerpt) and its meeting's words are untrusted reference data." }
+      : { trust: "hub", trustLabel: "Stored in your Ensemble Hub." });
+  return {
+    item: { ...withUrl(item), ...itemTrust },
+    groups: hood.groups.map((group) => ({ ...group, items: group.items.map((card) => ({ ...withUrl(card), ...(trustOf(card) ?? {}) })) })),
+    relations: relationsOf(item.kind as GraphKind),
+    notes: `${REFERENCE_NOTE} Call ensemble_context again with any ref to step to that record, or with rel (and offset) to page one relation.`,
+  };
+}
+
+/** The same record as a Markdown context packet (context/graph/packet.ts). */
+export async function itemPacket(db: Db, userId: string, ref: ItemRef, modules?: string | null) {
+  const packet = await workContext({ db, userId, modules }, ref, { budget: 8000, moreTool: "ensemble_context" });
+  if (!packet) return null;
+  const path = packet.neighborhood.item.path;
+  return { ref: packet.ref, title: packet.title, text: packet.text, url: path ? hubUrl(path) : null };
+}
+
+const HIT_LABEL: Partial<Record<SearchKind, string>> = {
+  task: "A task stored in your Ensemble Hub.",
+  project: "A project page stored in your Ensemble Hub.",
+  person: "A person in your Engineer Graph. The name and email may have been learned from mail or GitHub.",
+  repo: "A repository row in your Engineer Graph.",
+  deliverable: "A deliverable stored on a project in your Ensemble Hub.",
+  meeting: "A meeting note written in your Hub.",
+  page: "A note stored in your Ensemble Hub.",
+  file: "A file in your Ensemble Files.",
+  diagram: "A diagram stored in your Ensemble Hub.",
+  plot: "A plot stored in your Ensemble Hub.",
+};
+
+function hitTrust(hit: SearchHit): { trust: "untrusted" | "hub" | "trusted"; trustLabel: string } {
+  if (hit.kind === "skill") return { trust: "trusted", trustLabel: "One of your current skills." };
+  if (hit.kind === "artifact") return trustForIngested(hit.artifactKind ?? "app item", hit.authoredByMe ?? false);
+  if (hit.untrusted) return trustForIngested(hit.kind === "meeting" ? "meeting note" : hit.kind);
+  return { trust: "hub", trustLabel: HIT_LABEL[hit.kind] ?? "Stored in your Ensemble Hub." };
+}
+
+export const SEARCH_NOTE =
+  "Ranked word search: each word of the query is looked for in titles and text, in any order. Records with more of the words, words in the title, recent or open work, and (with near) records linked to that one rank first. This is not semantic search.";
+
+/** Ranked search over the context graph (context/graph/search.ts), as bridge citations. Returns up to limit × 3 hits, at most 40. */
+export async function searchHub(
+  db: Db,
+  userId: string,
+  q: string,
+  limitOrOptions: number | { limit: number; kinds?: SearchKind[]; near?: ItemRef | null },
+  modules?: string | null,
+) {
+  const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;
+  const cap = Math.min(options.limit * 3, 40);
+  const { terms, hits } = await rankedSearch({ db, userId, modules }, q, { kinds: options.kinds, near: options.near ?? null, limit: cap });
+  const results = hits.map((hit) => ({
+    id: hit.id,
+    ref: hit.ref,
+    // The kind ensemble_read takes for this hit.
+    kind: hit.kind === "file" ? "document" : hit.kind === "meeting" ? "meeting_note" : hit.kind,
+    ...(hit.artifactKind ? { artifactKind: hit.artifactKind } : {}),
+    label: hit.title,
+    status: hit.status,
+    when: hit.when,
+    url: hit.path ? hubUrl(hit.path) : null,
+    excerpt: hit.snippet,
+    truncated: hit.snippet.startsWith("…") || hit.snippet.endsWith("…"),
+    score: hit.score,
+    why: hit.why,
+    ...hitTrust(hit),
+  }));
   return {
     query: q,
-    match: "substring",
-    results: results.sort((a, b) => (b.label.toLowerCase() === q.toLowerCase() ? 2 : Number(b.label.toLowerCase().includes(q.toLowerCase()))) - (a.label.toLowerCase() === q.toLowerCase() ? 2 : Number(a.label.toLowerCase().includes(q.toLowerCase())))).slice(0, limit * 3),
+    terms,
+    match: "ranked" as const,
+    results,
     empty: results.length === 0,
-    message: results.length === 0 ? `Nothing in Ensemble matched “${q}”.` : undefined,
-    notes: `${REFERENCE_NOTE} This is not semantic search.`,
+    message: results.length
+      ? undefined
+      : terms.length
+        ? `Nothing in Ensemble matched “${q}”.`
+        : "Search for a word of two letters or more.",
+    notes: `${REFERENCE_NOTE} ${SEARCH_NOTE}`,
     gaps: DATA_GAPS,
   };
 }
@@ -1182,6 +1159,8 @@ function rankSkills(
   });
 }
 
+const BRIEF_PEOPLE = 12;
+
 async function peopleFor(
   db: Db,
   userId: string,
@@ -1192,24 +1171,26 @@ async function peopleFor(
   const names = task.people.filter((value) => !isUuid(value));
   const [byId, projectLinks, named] = await Promise.all([
     ids.length
-      ? db.person.findMany({ where: { userId, deletedAt: null, id: { in: ids } }, select: { id: true, name: true, role: true, email: true } })
+      ? db.person.findMany({ where: { userId, deletedAt: null, id: { in: ids } }, take: BRIEF_PEOPLE, select: { id: true, name: true, role: true, email: true } })
       : Promise.resolve([]),
     task.projectId
       ? db.projectPerson.findMany({
           where: { projectId: task.projectId, person: { userId, deletedAt: null } },
+          take: BRIEF_PEOPLE,
           include: { person: { select: { id: true, name: true, role: true, email: true } } },
         })
       : Promise.resolve([]),
     names.length
       ? db.person.findMany({
           where: { userId, deletedAt: null, OR: names.map((name) => ({ name: { equals: name, mode: "insensitive" as const } })) },
+          take: BRIEF_PEOPLE,
           select: { id: true, name: true, role: true, email: true },
         })
       : Promise.resolve([]),
   ]);
   const map = new Map<string, { id: string; name: string; role: string | null; email: string | null }>();
-  for (const person of [...byId, ...named, ...projectLinks.map((link) => link.person)]) map.set(person.id, person);
-  return [...map.values()].map((person) => ({
+  for (const person of [...byId, ...named, ...projectLinks.map((link) => link.person)]) if (!map.has(person.id)) map.set(person.id, person);
+  return [...map.values()].slice(0, BRIEF_PEOPLE).map((person) => ({
     ...person,
     url: hubUrl(`/context?person=${person.id}`),
     trust: "hub" as const,
@@ -1217,14 +1198,89 @@ async function peopleFor(
   }));
 }
 
+const TASK_REF_SELECT = { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true } satisfies Prisma.TaskSelect;
+
+type TaskCandidate = { id: string; ref: string | null; title: string; status: string | null; url: string | null };
+
+/** The task a brief was asked about: a handle, a Hub link, an id, or the exact title of one open task. */
+async function pickTask(db: Db, userId: string, requested: string, modules?: string | null): Promise<{ resolution: BriefResolution; candidates?: TaskCandidate[] }> {
+  const ref = parseItemRef(requested, "task");
+  if (ref) {
+    let taskId: string | null = ref.kind === "task" ? ref.id : null;
+    if (ref.kind === "page") {
+      taskId = (await db.taskPage.findFirst({ where: { id: ref.id, userId, deletedAt: null }, select: { taskId: true } }))?.taskId ?? null;
+    } else if (ref.kind !== "task") {
+      return {
+        resolution: {
+          kind: "task_not_found",
+          requested,
+          message: `“${requested}” names a ${ref.kind}, not a task. Pass a task handle (ensemble://task/<id>), a task link, its id or its exact title.`,
+        },
+        candidates: [],
+      };
+    }
+    const row = taskId ? await db.task.findFirst({ where: { id: taskId, userId, deletedAt: null }, select: TASK_REF_SELECT }) : null;
+    if (!row) {
+      return {
+        resolution: { kind: "task_not_found", requested, message: "No task with that id in this Ensemble space. It may be in Trash, or in another space." },
+        candidates: [],
+      };
+    }
+    return { resolution: { kind: "task", task: toRef(row), via: "task", otherOpen: [], message: `Task “${row.title}”, as asked.` } };
+  }
+  const titled = await db.task.findMany({
+    where: { userId, deletedAt: null, ...ON_BOARD, status: { in: [...OPEN_STATUSES] }, title: { equals: requested, mode: "insensitive" } },
+    orderBy: { updatedAt: "desc" },
+    take: 10,
+    select: TASK_REF_SELECT,
+  });
+  if (titled.length === 1) {
+    return { resolution: { kind: "task", task: toRef(titled[0]!), via: "task", otherOpen: [], message: `“${titled[0]!.title}” is the open task with that title.` } };
+  }
+  if (titled.length > 1) {
+    return {
+      resolution: {
+        kind: "ambiguous",
+        branch: null,
+        candidates: titled.map(toRef),
+        message: `${titled.length} open tasks are titled “${requested}”. No single task was chosen: pass one of the candidates' refs as task.`,
+      },
+    };
+  }
+  const { hits } = await rankedSearch({ db, userId, modules }, requested, { kinds: ["task"], limit: 5 });
+  return {
+    resolution: {
+      kind: "task_not_found",
+      requested,
+      message: hits.length
+        ? `No open task is titled “${requested}”. The closest tasks are listed as candidates: pass one of their refs as task.`
+        : `No open task is titled “${requested}”, and no task matched its words.`,
+    },
+    candidates: hits.map((hit) => ({ id: hit.id, ref: hit.ref, title: hit.title, status: hit.status, url: hit.path ? hubUrl(hit.path) : null })),
+  };
+}
+
+/** Open tasks whose id starts with an 8-character hex segment of the branch name (`fix/3f2a9c1d-latency`). */
+async function tasksByBranchId(db: Db, userId: string, branch: string): Promise<TaskRef[]> {
+  const prefixes = branchIdPrefixes(branch);
+  if (!prefixes.length) return [];
+  const rows = await db.task.findMany({
+    where: { userId, deletedAt: null, ...ON_BOARD, status: { in: [...OPEN_STATUSES] }, OR: prefixes.map((prefix) => ({ id: { startsWith: prefix } })) },
+    take: 5,
+    select: TASK_REF_SELECT,
+  });
+  return rows.map(toRef);
+}
+
 export async function buildBrief(
   db: Db,
   userId: string,
-  input: { query?: string; repo?: string; branch?: string; limit: number },
+  input: { query?: string; repo?: string; branch?: string; task?: string; limit: number },
   modules?: string | null,
 ) {
   const repoName = input.repo ? normalizeRepoName(input.repo) ?? input.repo.trim() : null;
   const branch = input.branch?.trim() || null;
+  const requestedTask = input.task?.trim() || null;
   const repo = repoName
     ? await db.repo.findFirst({
         where: { userId, deletedAt: null, fullName: { equals: repoName, mode: "insensitive" } },
@@ -1232,53 +1288,70 @@ export async function buildBrief(
       })
     : null;
 
-  const branchRows = branch && hasModule(modules, "workspace")
-    ? await db.workspaceJob.findMany({
-        where: {
-          userId,
-          branch: { equals: branch, mode: "insensitive" },
-          task: { deletedAt: null, ...(repo ? { repoId: repo.id } : {}) },
-        },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-        include: { task: { select: { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true, deletedAt: true } } },
-      })
-    : [];
-  const sessionRows = branch && hasModule(modules, "workspace")
-    ? await db.workspaceSession.findMany({
-        where: {
-          userId,
-          branch: { equals: branch, mode: "insensitive" },
-          task: { deletedAt: null, ...(repo ? { repoId: repo.id } : {}) },
-        },
-        take: 20,
-        include: { task: { select: { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true } } },
-      })
-    : [];
-  const branchTasks = distinctById([
-    ...branchRows.map((row) => toRef(row.task)),
-    ...sessionRows.map((row) => toRef(row.task)),
-  ]);
-  const openTasksOnRepo = repo
-    ? (
-        await db.task.findMany({
-          where: { userId, deletedAt: null, repoId: repo.id, status: { in: [...OPEN_STATUSES] } },
-          orderBy: { updatedAt: "desc" },
-          take: 15,
-          select: { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true },
+  let resolution: BriefResolution;
+  let taskCandidates: TaskCandidate[] | undefined;
+  if (requestedTask) {
+    const picked = await pickTask(db, userId, requestedTask, modules);
+    resolution = picked.resolution;
+    taskCandidates = picked.candidates;
+  } else {
+    const branchRows = branch && hasModule(modules, "workspace")
+      ? await db.workspaceJob.findMany({
+          where: {
+            userId,
+            branch: { equals: branch, mode: "insensitive" },
+            task: { deletedAt: null, ...(repo ? { repoId: repo.id } : {}) },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+          include: { task: { select: { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true, deletedAt: true } } },
         })
-      ).map(toRef)
-    : [];
+      : [];
+    const sessionRows = branch && hasModule(modules, "workspace")
+      ? await db.workspaceSession.findMany({
+          where: {
+            userId,
+            branch: { equals: branch, mode: "insensitive" },
+            task: { deletedAt: null, ...(repo ? { repoId: repo.id } : {}) },
+          },
+          take: 20,
+          include: { task: { select: { id: true, title: true, status: true, updatedAt: true, repoId: true, projectId: true } } },
+        })
+      : [];
+    const branchTasks = distinctById([
+      ...branchRows.map((row) => toRef(row.task)),
+      ...sessionRows.map((row) => toRef(row.task)),
+    ]);
+    const byId = branch && branchTasks.length === 0 ? await tasksByBranchId(db, userId, branch) : [];
+    const openTasksOnRepo = repo
+      ? (
+          await db.task.findMany({
+            where: { userId, deletedAt: null, repoId: repo.id, status: { in: [...OPEN_STATUSES] } },
+            orderBy: { updatedAt: "desc" },
+            take: 15,
+            select: TASK_REF_SELECT,
+          })
+        ).map(toRef)
+      : [];
+    resolution =
+      byId.length === 1
+        ? {
+            kind: "task",
+            task: byId[0]!,
+            via: "branch_id",
+            otherOpen: openTasksOnRepo.filter((row) => row.id !== byId[0]!.id).slice(0, 5),
+            message: `Branch ${branch} names “${byId[0]!.title}” by the start of its id.`,
+          }
+        : resolveBriefAnchor({
+            repoRequested: repoName,
+            repoFound: Boolean(repo),
+            branch,
+            branchTasks: byId.length > 1 ? byId : branchTasks,
+            openTasksOnRepo,
+          });
+  }
 
-  const resolution = resolveBriefAnchor({
-    repoRequested: repoName,
-    repoFound: Boolean(repo),
-    branch,
-    branchTasks,
-    openTasksOnRepo,
-  });
-
-  const taskId = resolution.kind === "task" ? resolution.task.id : resolution.kind === "ambiguous" ? null : null;
+  const taskId = resolution.kind === "task" ? resolution.task.id : null;
   const task = taskId
     ? await db.task.findFirst({
         where: { id: taskId, userId, deletedAt: null },
@@ -1304,7 +1377,7 @@ export async function buildBrief(
     artifactOr.push({ text: { contains: query, mode: "insensitive" } });
   }
 
-  const [skills, people, deliverables, artifacts, meetingNotes, files] = await Promise.all([
+  const [skills, people, deliverables, artifacts, meetingNotes, files, packet] = await Promise.all([
     hasModule(modules, "skills")
       ? db.skill.findMany({
           where: { userId, deletedAt: null, enabled: true },
@@ -1322,7 +1395,7 @@ export async function buildBrief(
       : Promise.resolve([]),
     artifactOr.length
       ? db.artifact.findMany({
-          where: { userId, deletedAt: null, OR: artifactOr },
+          where: { userId, deletedAt: null, OR: artifactOr, AND: [visibleArtifacts(userId), ...(EXTRACTED_TEXT_TO_MODELS ? [] : [NOT_UPLOADED])] },
           orderBy: { ts: "desc" },
           take: input.limit,
           select: { id: true, kind: true, title: true, text: true, url: true, ts: true, authoredByMe: true },
@@ -1345,6 +1418,7 @@ export async function buildBrief(
         })
       : Promise.resolve([]),
     task ? filesOnTask(db, userId, task.id) : Promise.resolve([]),
+    task ? workContext({ db, userId, modules }, { kind: "task", id: task.id }, { budget: 7000, moreTool: "ensemble_context" }) : Promise.resolve(null),
   ]);
 
   const howIWork = rankSkills(skills, task, resolvedRepo?.fullName ?? null, project?.name ?? null).filter((skill) => {
@@ -1393,17 +1467,15 @@ export async function buildBrief(
       kind: "meeting_note",
       label: note.title,
       when: note.askedAt.toISOString(),
-      url: hubUrl(`/context?meeting_note=${note.id}`),
+      url: hubUrl(`/meetings?note=${note.id}`),
       ...excerpt(note.answer || note.title),
-      ...(note.source === "paste"
-        ? { trust: "hub" as const, trustLabel: "A meeting note stored in your Hub." }
-        : trustForIngested("meeting note")),
+      ...meetingNoteTrust(note.source),
     })),
   ].slice(0, input.limit + (task ? 1 : 0) + deliverables.length);
 
   const degradedSearch =
-    (resolution.kind === "untracked_repo" || resolution.kind === "no_anchor" || resolution.kind === "branch_unmatched") && query
-      ? await searchHub(db, userId, query, input.limit, modules)
+    (resolution.kind === "untracked_repo" || resolution.kind === "no_anchor" || resolution.kind === "branch_unmatched" || resolution.kind === "task_not_found") && query
+      ? await searchHub(db, userId, query, { limit: input.limit }, modules)
       : null;
 
   const nothing =
@@ -1415,13 +1487,19 @@ export async function buildBrief(
   return {
     resolution: resolution.kind,
     message: resolution.message,
-    candidates: resolution.kind === "ambiguous" ? resolution.candidates.map((task) => ({ ...task, url: hubUrl(`/tasks/${task.id}`) })) : undefined,
+    candidates:
+      resolution.kind === "ambiguous"
+        ? resolution.candidates.map((task) => ({ ...task, ref: refOf("task", task.id), url: hubUrl(`/tasks/${task.id}`) }))
+        : resolution.kind === "task_not_found"
+          ? (taskCandidates ?? [])
+          : undefined,
     closedMatches: resolution.kind === "branch_unmatched" ? resolution.closed.map((task) => ({ ...task, url: hubUrl(`/tasks/${task.id}`) })) : undefined,
     otherOpenTasks: resolution.kind === "task" ? resolution.otherOpen.map((task) => ({ ...task, url: hubUrl(`/tasks/${task.id}`) })) : undefined,
     resolved: {
       task: task
         ? {
             id: task.id,
+            ref: refOf("task", task.id),
             title: task.title,
             status: task.status,
             url: hubUrl(`/tasks/${task.id}`),
@@ -1434,6 +1512,8 @@ export async function buildBrief(
       project: project ? { id: project.id, name: project.name, url: hubUrl(`/projects/${project.id}`) } : null,
       people,
     },
+    workContext: packet?.text,
+    contextRef: packet?.ref,
     howIWork,
     context,
     files: fileCitations(files),
@@ -1444,7 +1524,7 @@ export async function buildBrief(
     notes: nothing
       ? `Nothing relevant was found. ${REFERENCE_NOTE}`
       : REFERENCE_NOTE,
-    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest; files attached to the task are listed with links to open them in Ensemble.",
+    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest, or ensemble_context with a ref (contextRef for the task) for a record and everything linked to it; files attached to the task are listed with links to open them in Ensemble.",
     gaps: DATA_GAPS,
   };
 }

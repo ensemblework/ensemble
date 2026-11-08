@@ -279,6 +279,8 @@ model Task {
   @@index([peerRequestId])
   @@index([assigneeNodeId])
   @@index([assigneeRoomId])
+  @@index([people], type: Gin)
+  @@index([dependsOn], type: Gin)
   @@map("tasks")
 }
 
@@ -845,6 +847,8 @@ model Person {
   email                String?
   role                 String?
   team                 String?
+  /// How this person relates to the account owner (my manager, reports to me, client…). Free text.
+  relationship         String?
   relationshipWeight   Float            @default(0) @map("relationship_weight")
   typicalResponseHours Float?           @map("typical_response_hours")
   lastInteraction      DateTime?        @map("last_interaction")
@@ -1090,6 +1094,12 @@ model MeetingNote {
   /// Meeting-notes connector (fireflies, fathom, granola, …) and its meeting id, so a re-sync updates in place.
   externalSource       String?   @map("external_source")
   externalId           String?   @map("external_id")
+  /// Meetings of one recurring series share it (meetings/series.ts): the calendar series, else the title.
+  seriesKey            String?   @map("series_key")
+  /// The meeting AI pass (meetings/ai.ts): queued | running | done | failed | skipped. Null: never asked.
+  aiStatus             String?   @map("ai_status")
+  aiAttempts           Int       @default(0) @map("ai_attempts")
+  aiError              String?   @map("ai_error")
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @updatedAt @map("updated_at")
   deletedAt            DateTime? @map("deleted_at")
@@ -1105,6 +1115,9 @@ model MeetingNote {
   @@index([userId, projectId])
   @@index([userId, status])
   @@index([eventArtifactId])
+  @@index([personIds], type: Gin)
+  @@index([userId, seriesKey])
+  @@index([aiStatus])
   @@map("meeting_notes")
 }
 
@@ -1128,6 +1141,8 @@ model MeetingSession {
   personIds     String[]  @default([]) @map("person_ids")
   projectId     String?   @map("project_id")
   project       Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// See MeetingNote.seriesKey.
+  seriesKey     String?   @map("series_key")
   startedAt     DateTime  @default(now()) @map("started_at")
   endedAt       DateTime? @map("ended_at")
   recapAt       DateTime? @map("recap_at")
@@ -1140,6 +1155,8 @@ model MeetingSession {
   @@index([userId, artifactId])
   @@index([userId, startedAt])
   @@index([userId, projectId])
+  @@index([personIds], type: Gin)
+  @@index([userId, seriesKey])
   @@map("meeting_sessions")
 }
 
@@ -2029,6 +2046,8 @@ model ApiToken {
   tokenHash  String    @unique @map("token_hash")
   prefix     String
   scope      String    @default("full")
+  /// A `bridge` key that may also update tasks through the Context Bridge (status, notes, new proposed tasks).
+  canWrite   Boolean   @default(false) @map("can_write")
   lastUsedAt DateTime? @map("last_used_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   revokedAt  DateTime? @map("revoked_at")
