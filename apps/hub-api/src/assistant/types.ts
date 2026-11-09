@@ -45,6 +45,8 @@ export interface ToolContext {
   refs?: ReadonlyMap<string, AssistantRef>;
   /** What this turn has used so far, shared by every call in it (Hub chat only; hub_web_search stops at WEB_SEARCHES_PER_TURN). */
   turn?: { webSearches: number };
+  /** The turn runs on the person's own AI plan (an agent on their computer): its tools spend none of Ensemble's included credits. */
+  ownPlan?: boolean;
 }
 
 /**

@@ -36,7 +36,7 @@ import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
 import { copilotEnv } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
-import { findSession, forgetSession, saveSession, SESSION_KEY, sessionFolder } from "./turn-sessions.js";
+import { findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder } from "./turn-sessions.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -56,8 +56,21 @@ export type AgentTurnSpec = {
    * `history` is the chat so far, sent only when the turn starts a new session, and `position` how
    * many messages the chat had before this one (a session resumes only where it left the chat).
    */
-  session?: { key: string; history: string; position?: number } | null;
+  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number } | null;
+  /**
+   * The agent's own web search and page reading (Claude Code's WebSearch and WebFetch, Codex's live
+   * web_search, Copilot's web_search and web_fetch): on the person's plan, so a node reads the web
+   * without Ensemble's search. Never a shell, files or writes. Older computers ignore it.
+   */
+  ownWeb?: boolean;
 };
+
+/**
+ * Where a chat's session works when it belongs to more than one chat: an Ensemble Node's project
+ * folder (`<workspace>/projects/<name>`, agent-projects.ts), so the agent's app lists the node's
+ * conversations, and its coding sessions without a folder of their own, as one project.
+ */
+export type SessionGroup = { id: string; name: string };
 
 export type AgentTurnResult = {
   text: string;
@@ -96,7 +109,8 @@ type McpServer = { command: string; args: string[]; env: Record<string, string> 
  * take one (Claude Code, Copilot); null for a turn that saves no session.
  */
 type TurnSession = { id: string; resume: boolean } | null;
-type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<AgentTurnResult & { session?: string | null }>;
+/** `folder`: where the agent works; `own`: the chat's own folder, for the turn's settings files (the same unless the folder is shared). */
+type Driver = (input: { spec: AgentTurnSpec; io: AgentTurnIO; bin: string; folder: string; own?: string; mcp: McpServer; files: SavedTurnFile[]; session: TurnSession }) => Promise<AgentTurnResult & { session?: string | null }>;
 
 /** The chat's earlier session could not be reopened (deleted, or the agent lost it): the turn starts a new one. */
 class SessionGone extends Error {}
@@ -141,7 +155,7 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
@@ -154,14 +168,15 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     "--include-partial-messages",
     "--system-prompt-file",
     input.systemFile,
-    // None of Claude Code's own tools: no shell, files or web. Ensemble's tools come from its MCP server.
+    // None of Claude Code's own tools but its web search and page reading when asked: no shell or files.
+    // Ensemble's tools come from its MCP server.
     "--tools",
-    "",
+    input.web ? "WebSearch,WebFetch" : "",
     "--strict-mcp-config",
     "--mcp-config",
     input.mcpFile,
     "--allowedTools",
-    "mcp__ensemble",
+    input.web ? "mcp__ensemble,WebSearch,WebFetch" : "mcp__ensemble",
     "--permission-mode",
     "default",
     // The person's own settings, where their Claude Code keeps how it signs in; never a folder's.
@@ -176,12 +191,12 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
   ];
 }
 
-const runClaude: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
-  const systemFile = join(folder, "system.md");
-  const mcpFile = join(folder, "mcp.json");
+const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, session }) => {
+  const systemFile = join(own ?? folder, "system.md");
+  const mcpFile = join(own ?? folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
@@ -323,6 +338,8 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
       config: {
         projects: { [folder]: { trust_level: "untrusted" } },
         mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: TOOL_TIMEOUT_MS / 1000 } },
+        // Codex's own web search runs at OpenAI, not in the sandbox: the person's plan reads the web.
+        ...(spec.ownWeb ? { web_search: "live" } : {}),
       },
     };
     const { serviceName: _serviceName, ephemeral: _ephemeral, ...resumeSettings } = settings;
@@ -475,7 +492,7 @@ export function copilotPrompt(head: string, sections: string[], platform?: NodeJ
 }
 
 /** The arguments for Copilot CLI (exported for tests). */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null }): string[] {
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean }): string[] {
   const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -491,8 +508,8 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     "shell",
     "--deny-tool",
     "write",
-    "--deny-tool",
-    "url",
+    // Copilot's web_fetch asks for url(); its web_search does not. Without own web both stay closed.
+    ...(input.web ? [] : ["--deny-tool", "url", "--excluded-tools", "web_search"]),
     "--disable-builtin-mcps",
     // Nobody can answer Copilot's own question prompt here; Ensemble's tools carry the conversation.
     "--no-ask-user",
@@ -508,13 +525,13 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
   ];
 }
 
-const runCopilot: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
-  const mcpFile = join(folder, "mcp.json");
+const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session }) => {
+  const mcpFile = join(own ?? folder, "mcp.json");
   // A tool call may take minutes (a browser task, a slow connected app); Copilot's own MCP timeout is shorter.
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"], timeout: TOOL_TIMEOUT_MS } } }), "utf8");
   const { attachments, sections } = copilotFiles(files);
   const prompt = copilotPrompt(opening(spec, session), sections);
-  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? null }), {
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? null, web: spec.ownWeb === true }), {
     cwd: folder,
     env: copilotEnv(mcp.env),
     stdio: ["ignore", "pipe", "pipe"],
@@ -627,6 +644,17 @@ const DRIVERS: Record<SubscriptionProvider, Driver> = {
 /** Turns of one chat, one at a time: they share its session and its folder. */
 const chats = new Map<string, Promise<unknown>>();
 
+/** A node's project folder in the Ensemble workspace (agent-projects.ts); null when there is none here. */
+async function groupFolder(group: SessionGroup): Promise<string | null> {
+  try {
+    // Loaded only for a node's turn: the workspace's guard reads the runtime's settings.
+    const [{ projectFolder }, { workspaceRoot }] = await Promise.all([import("../workspace/agent-projects.js"), import("../workspace/guard.js")]);
+    return await projectFolder(await workspaceRoot(), group);
+  } catch {
+    return null;
+  }
+}
+
 /** Runs the turn with the agent's own sign-in; the tools are called through `io.call`. */
 export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promise<AgentTurnResult> {
   const key = spec.session && SESSION_KEY.test(spec.session.key) ? spec.session.key : null;
@@ -643,9 +671,9 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
 }
 
 async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null): Promise<AgentTurnResult> {
-  const found = await agentBinary(spec.agent);
+  const found_ = await agentBinary(spec.agent);
   const info = SUBSCRIPTION_INFO[spec.agent];
-  if (!found) throw new AgentTurnError("not_installed", `${info.label} is not on this computer. ${info.install.label} (${info.install.url}), sign in, and try again.`);
+  if (!found_) throw new AgentTurnError("not_installed", `${info.label} is not on this computer. ${info.install.label} (${info.install.url}), sign in, and try again.`);
   if (io.signal.aborted) throw aborted();
   const agent = await refreshAgent(spec.agent);
   if (io.signal.aborted) throw aborted();
@@ -655,9 +683,14 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   const thinking = checkEffort(spec.agent, spec.model ?? "default", spec.effort, { efforts: levels });
   if (!thinking.ok) throw new AgentTurnError("failed", thinking.message);
   spec = { ...spec, effort: thinking.send };
-  // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in).
-  const folder = key ? sessionFolder(key) : await mkdtemp(join(tmpdir(), "ensemble-turn-"));
+  // A chat keeps one folder for its session (Claude Code finds a session by the folder it began in); a
+  // node's chats share its project's folder, where its apps list them together.
+  const group = key && spec.session?.group ? await groupFolder(spec.session.group) : null;
+  const folder = group ?? (key ? sessionFolder(key) : await mkdtemp(join(tmpdir(), "ensemble-turn-")));
   if (key) await mkdir(folder, { recursive: true });
+  // The turn's own files and settings stay out of a shared folder: one folder per chat beside it.
+  const own = group ? sessionFolder(key!) : folder;
+  if (group) await mkdir(own, { recursive: true });
   const bridge = openBridge(spec.tools, io.call);
   const mcp: McpServer = {
     command: process.execPath,
@@ -667,17 +700,30 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   try {
     let files: SavedTurnFile[] = [];
     if (spec.files?.length) {
-      const fetched = await saveTurnFiles(spec.files, io.readFile, join(folder, "files"), io.signal);
+      const fetched = await saveTurnFiles(spec.files, io.readFile, join(own, "files"), io.signal);
       files = fetched.saved;
       spec = { ...spec, prompt: spec.prompt + filesNote(fetched) };
     }
     const history = spec.session?.history.trim() ?? "";
     // A new session gets the chat so far before the message; a resumed one already has it.
-    const run = (session: TurnSession) =>
-      DRIVERS[spec.agent]({ spec: { ...spec, prompt: !session?.resume && history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt }, io, bin: found.path, folder, mcp, files, session });
     // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
+    const perTurn = spec.agent === "claude-code" || spec.agent === "codex";
     const position = spec.session?.position;
-    const earlier = key ? await findSession(key, spec.agent, spec.system, spec.agent === "claude-code" || spec.agent === "codex", position) : null;
+    const found = key ? await findSession(key, spec.agent, spec.system, perTurn, position) : null;
+    // A resumed session whose instructions changed hears only what changed; most of them changed: a new session.
+    const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
+    const earlier = found && update !== null ? found.id : null;
+    const run = (session: TurnSession) =>
+      DRIVERS[spec.agent]({
+        spec: { ...spec, prompt: session?.resume ? (update ? `${update}\n\n---\n\n${spec.prompt}` : spec.prompt) : history ? `${history}\n\n---\n\n${spec.prompt}` : spec.prompt },
+        io,
+        bin: found_.path,
+        folder,
+        files,
+        mcp,
+        session,
+        own,
+      });
     let result: AgentTurnResult & { session?: string | null };
     let resumed = Boolean(earlier);
     try {
@@ -694,12 +740,19 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
       } else throw error;
     }
     // The chat will have this message and its reply: the next turn resumes only from there.
-    if (key && result.session) await saveSession(key, spec.agent, result.session, spec.system, position === undefined ? undefined : position + 2);
+    if (key && result.session) {
+      await saveSession(key, spec.agent, result.session, spec.system, {
+        ...(position === undefined ? {} : { next: position + 2 }),
+        ...(group ? { folder: group } : {}),
+        ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
+        perTurn,
+      });
+    }
     const { session: _session, ...answer } = result;
     return { ...answer, resumed };
   } finally {
     bridge.close();
     // A chat's folder stays for its next turn; the files of this turn do not.
-    await rm(key ? join(folder, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
+    await rm(key ? join(own, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
   }
 }

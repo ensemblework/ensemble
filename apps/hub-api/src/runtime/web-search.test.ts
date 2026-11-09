@@ -190,6 +190,15 @@ test("used-up included credits say so in the result, and a free web search answe
   assert.ok(!seen.some((row) => row.url.includes("azure.com")), "Azure is never called past the limit");
 });
 
+test("a turn on the person's own AI plan searches for free, never on Foundry's included credits", async () => {
+  const seen = engines({ azure: () => json(FOUNDRY_REPLY), bing: () => new Response(BING_RSS, { status: 200 }) });
+  const book = ledger();
+  const result = await search.run({ ...(ctx() as object), ownPlan: true } as never, { query: "rtx 5090 price" });
+  assert.deepEqual([(result.data as { provider: string; engine: string }).provider, (result.data as { engine: string }).engine], ["fallback", "bing"]);
+  assert.ok(!seen.some((row) => row.url.includes("azure.com")), "Foundry was not asked");
+  assert.equal(book.reserves.length, 0);
+});
+
 test("Bing's RSS results come back without Bing's own links, for the market asked", async () => {
   const seen = engines({ bing: () => new Response(BING_RSS, { status: 200 }) });
   const found = await webSearchFrom("rtx 5090 price", { market: "en_us" });
