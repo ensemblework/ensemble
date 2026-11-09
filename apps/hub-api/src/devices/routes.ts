@@ -58,7 +58,7 @@ import { folderPath, refusedPath } from "../workspace/folder-read.js";
 import { storeAnswer } from "./file-relay.js";
 import { endUnconfirmedStops } from "./settle.js";
 import { isCodeEngine, PageDocument } from "@ensemble/shared-types";
-import { projectBrief } from "../workspace/agent-projects.js";
+import { nodeProjectBrief, projectBrief } from "../workspace/agent-projects.js";
 import { activeConfig } from "../workspace/session-choice/config.js";
 import { factsOf } from "../workspace/session-choice/related.js";
 import { recordChoiceOutcome } from "../workspace/session-choice/outcome.js";
@@ -492,7 +492,16 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const runContext = (typeof next.context === "object" && next.context !== null ? next.context : {}) as { chat?: unknown; node?: unknown; newSession?: unknown };
       const ownAgent = next.kind === "code" && isCodeEngine(next.provider) && runContext.chat !== true && !runContext.node && !missionOf(next.context);
       const runSettings = ownAgent ? await loadSettings(prisma, next.userId) : null;
-      const project = runSettings && next.task.projectId && runSettings.orchestration.projectFolders !== false ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null) : null;
+      // A node's own run (not a plan's) that would get a new folder: the node's project folder (agent-projects.ts nodeProjectBrief).
+      const nodeId = typeof (runContext.node as { nodeId?: unknown } | undefined)?.nodeId === "string" ? ((runContext.node as { nodeId: string }).nodeId) : null;
+      const nodeFresh = Boolean(nodeId) && next.kind === "code" && isCodeEngine(next.provider) && runContext.chat !== true && !missionOf(next.context) && !next.repoUrl && !next.folderLabel && !next.continueFromJobId;
+      const nodeSettings = nodeFresh ? await loadSettings(prisma, next.userId) : null;
+      const project =
+        runSettings && next.task.projectId && runSettings.orchestration.projectFolders !== false
+          ? await projectBrief(prisma, next.userId, next.task.projectId).catch(() => null)
+          : nodeSettings && nodeSettings.orchestration.projectFolders !== false
+            ? await nodeProjectBrief(prisma, nodeId!).catch(() => null)
+            : null;
       const related = ownAgent ? await factsOf(prisma, next.userId, next.taskId, next.instructions, { space: next.userId, runner: next.runnerAccountId }).catch(() => null) : null;
       const choiceConfig = runSettings ? await activeConfig(app.log) : null;
       const description = [

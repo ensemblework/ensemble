@@ -312,8 +312,9 @@ export const graphTools = [
         if (grounded.length) return toolOk(`Found ${grounded.length} source(s).`, { results: grounded, provider: "grounding" });
       }
       // Included models, and a provider that found nothing here (no key of the person's, say): Azure Foundry's web search, on included credits.
+      // A turn on the person's own plan spends none of them: the free search below answers it.
       try {
-        const found = await includedWebSearch(ctx.userId, input.query, { tier, market });
+        const found = ctx.ownPlan ? null : await includedWebSearch(ctx.userId, input.query, { tier, market });
         if (found && (found.hits.length || found.answer)) {
           return toolOk(found.hits.length ? `Found ${found.hits.length} source(s).` : "Answered from a web search, with no source cited.", { results: found.hits, answer: found.answer, provider: "web_search" });
         }

@@ -51,6 +51,29 @@ const clip = (text: string, max: number) => {
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 };
 
+/**
+ * An Ensemble Node as a project (docs/35, Projects on the owner's agent): its conversations on the owner's
+ * AI plan and its coding sessions that have no folder of their own share one folder, so the agent's app
+ * lists them together. The brief is the node's role and charter. The name matches the one its chats use
+ * (node/brain.ts), so both find the same folder by the node's id.
+ */
+export async function nodeProjectBrief(prisma: Pick<PrismaClient, "nodeAgent">, nodeId: string): Promise<Omit<AgentProject, "folder"> | null> {
+  const node = await prisma.nodeAgent.findUnique({ where: { id: nodeId }, select: { id: true, name: true, slug: true, role: true, charter: true } });
+  if (!node) return null;
+  const brief = clip(
+    [
+      `# ${node.name} (Ensemble Node @${node.slug})`,
+      "",
+      `This folder is the Ensemble Node ${node.name}'s project: its conversations and the coding sessions it starts without a folder of their own work here. Keep files only one task needs in a folder named for that task.`,
+      "",
+      `Role: ${node.role}`,
+      node.charter.trim() ? `\n## Charter\n${clip(node.charter, 4000)}` : "",
+    ].join("\n"),
+    MAX_BRIEF,
+  );
+  return { id: node.id, name: `${node.name} (Ensemble Node)`, brief, hash: createHash("sha256").update(brief).digest("hex").slice(0, 16) };
+}
+
 /** The project's brief as Markdown for its agents, with a hash of it. Null when the project is gone. */
 export async function projectBrief(prisma: PrismaClient, userId: string, projectId: string): Promise<Omit<AgentProject, "folder"> | null> {
   const project = await prisma.project.findFirst({

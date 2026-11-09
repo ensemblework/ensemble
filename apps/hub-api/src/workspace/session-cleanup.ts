@@ -3,7 +3,9 @@
  * (Claude Code's, Codex's, Copilot's… history on their computer); those of finished work are deleted, so
  * the agents' apps are not cluttered by Ensemble. A session goes when every task it worked on is
  * retired: deleted (after a grace of a few minutes, so Undo can bring the task back with it), or done or
- * dropped for longer than the completed window (Settings → Data retention) and not pinned. A session with
+ * dropped for longer than the completed window (Settings → Data retention) and not pinned. An Ensemble
+ * Node's own session (its runs' tasks are the node's, kept off the board) goes once it has been unused for
+ * `NODE_SESSION_IDLE_DAYS`: those tasks are never marked done. A session with
  * a run still going, or whose computer is offline or too old to delete sessions, waits for a later sweep.
  * The run records in Ensemble, the project folders and their files stay; only the agent's conversation
  * goes (`deleteAgentSession`). Off with Settings → Orchestration → cleanSessions.
@@ -15,6 +17,10 @@ import { currentDevice } from "../devices/successor.js";
 import { deviceOnline } from "../devices/constants.js";
 import { deleteAgentSession } from "./delete-session.js";
 import { resolveSession, runsOfSession } from "./sessions.js";
+
+/** A node's own sessions unused this long are deleted (`ENSEMBLE_NODE_SESSION_IDLE_DAYS`, default 7). */
+export const NODE_SESSION_IDLE_DAYS = Math.max(1, Number(process.env.ENSEMBLE_NODE_SESSION_IDLE_DAYS) || 7);
+const NODE_TASK = "node:";
 
 /** A deleted task's sessions wait this long, so Undo (or a quick restore from Trash) still finds them. */
 export const DELETED_GRACE_MS = 10 * 60_000;
@@ -58,6 +64,7 @@ export async function sweepAgentSessions(
   const now = options.now ?? new Date();
   const deletedBefore = new Date(now.getTime() - DELETED_GRACE_MS);
   const completedBefore = new Date(now.getTime() - options.completedDays * 86_400_000);
+  const nodeIdleBefore = new Date(now.getTime() - NODE_SESSION_IDLE_DAYS * 86_400_000);
   const retryBefore = now.getTime() - RETRY_MS;
   const rows = await app.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT j.id FROM workspace_jobs j JOIN tasks t ON t.id = j.task_id
@@ -74,6 +81,7 @@ export async function sweepAgentSessions(
       AND (
         (t.deleted_at IS NOT NULL AND t.deleted_at <= ${deletedBefore})
         OR (t.deleted_at IS NULL AND t.pinned = false AND t.status::text IN ('done', 'dropped') AND t.completed_at <= ${completedBefore})
+        OR (t.deleted_at IS NULL AND t.source_ref LIKE ${`${NODE_TASK}%`} AND COALESCE(j.finished_at, j.created_at) <= ${nodeIdleBefore})
       )
     ORDER BY j.created_at ASC
     LIMIT 300`);
@@ -104,9 +112,14 @@ export async function sweepAgentSessions(
       result.waiting += 1;
       continue;
     }
-    // Every task the session worked on is retired; one still in use keeps it.
-    const taskIds = [...new Set(runs.map((run) => run.taskId))];
-    if (await app.prisma.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) })) {
+    // Every task the session worked on is retired; one still in use keeps it. A node's own tasks count as
+    // retired once the session has gone unused for NODE_SESSION_IDLE_DAYS.
+    const lastActive = Math.max(...runs.map((run) => (run.finishedAt ?? run.createdAt).getTime()));
+    const idle = lastActive <= nodeIdleBefore.getTime();
+    const allTasks = [...new Set(runs.map((run) => run.taskId))];
+    const nodeTasks = idle ? new Set((await app.prisma.task.findMany({ where: { id: { in: allTasks }, sourceRef: { startsWith: NODE_TASK } }, select: { id: true } })).map((row) => row.id)) : new Set<string>();
+    const taskIds = allTasks.filter((id) => !nodeTasks.has(id));
+    if (taskIds.length && (await app.prisma.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) }))) {
       await later(ids, IN_USE_AGAIN_MS);
       continue;
     }
@@ -120,7 +133,7 @@ export async function sweepAgentSessions(
     const guard: Guard = async (tx, current) => {
       if (current.length !== expected.size || current.some((run) => !expected.has(run))) return "The session gained a run since it was checked.";
       if (await tx.workspaceJob.count({ where: { id: { in: current }, status: { in: LIVE as WorkspaceJobStatus[] } } })) return "The session is working.";
-      if (await tx.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) })) return "A task of the session is in use again.";
+      if (taskIds.length && (await tx.task.count({ where: inUse(taskIds, deletedBefore, completedBefore) }))) return "A task of the session is in use again.";
       return null;
     };
     try {
