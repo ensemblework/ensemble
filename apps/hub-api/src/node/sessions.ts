@@ -38,6 +38,7 @@ import { postMessage, roomPeople, updateMessageData } from "./store.js";
 import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, stepRuns, type PlanLink } from "./plans.js";
 import { enqueueTurn } from "./queue.js";
 import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction, type SessionActor, type SessionVia } from "./session-queue.js";
+import { engineNamed, makerProblem, readinessProblem } from "../lib/agent-fit.js";
 import { appliedLine, requestedSettings, startingSettings, tuningProblem, type SettingValues, type Tuning } from "./settings.js";
 import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
@@ -257,12 +258,23 @@ export function agentDefaults(profile: RunProfile): string {
  * A coding agent signed in on the computer, for a run whose profile names none. With the sandbox on,
  * one that runs in its own OS sandbox there comes first: the others stop at once in a sandboxed run.
  */
-export async function agentOn(prisma: Pick<PrismaClient, "device">, deviceId: string | undefined, engines: string[], sandboxed = false): Promise<CodeEngine> {
+export async function agentOn(prisma: Pick<PrismaClient, "device">, deviceId: string | undefined, engines: string[], sandboxed = false, model?: string): Promise<CodeEngine> {
   const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId } }) : null;
-  const signedIn = device ? computerAgents(device).agents.filter((agent) => agent.signedIn !== false).map((agent) => agent.id as string) : [];
+  const agents = device ? computerAgents(device).agents : [];
+  // A named model narrows the choice to agents that can run it (GPT-6.1 Sol never goes to Claude Code).
+  const runsModel = (id: string) => !model?.trim() || !makerProblem(id, model, agents.find((agent) => agent.id === id), agents);
+  const signedIn = agents.filter((agent) => agent.signedIn !== false).map((agent) => agent.id as string).filter(runsModel);
   const runnable: string[] = engines.filter(isCodeEngine);
   const fits = (id: string) => !sandboxed || engineHasSandbox(id as CodeEngine, device?.platform);
-  return (signedIn.find((id) => runnable.includes(id) && fits(id)) ?? signedIn.find((id) => runnable.includes(id)) ?? runnable.find(fits) ?? runnable[0] ?? "claude-code") as CodeEngine;
+  const fallback = runnable.filter(runsModel);
+  return (signedIn.find((id) => runnable.includes(id) && fits(id)) ?? signedIn.find((id) => runnable.includes(id)) ?? fallback.find(fits) ?? fallback[0] ?? runnable[0] ?? "claude-code") as CodeEngine;
+}
+
+/** A named agent that is not installed or not signed in on the computer stops the call there, with the agents that are. */
+export async function refuseUnready(prisma: Pick<PrismaClient, "device">, deviceId: string | null | undefined, engine: string): Promise<void> {
+  const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId }, select: { capabilities: true, name: true } }) : null;
+  const problem = device ? readinessProblem(engine, device.name, computerAgents(device).agents) : null;
+  if (problem) throw new ToolBlockedError(problem.message, problem.remedy);
 }
 
 /** An agent that has no OS sandbox on that computer cannot take a sandboxed run: said before the run is made, with what to do. */
@@ -358,6 +370,10 @@ export async function agentModel(prisma: PrismaClient, deviceId: string | null |
         `Its models: ${models.filter((row) => row.id !== "auto").slice(0, 30).map((row) => `${row.id}${row.label !== row.id ? ` (${row.label})` : ""}`).join(", ")}.`,
       );
     }
+    if (!chosen) {
+      const wrongMaker = makerProblem(engine, model, agent, device ? computerAgents(device).agents : []);
+      if (wrongMaker) throw new ToolBlockedError(wrongMaker.message, wrongMaker.remedy);
+    }
     out.model = chosen?.id ?? model.trim();
   }
   if (wantedEffort === "default") out.effort = "default";
@@ -374,7 +390,8 @@ export async function agentModel(prisma: PrismaClient, deviceId: string | null |
 /** The computer's listing of an agent (capabilities `agents`), to check settings against. */
 async function listingOf(prisma: PrismaClient, deviceId: string | null | undefined, engine: string) {
   const device = deviceId ? await prisma.device.findUnique({ where: { id: deviceId }, select: { capabilities: true, name: true } }) : null;
-  return { computer: device?.name ?? null, listing: device ? computerAgents(device).agents.find((row) => row.id === engine) ?? null : null };
+  const agents = device ? computerAgents(device).agents : [];
+  return { computer: device?.name ?? null, listing: agents.find((row) => row.id === engine) ?? null, agents };
 }
 
 /**
@@ -390,7 +407,9 @@ function withAppliedSettings(body: JobRequest, requested: SettingValues): JobReq
 
 /** A setting the computer's agent cannot honour stops the call with what to do instead; nothing is swapped quietly. */
 async function refuseUnhonoured(prisma: PrismaClient, deviceId: string | null | undefined, engine: string, body: JobRequest, from: Pick<Tuning, "modelNamed" | "kept"> = {}): Promise<void> {
-  const { computer, listing } = await listingOf(prisma, deviceId, engine);
+  const { computer, listing, agents } = await listingOf(prisma, deviceId, engine);
+  const wrongMaker = makerProblem(engine, body.model?.trim() || null, listing, agents);
+  if (wrongMaker) throw new ToolBlockedError(wrongMaker.message, wrongMaker.remedy);
   const problem = tuningProblem({
     engine,
     computer,
@@ -560,7 +579,8 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   // A plan step's runs go as its owner asked the lead (agent, model, thinking, context), unless named here.
   if (env.plan?.planStep) {
     const run = await stepRun(env.prisma, env.plan.planId, env.plan.planStep);
-    const agent = Agent.safeParse(run.agent).success ? (run.agent as z.infer<typeof Agent>) : undefined;
+    // Written by the lead in its own words ("copilot", "GitHub Copilot"): read as the agent it names.
+    const agent: z.infer<typeof Agent> | undefined = run.agent?.trim().toLowerCase() === "ensemble" ? "ensemble" : engineNamed(run.agent);
     input = { ...input, agent: input.agent ?? agent, model: input.model ?? run.model, effort: input.effort ?? run.effort, context: input.context ?? run.context };
   }
   // What was asked, as asked (the step's settings count as asked); the profile fills in the rest.
@@ -568,7 +588,13 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   const profile = input.profile ? chooseProfile(env.ctx, input.profile) : nodeRunProfile(env.ctx.settings, env.node);
   let agent: z.infer<typeof Agent> | undefined = input.agent ?? (isCodeEngine(profile.engine) ? profile.engine : undefined);
   const where = await chooseComputer(env.ctx, profile, agent ?? "claude-code", input.computer);
-  if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? [], profile.sandbox);
+  // The profile's agent is only a default: a model named here that it cannot run goes to an agent that can.
+  if (!input.agent && agent && input.model?.trim()) {
+    const { listing, agents } = await listingOf(env.prisma, where.deviceId, agent);
+    if (makerProblem(agent, input.model, listing, agents)) agent = undefined;
+  }
+  if (!agent) agent = await agentOn(env.prisma, where.deviceId, where.computer?.engines ?? [], profile.sandbox, input.model);
+  await refuseUnready(env.prisma, where.deviceId, agent);
   const named = await agentModel(env.prisma, where.deviceId, agent, input.model, input.effort);
   input = { ...input, ...named };
   const task = await taskFor(env, input);
