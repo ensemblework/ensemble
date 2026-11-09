@@ -13,7 +13,8 @@ test("Settings → Prompts lists only prompts Ensemble sends, each built by the 
 
 test("prompts stay small: instructions without records, a message's context without the board, a brief with only the limits that apply", () => {
   const instructions = byId("assistant.instructions");
-  assert.ok(instructions.length < 2200, `assistant instructions: ${instructions.length} chars`);
+  // 2,500: the three conduct rules for small models (state.ts) took it from about 2,000 to 2,423 with a persona, a skill and an app.
+  assert.ok(instructions.length < 2500, `assistant instructions: ${instructions.length} chars`);
   assert.doesNotMatch(instructions, /Tasks on the board|Projects:|People:|Map of Ensemble|## Playbook|Today is|usually want/);
   const context = byId("assistant.context");
   assert.ok(context.length < 700, `a message's context: ${context.length} chars`);

@@ -106,10 +106,16 @@ export function checkedLink(raw: string): URL {
   return url;
 }
 
-function open(url: URL, lookup: LookupFunction, signal: AbortSignal): Promise<IncomingMessage> {
+const FILE_ACCEPT = "application/pdf,application/octet-stream,image/*,text/plain;q=0.9,*/*;q=0.8";
+const PAGE_ACCEPT = "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.8,*/*;q=0.5";
+/** A browser's name for page reads: many sites answer a bot's name with a block page. */
+const PAGE_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
+
+function open(url: URL, lookup: LookupFunction, signal: AbortSignal, page = false): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
     const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-    const request = send(url, { method: "GET", lookup, agent: false, signal, headers: { "user-agent": USER_AGENT, accept: "application/pdf,application/octet-stream,image/*,text/plain;q=0.9,*/*;q=0.8" } }, resolve);
+    const headers = page ? { "user-agent": PAGE_AGENT, accept: PAGE_ACCEPT, "accept-language": "en-US,en;q=0.9" } : { "user-agent": USER_AGENT, accept: FILE_ACCEPT };
+    const request = send(url, { method: "GET", lookup, agent: false, signal, headers }, resolve);
     request.on("error", reject);
     request.end();
   });
@@ -136,10 +142,11 @@ export type Fetched = { bytes: Buffer; url: string; contentType: string; disposi
 
 /**
  * Downloads a public file: http(s), every hop's address checked when it connects (no private, loopback
- * or link-local network), at most 5 redirects, at most `maxBytes`, within `timeoutMs`. A web page is refused with a hint.
+ * or link-local network), at most 5 redirects, at most `maxBytes`, within `timeoutMs`. A web page is refused with a hint,
+ * unless `page` asks for one (hub_read_web_page, tools/web-page.ts).
  * Calendar subscriptions (calendar/feeds.ts) fetch through here too.
  */
-export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), deps: SaveFetchDeps = testDeps ?? {}, timeoutMs = TIMEOUT_MS): Promise<Fetched> {
+export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), deps: SaveFetchDeps = testDeps ?? {}, timeoutMs = TIMEOUT_MS, page = false): Promise<Fetched> {
   const allowed = deps.allowAddress ?? ((address: string) => !privateAddress(address));
   const lookup = guardedLookup(deps.lookup ?? defaultLookup, allowed);
   const signal = AbortSignal.timeout(timeoutMs);
@@ -149,7 +156,7 @@ export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), de
     if (isIP(host) && !allowed(host, host)) throw new SaveFileError("That link points at a private address, which Ensemble does not fetch.");
     let response: IncomingMessage;
     try {
-      response = await open(url, lookup, signal);
+      response = await open(url, lookup, signal, page);
     } catch (error) {
       if (error instanceof SaveFileError) throw error;
       const cause = (error as { cause?: unknown }).cause;
@@ -171,7 +178,7 @@ export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), de
       throw new SaveFileError(`That link answered ${status}.`, signIn ? "It may need a sign-in or block automated downloads: download it in the browser with browser_fetch, then save the evidence id it returns." : undefined);
     }
     const contentType = String(response.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
-    if (/^(text\/html|application\/xhtml\+xml)$/.test(contentType)) {
+    if (!page && /^(text\/html|application\/xhtml\+xml)$/.test(contentType)) {
       response.destroy();
       throw new SaveFileError(WEB_PAGE_HINT, undefined, 415);
     }
@@ -183,7 +190,7 @@ export async function fetchPublicFile(raw: string, maxBytes = maxFileBytes(), de
     const bytes = await readCapped(response, maxBytes).catch((error: unknown) => {
       throw error instanceof SaveFileError ? error : new SaveFileError(signal.aborted ? "That download took too long." : "That download stopped before it finished.");
     });
-    if (/^\s*<(?:!doctype html|html[\s>]|head[\s>]|body[\s>])/i.test(bytes.subarray(0, 512).toString("latin1"))) throw new SaveFileError(WEB_PAGE_HINT, undefined, 415);
+    if (!page && /^\s*<(?:!doctype html|html[\s>]|head[\s>]|body[\s>])/i.test(bytes.subarray(0, 512).toString("latin1"))) throw new SaveFileError(WEB_PAGE_HINT, undefined, 415);
     const disposition = response.headers["content-disposition"];
     return { bytes, url: url.toString(), contentType, disposition: typeof disposition === "string" ? disposition : null };
   }

@@ -15,6 +15,11 @@ import {
 import { defineTool, inTransaction, toolOk } from "../types.js";
 import { isGuestIn } from "../../sharing/context.js";
 
+/** Searches one Hub chat turn may make; then the model reads what it found or answers (web-research playbook). */
+export const WEB_SEARCHES_PER_TURN = 3;
+const SEARCHES_USED =
+  "That is the most searches one turn may make. Read the most promising page you already have with hub_read_web_page, or the official site directly (its address), or answer now with what you found and say what you could not verify.";
+
 export const graphTools = [
   defineTool({
     name: "hub_create_person",
@@ -295,6 +300,10 @@ export const graphTools = [
     isWrite: false,
     risk: "low",
     async run(ctx, input) {
+      // A small model with poor results searches again and again until its steps run out, and never reads a page.
+      if (ctx.turn && ++ctx.turn.webSearches > WEB_SEARCHES_PER_TURN) {
+        return toolOk("No more searches in this turn.", { results: [], note: SEARCHES_USED });
+      }
       const market = searchMarket(input.market);
       const tier = ctx.settings.models[ctx.settings.assistant.defaultTier] ?? ctx.settings.models.medium;
       let note: string | undefined;

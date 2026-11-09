@@ -44,7 +44,7 @@ A dash means nothing in that column reaches the area. "Same" means the assistant
 | Needs me | Reads what waits (`hub_list_approvals`) | Same, and its own cards in the chat | MCP: `ensemble_decisions` (read); a run: `ask_person` |
 | Code folders and agent changes | Reads them | Same, plus its own hands on the computer | Its own folder |
 | Trash and Completed | Read them; restore a trashed record | Same | Allowlist: restore a trashed record |
-| The web | `hub_web_search` | Same, plus the browser and capture tools, `web_task`, `browser_shop` | A run: the computer's browser and capture tools |
+| The web | `hub_web_search`, `hub_read_web_page` (public pages and PDFs, no sign-in or scripts) | Same, plus the browser and capture tools, `web_task`, `browser_shop` | A run: the computer's browser and capture tools |
 | Ensemble Node itself | — | Rooms, crews, nodes, routines, memories (`node_*`) | — |
 | Ensemble's web app in a browser | — | Refused (§4) | Told not to (§4) |
 
