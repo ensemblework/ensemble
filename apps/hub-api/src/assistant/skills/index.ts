@@ -201,6 +201,8 @@ export const CORE_TOOLS: readonly string[] = [
   "hub_update_task",
   "hub_find_setting",
   "hub_web_search",
+  // Search snippets are not sources: the page itself is read before an answer rests on it.
+  "hub_read_web_page",
   // The instructions list the person's enabled skills by id, to read when one applies.
   "hub_read_skill",
 ];

@@ -5,7 +5,7 @@
  * (docs/25). The assistant never runs commands itself.
  */
 import { z } from "zod";
-import { CODE_ENGINES, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { CODE_ENGINES, isCodeEngine, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
 import { deviceEngines, deviceOpensPullRequests, folderLabels, repositoryLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
@@ -13,6 +13,8 @@ import { actorFor } from "../../sharing/context.js";
 import { Assign, autoKind, createJob } from "../../workspace/assign.js";
 import { listSessions, resolveSession, type AgentSession } from "../../workspace/sessions.js";
 import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
+import { makerProblem } from "../../lib/agent-fit.js";
+import { computerAgents } from "../../subscriptions/turn.js";
 import { engineName, profileLine } from "./code.js";
 
 const Engine = z.enum(["ensemble", ...CODE_ENGINES]);
@@ -189,6 +191,13 @@ export async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> 
     ...(kind === "code" && (input.pullRequest ?? profile.pullRequest) ? { pullRequest: input.pullRequest ?? profile.pullRequest! } : {}),
     ...(kind === "code" && input.branch?.trim() ? { branchMode: "new" as const, branch: input.branch.trim() } : {}),
   });
+  // Another maker's model in an agent that runs one maker's (GPT-6.1 Sol in Claude Code) is refused before a run is made.
+  if (isCodeEngine(engine) && body.model) {
+    const device = where.deviceId ? await ctx.prisma.device.findUnique({ where: { id: where.deviceId }, select: { capabilities: true } }) : null;
+    const agents = device ? computerAgents(device).agents : [];
+    const wrongMaker = makerProblem(engine, body.model, agents.find((agent) => agent.id === engine), agents);
+    if (wrongMaker) throw new ToolBlockedError(wrongMaker.message, wrongMaker.remedy);
+  }
   return { title: task.title, profile, engine, where, body, session };
 }
 

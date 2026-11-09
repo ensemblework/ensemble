@@ -1103,6 +1103,37 @@ test("a rate-limited turn tries again quietly; nodes cannot post into the conver
   }
 });
 
+test("a session never pairs a model with an agent that cannot run it, nor goes to an agent that is missing or signed out", async () => {
+  // The Software team crew (5 Nov 2026): a plan step's "copilot" was not read as GitHub Copilot, and its run went to Claude Code with GPT-6.1-Sol.
+  const mira = await person("Mira");
+  const { laptop } = await laptopFor(mira, "Mira's laptop");
+  const claude = (signedIn: boolean) => ({ id: "claude-code", via: "cli", version: "2.0", signedIn, typedModels: true, checkedAt: new Date().toISOString(), models: [{ id: "default", label: "Default" }, { id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }] });
+  const copilot = { id: "copilot-cli", via: "cli", version: "1.0", signedIn: true, checkedAt: new Date().toISOString(), models: [{ id: "auto", label: "Auto" }, { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", efforts: ["low", "medium", "high", "xhigh"] }] };
+  const listing = (agents: unknown[]) => h.prisma.device.update({ where: { id: laptop.id }, data: { appVersion: "cli-0.7.5", capabilities: { folders: ["ensemble"], engines: ["claude-code", "codex", "copilot-cli"], agents } as never } });
+  const { room } = await createNode(mira, "assistant");
+  const start = (args: Record<string, unknown>) => ({ calls: [{ name: "node_session_start", arguments: { title: "Fix it", prompt: "Fix it.", folder: "ensemble", ...args } }], then: "Started." });
+  const jobs = () => h.prisma.workspaceJob.findMany({ where: { userId: mira.id }, orderBy: { createdAt: "asc" }, select: { provider: true, model: true } });
+
+  await listing([claude(false), copilot]);
+  script = () => start({ agent: "claude-code", model: "GPT-6.1-Sol" });
+  await say(mira, room.id, "use claude code");
+  assert.equal((await jobs()).length, 0, "Claude Code is signed out: no run");
+
+  await listing([claude(true), copilot]);
+  script = () => start({ agent: "claude-code", model: "gpt-6.1-sol" });
+  await say(mira, room.id, "use claude code with sol");
+  assert.equal((await jobs()).length, 0, "Claude Code runs Claude models only, even though it takes typed names");
+
+  script = () => start({ model: "GPT-6.1-Sol", effort: "xhigh" });
+  await say(mira, room.id, "use GPT-6.1-Sol");
+  assert.deepEqual(await jobs(), [{ provider: "copilot-cli", model: "gpt-6.1-sol" }], "a named model goes to an agent that runs it");
+
+  await listing([copilot]);
+  script = () => start({ agent: "claude-code", model: "opus" });
+  await say(mira, room.id, "use claude code with opus");
+  assert.equal((await jobs()).length, 1, "Claude Code is not installed there: no run");
+});
+
 test("a session's model is resolved by name on the computer, an unsupported thinking level is refused, and an old computer cannot continue a session", async () => {
   const mira = await person("Mira");
   const { laptop } = await laptopFor(mira, "Mira's laptop");

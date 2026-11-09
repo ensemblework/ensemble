@@ -38,7 +38,7 @@ async function createSpace(user: HttpUser, name: string): Promise<string> {
 }
 
 /** Tools that reach outside the database (the web, a git checkout) are not part of this check. */
-const SKIP = new Set(["hub_web_search", "hub_fetch_now", "hub_repo_overview", "hub_repo_read_file", "hub_how_to", "hub_validate_diagram"]);
+const SKIP = new Set(["hub_web_search", "hub_read_web_page", "hub_fetch_now", "hub_repo_overview", "hub_repo_read_file", "hub_how_to", "hub_validate_diagram"]);
 
 type Ids = Record<string, string>;
 

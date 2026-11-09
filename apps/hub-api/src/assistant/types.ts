@@ -43,6 +43,8 @@ export interface ToolContext {
   space?: CallSpace;
   /** Records the turn knows by id, so a preview can name them by title. */
   refs?: ReadonlyMap<string, AssistantRef>;
+  /** What this turn has used so far, shared by every call in it (Hub chat only; hub_web_search stops at WEB_SEARCHES_PER_TURN). */
+  turn?: { webSearches: number };
 }
 
 /**
