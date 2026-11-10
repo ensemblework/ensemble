@@ -10,6 +10,7 @@
  */
 import { closeSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { uptime } from "node:os";
 
 export const LOCK_FILE_NAME = "runtime.lock";
 /** Exit code when another runtime already holds the lock (EX_TEMPFAIL). Launchers attach instead. */
@@ -28,6 +29,39 @@ function alive(pid: number): boolean {
     // EPERM: the process exists but belongs to someone else. Treat it as alive.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** When this computer last started. */
+function bootedAt(): number {
+  return Date.now() - uptime() * 1000;
+}
+
+/** When a process started, from Linux's /proc (USER_HZ is 100 there); null elsewhere or when unknown. */
+function processStartedAt(pid: number): number | null {
+  if (process.platform !== "linux") return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+    const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+    return Number.isFinite(ticks) && btime > 0 ? btime * 1000 + ticks * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the process that wrote a lock still holds it. Its pid being alive is not enough: after a
+ * reboot, or long enough, the same pid belongs to another program (a desktop shell, say), and a runtime
+ * that trusted it would refuse to start for good. A lock written before this computer last started is
+ * stale, and so (on Linux) is one whose pid's process started after the lock was written.
+ */
+export function holderAlive(holder: { pid: number; startedAt?: string }, isAlive: (pid: number) => boolean = alive): boolean {
+  if (!isAlive(holder.pid)) return false;
+  const wrote = Date.parse(holder.startedAt ?? "");
+  if (!Number.isFinite(wrote)) return true;
+  if (wrote < bootedAt() - 60_000) return false;
+  const began = processStartedAt(holder.pid);
+  return began === null || began <= wrote + 60_000;
 }
 
 export function readLock(dir: string): LockOwner | null {
@@ -59,7 +93,7 @@ export function acquireRuntimeLock(dir: string, owner: string, isAlive: (pid: nu
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const holder = readLock(dir);
-      if (holder && holder.pid !== process.pid && isAlive(holder.pid)) return { ok: false, holder };
+      if (holder && holder.pid !== process.pid && holderAlive(holder, isAlive)) return { ok: false, holder };
       // Stale (crash, reboot) or unreadable: remove and try again.
       rmSync(file, { force: true });
     }

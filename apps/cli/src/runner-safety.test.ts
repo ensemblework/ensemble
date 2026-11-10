@@ -129,6 +129,10 @@ test("a runtime that stopped answering but still holds the data folder is waited
     await mkdir(paths.dataHome, { recursive: true });
     await writeFile(join(paths.dataHome, "runtime.lock"), JSON.stringify({ pid: closing.pid, owner: "cli", startedAt: new Date().toISOString() }));
     assert.equal(await runtimeLockHolder(paths), closing.pid);
+    // The same pid in a lock written before this computer last started is another program's (a reused pid).
+    await writeFile(join(paths.dataHome, "runtime.lock"), JSON.stringify({ pid: closing.pid, owner: "cli", startedAt: "2020-01-01T00:00:00.000Z" }));
+    assert.equal(await runtimeLockHolder(paths), null, "a lock from before the last boot holds nothing");
+    await writeFile(join(paths.dataHome, "runtime.lock"), JSON.stringify({ pid: closing.pid, owner: "cli", startedAt: new Date().toISOString() }));
     assert.equal(await waitForLockRelease(paths, Date.now() + 100), false, "still running after 100 ms");
     assert.equal(await waitForLockRelease(paths, Date.now() + 10_000), true, "released once it exits");
     assert.equal(await runtimeLockHolder(paths), null, "a lock whose process is gone holds nothing");
