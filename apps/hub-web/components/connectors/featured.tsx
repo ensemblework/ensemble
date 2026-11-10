@@ -48,7 +48,7 @@ export function ConnectionsOverview({
   return (
     <SectionCard
       title="Connections"
-      description="The apps Ensemble reads and, after your Apply, changes. Everything else is in Browse connectors."
+      description="The apps Ensemble reads, and changes after your Apply."
     >
       {catalog.isLoading ? (
         <SkeletonRows count={5} rowClassName="h-12" />

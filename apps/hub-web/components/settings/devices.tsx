@@ -33,7 +33,7 @@ export function DevicesSection() {
   return (
     <SectionCard
       title="Connected computers"
-      description="Tasks run on a connected computer using its own AI subscriptions, model keys and git sign-in."
+      description="Where tasks run, with that computer's own plans and sign-ins."
       actions={<ConnectComputerButton />}
     >
       {devices.isLoading ? <Spinner size={14} /> : null}{devices.error ? <p role="alert" className="text-[13px] text-danger">Could not load connected computers. <button className="btn" onClick={() => void devices.refetch()}>Retry</button></p> : null}

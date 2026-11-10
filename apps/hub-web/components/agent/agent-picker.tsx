@@ -448,7 +448,8 @@ export function AgentPicker({
  * The model's thinking level, context window and fast mode, as one small button beside the agent.
  * Renders nothing for a model with none of them.
  */
-export function TuningPicker({ value, model, onChange, allowFast = true, label }: { value: AgentChoice; model: PickerModel | null; onChange: (value: AgentChoice) => void; allowFast?: boolean; label: string }) {
+/** `width`: a fixed width where several pickers stack, so their rows line up whatever each one says. */
+export function TuningPicker({ value, model, onChange, allowFast = true, label, width }: { value: AgentChoice; model: PickerModel | null; onChange: (value: AgentChoice) => void; allowFast?: boolean; label: string; width?: string }) {
   const levels = model?.levels ?? [];
   const contexts = model?.contexts ?? [];
   const fast = allowFast && Boolean(model?.fast);
@@ -460,9 +461,9 @@ export function TuningPicker({ value, model, onChange, allowFast = true, label }
       maxHeight={420}
       align="right"
       trigger={(open, toggle) => (
-        <button type="button" className="picker-trigger h-10 w-auto shrink-0" aria-haspopup="dialog" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="tuning">
+        <button type="button" className={cx("picker-trigger h-10 shrink-0", width ?? "w-auto")} aria-haspopup="dialog" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="tuning">
           <span className="text-[11.5px] text-faint">Thinking</span>
-          <span className="max-w-[10rem] truncate font-medium">{text}</span>
+          <span className={cx("truncate font-medium", width ? "min-w-0 flex-1" : "max-w-[10rem]")}>{text}</span>
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>
       )}

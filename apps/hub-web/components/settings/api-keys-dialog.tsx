@@ -246,7 +246,7 @@ function MorePane({ settings, patch }: { settings: Settings; patch: Patch }) {
         <h3 className="text-[17px] font-semibold">Other settings</h3>
         <p className="mt-0.5 text-[12.5px] text-muted">Where keys are used, trying each tier, and local models.</p>
       </div>
-      <SettingRow title="Use these keys on my computers" description="The Ensemble CLI and the desktop app, signed in to this account, use these keys for their own model calls. A key added on a computer stays on it and wins there.">
+      <SettingRow title="Use these keys on my computers" description="The CLI and desktop app use them too." info="The Ensemble CLI and the desktop app, signed in to this account, use these keys for their own model calls. A key added on a computer stays on it and wins there.">
         <Toggle label="Use these keys on my computers" checked={settings.models.keysOnComputers !== false} onChange={(keysOnComputers) => patch({ models: { keysOnComputers } })} />
       </SettingRow>
       <div>
@@ -322,7 +322,7 @@ export function ApiKeysDialog({ open, onClose, settings, patch }: { open: boolea
               <span className="text-[15px] font-semibold">API keys</span>
               <Tag tone={withKeys ? "green" : "gray"}>{withKeys ? `${withKeys} with a key` : "none yet"}</Tag>
             </div>
-            <p className="mt-0.5 text-[12.5px] text-muted">For people who have API keys. With a Claude, ChatGPT, Cursor or Copilot plan you don't need one: use Your AI subscriptions instead.</p>
+            <p className="mt-0.5 text-[12.5px] text-muted">Only if you have API keys. A Claude, ChatGPT, Cursor or Copilot plan needs none.</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>

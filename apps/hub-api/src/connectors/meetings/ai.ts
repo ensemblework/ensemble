@@ -286,7 +286,7 @@ export interface QueueOptions {
 
 /**
  * Marks a note for the AI pass and returns its status. Without `force` only when
- * `automations.meetingTasks` is on, the meeting is recent and has enough text, and no pass has
+ * `automations.meetings` is on, the meeting is recent and has enough text, and no pass has
  * finished on it. A note being read stays as it is.
  */
 export async function queueMeetingAi(db: Db, userId: string, noteId: string, options: QueueOptions = {}): Promise<AiStatus | null> {
@@ -304,7 +304,7 @@ export async function queueMeetingAi(db: Db, userId: string, noteId: string, opt
   } else {
     if (current === "done" || !meetingAiEnabled()) return current;
     const settings = await loadSettings(db, userId);
-    if (!settings.automations.meetingTasks.enabled) return current;
+    if (!settings.automations.meetings.enabled) return current;
     if (chars < (options.minChars ?? AUTO_MIN_CHARS)) return current;
     if ((note.occurredAt ?? note.askedAt).getTime() < Date.now() - AUTO_DAYS * 86_400_000) return current;
   }
@@ -520,7 +520,7 @@ export async function runMeetingAi(noteId: string, options: { db?: PrismaClient;
 
 async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<MeetingAiOutcome> {
   const settings = await loadSettings(db, note.userId);
-  const tier = settings.automations.meetingTasks.tier;
+  const tier = settings.automations.meetings.tier;
   const context = await gather(db, note, settings);
   const { input, corpus, me, people, attendees } = context;
   if (!input.transcript.trim() && !input.notes.trim() && !input.vendor.summary.trim() && !input.vendor.items.length) {

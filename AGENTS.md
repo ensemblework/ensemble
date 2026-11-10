@@ -123,6 +123,7 @@ cd apps/agent-runtime && .venv/bin/python -m pytest tests   # install pytest int
 - **No em dashes, no `--`, in anything people read**: labels, notices, empty values, Apply previews, recap text, files Ensemble writes, and the assistant's replies (its prompt says so in `assistant/state.ts`). Use a period, comma, colon or `·`; an empty value says what it is ("No date", "None", "Not reported"). Parsers keep accepting old text that has one.
 - **Settings rows line up.** A setting is a `SettingRow` (title and short description left, one control right); a card's rows sit in `divide-y divide-[var(--line)]`. Controls in a card share a width (`w-32` for selects and `NumberField`, whose unit sits inside its box). Never a sentence with a control in the middle of it.
 - **Short copy; the rest goes in the ⓘ.** A card or row says what it does in one line at most. How it works, limits and edge cases go in `info` (`InfoTip`), never in a paragraph under the controls.
+- **Few settings.** One switch per feature, with its model picker beside it, not one per step. Behaviour that is simply right is not a setting. Never show the same setting in two cards.
 - **No robots.** An agent is drawn with `AgentIcon` (`components/agent-icon.tsx`, Ensemble's mark in the text colour), never lucide `Bot` or another robot.
 
 ## Guardrails

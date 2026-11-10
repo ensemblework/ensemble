@@ -93,7 +93,7 @@ async function tick(app: FastifyInstance): Promise<void> {
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));
-    if (settings.automations.meetingPrep.enabled) void runMeetingPreps(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "meeting prep failed"));
+    if (settings.automations.meetings.enabled) void runMeetingPreps(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "meeting prep failed"));
     void runDueRoutines(app, userId, settings.routines.enabled).catch((error: unknown) => app.log.error({ err: error }, "routines failed"));
     // The agent sessions of deleted and long-finished work, deleted from the person's agents (workspace/session-cleanup.ts).
     if (settings.orchestration.cleanSessions !== false) sweepWhenDue(app, userId, settings.completedRetentionDays);
