@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createReadStream, openSync } from "node:fs";
+import { createReadStream, openSync, readFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
@@ -86,11 +87,45 @@ function processAlive(pid: number): boolean {
   }
 }
 
-/** The pid of the live process holding this computer's runtime lock, or null. */
+/** When this computer last started. */
+function bootedAt(): number {
+  return Date.now() - uptime() * 1000;
+}
+
+/** When a process started, from Linux's /proc (USER_HZ is 100 there); null elsewhere or when unknown. */
+function processStartedAt(pid: number): number | null {
+  if (process.platform !== "linux") return null;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+    const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+    return Number.isFinite(ticks) && btime > 0 ? btime * 1000 + ticks * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the process that wrote a lock still holds it. Its pid being alive is not enough: after a
+ * reboot, or long enough, the same pid belongs to another program (a desktop shell, say), and a runtime
+ * that trusted it would refuse to start for good. A lock written before this computer last started is
+ * stale, and so (on Linux) is one whose pid's process started after the lock was written.
+ */
+export function holderAlive(holder: { pid: number; startedAt?: string }, isAlive: (pid: number) => boolean = processAlive): boolean {
+  if (!isAlive(holder.pid)) return false;
+  const wrote = Date.parse(holder.startedAt ?? "");
+  if (!Number.isFinite(wrote)) return true;
+  if (wrote < bootedAt() - 60_000) return false;
+  const began = processStartedAt(holder.pid);
+  return began === null || began <= wrote + 60_000;
+}
+
+/** The pid of the live process holding this computer's runtime lock, or null (none, or a stale lock: `holderAlive`). */
 export async function runtimeLockHolder(paths: CliPaths = resolveCliPaths(), isAlive: (pid: number) => boolean = processAlive): Promise<number | null> {
   try {
-    const value = JSON.parse(await readFile(join(paths.dataHome, LOCK_FILE_NAME), "utf8")) as { pid?: unknown };
-    return typeof value.pid === "number" && value.pid !== process.pid && isAlive(value.pid) ? value.pid : null;
+    const value = JSON.parse(await readFile(join(paths.dataHome, LOCK_FILE_NAME), "utf8")) as { pid?: unknown; startedAt?: unknown };
+    if (typeof value.pid !== "number" || value.pid === process.pid) return null;
+    return holderAlive({ pid: value.pid, startedAt: typeof value.startedAt === "string" ? value.startedAt : "" }, isAlive) ? value.pid : null;
   } catch {
     return null;
   }
