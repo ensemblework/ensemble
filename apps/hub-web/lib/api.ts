@@ -260,7 +260,7 @@ export type NodeAssignable = {
 export type Complexity = "easy" | "medium" | "high" | "max";
 
 /** An earlier code run Assign can continue: `folder` is its path here, or its shared folder's label on a computer. */
-export type EarlierRun = { jobId: string; taskId?: string; title: string; status: string; folder: string; repoUrl?: string | null; branch: string; createdAt: string };
+export type EarlierRun = { jobId: string; taskId?: string; title: string; status: string; folder: string; repoUrl?: string | null; branch: string; createdAt: string; sessionDeleted?: boolean };
 
 export type TaskRecord = {
   id: string;
@@ -781,6 +781,11 @@ export type AgentJob = {
   resume?: { reason: string; attempt: number; of: number } | null;
   /** The agent session the computer chose to continue because it fit the task, and why. */
   sessionChoice?: { title: string | null; why: string | null } | null;
+  /**
+   * A run continuing an earlier one that could not continue its agent session: `gone` (the agent no longer
+   * had it: deleted in its own app), `deleted` (deleted in Ensemble). It started a new one with the earlier summary.
+   */
+  sessionRestart?: "gone" | "deleted" | null;
   deviceId?: string | null;
   deviceName?: string | null;
   /** In a shared space: whose computer runs it (null: the space's owner). */

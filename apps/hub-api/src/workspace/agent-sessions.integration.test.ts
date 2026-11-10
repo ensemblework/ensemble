@@ -312,3 +312,57 @@ test("a node's own session unused for a week is deleted though its task stays op
   assert.ok(!removed.includes(fresh.id), "used two days ago: kept");
   assert.ok(!removed.includes(persons.id), "the person's own open task keeps its session");
 });
+
+test("a run continuing a deleted session starts its own; a continued run whose session was gone is told apart", async () => {
+  const user = await h.asUser();
+  const scope = { space: user.id, runner: null };
+  const { listSessions, resolveSession, runsOfSession } = await import("./sessions.js");
+  const { sessionRestartOf, sessionToResume } = await import("./session-continuity.js");
+  const task = (title: string) => db.task.create({ data: { userId: user.id, title, createdBy: "me" } });
+  const engineOf = async (jobId: string) => ((await db.workspaceEvent.findFirstOrThrow({ where: { jobId, kind: "engine" } })).data as { session: string }).session;
+
+  // Ensemble deleted the session (a person, or its clean-up): every run of it is marked so.
+  const first = await ranOn(user.id, (await task("Build it")).id, null);
+  const second = await ranOn(user.id, (await task("Fix it")).id, null, { continueFrom: first.id });
+  for (const id of [first.id, second.id]) await db.workspaceJob.update({ where: { id }, data: { context: { sessionDeletion: { state: "deleted", at: new Date().toISOString() } } } });
+  // Continue an earlier task (its folder) after that: a session of its own, never resuming the deleted one.
+  const later = await db.workspaceJob.create({ data: { userId: user.id, taskId: (await task("Polish it")).id, kind: "code", status: "queued", executionMode: "sandbox", provider: "claude-code", model: "default", continueFromJobId: second.id } });
+  assert.equal(await sessionToResume(db, later), null, "a deleted session is not tried");
+  await db.workspaceJob.update({ where: { id: later.id }, data: { status: "succeeded", startedAt: new Date(), finishedAt: new Date() } });
+  await db.workspaceEvent.create({ data: { jobId: later.id, kind: "engine", data: { session: randomUUID() } } });
+  const own = await resolveSession(db, scope, later.id);
+  assert.equal(own?.id, later.id, "it is the root of its own session");
+  assert.ok((await listSessions(db, scope)).some((row) => row.id === later.id), "listed, so it can be chosen and cleaned up");
+  assert.deepEqual((await runsOfSession(db, scope, first.id, true)).map((run) => run.id).sort(), [first.id, second.id].sort(), "the deleted session keeps only its own runs");
+  assert.equal(await sessionRestartOf(db, later), "deleted");
+
+  // The agent no longer had the session (deleted in its own app): the run started a new one under another id.
+  const before = await ranOn(user.id, (await task("Draft the report")).id, null);
+  const resumed = await ranOn(user.id, (await task("Add the charts")).id, null, { continueFrom: before.id });
+  await db.workspaceEvent.updateMany({ where: { jobId: resumed.id, kind: "engine" }, data: { data: { session: await engineOf(before.id) } } });
+  assert.equal(await sessionRestartOf(db, resumed), null, "the same session id: it was resumed");
+  const restarted = await ranOn(user.id, (await task("Add the tables")).id, null, { continueFrom: resumed.id });
+  assert.equal(await sessionRestartOf(db, restarted), "gone", "another session id: the agent had lost it");
+  const response = await user.inject({ method: "GET", url: `/api/agent/jobs/${restarted.id}` });
+  assert.equal(response.json().job.sessionRestart, "gone", "the task page says so");
+  const other = await ranOn(user.id, (await task("Review it")).id, null, { continueFrom: before.id, provider: "codex" });
+  assert.equal(await sessionRestartOf(db, other), null, "another agent never resumes it");
+});
+
+test("Copilot's saved sessions are looked up in its own home", async () => {
+  const { copilotHasSession } = await import("../subscriptions/copilot.js");
+  const home = await mkdtemp(join(tmpdir(), "copilot-home-"));
+  const saved = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = home;
+  try {
+    assert.equal(await copilotHasSession("abc-1"), null, "a Copilot that keeps sessions elsewhere: unknown");
+    await mkdir(join(home, "session-state", "abc-1"), { recursive: true });
+    assert.equal(await copilotHasSession("abc-1"), true);
+    assert.equal(await copilotHasSession("abc-2"), false);
+    assert.equal(await copilotHasSession("../escape"), false);
+  } finally {
+    if (saved === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = saved;
+    await rm(home, { recursive: true, force: true });
+  }
+});

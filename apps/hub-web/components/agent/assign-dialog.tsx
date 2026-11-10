@@ -288,6 +288,7 @@ export function earlierRunLabel(row: EarlierRun, taskId: string): string {
     waiting ? "not finished yet, waits for it" : EARLIER_STATUS[row.status] ?? row.status,
     row.branch,
     where,
+    row.sessionDeleted ? "its agent session was deleted: a new one starts there" : "",
   ]
     .filter(Boolean)
     .join(" · ");

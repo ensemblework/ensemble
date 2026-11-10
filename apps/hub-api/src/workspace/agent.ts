@@ -15,6 +15,7 @@ import type { PrismaClient } from "@prisma/client";
 import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
 import { recordChoiceOutcome } from "./session-choice/outcome.js";
+import { engineSessionOf, sessionToResume } from "./session-continuity.js";
 import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type AgentProject } from "./agent-projects.js";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -351,31 +352,14 @@ export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | 
  * session), if the same agent: that run's, else the nearest earlier run's in the same chain, for a
  * run that stopped before its agent started (workspace/sessions.ts).
  */
-async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null }): Promise<{ session: string | null; summary: string | null }> {
+async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null; context: unknown }): Promise<{ session: string | null; summary: string | null }> {
   if (!job.continueFromJobId) return { session: null, summary: null };
   const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
   if (!previous) return { session: null, summary: null };
   if (previous.provider !== job.provider) return { session: null, summary: previous.summary };
-  let id: string | null = job.continueFromJobId;
-  for (let hops = 0; id && hops < 20; hops += 1) {
-    const session = await engineSession(prisma, id);
-    if (session) return { session, summary: previous.summary };
-    const earlier: { provider: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id }, select: { provider: true, continueFromJobId: true } });
-    if (!earlier?.continueFromJobId) break;
-    const parent: { provider: string | null } | null = await prisma.workspaceJob.findUnique({ where: { id: earlier.continueFromJobId }, select: { provider: true } });
-    if (parent?.provider !== job.provider) break;
-    id = earlier.continueFromJobId;
-  }
-  return { session: null, summary: previous.summary };
+  // Never a session that was deleted (session-continuity.ts): the run starts a new one with the earlier summary.
+  return { session: await sessionToResume(prisma, job), summary: previous.summary };
 }
-
-/** The engine session a job's run started (each engine records it on its `engine` event). */
-async function engineSession(prisma: PrismaClient, jobId: string): Promise<string | null> {
-  const started = await prisma.workspaceEvent.findFirst({ where: { jobId, kind: "engine" }, orderBy: { sequence: "desc" } });
-  const session = (started?.data as { session?: unknown } | null)?.session;
-  return typeof session === "string" && session ? session : null;
-}
-
 
 /** Originals copied for an engine (Claude Code, Codex, Cursor) to open with its own tools. */
 export interface EngineCopies {
@@ -1029,7 +1013,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           retry += 1;
           if (control.signal.aborted) throw failure;
           // Carry on the same session when the engine got far enough to start one; else start over.
-          const known = (await engineSession(prisma, job.id)) ?? session;
+          const known = (await engineSessionOf(prisma, job.id)) ?? session;
           session = known;
           prompt = known ? continuePrompt(reason) : prompt;
         } finally {

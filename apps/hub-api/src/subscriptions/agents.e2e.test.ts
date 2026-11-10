@@ -154,6 +154,8 @@ if (process.env.STANDIN_SESSIONS) {
   const at = args.indexOf('--session-id');
   require('node:fs').appendFileSync(process.env.STANDIN_SESSIONS, JSON.stringify({ cwd: process.cwd(), session: at >= 0 ? args[at + 1] : null, prompt }) + "\\n");
 }
+// Copilot keeps each session it saves as a folder in its home's session-state.
+if (process.env.COPILOT_HOME && args.includes('--session-id')) require('node:fs').mkdirSync(require('node:path').join(process.env.COPILOT_HOME, 'session-state', args[args.indexOf('--session-id') + 1]), { recursive: true });
 if (process.env.STANDIN_LOG) {
   const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
   const server = JSON.parse(readFileSync(args[args.indexOf('--additional-mcp-config') + 1].slice(1), 'utf8')).mcpServers.ensemble;
@@ -238,11 +240,13 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
   const { setNativeDropForTests } = await import("./turn-sessions.js");
   const dropped: string[] = [];
   setNativeDropForTests(async (_agent, id) => void dropped.push(id));
-  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
   process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
   process.env.ENSEMBLE_DESKTOP = "1";
   process.env.STANDIN_SESSIONS = log;
   process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
   const io = { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal };
   const chat = "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11";
   const turn = (prompt: string, system = "Instructions.", key: string | null = chat, position?: number) =>
@@ -272,6 +276,19 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
     for (let wait = 0; wait < 50 && !dropped.includes(calls[4]!.session!); wait += 1) await new Promise((done) => setTimeout(done, 20));
     assert.ok(dropped.includes(calls[4]!.session!), "…and it is deleted from Copilot afterwards");
     assert.equal(calls[4]!.prompt, "Instructions.\n\n---\n\nClassify");
+
+    // A session deleted in Copilot: its --session-id would quietly start an empty session under the old id.
+    // The chat goes on in a new session that gets the instructions and the chat so far.
+    const gone = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
+    assert.equal((await turn("Start", "Instructions.", gone, 0)).resumed, false);
+    const read = () => readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { session: string | null; prompt: string });
+    const started = read().at(-1)!.session!;
+    rmSync(join(root, "copilot-home", "session-state", started), { recursive: true, force: true });
+    assert.equal((await turn("Next", "Instructions.", gone, 2)).resumed, false, "a session Copilot no longer has is not resumed");
+    const next = read().at(-1)!;
+    assert.notEqual(next.session, started);
+    assert.equal(next.prompt, "Instructions.\n\n---\n\nThis chat so far, oldest first:\n\nPerson: hi\n\n---\n\nNext");
+    assert.equal((await turn("After", "Instructions.", gone, 4)).resumed, true, "and the new session is resumed after");
   } finally {
     setNativeDropForTests(null);
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -331,11 +348,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 
 test("a Copilot that reports its session's totals is charged per turn: what the turn added", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-totals-"));
-  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_TOTALS: process.env.STANDIN_TOTALS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_TOTALS: process.env.STANDIN_TOTALS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR, COPILOT_HOME: process.env.COPILOT_HOME };
   process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
   process.env.ENSEMBLE_DESKTOP = "1";
   process.env.STANDIN_TOTALS = join(root, "totals.json");
   process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  process.env.COPILOT_HOME = join(root, "copilot-home");
+  mkdirSync(join(root, "copilot-home", "session-state"), { recursive: true });
   try {
     const turn = (prompt: string, position: number) =>
       runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key: "chat-totals-1", history: "", position } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal });

@@ -12,7 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContextTier, ModelContext, SubscriptionModel } from "@ensemble/shared-types";
@@ -31,6 +31,19 @@ export function copilotEnv(extra: Record<string, string> = {}): NodeJS.ProcessEn
   // Updates are the person's to take; a run always uses the copy that was checked.
   env.COPILOT_AUTO_UPDATE = "false";
   return env;
+}
+
+/**
+ * Whether Copilot still has a session it saved: each is a folder under `session-state` in its home.
+ * Copilot's `--session-id` resumes a session it has or quietly starts a new one under that id, so a
+ * session deleted in Copilot must be noticed here, before it is "resumed" without its conversation.
+ * Null when this Copilot keeps its sessions some other way (no `session-state` folder): unknown.
+ */
+export async function copilotHasSession(id: string, home = homedir()): Promise<boolean | null> {
+  const store = join(process.env.COPILOT_HOME || join(home, ".copilot"), "session-state");
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/.test(id)) return false;
+  if (!(await stat(store).then((info) => info.isDirectory(), () => false))) return null;
+  return stat(join(store, id)).then(() => true, () => false);
 }
 
 /**

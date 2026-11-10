@@ -157,12 +157,24 @@ async function sessionRuns(prisma: PrismaClient, scope: SessionScope, where: Pri
   return byId;
 }
 
-/** A run's session: walk back while the earlier run is by the same agent. */
+/** The agent session the run was part of was deleted (by the person, or Ensemble's clean-up). */
+const sessionDeleted = (context: unknown) => sessionDeletionOf(context)?.state === "deleted";
+
+/**
+ * A run continues its parent's agent session when the same agent does it, unless that session was
+ * deleted since: a run continuing a deleted session's folder ("Continue an earlier task") starts a session
+ * of its own, which is listed, chosen and cleaned up as any other.
+ */
+export function continuesSessionOf(run: { provider: string | null; context: unknown }, parent: { provider: string | null; context: unknown }): boolean {
+  return parent.provider === run.provider && !(sessionDeleted(parent.context) && !sessionDeleted(run.context));
+}
+
+/** A run's session: walk back while the earlier run is in the same agent session. */
 function rootOf(byId: Map<string, Row>, id: string): string {
   let root = byId.get(id);
   for (let hops = 0; root && hops < 200; hops += 1) {
     const parent = root.continueFromJobId ? byId.get(root.continueFromJobId) : undefined;
-    if (!parent || parent.provider !== root.provider) break;
+    if (!parent || !continuesSessionOf(root, parent)) break;
     root = parent;
   }
   return root?.id ?? id;
@@ -281,8 +293,10 @@ async function chainFrom(prisma: Pick<PrismaClient, "workspaceJob">, scope: Sess
   const runs: Row[] = [first];
   const seen = new Set([root]);
   let frontier = [root];
+  const byId = new Map([[first.id, first]]);
   for (let round = 0; frontier.length && (complete || round < 200 && runs.length < 500); round += 1) {
-    const next = ((await prisma.workspaceJob.findMany({ where: { userId: scope.space, runnerAccountId: scope.runner, continueFromJobId: { in: frontier }, provider: first.provider }, select: SELECT })) as Row[]).filter(row => !seen.has(row.id));
+    const next = ((await prisma.workspaceJob.findMany({ where: { userId: scope.space, runnerAccountId: scope.runner, continueFromJobId: { in: frontier }, provider: first.provider }, select: SELECT })) as Row[]).filter(row => !seen.has(row.id) && continuesSessionOf(row, byId.get(row.continueFromJobId!)!));
+    for (const row of next) byId.set(row.id, row);
     for (const row of next) seen.add(row.id);
     runs.push(...next);
     frontier = next.map((row) => row.id);
@@ -342,16 +356,16 @@ export const LIVE_RUN = new Set<string>(WAITING);
 /** The session a run belongs to, for its detail view: its id, and whether the agent's own conversation is known. */
 export async function sessionOfJob(prisma: PrismaClient, job: { id: string; userId: string; runnerAccountId: string | null; provider: string | null; kind: string }): Promise<{ id: string; resumable: boolean } | null> {
   if (job.kind !== "code" || !isCodeEngine(job.provider)) return null;
-  let current: { id: string; provider: string | null; continueFromJobId: string | null } | null = { id: job.id, provider: job.provider, continueFromJobId: null };
-  const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true } });
-  current.continueFromJobId = own?.continueFromJobId ?? null;
+  type Link = { id: string; provider: string | null; continueFromJobId: string | null; context: unknown };
+  const own = await prisma.workspaceJob.findUnique({ where: { id: job.id }, select: { continueFromJobId: true, context: true } });
+  let current: Link | null = { id: job.id, provider: job.provider, continueFromJobId: own?.continueFromJobId ?? null, context: own?.context ?? null };
   const seen = new Set([job.id]);
   while (current?.continueFromJobId) {
-    const parent: { id: string; provider: string | null; continueFromJobId: string | null } | null = await prisma.workspaceJob.findFirst({
+    const parent: Link | null = await prisma.workspaceJob.findFirst({
       where: { id: current.continueFromJobId, userId: job.userId, runnerAccountId: job.runnerAccountId },
-      select: { id: true, provider: true, continueFromJobId: true },
+      select: { id: true, provider: true, continueFromJobId: true, context: true },
     });
-    if (!parent || parent.provider !== job.provider) break;
+    if (!parent || !continuesSessionOf(current, parent)) break;
     if (seen.has(parent.id)) throw new Error("The agent session has a cyclic resume chain.");
     seen.add(parent.id);
     current = parent;
