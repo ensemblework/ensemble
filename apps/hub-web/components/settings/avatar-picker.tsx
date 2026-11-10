@@ -57,7 +57,7 @@ export function AvatarPicker() {
   };
 
   return (
-    <SectionCard title="Avatar" description="How you show up in shared spaces, on pages people are looking at together, and in the top bar.">
+    <SectionCard title="Avatar" description="How others see you in shared spaces and pages.">
       <div className="flex flex-wrap items-center gap-4">
         <span className="inline-flex size-16 items-center justify-center overflow-hidden rounded-full border border-line-strong bg-raised text-[20px] font-semibold">
           {current ? <PersonaAvatar id={current} size={64} /> : initials}

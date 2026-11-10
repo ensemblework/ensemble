@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { SKILL_LEARNING_MIN_ITEMS, SKILL_LEARNING_WAIT_DAYS, type AutomationTier, type Settings } from "@ensemble/shared-types";
 import { tierModelName } from "@/lib/included";
 import { SectionCard, SettingRow, Toggle } from "../ui";
@@ -10,7 +11,7 @@ type Plain = Record<string, unknown>;
 
 function TierPicker({ label, value, settings, disabled, onChange }: { label: string; value: AutomationTier; settings: Settings; disabled?: boolean; onChange: (tier: AutomationTier) => void }) {
   return (
-    <select aria-label={label} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value as AutomationTier)} className="field">
+    <select aria-label={label} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value as AutomationTier)} className="field w-56 truncate">
       {TIERS.map((tier) => (
         <option key={tier.id} value={tier.id}>
           {tier.label.replace(" model", "")} · {tierModelName(settings.models[tier.id].provider, settings.models[tier.id].model)}
@@ -20,53 +21,62 @@ function TierPicker({ label, value, settings, disabled, onChange }: { label: str
   );
 }
 
-/** Work Ensemble does on its own: each with its own switch and, when it calls a model, the tier it uses. */
+/** A model tier, then the switch: every automation lines up its pickers and its switches in two columns. */
+function Controls({ children }: { children: ReactNode }) {
+  return <div className="flex items-center justify-end gap-3">{children}</div>;
+}
+
+/** Work Ensemble does on its own: a switch each and, when it calls a model, the tier it uses. */
 export function AutomationsSection({ settings, patch }: { settings: Settings; patch: (value: Plain) => void }) {
   const auto = settings.automations;
   const set = (value: Plain) => patch({ automations: value });
   return (
     <SectionCard
       title="Automations"
-      description="What Ensemble does for you without being asked. Switched off, you can still ask for each one on the record itself."
-      info="Each switch here only stops the automatic run. Suggest tasks on a meeting, Prepare on a calendar event and the assistant still work when you ask."
+      description="What Ensemble does without being asked."
+      info="A switch only stops the automatic run. Suggest tasks on a meeting, Prepare on a calendar event and the assistant still work when you ask."
     >
-      <SettingRow title="Suggest tasks from meetings" description="When a transcript or notes arrive: a summary, decisions and proposed tasks that quote who asked for what. You accept or dismiss each one.">
-        <Toggle label="Suggest tasks from meetings" checked={auto.meetingTasks.enabled} onChange={(enabled) => set({ meetingTasks: { enabled } })} />
-      </SettingRow>
-      <SettingRow title="Model for meeting tasks" description="The tier that reads meetings. A long transcript reads better on a stronger model.">
-        <TierPicker label="Model for meeting tasks" value={auto.meetingTasks.tier} settings={settings} onChange={(tier) => set({ meetingTasks: { tier } })} />
-      </SettingRow>
-      <SettingRow title="Prepare for recurring meetings" description="Before a meeting whose series has notes in Ensemble: a short brief of last time, your open work from it and what others owe.">
-        <Toggle label="Prepare for recurring meetings" checked={auto.meetingPrep.enabled} onChange={(enabled) => set({ meetingPrep: { enabled } })} />
-      </SettingRow>
-      <SettingRow title="Minutes before a meeting to prepare">
-        <NumberField label="Minutes before a meeting to prepare" min={5} max={240} unit="min" value={auto.meetingPrep.minutesBefore} onChange={(minutesBefore) => set({ meetingPrep: { minutesBefore } })} />
-      </SettingRow>
-      <SettingRow title="Model for meeting prep">
-        <TierPicker label="Model for meeting prep" value={auto.meetingPrep.tier} settings={settings} disabled={!auto.meetingPrep.enabled} onChange={(tier) => set({ meetingPrep: { tier } })} />
-      </SettingRow>
-      <SettingRow title="Summarize uploaded files" description="A short summary of each file you upload, used in search and by agents.">
-        <div className="flex items-center gap-3">
-          <TierPicker label="Model for file summaries" value={auto.fileSummaries.tier} settings={settings} disabled={!auto.fileSummaries.enabled} onChange={(tier) => set({ fileSummaries: { tier } })} />
-          <Toggle label="Summarize uploaded files" checked={auto.fileSummaries.enabled} onChange={(enabled) => set({ fileSummaries: { enabled } })} />
-        </div>
-      </SettingRow>
-      <SettingRow title="Meetings of a series share a project" description="A meeting with no project takes the one an earlier meeting of its series has. No model.">
-        <Toggle label="Meetings of a series share a project" checked={auto.linkMeetingSeries} onChange={(linkMeetingSeries) => set({ linkMeetingSeries })} />
-      </SettingRow>
-      <SettingRow
-        title="Learn personal skills from completed work"
-        description={`Once at least ${SKILL_LEARNING_MIN_ITEMS} completed tasks and deliverables are past the completed window (Data retention), Ensemble reads them to add or update your skills (how you write PRs, emails, reports…), then moves them to Trash. Off: they move to Trash unread.`}
-        info={`If this model cannot answer (an AI plan on a computer that is offline), learning waits and tells you. After ${SKILL_LEARNING_WAIT_DAYS} days it uses your lower tiers, then a model included with your Ensemble account, and says which.`}
-      >
-        <div className="flex items-center gap-3">
-          <TierPicker label="Model for learning skills" value={auto.skillLearning.tier} settings={settings} disabled={!auto.skillLearning.enabled} onChange={(tier) => set({ skillLearning: { tier } })} />
-          <Toggle label="Learn personal skills from completed work" checked={auto.skillLearning.enabled} onChange={(enabled) => set({ skillLearning: { enabled } })} />
-        </div>
-      </SettingRow>
-      <SettingRow title="Tell me when agent work waits for review" description="A notification when an agent finishes a task and its work is ready for you. No model.">
-        <Toggle label="Tell me when agent work waits for review" checked={auto.reviewNotices} onChange={(reviewNotices) => set({ reviewNotices })} />
-      </SettingRow>
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow
+          title="Meeting automations"
+          description="Proposed tasks after each meeting, and a brief before recurring ones."
+          info="When a transcript or notes arrive: a summary, decisions and proposed tasks that quote who asked for what; you accept or dismiss each. Before a meeting whose series has notes: a short brief of last time, your open work from it and what others owe. Meetings of a series share a project."
+        >
+          <Controls>
+            <TierPicker label="Model for meeting automations" value={auto.meetings.tier} settings={settings} disabled={!auto.meetings.enabled} onChange={(tier) => set({ meetings: { tier } })} />
+            <Toggle label="Meeting automations" checked={auto.meetings.enabled} onChange={(enabled) => set({ meetings: { enabled } })} />
+          </Controls>
+        </SettingRow>
+        {auto.meetings.enabled ? (
+          <SettingRow title="Brief before a meeting">
+            <Controls>
+              <NumberField label="Minutes before a meeting to prepare" min={5} max={240} unit="min before" width="w-56" value={auto.meetings.minutesBefore} onChange={(minutesBefore) => set({ meetings: { minutesBefore } })} />
+              <span className="w-11 shrink-0" aria-hidden />
+            </Controls>
+          </SettingRow>
+        ) : null}
+        <SettingRow title="Summarize uploaded files" description="Used in search and by agents.">
+          <Controls>
+            <TierPicker label="Model for file summaries" value={auto.fileSummaries.tier} settings={settings} disabled={!auto.fileSummaries.enabled} onChange={(tier) => set({ fileSummaries: { tier } })} />
+            <Toggle label="Summarize uploaded files" checked={auto.fileSummaries.enabled} onChange={(enabled) => set({ fileSummaries: { enabled } })} />
+          </Controls>
+        </SettingRow>
+        <SettingRow
+          title="Learn skills from finished work"
+          description="How you write PRs, emails and reports."
+          info={`Once at least ${SKILL_LEARNING_MIN_ITEMS} completed tasks and deliverables are past the completed window (Data retention), Ensemble reads them to add or update your skills, then moves them to Trash. Off: they move to Trash unread. If the model cannot answer (an AI plan on a computer that is offline), learning waits; after ${SKILL_LEARNING_WAIT_DAYS} days it uses your lower tiers, then a model included with your account, and says which.`}
+        >
+          <Controls>
+            <TierPicker label="Model for learning skills" value={auto.skillLearning.tier} settings={settings} disabled={!auto.skillLearning.enabled} onChange={(tier) => set({ skillLearning: { tier } })} />
+            <Toggle label="Learn personal skills from completed work" checked={auto.skillLearning.enabled} onChange={(enabled) => set({ skillLearning: { enabled } })} />
+          </Controls>
+        </SettingRow>
+        <SettingRow title="Tell me when agent work waits for review" description="A notification when an agent finishes a task.">
+          <Controls>
+            <Toggle label="Tell me when agent work waits for review" checked={auto.reviewNotices} onChange={(reviewNotices) => set({ reviewNotices })} />
+          </Controls>
+        </SettingRow>
+      </div>
     </SectionCard>
   );
 }

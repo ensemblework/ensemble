@@ -443,18 +443,36 @@ export const SKILL_LEARNING_MIN_ITEMS = 10;
 export const SKILL_LEARNING_WAIT_DAYS = 5;
 
 /**
- * Work Ensemble does with a model on its own, each with its own switch and model tier
- * (Settings › Assistant › Automations). Switched off, the same work stays available as a button.
+ * Settings saved before meeting automations were one switch kept `meetingTasks` and `meetingPrep`, and
+ * `linkMeetingSeries` (now always on). They become `meetings`: on if either was, their task tier unless it
+ * was the old default (Low), and prep's minutes. A `meetings` value saved since wins.
  */
-export const AutomationSettings = z.object({
-  /** When a meeting's transcript or notes arrive: a summary, decisions and grounded task proposals to review (meetings/ai.ts). */
-  meetingTasks: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy") }).default({}),
-  /** Before a meeting of a series that has notes: a short brief of last time and what is still open. */
-  meetingPrep: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy"), minutesBefore: z.number().int().min(5).max(240).default(45) }).default({}),
+function legacyAutomations(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const { meetingTasks, meetingPrep, linkMeetingSeries: _series, ...rest } = raw as Record<string, unknown>;
+  if (!meetingTasks && !meetingPrep) return rest;
+  const tasks = (meetingTasks ?? {}) as { enabled?: unknown; tier?: unknown };
+  const prep = (meetingPrep ?? {}) as { enabled?: unknown; minutesBefore?: unknown };
+  const legacy: Record<string, unknown> = { enabled: tasks.enabled !== false || prep.enabled !== false };
+  if (typeof tasks.tier === "string" && tasks.tier !== "easy") legacy.tier = tasks.tier;
+  if (prep.minutesBefore !== undefined) legacy.minutesBefore = prep.minutesBefore;
+  const saved = rest.meetings && typeof rest.meetings === "object" ? (rest.meetings as Record<string, unknown>) : {};
+  return { ...rest, meetings: { ...legacy, ...saved } };
+}
+
+/**
+ * Work Ensemble does on its own (Settings › Assistant › Automations), each with a switch and, when it
+ * calls a model, the tier it uses. Switched off, the same work stays available as a button.
+ */
+export const AutomationSettings = z.preprocess(legacyAutomations, z.object({
+  /**
+   * Meeting automations, one switch and one tier: when a meeting's transcript or notes arrive, a summary,
+   * decisions and grounded task proposals to review (meetings/ai.ts); before a meeting of a series that has
+   * notes, `minutesBefore` ahead, a short brief of last time and what is still open (cowork/prep.ts).
+   */
+  meetings: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("medium"), minutesBefore: z.number().int().min(5).max(240).default(45) }).default({}),
   /** A short summary of each uploaded file (context/enrich-documents.ts). */
   fileSummaries: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("easy") }).default({}),
-  /** A meeting with no project takes the one an earlier meeting of its series has. No model. */
-  linkMeetingSeries: z.boolean().default(true),
   /** A notification when an agent finishes a task and its work waits for your review. No model. */
   reviewNotices: z.boolean().default(true),
   /**
@@ -462,7 +480,7 @@ export const AutomationSettings = z.object({
    * least `SKILL_LEARNING_MIN_ITEMS` items are past their window. Off, completed work moves to Trash unread.
    */
   skillLearning: z.object({ enabled: z.boolean().default(true), tier: AutomationTier.default("high") }).default({}),
-});
+}));
 export type AutomationSettings = z.infer<typeof AutomationSettings>;
 
 /** Routines: work the assistant does on a schedule. Off, none run and the Routines page is hidden. */

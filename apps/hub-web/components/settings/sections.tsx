@@ -28,28 +28,27 @@ type Props = { settings: Settings; patch: Patch };
 
 // ── autonomy & orchestration ──────────────────────────────────────────────
 
+const AUTONOMY = {
+  assist: "Every external write waits for your approval.",
+  supervised: "Reversible writes go ahead; sends wait for you.",
+  autonomous: "Writes go ahead; everything is still audited.",
+};
+
 export function AutonomySection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   return (
-    <SectionCard title="Autonomy" info="Default for new tasks; override it when assigning.">
-      <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-full">
-        <option value="assist">Assist, every external write needs your approval</option>
-        <option value="supervised">Supervised, reversible writes proceed; sends need you</option>
-        <option value="autonomous">Autonomous, writes proceed; everything still audited</option>
-      </select>
-      <p className="mt-1.5 text-[12px] text-muted">
-        Policy still forces approval for anything leaving your domain or mentioning money, legal or HR matters, at every level.
-      </p>
-      <div className="mt-2 divide-y divide-[var(--line)]">
-        <SettingRow title="Daily action safety limit" description="After this many sensitive actions in one day, Ensemble asks you before continuing.">
-          <NumberField label="Daily action safety limit" min={0} max={500} value={orchestration.dailyHighRiskLimit} onChange={(dailyHighRiskLimit) => set({ dailyHighRiskLimit })} />
+    <SectionCard title="Autonomy" info="Default for new tasks; override it when assigning. At every level, anything leaving your domain or mentioning money, legal or HR matters still needs your approval.">
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Default autonomy" description={AUTONOMY[settings.autonomy as keyof typeof AUTONOMY] ?? ""}>
+          <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-36">
+            <option value="assist">Assist</option>
+            <option value="supervised">Supervised</option>
+            <option value="autonomous">Autonomous</option>
+          </select>
         </SettingRow>
-        <SettingRow
-          title="Network for sandboxed commands"
-          info="Allow sandboxed commands to fetch pages, install packages and call APIs. Turn off for untrusted tasks."
-        >
-          <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
+        <SettingRow title="Daily action safety limit" description="Past this many sensitive actions a day, Ensemble asks first.">
+          <NumberField label="Daily action safety limit" min={0} max={500} value={orchestration.dailyHighRiskLimit} onChange={(dailyHighRiskLimit) => set({ dailyHighRiskLimit })} />
         </SettingRow>
         <SettingRow
           title="Run commands in the Ensemble workspace without asking"
@@ -99,36 +98,39 @@ export function OrchestrationSection({ settings, patch }: Props) {
   return (
     <SectionCard title="Orchestration" info="Tasks queue in assignment order. Work in the same folder runs sequentially. A long-waiting question can release one extra slot.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Tasks that run at once" description="Independent tasks run in parallel. Tasks sharing a project, repository or folder wait their turn.">
+        <SettingRow title="Tasks that run at once" description="Tasks in the same project or folder wait their turn.">
           {number("maxConcurrentJobs", 1, 8)}
         </SettingRow>
-        <SettingRow title="Model turns per task" description="A task that reaches this stops and keeps its progress. You can raise it per task when you assign.">
+        <SettingRow title="Model turns per task" description="A task stops here and keeps its progress." info="You can raise it for one task when you assign it.">
           {number("maxTurns", 5, 200)}
         </SettingRow>
-        <SettingRow title="Minutes per task" description="A task that takes longer is stopped; its folder and partial work are kept.">
+        <SettingRow title="Minutes per task" description="A slower task stops; its work is kept.">
           {number("maxMinutes", 5, 480)}
         </SettingRow>
         <SettingRow title="Sandbox by default" info="Isolate commands with this computer's OS sandbox. Override per task; keys and browser data stay private.">
           <Toggle label="Sandbox by default" checked={orchestration.defaultExecution === "sandbox"} onChange={(on) => set({ defaultExecution: on ? "sandbox" : "native" })} />
         </SettingRow>
-        <SettingRow title="Internet for agent commands by default" description="Needed to clone, install packages or read the web. Turn it off for tasks whose inputs you do not trust.">
+        <SettingRow title="Internet for agent commands" description="For cloning, installing packages and the web." info="The default for new tasks. Turn it off for tasks whose inputs you do not trust.">
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
         <SettingRow
-          title="A project's tasks share the project's folder"
-          description="Your own agent (Claude Code, Codex, Cursor, Copilot…) works on a project's tasks in one folder named after the project, so its app shows them together as that project. The project's brief is kept in the folder's AGENTS.md and CLAUDE.md and rewritten when you change the project."
+          title="One folder per project"
+          description="Your agent sees a project's tasks together."
+          info="Your own agent (Claude Code, Codex, Cursor, Copilot…) works on a project's tasks in one folder named after the project, so its app shows them together. The project's brief is kept in the folder's AGENTS.md and CLAUDE.md and rewritten when you change the project."
         >
           <Toggle label="A project's tasks share the project's folder" checked={orchestration.projectFolders} onChange={(projectFolders) => set({ projectFolders })} />
         </SettingRow>
         <SettingRow
           title="Continue a fitting agent session"
-          description="A new task goes on in one of the agent's sessions on that computer when it clearly fits: it mentions or depends on a task done there, shares its deliverable or meeting, or names the same files and topic. The agent keeps what it learned and its cached context. Only within one project; never when the session is nearly full. Assign → More options starts a new session instead."
+          description="A related task picks up where the agent left off."
+          info="A new task goes on in one of the agent's sessions on that computer when it clearly fits: it mentions or depends on a task done there, shares its deliverable or meeting, or names the same files and topic. The agent keeps what it learned. Only within one project, and never when the session is nearly full. Assign › More options starts a new session instead."
         >
           <Toggle label="Continue a fitting agent session" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
         </SettingRow>
         <SettingRow
           title="Clean up agent sessions"
-          description="Delete the agent's saved conversation once all its tasks are deleted, or retired after the completed window (Data retention). Project files stay."
+          description="Once their tasks are gone. Project files stay."
+          info="Deletes the agent's saved conversation once all its tasks are deleted, or retired after the completed window (Data retention)."
         >
           <Toggle label="Clean up agent sessions" checked={orchestration.cleanSessions} onChange={(cleanSessions) => set({ cleanSessions })} />
         </SettingRow>
@@ -140,7 +142,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
             aria-label="Outside the Ensemble workspace"
             value={orchestration.outsideAccess}
             onChange={(event) => set({ outsideAccess: event.target.value as Settings["orchestration"]["outsideAccess"] })}
-            className="field"
+            className="field w-36"
           >
             <option value="read">Read only</option>
             <option value="read-write">Read and write</option>
@@ -444,7 +446,10 @@ export function TerminalSection({ settings, patch }: Props) {
       ) : null}
       {usable ? (
         <>
-          <div className="mt-4 text-[13px] font-medium">Folders the terminal can use</div>
+          <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
+            Folders the terminal can use
+            <InfoTip text="Everything inside a folder is reachable; nothing above it. System folders, your home folder itself, ~/Library, key folders and Ensemble's own code are always refused." />
+          </div>
           <div className="mt-1.5 space-y-1 font-mono text-[12px]">
             <div>
               {repos.data?.roots[0] ?? "Ensemble workspace"} <span className="font-sans text-faint">(always)</span>
@@ -465,9 +470,6 @@ export function TerminalSection({ settings, patch }: Props) {
             </button>
           </div>
           {folderError ? <p className="mt-1 text-[12px] text-danger">{folderError}</p> : null}
-          <p className="mt-1 text-[12px] text-muted">
-            Everything inside a folder is reachable; nothing above it. System folders, your home folder itself, ~/Library, key folders and Ensemble&apos;s own code are always refused.
-          </p>
           <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
             Touch ID passkeys
             <InfoTip text="Every passkey added is in the audit log. Remove any you do not recognise." />
@@ -551,8 +553,10 @@ function CodeFolders({ settings, patch, workspace, desktop }: Props & { workspac
   };
   return (
     <div data-jump-label="Folders Code can use" data-testid="code-folders" className="mb-1">
-      <div className="text-[13px] font-medium">Folders Code can use</div>
-      <p className="mt-0.5 text-[12px] text-muted">The Code tab lists and reviews git checkouts in these folders. The terminal keeps its own list.</p>
+      <div className="flex items-center gap-1.5 text-[13px] font-medium">
+        Folders Code can use
+        <InfoTip text="The Code tab lists and reviews git checkouts in these folders; the terminal keeps its own list. System folders, your home folder itself, dotfiles and dot-folders in it, paths with “..”, and links that lead somewhere unsafe are refused." />
+      </div>
       <div className="mt-1.5 space-y-1 font-mono text-[12px]">
         <div>
           {workspace ?? "Ensemble workspace"} <span className="font-sans text-faint">(always)</span>
@@ -591,9 +595,6 @@ function CodeFolders({ settings, patch, workspace, desktop }: Props & { workspac
           {error}
         </p>
       ) : null}
-      <p className="mt-1 text-[12px] text-muted">
-        System folders, your home folder itself, dotfiles and dot-folders in it, paths with “..”, and links that lead somewhere unsafe are refused.
-      </p>
     </div>
   );
 }
@@ -604,7 +605,7 @@ export function IdentitySection({ settings, patch }: Props) {
   useEffect(() => setEmail(settings.email), [settings.email]);
   const emailError = left && !isEmailAddress(email) ? "Enter an email address like name@example.com." : null;
   return (
-    <SectionCard title="Scheduling and confirmations" description="Your time zone sets scheduled tasks, the morning brief and quiet hours. The email below confirms sensitive workspace changes; it does not change your sign-in email.">
+    <SectionCard title="Scheduling and confirmations" description="Your time zone, and where sensitive changes are confirmed." info="Your time zone sets scheduled tasks, the morning brief and quiet hours. The email confirms sensitive workspace changes; it does not change your sign-in email.">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="text-[13px] font-medium">
           <label htmlFor="settings-email">Email</label>
@@ -778,7 +779,8 @@ export function MorningBriefSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Morning brief"
-      description="A note inside Ensemble at the time you pick. It reuses today's focus, proposals, meetings, and deliverables. It never sends email."
+      description="A note in Ensemble at the time you pick."
+      info="It reuses today's focus, proposals, meetings and deliverables. It never sends email."
     >
       <SettingRow title="Deliver the morning brief" description="Shows in the bell and on Today.">
         <Toggle
@@ -799,7 +801,7 @@ export function MorningBriefSection({ settings, patch }: Props) {
 export function RoutinesSection({ settings, patch }: Props) {
   const on = settings.routines?.enabled !== false;
   return (
-    <SectionCard title="Routines" description="Work the assistant does on a schedule, with your apps and your settings. Each result arrives in the bell.">
+    <SectionCard title="Routines" description="Work the assistant does on a schedule." info="With your apps and your settings. Each result arrives in the bell.">
       <SettingRow title="Run my routines" description={on ? "Manage them on the Routines page." : "Off: none run, and Routines leaves the sidebar."}>
         <Toggle label="Routines" checked={on} onChange={(enabled) => patch({ routines: { enabled } })} />
       </SettingRow>
@@ -816,7 +818,8 @@ export function StaleSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Quiet nudges"
-      description="Items left alone, and due items that were never started, ask if they are still relevant. Keep, snooze, done, or Trash."
+      description="Ask about work left alone too long."
+      info="Items left alone, and due items that were never started, ask if they are still relevant: keep, snooze, done, or Trash."
     >
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Ask when work goes quiet">
@@ -839,14 +842,12 @@ export function QuickCaptureSection() {
   return (
     <SectionCard
       title="Quick capture"
-      description="Type a reminder from anywhere. The Hub tab listens for the shortcut. A small desktop companion does the same when Ensemble is in the background."
+      description="Type a reminder from anywhere."
+      info="The Ensemble tab listens for the shortcut, and a small desktop companion does the same when Ensemble is in the background. Inside Ensemble you can also press C when you are not typing."
     >
-      <p className="text-[13px]">
-        This computer: <span className="kbd">{chord}</span>
-      </p>
-      <p className="mt-2 text-[12.5px] text-muted">
-        The other shortcut is <span className="kbd">{other}</span>. Inside Ensemble you can also press C when you are not typing.
-      </p>
+      <SettingRow title="Shortcut on this computer" description={`On the other platform: ${other}`}>
+        <span className="kbd">{chord}</span>
+      </SettingRow>
     </SectionCard>
   );
 }

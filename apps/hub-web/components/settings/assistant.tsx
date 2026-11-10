@@ -114,7 +114,7 @@ export function ChangesDialog({ open, onClose, settings, patch }: Props & { open
         </SettingRow>
       </div>
       <p className="mt-2 text-[12px] text-muted">
-        Anything that leaves the building, sending mail, opening a pull request, posting to chat, keeps its own approval gate whatever this is set to.
+        Sending mail, opening a pull request or posting to chat always keeps its own approval.
       </p>
     </Modal>
   );
@@ -136,7 +136,7 @@ export function WatchersSection() {
   if (!rows.length) return null;
   return (
     <div id="watchers" className="scroll-mt-6">
-      <SectionCard title="Watching for you" description="When you ask “tell me when …”, the assistant keeps an eye out and lets you know. Cancel one any time.">
+      <SectionCard title="Watching for you" description="What you asked the assistant to tell you about.">
         <ul className="divide-y divide-[var(--line)]">
           {rows.map((row) => (
             <li key={row.id} className="flex items-center gap-3 py-2 text-[13px]">

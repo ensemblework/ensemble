@@ -1,6 +1,6 @@
 /**
  * Before a meeting of a series (docs/03 §7): what happened last time, without a model, on every cue
- * and in the morning brief; and, with `automations.meetingPrep` on or when the person asks, a short
+ * and in the morning brief; and, with `automations.meetings` on or when the person asks, a short
  * prep brief a model writes from last time's notes, the work still open and what was done since.
  * The brief is kept on the event (`metadata.ensemblePrep`) and never written to the calendar.
  */
@@ -151,7 +151,7 @@ export async function prepareMeeting(db: Db, userId: string, eventId: string, op
   const previous = await previousMeeting(db, userId, event);
   if (!previous) throw new PrepError("This meeting has no earlier meeting in its series with notes in Ensemble, so there is nothing to prepare from.", 422);
   const settings = options.settings ?? (await loadSettings(db, userId));
-  const ask = options.ask ?? modelAsk(userId, settings, settings.automations.meetingPrep.tier);
+  const ask = options.ask ?? modelAsk(userId, settings, settings.automations.meetings.tier);
   const answer = await ask(await prepPrompt(db, userId, event, previous, settings));
   const prep: MeetingPrep = { text: answer.text.trim().slice(0, 4000), at: new Date().toISOString(), model: answer.model ?? null, previousId: previous.id };
   for (const row of await db.artifact.findMany({ where: { userId, id: { in: event.memberIds } }, select: { id: true, metadata: true } })) {
@@ -170,10 +170,10 @@ const PER_TICK = 3;
  */
 export async function runMeetingPreps(db: Db, userId: string, options: { ask?: PrepAsk; now?: Date } = {}): Promise<number> {
   const settings = await loadSettings(db, userId);
-  if (!settings.automations.meetingPrep.enabled) return 0;
+  if (!settings.automations.meetings.enabled) return 0;
   const now = options.now ?? new Date();
   const rows = await db.artifact.findMany({
-    where: { userId, kind: "event", deletedAt: null, ts: { gt: now, lte: new Date(now.getTime() + settings.automations.meetingPrep.minutesBefore * 60_000) } },
+    where: { userId, kind: "event", deletedAt: null, ts: { gt: now, lte: new Date(now.getTime() + settings.automations.meetings.minutesBefore * 60_000) } },
     orderBy: { ts: "asc" },
     take: 20,
     select: EVENT_ROW_SELECT,

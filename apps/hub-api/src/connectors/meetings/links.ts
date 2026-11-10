@@ -5,22 +5,19 @@
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { meetingsInSeries, seriesKeyOf } from "../../cowork/series.js";
-import { loadSettings } from "../../lib/settings.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
 /**
  * The project of the newest earlier meeting of the series that has a live one, or null.
- * Off when `automations.linkMeetingSeries` is off; "" (no series) never links.
+ * "" (no series) never links.
  */
 export async function seriesProject(
   db: Db,
   userId: string,
   input: { seriesKey: string | null | undefined; before: Date; excludeIds?: Array<string | null | undefined>; personIds?: string[] },
-  enabled?: boolean,
 ): Promise<string | null> {
   if (!input.seriesKey) return null;
-  if (!(enabled ?? (await loadSettings(db, userId)).automations.linkMeetingSeries)) return null;
   const rows = await meetingsInSeries(db, userId, {
     seriesKey: input.seriesKey,
     before: input.before,
