@@ -1284,6 +1284,58 @@ span.mention:not(.mention-off) {
 @media (prefers-reduced-motion: reduce) {
   .shimmer, .ensemble-reply[data-streaming] .ensemble-reply-rule { animation: none; }
 }
+/* `@ensemble …` while it is typed (components/editor/ensemble-ask.ts): Ensemble's chip, the question
+   tinted, and the hint that Enter asks. Decorations only; the text stays as typed. */
+.ProseMirror .ensemble-ask-token {
+  padding: 1px 7px 1px 22px;
+  border-radius: 999px;
+  background: url("/icon.svg") no-repeat 6px 50% / 13px 13px, rgb(var(--accent-rgb) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.35);
+  color: var(--ink);
+  font-weight: 600;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.ProseMirror .ensemble-ask-prompt {
+  border-radius: 3px;
+  background: rgb(var(--accent-rgb) / 0.08);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.ProseMirror .ensemble-ask-placeholder {
+  margin-left: 4px;
+  color: var(--faint);
+  pointer-events: none;
+  user-select: none;
+}
+.ProseMirror .ensemble-ask-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 7px;
+  border: 1px solid rgb(var(--accent-rgb) / 0.35);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+  vertical-align: 1px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  animation: ensemble-ask-in 160ms ease-out;
+}
+.ProseMirror .ensemble-ask-send kbd {
+  font-family: inherit;
+  color: var(--accent);
+}
+@keyframes ensemble-ask-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ProseMirror .ensemble-ask-send { animation: none; }
+}
 
 /* ── connect your apps ───────────────────────────────────────────────── */
 
