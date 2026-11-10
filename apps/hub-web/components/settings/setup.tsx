@@ -194,7 +194,7 @@ export function GitHubGitCard() {
     <div className="mt-4 rounded-lg border border-line bg-panel px-3 py-3">
       <div className="text-[13px] font-medium">GitHub token for private clones</div>
       <p className="mt-1 text-[12.5px] text-muted">
-        Used when a workspace task has “Use my git sign-in”. Stored encrypted, like a model key. {current.data?.hint ? `Saved as ${current.data.hint}.` : "None saved."}
+        For tasks set to “Use my git sign-in”. Stored encrypted. {current.data?.hint ? `Saved as ${current.data.hint}.` : "None saved."}
       </p>
       <div className="mt-2 flex gap-2">
         <input
@@ -606,10 +606,10 @@ export function EditorsSection() {
   return (
     <SectionCard
       title="Editors & agents"
-      info="A hook in the editor holds the tool call open and asks Ensemble. Your answer on Needs me goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt, the hook never allows by itself."
-      description="Let Claude Code, Codex, Copilot, Cursor and other AI apps read your Ensemble, and answer their “Allow this command?” prompts and questions from Needs me."
+      info="Claude Code, Codex, Copilot, Cursor and other AI apps can read your Ensemble, and their “Allow this command?” prompts come to Needs me. A hook in the editor holds the tool call open and asks Ensemble; your answer goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt. The hook never allows by itself."
+      description="Let your AI apps read Ensemble and ask you from Needs me."
     >
-      <SettingRow title="Connect an editor or AI app" description="A step-by-step guide for each app. It creates a read-only key: the app can read your tasks and notes, never change them.">
+      <SettingRow title="Connect an editor or AI app" description="A guide for each app, with a read-only key.">
         <Link href="/connect" className="btn-primary">
           <Plug size={12} /> Connect an editor
         </Link>
@@ -635,7 +635,7 @@ export function EditorsSection() {
       </div>
       {routing ? (
       <div id="editor-permission-routing" className="mt-2">
-      <p className="mb-3 text-[12.5px] text-muted">Only tasks started through Ensemble come to Needs me. Ensemble sets up the connection on the computer running the task automatically. Your other sessions keep their questions in their own app.</p>
+      <p className="mb-3 text-[12.5px] text-muted">Only tasks started through Ensemble come to Needs me; your other sessions keep their questions in their own app.</p>
       {setup.data?.local ? (
         <div className="mb-2 border-b border-line pb-2">
           {CONNECTABLE.map((target) => (

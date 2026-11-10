@@ -109,7 +109,7 @@ test("a meeting's AI pass proposes only grounded, untracked work, carrying who a
 
 test("with the switch off nothing is read on its own, but asking still works", async () => {
   const { userId, note } = await world();
-  await saveSettings(db, userId, { automations: { meetingTasks: { enabled: false } } });
+  await saveSettings(db, userId, { automations: { meetings: { enabled: false } } });
   assert.equal(await queueMeetingAi(db, userId, note.id), null);
   assert.equal((await db.meetingNote.findUniqueOrThrow({ where: { id: note.id } })).aiStatus, null);
   assert.equal(await queueMeetingAi(db, userId, note.id, { force: true }), "queued");

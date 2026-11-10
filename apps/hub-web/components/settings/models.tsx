@@ -161,11 +161,12 @@ export function ModelsSection({ settings, patch }: Props) {
       </div>
       <div className="mb-2 mt-5 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h3 className="text-[13px] font-semibold">Which model each tier uses</h3>
+          <h3 className="flex items-center gap-1.5 text-[13px] font-semibold">
+            Which model each tier uses
+            <InfoTip text="Models and their thinking levels come from each provider's model list or documentation. Lists refresh every week." />
+          </h3>
           <p className="text-[12px] text-muted" data-testid="models-fetched">
-            {catalog.data?.fetchedAt
-              ? `Model lists from your keys, fetched ${relative(catalog.data.fetchedAt)}. Available thinking levels follow provider information. Lists refresh every week.`
-              : "Models and available thinking levels come from the provider’s model list or documentation. Lists refresh every week."}
+            {catalog.data?.fetchedAt ? `Lists fetched ${relative(catalog.data.fetchedAt)}.` : "Lists refresh every week."}
           </p>
         </div>
         <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
@@ -209,6 +210,7 @@ export function ModelsSection({ settings, patch }: Props) {
                 </div>
                 <TuningPicker
                   label={`${tier.label}: thinking and context`}
+                  width="w-[15.5rem]"
                   allowFast={false}
                   value={{ provider: value.provider, model: value.model, effort: value.effort, ...(value.context === "long_context" ? { context: "long_context" as const } : {}) }}
                   model={tierModel}

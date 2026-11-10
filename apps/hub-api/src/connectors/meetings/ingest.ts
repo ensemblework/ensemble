@@ -170,7 +170,7 @@ export async function ingestMeetings(
     let projectFrom = typeof kept.projectFrom === "string" ? kept.projectFrom : null;
     // Only when the meeting's series is first known: a project the person removed later is not put back.
     if (!projectId && (!existing || existing.seriesKey === null)) {
-      projectId = await seriesProject(prisma, ctx.userId, { seriesKey, before: record.start, excludeIds: [existing?.id], personIds }, ctx.settings.automations.linkMeetingSeries);
+      projectId = await seriesProject(prisma, ctx.userId, { seriesKey, before: record.start, excludeIds: [existing?.id], personIds });
       if (projectId) projectFrom = "series";
     }
 

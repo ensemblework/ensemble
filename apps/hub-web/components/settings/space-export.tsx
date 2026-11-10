@@ -30,7 +30,8 @@ export function SpaceExportSection() {
     <>
       <SectionCard
         title="Download this space"
-        description="Pick what to include and get one ZIP of Markdown, CSV and images. It is put together on this computer and opens in Notion, Obsidian, Excel or any editor."
+        description="One ZIP of Markdown, CSV and images."
+        info="Pick what to include. The ZIP is put together on this computer and opens in Notion, Obsidian, Excel or any editor."
         actions={
           <button type="button" className="btn h-8 gap-1.5 px-3 text-[13px]" onClick={() => setOpen(true)}>
             <Archive size={14} /> Download…
