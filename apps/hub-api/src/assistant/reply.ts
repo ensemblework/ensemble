@@ -60,7 +60,8 @@ export function reflectProposals(text: string, calls: ReplyCall[]): string {
   return [body, ...missing].filter(Boolean).join("\n\n");
 }
 
-const STALE_APPLY_PROMPT = /(?:\n{0,2})Nothing has changed yet — press Apply\.?/g;
+// Replies saved before the dash went out say "yet — press Apply".
+const STALE_APPLY_PROMPT = /(?:\n{0,2})Nothing has changed yet(?: —|\.) [pP]ress Apply\.?/g;
 // Written by reflectProposals before Apply. The summary changes on Apply
 // ("Create project …" becomes "Created …"), so these lines cannot be matched
 // to a call by text. The Applied / Still waiting sentence replaces them.
@@ -88,7 +89,7 @@ export function replyAfterApply(content: string, calls: ReplyCall[], notApplied:
   if (!applied.length && !notApplied.length) return content.trim();
   const body = content
     .replace(STALE_APPLY_PROMPT, "\n\n")
-    .replace(/\n{0,2}Applied: .*Still waiting — press Apply for .*\.?/g, "\n\n")
+    .replace(/\n{0,2}Applied: .*Still waiting(?: —|\.) [pP]ress Apply for .*\.?/g, "\n\n")
     .replace(PROPOSED_LINE, "")
     .replace(NOT_APPLIED_LINE, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -101,7 +102,7 @@ export function replyAfterApply(content: string, calls: ReplyCall[], notApplied:
   const withFailures = (text: string) => (failedLine ? `${text}\n\n${failedLine}`.trim() : text);
   if (!applied.length) {
     const left = summaries(pending);
-    return withFailures(left ? `${body}\n\nStill waiting — press Apply for ${left}.`.trim() : body);
+    return withFailures(left ? `${body}\n\nStill waiting. Press Apply for ${left}.`.trim() : body);
   }
   if (pending.length === 0) {
     const detail = summaries(applied);
@@ -111,5 +112,5 @@ export function replyAfterApply(content: string, calls: ReplyCall[], notApplied:
   }
   const done = summaries(applied) || "some changes";
   const left = summaries(pending) || "the rest";
-  return withFailures(`${body}\n\nApplied: ${done}. Still waiting — press Apply for ${left}.`.trim());
+  return withFailures(`${body}\n\nApplied: ${done}. Still waiting. Press Apply for ${left}.`.trim());
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronRight, Eye, PenLine, Plus, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
@@ -12,6 +12,10 @@ import { dateTime } from "@/lib/format";
 import { askText } from "@/components/ask-dialog";
 import { ExportMenu } from "@/components/export-menu";
 import { skillDoc } from "@/lib/export/items";
+import { MarkdownText } from "@/components/markdown-text";
+import { skillPreview } from "@/lib/skill-preview";
+
+const VIEW_KEY = "ensemble.skills.view";
 
 function SkillDetail({ skill }: { skill: SkillRecord }) {
   const client = useQueryClient();
@@ -19,7 +23,16 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
   const [body, setBody] = useState(skill.body);
   const [state, setState] = useState<"saved" | "saving" | "dirty">("saved");
   const [history, setHistory] = useState(false);
+  const [view, setViewState] = useState<"edit" | "preview">("edit");
   const timer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (window.localStorage.getItem(VIEW_KEY) === "preview") setViewState("preview");
+  }, []);
+  const setView = (next: "edit" | "preview") => {
+    setViewState(next);
+    window.localStorage.setItem(VIEW_KEY, next);
+  };
+  const preview = view === "preview" ? skillPreview(body) : null;
 
   useEffect(() => {
     setBody(skill.body);
@@ -46,12 +59,42 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
   return (
     <div className="tile min-w-0 rounded-lg bg-panel p-5">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-[18px] font-semibold">{skill.name}</h2>
-        <div className="flex items-center gap-1">
+        <h2 className="min-w-0 truncate text-[18px] font-semibold">{skill.name}</h2>
+        <div className="flex shrink-0 items-center gap-1">
+          <div className="flex overflow-hidden rounded-md border border-line text-[12px]" role="group" aria-label="View">
+            {(["edit", "preview"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={view === value}
+                onClick={() => setView(value)}
+                className={cx("flex items-center gap-1 px-2 py-0.5", view === value ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")}
+              >
+                {value === "edit" ? <PenLine size={11} /> : <Eye size={11} />} {value === "edit" ? "Edit" : "Preview"}
+              </button>
+            ))}
+          </div>
           <ExportMenu load={() => skillDoc({ ...skill, body })} />
           <ShareButton target={{ kind: "skill", resourceId: skill.id, title: skill.name }} />
         </div>
       </div>
+      {preview ? (
+        <div className="mt-3 max-h-[70vh] min-h-[340px] overflow-auto rounded-md border border-line bg-bg" data-testid="skill-preview">
+          {preview.meta.length ? (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 border-b border-line px-6 py-3 text-[12px]">
+              {preview.meta.map(([key, value]) => (
+                <div key={key} className="contents">
+                  <dt className="text-faint">{key}</dt>
+                  <dd className="min-w-0 break-words text-muted">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <article className="code-preview-markdown !px-6 !py-5">
+            <MarkdownText text={preview.text} className="space-y-3 text-[14px] leading-[1.7]" />
+          </article>
+        </div>
+      ) : (
       <textarea
         value={body}
         onChange={(event) => {
@@ -64,6 +107,7 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
         spellCheck={false}
         className="field mt-3 h-[340px] w-full resize-y font-mono text-[12.5px] leading-5"
       />
+      )}
       <div className="mt-1.5 text-[12.5px] text-muted">
         {state === "saved" ? "Saved" : state === "saving" ? "Saving…" : "Unsaved changes"}
       </div>

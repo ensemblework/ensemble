@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
+  CirclePlay,
   BarChart3,
   BookOpen,
   CalendarDays,
@@ -45,7 +45,7 @@ import { usePersistentState } from "@/lib/prefs";
 import { SIDEBAR_ORDER_KEY, arrangeSidebar, isDefaultSidebar, moveSidebarTab, stepSidebarTab } from "@/lib/sidebar-order";
 
 /** The tabs that can be dragged into another order (lib/sidebar-order.ts keeps it). */
-const TABS: Record<string, { label: string; icon: typeof Activity }> = {
+const TABS: Record<string, { label: string; icon: typeof CirclePlay }> = {
   "/board": { label: "Board", icon: Columns3 },
   "/needs-me": { label: "Needs me", icon: CircleCheck },
   "/marketplace": { label: "Templates", icon: LayoutTemplate },
@@ -53,7 +53,7 @@ const TABS: Record<string, { label: string; icon: typeof Activity }> = {
   "/meetings": { label: "Meeting notes", icon: CalendarCheck },
   "/routines": { label: "Routines", icon: Repeat },
   "/code": { label: "Code", icon: Code2 },
-  "/runs": { label: "Runs", icon: Activity },
+  "/runs": { label: "Runs", icon: CirclePlay },
   "/skills": { label: "Skills", icon: BookOpen },
   "/metrics": { label: "Metrics", icon: BarChart3 },
   "/diagrams": { label: "Diagrams", icon: Workflow },
@@ -92,7 +92,7 @@ function NavItem({
 }: {
   href: string;
   label: string;
-  icon: typeof Activity;
+  icon: typeof CirclePlay;
   badge?: number;
   reorder?: Reorder;
 }) {

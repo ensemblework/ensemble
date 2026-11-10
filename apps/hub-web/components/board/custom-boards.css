@@ -8,7 +8,6 @@
 .custom-boards > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .cb-eyebrow { font-size: 10px; letter-spacing: .12em; color: var(--muted); }
 .custom-boards h2 { margin-top: 6px; font-size: 21px; font-weight: 600; letter-spacing: -.025em; }
-.custom-boards header p { margin-top: 5px; font-size: 13px; color: var(--muted); }
 .cb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 14px; }
 .cb-board-card, .cb-new-card { position: relative; min-height: 188px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; text-align: left; transition: border-color .15s, background .15s; }
 .cb-board-card { background: var(--panel); }

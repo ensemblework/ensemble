@@ -253,7 +253,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(prisma, request.userId);
     if (!settings.terminal.enabled) throw new GuardError("The terminal is turned off in Settings.");
     const body = z.object({ cwd: z.string(), line: z.string().min(1).max(4000), confirmed: z.boolean().default(false) }).parse(request.body);
-    const prepared = await prepareRun({ allowed: await terminalRoots(prisma, request.userId), cwd: body.cwd, line: body.line, confirmed: body.confirmed, commitAuthor: settings.terminal.commitAuthor });
+    const prepared = await prepareRun({ allowed: await terminalRoots(prisma, request.userId), cwd: body.cwd, line: body.line, confirmed: body.confirmed });
     if (prepared.kind === "confirm") return reply.code(428).send({ confirm: prepared.message });
     const { argv, full, cwd, scope, sandboxed } = prepared;
 

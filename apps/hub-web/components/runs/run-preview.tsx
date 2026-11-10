@@ -203,7 +203,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
         {job?.engine === "ensemble" && job.provider ? <span className="text-muted"> · {job.provider}</span> : null}
       </Fact>
       <Fact label="Model" hint={job?.reasoningEffort ? `Thinking: ${job.reasoningEffort}` : undefined}>
-        <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px]"><ModelLogo model={asked} provider={job?.provider} />{asked ?? "—"}</span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px]"><ModelLogo model={asked} provider={job?.provider} />{asked ?? "Not reported"}</span>
         {job?.reasoningEffort && job.reasoningEffort !== "default" ? <span className="text-muted"> · {job.reasoningEffort}</span> : null}
       </Fact>
       <Fact label="Answered by" hint={seen.length > 1 ? `Models seen: ${seen.join(", ")}` : "The model the provider reported"}>
@@ -213,7 +213,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
             {answered}
           </span>
         ) : (
-          <span className="text-muted">{run.endedAt ? "Not reported" : "—"}</span>
+          <span className="text-muted">{run.endedAt ? "Not reported" : "Not yet"}</span>
         )}
       </Fact>
       {job?.kind === "code" ? (
@@ -234,10 +234,10 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
         {plural(calls, "tool call")}
       </Fact>
       <Fact label="Tokens" hint="In / out">
-        {tokensIn || tokensOut ? `${tokensIn.toLocaleString()} / ${tokensOut.toLocaleString()}` : "—"}
+        {tokensIn || tokensOut ? `${tokensIn.toLocaleString()} / ${tokensOut.toLocaleString()}` : "Not reported"}
       </Fact>
       <Fact label="Cost" hint="An estimate: the harness's own, or from token counts and list prices">
-        {job?.costUsd != null ? usd(job.costUsd) : credits ? `${Math.round(credits * 10) / 10} credits` : "—"}
+        {job?.costUsd != null ? usd(job.costUsd) : credits ? `${Math.round(credits * 10) / 10} credits` : "Not reported"}
       </Fact>
     </div>
   );
@@ -301,7 +301,7 @@ function Trace({ entries, live }: { entries: TraceEntry[]; live: boolean }) {
                   <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-raised">
                     <div className="h-full rounded-full bg-accent" style={{ width: `${Math.max(2, share * 100)}%` }} />
                   </div>
-                  <span className="w-14 shrink-0 text-right tabular-nums text-muted">{duration(row.ms) || "—"}</span>
+                  <span className="w-14 shrink-0 text-right tabular-nums text-muted">{duration(row.ms)}</span>
                   {row.failed ? <span className="shrink-0 text-danger">{row.failed} failed</span> : null}
                 </div>
               );

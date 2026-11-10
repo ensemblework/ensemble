@@ -180,17 +180,14 @@ export function BoardDragOverlay({ children, width = 264 }: { children: ReactNod
   );
 }
 
-/* ---------- agent / remote moves (no drag): crane · glide · dot + FLIP for the shifted cards ---------- */
+/* ---------- remote moves (no drag): FLIP for the cards a reorder shifted ---------- */
 /**
  * Call in <Board>. Cards need data-bdg-card + data-id, lists data-bdg-list, columns data-column.
- * Completion identities survive route changes within a tab. Geometry changes alone are not moves.
+ * Geometry changes alone are not moves. A card reaching Done moves like any other: no extra animation.
  * Call skipNext() in onDragEnd so the user's own drop is left to dnd-kit.
  */
 type Spot = { x: number; y: number; w: number; h: number; col: string };
-type CompletionSpot = Spot & { completion: string | null };
-type MoveCard = { id: string; column: string | null; completion: string | null };
-// Route changes must not turn an already-presented completion into a new event.
-const boardCompletions = new Map<string, Map<string, CompletionSpot>>();
+type MoveCard = { id: string; column: string | null };
 
 /** Viewport position plus every ancestor's scroll, so scrolling does not look like a move. */
 function contentBox(el: HTMLElement): { x: number; y: number; w: number; h: number; left: number; top: number } {
@@ -215,16 +212,10 @@ function contentBox(el: HTMLElement): { x: number; y: number; w: number; h: numb
 
 export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, dragging: boolean, scope: string | null, rows: readonly MoveCard[]) {
   const { theme, reduced } = useMotionPrefs();
-  const engine = useRef<import("./board-drag").BoardDrag | null>(null);
   const prev = useRef(new Map<string, Spot>());
   const previousOrder = useRef("");
   const previousScope = useRef(scope);
   const skip = useRef(false);
-  useLayoutEffect(() => {
-    if (!boardRef.current) return;
-    engine.current = BD.mount(boardRef.current, { input: false, layerParent: document.body, card: "[data-bdg-card]", column: "[data-column]", list: "[data-bdg-list]" });
-    return () => { engine.current?.destroy(); engine.current = null; };
-  }, [boardRef]);
   useLayoutEffect(() => {
     const root = boardRef.current; if (!root) return;
     if (previousScope.current !== scope) {
@@ -234,8 +225,6 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
     }
     const cards = [...root.querySelectorAll<HTMLElement>("[data-bdg-card]")].filter((card) => !card.closest(".bdg-layer"));
     const tasks = new Map(rows.map((row) => [row.id, row]));
-    let history = scope ? boardCompletions.get(scope) : undefined;
-    if (scope && !history) { history = new Map(); boardCompletions.set(scope, history); }
     const next = new Map<string, Spot>();
     const ids: string[] = [];
     for (const el of cards) {
@@ -256,17 +245,13 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
       const task = tasks.get(id);
       // React commits the query result before the column state catches up.
       if (!now || !task || task.column !== now.col) continue;
-      const known = history?.get(id);
-      history?.set(id, { ...now, completion: task.completion });
-      const was = prevIds.get(id) ?? known;
+      const was = prevIds.get(id);
       if (!was || dragging || skip.current) continue;
       const box = el.getBoundingClientRect();
       // Where this card would sit, at the current scroll, if it had not moved in content space.
       const from = { left: box.left - (now.x - was.x), top: box.top - (now.y - was.y), width: was.w, height: was.h };
       const shifted = Math.abs(from.left - box.left) >= 0.5 || Math.abs(from.top - box.top) >= 0.5;
-      if (now.col === "done" && known && known.completion !== task.completion) {
-        void engine.current?.play(el, from, "done").catch((error: unknown) => console.error("Board completion animation failed.", error));
-      } else if (sameCards && rearranged && shifted && was.col === now.col) BD.flipFrom(el, from, theme, reduced);
+      if (sameCards && rearranged && shifted && was.col === now.col) BD.flipFrom(el, from, theme, reduced);
     }
     prev.current = next; previousOrder.current = order; skip.current = false;
   });

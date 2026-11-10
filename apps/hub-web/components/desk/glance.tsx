@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, CalendarClock, CalendarDays, CircleDot, Hand, TriangleAlert, type LucideIcon } from "lucide-react";
+import { CalendarClock, CalendarDays, CircleDot, Hand, TriangleAlert, type LucideIcon } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { api, type DeskLive } from "@/lib/api";
 import { isoDate } from "@/lib/format";
@@ -55,7 +56,7 @@ export function GlancePills({ live, sample = false }: { live: DeskLive; sample?:
     { key: "due", icon: CalendarClock, n: counts.dueToday, one: "due today", many: "due today", href: "/board" },
     { key: "overdue", icon: TriangleAlert, n: counts.overdue, one: "overdue", many: "overdue", href: "/board", tone: "danger" },
     ...(sample || shell.isSuccess ? [{ key: "needs", icon: Hand, n: needs, one: "needs you", many: "need you", href: "/needs-me", tone: "warn" as const }] : []),
-    ...(agentsOn && agents.data ? [{ key: "agents", icon: Bot, n: agents.data.running.length, one: "agent working", many: "agents working", href: "/runs", tone: "live" as const }] : []),
+    ...(agentsOn && agents.data ? [{ key: "agents", icon: AgentIcon, n: agents.data.running.length, one: "agent working", many: "agents working", href: "/runs", tone: "live" as const }] : []),
     ...(calendar.data && (calendar.data.sync.length || meetings) ? [{ key: "meetings", icon: CalendarDays, n: meetings, one: "meeting today", many: "meetings today", href: "/meetings" }] : []),
   ];
   return (

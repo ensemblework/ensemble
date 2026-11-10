@@ -284,7 +284,7 @@ test("recap narrative compares with last week and highlights are deterministic",
   assert.match(markdown, /A good week\.\n\n## At a glance/);
   assert.match(markdown, /- Done: 9 tasks \(7 by you, 2 by agents\) \(4 more than the week before\)/);
   assert.match(markdown, /## Highlights\n\n- Delivered “Mobile release”/);
-  assert.match(markdown, /Send the deck — due 3 Nov/);
+  assert.match(markdown, /Send the deck, due 3 Nov/);
   assert.match(markdown, /## Meetings/);
 });
 

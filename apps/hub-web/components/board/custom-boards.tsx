@@ -21,7 +21,7 @@ export function CustomBoards() {
   const [creating, setCreating] = useState(false);
   if (inItemView()) return null;
   return <section className="custom-boards" aria-label="Your boards">
-    <header><div><span className="cb-eyebrow">A SPACE FOR EACH KIND OF WORK</span><h2>Your boards</h2><p>Different projects. Your own way of moving them forward.</p></div>
+    <header><div><span className="cb-eyebrow">A SPACE FOR EACH KIND OF WORK</span><h2>Your boards</h2></div>
       {access.ready && access.canEdit && <button type="button" className="btn" onClick={() => setCreating(true)}><Plus size={15} />New board</button>}
     </header>
     {boards.isError ? <LoadError what="your boards" error={boards.error} onRetry={() => void boards.refetch()} /> : boards.isPending ? <p className="text-[13px] text-muted" role="status">Loading your boards…</p> : <div className="cb-grid">

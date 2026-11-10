@@ -47,7 +47,7 @@ export function describeGraph(nodes: GraphFactNode[], edges: readonly GraphEdge[
         return other ? `${edge.kind} ${other.kind} “${other.label}” (${other.id})` : null;
       })
       .filter((item): item is string => Boolean(item));
-    return `${node.kind} ${node.id} “${node.label}”${linked.length ? ` — ${linked.join("; ")}` : ""}`;
+    return `${node.kind} ${node.id} “${node.label}”${linked.length ? `: ${linked.join("; ")}` : ""}`;
   };
   const counts = new Map<string, number>();
   for (const node of rest) counts.set(node.kind, (counts.get(node.kind) ?? 0) + 1);

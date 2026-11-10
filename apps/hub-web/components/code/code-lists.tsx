@@ -4,7 +4,8 @@
  * Rows Code's Welcome and Explorer share: an agent change to review, a repository (named by
  * `lib/code-repos.ts`, never by a folder id), and a section that folds open and closed.
  */
-import { Bot, ChevronRight, FolderGit2, GitBranch, Laptop } from "lucide-react";
+import { ChevronRight, FolderGit2, GitBranch, Laptop } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { cx } from "@/components/ui";
@@ -32,7 +33,7 @@ export function ReviewItem({ review, repo, href, where, compact = false }: { rev
   const state = reviewState(review);
   const meta = [repo, shortBranch(review.branch), compact ? null : plural(review.files, "file"), compact ? null : review.model, where ?? null, relative(review.createdAt)].filter(Boolean);
   return (
-    <Link href={href} className="group flex min-w-0 items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover focus-visible:bg-hover" title={`${review.title} — ${state.label}`}>
+    <Link href={href} className="group flex min-w-0 items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover focus-visible:bg-hover" title={`${review.title} · ${state.label}`}>
       <span className={cx("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", state.dot)} aria-hidden />
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-baseline gap-2">
@@ -64,7 +65,7 @@ export function RepoItem({ repo, href, where, dense = false }: { repo: RepoView;
       className={cx("group/repo flex min-w-0 items-center gap-2 rounded-md px-1.5 hover:bg-hover focus-visible:bg-hover", dense ? "py-1" : "py-1.5")}
     >
       <span className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors group-hover/repo:text-ink", run ? "bg-transparent" : "bg-raised")} aria-hidden>
-        {run ? <Bot size={12} /> : <FolderGit2 size={13} />}
+        {run ? <AgentIcon size={12} /> : <FolderGit2 size={13} />}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate leading-tight text-ink">{repo.name}</span>
@@ -120,7 +121,7 @@ export function RepoList({ repos, hrefOf, empty }: { repos: RepoView[]; hrefOf: 
       ))}
       {runs.length ? (
         <div className="pt-1">
-          <Fold title="Agent worktrees" count={runCount} open={false} persist="agent-worktrees" icon={<Bot size={11} className="shrink-0" />}>
+          <Fold title="Agent worktrees" count={runCount} open={false} persist="agent-worktrees" icon={<AgentIcon size={11} className="shrink-0" />}>
             <div className="ml-2 space-y-0.5 border-l border-line pl-1">
               {runs.map((repo) => (
                 <RepoItem key={repo.path} repo={repo} href={hrefOf(repo.path)} dense />

@@ -117,7 +117,7 @@ export const taskTools = [
   defineTool({
     name: "hub_get_task",
     area: "tasks",
-    description: "Read one task by id. Never invent an id — list first and match by name.",
+    description: "Read one task by id. Never invent an id: list first and match by name.",
     input: z.object({ taskId: z.string().uuid() }),
     isWrite: false,
     risk: "low",

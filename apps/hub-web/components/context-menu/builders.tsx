@@ -30,10 +30,10 @@ import {
   RotateCw,
   Search,
   Settings,
-  Sparkles,
   Trash2,
   UserRound,
 } from "lucide-react";
+import { EnsembleIcon } from "@/components/agent-icon";
 import { DOC_FORMATS, downloadDocument } from "@/lib/export/formats";
 import { pageDoc } from "@/lib/export/items";
 import { api, type TaskRecord } from "@/lib/api";
@@ -77,7 +77,7 @@ export function askItems(attachment: AssistantAttachment, extra: Array<{ id: str
     {
       id: "ask",
       label: "Ask Ensemble",
-      icon: Sparkles,
+      icon: EnsembleIcon,
       submenu: () => ({
         sections: [
           { items: (only ? extra : [...extra, ...ASK_PRESETS]).map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: () => attachToAssistant({ attachment, prompt: preset.prompt, send: true }) })) },
@@ -152,7 +152,7 @@ export function pageWideMenu(event: MouseEvent, nav: Nav): MenuSpec | null {
       items: [
         { id: "copy-url", label: "Copy link to this page", icon: Link2, run: () => copyText(window.location.href) },
         { id: "search-all", label: "Search Ensemble", icon: Search, hint: "Ctrl+K", run: () => openPalette() },
-        { id: "ask-view", label: "Ask Ensemble about this", icon: Sparkles, run: () => attachToAssistant({ prompt: "" }) },
+        { id: "ask-view", label: "Ask Ensemble about this", icon: EnsembleIcon, run: () => attachToAssistant({ prompt: "" }) },
       ],
     });
   }

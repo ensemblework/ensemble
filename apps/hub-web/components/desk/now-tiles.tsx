@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ArrowUpRight, Bot, Check, CircleCheck, Crosshair, Flame } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, CircleCheck, Crosshair, Flame } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import type { ReactNode } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { api, type AgentJob, type DeskLive } from "@/lib/api";
@@ -127,8 +128,8 @@ function LiveAgents() {
   const on = hasModule(shell.data?.modules, "workspace");
   const state = useQuery({ queryKey: ["agent-state"], queryFn: api.agentState, enabled: on, staleTime: 15_000 });
   const needs = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0) + (shell.data?.nodeApprovals ?? 0);
-  if (shell.isSuccess && !on) return <TileEmpty icon={Bot} label="Agents are switched off in this space." />;
-  if (!state.data) return <TileEmpty icon={Bot} label={state.isError ? "Agent activity could not load." : "Checking on your agents…"} />;
+  if (shell.isSuccess && !on) return <TileEmpty icon={AgentIcon} label="Agents are switched off in this space." />;
+  if (!state.data) return <TileEmpty icon={AgentIcon} label={state.isError ? "Agent activity could not load." : "Checking on your agents…"} />;
   return <AgentsView running={state.data.running} queued={state.data.queued} waiting={needs} paused={state.data.paused} />;
 }
 
@@ -142,7 +143,7 @@ function AgentsView({ running, queued, waiting, paused = false, preview = false 
     return (
       <div className="lwrap">
         {needs ? <div className="agent-summary">{needs}</div> : null}
-        <TileEmpty icon={Bot} label={paused ? "Agents are paused." : "No agents running right now."} action={preview ? undefined : "Open Runs"} href="/runs" />
+        <TileEmpty icon={AgentIcon} label={paused ? "Agents are paused." : "No agents running right now."} action={preview ? undefined : "Open Runs"} href="/runs" />
       </div>
     );
   }

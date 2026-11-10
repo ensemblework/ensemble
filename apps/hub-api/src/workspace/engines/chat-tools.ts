@@ -56,7 +56,7 @@ export async function runChatTool(ctx: Pick<JobContext, "userId" | "taskId" | "e
     const args = SearchInput.parse(input ?? {});
     const found = await searchWorkspace(ctx.prisma, ctx.userId, args.query);
     if (!found.results.length) return `Nothing in Ensemble matches “${args.query}”.`;
-    return found.results.map((hit) => `- ${hit.kind}: ${hit.label}${hit.excerpt ? ` — ${hit.excerpt}` : ""}`).join("\n");
+    return found.results.map((hit) => `- ${hit.kind}: ${hit.label}${hit.excerpt ? `: ${hit.excerpt}` : ""}`).join("\n");
   }
   throw new Error(`Unknown tool ${name}.`);
 }

@@ -106,7 +106,7 @@ test("the IDE opens the run's first changed file in the editor, with the explore
     assert.ok(view.host.querySelector('[data-testid="review-editor"]'), "the editor");
     assert.ok(view.host.querySelector(".cm-chunkBar-agent"), "the agent's change, with its actions");
     assert.ok(view.host.textContent?.includes("README.md"), "the folder, from the computer");
-    assert.match(view.host.querySelector('[data-testid="ide-progress"]')?.textContent ?? "", /0 \/ 1 — 1 file left/);
+    assert.match(view.host.querySelector('[data-testid="ide-progress"]')?.textContent ?? "", /0 \/ 1 · 1 file left/);
     assert.match(view.host.querySelector('[data-testid="ide-statusbar"]')?.textContent ?? "", /ensemble\/job-1/);
     assert.ok(fake.calls.some((call) => call.url.includes("/api/code/versions") && call.url.includes("path=src%2Fname.ts")));
   } finally {

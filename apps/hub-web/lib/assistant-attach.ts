@@ -34,13 +34,13 @@ const KIND_WORD: Record<AttachSource["kind"], string> = { page: "page", task: "t
 
 const clean = (title: string) => title.replace(/[“”\n]/g, "").trim() || "Untitled";
 
-/** The message's head: each attachment quoted (`> …`) with `— from “Title”`, or `[Attached: “Title”]` for a whole one. */
+/** The message's head: each attachment quoted (`> …`) with `From “Title”`, or `[Attached: “Title”]` for a whole one. */
 export function quoteAttachments(list: AssistantAttachment[]): string {
   return list
     .map((item) => {
       const text = item.text.trim().slice(0, MAX_TEXT);
       if (!text) return `[Attached: “${clean(item.source.title)}”]`;
-      return `${text.split(/\r?\n/).map((line) => `> ${line}`).join("\n")}\n— from “${clean(item.source.title)}”`;
+      return `${text.split(/\r?\n/).map((line) => `> ${line}`).join("\n")}\nFrom “${clean(item.source.title)}”`;
     })
     .join("\n\n");
 }
@@ -73,7 +73,8 @@ export function splitQuoted(content: string): { parts: QuotedPart[]; rest: strin
       rest = rest.slice(whole[0].length);
       continue;
     }
-    const quote = /^((?:> [^\n]*(?:\n|$))+)— from “([^”\n]*)”\n*/.exec(rest);
+    // "— from" is how messages sent before the plain "From" were written.
+    const quote = /^((?:> [^\n]*(?:\n|$))+)(?:— from|From) “([^”\n]*)”\n*/.exec(rest);
     if (!quote) break;
     parts.push({ text: quote[1]!.split("\n").filter(Boolean).map((line) => line.replace(/^> /, "")).join("\n"), from: quote[2]!, whole: false });
     rest = rest.slice(quote[0].length);

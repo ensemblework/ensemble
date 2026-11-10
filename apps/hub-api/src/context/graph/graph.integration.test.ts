@@ -145,7 +145,7 @@ test("the work packet carries the meeting's words, people and related work withi
   assert.match(packet.text, /Where it came from: meeting “Atlas weekly sync”/);
   assert.match(packet.text, /Could you send the latency budget by Friday\?/);
   assert.match(packet.text, /Ship the beta on Nov 20/);
-  assert.match(packet.text, /Priya Shah — Product lead · my manager/);
+  assert.match(packet.text, /Priya Shah: Product lead · my manager/);
   assert.match(packet.text, /Collect p95 numbers/);
   assert.match(packet.text, /budget\.md/);
   assert.ok(packet.text.length <= 4000);

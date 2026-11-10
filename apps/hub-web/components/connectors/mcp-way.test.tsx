@@ -165,7 +165,7 @@ test("an anonymous Hugging Face connection shows as public data only and offers 
     assert.match(detail.querySelector("header")?.textContent ?? "", /Connected · public data only/);
     const panel = detail.querySelector<HTMLElement>('[data-testid="mcp-panel"]')!;
     assert.match(panel.textContent ?? "", /connected · public data only/);
-    assert.match(panel.textContent ?? "", /Public data only — sign in to use your account\. 2 of 2 tools on\./);
+    assert.match(panel.textContent ?? "", /Public data only\. Sign in to use your account\. 2 of 2 tools on\./);
     assert.ok(button(panel, /^Sign in with Hugging Face$/));
     assert.ok(button(panel, /^Paste an access token$/));
   } finally {

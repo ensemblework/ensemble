@@ -149,7 +149,7 @@ const text = (host: HTMLElement) => host.textContent ?? "";
 
 /** Settings rows that have nothing to do with where the terminal runs stay on every build. */
 function assertCommitSettingsStay(host: HTMLElement, label: string) {
-  for (const row of ["Branch prefix for agent work", "Commit author", "Sign commits"]) {
+  for (const row of ["Branch prefix for agent work", "Sign commits"]) {
     assert.ok(text(host).includes(row), `${label}: ${row}`);
   }
 }
@@ -232,7 +232,7 @@ test("Ensemble on the web: this server's terminal is not offered; the passkeys f
     assert.equal(hasAddressNote(view.host), false, "no message that sends you to localhost");
     const block = view.host.querySelector('[data-testid="web-terminal-passkeys"]');
     assert.ok(block, "the web terminal's passkeys");
-    assert.match(block.textContent ?? "", /paired computer/);
+    assert.match(block.textContent ?? "", /Terminal passkeys/);
     assert.equal(hasToggle(view.host), false, "no Terminal toggle for this server");
     assert.equal(view.calls.some((call) => call.endsWith("/api/terminal/status")), false);
     assert.ok(view.calls.some((call) => call.endsWith("/api/web-terminal/status")));

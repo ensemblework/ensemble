@@ -671,10 +671,10 @@ function ReviewStep({
                 {preview.samples.map((row, index) => (
                   <tr key={`${row.containerId}-${index}`} className="border-t border-line">
                     <td className="max-w-[220px] truncate px-2 py-1">{row.title}</td>
-                    <td className="px-2 py-1 text-muted">{row.status ?? "—"}</td>
-                    <td className="whitespace-nowrap px-2 py-1 text-muted">{row.due ? row.due.slice(0, 10) : "—"}</td>
-                    <td className="max-w-[160px] truncate px-2 py-1 text-muted">{row.labels.join(", ") || "—"}</td>
-                    <td className="max-w-[140px] truncate px-2 py-1 text-muted">{row.project ?? "—"}</td>
+                    <td className="px-2 py-1 text-muted">{row.status ?? "None"}</td>
+                    <td className="whitespace-nowrap px-2 py-1 text-muted">{row.due ? row.due.slice(0, 10) : "None"}</td>
+                    <td className="max-w-[160px] truncate px-2 py-1 text-muted">{row.labels.join(", ") || "None"}</td>
+                    <td className="max-w-[140px] truncate px-2 py-1 text-muted">{row.project ?? "None"}</td>
                   </tr>
                 ))}
               </tbody>

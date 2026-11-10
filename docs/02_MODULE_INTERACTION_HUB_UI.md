@@ -67,7 +67,7 @@ Assigned tasks move to In progress live when the agent claims the work; queued t
 
 The Ensemble Kanban collapses independently of Board overview. Its columns are Proposed, To do, In progress and Done. Blocked and awaiting-approval tasks appear in In progress while retaining their task status and approval controls. Flow, WIP counts and the In progress overview filter use the same grouping; the attention tile can still isolate blocked and awaiting-approval work. `/api/tasks?board=default` excludes task pages assigned to custom boards; `/api/tasks` remains the complete task list.
 
-Automatic moves to Done play once per observed completion, scoped to the open space or share for the browser tab. Returning from another screen can show a new completion, but opening a peek, the assistant, or resizing the board does not replay one. Animation clones are excluded from card measurements; system motion uses a viewport layer below active peeks, menus and the assistant (`components/motion/board-drag/board-drag-dnd-kit.tsx`).
+A card reaching Done, by your drag or because the work finished, moves like a card between any other columns: no completion animation. Only a reorder within a column slides the shifted cards; opening a peek, the assistant, or resizing the board moves nothing (`components/motion/board-drag/board-drag-dnd-kit.tsx`).
 
 A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas. Its tiles share the Today tile shell and type scale (`components/board/insights.css`) and wrap below 1100 px. Add a page and Board tiles are in the toolbar's More (⋯) menu; Import and New task stay visible.
 
@@ -301,7 +301,7 @@ Run output is immutable evidence. A run's card on its task shows the agent's out
 
 ### Selection comments and inline questions
 
-Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model.
+Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model. While it is typed in the caret's line, `@ensemble` shows as Ensemble's chip, the question is tinted and the line ends with *↵ Ask Ensemble* (an empty one says what it can do); these are editor decorations only (`components/editor/ensemble-ask.ts`), and only where Enter sends a request (a page, task or meeting notes, not a public link). In the @ menu the row carries Ensemble's mark and an *AI* badge.
 
 Comments never reserve document width or change the focus-mode reading column. Small gutter markers show thread counts; clicking a marker or highlighted text opens one compact, viewport-bounded thread overlay. Long quotes are limited to two lines; the thread scrolls independently. Close or Escape returns to writing. Page comments and selection drafts use the same overlay, with edits, resolution and delete confirmation (`components/comments/comment-layer.tsx`, `.comment-*` rules in `app/globals.css`).
 

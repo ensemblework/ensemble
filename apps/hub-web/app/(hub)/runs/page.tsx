@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ModelLogo } from "@/components/connectors/provider-logo";
-import { Clock3, PanelRightOpen, SquareArrowOutUpRight, Trash2, Wrench } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleDot, CircleMinus, CirclePause, CircleX, Clock3, SquareArrowOutUpRight, Trash2, Wrench, type LucideIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { usePeek } from "@/components/shell/peek";
@@ -18,6 +18,15 @@ import { duration, usd } from "@/lib/run-trace";
 import { useModuleOn } from "@/lib/use-module";
 
 const LIVE_JOB = new Set(["queued", "claimed", "running", "stopping", "waiting_approval"]);
+/** The run's state at a glance, in the row's first column. */
+const OUTCOME_GLYPH: Record<string, { icon: LucideIcon; className: string }> = {
+  green: { icon: CircleCheck, className: "text-ok" },
+  red: { icon: CircleX, className: "text-danger" },
+  orange: { icon: CircleAlert, className: "text-warn" },
+  yellow: { icon: CirclePause, className: "text-warn" },
+  blue: { icon: CircleDot, className: "animate-pulse text-accent" },
+  gray: { icon: CircleMinus, className: "text-faint" },
+};
 
 function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
   const peek = usePeek();
@@ -48,7 +57,11 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
         tabIndex={0}
         aria-label={`Preview the run of ${run.title}`}
       >
-        <PanelRightOpen size={14} className="hidden shrink-0 text-faint sm:block" />
+        {(() => {
+          const glyph = OUTCOME_GLYPH[outcome.tone] ?? OUTCOME_GLYPH.gray!;
+          const Icon = glyph.icon;
+          return <Icon size={15} aria-hidden className={`hidden shrink-0 sm:block ${glyph.className}`} />;
+        })()}
         <div className="col-span-3 min-w-0 flex-1 [overflow-wrap:anywhere]">
           <div className="text-[14.5px] font-semibold sm:truncate">{run.title}</div>
           {run.sourceRunId && <Link href={`/runs?run=${run.sourceRunId}`} onClick={event=>event.stopPropagation()} className="mt-1 block text-[12px] text-accent hover:underline">From feedback on an earlier run</Link>}

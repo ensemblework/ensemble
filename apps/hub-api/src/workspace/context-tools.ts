@@ -84,7 +84,7 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
     if (!hits.length) return `Nothing in Ensemble matched “${query}”. Try other words, or fewer of them.`;
     return [
       `${hits.length} result(s) for “${query}”, closest to your task first:`,
-      ...hits.map((hit) => `- [${hit.kind}] ${hit.title}${hit.status ? ` — ${hit.status.replace(/_/g, " ")}` : ""}${hit.when ? ` · ${hit.when.slice(0, 10)}` : ""}${hit.ref ? ` (${hit.ref})` : ""}${hit.snippet && hit.snippet !== hit.title ? `\n  ${hit.untrusted ? "(from an app or meeting) " : ""}${hit.snippet}` : ""}`),
+      ...hits.map((hit) => `- [${hit.kind}] ${hit.title}${hit.status ? `: ${hit.status.replace(/_/g, " ")}` : ""}${hit.when ? ` · ${hit.when.slice(0, 10)}` : ""}${hit.ref ? ` (${hit.ref})` : ""}${hit.snippet && hit.snippet !== hit.title ? `\n  ${hit.untrusted ? "(from an app or meeting) " : ""}${hit.snippet}` : ""}`),
     ].join("\n");
   }
   const raw = asText(args.item).trim();
@@ -103,8 +103,8 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
   const group = hood.groups[0];
   if (!group || !group.items.length) return `${hood.item.title} has nothing under “${rel}”${offset ? ` past ${offset}` : ""}.`;
   return [
-    `${group.label} — ${hood.item.title} (${hood.item.ref ?? hood.item.id})${offset ? `, from ${offset}` : ""}:`,
-    ...group.items.map((card) => `- ${card.title}${[card.status?.replace(/_/g, " "), card.due ? `due ${card.due.slice(0, 10)}` : null, card.role, card.detail].filter(Boolean).length ? ` — ${[card.status?.replace(/_/g, " "), card.due ? `due ${card.due.slice(0, 10)}` : null, card.role, card.detail].filter(Boolean).join(" · ")}` : ""}${card.ref ? ` (${card.ref})` : ""}`),
+    `${group.label}: ${hood.item.title} (${hood.item.ref ?? hood.item.id})${offset ? `, from ${offset}` : ""}:`,
+    ...group.items.map((card) => `- ${card.title}${[card.status?.replace(/_/g, " "), card.due ? `due ${card.due.slice(0, 10)}` : null, card.role, card.detail].filter(Boolean).length ? `: ${[card.status?.replace(/_/g, " "), card.due ? `due ${card.due.slice(0, 10)}` : null, card.role, card.detail].filter(Boolean).join(" · ")}` : ""}${card.ref ? ` (${card.ref})` : ""}`),
     group.more ? `More: call again with rel "${rel}" and offset ${offset + group.items.length}.` : "",
   ]
     .filter(Boolean)

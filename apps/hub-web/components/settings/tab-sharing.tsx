@@ -17,7 +17,7 @@ import { Avatar } from "../sharing/people";
 import { ContactLimitDialog } from "../sharing/sharing-limits";
 import { Meter, PersonPicker, ShareDialog } from "../sharing/share-dialog";
 import { useToast } from "../toast";
-import { Dialog, SectionCard, SkeletonRows } from "../ui";
+import { Dialog, SectionCard, SettingRow, SkeletonRows } from "../ui";
 
 export const KIND_NAMES: Record<ShareKind, string> = {
   page: "Page",
@@ -159,22 +159,22 @@ function LimitsCard({ limits, caps }: { limits: SharingOverview["limits"]; caps:
   const changed = fields.some((field) => Number(values[field.key]) !== limits[field.key]);
   return (
     <SectionCard title="Limits" info="Your choice. Lowering a limit takes nobody and nothing away; it only stops new additions until fewer are in use. A Node room counts you and open requests to join; spaces count your own.">
-      <div className="flex flex-wrap items-end gap-3 text-[13px]">
+      <div className="divide-y divide-[var(--line)]">
         {fields.map((field) => (
-          <label key={field.key} className="block">
-            <span className="text-[12px] text-muted">
-              {field.label} (up to {caps[field.key]})
-            </span>
+          <SettingRow key={field.key} title={field.label} description={`Up to ${caps[field.key]}`}>
             <input
               type="number"
+              aria-label={field.label}
               min={field.min}
               max={caps[field.key]}
-              className="field mt-1 w-28"
+              className="field w-32 text-right tabular-nums"
               value={values[field.key]}
               onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
             />
-          </label>
+          </SettingRow>
         ))}
+      </div>
+      <div className="mt-2 flex justify-end">
         <button type="button" className="btn" disabled={!changed || !valid || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : "Save"}
         </button>

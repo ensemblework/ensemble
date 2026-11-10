@@ -69,8 +69,8 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
 };
 
 /** Dialogs that can be opened from the address: /settings?tab=assistant&dialog=keys. */
-export type SettingsDialog = "keys" | "changes";
-const DIALOGS: readonly SettingsDialog[] = ["keys", "changes"];
+export type SettingsDialog = "keys" | "subscriptions" | "changes";
+const DIALOGS: readonly SettingsDialog[] = ["keys", "subscriptions", "changes"];
 
 export type SettingsLocation = {
   tab: SettingsTab;

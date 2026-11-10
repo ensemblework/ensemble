@@ -24,6 +24,7 @@ import { useToast } from "../toast";
 import { openContextMenu } from "../context-menu/menu-store";
 import { usePageMenu } from "../context-menu/page-menu";
 import { editorMenu } from "./editor-menu";
+import { EnsembleAsk } from "./ensemble-ask";
 
 const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod) => mod.CommentLayer), { ssr: false });
 const InlineEnsemble = dynamic(() => import("../comments/inline-ensemble").then((mod) => mod.InlineEnsemble), { ssr: false });
@@ -112,6 +113,8 @@ export function BlockEditor({
         create: page && !currentLink() ? (instance, pos) => void createNestedPage(instance, pos) : null,
         allowed: () => (pageRef.current?.depth ?? 1) < MAX_PAGE_DEPTH,
       }),
+      // `@ensemble …` reads as a request only where Enter sends one: a page, task or meeting notes, not a public link.
+      EnsembleAsk.configure({ active: () => Boolean(pageRef.current) && !currentLink() }),
       ...(collab ? [CollabSync.configure({ version: collab.version, clientID: collab.clientID })] : []),
     ],
     content: initial as JSONContent,

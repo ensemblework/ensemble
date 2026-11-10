@@ -449,7 +449,7 @@ async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings, 
   const fromApps = task ? await contextForPrompt(ctx.userId, { taskId: task.id, projectId: task.projectId }, 12_000, app.prisma).catch(() => "") : "";
   const attachedFiles = await attachmentsBrief(ctx, files, copies, pictures).catch(() => "");
   const about = [
-    task?.project ? `Project: ${task.project.name}${task.project.notes ? ` — ${task.project.notes.slice(0, 1500)}` : ""}` : "",
+    task?.project ? `Project: ${task.project.name}${task.project.notes ? `. ${task.project.notes.slice(0, 1500)}` : ""}` : "",
     task?.repo ? `Repository: ${task.repo.fullName}` : "",
     task?.sourceUrl ? `From ${task.sourceKind}: ${task.sourceUrl}` : "",
   ].filter(Boolean);
@@ -728,7 +728,6 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     strength,
     network: job.networkAccess,
     signal: control.signal,
-    commitAuthor: settings.terminal.commitAuthor,
     chosenBranch: job.branchMode === "as-is" ? undefined : job.branch || undefined,
     trusted: true,
     explicitTrust: false,
