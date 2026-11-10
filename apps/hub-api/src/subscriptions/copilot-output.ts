@@ -26,6 +26,28 @@ export function copilotOutput(model: string | null, onDelta: (text: string) => v
         streamed = "";
       }
     },
+    /**
+     * Copilot's own totals for the run (`--usage-output-file`, Copilot 1.0.81 and later), which newer
+     * versions write in place of per-call `assistant.usage` events: input counts cache reads and writes.
+     */
+    usageFile(raw: string | null): { totals: { in: number; out: number }; applied: boolean } | null {
+      let file: { modelMetrics?: Record<string, { usage?: { inputTokens?: unknown; outputTokens?: unknown } }> };
+      try { file = raw ? JSON.parse(raw) : {}; } catch { return null; }
+      const models = Object.entries(file.modelMetrics ?? {});
+      if (!models.length) return null;
+      let tokensIn = 0;
+      let tokensOut = 0;
+      for (const [, metric] of models) {
+        if (valid(metric.usage?.inputTokens)) tokensIn += metric.usage.inputTokens;
+        if (valid(metric.usage?.outputTokens)) tokensOut += metric.usage.outputTokens;
+      }
+      // Per-call events, when this Copilot sent them, already are the turn's.
+      if (result.tokensIn !== null) return { totals: { in: tokensIn, out: tokensOut }, applied: false };
+      result.tokensIn = tokensIn;
+      result.tokensOut = tokensOut;
+      if (!result.model && models.length === 1) result.model = models[0]![0];
+      return { totals: { in: tokensIn, out: tokensOut }, applied: true };
+    },
     finish() { result.text = (result.text + (result.text && streamed ? "\n\n" : "") + streamed).trim(); return result; },
   };
 }

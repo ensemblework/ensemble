@@ -7,7 +7,7 @@ import { engineNamed, makerProblem, modelMaker, readinessProblem } from "./agent
 const agent = (id: string, signedIn: boolean | null, models: string[] = []) => ({ id, via: "cli", version: "1", signedIn, models: models.map((model) => ({ id: model, label: model })) }) as unknown as SubscriptionAgent;
 
 test("agents are read as people and models write them", () => {
-  for (const [name, id] of [["copilot", "copilot-cli"], ["GitHub Copilot", "copilot-cli"], ["copilot-cli", "copilot-cli"], ["Claude", "claude-code"], ["Claude Code", "claude-code"], ["codex", "codex"], ["Cursor", "cursor-agent"], ["Grok Build", "grok-cli"], ["Gemini CLI", "gemini-cli"], ["OpenCode", "opencode"]] as const) {
+  for (const [name, id] of [["copilot", "copilot-cli"], ["GitHub Copilot", "copilot-cli"], ["copilot-cli", "copilot-cli"], ["Claude", "claude-code"], ["Claude Code", "claude-code"], ["codex", "codex"], ["Cursor", "cursor-agent"], ["Grok Build", "grok-cli"], ["Gemini CLI", "gemini-cli"], ["OpenCode", "opencode"], ["Mistral Vibe", "mistral-vibe"], ["vibe", "mistral-vibe"], ["Qwen Code", "qwen-code"], ["qwen", "qwen-code"], ["Kimi Code", "kimi-code"], ["kimi-cli", "kimi-code"]] as const) {
     assert.equal(engineNamed(name), id, name);
   }
   assert.equal(engineNamed("ensemble"), undefined);

@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt } from "./agents.js";
+import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs, copilotPrompt, copilotReadsStdin } from "./agents.js";
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
@@ -191,6 +191,10 @@ test("Copilot CLI denies its shell, writes and fetches, and Windows gets a promp
   const prompt = long[long.indexOf("-p") + 1]!;
   assert.ok(prompt.length <= 28_000);
   assert.ok(prompt.endsWith("END"), "the newest part of the conversation is kept");
+  const piped = copilotArgs({ prompt: `${"x".repeat(40_000)}END`, mcpFile: "m", model: null, effort: null, platform: "win32", stdin: true });
+  assert.ok(!piped.includes("-p") && !piped.some((arg) => arg.includes("END")), "piped on stdin, the prompt is not on the command line");
+  assert.equal(copilotPrompt("head", ["t".repeat(60_000)], "win32", true), `head\n\n${"t".repeat(60_000)}`, "nor cut on Windows");
+  assert.deepEqual(["GitHub Copilot CLI 1.0.108.", "1.0.78", "1.0.77", "0.0.400", "2.0.1", null].map(copilotReadsStdin), [true, true, false, false, true, false]);
 });
 
 test("Copilot's models carry their context windows, thinking levels and cost as Copilot reports them", () => {
@@ -410,6 +414,21 @@ test("Copilot context snapshots, invalid counts and billing units never become c
   output.line("not JSON");
   output.line(JSON.stringify({ type: "assistant.message", data: { content: "Ready." } }));
   assert.deepEqual(output.finish(), { text: "Ready.", model: null, tokensIn: null, tokensOut: null, costUsd: null });
+});
+
+test("a newer Copilot's tokens come from its usage file, never its AI credits", () => {
+  const output = copilotOutput(null, () => {});
+  output.line(JSON.stringify({ type: "assistant.message", data: { content: "OK" } }));
+  assert.deepEqual(output.usageFile(JSON.stringify({ totalNanoAiu: 1987010000, modelMetrics: { "gpt-6.1-sol": { usage: { inputTokens: 17352, outputTokens: 5, cacheReadTokens: 9816 } } } })), { totals: { in: 17352, out: 5 }, applied: true });
+  assert.deepEqual(output.finish(), { text: "OK", model: "gpt-6.1-sol", tokensIn: 17352, tokensOut: 5, costUsd: null });
+  const both = copilotOutput(null, () => {});
+  both.line(JSON.stringify({ type: "assistant.usage", data: { model: "m", inputTokens: 40, outputTokens: 4 } }));
+  assert.deepEqual(both.usageFile(JSON.stringify({ modelMetrics: { m: { usage: { inputTokens: 900, outputTokens: 9 } } } })), { totals: { in: 900, out: 9 }, applied: false }, "per-call events already are the turn's");
+  assert.equal(both.finish().tokensIn, 40);
+  const unreadable = copilotOutput("gpt-6.1-sol", () => {});
+  unreadable.usageFile("{not json");
+  unreadable.usageFile(null);
+  assert.equal(unreadable.finish().tokensIn, null);
 });
 
 const MB = 1024 * 1024;

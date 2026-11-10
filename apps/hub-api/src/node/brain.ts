@@ -39,6 +39,7 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
+import { OWN_WEB_AGENTS } from "../subscriptions/agents.js";
 
 /** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
 const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
@@ -213,11 +214,26 @@ async function persona(
   return { text: lines.filter((line) => line !== "").join("\n"), rooms: known };
 }
 
+/** Days a node's conversation on its owner's AI plan is kept unused before it is dropped from the agent (subscriptions/turn-sessions.ts). */
+export const NODE_SESSION_KEEP_DAYS = 7;
+const WEB_TASK_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.";
+const OWN_LOOP_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): drive the browser yourself (browser_open, browser_snapshot, browser_click, browser_type…), reading the page after each step; sign-ins go to your owner's card, not Connections.";
+
+/**
+ * The persona on the owner's AI plan: the agent drives the browser itself (no web_task), and where its own web
+ * search is on (Claude Code, Codex, Copilot) facts come from that first, as its run notes say (subscriptions/turn.ts).
+ */
+export function ownLoopPersona(text: string, provider: string): string {
+  const own = isSubscriptionProvider(provider) && OWN_WEB_AGENTS.has(provider);
+  const looked = text.replace(WEB_TASK_ROW, OWN_LOOP_ROW).replace("several steps on a site: web_task", "several steps on a site: drive the browser yourself");
+  return own ? looked.replace(/hub_web_search first \(the live web, with sources\)/g, "your own web search first (or hub_web_search), then read the source page itself; cite it") : looked;
+}
+
 /** What a node does itself on its owner's computer: the rows of its routing table that need its hands there. */
 const HANDS = [
   "- Prices, “compare” stores, “where to buy”: browser_shop (product, stores, location) in one call; reply with a Markdown table.",
   "- “Screenshot of” or “show me” a page: browser_view (url; focus: what was asked, “the price chart”), one call per screenshot.",
-  "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.",
+  WEB_TASK_ROW,
   "- A sign-in or human check (captcha, “Robot or human?”): browser_login_needed (your owner does it on a card, even by phone). They say done: browser_login_check.",
   "- A terminal screenshot (htop, a command's output): computer_terminal_screenshot.",
   "- Commands, checks, files, a report (.md): computer_run or computer_files_write yourself, in your own folder unless your owner names one. A file into this chat: node_share_file.",
@@ -312,7 +328,9 @@ async function helperPersona(app: FastifyInstance, node: NodeAgent, room: NodeRo
  * at low, gpt-5-mini announced work instead of doing it far more often (node-agent playground, 6 Nov 2026).
  */
 async function turnEffort(owner: string, node: NodeAgent, provider: string, model: string, wanted?: string): Promise<string | undefined> {
-  if (isSubscriptionProvider(provider)) return undefined;
+  // On the owner's own AI plan: the level they chose for the node (checked against the plan's model on
+  // the computer), else the agent's own default. No level of Ensemble's is imposed on their plan.
+  if (isSubscriptionProvider(provider)) return wanted ?? node.effort ?? undefined;
   return effortToSend(owner, provider, model, wanted ?? node.effort ?? (process.env.ENSEMBLE_NODE_EFFORT?.trim() || "medium")).catch(() => undefined);
 }
 
@@ -523,12 +541,16 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
     }),
   );
   // A conversation turn offers the advanced browser and capture tools only for that work (node/skills.ts).
-  const extraTools = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  // On the owner's own AI plan the agent is the loop: web_task's sub-agent would spend Ensemble's model, so it drives the browser itself.
+  const ownLoop = isSubscriptionProvider(choice.provider);
+  const tiered = step || carriesOn ? offered : tieredTools(offered, `${ownerWords}\n${turn.note ?? ""}`, await recentTools(prisma, conversationId));
+  const extraTools = ownLoop ? tiered.filter((tool) => tool.name !== "web_task") : tiered;
   const gateway = nodeSpaceGateway(app, node, { homeSpaceId: turn.spaceId, reach: ownerOnly ? "all" : "home" });
   const offeredNames = new Set(extraTools.map((tool) => tool.name));
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
-  const nodePersona = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
+  const built = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
+  const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider) } : built;
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)
@@ -567,6 +589,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       extraTools: extraTools.map((tool) => (tool.name.startsWith("hub_") ? gateway.wrap([tool])[0]! : tool)),
       ...(verify ? { verify } : {}),
       purpose: "Ensemble Node",
+      // The owner's own AI plan: the node's project folder groups its conversations (and folder-less coding sessions) in the agent's app.
+      ...(isSubscriptionProvider(pick.provider) ? { subscription: { node: true, group: { id: node.id, name: `${node.name} (Ensemble Node)` }, keepDays: NODE_SESSION_KEEP_DAYS, maxCalls: 60 } } : {}),
       signal: deps.signal,
       async onToolStart(call) {
         // From the first tool that changes something, the turn is not aborted to merge a newer message.

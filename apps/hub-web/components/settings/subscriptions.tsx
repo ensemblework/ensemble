@@ -45,6 +45,9 @@ const PROGRAM: Record<SubscriptionProvider, string> = {
   opencode: "OpenCode",
   "gemini-cli": "Gemini CLI",
   antigravity: "Antigravity's agent, installed by Ensemble",
+  "mistral-vibe": "Mistral Vibe",
+  "qwen-code": "Qwen Code",
+  "kimi-code": "Kimi Code CLI",
 };
 const viaText = (agent: SubscriptionAgent): string => {
   const program = agent.id === "claude-code" && agent.via === "app" ? "the Claude app" : agent.id === "codex" && agent.via === "app" ? "the ChatGPT app" : PROGRAM[agent.id];

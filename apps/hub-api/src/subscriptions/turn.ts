@@ -11,7 +11,7 @@ import { deviceOnline } from "../devices/constants.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
-import { AgentTurnError, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
+import { AgentTurnError, OWN_WEB_AGENTS, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
 import type { ToolAnswer, ToolSpec } from "./bridge.js";
 import { runOnComputer } from "./relay.js";
 import type { TurnFile } from "./turn-files.js";
@@ -112,6 +112,11 @@ export type SubscriptionTurnInput = {
   sessionKey?: string;
   /** How many messages the chat had before this one. */
   position?: number;
+  /** An Ensemble Node's project, whose folder its chats share (agents.ts `SessionGroup`), and how long its sessions are kept unused. */
+  group?: { id: string; name: string };
+  keepDays?: number;
+  /** The agent's own web search and page reading, on the person's plan. */
+  ownWeb?: boolean;
   tools: ToolSpec[];
   maxTurns?: number;
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
@@ -141,9 +146,20 @@ export function turnFiles(computer: TurnComputer, prompt: string, files: Subscri
 }
 
 /** The message and the chat so far: a session on the computer when it keeps one, else the chat folded in front of the message. */
-export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position">): Pick<AgentTurnSpec, "prompt" | "session"> {
+export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position" | "group" | "keepDays">): Pick<AgentTurnSpec, "prompt" | "session"> {
   const history = input.history?.trim() ?? "";
-  if (input.sessionKey && (computer.local || computer.turns >= ASSISTANT_TURN_SESSIONS)) return { prompt: input.prompt, session: { key: input.sessionKey, history, ...(input.position === undefined ? {} : { position: input.position }) } };
+  if (input.sessionKey && (computer.local || computer.turns >= ASSISTANT_TURN_SESSIONS)) {
+    return {
+      prompt: input.prompt,
+      session: {
+        key: input.sessionKey,
+        history,
+        ...(input.position === undefined ? {} : { position: input.position }),
+        ...(input.group ? { group: input.group } : {}),
+        ...(input.keepDays ? { keepDays: input.keepDays } : {}),
+      },
+    };
+  }
   return { prompt: history ? `${history}\n\n---\n\n${input.prompt}` : input.prompt };
 }
 
@@ -160,6 +176,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     ...(turn.session ? { session: turn.session } : {}),
     tools: input.tools,
     maxTurns: input.maxTurns ?? 16,
+    ...(input.ownWeb && OWN_WEB_AGENTS.has(input.agent) ? { ownWeb: true } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
@@ -181,7 +198,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
  * as one system prompt, the new message, and the chat before it, which the agent needs only when
  * it starts a new session.
  */
-export function agentConversation(messages: ReadonlyArray<Record<string, unknown>>, agent: SubscriptionProvider): { system: string; prompt: string; history: string } {
+export function agentConversation(messages: ReadonlyArray<Record<string, unknown>>, agent: SubscriptionProvider, how: RunHow = {}): { system: string; prompt: string; history: string } {
   const text = (value: unknown) => (typeof value === "string" ? value : value === undefined || value === null ? "" : JSON.stringify(value));
   const systems: string[] = [];
   const turns: Array<{ role: string; content: string }> = [];
@@ -194,16 +211,37 @@ export function agentConversation(messages: ReadonlyArray<Record<string, unknown
   const last = turns.length && turns[turns.length - 1]!.role === "user" ? turns.pop()!.content : "";
   const earlier = turns.map((turn) => `${turn.role === "user" ? "Person" : "You"}: ${turn.content}`).join("\n\n");
   return {
-    system: [...systems, howYouRun(agent)].join("\n\n"),
+    system: [...systems, howYouRun(agent, how)].join("\n\n"),
     prompt: last,
     history: earlier ? `This chat so far, oldest first:\n\n${earlier}` : "",
   };
 }
 
-/** The one thing that differs on the person's own agent: only Ensemble's tools. */
-export function howYouRun(agent: SubscriptionProvider): string {
+/** How the turn runs on the person's agent: with its own web tools (`ownWeb`), and whether it is an Ensemble Node's turn. */
+export type RunHow = { ownWeb?: boolean; node?: boolean };
+
+/** What differs on the person's own agent: Ensemble's tools (and its own web tools, when on), never its own shell or files. */
+export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string {
   const label = SUBSCRIPTION_INFO[agent].label;
-  return `You run on their own ${label} subscription, on their computer, with only Ensemble's tools (the "ensemble" MCP server, so hub_list_tasks may appear as mcp__ensemble__hub_list_tasks): no shell, files or web of your own. A tool you need but cannot see: call hub_use_tool with its name and input.`;
+  // Said only where the turn really turns them on.
+  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent) };
+  const tools = `Ensemble's tools (the "ensemble" MCP server, so hub_list_tasks may appear as mcp__ensemble__hub_list_tasks)`;
+  const lines = [
+    how.ownWeb
+      ? `You run on their own ${label} subscription, on their computer, with ${tools} and your own web search and page reading, which their plan pays for: use those for facts, docs and articles before Ensemble's hub_web_search. You have no shell or files of your own.`
+      : `You run on their own ${label} subscription, on their computer, with only ${tools}: no shell, files or web of your own.`,
+    "A tool you need but cannot see: call hub_use_tool with its name and input.",
+  ];
+  if (how.node) {
+    lines.push(
+      how.ownWeb
+        ? "Their computer is reached only through Ensemble's tools: its browser (browser_*: a site that needs clicking, a sign-in or a shop; drive it one step at a time yourself, reading the page after each), its terminal and files (computer_*). Plain reading of public pages: your own web tools."
+        : "Their computer is reached only through Ensemble's tools: its browser (browser_*: drive it one step at a time yourself, reading the page after each), its terminal and files (computer_*).",
+      "Real coding in a repository goes to a coding-agent session (node_session_start / node_session_send); everything else (looking up, browsing, commands, files, reports) you do yourself in this conversation.",
+      "This conversation goes on from one message to the next: what you did and found earlier is above, so build on it instead of doing it again.",
+    );
+  }
+  return lines.join(" ");
 }
 
 /** The dispatcher every turn has: any tool of the turn by name, for agents that do not re-list tools. */

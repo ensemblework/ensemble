@@ -50,4 +50,7 @@ export const ENGINE_LABEL: Record<Engine, string> = {
   opencode: ENGINE_LABELS.opencode,
   "gemini-cli": ENGINE_LABELS["gemini-cli"],
   antigravity: ENGINE_LABELS.antigravity,
+  "mistral-vibe": ENGINE_LABELS["mistral-vibe"],
+  "qwen-code": ENGINE_LABELS["qwen-code"],
+  "kimi-code": ENGINE_LABELS["kimi-code"],
 };

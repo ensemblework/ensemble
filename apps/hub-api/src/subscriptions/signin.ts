@@ -2,7 +2,7 @@
  * Signing in to an AI subscription on this computer, with the vendor's own sign-in (docs/30 §8):
  * Ensemble opens a terminal window running the tool's own login command (`claude auth login`,
  * `codex login`, `cursor-agent login`, `copilot login`, `grok login`, `opencode auth login`, or
- * `gemini`, whose first start asks how to sign in), which opens the vendor's sign-in page in the
+ * `gemini` or `qwen`, whose first start asks how to sign in, `vibe-acp --setup`, `kimi login`), which opens the vendor's sign-in page in the
  * browser. Antigravity has no command: Ensemble installs its agent when needed and opens the Google
  * sign-in page it prints (`antigravity.ts`). The tool keeps the sign-in where it always does;
  * Ensemble never sees it. Then the tool is checked again every few seconds until it reports a
@@ -24,6 +24,12 @@ export const LOGIN_ARGS: Record<Exclude<SubscriptionProvider, "antigravity">, st
   opencode: ["auth", "login"],
   // Gemini CLI has no login command: its first start asks how to sign in (Sign in with Google).
   "gemini-cli": [],
+  // Mistral Vibe's setup: sign in with the Mistral account in the browser, or paste an API key.
+  "mistral-vibe": ["--setup"],
+  // Qwen Code (built from Gemini CLI) asks how to sign in on its first start; `/auth` there later.
+  "qwen-code": [],
+  // Kimi Code's device-code sign-in: it prints a link and a code, and waits for the browser.
+  "kimi-code": ["login"],
 };
 
 const WATCH_MS = 6 * 60_000;
@@ -48,7 +54,7 @@ export async function startSignIn(
     const info = SUBSCRIPTION_INFO[agent];
     throw new Error(`${label} is not on this computer. ${info.install.label} (${info.install.url}) first.`);
   }
-  await open({ url: null, commands: [], terminal: { folder: homedir(), program: found.path, args: LOGIN_ARGS[agent] } });
+  await open({ url: null, commands: [], terminal: { folder: homedir(), program: found.path, args: [...(found.args ?? []), ...LOGIN_ARGS[agent]] } });
   if (!watching.has(agent)) {
     watching.add(agent);
     const started = Date.now();

@@ -119,3 +119,21 @@ test("after an upgrade, only a runner this CLI started from another version coun
   assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "admin", version: "cli-0.3.3" }, "0.3.4"), false);
   assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "runner" }, "0.3.4"), false, "an old sidecar that wrote no version is left alone");
 });
+
+test("a runtime that stopped answering but still holds the data folder is waited for until it exits", async () => {
+  const { runtimeLockHolder, waitForLockRelease } = await import("./sidecar.js");
+  const { root, paths } = await sandboxPaths();
+  const { mkdir } = await import("node:fs/promises");
+  const closing = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1500)"], { stdio: "ignore" });
+  try {
+    await mkdir(paths.dataHome, { recursive: true });
+    await writeFile(join(paths.dataHome, "runtime.lock"), JSON.stringify({ pid: closing.pid, owner: "cli", startedAt: new Date().toISOString() }));
+    assert.equal(await runtimeLockHolder(paths), closing.pid);
+    assert.equal(await waitForLockRelease(paths, Date.now() + 100), false, "still running after 100 ms");
+    assert.equal(await waitForLockRelease(paths, Date.now() + 10_000), true, "released once it exits");
+    assert.equal(await runtimeLockHolder(paths), null, "a lock whose process is gone holds nothing");
+  } finally {
+    closing.kill();
+    await rm(root, { recursive: true, force: true });
+  }
+});

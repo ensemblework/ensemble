@@ -151,6 +151,8 @@ export async function runCursor(
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
+  // How full the session's context window is, when Cursor reports it (session choice weighs it).
+  const fill: { window: { used: number; size: number } | null } = { window: null };
   // Reopening a chat session replays its history as updates: those are not this turn's reply.
   let replaying = false;
   rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
@@ -165,7 +167,10 @@ export async function runCursor(
       status?: string;
       rawInput?: unknown;
       rawOutput?: unknown;
+      used?: unknown;
+      size?: unknown;
     };
+    if (update.sessionUpdate === "usage_update" && typeof update.used === "number" && typeof update.size === "number") fill.window = { used: update.used, size: update.size };
     const single = Array.isArray(update.content) ? undefined : update.content;
     void (async () => {
       if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text) {
@@ -256,8 +261,11 @@ export async function runCursor(
     const current = (session.models as { currentModelId?: unknown } | undefined)?.currentModelId;
     await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId, observed: typeof current === "string" && current ? { model: current } : {} });
     await ctx.progress("Cursor started");
-    const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: options.prompt }] })) as { stopReason?: string };
+    const done = (await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: options.prompt }] })) as { stopReason?: string; usage?: { inputTokens?: number; outputTokens?: number } };
     result.turns = 1;
+    result.tokensIn += done.usage?.inputTokens ?? 0;
+    result.tokensOut += done.usage?.outputTokens ?? 0;
+    if (fill.window) await ctx.event("engine_context", { used: fill.window.used, size: fill.window.size });
     await options.stopCheck();
     if (ctx.signal.aborted || done.stopReason === "cancelled") throw new DOMException("Stopped", "AbortError");
     if (done.stopReason === "refusal") throw new Error("Cursor's agent refused the task.");

@@ -33,7 +33,18 @@ const Spec = z.object({
   /** Files attached to the person's message (`assistantTurns` 2). Older servers omit it. */
   files: z.array(TurnFileShape).max(TURN_FILES_MAX).optional(),
   /** The chat's session on this computer (`assistantTurns` 3). Older servers fold the chat into `prompt`. */
-  session: z.object({ key: z.string().regex(SESSION_KEY), history: z.string().max(400_000), position: z.number().int().min(0).optional() }).nullish(),
+  session: z
+    .object({
+      key: z.string().regex(SESSION_KEY),
+      history: z.string().max(400_000),
+      position: z.number().int().min(0).optional(),
+      /** An Ensemble Node's project folder for its chats (0.7.6). Older servers omit it. */
+      group: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(200) }).optional(),
+      keepDays: z.number().int().min(1).max(90).optional(),
+    })
+    .nullish(),
+  /** The agent's own web search and page reading (0.7.6). Older servers omit it. */
+  ownWeb: z.boolean().optional(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 

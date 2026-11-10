@@ -188,6 +188,9 @@ export const ModelProvider = z.enum([
   "opencode",
   "gemini-cli",
   "antigravity",
+  "mistral-vibe",
+  "qwen-code",
+  "kimi-code",
   "mock",
 ]);
 export type ModelProvider = z.infer<typeof ModelProvider>;

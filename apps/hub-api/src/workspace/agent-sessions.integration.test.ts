@@ -293,3 +293,22 @@ test("a claim of a project's task by the person's own agent carries the project'
   assert.match(spec.project!.hash, /^[a-f0-9]{16}$/);
   await db.workspaceJob.updateMany({ where: { userId: user.id }, data: { status: "cancelled", finishedAt: new Date() } });
 });
+
+test("a node's own session unused for a week is deleted though its task stays open; a recent one and a person's open task stay", async () => {
+  const user = await h.asUser();
+  const laptop = await laptopFor(user);
+  const app = { prisma: db, log: { info: () => undefined } } as unknown as FastifyInstance;
+  const { NODE_SESSION_IDLE_DAYS } = await import("./session-cleanup.js");
+  const idle = new Date(Date.now() - (NODE_SESSION_IDLE_DAYS + 1) * DAY);
+  const nodeTask = (title: string) => db.task.create({ data: { userId: user.id, title, createdBy: "agent", sourceRef: `node:${randomUUID()}` } });
+
+  const stale = await ranOn(user.id, (await nodeTask("Node work last week")).id, laptop.id, { at: idle });
+  const fresh = await ranOn(user.id, (await nodeTask("Node work this week")).id, laptop.id, { at: new Date(Date.now() - 2 * DAY) });
+  const persons = await ranOn(user.id, (await db.task.create({ data: { userId: user.id, title: "My open work", createdBy: "me" } })).id, laptop.id, { at: idle });
+
+  const removed: string[] = [];
+  await sweepAgentSessions(app, user.id, { completedDays: 60, remove: async (id) => removed.push(id) });
+  assert.ok(removed.includes(stale.id), "the node's idle session goes");
+  assert.ok(!removed.includes(fresh.id), "used two days ago: kept");
+  assert.ok(!removed.includes(persons.id), "the person's own open task keeps its session");
+});

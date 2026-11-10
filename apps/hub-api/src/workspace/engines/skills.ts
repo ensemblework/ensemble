@@ -43,6 +43,10 @@ export function agentSkillRoots(home = homedir(), env: NodeJS.ProcessEnv = proce
     join(home, ".gemini", "antigravity", "skills"),
     join(config, "opencode", "skill"),
     join(config, "opencode", "skills"),
+    join(dir(env.VIBE_HOME, join(home, ".vibe")), "skills"),
+    join(home, ".qwen", "skills"),
+    join(home, ".qwen", "extensions"),
+    join(dir(env.KIMI_CODE_HOME, join(home, ".kimi-code")), "skills"),
   ];
 }
 

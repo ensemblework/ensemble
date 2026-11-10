@@ -42,7 +42,7 @@ export class EngineTransientError extends Error {
 }
 
 /** What an engine says when it has no usable sign-in. A bare "auth" in an error (OAuth for an MCP server, say) is not one. */
-export const SIGNED_OUT = /authentication required|not (logged|signed) in|please (log|sign) ?in|unauthori[sz]ed|\b401\b|copilot login|no authentication available/i;
+export const SIGNED_OUT = /authentication required|not (logged|signed) in|please (log|sign) ?in|unauthori[sz]ed|\b401\b|copilot login|no authentication available|missing api key for [a-z]+ provider/i;
 /** The network or GitHub's servers, not the person's account. */
 export const UNREACHABLE = /ECONN(RESET|REFUSED|ABORTED)|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|fetch failed|socket hang up|network (error|is unreachable)|timed? ?out|\b(502|503|504)\b|service unavailable|rate.?limit|\b429\b/i;
 const runs = new Map<string, Run>();

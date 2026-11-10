@@ -179,6 +179,12 @@ export interface AssistantTurnArgs {
    * `MAX_VERIFY_ROUNDS` per turn, within the step cap; null (or a failure) ends the turn as usual.
    */
   verify?: (state: VerifyState) => string | null | Promise<string | null>;
+  /**
+   * On the person's own AI plan (`isSubscriptionProvider`): an Ensemble Node's turn (`node`) has its
+   * project (`group`, whose folder its chats share), its sessions' keeping days and more tool calls
+   * (`maxCalls`); `ownWeb` (default on) lets the agent search and read the web on its plan.
+   */
+  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean };
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -377,7 +383,10 @@ async function drive(
       }),
       USE_TOOL,
     ];
-    const conversation = agentConversation(messages, agent);
+    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true };
+    // A node does long work on a computer (two steps per browser action); the relay takes at most 64 turns.
+    const maxCalls = Math.min(60, args.subscription?.maxCalls ?? MAX_COMPUTER_CALLS);
+    const conversation = agentConversation(messages, agent, how);
     const pendingProjectNames: string[] = [];
     let used = 0;
     const call = async (name: string, input: unknown): Promise<ToolAnswer> => {
@@ -385,7 +394,7 @@ async function drive(
       const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
       const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
       used += 1;
-      if (used > MAX_COMPUTER_CALLS) {
+      if (used > maxCalls) {
         return { text: JSON.stringify({ error: "This turn's tool budget is used up. Answer the person now from what you already have." }), isError: true };
       }
       args.emit({ type: "status", text: statusFor([requested]) });
@@ -427,7 +436,10 @@ async function drive(
             }
           : {}),
         tools: toolSpecs(),
-        maxTurns: MAX_COMPUTER_CALLS + 4,
+        maxTurns: Math.min(64, maxCalls + 4),
+        ownWeb: how.ownWeb,
+        ...(args.subscription?.group ? { group: args.subscription.group } : {}),
+        ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         call,
         signal: stop.signal,
         onDelta(piece) {
@@ -1081,6 +1093,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     ...(args.code ? { code: args.code } : {}),
     // A node's turn may research at length; the Hub chat's searches are counted (graph.ts, hub_web_search).
     ...(args.agentPersona === undefined ? { turn: { webSearches: 0 } } : {}),
+    ...(isSubscriptionProvider(args.provider) ? { ownPlan: true } : {}),
   };
 }
 

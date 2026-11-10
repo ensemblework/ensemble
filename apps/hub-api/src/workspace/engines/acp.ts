@@ -22,7 +22,7 @@ import { antigravityArgs, antigravityAuthLink, antigravityEnv, antigravityInstal
 import { agentEnv, quickRun } from "../../subscriptions/detect.js";
 import { GuardError } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
-import { hostExecutable } from "../policy.js";
+import { hostLaunch, type HostLaunch } from "../policy.js";
 import type { JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { refusalMessage, REFUSAL_FOLLOW_UPS, type Refusal } from "./copilot.js";
@@ -35,6 +35,8 @@ import { EngineTrace } from "./trace.js";
 export type AcpLaunch = {
   program: string;
   args: string[];
+  /** What starts the program itself, before its own arguments: [] , or an npm shim's script on Windows. */
+  base: string[];
   env: NodeJS.ProcessEnv;
   /** `authenticate` with this method before the first session (the login the agent already has). */
   authMethod?: string;
@@ -95,17 +97,19 @@ export const OPENCODE_PERMISSIONS = {
 } as const;
 
 const geminiFlag = new Map<string, string>();
-/** `--acp`, or `--experimental-acp` on a Gemini CLI from before it was renamed. */
-async function geminiAcpFlag(program: string): Promise<string> {
-  const known = geminiFlag.get(program);
+/** `--acp`, or `--experimental-acp` on a Gemini CLI (or Qwen Code, built from it) from before it was renamed. */
+async function geminiAcpFlag(found: HostLaunch): Promise<string> {
+  const key = [found.program, ...found.args].join("\u0000");
+  const known = geminiFlag.get(key);
   if (known) return known;
-  const help = await quickRun(program, ["--help"], 15_000);
+  const help = await quickRun(found.program, [...found.args, "--help"], 15_000);
   const flag = /--acp\b/.test(help.stdout) || !/--experimental-acp\b/.test(help.stdout) ? "--acp" : "--experimental-acp";
-  geminiFlag.set(program, flag);
+  geminiFlag.set(key, flag);
   return flag;
 }
 
-const onPath = (name: string) => hostExecutable(name).catch(() => null);
+/** The agent's program on the trusted PATH (an npm shim on Windows as Node and its script), or null. */
+const onPath = (name: string) => hostLaunch(name).catch(() => null);
 
 export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
   "grok-cli": {
@@ -115,10 +119,10 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     login: "Run `grok login` there (or press Sign in under Settings → Models), then Run again.",
     sandbox: () => null,
     launch: async (input) => {
-      const program = await onPath("grok");
-      if (!program) return null;
+      const found = await onPath("grok");
+      if (!found) return null;
       // `--permission-mode default` on the command line wins over a saved always-approve.
-      return { program, args: ["--permission-mode", "default", "agent", "stdio"], env: agentEnv(input.extraEnv), authMethod: "cached_token", initializeMeta: { clientType: "extension" }, resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, "--permission-mode", "default", "agent", "stdio"], env: agentEnv(input.extraEnv), authMethod: "cached_token", initializeMeta: { clientType: "extension" }, resume: "session/load" };
     },
   },
   opencode: {
@@ -128,8 +132,8 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     login: "Run `opencode auth login` there (or press Sign in under Settings → Models), then Run again.",
     sandbox: () => null,
     launch: async (input) => {
-      const program = await onPath("opencode");
-      if (!program) return null;
+      const found = await onPath("opencode");
+      if (!found) return null;
       // Both ways OpenCode reads inline settings, so an older OpenCode without OPENCODE_PERMISSION still asks.
       const env = agentEnv({
         ...input.extraEnv,
@@ -139,7 +143,7 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
       });
       // A repository's own opencode.json, agents and plugins load only in a folder the person trusted.
       if (!input.trusted) env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
-      return { program, args: ["acp"], env, resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, resume: "session/load" };
     },
   },
   "gemini-cli": {
@@ -150,11 +154,11 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     // Gemini CLI's own sandbox is Seatbelt on macOS; elsewhere it needs Docker or Podman.
     sandbox: (platform) => (platform === "darwin" ? ["--sandbox"] : null),
     launch: async (input) => {
-      const program = await onPath("gemini");
-      if (!program) return null;
+      const found = await onPath("gemini");
+      if (!found) return null;
       const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
       const sandbox = input.sandboxed ? (ACP_AGENTS["gemini-cli"].sandbox(process.platform) ?? []) : [];
-      return { program, args: [await geminiAcpFlag(program), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
     },
   },
   antigravity: {
@@ -166,7 +170,54 @@ export const ACP_AGENTS: Record<AcpEngine, AcpAgent> = {
     launch: async (input) => {
       const install = antigravityInstalled();
       if (!install) return null;
-      return { program: install.executable, args: antigravityArgs(), env: antigravityEnv(install, input.extraEnv), authMethod: "oauth-personal", resume: "session/resume", askingMode: "default" };
+      return { program: install.executable, base: [], args: antigravityArgs(), env: antigravityEnv(install, input.extraEnv), authMethod: "oauth-personal", resume: "session/resume", askingMode: "default" };
+    },
+  },
+  "mistral-vibe": {
+    id: "mistral-vibe",
+    trace: "vibe",
+    install: "Install Mistral Vibe (curl -LsSf https://mistral.ai/vibe/install.sh | bash, or uv tool install mistral-vibe), run `vibe --setup`, and Run again.",
+    login: "Run `vibe --setup` there and sign in with your Mistral account (or press Sign in under Settings → Models), then Run again.",
+    sandbox: () => null,
+    launch: async (input) => {
+      const found = await onPath("vibe-acp");
+      if (!found) return null;
+      // Vibe's agents are its modes; `ask` asks before every tool, where the default `accept-edits` writes without asking.
+      // A folder's own .vibe/ settings, agents and skills load only where the person trusted it in Vibe.
+      return { program: found.program, base: found.args, args: [...found.args], env: agentEnv(input.extraEnv), resume: "session/load", askingMode: "ask" };
+    },
+  },
+  "qwen-code": {
+    id: "qwen-code",
+    trace: "qwen",
+    install: "Install Qwen Code (npm install -g @qwen-code/qwen-code@latest), sign in by running `qwen` once (`/auth`), and Run again.",
+    login: "Run `qwen` there and choose how to sign in (`/auth`: your Qwen account, or a provider key), or press Sign in under Settings → Models, then Run again.",
+    // Built from Gemini CLI: the same sandbox, Seatbelt on macOS and Docker or Podman elsewhere.
+    sandbox: (platform) => (platform === "darwin" ? ["--sandbox"] : null),
+    launch: async (input) => {
+      const found = await onPath("qwen");
+      if (!found) return null;
+      const model = input.model && input.model !== "default" ? ["--model", input.model] : [];
+      const sandbox = input.sandboxed ? (ACP_AGENTS["qwen-code"].sandbox(process.platform) ?? []) : [];
+      return { program: found.program, base: found.args, args: [...found.args, await geminiAcpFlag(found), "--approval-mode", "default", ...sandbox, ...model], env: agentEnv(input.extraEnv), resume: "session/load" };
+    },
+  },
+  "kimi-code": {
+    id: "kimi-code",
+    trace: "kimi",
+    install: "Install Kimi Code CLI (curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash), run `kimi login`, and Run again.",
+    login: "Run `kimi login` there (or press Sign in under Settings → Models), then Run again.",
+    sandbox: () => null,
+    launch: async (input) => {
+      const found = await onPath("kimi");
+      if (!found) return null;
+      // `login` confirms the sign-in `kimi login` saved; `default` mode asks before every edit and command.
+      // A folder the person trusted in Ensemble is trusted for this run only, so its .kimi-code/ settings and MCP servers
+      // load as in their own Kimi; any other folder's do not, whatever the environment says.
+      const env = agentEnv(input.extraEnv);
+      if (input.trusted) env.KIMI_CODE_TRUST_WORKSPACE = "1";
+      else delete env.KIMI_CODE_TRUST_WORKSPACE;
+      return { program: found.program, base: found.args, args: [...found.args, "acp"], env, authMethod: "login", resume: "session/load", askingMode: "default" };
     },
   },
 };

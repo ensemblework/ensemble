@@ -1082,3 +1082,28 @@ test("the owner's reply in the chat answers what its session waits on, and every
   assert.ok(frames.some((row) => row.to === ada.id && row.event === "decision" && row.data.id === later && row.data.status === "expired"), "announced when its run ended");
   assert.equal(json(await ada.inject({ method: "GET", url: "/api/shell" })).decisions, 0);
 });
+
+test("starting a session for work like an earlier one shows that session first; newSession starts one anyway", async () => {
+  const user = await person("Fit owner");
+  const { laptop, key } = await laptopFor(user, "Fit laptop", [COPILOT]);
+  const { node, room } = await createNode(user, "assistant");
+  script = () => startCall("Fix the rate limiter in src/auth/session.ts", "The rate limiter in src/auth/session.ts lets bursts through. Fix it.", { agent: "copilot-cli" });
+  await say(user, room.id, "Fix the rate limiter");
+  const first = await h.prisma.nodeRun.findFirstOrThrow({ where: { userId: user.id, nodeId: node.id }, orderBy: { createdAt: "desc" } });
+  const spec = await claim(key);
+  assert.equal(spec?.id, first.jobId);
+  await complete(key, spec!);
+
+  results.length = 0;
+  script = () => startCall("Follow up: rate limiter test in src/auth/session.ts", "Add a test for the rate limiter in src/auth/session.ts.", { agent: "copilot-cli" });
+  await say(user, room.id, "Also add a test for the rate limiter");
+  assert.match(results.join("\n"), /Not started yet/);
+  assert.match(results.join("\n"), /node_session_send/);
+  assert.equal(await h.prisma.workspaceJob.count({ where: { deviceId: laptop.id } }), 1, "nothing new started");
+
+  results.length = 0;
+  script = () => startCall("Follow up: rate limiter test in src/auth/session.ts", "Add a test for the rate limiter in src/auth/session.ts.", { agent: "copilot-cli", newSession: true });
+  await say(user, room.id, "Start a fresh session for it");
+  assert.doesNotMatch(results.join("\n"), /Not started yet/);
+  assert.equal(await h.prisma.workspaceJob.count({ where: { deviceId: laptop.id } }), 2, "a new session started");
+});

@@ -39,6 +39,7 @@ import { finishStep, MAX_STEP_FAILURES, stepCardsWaiting, stepLive, stepRun, ste
 import { enqueueTurn } from "./queue.js";
 import { recordSessionEvent, refreshSessionCards, sessionOwners, type SessionAction, type SessionActor, type SessionVia } from "./session-queue.js";
 import { engineNamed, makerProblem, readinessProblem } from "../lib/agent-fit.js";
+import { fitMessage, fitSessions, type Fit } from "./session-fit.js";
 import { appliedLine, requestedSettings, startingSettings, tuningProblem, type SettingValues, type Tuning } from "./settings.js";
 import { questionTools } from "./session-questions.js";
 import { secretScopeFor } from "./secret-scope.js";
@@ -84,8 +85,12 @@ export const StartInput = options
       .uuid()
       .optional()
       .describe("Only when your owner wants this work on their Ensemble board: the board task it belongs to (make one with hub_create_tasks). Leave out to keep the run off the board."),
-    agent: Agent.optional().describe("Only when your owner names the agent: claude-code, codex, cursor-agent, copilot-cli (GitHub Copilot), grok-cli, opencode, gemini-cli, antigravity. Leave out for their run profile's agent, else one signed in on the computer."),
+    agent: Agent.optional().describe("Only when your owner names the agent: claude-code, codex, cursor-agent, copilot-cli (GitHub Copilot), grok-cli, opencode, gemini-cli, antigravity, mistral-vibe, qwen-code, kimi-code. Leave out for their run profile's agent, else one signed in on the computer."),
     fast: z.boolean().optional().describe("Only when your owner asks for the model's fast mode (Claude Code, Codex): true, or false to turn it off."),
+    newSession: z
+      .boolean()
+      .optional()
+      .describe("true to start fresh after node_session_start listed sessions of yours that may fit and none should go on, or when your owner asks for a new session."),
   })
   .strict();
 export type StartInput = z.infer<typeof StartInput>;
@@ -573,6 +578,21 @@ function placeLine(found: Plan): string {
   return `${where}${folder}`;
 }
 
+/** The node's own sessions of this agent, on this computer, in this folder, that the work may fit (best first). */
+async function nodeFits(env: SessionEnv, agent: CodeEngine, deviceId: string | null, input: StartInput): Promise<Fit[]> {
+  const mine = (await sessionsForNode(env.prisma, env.node, { limit: 50 })).filter(
+    (row) => row.yours && !row.chat && row.agent === agent && row.deviceId === deviceId && row.deletion?.state !== "deleted" && (input.folder?.trim() ? row.folder === input.folder.trim() : true),
+  );
+  if (!mine.length) return [];
+  const candidates = await Promise.all(
+    mine.slice(0, 20).map(async (session) => {
+      const runs = await runsOfSession(env.prisma, scopeOf(env.node), session.id);
+      return { session, work: await workOf(env.prisma, runs, 8), taskIds: runs.map((run) => run.taskId) };
+    }),
+  );
+  return fitSessions(env.prisma, env.node.userId, { title: input.title, prompt: input.prompt }, candidates);
+}
+
 /** A new session with one of the owner's coding agents. */
 export async function startSession(env: SessionEnv, input: StartInput): Promise<Started> {
   await refuseWhenPaused(env);
@@ -597,6 +617,11 @@ export async function startSession(env: SessionEnv, input: StartInput): Promise<
   await refuseUnready(env.prisma, where.deviceId, agent);
   const named = await agentModel(env.prisma, where.deviceId, agent, input.model, input.effort);
   input = { ...input, ...named };
+  // Only here, when the node is about to start a session: its own sessions this work may fit, for it to choose (node/session-fit.ts).
+  if (!input.newSession && !env.plan?.planStep && !input.repoUrl?.trim() && isCodeEngine(agent)) {
+    const fits = await nodeFits(env, agent, where.deviceId ?? null, input).catch(() => []);
+    if (fits.length) return { summary: fitMessage(fits), data: { started: false, fits } };
+  }
   const task = await taskFor(env, input);
   const cleanup = task.made ? () => env.prisma.task.delete({ where: { id: task.id } }) : undefined;
   let found: Plan;
@@ -1014,7 +1039,7 @@ export function sessionTools(scope: SessionToolScope): AnyHubTool[] {
     description:
       "Real coding work on your owner's computer (changing code in a repository, building a feature, fixing a bug, a test-and-fix loop; no Ensemble task needed): start a new session with one of their own coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity) on their paired computer and their own subscription: the agent does the work in a folder that computer shares (folder), a fresh clone (repoUrl) or a new empty folder, and you hear when it ends. " +
       "Your run profile decides the agent, model, thinking level, context, computer, mode and git rules unless your owner names others (profile, agent, computer, model, effort, context, mode, branch, pullRequest). " +
-      "For work that builds on what one of your sessions already did, use node_session_send instead. Off the board unless you pass taskId.",
+      "For work that builds on what one of your sessions already did, use node_session_send instead. When some of your sessions (same agent, computer and folder) may fit the work, it lists them with why instead of starting: continue one with node_session_send, or call again with newSession: true. Off the board unless you pass taskId.",
     input: StartInput,
     isWrite: false,
     risk: "medium",

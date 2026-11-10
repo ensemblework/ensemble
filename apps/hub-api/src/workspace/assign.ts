@@ -24,7 +24,7 @@ import { chooseSession, type Choice } from "./session-choice/choose.js";
 import { activeConfig, type SessionChoiceConfig } from "./session-choice/config.js";
 import { factsOf, LOCAL_SPACE, type TaskFacts } from "./session-choice/related.js";
 import { jobOrigin } from "../remote/origin.js";
-import { agentProjectOf, projectBrief, projectFolder, type AgentProject } from "./agent-projects.js";
+import { agentProjectOf, nodeProjectBrief, projectBrief, projectFolder, type AgentProject } from "./agent-projects.js";
 import { currentDevice } from "../devices/successor.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
@@ -408,6 +408,14 @@ async function createDeviceJob(
   return { jobId: job.id };
 }
 
+/** A node's run: its id, or null for a plan's run (a mission's, with its own places); undefined when not a node's. */
+function nodeOf(context: unknown): string | null | undefined {
+  const value = typeof context === "object" && context !== null ? (context as { node?: { nodeId?: unknown }; mission?: unknown }) : {};
+  if (!value.node && !value.mission) return undefined;
+  if (value.mission) return null;
+  return typeof value.node?.nodeId === "string" ? value.node.nodeId : null;
+}
+
 /** A run Ensemble Node plans (its own sessions and folders), not one a person or the assistant assigns. */
 function nodeRun(context: unknown): boolean {
   const value = typeof context === "object" && context !== null ? (context as { node?: unknown; mission?: unknown }) : {};
@@ -456,8 +464,15 @@ function withHandover(instructions: string, handover: NonNullable<Choice["handov
  * The project brief a run by the person's own agent brings to its project's folder (agent-projects.ts):
  * the one a claim from the web carries, else this database's, when the task is in a project.
  */
-async function projectFor(prisma: PrismaClient, userId: string, task: AssignTask, options: CreateJobOptions, enabled: boolean): Promise<Omit<AgentProject, "folder"> | null> {
-  if (nodeRun(options.context)) return null;
+async function projectFor(prisma: PrismaClient, userId: string, task: AssignTask, options: CreateJobOptions, enabled: boolean, fresh = true): Promise<Omit<AgentProject, "folder"> | null> {
+  // A node's run that gets a new folder works in the node's project folder (nodeProjectBrief); a plan's runs keep their places.
+  const node = nodeOf(options.context);
+  if (node !== undefined) {
+    if (!node || !fresh || !enabled) return null;
+    const claimedNode = agentProjectOf(options.context);
+    if (claimedNode) return claimedNode.id === node ? { id: claimedNode.id, name: claimedNode.name, brief: claimedNode.brief, hash: claimedNode.hash } : null;
+    return jobOrigin(options.context) === "web" ? null : nodeProjectBrief(prisma, node).catch(() => null);
+  }
   const claimed = agentProjectOf(options.context);
   if (claimed) return { id: claimed.id, name: claimed.name, brief: claimed.brief, hash: claimed.hash };
   return enabled && task.projectId ? projectBrief(prisma, userId, task.projectId).catch(() => null) : null;
@@ -504,7 +519,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
-  if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
+  if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
   let provider: string;
@@ -583,9 +598,9 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   // and brings the project's brief to whichever folder it works in (agent-projects.ts).
   let project: AgentProject | null = null;
   if (body.kind === "code" && isCodeEngine(body.engine) && !body.chat) {
-    const brief = await projectFor(prisma, userId, task, options, settings.orchestration.projectFolders !== false);
+    const fresh = !continueFrom && !externalRoot && !repoUrl;
+    const brief = await projectFor(prisma, userId, task, options, settings.orchestration.projectFolders !== false, fresh);
     if (brief) {
-      const fresh = !continueFrom && !externalRoot && !repoUrl;
       project = { ...brief, ...(fresh ? { folder: await projectFolder(await workspaceRoot(), brief) } : {}) };
       // Runs in one project's folder take turns, as runs continuing one session do.
       if (project.folder) resourceKeys.push(`dir:${project.folder}`);
