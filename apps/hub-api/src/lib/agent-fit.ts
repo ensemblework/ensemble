@@ -18,6 +18,9 @@ const ENGINE_WORDS: Array<[RegExp, CodeEngine]> = [
   [/^open[\s-]*code$/, "opencode"],
   [/^gemini([\s-]*cli)?$/, "gemini-cli"],
   [/^(google[\s-]*)?antigravity$/, "antigravity"],
+  [/^(mistral([\s-]*vibe)?|vibe)([\s-]*cli)?$/, "mistral-vibe"],
+  [/^qwen([\s-]*code)?([\s-]*cli)?$/, "qwen-code"],
+  [/^kimi([\s-]*code)?([\s-]*cli)?$/, "kimi-code"],
 ];
 
 export function engineNamed(name: string | null | undefined): CodeEngine | undefined {
@@ -28,7 +31,9 @@ export function engineNamed(name: string | null | undefined): CodeEngine | undef
 }
 
 /** The maker of a model, from its name, when the name says it; null for a name that says nothing ("default", "auto", "opus"[1m] counts). */
-export function modelMaker(model: string | null | undefined): "Claude" | "OpenAI" | "Gemini" | "Grok" | null {
+type Maker = "Claude" | "OpenAI" | "Gemini" | "Grok";
+
+export function modelMaker(model: string | null | undefined): Maker | null {
   const name = model?.trim().toLowerCase() ?? "";
   if (!name || name === "default" || name === "auto") return null;
   if (/claude|opus|sonnet|haiku|fable/.test(name)) return "Claude";
@@ -38,8 +43,12 @@ export function modelMaker(model: string | null | undefined): "Claude" | "OpenAI
   return null;
 }
 
-/** Agents that run one maker's models only. GitHub Copilot, Cursor, OpenCode and Antigravity run several. */
-const ONE_MAKER: Partial<Record<CodeEngine, "Claude" | "OpenAI" | "Gemini" | "Grok">> = { "claude-code": "Claude", codex: "OpenAI", "gemini-cli": "Gemini", "grok-cli": "Grok" };
+/**
+ * Agents that run one maker's models only. GitHub Copilot, Cursor, OpenCode and Antigravity run several;
+ * Mistral Vibe, Qwen Code and Kimi Code take other providers' keys too, so a model they do not offer is
+ * refused by the agent's own session options when the run starts (workspace/engines/acp.ts).
+ */
+const ONE_MAKER: Partial<Record<CodeEngine, Maker>> = { "claude-code": "Claude", codex: "OpenAI", "gemini-cli": "Gemini", "grok-cli": "Grok" };
 
 /**
  * A model the agent cannot run: another maker's model in an agent that runs one maker's (GPT-6.1 Sol in

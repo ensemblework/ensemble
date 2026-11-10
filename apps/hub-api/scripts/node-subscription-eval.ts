@@ -55,8 +55,8 @@ try {
     const turns = await harness.prisma.nodeTurn.findMany({ where: { nodeId: node.id }, orderBy: { createdAt: "asc" }, skip: before });
     const assistant = await harness.prisma.assistantMessage.findFirst({ where: { userId: owner.id, role: "assistant" }, orderBy: { createdAt: "desc" }, select: { toolCalls: true } });
     const tools = (Array.isArray(assistant?.toolCalls) ? assistant!.toolCalls : []).map((call) => String((call as { name?: unknown }).name ?? ""));
-    const metric = await harness.prisma.metricEvent.findFirst({ where: { userId: owner.id, kind: "model.call" }, orderBy: { createdAt: "desc" }, select: { meta: true } }).catch(() => null);
-    const meta = (metric?.meta ?? {}) as { tokensIn?: number | null; tokensOut?: number | null };
+    const metric = await harness.prisma.metricEvent.findFirst({ where: { userId: owner.id, kind: "model.call" }, orderBy: { ts: "desc" }, select: { payload: true } });
+    const meta = (metric?.payload ?? {}) as { tokensIn?: number | null; tokensOut?: number | null };
     const text = reply?.body ?? "";
     const problems = [...(turns.some((row) => row.status === "failed") ? [`turn failed: ${turns.map((row) => row.error).filter(Boolean).join("; ").slice(0, 300)}`] : []), ...(await check(text))];
     for (const entry of Object.values(store())) sessionsSeen.add(entry.id);
@@ -66,7 +66,7 @@ try {
   };
 
   await turn("fact with a source", "What is the latest LTS version of Node.js, and when does its support end? Cite the source.", (reply) => [
-    ...(new RegExp(`\\b${lts.cycle}\\b`).test(reply) ? [] : [`names Node ${lts.cycle}`]),
+    ...(new RegExp(`(?<!\\d)${lts.cycle}(?!\\d)`).test(reply) ? [] : [`names Node ${lts.cycle}`]),
     ...(reply.includes(String(lts.eol).slice(0, 4)) ? [] : [`end of support ${String(lts.eol).slice(0, 4)}`]),
     ...(/https?:\/\//.test(reply) ? [] : ["a link"]),
   ]);

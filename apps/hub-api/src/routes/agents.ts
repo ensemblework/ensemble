@@ -436,7 +436,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     return result.count ? reply.code(204).send() : reply.code(404).send({ error: "That folder is not trusted." });
   });
 
-  // Trusted folders also trusted in Claude Code, Codex, Copilot CLI, Cursor and Gemini CLI on this computer.
+  // Trusted folders also trusted in Claude Code, Codex, Copilot CLI, Cursor, Gemini CLI, Qwen Code and Mistral Vibe on this computer.
   app.get("/api/workspace/trust/sharing", async () => sharingReport(await loadSharedTrust()));
 
   app.put("/api/workspace/trust/sharing", async (request, reply) => {

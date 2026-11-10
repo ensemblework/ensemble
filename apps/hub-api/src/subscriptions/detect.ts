@@ -13,9 +13,9 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { claudeCodeModelsFrom, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeCodeModelsFrom, ENGINE_LABELS, isAcpEngine, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
 import { bundledCodex } from "../workspace/handoff.js";
-import { hostExecutable } from "../workspace/policy.js";
+import { hostExecutable, hostLaunch } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { acpProbe } from "./acp-probe.js";
 import { ANTIGRAVITY_MODELS, antigravityInstalled, antigravitySignedIn } from "./antigravity.js";
@@ -50,7 +50,11 @@ export function agentEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   return env;
 }
 
-export type AgentBinary = { path: string; via: "app" | "cli" };
+/** Where an agent's program is. `args` start it before its own arguments: an npm shim's script on Windows (ACP agents). */
+export type AgentBinary = { path: string; via: "app" | "cli"; args?: string[] };
+
+/** Runs an agent's program for a short check, with what starts it. */
+const runAgent = (found: AgentBinary, args: string[], timeoutMs?: number) => quickRun(found.path, [...(found.args ?? []), ...args], timeoutMs);
 
 const versionParts = (name: string): number[] => name.split(/[.\-+]/).map((part) => Number.parseInt(part, 10)).filter((part) => Number.isFinite(part));
 
@@ -150,6 +154,10 @@ const COMMANDS: Record<Exclude<SubscriptionProvider, "claude-code" | "codex" | "
   "grok-cli": "grok",
   opencode: "opencode",
   "gemini-cli": "gemini",
+  // Mistral Vibe's ACP server, installed with it; it also runs `--setup` and `--version`.
+  "mistral-vibe": "vibe-acp",
+  "qwen-code": "qwen",
+  "kimi-code": "kimi",
 };
 
 export async function agentBinary(id: SubscriptionProvider): Promise<AgentBinary | null> {
@@ -160,6 +168,11 @@ export async function agentBinary(id: SubscriptionProvider): Promise<AgentBinary
     return installed ? { path: installed.executable, via: "app" } : null;
   }
   const name = COMMANDS[id];
+  if (isAcpEngine(id)) {
+    // An npm-installed agent (Gemini CLI, Qwen Code) is a .cmd shim on Windows: found as Node and its script.
+    const launch = await hostLaunch(name).catch(() => null);
+    return launch ? { path: launch.program, via: "cli", ...(launch.args.length ? { args: launch.args } : {}) } : null;
+  }
   const cli = await hostExecutable(name).catch(() => null);
   return cli ? { path: cli, via: "cli" } : null;
 }
@@ -521,7 +534,7 @@ export function parseOpenCodeAuth(text: string): number | null {
 async function probeGrok(): Promise<SubscriptionAgent | null> {
   const found = await agentBinary("grok-cli");
   if (!found) return null;
-  const [version, listed] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["models"], 25_000)]);
+  const [version, listed] = await Promise.all([runAgent(found, ["--version"]), runAgent(found, ["models"], 25_000)]);
   const { signedIn, models } = parseGrokModels(`${listed.stdout}\n${listed.stderr}`);
   return {
     id: "grok-cli",
@@ -539,7 +552,7 @@ async function probeGrok(): Promise<SubscriptionAgent | null> {
 async function probeOpenCode(): Promise<SubscriptionAgent | null> {
   const found = await agentBinary("opencode");
   if (!found) return null;
-  const [version, auth, listed] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["auth", "list"], 20_000), quickRun(found.path, ["models"], 25_000)]);
+  const [version, auth, listed] = await Promise.all([runAgent(found, ["--version"]), runAgent(found, ["auth", "list"], 20_000), runAgent(found, ["models"], 25_000)]);
   const credentials = parseOpenCodeAuth(`${auth.stdout}\n${auth.stderr}`);
   const models = parseModelLines(listed.stdout).filter((model) => model.id.includes("/"));
   return {
@@ -559,7 +572,7 @@ async function probeOpenCode(): Promise<SubscriptionAgent | null> {
 async function probeGemini(): Promise<SubscriptionAgent | null> {
   const found = await agentBinary("gemini-cli");
   if (!found) return null;
-  const [version, probe] = await Promise.all([quickRun(found.path, ["--version"]), acpProbe("gemini-cli").catch(() => null)]);
+  const [version, probe] = await Promise.all([runAgent(found, ["--version"]), acpProbe("gemini-cli").catch(() => null)]);
   return {
     id: "gemini-cli",
     via: "cli",
@@ -569,6 +582,28 @@ async function probeGemini(): Promise<SubscriptionAgent | null> {
     models: probe?.models.length ? probe.models : [{ id: "default", label: "Gemini CLI's default", isDefault: true }],
     typedModels: true,
     problem: probe?.signedIn === false ? "Gemini CLI is not signed in on this computer. Press Sign in, or run `gemini` there and choose Sign in with Google." : (probe?.problem ?? null),
+    checkedAt: now(),
+  };
+}
+
+/**
+ * An ACP agent checked the way a run starts it (`acpProbe`): its version, whether a session opens (a
+ * sign-in error means signed out), and the models its session offers, with the current one's levels.
+ */
+async function probeAcpAgent(id: "mistral-vibe" | "qwen-code" | "kimi-code", signIn: string): Promise<SubscriptionAgent | null> {
+  const found = await agentBinary(id);
+  if (!found) return null;
+  const [version, probe] = await Promise.all([runAgent(found, ["--version"]), acpProbe(id).catch(() => null)]);
+  const label = ENGINE_LABELS[id];
+  return {
+    id,
+    via: "cli",
+    version: firstVersion(`${version.stdout}\n${version.stderr}`),
+    signedIn: probe?.signedIn ?? null,
+    plan: null,
+    models: probe?.models.length ? probe.models : [{ id: "default", label: `${label}'s default`, isDefault: true }],
+    typedModels: true,
+    problem: probe?.signedIn === false ? `${label} is not signed in on this computer. Press Sign in, or ${signIn} there.` : (probe?.problem ?? null),
     checkedAt: now(),
   };
 }
@@ -599,6 +634,9 @@ const PROBES: Record<SubscriptionProvider, () => Promise<SubscriptionAgent | nul
   opencode: probeOpenCode,
   "gemini-cli": probeGemini,
   antigravity: probeAntigravity,
+  "mistral-vibe": () => probeAcpAgent("mistral-vibe", "run `vibe --setup`"),
+  "qwen-code": () => probeAcpAgent("qwen-code", "run `qwen` and choose how to sign in (`/auth`)"),
+  "kimi-code": () => probeAcpAgent("kimi-code", "run `kimi login`"),
 };
 
 const FRESH_MS = 10 * 60_000;

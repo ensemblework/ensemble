@@ -85,7 +85,7 @@ export const StartInput = options
       .uuid()
       .optional()
       .describe("Only when your owner wants this work on their Ensemble board: the board task it belongs to (make one with hub_create_tasks). Leave out to keep the run off the board."),
-    agent: Agent.optional().describe("Only when your owner names the agent: claude-code, codex, cursor-agent, copilot-cli (GitHub Copilot), grok-cli, opencode, gemini-cli, antigravity. Leave out for their run profile's agent, else one signed in on the computer."),
+    agent: Agent.optional().describe("Only when your owner names the agent: claude-code, codex, cursor-agent, copilot-cli (GitHub Copilot), grok-cli, opencode, gemini-cli, antigravity, mistral-vibe, qwen-code, kimi-code. Leave out for their run profile's agent, else one signed in on the computer."),
     fast: z.boolean().optional().describe("Only when your owner asks for the model's fast mode (Claude Code, Codex): true, or false to turn it off."),
     newSession: z
       .boolean()

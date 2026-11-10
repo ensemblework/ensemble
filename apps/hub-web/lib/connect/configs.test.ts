@@ -119,7 +119,8 @@ describe("editor snippets", () => {
           assert.match(snippet.text, /command = "ensemble"/);
           assert.match(snippet.text, /args = \["mcp"\]/);
         }
-        if (snippet.format === "shell") assert.match(snippet.text, /ensemble mcp/);
+        // Mistral Vibe takes the program and its argument separately.
+        if (snippet.format === "shell") assert.match(snippet.text, id === "mistral-vibe" ? /--command ensemble --arg=mcp/ : /ensemble mcp/);
       }
     }
   });

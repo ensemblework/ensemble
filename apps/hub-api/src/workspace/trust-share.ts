@@ -2,7 +2,8 @@
  * Folder trust, shared with the person's other AI tools on this computer (doc 24 §4).
  *
  * A folder trusted in Ensemble is marked trusted in Claude Code, Codex, GitHub Copilot CLI,
- * Cursor's agent and Gemini CLI too, in the same files their apps and CLIs read, so a task
+ * Cursor's agent, Gemini CLI, Qwen Code and Mistral Vibe too, in the same files their apps and CLIs
+ * read (Kimi Code is told per run, `KIMI_CODE_TRUST_WORKSPACE`), so a task
  * Ensemble hands to one of them does not stop at that tool's own "Do you trust this folder?".
  * Ensemble removes only the marks it added: a folder the person trusted in a tool directly
  * stays trusted there. A tool that is not installed (no config folder) is left alone, and a
@@ -21,7 +22,7 @@ import { stateDir } from "../remote/store.js";
 import { workspaceRoot } from "./guard.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "./trust.js";
 
-export type TrustTool = "claude" | "codex" | "copilot" | "cursor" | "gemini";
+export type TrustTool = "claude" | "codex" | "copilot" | "cursor" | "gemini" | "qwen" | "vibe";
 
 export const TRUST_TOOLS: Array<{ id: TrustTool; name: string }> = [
   { id: "claude", name: "Claude Code" },
@@ -29,6 +30,8 @@ export const TRUST_TOOLS: Array<{ id: TrustTool; name: string }> = [
   { id: "copilot", name: "GitHub Copilot CLI" },
   { id: "cursor", name: "Cursor" },
   { id: "gemini", name: "Gemini CLI" },
+  { id: "qwen", name: "Qwen Code" },
+  { id: "vibe", name: "Mistral Vibe" },
 ];
 
 /** What a change did to one tool's file. `already`: the tool trusted the folder before Ensemble did. */
@@ -147,6 +150,79 @@ export function geminiTrust(text: string, folder: string, on: boolean, was: stri
   return { text: `${JSON.stringify(data, null, 2)}\n`, already: false };
 }
 
+/** One top-level TOML array of strings (`key = [...]`): where it is in the text, and its strings. Null when absent. */
+function tomlStringArray(text: string, key: string): { start: number; end: number; items: string[] } | null {
+  const head = new RegExp(`^[ \\t]*${key}[ \\t]*=[ \\t]*\\[`, "m").exec(text);
+  if (!head) return null;
+  const items: string[] = [];
+  let index = head.index + head[0].length;
+  while (index < text.length) {
+    const char = text[index]!;
+    if (char === "]") return { start: head.index, end: index + 1, items };
+    if (char === "#") {
+      while (index < text.length && text[index] !== "\n") index += 1;
+      continue;
+    }
+    if (char === '"') {
+      let value = "";
+      index += 1;
+      while (index < text.length && text[index] !== '"') {
+        if (text[index] === "\\") {
+          const next = text[index + 1]!;
+          if (next === "u" || next === "U") {
+            const size = next === "u" ? 4 : 8;
+            value += String.fromCodePoint(Number.parseInt(text.slice(index + 2, index + 2 + size), 16));
+            index += 2 + size;
+            continue;
+          }
+          value += ({ b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", '"': '"', "\\": "\\" } as Record<string, string>)[next] ?? next;
+          index += 2;
+          continue;
+        }
+        value += text[index];
+        index += 1;
+      }
+      items.push(value);
+    } else if (char === "'") {
+      const close = text.indexOf("'", index + 1);
+      if (close < 0) throw new Error("Unclosed string.");
+      items.push(text.slice(index + 1, close));
+      index = close;
+    } else if (!/[\s,]/.test(char)) throw new Error(`Unexpected ${char} in ${key}.`);
+    index += 1;
+  }
+  throw new Error(`Unclosed ${key}.`);
+}
+
+/** The array written back, one string a line; JSON's string escapes are TOML's basic-string escapes. */
+const tomlArrayText = (key: string, items: string[]) => (items.length ? `${key} = [\n${items.map((item) => `    ${JSON.stringify(item)},`).join("\n")}\n]` : `${key} = []`);
+
+function withTomlArray(text: string, key: string, items: string[]): string {
+  const found = tomlStringArray(text, key);
+  if (found) return `${text.slice(0, found.start)}${tomlArrayText(key, items)}${text.slice(found.end)}`;
+  // Top-level keys go before the first table.
+  const table = /^[ \t]*\[/m.exec(text);
+  const line = `${tomlArrayText(key, items)}\n`;
+  return table ? `${text.slice(0, table.index)}${line}${text.slice(table.index)}` : `${text}${text && !text.endsWith("\n") ? "\n" : ""}${line}`;
+}
+
+/** `~/.vibe/trusted_folders.toml`: `trusted = [...]` and `untrusted = [...]`, read by Mistral Vibe and its ACP server. */
+export function vibeTrust(text: string, folder: string, on: boolean, was: string | null = null): Change {
+  const trusted = tomlStringArray(text, "trusted")?.items ?? [];
+  const untrusted = tomlStringArray(text, "untrusted")?.items ?? [];
+  if (on) {
+    if (trusted.includes(folder)) return { text: null, already: true };
+    const before = untrusted.includes(folder) ? "untrusted" : null;
+    let next = withTomlArray(text, "trusted", [...trusted, folder]);
+    if (before) next = withTomlArray(next, "untrusted", untrusted.filter((item) => item !== folder));
+    return { text: next, already: false, was: before };
+  }
+  if (!trusted.includes(folder)) return { text: null, already: false };
+  let next = withTomlArray(text, "trusted", trusted.filter((item) => item !== folder));
+  if (was === "untrusted" && !untrusted.includes(folder)) next = withTomlArray(next, "untrusted", [...untrusted, folder]);
+  return { text: next, already: false };
+}
+
 /** Cursor's agent keeps one folder per workspace under `~/.cursor/projects`, named after the path. */
 export function cursorSlug(folder: string): string {
   return folder.replace(/^[/\\]+/, "").replace(/[^A-Za-z0-9]/g, "-");
@@ -177,6 +253,15 @@ function toolFile(tool: TrustTool, { home, env }: ToolHomes): { file: string; ne
     case "gemini": {
       const dir = join(home, ".gemini");
       return { file: env.GEMINI_CLI_TRUSTED_FOLDERS_PATH || join(dir, "trustedFolders.json"), needs: dir };
+    }
+    case "qwen": {
+      // Qwen Code is built from Gemini CLI and keeps the same file in its own folder.
+      const dir = join(home, ".qwen");
+      return { file: env.QWEN_CODE_TRUSTED_FOLDERS_PATH || join(dir, "trustedFolders.json"), needs: dir };
+    }
+    case "vibe": {
+      const dir = env.VIBE_HOME || join(home, ".vibe");
+      return { file: join(dir, "trusted_folders.toml"), needs: dir };
     }
   }
 }
@@ -303,7 +388,9 @@ async function editToolFile(
           ? codexTrust(text, folder, on, was)
           : tool === "copilot"
             ? copilotTrust(text, folder, on)
-            : geminiTrust(text, folder, on, was);
+            : tool === "vibe"
+              ? vibeTrust(text, folder, on, was)
+              : geminiTrust(text, folder, on, was);
   } catch {
     // A file Ensemble cannot read is the tool's to fix; it is never rewritten.
     return { changed: false, already: false };

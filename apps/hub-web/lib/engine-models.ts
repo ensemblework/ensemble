@@ -4,7 +4,7 @@
  * thinking levels and context windows where its agent says (Claude Code from its model table,
  * Codex from `model/list`, GitHub Copilot from `models.list`); Cursor's agent lists names only.
  */
-import { ACP_ENGINES, claudeCodeModels, EFFORT_LABEL, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { ACP_ENGINES, claudeCodeModels, EFFORT_LABEL, engineHasSandbox, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { AssignInput, SubscriptionsView } from "./api";
 
 const record = (value: unknown): Record<string, unknown> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
@@ -31,13 +31,9 @@ export function computerRuns(engine: CodeEngine, capabilities: unknown): boolean
   return Array.isArray(listed) ? listed.includes(engine) : engine !== "copilot-cli" && !(ACP_ENGINES as readonly string[]).includes(engine);
 }
 
-/**
- * Whether the agent can run inside its own OS sandbox on that computer. Grok Build, OpenCode and
- * Antigravity have none Ensemble can turn on; Gemini CLI has one on macOS.
- */
+/** Whether the agent can run inside its own OS sandbox on that computer (`engineHasSandbox`, shared with the server). */
 export function engineSandboxes(engine: CodeEngine, platform: string | null | undefined): boolean {
-  if (engine === "gemini-cli") return /^(mac|darwin)/i.test(platform ?? "");
-  return !(ACP_ENGINES as readonly string[]).includes(engine);
+  return engineHasSandbox(engine, platform);
 }
 
 export type EngineModel = {

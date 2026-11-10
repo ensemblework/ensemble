@@ -105,6 +105,9 @@ const ENGINE_SIGN_IN: Record<CodeEngine, { program: string; login: string }> = {
   opencode: { program: "OpenCode", login: "opencode auth login" },
   "gemini-cli": { program: "Gemini CLI", login: "gemini" },
   antigravity: { program: "Antigravity", login: "Sign in under Settings → Models" },
+  "mistral-vibe": { program: "Mistral Vibe", login: "vibe --setup" },
+  "qwen-code": { program: "Qwen Code", login: "qwen (then /auth)" },
+  "kimi-code": { program: "Kimi Code", login: "kimi login" },
 };
 
 const OUTSIDE_HELP =

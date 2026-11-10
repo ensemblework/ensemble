@@ -11,7 +11,7 @@ import { deviceOnline } from "../devices/constants.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
-import { AgentTurnError, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
+import { AgentTurnError, OWN_WEB_AGENTS, runAgentTurn, type AgentTurnResult, type AgentTurnSpec } from "./agents.js";
 import type { ToolAnswer, ToolSpec } from "./bridge.js";
 import { runOnComputer } from "./relay.js";
 import type { TurnFile } from "./turn-files.js";
@@ -176,7 +176,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     ...(turn.session ? { session: turn.session } : {}),
     tools: input.tools,
     maxTurns: input.maxTurns ?? 16,
-    ...(input.ownWeb ? { ownWeb: true } : {}),
+    ...(input.ownWeb && OWN_WEB_AGENTS.has(input.agent) ? { ownWeb: true } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
@@ -223,6 +223,8 @@ export type RunHow = { ownWeb?: boolean; node?: boolean };
 /** What differs on the person's own agent: Ensemble's tools (and its own web tools, when on), never its own shell or files. */
 export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string {
   const label = SUBSCRIPTION_INFO[agent].label;
+  // Said only where the turn really turns them on.
+  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent) };
   const tools = `Ensemble's tools (the "ensemble" MCP server, so hub_list_tasks may appear as mcp__ensemble__hub_list_tasks)`;
   const lines = [
     how.ownWeb

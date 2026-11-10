@@ -274,6 +274,27 @@ export const EDITORS: Record<AppId, EditorSetup> = {
     supportsHosted: true,
     printOnly: true,
   },
+  "qwen-code": {
+    id: "qwen-code",
+    setupId: "qwen",
+    name: "Qwen Code",
+    localPath: { mac: "~/.qwen/settings.json", windows: "%USERPROFILE%\\.qwen\\settings.json", linux: "~/.qwen/settings.json" },
+    supportsHosted: true,
+  },
+  "kimi-code": {
+    id: "kimi-code",
+    setupId: "kimi",
+    name: "Kimi Code",
+    localPath: { mac: "~/.kimi-code/mcp.json", windows: "%USERPROFILE%\\.kimi-code\\mcp.json", linux: "~/.kimi-code/mcp.json" },
+    supportsHosted: true,
+  },
+  "mistral-vibe": {
+    id: "mistral-vibe",
+    setupId: "vibe",
+    name: "Mistral Vibe",
+    localPath: {},
+    supportsHosted: true,
+  },
   opencode: {
     id: "opencode",
     setupId: "opencode",
@@ -412,7 +433,11 @@ export function localCliSnippet(app: AppId, os: ConnectOs): ConnectSnippet {
     case "windsurf":
     case "gemini":
     case "jetbrains":
+    case "qwen-code":
+    case "kimi-code":
       return jsonSnippet("Local MCP config", { mcpServers: { ensemble: { command, args: ["mcp"] } } }, path, editor.notes?.cli);
+    case "mistral-vibe":
+      return commandSnippet("Local setup command", "vibe mcp add ensemble --transport stdio --command ensemble --arg=mcp");
     case "claude-desktop":
       return jsonSnippet("Local MCP config", { mcpServers: { ensemble: { command, args: ["mcp"] } } }, path, editor.notes?.cli);
     case "claude-code":
@@ -460,7 +485,12 @@ export function hostedSnippet(app: AppId, facts: ConnectFacts, os: ConnectOs, or
         `Export ENSEMBLE_TOKEN=${key} before starting Codex.`,
       );
     case "gemini":
+    case "qwen-code":
       return jsonSnippet("Hosted MCP config", { mcpServers: { ensemble: { httpUrl: url, headers } } }, path);
+    case "kimi-code":
+      return jsonSnippet("Hosted MCP config", { mcpServers: { ensemble: { url, headers } } }, path);
+    case "mistral-vibe":
+      return commandSnippet("Hosted setup command", `vibe mcp add ensemble --url ${url} --transport streamable-http --header "Authorization=Bearer ${key}"`);
     case "copilot-cli":
       return jsonSnippet("Hosted MCP config", { type: "http", url, headers, tools: ["*"] }, path);
     case "zed":

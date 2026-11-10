@@ -39,6 +39,7 @@ import { checkLoginOnDone } from "./login-check.js";
 import { skillsBlock, skillsFor, tieredTools } from "./skills.js";
 import { startDeliverables } from "./deliverables.js";
 import { taskReplyData } from "./task-assignment.js";
+import { OWN_WEB_AGENTS } from "../subscriptions/agents.js";
 
 /** Turns that carry on work already under way: they keep every tool (node/skills.ts tiers apply to the others). */
 const CARRIES_ON = new Set(["approval", "run", "attention", "plan", "tool", "work"]);
@@ -217,6 +218,16 @@ async function persona(
 export const NODE_SESSION_KEEP_DAYS = 7;
 const WEB_TASK_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.";
 const OWN_LOOP_ROW = "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): drive the browser yourself (browser_open, browser_snapshot, browser_click, browser_type…), reading the page after each step; sign-ins go to your owner's card, not Connections.";
+
+/**
+ * The persona on the owner's AI plan: the agent drives the browser itself (no web_task), and where its own web
+ * search is on (Claude Code, Codex, Copilot) facts come from that first, as its run notes say (subscriptions/turn.ts).
+ */
+export function ownLoopPersona(text: string, provider: string): string {
+  const own = isSubscriptionProvider(provider) && OWN_WEB_AGENTS.has(provider);
+  const looked = text.replace(WEB_TASK_ROW, OWN_LOOP_ROW).replace("several steps on a site: web_task", "several steps on a site: drive the browser yourself");
+  return own ? looked.replace(/hub_web_search first \(the live web, with sources\)/g, "your own web search first (or hub_web_search), then read the source page itself; cite it") : looked;
+}
 
 /** What a node does itself on its owner's computer: the rows of its routing table that need its hands there. */
 const HANDS = [
@@ -539,7 +550,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const has = (name: string) => offeredNames.has(name) || Boolean(getTool(name));
   const skills = bound || step || fromNonOwner ? "" : skillsBlock(skillsFor(ownerWords, has), has);
   const built = bound ? await bound.persona() : await persona(app, node, room, members, ownerName, fromNonOwner, ownerOnly, Boolean(step), skills);
-  const nodePersona = ownLoop ? { ...built, text: built.text.replace(WEB_TASK_ROW, OWN_LOOP_ROW) } : built;
+  const nodePersona = ownLoop ? { ...built, text: ownLoopPersona(built.text, choice.provider) } : built;
   // What the owner asked for is checked against the reply before it is posted (node/deliverables.ts).
   const deliverables =
     !step && !bound && !drafting && !fromNonOwner && ownerOnly && !node.parentNodeId && room.kind !== "task" && ownerWords.trim() && !isSubscriptionProvider(choice.provider)

@@ -5,8 +5,9 @@
  * CWD/PATH lookup. hostExecutable only accepts absolute PATH entries that
  * sit *outside* ENSEMBLE_WORKSPACE_ROOT.
  */
-import { lstat, realpath } from "node:fs/promises";
-import { delimiter, isAbsolute, join } from "node:path";
+import { existsSync } from "node:fs";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { env } from "../config.js";
 import { expandHome } from "./guard.js";
 
@@ -48,4 +49,42 @@ export async function hostExecutable(name: string): Promise<string> {
   throw new WorkspaceBlockedError(
     `${name} was not found on the trusted host PATH. Install it outside the workspace before running this task.`,
   );
+}
+
+/**
+ * What an npm `.cmd` shim on Windows runs (npm's cmd-shim: `"%_prog%" "%dp0%\\node_modules\\…\\cli.js" %*`):
+ * the script or program it points at, beside the shim. Null when the text is not such a shim. Exported for tests.
+ */
+export function npmShimTarget(text: string, shim: string): string | null {
+  const found = /"%(?:~dp0|dp0%)\\?([^"%]+)"\s*%\*/i.exec(text);
+  if (!found) return null;
+  return resolve(dirname(shim), found[1]!.replace(/\\/g, "/"));
+}
+
+export type HostLaunch = { program: string; args: string[] };
+
+/**
+ * A program on the trusted PATH as a launch: `hostExecutable`, and on Windows an npm-installed command's
+ * `.cmd` shim as Node and the script it runs (Gemini CLI, Qwen Code), since Windows cannot start a `.cmd`
+ * without a shell. The Node beside the shim when there is one, as the shim itself prefers.
+ */
+export async function hostLaunch(name: string, platform: NodeJS.Platform = process.platform): Promise<HostLaunch> {
+  try {
+    return { program: await hostExecutable(name), args: [] };
+  } catch (error) {
+    if (platform !== "win32") throw error;
+  }
+  const pathVar = process.env.PATH ?? process.env.Path ?? "";
+  for (const directory of pathVar.split(delimiter)) {
+    if (!isAbsolute(directory)) continue;
+    const shim = join(directory, `${name}.cmd`);
+    if (!existsSync(shim) || isWithin(expandHome(env.ENSEMBLE_WORKSPACE_ROOT), shim, true)) continue;
+    const target = npmShimTarget(await readFile(shim, "utf8").catch(() => ""), shim);
+    if (!target || !existsSync(target) || isWithin(expandHome(env.ENSEMBLE_WORKSPACE_ROOT), target, true)) continue;
+    if (/\.exe$/i.test(target)) return { program: target, args: [] };
+    const besides = join(directory, "node.exe");
+    const node = existsSync(besides) ? besides : await hostExecutable("node");
+    return { program: node, args: [target] };
+  }
+  throw new WorkspaceBlockedError(`${name} was not found on the trusted host PATH. Install it outside the workspace before running this task.`);
 }

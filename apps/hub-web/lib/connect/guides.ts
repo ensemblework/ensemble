@@ -21,6 +21,9 @@ export type StepKind =
   | "cline"
   | "continue"
   | "opencode"
+  | "qwen"
+  | "kimi"
+  | "vibe"
   | "http-start"
   | "http-config"
   | "enable"
@@ -305,6 +308,42 @@ const STEPS: Record<AppId, GuideStep[]> = {
     },
     TEST,
   ],
+  "qwen-code": [
+    KEY,
+    {
+      kind: "qwen",
+      title: "Paste Ensemble into Qwen Code",
+      body: "Open ~/.qwen/settings.json (on Windows, %USERPROFILE%\\.qwen\\settings.json) and add the ensemble server under mcpServers. If other servers are already there, merge the ensemble entry instead of replacing the file.",
+      scene: "paste",
+      hotspot: "settings.json",
+      os: true,
+    },
+    TEST,
+  ],
+  "kimi-code": [
+    KEY,
+    {
+      kind: "kimi",
+      title: "Paste Ensemble into Kimi Code",
+      body: "Open ~/.kimi-code/mcp.json (on Windows, %USERPROFILE%\\.kimi-code\\mcp.json) and add the ensemble server under mcpServers. If other servers are already there, merge the ensemble entry instead of replacing the file.",
+      scene: "paste",
+      hotspot: "mcp.json",
+      os: true,
+    },
+    TEST,
+  ],
+  "mistral-vibe": [
+    KEY,
+    {
+      kind: "vibe",
+      title: "Add Ensemble to Mistral Vibe",
+      body: "Copy this command and run it in Terminal or PowerShell, from any folder. Vibe saves the server in its own settings.",
+      scene: "terminal",
+      hotspot: "vibe mcp add",
+      os: true,
+    },
+    TEST,
+  ],
 };
 
 export function stepsFor(app: AppId, built: boolean): GuideStep[] {
@@ -356,6 +395,24 @@ const EXTRA: Partial<Record<AppId, Trouble[]>> = {
     {
       problem: "Visual Studio does not list Ensemble.",
       fix: "Use Visual Studio 2022 17.14 or newer. The file is %USERPROFILE%\\.mcp.json and the top-level key is servers.",
+    },
+  ],
+  "qwen-code": [
+    {
+      problem: "Qwen Code does not read the server.",
+      fix: "The file is ~/.qwen/settings.json and the top-level key is mcpServers. Restart Qwen Code after saving it, then type /mcp to see what loaded.",
+    },
+  ],
+  "kimi-code": [
+    {
+      problem: "Kimi Code does not list Ensemble.",
+      fix: "The file is ~/.kimi-code/mcp.json and the top-level key is mcpServers. Servers added while a session is open join new sessions only: start a new one.",
+    },
+  ],
+  "mistral-vibe": [
+    {
+      problem: "vibe mcp add says the command is not found.",
+      fix: "Install Mistral Vibe first (curl -LsSf https://mistral.ai/vibe/install.sh | bash), and open a new terminal so vibe is on your PATH.",
     },
   ],
   opencode: [

@@ -151,6 +151,9 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
     await openBrowser(DOWNLOAD_URL);
     return "Choose the current installer in Downloads. Your work and settings are kept.";
   }
+  // Stopped before its files are replaced (Homebrew removes the old version's folder), and waited for until it
+  // has closed the database, so the new version starts cleanly when Ensemble is reopened.
+  if (runner && runner.owner !== "desktop") await stopRunner(paths);
   const temp = await mkdtemp(join(tmpdir(), "ensemble-update-"));
   try {
     const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, [TESTING ? "ENSEMBLE_TEST_VERSION" : "ENSEMBLE_VERSION"]: latest.replace(/^cli-v/, "") } };
@@ -171,7 +174,6 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
       await writeFile(script, contents, { mode: 0o600 });
       await run(windows ? "powershell.exe" : "/bin/sh", windows ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script] : [script], options);
     }
-    if (runner && runner.owner !== "desktop") await stopRunner(paths);
     return "Update installed. Reopen Ensemble to use the new version. Your work and settings are kept.";
   } catch (error) {
     const said = error instanceof Error && /does not offer/.test(error.message) ? `${error.message} Try again in a few minutes. ` : "";

@@ -37,7 +37,7 @@ test("JSONC editor writer preserves comments, other servers, and one backup", as
 test("local JSON writers create the expected Ensemble entry", async () => {
   const writable = EDITORS.filter(
     (editor): editor is EditorName =>
-      !["claude-code", "codex", "jetbrains", "continue", "visual-studio"].includes(editor),
+      !["claude-code", "vibe", "codex", "jetbrains", "continue", "visual-studio"].includes(editor),
   );
   for (const editor of writable) {
     const home = await tempHome();
@@ -113,4 +113,21 @@ test("Codex TOML edits keep array tables, commented headers and spaced headers i
   assert.match(removed, /\[mcp_servers\.github\] # my server\ncommand = "gh-mcp"/);
   assert.match(removed, /\[\[profiles\.list\]\]\nname = "a"/);
   assert.match(removed, /^model = "o3"/);
+});
+
+test("Qwen Code and Kimi Code get Ensemble in their mcpServers; Mistral Vibe through vibe mcp add", async () => {
+  const home = await tempHome();
+  const where = { platform: "linux" as const, home, env: {} };
+  for (const editor of ["qwen", "kimi"] as const) {
+    const path = editorConfigPath(editor, where)!;
+    await setupEditor(editor, { hosted: false, apiBase: "https://api.example.test", token: "ens_test", launcher }, where);
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")).mcpServers.ensemble, { command: "/usr/local/bin/ensemble", args: ["mcp"] }, editor);
+  }
+  assert.equal(editorConfigPath("kimi", where), join(home, ".kimi-code", "mcp.json"));
+  const hosted = await setupEditor("qwen", { hosted: true, apiBase: "https://api.example.test", token: "ens_test", launcher }, { ...where, printOnly: true });
+  assert.match(hosted.message, /"httpUrl": "https:\/\/api\.example\.test\/mcp"/);
+  const vibe = await setupEditor("vibe", { hosted: false, apiBase: "https://api.example.test", token: null, launcher }, { ...where, printOnly: true });
+  assert.match(vibe.message, /(^|\n)vibe mcp add ensemble --transport stdio --command \/usr\/local\/bin\/ensemble --arg=mcp$/);
+  const vibeHosted = await setupEditor("vibe", { hosted: true, apiBase: "https://api.example.test", token: "ens_test", launcher }, { ...where, printOnly: true });
+  assert.match(vibeHosted.message, /(^|\n)vibe mcp add ensemble --url https:\/\/api\.example\.test\/mcp --transport streamable-http --header "Authorization=Bearer ens_test"$/);
 });

@@ -80,3 +80,19 @@ test("a node on its owner's plan is told what it has: its own web, the computer 
   assert.match(howYouRun("codex"), /no shell, files or web of your own/);
   assert.match(agentConversation([{ role: "system", content: "S" }, { role: "user", content: "hi" }], "claude-code", { ownWeb: true }).system, /^S\n\nYou run on their own Claude subscription/);
 });
+
+test("a node on an AI plan drives the browser itself, and looks facts up with its own web search where it has one", async () => {
+  const { ownLoopPersona } = await import("../node/brain.js");
+  const persona = [
+    "- Facts, news, “look up”: hub_web_search first (the live web, with sources).",
+    "- Steps on a site (a dashboard, “log in to my Azure portal and check …”): web_task with the goal; sign-ins go to your owner's card, not Connections.",
+    "- … pages and screenshots (browser_view; prices: browser_shop; several steps on a site: web_task), …",
+  ].join("\n");
+  const copilot = ownLoopPersona(persona, "copilot-cli");
+  assert.doesNotMatch(copilot, /web_task/);
+  assert.match(copilot, /drive the browser yourself \(browser_open/);
+  assert.match(copilot, /your own web search first \(or hub_web_search\), then read the source page itself/);
+  const kimi = ownLoopPersona(persona, "kimi-code");
+  assert.doesNotMatch(kimi, /web_task/);
+  assert.match(kimi, /hub_web_search first/, "an agent whose own tools are refused in a turn uses Ensemble's search");
+});

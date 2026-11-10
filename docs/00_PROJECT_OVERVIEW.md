@@ -84,7 +84,7 @@ The Hub assistant operates the app through typed tools. Its instructions stay th
 | --- | --- |
 | Tasks and records | Create and update tasks, people, projects, repositories and profession records; comments, Trash, conversions, history. Clearing the board or a filtered set is one `hub_delete_tasks` call with one Undo |
 | Custom boards | List and read a board by its link, id or title; make, change and delete boards and their columns; put, move and take off tasks and notes. Deleting a board always waits for Apply |
-| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity on a paired computer or this server, with a run profile; waits for Apply, then queues |
+| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code or Kimi Code on a paired computer or this server, with a run profile; waits for Apply, then queues |
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, references to earlier results, durable per-step receipts |
