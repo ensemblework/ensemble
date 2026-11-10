@@ -691,7 +691,7 @@ export function CodeIde({ source }: { source: Source }) {
         {scm.data?.behind ? <StatusItem icon={ArrowDown} title="Commits to pull">{scm.data.behind}</StatusItem> : null}
         {isReview && totals ? (
           <span className="px-1.5" data-testid="ide-progress">
-            {totals.total - totals.pending} / {totals.total} — {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
+            {totals.total - totals.pending} / {totals.total} · {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
           </span>
         ) : null}
         {where ? <StatusItem icon={Laptop}>{where}</StatusItem> : null}
@@ -1413,7 +1413,7 @@ function FilePane(props: {
         <div className="flex-1" />
         {props.review && counts ? (
           counts.agent === 0 ? (
-            <span className="text-ok" data-testid="ide-file-reviewed">Reviewed — edit freely</span>
+            <span className="text-ok" data-testid="ide-file-reviewed">Reviewed. Edit freely</span>
           ) : (
             <span className="text-muted">{counts.agent} agent change{counts.agent === 1 ? "" : "s"} to decide{counts.yours ? ` · ${counts.yours} yours` : ""}</span>
           )

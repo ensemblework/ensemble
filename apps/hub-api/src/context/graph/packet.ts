@@ -30,7 +30,7 @@ const line = (card: ItemCard): string => {
     card.kind !== "task" && card.when ? card.when.slice(0, 10) : null,
   ].filter(Boolean);
   const handle = card.ref ? ` (${card.ref})` : "";
-  return `- ${card.title}${bits.length ? ` — ${bits.join(" · ")}` : ""}${handle}`;
+  return `- ${card.title}${bits.length ? `: ${bits.join(" · ")}` : ""}${handle}`;
 };
 
 function groupText(group: RelationGroup | undefined, title?: string, max = 8): string {
@@ -84,7 +84,7 @@ async function meetingSection(ctx: GraphCtx, meetingId: string, excerpt: string 
     excerpt ? `What was said: “${clip(excerpt, 500)}”` : "",
     meeting.summary ? `Meeting summary: ${clip(meeting.summary, 700)}` : "",
     meeting.decisions.length ? `Decisions:\n${meeting.decisions.slice(0, 6).map((row) => `- ${clip(row, 200)}`).join("\n")}` : "",
-    tasks.length > 1 ? `Other work from this meeting:\n${tasks.map((row) => `- ${row.title} — ${row.status.replace(/_/g, " ")} (ensemble://task/${row.id})`).join("\n")}` : "",
+    tasks.length > 1 ? `Other work from this meeting:\n${tasks.map((row) => `- ${row.title}: ${row.status.replace(/_/g, " ")} (ensemble://task/${row.id})`).join("\n")}` : "",
     meeting.waitingOn.length ? `Waiting on others from it:\n${meeting.waitingOn.slice(0, 5).map((row) => `- ${row.owner?.name ?? "Someone"}: ${clip(row.text, 160)}`).join("\n")}` : "",
     meeting.hasTranscript ? "The meeting's whole transcript is kept with it: read the meeting for the exact words around a request." : "",
   ]

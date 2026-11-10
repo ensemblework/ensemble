@@ -65,9 +65,9 @@ export const graphTools = [
     async preview(ctx, input) {
       const person = await ctx.prisma.person.findFirst({ where: { id: input.personId, userId: ctx.userId }, select: { name: true, role: true } });
       const changes = [
-        input.role !== undefined ? `role ${person?.role ?? "—"} → ${input.role ?? "—"}` : null,
-        input.team !== undefined ? `team → ${input.team ?? "—"}` : null,
-        input.relationship !== undefined ? `to you → ${input.relationship ?? "—"}` : null,
+        input.role !== undefined ? `role ${person?.role ?? "none"} → ${input.role ?? "none"}` : null,
+        input.team !== undefined ? `team → ${input.team ?? "none"}` : null,
+        input.relationship !== undefined ? `to you → ${input.relationship ?? "none"}` : null,
         input.name ? `name → ${input.name}` : null,
       ].filter(Boolean);
       return `Update ${person?.name ?? "person"}${changes.length ? `: ${changes.join(", ")}` : ""}`;

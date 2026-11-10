@@ -120,6 +120,10 @@ cd apps/agent-runtime && .venv/bin/python -m pytest tests   # install pytest int
 
 - **Focus highlight: one edge, always the outer one.** When an input, textarea or select sits inside its own box (an icon, chips or a hidden label beside it, a search box, the date picker's type field), only the box shows focus. In `apps/hub-web`, give the box `compound-field` (or a `border`, with the input `bg-transparent`) and `app/globals.css` draws the edge. The inner control never draws a ring, outline or shadow of its own: no `focus:ring-*`, `focus-visible:ring-*` or outline on it. A standalone `.field` shows the edge on itself. The same holds in Ensemble Node (`.compound-field` / `.search-field`).
 - **Notices (toasts) only when they matter.** Show one for a failure, an Undo, a consequence the screen does not show, or the result of a sync or import. Never for saving, copying, moving, assigning, approving, pushing or a toggle the person can see change. Never put ids or hashes in them.
+- **No em dashes, no `--`, in anything people read**: labels, notices, empty values, Apply previews, recap text, files Ensemble writes, and the assistant's replies (its prompt says so in `assistant/state.ts`). Use a period, comma, colon or `·`; an empty value says what it is ("No date", "None", "Not reported"). Parsers keep accepting old text that has one.
+- **Settings rows line up.** A setting is a `SettingRow` (title and short description left, one control right); a card's rows sit in `divide-y divide-[var(--line)]`. Controls in a card share a width (`w-32` for selects and `NumberField`, whose unit sits inside its box). Never a sentence with a control in the middle of it.
+- **Short copy; the rest goes in the ⓘ.** A card or row says what it does in one line at most. How it works, limits and edge cases go in `info` (`InfoTip`), never in a paragraph under the controls.
+- **No robots.** An agent is drawn with `AgentIcon` (`components/agent-icon.tsx`, Ensemble's mark in the text colour), never lucide `Bot` or another robot.
 
 ## Guardrails
 

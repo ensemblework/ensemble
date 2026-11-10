@@ -189,12 +189,16 @@ export function PromptsSection() {
 export function QuietHoursSection({ settings, patch }: Props) {
   return (
     <SectionCard title="Quiet hours" description="Notifications hold until morning. Nothing is lost, the digest carries it over.">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
-        <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
-        <span className="text-muted">From</span>
-        <TimeInput label="Quiet hours start" value={settings.quietHours.from} step={30} onChange={(from) => patch({ quietHours: { from } })} className="w-32" />
-        <span className="text-muted">until</span>
-        <TimeInput label="Quiet hours end" value={settings.quietHours.until} step={30} onChange={(until) => patch({ quietHours: { until } })} className="w-32" />
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Hold notifications">
+          <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
+        </SettingRow>
+        <SettingRow title="From">
+          <TimeInput label="Quiet hours start" value={settings.quietHours.from} step={30} onChange={(from) => patch({ quietHours: { from } })} className="w-32" />
+        </SettingRow>
+        <SettingRow title="Until">
+          <TimeInput label="Quiet hours end" value={settings.quietHours.until} step={30} onChange={(until) => patch({ quietHours: { until } })} className="w-32" />
+        </SettingRow>
       </div>
     </SectionCard>
   );
@@ -212,72 +216,48 @@ export function RetentionSection({ settings, patch }: Props) {
   const completed = settings.completedRetentionDays;
   const choices = (value: number) => [...new Set([30, 60, 90, value])].sort((a, b) => a - b);
   return (
-    <SectionCard title="Data retention" info="Two clocks. Trash and completed work are purged on different schedules, and a missed night is caught up the next time Ensemble starts.">
-      <div className="space-y-3 text-[13.5px]">
-        <label className="flex items-center gap-3">
-          Keep items in Trash for
-          <select
-            aria-label="Trash retention"
-            value={trash}
-            onChange={(event) => patch({ retentionDays: Number(event.target.value) })}
-            className="field"
-          >
+    <SectionCard
+      title="Data retention"
+      info={`Trash and completed work run on separate clocks; active work is never purged. Once ${SKILL_LEARNING_MIN_ITEMS} completed items pass their window, Ensemble learns your skills from them (Settings › Automations), then moves them to Trash.`}
+    >
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Keep items in Trash">
+          <select aria-label="Trash retention" value={trash} onChange={(event) => patch({ retentionDays: Number(event.target.value) })} className="field w-32">
             {choices(trash).map((days) => (
               <option key={days} value={days}>
                 {days} days
               </option>
             ))}
           </select>
-        </label>
-        <label className="flex items-center gap-3">
-          Purge completed items after
-          <select
-            aria-label="Completed retention"
-            value={completed}
-            onChange={(event) => patch({ completedRetentionDays: Number(event.target.value) })}
-            className="field"
-          >
+        </SettingRow>
+        <SettingRow title="Purge completed items after" description="Pinned items stay.">
+          <select aria-label="Completed retention" value={completed} onChange={(event) => patch({ completedRetentionDays: Number(event.target.value) })} className="field w-32">
             {choices(completed).map((days) => (
               <option key={days} value={days}>
                 {days} days
               </option>
             ))}
           </select>
-          unless pinned
-        </label>
-        <label className="flex items-center gap-3">
-          Show recently completed
-          <select
-            aria-label="Completed visible count"
-            value={settings.completedVisible}
-            onChange={(event) => patch({ completedVisible: Number(event.target.value) })}
-            className="field"
-          >
+        </SettingRow>
+        <SettingRow title="Recently completed on the board">
+          <select aria-label="Completed visible count" value={settings.completedVisible} onChange={(event) => patch({ completedVisible: Number(event.target.value) })} className="field w-32">
             {[3, 5, 8, 10, 15, 20].map((count) => (
               <option key={count} value={count}>
-                {count}
+                {count} tasks
               </option>
             ))}
           </select>
-          on the board
-        </label>
-        <div className="flex flex-wrap items-center gap-3">
-          Keep finished tasks on the Context graph for
-          <NumberField label="Context review days" min={0} max={365} unit="days" width="w-16" value={settings.contextReviewDays} onChange={(contextReviewDays) => patch({ contextReviewDays })} />
-        </div>
-        <p className="text-[12.5px] text-muted">Zero hides them until All completed is ticked on the graph. Open Completed or Trash below to see their history.</p>
-        <div className="flex flex-wrap items-center gap-3">
-          Undo history
-          <NumberField label="Undo depth" min={3} max={20} unit="actions" width="w-16" value={settings.undoDepth} onChange={(undoDepth) => patch({ undoDepth })} />
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          Keep the audit log and status history
+        </SettingRow>
+        <SettingRow title="Finished tasks on the Context graph" info="Zero hides them until All completed is ticked on the graph.">
+          <NumberField label="Context review days" min={0} max={365} unit="days" value={settings.contextReviewDays} onChange={(contextReviewDays) => patch({ contextReviewDays })} />
+        </SettingRow>
+        <SettingRow title="Undo history">
+          <NumberField label="Undo depth" min={3} max={20} unit="actions" value={settings.undoDepth} onChange={(undoDepth) => patch({ undoDepth })} />
+        </SettingRow>
+        <SettingRow title="Audit log and status history">
           <NumberField label="History retention" min={30} max={365} unit="days" value={settings.historyRetentionDays} onChange={(historyRetentionDays) => patch({ historyRetentionDays })} />
-        </div>
+        </SettingRow>
       </div>
-      <p className="mt-2 text-[12.5px] text-muted">
-        Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged. Once at least {SKILL_LEARNING_MIN_ITEMS} completed items are past their window, Ensemble gives a day’s notice and learns personal skills from them with the model Settings → Automations names (High by default), then moves them to Trash. If learning cannot run, the work stays in Completed; turn learning off there to move it without reading it. Agent sessions of retired or deleted tasks are deleted from your agents (Settings → Orchestration).
-      </p>
     </SectionCard>
   );
 }
@@ -376,13 +356,13 @@ function WebPasskeys() {
   const keys = status.data?.passkeys ?? [];
   return (
     <div className="mb-3 rounded-md border border-line bg-panel px-3 py-2 text-[12.5px]" data-testid="web-terminal-passkeys">
-      <div className="font-medium">Passkeys for the terminal on your computers</div>
-      <p className="mt-0.5 text-muted">
-        The terminal on a paired computer opens from the Code tab after you unlock it with one of these (Touch ID, Windows Hello, your phone or a security key). It locks after 30 minutes idle, 8 hours at most. Each computer decides whether the web may open it (Settings → this computer there, or <code className="font-mono">ensemble web terminal on|off</code>).
-      </p>
+      <div className="flex items-center gap-1.5 font-medium">
+        Terminal passkeys
+        <InfoTip text="Unlock the terminal on a paired computer from the Code tab with Touch ID, Windows Hello, your phone or a security key. It locks after 30 minutes idle, 8 hours at most. Each computer decides whether the web may open it. Every passkey added is in the audit log; remove any you do not recognise." />
+      </div>
       <div className="mt-1.5 space-y-1">
         {status.isLoading ? null : keys.length === 0 ? (
-          <div className="text-muted">None yet. Open the terminal on a computer in the Code tab to add one.</div>
+          <div className="text-muted">None yet. You add one the first time you open a terminal in the Code tab.</div>
         ) : (
           keys.map((key) => (
             <div key={key.id} className="group flex items-center gap-2">
@@ -408,7 +388,6 @@ function WebPasskeys() {
         </button>
       ) : null}
       {error ? <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p> : null}
-      <p className="mt-1 text-[12px] text-muted">Every passkey added is recorded in the audit ledger. Remove any you do not recognise.</p>
     </div>
   );
 }
@@ -489,7 +468,10 @@ export function TerminalSection({ settings, patch }: Props) {
           <p className="mt-1 text-[12px] text-muted">
             Everything inside a folder is reachable; nothing above it. System folders, your home folder itself, ~/Library, key folders and Ensemble&apos;s own code are always refused.
           </p>
-          <div className="mt-4 text-[13px] font-medium">Touch ID passkeys</div>
+          <div className="mt-4 flex items-center gap-1.5 text-[13px] font-medium">
+            Touch ID passkeys
+            <InfoTip text="Every passkey added is in the audit log. Remove any you do not recognise." />
+          </div>
           <div className="mt-1.5 space-y-1 text-[12.5px]">
             {(status.data?.passkeys ?? []).length === 0 ? (
               <div className="text-muted">None yet. Open the terminal in the Code tab to set one up.</div>
@@ -511,16 +493,12 @@ export function TerminalSection({ settings, patch }: Props) {
                 </div>
               ))
             )}
-            <p className="text-[12px] text-muted">Every passkey added is recorded in the audit ledger. Remove any you do not recognise.</p>
           </div>
         </>
       ) : null}
       <div className="mt-3 divide-y divide-[var(--line)]">
         <SettingRow title="Branch prefix for agent work">
           <input aria-label="Branch prefix" value={terminal.branchPrefix} onChange={(event) => patch({ terminal: { branchPrefix: event.target.value } })} className="field w-40 font-mono text-[12.5px]" />
-        </SettingRow>
-        <SettingRow title="Commit author" description="“Name <email>”. Empty uses your git config.">
-          <input aria-label="Commit author" value={terminal.commitAuthor} onChange={(event) => patch({ terminal: { commitAuthor: event.target.value } })} placeholder="Ada Lovelace <ada@example.com>" className="field w-64" />
         </SettingRow>
         <SettingRow title="Sign commits" description="Passes -S to git commit. Requires a signing key in your git config.">
           <Toggle label="Sign commits" checked={terminal.signCommits} onChange={(signCommits) => patch({ terminal: { signCommits } })} />
@@ -840,12 +818,13 @@ export function StaleSection({ settings, patch }: Props) {
       title="Quiet nudges"
       description="Items left alone, and due items that were never started, ask if they are still relevant. Keep, snooze, done, or Trash."
     >
-      <SettingRow title="Ask when work goes quiet">
-        <Toggle label="Quiet nudges" checked={settings.staleNudge.enabled} onChange={(enabled) => patch({ staleNudge: { enabled } })} />
-      </SettingRow>
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px]">
-        Untouched for
-        <NumberField label="Days before a quiet nudge" min={1} max={180} unit="days" value={settings.staleNudge.untouchedDays} onChange={(untouchedDays) => patch({ staleNudge: { untouchedDays } })} />
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Ask when work goes quiet">
+          <Toggle label="Quiet nudges" checked={settings.staleNudge.enabled} onChange={(enabled) => patch({ staleNudge: { enabled } })} />
+        </SettingRow>
+        <SettingRow title="Untouched for">
+          <NumberField label="Days before a quiet nudge" min={1} max={180} unit="days" value={settings.staleNudge.untouchedDays} onChange={(untouchedDays) => patch({ staleNudge: { untouchedDays } })} />
+        </SettingRow>
       </div>
     </SectionCard>
   );

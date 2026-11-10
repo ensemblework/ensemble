@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bot, Check, ChevronRight, Cloud, Eye, FolderOpen, GitBranch, GitPullRequest, Hand, Lock, Monitor, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Cloud, Eye, FolderOpen, GitBranch, GitPullRequest, Hand, Lock, Monitor, Pencil, Plus, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ENGINE_LABELS, isCodeEngine, type CodeEngine, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type EarlierRun, type HandoffApp } from "@/lib/api";
@@ -92,7 +93,7 @@ function WithCode({ text }: { text: string }) {
 const MODES: Array<{ id: Mode; title: string; text: string; icon: typeof Hand }> = [
   { id: "ask", title: "Ask", text: "Asks before commands and edits. Reading goes ahead.", icon: Hand },
   { id: "review", title: "Review only", text: "Works freely in its folder. Asks you decisions, and once before working in another folder.", icon: Eye },
-  { id: "unattended", title: "Run unattended", text: "Never waits for you. Works across your workspace and folders; keys, system files and Ensemble's code stay off limits.", icon: Bot },
+  { id: "unattended", title: "Run unattended", text: "Never waits for you. Works across your workspace and folders; keys, system files and Ensemble's code stay off limits.", icon: AgentIcon },
 ];
 
 /** What each agent is called where it is signed in, and the command that signs it in. */

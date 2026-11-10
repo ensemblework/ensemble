@@ -287,6 +287,9 @@ select:focus-visible {
   border-color: rgb(var(--accent-rgb)) !important;
   box-shadow: 0 0 0 1px rgb(var(--accent-rgb)) !important;
 }
+.compound-field[data-invalid] {
+  border-color: var(--danger) !important;
+}
 #command-list [role="option"] {
   scroll-margin-block: 8px;
 }

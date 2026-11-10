@@ -57,3 +57,20 @@ test("both day fields restricted run on either, as in cron; matching a wall-cloc
   assert.equal(describeCron("30 7 * * *", "UTC"), "Every day at 07:30 (UTC)");
   assert.equal(describeCron("0 10 * * 5", "Europe/London"), "Every Friday at 10:00 (Europe/London)");
 });
+
+test("any schedule reads as words, never as the raw cron", () => {
+  const say = (cron: string) => describeCron(cron, "UTC").replace(" (UTC)", "");
+  assert.equal(say("0 9 * * 1,3"), "Monday and Wednesday at 09:00");
+  assert.equal(say("0 9 * * 0,1,3,5"), "Mon, Wed, Fri and Sun at 09:00");
+  assert.equal(say("0 10 * * 6,0"), "Weekends at 10:00");
+  assert.equal(say("0 9,17 * * 1-5"), "Weekdays at 09:00 and 17:00");
+  assert.equal(say("*/15 * * * *"), "Every 15 minutes");
+  assert.equal(say("15 * * * *"), "Every hour at :15");
+  assert.equal(say("0 9-17 * * 1-5"), "Weekdays, every hour from 09:00 to 17:00");
+  assert.equal(say("0 8 1 * *"), "Every month on the 1st at 08:00");
+  assert.equal(say("0 8 1,15 * *"), "On the 1st and 15th at 08:00");
+  assert.equal(say("0 8 1 * mon"), "Every month on the 1st and every Monday at 08:00");
+  assert.equal(say("0 9 1 1,7 *"), "Every month on the 1st at 09:00 in January and July");
+  assert.equal(say("@daily"), "Every day at 00:00");
+  for (const cron of ["0 9 * * 1,3", "*/5 9-17 * * *", "7 3 2,12,22 */2 *"]) assert.doesNotMatch(say(cron), /\*|\//);
+});

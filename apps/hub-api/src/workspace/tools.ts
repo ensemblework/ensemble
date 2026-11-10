@@ -56,7 +56,6 @@ export interface JobContext {
   /** Ensemble's own model loop (not a coding agent): view_attachment is offered and attached files follow the brief. */
   viewFiles?: boolean;
   signal: AbortSignal;
-  commitAuthor: string;
   /** Branch the engineer picked explicitly, if any. Protected branches are only pushable when named here. */
   chosenBranch?: string;
   touched: Set<string>;
@@ -1348,7 +1347,7 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       const cloned = await cloneForAgent(ctx, argv, line, { cwd: cwdInput, asked: true });
       return { ok: cloned.ok, result: cloned.result, summary: cloned.summary };
     }
-    full = ["git", ...gitHardening(false, ctx.commitAuthor || "Ensemble Agent <agent@ensemble.local>"), ...argv.slice(1)];
+    full = ["git", ...gitHardening(false, "Ensemble Agent <agent@ensemble.local>"), ...argv.slice(1)];
   } else {
     // Reading inside the folder (ls, cat, grep…) asks nobody, as in the person's own coding agents; a command the person just approved is not asked again.
     const held = asked || (await quietArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) ? null : await allowOrRefuse(ctx, "command", true, { toolName: program, title: `Run ${line.slice(0, 140)}`, command: line });

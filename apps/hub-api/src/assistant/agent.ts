@@ -725,7 +725,7 @@ async function drive(
   }
   text = reflectProposals(text, calls);
   if (!stopped && calls.some((call) => call.state === "awaiting_approval") && !text.includes("Nothing has changed yet")) {
-    text = `${text}\n\nNothing has changed yet — press Apply.`.trim();
+    text = `${text}\n\nNothing has changed yet. Press Apply.`.trim();
   }
 
   try {

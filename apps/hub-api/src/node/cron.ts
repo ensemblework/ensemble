@@ -166,15 +166,68 @@ export function nextRun(cron: Cron, zone: string, after: Date): Date | null {
   return null;
 }
 
-/** "0 9 * * 1-5" in words, for cards and the routines list: short, not exhaustive. */
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const clock = (hour: number, minute: number) => `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+/** "a", "a and b", "a, b and c". */
+const words = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+/** The step of an evenly spaced run starting at `start`, or 0. */
+function stepOf(values: number[], start: number): number {
+  if (values.length < 2 || values[0] !== start) return 0;
+  const step = values[1]! - values[0]!;
+  return values.every((value, at) => value === start + at * step) ? step : 0;
+}
+
+/** When it runs, in words: "Mon and Wed at 09:00", "Every 15 minutes", "On the 1st and 15th at 08:00". */
+function timesText(cron: Cron): { text: string; clock: boolean } {
+  const { minutes, hours } = cron;
+  if (hours.length === 24) {
+    if (minutes.length === 1) return { text: `every hour at :${String(minutes[0]).padStart(2, "0")}`, clock: false };
+    const step = stepOf(minutes, 0);
+    if (step && 60 % step === 0) return { text: `every ${step} minutes`, clock: false };
+    return { text: `${minutes.length} times an hour`, clock: false };
+  }
+  if (minutes.length * hours.length <= 3) return { text: `at ${words(hours.flatMap((hour) => minutes.map((minute) => clock(hour, minute))))}`, clock: true };
+  const from = clock(hours[0]!, minutes[0]!);
+  const to = clock(hours.at(-1)!, minutes.at(-1)!);
+  if (minutes.length === 1) {
+    const step = stepOf(hours, hours[0]!);
+    if (step === 1) return { text: `every hour from ${from} to ${to}`, clock: true };
+    if (step) return { text: `every ${step} hours from ${from} to ${to}`, clock: true };
+  }
+  return { text: `${minutes.length * hours.length} times a day from ${from} to ${to}`, clock: true };
+}
+
+function daysText(cron: Cron): string {
+  const weekdays = [...cron.weekdays].sort((a, b) => a - b);
+  const days = [...cron.days].sort((a, b) => a - b);
+  const weekdayText = () => {
+    if (weekdays.length === 5 && [1, 2, 3, 4, 5].every((day) => cron.weekdays.has(day))) return "Weekdays";
+    if (weekdays.length === 2 && cron.weekdays.has(0) && cron.weekdays.has(6)) return "Weekends";
+    if (weekdays.length === 1) return `Every ${DAY_NAMES[weekdays[0]!]}`;
+    // Monday first, as people read a week.
+    const ordered = [...weekdays.filter((day) => day !== 0), ...weekdays.filter((day) => day === 0)];
+    return words(ordered.map((day) => (weekdays.length === 2 ? DAY_NAMES[day]! : DAY_NAMES[day]!.slice(0, 3))));
+  };
+  const dayText = () => (days.length === 1 ? `Every month on the ${ordinal(days[0]!)}` : `On the ${words(days.map(ordinal))}`);
+  if (cron.anyDay && cron.anyWeekday) return "Every day";
+  if (cron.anyDay) return weekdayText();
+  if (cron.anyWeekday) return dayText();
+  // As in cron, a day matching either field runs.
+  return `${dayText()} and ${weekdayText().replace(/^Every /, "every ")}`;
+}
+
+/** "0 9 * * 1-5" in words, for cards and the routines list: short, and never the raw expression. */
 export function describeCron(expression: string, zone: string): string {
   const cron = parseCron(expression);
-  const time = cron.hours.length === 1 && cron.minutes.length === 1 ? `${String(cron.hours[0]).padStart(2, "0")}:${String(cron.minutes[0]).padStart(2, "0")}` : null;
   const zoneText = zone === "UTC" ? "UTC" : zone;
-  if (time && cron.anyDay && cron.anyWeekday && cron.months.size === 12) return `Every day at ${time} (${zoneText})`;
-  if (time && cron.anyDay && cron.months.size === 12 && [1, 2, 3, 4, 5].every((day) => cron.weekdays.has(day)) && cron.weekdays.size === 5) return `Weekdays at ${time} (${zoneText})`;
-  if (time && cron.anyDay && cron.months.size === 12 && cron.weekdays.size === 1) return `Every ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][[...cron.weekdays][0]!]} at ${time} (${zoneText})`;
-  if (time && cron.anyWeekday && cron.days.size === 1 && cron.months.size === 12) return `Every month on day ${[...cron.days][0]} at ${time} (${zoneText})`;
-  if (cron.minutes.length === 1 && cron.hours.length === 24 && cron.anyDay && cron.anyWeekday) return `Every hour at :${String(cron.minutes[0]).padStart(2, "0")}`;
-  return `${expression.trim()} (${zoneText})`;
+  const times = timesText(cron);
+  const days = daysText(cron);
+  let text = times.text.startsWith("at ") ? `${days} ${times.text}` : days === "Every day" ? `${times.text[0]!.toUpperCase()}${times.text.slice(1)}` : `${days}, ${times.text}`;
+  if (cron.months.size < 12) {
+    const months = [...cron.months].sort((a, b) => a - b).map((month) => MONTH_NAMES[month - 1]!);
+    text += ` in ${words(months.length > 3 ? months.map((month) => month.slice(0, 3)) : months)}`;
+  }
+  return times.clock ? `${text} (${zoneText})` : text;
 }

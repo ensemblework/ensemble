@@ -108,7 +108,7 @@ export function meetingAiPrompt(input: MeetingAiInput): { text: string; cut: num
     transcript = `${transcript.slice(0, keep)}\n[Transcript cut here: ${cut.toLocaleString("en-US")} more characters are not shown.]`;
   }
   const attendee = (row: MeetingAiInput["attendees"][number]) =>
-    [row.name, row.email ? `<${row.email}>` : "", [row.role, row.relationship].filter(Boolean).join("; ")].filter(Boolean).join(" — ");
+    [row.name, row.email ? `<${row.email}>` : "", [row.role, row.relationship].filter(Boolean).join("; ")].filter(Boolean).join(", ");
   const sections = [
     `Me: ${input.me.name || "the person"}${input.me.emails.length ? ` (${input.me.emails.join(", ")})` : ""}`,
     `Today: ${input.today}`,
@@ -121,7 +121,7 @@ export function meetingAiPrompt(input: MeetingAiInput): { text: string; cut: num
     "Attendees:",
     bullets(input.attendees.map(attendee)),
     "",
-    input.project ? `Project: ${input.project.name}${input.project.summary ? ` — ${input.project.summary.replace(/\s+/g, " ").slice(0, 400)}` : ""}` : `Projects to choose from:\n${bullets(input.projects)}`,
+    input.project ? `Project: ${input.project.name}${input.project.summary ? `. ${input.project.summary.replace(/\s+/g, " ").slice(0, 400)}` : ""}` : `Projects to choose from:\n${bullets(input.projects)}`,
     "",
     `${input.openTasks.label}:`,
     bullets(input.openTasks.titles),
@@ -602,7 +602,7 @@ async function readMeeting(db: PrismaClient, note: AiNote, ask?: Ask): Promise<M
       linkArtifact: false,
       meetingNoteId: note.id,
       projectId,
-      rationale: `${item.why ?? `${item.title}, from “${note.title}”.`}${askerName || item.at ? ` — asked${askerName ? ` by ${askerName}` : ""}${item.at ? ` at ${item.at}` : ""}` : ""}`,
+      rationale: `${item.why ?? `${item.title}, from “${note.title}”.`}${askerName || item.at ? ` (asked${askerName ? ` by ${askerName}` : ""}${item.at ? ` at ${item.at}` : ""})` : ""}`,
     });
   }
 

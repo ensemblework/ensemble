@@ -235,7 +235,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     boardRef,
     dragId !== null,
     currentShare() ? `share:${currentShare()}` : shell.data?.space?.id ?? shell.data?.user.id ?? null,
-    visible.map((task) => ({ id: task.id, column: columnOf(task.status), completion: task.status === "done" ? task.completedAt ?? "done" : null })),
+    visible.map((task) => ({ id: task.id, column: columnOf(task.status) })),
   );
   const [overColumn, setOverColumn] = useState<ColumnId | null>(null);
   const [overlayWidth, setOverlayWidth] = useState(248);

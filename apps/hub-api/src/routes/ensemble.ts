@@ -173,7 +173,7 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
           calls.push(call);
           send("pending", { type: "pending", call, preview: call.summary });
           if (!text.includes("Nothing has changed yet")) {
-            text = `${text}\n\nNothing has changed yet — press Apply.`.trim();
+            text = `${text}\n\nNothing has changed yet. Press Apply.`.trim();
           }
         }
       }

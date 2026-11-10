@@ -66,7 +66,7 @@ const WEEKDAY = new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numer
 /** "Wed, 30 Sept" */
 export function weekdayDate(value: string | Date | null | undefined = new Date()): string {
   const date = value instanceof Date ? value : safeDate(value);
-  if (!date) return "—";
+  if (!date) return "No date";
   return WEEKDAY.format(date);
 }
 
@@ -79,7 +79,7 @@ export function shortDate(value: string | Date | null | undefined): string {
 
 /** Recent moments stay relative. Older dates are "28 Sept", in en-IN. */
 export function whenLabel(value: string | Date | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "No date";
   const date = safeDate(value);
   if (!date) return String(value);
   const days = Math.floor((Date.now() - date.getTime()) / DAY);
@@ -90,7 +90,7 @@ export function whenLabel(value: string | Date | null | undefined): string {
 }
 
 export function dateTime(value: string | Date | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "No date";
   const date = safeDate(value);
   if (!date) return String(value);
   return new Intl.DateTimeFormat("en-IN", {
@@ -117,7 +117,7 @@ export function clockLabel(value: string | null | undefined): string {
 
 export function clock(value: string | Date): string {
   const date = typeof value === "string" ? safeDate(value) : value;
-  if (!date || Number.isNaN(date.getTime())) return typeof value === "string" ? value : "—";
+  if (!date || Number.isNaN(date.getTime())) return typeof value === "string" ? value : "No date";
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
 
@@ -200,7 +200,7 @@ export function languageFor(path: string): string {
 /** Friendly labels for activity; full timestamps remain available where exact dates matter. */
 export function friendlyDateTime(value: string | Date, now = new Date()): string {
   const date = value instanceof Date ? value : safeDate(value);
-  if (!date) return "—";
+  if (!date) return "No date";
   const days = Math.round((startOfDay(now).getTime() - startOfDay(date).getTime()) / DAY);
   const day = days === 0 ? "Today" : days === 1 ? "Yesterday" : new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) }).format(date);
   return `${day}, ${new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(date)}`;

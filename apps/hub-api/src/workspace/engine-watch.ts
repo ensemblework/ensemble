@@ -73,7 +73,7 @@ export function passingFailure(error: unknown): boolean {
 /** The message that carries an engine on in its own session after it stopped. */
 export function continuePrompt(reason: string): string {
   return [
-    `(Ensemble: your previous turn stopped before it finished — ${reason}.`,
+    `(Ensemble: your previous turn stopped before it finished: ${reason}.`,
     "Carry on with the same task from where you left off. First check the current state of the files and git; do not redo work that is already done. Then finish the task and summarise it as usual.)",
   ].join(" ");
 }

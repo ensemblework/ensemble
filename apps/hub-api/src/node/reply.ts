@@ -1,7 +1,7 @@
 /** How a node's answer becomes a room message. Pure. */
 
 export const NO_REPLY = "(no reply)";
-const APPLY_HINT = /\n*Nothing has changed yet — press Apply\.\s*$/;
+const APPLY_HINT = /\n*Nothing has changed yet(?: —|\.) [pP]ress Apply\.\s*$/;
 
 /** Outcome lines the assistant loop adds when the reply does not mention them (assistant/reply.ts). */
 const OUTCOME = /^(Done|Proposed, not applied yet|Not added|Not done): /;

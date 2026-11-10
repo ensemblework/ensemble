@@ -113,7 +113,7 @@ test("Apply replaces the stale prompt on a full and a partial batch", async (t) 
     const reloaded = await prisma.assistantMessage.findUnique({ where: { id: partial.id } });
     assert.equal(reloaded?.content.includes("Nothing has changed yet"), false);
     assert.match(reloaded?.content ?? "", /Applied:/);
-    assert.match(reloaded?.content ?? "", /Still waiting — press Apply/);
+    assert.match(reloaded?.content ?? "", /Still waiting\. Press Apply/);
     const calls = reloaded?.toolCalls as Array<{ id: string; state: string }>;
     assert.equal(calls.find((call) => call.id === "call-project-2")?.state, "ok");
     assert.equal(calls.find((call) => call.id === "call-task")?.state, "awaiting_approval");

@@ -189,8 +189,7 @@ test("Your AI subscriptions lead the Models card: what each computer has, sign-i
     assert.equal(document.querySelector('[data-subscription="gemini"]'), null);
     assert.equal(tile("claude-code").querySelector('[data-provider-logo="claude"]') !== null, true);
     assert.match(tile("codex").textContent ?? "", /Not signed in/);
-    assert.equal(tile("cursor-agent").dataset.state, "missing");
-    assert.match(tile("cursor-agent").textContent ?? "", /Install Cursor's agent/);
+    assert.equal(document.querySelector('[data-subscription="cursor-agent"]'), null, "a plan not on the computer waits in Manage subscriptions");
 
     const button = (root: HTMLElement, text: string) => Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === text)!;
     await act(async () => {
@@ -214,6 +213,19 @@ test("Your AI subscriptions lead the Models card: what each computer has, sign-i
     await settle(3);
     assert.deepEqual(view.bodies.find((row) => row.path === "/api/subscriptions/sign-in")?.body, { deviceId: "device-1", agent: "codex" });
     assert.match(document.getElementById("models")!.textContent ?? "", /Claude \(your plan\)|Which model each tier uses/);
+
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-testid="subscriptions-manage"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await until(() => Boolean(document.querySelector('[data-testid="subscriptions-dialog"]')), "the Manage subscriptions dialog");
+    const dialog = document.querySelector<HTMLElement>('[data-testid="subscriptions-dialog"]')!;
+    assert.equal(dialog.querySelector("[data-subscription-pane]")?.getAttribute("data-subscription-pane"), "claude-code", "it opens on a signed-in plan");
+    await act(async () => {
+      dialog.querySelector<HTMLElement>('[data-subscription-row="cursor-agent"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const missing = dialog.querySelector<HTMLElement>('[data-subscription="cursor-agent"]')!;
+    assert.equal(missing.dataset.state, "missing");
+    assert.match(missing.textContent ?? "", /Install Cursor's agent/);
   } finally {
     await view.done();
   }

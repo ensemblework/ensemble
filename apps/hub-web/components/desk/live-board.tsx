@@ -7,7 +7,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   BookOpen,
-  Bot,
   Boxes,
   ChartColumn,
   Crosshair,
@@ -26,6 +25,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { api, type DeskLive } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
@@ -451,7 +451,7 @@ export function extraGates(deskId: DeskId, extras: ReadonlySet<DeskExtraId>) {
   return { extras: on, blocked };
 }
 
-const DERIVED_ICON: Record<string, LucideIcon> = { calendar: CalendarClock, agenda: CalendarClock, "focus-now": Crosshair, agents: Bot, "your-week": ChartColumn };
+const DERIVED_ICON: Record<string, LucideIcon> = { calendar: CalendarClock, agenda: CalendarClock, "focus-now": Crosshair, agents: AgentIcon, "your-week": ChartColumn };
 
 let POOL: Map<string, Spec> | null = null;
 /** Every live tile any desk can draw, first desk wins on a shared key. A layout may borrow from here. */

@@ -72,6 +72,9 @@ function cadenceOf(draft: Draft): RoutineCadence {
   return { every: draft.every, time: draft.time, ...(draft.every === "week" ? { days: draft.days } : {}), ...(draft.every === "month" ? { dayOfMonth: draft.dayOfMonth } : {}) };
 }
 
+const listWords = (items: string[]) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+
 /** The schedule in words while it is being picked. */
 function sayCadence(draft: Draft): string {
   switch (draft.every) {
@@ -82,9 +85,10 @@ function sayCadence(draft: Draft): string {
     case "weekday":
       return `Weekdays at ${draft.time}`;
     case "week":
-      return draft.days.length ? `Every ${CRON_DAY.filter((day) => draft.days.includes(day)).map((day) => DAY_NAMES[day]).join(", ")} at ${draft.time}` : "Pick a day";
+      if (!draft.days.length) return "Pick a day";
+      return `${draft.days.length === 1 ? "Every " : ""}${listWords(CRON_DAY.filter((day) => draft.days.includes(day)).map((day) => DAY_NAMES[day]))} at ${draft.time}`;
     case "month":
-      return `Every month on day ${draft.dayOfMonth} at ${draft.time}`;
+      return `Every month on the ${ordinal(draft.dayOfMonth)} at ${draft.time}`;
     case "custom":
       return draft.cron.trim() ? `Cron: ${draft.cron.trim()}` : "Five-field cron, in your time zone";
   }
@@ -97,7 +101,8 @@ function ahead(value: string | null): string {
   const minutes = Math.round((at.getTime() - Date.now()) / 60_000);
   if (minutes < 1) return "now";
   if (minutes < 60) return `in ${minutes} min`;
-  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // 24-hour, like the schedule beside it.
+  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   const today = new Date();
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   if (at.toDateString() === today.toDateString()) return `today at ${time}`;

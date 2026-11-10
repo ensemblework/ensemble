@@ -4,7 +4,6 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
   Award,
-  Bot,
   CalendarClock,
   CalendarRange,
   ChevronDown,
@@ -24,6 +23,7 @@ import {
   Sprout,
   type LucideIcon,
 } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import type { ReactNode } from "react";
 import { InfoTip, MenuItem, Popover, QueryError, Skeleton } from "@/components/ui";
 import { useToast } from "@/components/toast";
@@ -62,7 +62,6 @@ function Header({ data }: { data: WeeklyRecap }) {
   const previous = addDays(data.start, -7);
   const next = addDays(data.start, 7);
   const canGoNext = next <= data.today;
-  const lastDay = addDays(data.end, -1);
   const which = data.current ? "This week" : data.end <= data.today && data.today < addDays(data.end, 7) ? "Last week" : null;
   return (
     <header className="recap-head">
@@ -97,10 +96,6 @@ function Header({ data }: { data: WeeklyRecap }) {
           {data.narrative.split(/(\d+)/).map((part, index) => (index % 2 ? <strong key={index}>{part}</strong> : part))}
         </p>
       )}
-      <p className="recap-note">
-        {weekdayLong(data.start)} {dayMonth(data.start)} to {weekdayLong(lastDay)} {dayMonth(lastDay)}, {data.timeZone.replace(/_/g, " ")} time.{" "}
-        {data.compare === "to_date" ? "Changes compare with this time last week." : "Changes compare with the week before."}
-      </p>
     </header>
   );
 }
@@ -195,7 +190,7 @@ function Body({ data }: { data: WeeklyRecap }) {
             <RecapTile title="Projects moved" icon={FolderKanban} md={6} lg={6} meta={data.projects.length ? plural(data.projects.length, "project") : undefined}>
               <Projects rows={data.projects} />
             </RecapTile>
-            <RecapTile title="Agent work" icon={Bot} md={6} lg={6} right={<Link href="/runs" className="recap-link">Runs</Link>}>
+            <RecapTile title="Agent work" icon={AgentIcon} md={6} lg={6} right={<Link href="/runs" className="recap-link">Runs</Link>}>
               <AgentWork data={data} />
             </RecapTile>
           </>
@@ -290,7 +285,7 @@ function Kpis({ data }: { data: WeeklyRecap }) {
         sub={s.completed ? `${s.completed - s.completedByAgents} by you · ${s.completedByAgents} by agents` : "None finished yet"} />
       <Kpi icon={ListPlus} label="Tasks added" zero={!s.created} value={s.created} delta={delta("created")}
         sub={net > 0 ? `Open work down by ${net}` : net < 0 ? `Open work up by ${-net}` : s.created ? "As many done as added" : "Nothing new"} />
-      <Kpi icon={Bot} label="Agent runs" zero={!s.agentRuns} value={s.agentRuns} delta={delta("agentRuns")}
+      <Kpi icon={AgentIcon} label="Agent runs" zero={!s.agentRuns} value={s.agentRuns} delta={delta("agentRuns")}
         sub={s.agentRuns ? `${s.agentSucceeded} succeeded${data.agents.failed ? ` · ${data.agents.failed} failed` : ""}` : "No runs"} />
       <Kpi icon={Clock3} label="Active in Ensemble" zero={!s.activeMinutes} value={<ActiveValue minutes={s.activeMinutes} />} delta={delta("activeMinutes", shortDuration)}
         sub={<>{activeDays ? `${plural(activeDays, "day")}, ~${shortDuration(s.activeMinutes / activeDays)} each` : "No screen time yet"}<InfoTip label="About active time" text={ACTIVE_NOTE} /></>} />

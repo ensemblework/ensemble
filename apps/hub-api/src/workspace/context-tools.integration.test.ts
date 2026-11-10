@@ -26,7 +26,7 @@ test("a run's context tools answer for its task: the packet, one relation in pag
   const packet = await answerContextTool(ctx, w.task.id, "ensemble_context", {});
   assert.match(packet, /Atlas weekly sync/);
   assert.match(packet, /Could you send the latency budget by Friday\?/);
-  assert.match(packet, /Priya Shah — Product lead · my manager/);
+  assert.match(packet, /Priya Shah: Product lead · my manager/);
   const first = await answerContextTool(ctx, w.task.id, "ensemble_context", { item: `ensemble://project/${w.project.id}`, rel: "open_tasks", limit: 2 });
   assert.match(first, /More: call again with rel "open_tasks" and offset 2/);
   const search = await answerContextTool(ctx, w.task.id, "ensemble_search", { query: "latency budget" });

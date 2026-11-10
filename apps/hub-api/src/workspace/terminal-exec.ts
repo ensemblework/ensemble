@@ -63,7 +63,7 @@ export type PreparedRun =
  * One command line, checked: the folder, the program against the allow-list, git's own rules and
  * hardening, and a confirmation for destructive commands. Throws GuardError with the reason when refused.
  */
-export async function prepareRun(input: { allowed: string[]; cwd: string; line: string; confirmed: boolean; commitAuthor: string; sandboxed?: boolean }): Promise<PreparedRun> {
+export async function prepareRun(input: { allowed: string[]; cwd: string; line: string; confirmed: boolean; sandboxed?: boolean }): Promise<PreparedRun> {
   const scope = scopeOf(input.allowed, input.cwd);
   if (!scope) throw new GuardError("That folder is outside what the terminal may use.");
   const cwd = await jailPath(scope, input.cwd, true);
@@ -74,7 +74,7 @@ export async function prepareRun(input: { allowed: string[]; cwd: string; line: 
   let full = argv;
   if (program === "git") {
     checkGit(argv, { delivery: "push" });
-    full = ["git", ...gitHardening(true, input.commitAuthor), ...argv.slice(1)];
+    full = ["git", ...gitHardening(true), ...argv.slice(1)];
   }
   const warning = DESTRUCTIVE.find(([pattern]) => pattern.test(line))?.[1];
   if (warning && !input.confirmed) return { kind: "confirm", message: warning };

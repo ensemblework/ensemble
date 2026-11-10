@@ -14,7 +14,6 @@ import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
 import { referenceSecrets, runSecretEnv } from "../lib/run-secrets.js";
-import { loadSettings as loadHubSettings } from "../lib/settings.js";
 import { sliceBytes } from "../lib/text.js";
 import { checkGit, checkProgram, childEnv, gitHardening, GuardError, jailPath, parseCommand, sandboxAvailable } from "../workspace/guard.js";
 import { killGroup, runCommand } from "../workspace/runner.js";
@@ -123,8 +122,7 @@ async function prepare(app: App, request: RunRequest, folder: ToolFolder, sandbo
     if (action === "push" || (action === "network" && sub !== "clone")) {
       throw new GuardError(`git ${sub} needs the owner's sign-in, which a node's command never has. Start an agent session for it (node_session_start): Ensemble runs ${sub} there with their sign-in.`);
     }
-    const author = (await loadHubSettings(app.prisma, userId()).catch(() => null))?.terminal.commitAuthor ?? "";
-    return { argv: ["git", ...gitHardening(false, author || "Ensemble Node <node@ensemble.local>"), ...argv.slice(1)], program, cwd: await jailPath(folder.path, request.cwd ?? ".", true) };
+    return { argv: ["git", ...gitHardening(false, "Ensemble Node <node@ensemble.local>"), ...argv.slice(1)], program, cwd: await jailPath(folder.path, request.cwd ?? ".", true) };
   }
   return { argv, program, cwd: await jailPath(folder.path, request.cwd ?? ".", true) };
 }

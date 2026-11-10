@@ -462,7 +462,7 @@ const projectSpec: KindSpec<ProjectAnchor> = {
   load: loadProject,
   detail: (_ctx, project) => ({
     ...card("project", project.id, project.name, { status: project.status, when: iso(project.updatedAt) }),
-    summary: clip([project.summary, project.notes].filter(Boolean).join(" — "), 900),
+    summary: clip([project.summary, project.notes].filter(Boolean).join(" · "), 900),
     facts: { status: project.status, aliases: project.aliases, createdAt: iso(project.createdAt) },
   }),
   relations: [

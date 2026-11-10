@@ -205,7 +205,7 @@ function docsParagraphs(markdown: string): DocsParagraph[] {
         out.push({ text: inlineText(block.inlines), inlines: block.inlines, italic: true });
         break;
       case "rule":
-        out.push({ text: "———", inlines: [{ text: "———" }] });
+        out.push({ text: "────", inlines: [{ text: "────" }] });
         break;
       case "code":
         for (const line of block.text.split("\n")) out.push({ text: line, inlines: [{ text: line, code: true }], code: true });

@@ -8,7 +8,7 @@ test("a handed part goes quoted with its page, and comes back as a card with the
     { text: "", source: { kind: "task" as const, id: "t-1", title: "Write release notes" } },
   ];
   const message = `${quoteAttachments(list)}\n\nIs this realistic?`;
-  assert.equal(message, "> Ship the beta\n> by Friday\n— from “Launch plan”\n\n[Attached: “Write release notes”]\n\nIs this realistic?");
+  assert.equal(message, "> Ship the beta\n> by Friday\nFrom “Launch plan”\n\n[Attached: “Write release notes”]\n\nIs this realistic?");
   assert.deepEqual(splitQuoted(message), {
     parts: [
       { text: "Ship the beta\nby Friday", from: "Launch plan", whole: false },
@@ -21,4 +21,5 @@ test("a handed part goes quoted with its page, and comes back as a card with the
   assert.match(context, /All of the task “Write release notes” \(task id t-1\)/);
   assert.doesNotMatch(message, /p-1|t-1/, "ids stay out of what the person sees");
   assert.deepEqual(splitQuoted("> not an attachment"), { parts: [], rest: "> not an attachment" });
+  assert.deepEqual(splitQuoted("> Ship it\n— from “Plan”\n\nOk?"), { parts: [{ text: "Ship it", from: "Plan", whole: false }], rest: "Ok?" }, "messages sent with the old dash still show as cards");
 });

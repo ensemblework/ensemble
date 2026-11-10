@@ -345,9 +345,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
       await trusted(["add", "-A", "--", ...stageable]);
       const staged = await runTrustedGit({ userId: request.userId, cwd: repo, args: ["diff", "--cached", "--quiet"] });
       if (staged.exitCode === 1) {
-        const settings = await loadSettings(prisma, request.userId);
-        const identity = settings.terminal.commitAuthor.match(/^(.+?)\s*<(.+)>$/) ?? [null, "Ensemble Agent", "agent@ensemble.local"];
-        await trusted(["-c", `user.name=${identity[1]}`, "-c", `user.email=${identity[2]}`, "commit", "--quiet", "--no-verify", "-m", `${review.job.task.title}\n\nAccepted in Ensemble review (job ${review.job.id}).`]);
+        await trusted(["-c", "user.name=Ensemble Agent", "-c", "user.email=agent@ensemble.local", "commit", "--quiet", "--no-verify", "-m", `${review.job.task.title}\n\nAccepted in Ensemble review (job ${review.job.id}).`]);
       }
       commit = await trusted(["rev-parse", "HEAD"]);
     }
@@ -702,9 +700,9 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const source = await resolveSource(request, body);
     const settings = await loadSettings(prisma, request.userId);
-    // Settings' commit author; else git's own; else the Ensemble account, so a computer without a git identity can still commit.
-    let author = settings.terminal.commitAuthor || null;
-    if (!author && !(await git(source.repo, ["config", "user.email"]).catch(() => "")).trim()) {
+    // Git's own identity; else the Ensemble account, so a computer without a git identity can still commit.
+    let author: string | null = null;
+    if (!(await git(source.repo, ["config", "user.email"]).catch(() => "")).trim()) {
       const account = await prisma.user.findUnique({ where: { id: request.userId }, select: { name: true, email: true } });
       if (account?.email) author = `${account.name || account.email.split("@")[0]} <${account.email}>`;
     }
@@ -757,11 +755,9 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     const body = RepoBody.extend({ message: z.string().min(1), all: z.boolean().default(false) }).parse(request.body);
     const repo = await allowedRepo(body.repo, await roots(request.userId));
     const settings = await loadSettings(prisma, request.userId);
-    const identity = settings.terminal.commitAuthor.match(/^(.+?)\s*<(.+)>$/);
     // Repository hooks do not run: a commit from the Code tab (here or from the web) runs no code from the folder.
     const args = [
       ...gitHardening(true),
-      ...(identity ? ["-c", `user.name=${identity[1]}`, "-c", `user.email=${identity[2]}`] : []),
       "commit",
       ...(body.all ? ["-a"] : []),
       ...(settings.terminal.signCommits ? ["-S"] : []),

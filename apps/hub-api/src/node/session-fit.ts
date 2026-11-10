@@ -81,7 +81,7 @@ export async function fitSessions(
 
 /** What the node reads when sessions fit: short, with what each did and why it fits, and the two ways on. */
 export function fitMessage(fits: readonly Fit[]): string {
-  const lines = fits.map((fit, index) => `${index + 1}. ${fit.id} — ${fit.agent} in ${fit.folder} on ${fit.computer}, ${fit.tasks} task${fit.tasks === 1 ? "" : "s"}, ${fit.why}. Did: ${fit.did.join(" | ")}`);
+  const lines = fits.map((fit, index) => `${index + 1}. ${fit.id}: ${fit.agent} in ${fit.folder} on ${fit.computer}, ${fit.tasks} task${fit.tasks === 1 ? "" : "s"}, ${fit.why}. Did: ${fit.did.join(" | ")}`);
   return [
     `Not started yet: ${fits.length === 1 ? "one of your sessions" : `${fits.length} of your sessions`} may fit this work. Continuing one keeps what the agent already learned and its prompt cache, and costs less.`,
     ...lines,

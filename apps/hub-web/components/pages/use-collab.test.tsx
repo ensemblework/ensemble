@@ -148,7 +148,7 @@ test("offline typing stays, says so, and is sent when the connection is back", a
     await act(async () => {
       page.editor.chain().setTextSelection(7).insertContent(" for Friday").run();
     });
-    await waitFor(() => page.status().includes("Offline — your changes will sync when you're back"), "the offline line");
+    await waitFor(() => page.status().includes("Offline. Your changes sync when you're back"), "the offline line");
     assert.equal(drafts().length, 1, "the typing is kept as a draft");
     const leaving = () => {
       const event = new window.Event("beforeunload", { cancelable: true });
