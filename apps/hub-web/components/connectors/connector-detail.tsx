@@ -825,7 +825,7 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
           </div>
           <div className="text-[12.5px] text-muted">
             {status === "connected"
-              ? `${publicOnly ? "Public data only — sign in to use your account. " : account ? `Signed in as ${account}. ` : ""}${
+              ? `${publicOnly ? "Public data only. Sign in to use your account. " : account ? `Signed in as ${account}. ` : ""}${
                   tools.length
                     ? `${on} of ${tools.length} tools on. Tools that change things wait for your Apply.`
                     : `${entry.state.mcp?.toolCount ?? 0} tools. Tools that change things wait for your Apply.`

@@ -70,8 +70,8 @@
       "license": "CC0 canonical vendor symbol"
     },
     "opencode": {
-      "source": "https://github.com/simple-icons/simple-icons",
-      "asset": "opencode.svg (from github.com/anomalyco/opencode packages/identity/mark.svg)",
+      "source": "https://opencode.ai/favicon.svg",
+      "asset": "opencode.svg (the frame and its lower block; the block at 45% so a one-colour mask keeps it)",
       "license": "CC0 canonical vendor symbol"
     }
   }

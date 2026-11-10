@@ -251,7 +251,6 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "terminal.folders", label: "Terminal folder", keywords: "terminal folder roots", about: "Folders the terminal may open.", href: at("data", "jump-terminal-terminal-folder"), ownerOnly: true },
     { id: "terminal.passkeys", label: "Passkeys", keywords: "passkey touch id fingerprint unlock terminal", about: "The passkeys that unlock the terminal.", href: at("data", "jump-terminal-passkeys"), ownerOnly: true },
     { id: "terminal.branch-prefix", label: "Branch prefix for agent work", keywords: "branch prefix git agent", about: "The prefix of branches agents create.", href: at("data", "jump-terminal-branch-prefix-for-agent-work"), ownerOnly: true },
-    { id: "terminal.author", label: "Commit author", keywords: "commit author git name email", about: "The author on commits made here.", href: at("data", "jump-terminal-commit-author"), ownerOnly: true },
     { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("data", "jump-terminal-sign-commits"), ownerOnly: true },
   ]),
   ...group("data", "Delete my data", [

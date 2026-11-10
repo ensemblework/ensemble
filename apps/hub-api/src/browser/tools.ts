@@ -66,7 +66,7 @@ function viewSummary(view: ViewResult): string {
 function extractSummary(page: ExtractResult): string {
   const lines = [`${page.title || page.url} (${page.url})${page.tab ? ` in tab ${page.tab}` : page.mode === "clean" ? ", read in a clean browser" : ""}.`];
   if (page.humanCheck) lines.push(`${HUMAN_CHECK_HINT} It shows ${page.humanCheckKind}.`);
-  if (page.products.length) lines.push(`Products: ${page.products.slice(0, 15).map((product) => `${product.name}${product.price !== null ? ` — ${product.currency ?? ""} ${product.price}`.replace("  ", " ") : ""}${product.availability ? ` (${product.availability})` : ""}${product.url ? ` ${product.url}` : ""}`).join("; ")}`);
+  if (page.products.length) lines.push(`Products: ${page.products.slice(0, 15).map((product) => `${product.name}${product.price !== null ? `: ${product.currency ?? ""} ${product.price}`.replace("  ", " ") : ""}${product.availability ? ` (${product.availability})` : ""}${product.url ? ` ${product.url}` : ""}`).join("; ")}`);
   lines.push(`${page.markdown || "(no readable text)"}${page.truncated ? `\n(cut at ${page.markdown.length} of ${page.chars} characters: ask for more with maxChars, or a focus)` : ""}`);
   return lines.join("\n");
 }

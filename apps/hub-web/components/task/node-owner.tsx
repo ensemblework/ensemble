@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Users } from "lucide-react";
+import { Users } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import { useEffect, useId, useRef, useState } from "react";
 import { api, type NodeAssignable, type NodeTaskWork, type TaskRecord } from "@/lib/api";
 import { NO_NODES, nodeOwnerText } from "@/lib/node-owner";
@@ -81,7 +82,7 @@ export function NodeOwnerMark({ task }: { task: Pick<TaskRecord, "owner" | "assi
   const node = crew ? undefined : mine.nodes.find((row) => row.id === task.assigneeNodeId);
   return (
     <span title={crew ? `The crew ${text} does it` : `${text} does it`} className="inline-flex h-[18px] max-w-[140px] items-center gap-1 rounded-full bg-ink/10 px-1.5 text-[11px] font-medium leading-none text-ink">
-      {crew ? <Users size={11} aria-hidden /> : node ? <NodeFace look={node.avatar} paused={node.paused} size={13} /> : <Bot size={11} aria-hidden />}
+      {crew ? <Users size={11} aria-hidden /> : node ? <NodeFace look={node.avatar} paused={node.paused} size={13} /> : <AgentIcon size={11} aria-hidden />}
       <span className="truncate">{text}</span>
     </span>
   );

@@ -30,7 +30,7 @@ export const skillTools = [
         where: { id: input.skillId, userId: ctx.userId, deletedAt: null },
         select: { id: true, name: true, slug: true, version: true, body: true },
       });
-      if (!skill) throw new Error("call hub_list_skills and match by name — never invent a skill.");
+      if (!skill) throw new Error("call hub_list_skills and match by name; never invent a skill.");
       const body = skill.body.slice(input.offset, input.offset + 4500);
       const versions = input.includeVersions ? await ctx.prisma.skillVersion.findMany({ where: { skillId: skill.id }, orderBy: { version: "desc" }, take: 3, select: { version: true, note: true, createdAt: true } }) : undefined;
       return toolOk(`Read “${skill.name}”.`, { skill: { ...skill, body }, offset: input.offset, total: skill.body.length, ...(input.offset + body.length < skill.body.length ? { nextOffset: input.offset + body.length } : {}), ...(versions ? { versions } : {}) }, { href: `/skills?skill=${skill.id}` });

@@ -99,7 +99,7 @@ export function shopSummary(result: ShopResult): string {
   for (const store of result.stores) {
     const head = `${store.name}: ${store.status === "ok" ? "" : `${store.status.replace("_", " ")}. `}${store.shown ? `[${store.shown}] ` : ""}${store.mode === "clean" ? "[read-only view] " : ""}`;
     if (store.offers.length) {
-      lines.push(`- ${head}${store.offers.map((offer) => `${offer.title} — ${offer.priceText || "price not shown"}${offer.availability ? ` (${offer.availability})` : ""}${offer.delivery ? ` [${offer.delivery}]` : ""}${offer.sponsored ? " [sponsored]" : ""}${offer.url ? ` ${offer.url}` : ""}`).join("; ")}`);
+      lines.push(`- ${head}${store.offers.map((offer) => `${offer.title}: ${offer.priceText || "price not shown"}${offer.availability ? ` (${offer.availability})` : ""}${offer.delivery ? ` [${offer.delivery}]` : ""}${offer.sponsored ? " [sponsored]" : ""}${offer.url ? ` ${offer.url}` : ""}`).join("; ")}`);
     } else {
       lines.push(`- ${head}${store.note ?? "no offers read"}${store.text ? `\n  Its page says: ${store.text.replace(/\s+/g, " ").slice(0, 1_500)}` : ""}`);
     }

@@ -409,7 +409,7 @@ test("slides_create fills the cover, adds a slide per spec with bullets, then wr
     return json({ replies: [] });
   };
   const input = { title: "Q4 review", subtitle: "Fieldnote", slides: [{ title: "Wins", bullets: ["Imports", "  Notion"], notes: "Mention Sam" }] };
-  assert.equal(await preview("slides_create", input), "Create Google Slides deck “Q4 review” in Mira's Google Drive (mira@fieldnote.example) with 2 slides:\n1. Title slide — Fieldnote\n2. Wins (with notes)");
+  assert.equal(await preview("slides_create", input), "Create Google Slides deck “Q4 review” in Mira's Google Drive (mira@fieldnote.example) with 2 slides:\n1. Title slide: Fieldnote\n2. Wins (with notes)");
   const result = await run("slides_create", input);
   const first = (seen[1]!.body as { requests: Array<Record<string, any>> }).requests;
   assert.deepEqual(first[0], { insertText: { objectId: "t0", text: "Q4 review" } });

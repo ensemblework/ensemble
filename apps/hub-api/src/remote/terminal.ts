@@ -120,8 +120,7 @@ export async function terminalAnswerFor(app: App, client: HostedClient, request:
     const home = await workspaceRoot();
     if (request.op === "status") return answer(200, { roots: allowed, home, sandboxed: webTerminalSandboxed() });
     if (request.op === "cd") return answer(200, await resolveCd(allowed, request.cwd || home, request.path ?? ""));
-    const hub = await loadHubSettings(app.prisma, userId());
-    const prepared = await prepareRun({ allowed, cwd: request.cwd || home, line: request.line ?? "", confirmed: request.confirmed, commitAuthor: hub.terminal.commitAuthor, sandboxed: true });
+    const prepared = await prepareRun({ allowed, cwd: request.cwd || home, line: request.line ?? "", confirmed: request.confirmed, sandboxed: true });
     // From the web, commands run only under this computer's OS sandbox: files change only inside the folder.
     if (!webTerminalSandboxed()) return answer(409, { error: NO_SANDBOX });
     if (prepared.kind === "confirm") return answer(428, { confirm: prepared.message });

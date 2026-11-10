@@ -483,7 +483,6 @@ export const TerminalSettingsShape = z.object({
   roots: z.array(z.string()).default([]),
   keepReviewCache: z.boolean().default(false),
   branchPrefix: z.string().default("ensemble/"),
-  commitAuthor: z.string().default(""),
   signCommits: z.boolean().default(false),
 });
 export type TerminalSettingsShape = z.infer<typeof TerminalSettingsShape>;

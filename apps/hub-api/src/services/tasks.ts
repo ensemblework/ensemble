@@ -147,12 +147,12 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function labelPriority(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "none";
   return PRIORITY_LABEL[value] ?? value;
 }
 
 export function labelStatus(value: string | null | undefined): string {
-  if (!value) return "—";
+  if (!value) return "none";
   return STATUS_LABEL[value] ?? value;
 }
 
@@ -374,7 +374,7 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
 
 export function taskChangePreview(title: string, before: Record<string, unknown>, after: Record<string, unknown>): string {
   const parts: string[] = [];
-  const show = (key: string, label: string, format: (value: unknown) => string = (value) => String(value ?? "—")) => {
+  const show = (key: string, label: string, format: (value: unknown) => string = (value) => String(value ?? "none")) => {
     if (after[key] === undefined || after[key] === before[key]) return;
     parts.push(`${label} ${format(before[key])} → ${format(after[key])}`);
   };

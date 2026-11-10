@@ -21,19 +21,19 @@ function folder(): string {
 test("one allow-listed command in an allowed folder; destructive ones ask first; shells and chains are refused", async () => {
   const root = folder();
   const allowed = [root];
-  const status = await prepareRun({ allowed, cwd: root, line: "git status", confirmed: false, commitAuthor: "", sandboxed: true });
+  const status = await prepareRun({ allowed, cwd: root, line: "git status", confirmed: false, sandboxed: true });
   assert.equal(status.kind, "run");
   if (status.kind === "run") {
     assert.deepEqual(status.argv, ["git", "status"]);
     assert.ok(status.full.includes("core.hooksPath=/dev/null"), "git runs with the repository's hooks off");
   }
-  const reset = await prepareRun({ allowed, cwd: root, line: "git reset --hard HEAD", confirmed: false, commitAuthor: "", sandboxed: true });
+  const reset = await prepareRun({ allowed, cwd: root, line: "git reset --hard HEAD", confirmed: false, sandboxed: true });
   assert.equal(reset.kind, "confirm");
-  assert.equal((await prepareRun({ allowed, cwd: root, line: "git reset --hard HEAD", confirmed: true, commitAuthor: "", sandboxed: true })).kind, "run");
+  assert.equal((await prepareRun({ allowed, cwd: root, line: "git reset --hard HEAD", confirmed: true, sandboxed: true })).kind, "run");
   for (const line of ["ls; rm -rf /", "cat a | sh", "echo $(id)", "sudo ls", "ssh example.com", "bash -c 'id'"]) {
-    await assert.rejects(prepareRun({ allowed, cwd: root, line, confirmed: true, commitAuthor: "", sandboxed: true }), Error, line);
+    await assert.rejects(prepareRun({ allowed, cwd: root, line, confirmed: true, sandboxed: true }), Error, line);
   }
-  await assert.rejects(prepareRun({ allowed, cwd: tmpdir(), line: "ls", confirmed: false, commitAuthor: "", sandboxed: true }), /outside/);
+  await assert.rejects(prepareRun({ allowed, cwd: tmpdir(), line: "ls", confirmed: false, sandboxed: true }), /outside/);
 });
 
 test("cd stays inside the allowed folders, and an absolute path may only move to another of them", async () => {

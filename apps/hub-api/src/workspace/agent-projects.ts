@@ -95,13 +95,13 @@ export async function projectBrief(prisma: PrismaClient, userId: string, project
   const doc = PageDocument.safeParse(project.content);
   const page = clip(pageText(doc.success ? doc.data : null, ""), 4000);
   const repos = project.repoLinks.map(({ repo }) =>
-    `- ${repo.fullName}${repo.url ? ` — ${repo.url}` : ""}${repo.defaultBranch ? ` (default branch ${repo.defaultBranch})` : ""}${repo.description ? `: ${clip(repo.description, 160)}` : ""}`,
+    `- ${repo.fullName}${repo.url ? `: ${repo.url}` : ""}${repo.defaultBranch ? ` (default branch ${repo.defaultBranch})` : ""}${repo.description ? `: ${clip(repo.description, 160)}` : ""}`,
   );
   const people = project.people.map(({ role, person }) => {
     const bits = [role || person.role, person.team, person.relationship].filter(Boolean).join(" · ");
-    return `- ${person.name}${bits ? ` — ${bits}` : ""}${person.email ? ` <${person.email}>` : ""}`;
+    return `- ${person.name}${bits ? `: ${bits}` : ""}${person.email ? ` <${person.email}>` : ""}`;
   });
-  const deliverables = project.deliverables.map((row) => `- ${row.title}${row.due ? ` — due ${row.due.toISOString().slice(0, 10)}` : ""}${row.owner ? ` · ${row.owner}` : ""}${row.notes ? `: ${clip(row.notes, 160)}` : ""}`);
+  const deliverables = project.deliverables.map((row) => `- ${row.title}${row.due ? `, due ${row.due.toISOString().slice(0, 10)}` : ""}${row.owner ? ` · ${row.owner}` : ""}${row.notes ? `: ${clip(row.notes, 160)}` : ""}`);
   const brief = clip(
     [
       `# ${project.name}`,

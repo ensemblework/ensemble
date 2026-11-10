@@ -141,7 +141,7 @@ const STEPS: Record<AppId, GuideStep[]> = {
     {
       kind: "claude-code",
       title: "Add Ensemble to Claude Code",
-      body: "Copy this command and run it in Terminal or PowerShell, from any folder. It saves the server and your key. This Ensemble folder also contains a file named .mcp.json, which Claude Code reads when you work inside the folder — but only after the key is set.",
+      body: "Copy this command and run it in Terminal or PowerShell, from any folder. It saves the server and your key. This Ensemble folder also contains a file named .mcp.json, which Claude Code reads when you work inside the folder, but only after the key is set.",
       scene: "terminal",
       hotspot: "claude mcp add",
       os: true,
@@ -268,7 +268,7 @@ const STEPS: Record<AppId, GuideStep[]> = {
     {
       kind: "cline",
       title: "Add Ensemble in Cline",
-      body: "In the Cline panel, click the MCP Servers icon in the top toolbar. Open the Configure tab, then Configure MCP Servers. Paste this block. Leave the type field out — Cline treats a command as a local program. For the Cline terminal app, the same block goes in the file below, or you can run cline mcp and follow the prompts.",
+      body: "In the Cline panel, click the MCP Servers icon in the top toolbar. Open the Configure tab, then Configure MCP Servers. Paste this block. Leave the type field out: Cline treats a command as a local program. For the Cline terminal app, the same block goes in the file below, or you can run cline mcp and follow the prompts.",
       scene: "paste",
       hotspot: "Configure MCP Servers",
       os: true,
@@ -372,7 +372,7 @@ const EXTRA: Partial<Record<AppId, Trouble[]>> = {
   vscode: [
     {
       problem: "Ensemble never appears in the tools list.",
-      fix: "Run Developer: Reload Window. Then MCP: List Servers, start ensemble, and open Configure Tools in Chat. A server that asks you to type the key in a popup is dropped — the key has to be the environment line from the earlier step.",
+      fix: "Run Developer: Reload Window. Then MCP: List Servers, start ensemble, and open Configure Tools in Chat. A server that asks you to type the key in a popup is dropped. The key has to be the environment line from the earlier step.",
     },
     {
       problem: "The Add to VS Code button does nothing.",

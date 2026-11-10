@@ -4,6 +4,7 @@ import { PageBoardPicker } from "../pages/page-board-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
 import {
+  BookOpen,
   History,
   Calendar,
   CheckSquare,
@@ -722,7 +723,7 @@ export function TaskPage({
               )}
             </Popover>
           </PropertyRow>
-          <PropertyRow icon={Orbit} label="Skills">
+          <PropertyRow icon={BookOpen} label="Skills">
             <Popover
               trigger={(_open, toggle) => (
                 <ValueButton onClick={toggle} empty={!record.skillIds.length}>

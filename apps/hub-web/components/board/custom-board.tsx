@@ -76,7 +76,7 @@ export function CustomBoard({ id }: { id: string }) {
   const byId = useMemo(() => new Map((query.data?.pages ?? []).map((page) => [page.id, page])), [query.data?.pages]);
   const titleOf = useCallback((pageId: UniqueIdentifier) => byId.get(String(pageId))?.title ?? "Page", [byId]);
   const motion = useBoardMotion(titleOf);
-  const moveMotion = useBoardMoveMotion(boardRef, dragId !== null, `board:${id}`, (query.data?.pages ?? []).map((page) => ({ id: page.id, column: page.columnId ?? "", completion: null })));
+  const moveMotion = useBoardMoveMotion(boardRef, dragId !== null, `board:${id}`, (query.data?.pages ?? []).map((page) => ({ id: page.id, column: page.columnId ?? "" })));
   // Freeze each column's height while a card is in the air, as the Ensemble board does, so the page does not bounce.
   useLayoutEffect(() => {
     const root = boardRef.current;

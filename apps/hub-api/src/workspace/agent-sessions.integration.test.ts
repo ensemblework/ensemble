@@ -51,7 +51,7 @@ test("a project's folder is kept by the index and its brief is rewritten only wh
   const person = await db.person.create({ data: { userId: user.id, name: "Mira Chen" } });
   await db.projectPerson.create({ data: { projectId: project.id, personId: person.id, role: "Lead" } });
   const brief = (await projectBrief(db, user.id, project.id))!;
-  assert.match(brief.brief, /# Atlas Search[\s\S]*Ranking for the new search[\s\S]*Mira Chen — Lead/);
+  assert.match(brief.brief, /# Atlas Search[\s\S]*Ranking for the new search[\s\S]*Mira Chen: Lead/);
 
   const workspace = join(scratch, "ws1");
   const folder = await projectFolder(workspace, brief);

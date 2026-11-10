@@ -6,7 +6,7 @@
 import { INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE } from "@ensemble/shared-types";
 import { includedMessage } from "../included/errors.js";
 
-export const DECRYPT_MESSAGE = "This stored key can't be decrypted — re-enter it in Settings → Models.";
+export const DECRYPT_MESSAGE = "This stored key can't be decrypted. Re-enter it in Settings → Models.";
 
 export class DecryptError extends Error {
   readonly statusCode = 409;

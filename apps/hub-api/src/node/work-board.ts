@@ -53,7 +53,7 @@ export async function workBoard(prisma: PrismaClient, node: Pick<NodeAgent, "id"
     const here = mission.originRoomId === roomId ? "" : " (asked in another room)";
     const steps = mission.steps.map((step) => {
       const outcome = step.outcome !== "unknown" ? `/${step.outcome}` : "";
-      const doing = step.status === "working" && step.progress ? ` — ${truncateText(step.progress.replace(/\s+/g, " "), 120)}` : "";
+      const doing = step.status === "working" && step.progress ? `: ${truncateText(step.progress.replace(/\s+/g, " "), 120)}` : "";
       return `@${step.handle} ${step.kind} ${step.status}${outcome}${step.attempt > 1 ? ` (attempt ${step.attempt})` : ""}${doing}`;
     });
     lines.push(`- ${mission.kind === "self" ? "Own work" : "Plan"} [${mission.id}] ${mission.status}${here}: ${steps.join("; ") || "no steps yet"}`);
@@ -61,7 +61,7 @@ export async function workBoard(prisma: PrismaClient, node: Pick<NodeAgent, "id"
   for (const run of runs) {
     const row = job.get(run.jobId);
     if (!row || !LIVE_JOB.includes(row.status)) continue;
-    lines.push(`- Session ${run.sessionId ?? run.jobId} (${row.provider ?? "agent"} on ${row.device?.name ?? "a computer"}): ${row.status}${row.progress ? ` — ${truncateText(row.progress.replace(/\s+/g, " "), 140)}` : ""}${run.prompt ? `; asked: “${truncateText(run.prompt.replace(/\s+/g, " "), 100)}”` : ""} (${ago(run.createdAt)})`);
+    lines.push(`- Session ${run.sessionId ?? run.jobId} (${row.provider ?? "agent"} on ${row.device?.name ?? "a computer"}): ${row.status}${row.progress ? `: ${truncateText(row.progress.replace(/\s+/g, " "), 140)}` : ""}${run.prompt ? `; asked: “${truncateText(run.prompt.replace(/\s+/g, " "), 100)}”` : ""} (${ago(run.createdAt)})`);
   }
   for (const card of cards) lines.push(`- Waiting for your owner since ${ago(card.createdAt)}: ${truncateText(card.body.replace(/\s+/g, " "), 140)}`);
   // Ensemble tasks your owner gave you, or a crew you lead (docs/35 §6.6).

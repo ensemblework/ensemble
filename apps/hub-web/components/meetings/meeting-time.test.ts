@@ -10,7 +10,7 @@ test("a meeting card says the day and the time the meeting started", () => {
   assert.equal(meetingWhen(new Date(2026, 9, 12, 16, 0), now), "Mon, 12 Oct, 4:00 pm");
   assert.equal(meetingWhen(new Date(2026, 8, 3, 11, 0), now), "3 Sept, 11:00 am");
   assert.equal(meetingWhen(new Date(2025, 8, 3, 11, 0), now), "3 Sept 2025, 11:00 am");
-  assert.equal(meetingWhen("not a date", now), "—");
+  assert.equal(meetingWhen("not a date", now), "No date");
 });
 
 test("new notes are titled with when they started, so two notes on one day differ", () => {

@@ -61,7 +61,6 @@ async function run(title: string, over: { unattended?: boolean; provider?: strin
     touched: new Set<string>(),
     wrotePage: false,
     finished: null,
-    commitAuthor: "Mira Chen <mira@example.test>",
     signal: control.signal,
     progress: async () => undefined,
     event: async (kind: string, data: Record<string, unknown>) => void (await h.prisma.workspaceEvent.create({ data: { jobId: id, kind, data: data as never } })),

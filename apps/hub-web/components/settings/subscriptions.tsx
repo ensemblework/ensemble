@@ -10,9 +10,10 @@ import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/ap
 import { relative, untilLabel } from "@/lib/format";
 import { modelFacts } from "@/lib/engine-models";
 import { useToast } from "../toast";
-import { cx, Tag } from "../ui";
+import { cx, InfoTip, Tag } from "../ui";
 import { ConnectComputerButton } from "./connect-computer";
-import { navigateSettings } from "./url-state";
+import { navigateSettings, useSettingsLocation } from "./url-state";
+import { SubscriptionsDialog } from "./subscriptions-dialog";
 import { modelBrand, ProviderLogo } from "../connectors/provider-logo";
 
 type Patch = (patch: Record<string, unknown>) => void;
@@ -54,7 +55,7 @@ const viaText = (agent: SubscriptionAgent): string => {
   return `via ${program}${agent.version ? ` ${agent.version}` : ""}`;
 };
 
-function statusOf(agent: SubscriptionAgent | null): { tone: "green" | "orange" | "gray" | "blue"; text: string } {
+export function statusOf(agent: SubscriptionAgent | null): { tone: "green" | "orange" | "gray" | "blue"; text: string } {
   if (!agent) return { tone: "gray", text: "Not on this computer" };
   if (agent.problem) return { tone: "orange", text: "Needs a look" };
   if (agent.signedIn === false) return { tone: "orange", text: "Not signed in" };
@@ -95,7 +96,7 @@ export function UsageBars({ windows, label }: { windows: UsageWindow[]; label: s
   );
 }
 
-function SubscriptionTile({
+export function SubscriptionTile({
   id,
   agent,
   computer,
@@ -103,6 +104,7 @@ function SubscriptionTile({
   patch,
   onSignIn,
   signingIn,
+  full = false,
 }: {
   id: SubscriptionProvider;
   agent: SubscriptionAgent | null;
@@ -111,6 +113,8 @@ function SubscriptionTile({
   patch: Patch;
   onSignIn: () => void;
   signingIn: boolean;
+  /** In the Manage dialog: every model, and what the plan is. */
+  full?: boolean;
 }) {
   const info = SUBSCRIPTION_INFO[id];
   const status = statusOf(agent);
@@ -140,7 +144,7 @@ function SubscriptionTile({
       {agent?.limits?.length ? <UsageBars windows={agent.limits} label={info.label} /> : null}
       {agent ? (
         <div className="flex flex-wrap gap-1" aria-label={`${info.label} models`}>
-          {agent.models.slice(0, 6).map((row) => (
+          {(full ? agent.models : agent.models.slice(0, 6)).map((row) => (
             <button
               key={row.id}
               type="button"
@@ -155,12 +159,13 @@ function SubscriptionTile({
               {row.label}
             </button>
           ))}
-          {agent.models.length > 6 ? <span className="px-1 py-0.5 text-[11.5px] text-faint">+{agent.models.length - 6} more in the tier pickers</span> : null}
+          {!full && agent.models.length > 6 ? <span className="px-1 py-0.5 text-[11.5px] text-faint">+{agent.models.length - 6} more in the tier pickers</span> : null}
           {facts ? <p className="w-full px-0.5 text-[11.5px] text-faint" data-testid="subscription-model-facts">{chosen!.label}: {facts}</p> : null}
         </div>
       ) : (
         <p className="text-[12px] text-muted">Needs {info.program}.</p>
       )}
+      {full ? <p className="text-[12px] text-faint">Works with {info.plan}.</p> : null}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11.5px] text-faint">{using.length ? `In use: ${using.join(", ")}` : ""}</span>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -228,20 +233,42 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const computers = view.data?.computers ?? [];
+  const location = useSettingsLocation();
+  const found = computer ? SUBSCRIPTION_PROVIDERS.filter((id) => computer.agents.some((row) => row.id === id)) : [];
+  const tile = (id: SubscriptionProvider, full = false) => (
+    <SubscriptionTile
+      key={id}
+      id={id}
+      agent={computer?.agents.find((row) => row.id === id) ?? null}
+      computer={computer}
+      settings={settings}
+      patch={patch}
+      signingIn={signIn.isPending && signIn.variables === id}
+      onSignIn={() => signIn.mutate(id)}
+      full={full}
+    />
+  );
+  const checkButton = computer ? (
+    <button type="button" className="btn shrink-0" onClick={() => check.mutate()} disabled={check.isPending || !computer.online || !computer.ready} title="Look for subscriptions on this computer again">
+      <RefreshCw size={12} className={cx((check.isPending || fast) && "animate-spin")} aria-hidden /> Check again
+    </button>
+  ) : null;
   return (
     <div className="rounded-xl border border-line bg-panel p-4" data-testid="subscriptions-card">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-[14.5px] font-semibold" data-jump-label="Your AI subscriptions">Your AI subscriptions</h3>
-          <p className="mt-0.5 max-w-[620px] text-[12.5px] leading-[18px] text-muted">
-            Use the Claude, ChatGPT, Cursor or Copilot plan you already pay for. It runs on your own computer with your own sign-in, so the assistant, @ensemble on pages and the rest of Ensemble's AI cost you nothing extra here.
-          </p>
+          <h3 className="flex items-center gap-1.5 text-[14.5px] font-semibold" data-jump-label="Your AI subscriptions">
+            Your AI subscriptions
+            <InfoTip text="Use the Claude, ChatGPT, Cursor or Copilot plan you already pay for. It runs on your own computer with your own sign-in, so the assistant, @ensemble on pages and the rest of Ensemble's AI cost you nothing extra here." />
+          </h3>
+          <p className="mt-0.5 text-[12.5px] text-muted">Plans you already pay for, on your own computer.</p>
         </div>
-        {computer ? (
-          <button type="button" className="btn shrink-0" onClick={() => check.mutate()} disabled={check.isPending || !computer.online || !computer.ready}>
-            <RefreshCw size={12} className={cx((check.isPending || fast) && "animate-spin")} aria-hidden /> Check again
+        <div className="flex shrink-0 items-center gap-1.5">
+          {checkButton}
+          <button type="button" className="btn shrink-0" aria-haspopup="dialog" onClick={() => navigateSettings({ dialog: "subscriptions" })} data-testid="subscriptions-manage">
+            Manage subscriptions
           </button>
-        ) : null}
+        </div>
       </div>
       {view.isLoading ? <div className="mt-4 h-24 animate-pulse rounded-xl bg-raised" /> : null}
       {view.error ? <p className="mt-3 text-[12.5px] text-warn">{(view.error as Error).message}</p> : null}
@@ -259,51 +286,63 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
       ) : null}
       {computer ? (
         <>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
-            <span className="text-muted">Runs on</span>
-            {computers.length > 1 ? (
-              <select
-                className="field py-1 text-[12.5px]"
-                aria-label="Computer that runs your subscriptions"
-                value={settings.models.computer ?? ""}
-                onChange={(event) => patch({ models: { computer: event.target.value || null } })}
-              >
-                <option value="">The computer online most recently</option>
-                {computers.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.name}
-                    {row.online ? "" : " (offline)"}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-raised px-2 py-0.5">
-              <span className={cx("size-1.5 rounded-full", computer.online ? "bg-ok" : "bg-line-strong")} aria-hidden />
-              {computer.name}
-              <span className="text-faint">{computer.online ? "online" : computer.lastSeenAt ? `last seen ${relative(computer.lastSeenAt)}` : "offline"}</span>
-            </span>
-          </div>
-          {!computer.online ? (
-            <p className="mt-2 text-[12.5px] text-warn">{computer.name} is offline. Open Ensemble on it (the desktop app, or `ensemble` in a terminal) so the assistant can use your subscriptions.</p>
-          ) : !computer.ready ? (
-            <p className="mt-2 text-[12.5px] text-warn">Update Ensemble on {computer.name} to use your subscriptions (the CLI 0.3.10 or the desktop app 0.3.7, or newer).</p>
+          <ComputerLine computer={computer} computers={computers} settings={settings} patch={patch} />
+          {found.length ? (
+            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2" data-testid="subscriptions-grid">
+              {found.map((id) => tile(id))}
+            </div>
+          ) : computer.online && computer.ready ? (
+            <p className="mt-3 text-[12.5px] text-muted" data-testid="subscriptions-none-found">
+              None found on {computer.name} yet. Manage subscriptions shows every plan Ensemble can use and how to add it.
+            </p>
           ) : null}
-          <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2" data-testid="subscriptions-grid">
-            {SUBSCRIPTION_PROVIDERS.map((id) => (
-              <SubscriptionTile
-                key={id}
-                id={id}
-                agent={computer.agents.find((row) => row.id === id) ?? null}
-                computer={computer}
-                settings={settings}
-                patch={patch}
-                signingIn={signIn.isPending && signIn.variables === id}
-                onSignIn={() => signIn.mutate(id)}
-              />
-            ))}
-          </div>
         </>
       ) : null}
+      <SubscriptionsDialog
+        open={location.dialog === "subscriptions"}
+        onClose={() => navigateSettings({ dialog: null })}
+        computer={computer}
+        tile={(id) => tile(id, true)}
+        checkButton={checkButton}
+        header={computer ? <ComputerLine computer={computer} computers={computers} settings={settings} patch={patch} /> : null}
+      />
     </div>
+  );
+}
+
+/** Which computer runs the subscriptions, whether it is online, and why it cannot run them yet. */
+function ComputerLine({ computer, computers, settings, patch }: { computer: SubscriptionComputer; computers: SubscriptionComputer[]; settings: Settings; patch: Patch }) {
+  return (
+    <>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px]">
+        <span className="text-muted">Runs on</span>
+        {computers.length > 1 ? (
+          <select
+            className="field py-1 text-[12.5px]"
+            aria-label="Computer that runs your subscriptions"
+            value={settings.models.computer ?? ""}
+            onChange={(event) => patch({ models: { computer: event.target.value || null } })}
+          >
+            <option value="">The computer online most recently</option>
+            {computers.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+                {row.online ? "" : " (offline)"}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-raised px-2 py-0.5">
+          <span className={cx("size-1.5 rounded-full", computer.online ? "bg-ok" : "bg-line-strong")} aria-hidden />
+          {computer.name}
+          <span className="text-faint">{computer.online ? "online" : computer.lastSeenAt ? `last seen ${relative(computer.lastSeenAt)}` : "offline"}</span>
+        </span>
+      </div>
+      {!computer.online ? (
+        <p className="mt-2 text-[12.5px] text-warn">{computer.name} is offline. Open Ensemble on it (the desktop app, or `ensemble` in a terminal) so the assistant can use your subscriptions.</p>
+      ) : !computer.ready ? (
+        <p className="mt-2 text-[12.5px] text-warn">Update Ensemble on {computer.name} to use your subscriptions (the CLI 0.3.10 or the desktop app 0.3.7, or newer).</p>
+      ) : null}
+    </>
   );
 }

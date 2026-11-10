@@ -335,7 +335,7 @@ export const powerpointCreate = defineTool({
     const where = await whose(ctx, "microsoft", "OneDrive");
     const list = input.slides.slice(0, 12).map((slide, index) => `${index + 2}. ${slide.title}${slide.notes ? " (with notes)" : ""}`);
     const more = input.slides.length > 12 ? `\n…and ${plural(input.slides.length - 12, "more slide")}` : "";
-    return `Create PowerPoint deck ${quote(fileName(input.title, "pptx"))} in ${where}, folder ${ENSEMBLE_FOLDER}, with ${plural(input.slides.length + 1, "slide")}:\n1. Title slide${input.subtitle ? ` — ${input.subtitle}` : ""}\n${list.join("\n")}${more}`;
+    return `Create PowerPoint deck ${quote(fileName(input.title, "pptx"))} in ${where}, folder ${ENSEMBLE_FOLDER}, with ${plural(input.slides.length + 1, "slide")}:\n1. Title slide${input.subtitle ? `: ${input.subtitle}` : ""}\n${list.join("\n")}${more}`;
   },
   async run(ctx, input) {
     const token = await appToken(ctx, POWERPOINT_WRITE);

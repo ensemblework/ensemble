@@ -237,7 +237,7 @@ export function collabStatusText(status: CollabStatus, locked: boolean): string 
     case "saving":
       return "Saving…";
     case "offline":
-      return "Offline — your changes will sync when you're back";
+      return "Offline. Your changes sync when you're back";
     case "lost":
       return "Not saved";
     default:

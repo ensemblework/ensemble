@@ -176,7 +176,7 @@ test("web_task reads the tab, asks the model for one action at a time, and retur
     assert.equal(steps.length, 2, "one model call per step");
     assert.ok(steps.every((row) => row.effort === "low" && row.tools.length === 0));
     assert.match(steps[0]!.last, /^Goal: Find yesterday's usage on the portal\n\nStep 1 of 8\./);
-    assert.match(steps[0]!.last, /Page now \(https:\/\/portal\.example\.test\/ — Portal\):\nPortal\n- heading "Portal"/);
+    assert.match(steps[0]!.last, /Page now \(https:\/\/portal\.example\.test\/, Portal\):\nPortal\n- heading "Portal"/);
     assert.match(steps[1]!.last, /Done so far:\n1\. goto https:\/\/portal\.example\.test\/ → Opened t1: Portal\.\n2\. click e3 → Clicked e3; the tab shows Usage\./);
     const reply = (await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!;
     assert.equal(reply.body, "Result: web_task done: Yesterday's usage was 42 GB.");
@@ -197,7 +197,7 @@ test("a click that opens a new window (a payment popup): web_task goes on there 
     await say(mira, room.id, "find out what the payment page asks for");
     assert.deepEqual(device.heard.map((row) => [row.name, row.input.tab]), [["browser_open", undefined], ["browser_snapshot", "t1"], ["browser_click", "t1"], ["browser_snapshot", "t2"]]);
     assert.match(subAgent()[1]!.last, /2\. click e6 → Clicked e6; the tab shows Your cart\. It opened a new window, tab t2: going on there\./);
-    assert.match(subAgent()[1]!.last, /Page now \(https:\/\/pay\.example\.test\/upi — Payment\)/);
+    assert.match(subAgent()[1]!.last, /Page now \(https:\/\/pay\.example\.test\/upi, Payment\)/);
     const call = (await h.prisma.assistantMessage.findMany({ where: { userId: mira.id, role: "assistant" }, orderBy: { createdAt: "asc" } })).map((row) => JSON.stringify(row.toolCalls)).join("\n");
     assert.match(call, /A click opened a new window, tab t2 \(Payment, pay\.example\.test\), and it went on there; tab t1 is still open\. Use tab t2 for this page\./);
     const reply = (await rows(mira, room.id)).filter((row) => row.authorNodeId === made.id && row.kind === "text").at(-1)!;

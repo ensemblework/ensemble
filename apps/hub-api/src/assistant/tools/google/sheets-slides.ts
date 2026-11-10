@@ -278,7 +278,7 @@ export const DeckInput = z.object({
 function deckPreview(kind: string, title: string, where: string, input: z.infer<typeof DeckInput>): string {
   const list = input.slides.slice(0, 12).map((slide, index) => `${index + 2}. ${slide.title}${slide.notes ? " (with notes)" : ""}`);
   const more = input.slides.length > 12 ? `\n…and ${plural(input.slides.length - 12, "more slide")}` : "";
-  return `Create ${kind} ${quote(title)} in ${where} with ${plural(input.slides.length + 1, "slide")}:\n1. Title slide${input.subtitle ? ` — ${input.subtitle}` : ""}\n${list.join("\n")}${more}`;
+  return `Create ${kind} ${quote(title)} in ${where} with ${plural(input.slides.length + 1, "slide")}:\n1. Title slide${input.subtitle ? `: ${input.subtitle}` : ""}\n${list.join("\n")}${more}`;
 }
 
 interface Presentation {

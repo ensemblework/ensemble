@@ -55,7 +55,7 @@ function section(title: string, rows: string[], empty: string): string {
 export function renderWeeklyRecap(input: WeeklyRecapInput): string {
   const done = input.done.map((row) => (row.detail ? `${row.title} (${row.detail})` : row.title));
   const decided = input.decided.map((row) => row.title);
-  const slipped = input.slipped.map((row) => (row.detail ? `${row.title} — due ${row.detail}` : row.title));
+  const slipped = input.slipped.map((row) => (row.detail ? `${row.title}, due ${row.detail}` : row.title));
   const meetings = input.meetings.map((row) => {
     const summary = row.summary.replace(/\s+/g, " ").trim();
     return summary ? `${row.title} (${row.when}): ${summary}` : `${row.title} (${row.when})`;
@@ -393,6 +393,6 @@ export function renderSummary(summary: RecapSummary): string {
   ];
   const parts = [summary.narrative, "", "## At a glance", "", ...lines];
   if (summary.highlights.length) parts.push("", "## Highlights", "", ...summary.highlights.map((row) => `- ${row.title}: ${row.detail}`));
-  if (summary.dueSoon.length) parts.push("", "## Coming up", "", ...summary.dueSoon.map((row) => `- ${row.title} — due ${dueLabel(row.due, row.due)}${row.detail ? ` (${row.detail})` : ""}`));
+  if (summary.dueSoon.length) parts.push("", "## Coming up", "", ...summary.dueSoon.map((row) => `- ${row.title}, due ${dueLabel(row.due, row.due)}${row.detail ? ` (${row.detail})` : ""}`));
   return parts.join("\n");
 }

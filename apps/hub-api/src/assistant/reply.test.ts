@@ -35,7 +35,7 @@ test("a partial apply names what landed and what is still waiting", () => {
   ]);
   assert.equal(text.includes("Nothing has changed yet"), false);
   assert.match(text, /Applied: Created “Launch”\./);
-  assert.match(text, /Still waiting — press Apply for Add 1 task\(s\)\./);
+  assert.match(text, /Still waiting\. Press Apply for Add 1 task\(s\)\./);
 });
 
 test("apply drops the proposed lines so the saved reply does not contradict itself", () => {
@@ -57,7 +57,7 @@ test("a partial apply does not double the sentence punctuation", () => {
     { name: "hub_create_project", state: "ok", summary: "Created “Launch”.", isWrite: true },
     { name: "hub_create_tasks", state: "awaiting_approval", summary: "Add 1 task(s).", isWrite: true },
   ]);
-  assert.equal(text, "Applied: Created “Launch”. Still waiting — press Apply for Add 1 task(s).");
+  assert.equal(text, "Applied: Created “Launch”. Still waiting. Press Apply for Add 1 task(s).");
   assert.equal(replyAfterApply(text, [
     { name: "hub_create_project", state: "ok", summary: "Created “Launch”.", isWrite: true },
     { name: "hub_create_tasks", state: "ok", summary: "Added 1 task(s).", isWrite: true },

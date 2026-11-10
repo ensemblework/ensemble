@@ -254,7 +254,7 @@ export function renderConstraints(constraints: Constraints | null | undefined, o
     lines.push(
       `- Publish: ${
         constraints.publish === "none"
-          ? "nothing — do not commit or push"
+          ? "nothing: do not commit or push"
           : constraints.publish === "commit"
             ? "commit locally, do not push"
             : constraints.publish === "push"

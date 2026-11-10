@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   ArrowUpRight,
-  Bot,
   CalendarCheck,
   CircleCheck,
   Flame,
@@ -16,6 +15,7 @@ import {
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
+import { AgentIcon } from "@/components/agent-icon";
 import type { WeeklyRecap } from "@/lib/api";
 import { dayLabel, dayMonth, plural } from "./format";
 
@@ -62,9 +62,9 @@ const HIGHLIGHT: Record<string, { icon: LucideIcon; hue: string }> = {
   best_day: { icon: Trophy, hue: "var(--accent)" },
   project_push: { icon: TrendingUp, hue: "var(--chart-blue)" },
   streak: { icon: CalendarCheck, hue: "var(--chart-amber)" },
-  first_run: { icon: Bot, hue: "var(--chart-teal)" },
+  first_run: { icon: AgentIcon, hue: "var(--chart-teal)" },
   clear: { icon: Inbox, hue: "var(--ok)" },
-  agents: { icon: Bot, hue: "var(--chart-teal)" },
+  agents: { icon: AgentIcon, hue: "var(--chart-teal)" },
   decisions: { icon: Scale, hue: "var(--chart-violet)" },
 };
 

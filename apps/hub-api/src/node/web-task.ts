@@ -291,7 +291,7 @@ async function runWebTask(ctx: ToolContext, scope: NodeScope, input: z.infer<typ
       `Step ${index + 1} of ${input.maxSteps}.`,
       steps.length ? `Done so far:\n${steps.map((step, at) => `${at + 1}. ${step.action} → ${step.result}`).join("\n")}` : "",
       last ? `Last result:\n${truncateText(last, last.length > RESULT_CHARS && steps.at(-1)?.action.startsWith("extract") ? EXTRACT_CHARS : RESULT_CHARS)}` : "",
-      `Page now (${url || "this tab"}${title ? ` — ${title}` : ""}):\n${page}`,
+      `Page now (${url || "this tab"}${title ? `, ${title}` : ""}):\n${page}`,
     ].filter(Boolean).join("\n\n");
     const answer = await ask(ctx, scope, model, input.goal, [
       { role: "system", content: WEB_TASK_PROMPT },

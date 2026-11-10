@@ -12,8 +12,9 @@ export function rangeProblem(text: string, min: number, max: number): string | n
 }
 
 /**
- * A whole-number setting that shows its allowed range. A value outside it stays on screen with
- * an error and is not saved, instead of snapping back.
+ * A whole-number setting: one box with the unit inside, the same width as the selects beside it, so a
+ * column of settings lines up. The allowed range is its tooltip and the error; a value outside it stays on
+ * screen with that error and is not saved, instead of snapping back.
  */
 export function NumberField({
   label,
@@ -22,7 +23,7 @@ export function NumberField({
   max,
   unit,
   onChange,
-  width = "w-20",
+  width = "w-32",
 }: {
   label: string;
   value: number;
@@ -40,31 +41,33 @@ export function NumberField({
     if (!error) setText(String(value));
   }, [value, error]);
   return (
-    <span className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
-      <input
-        aria-label={label}
-        type="number"
-        inputMode="numeric"
-        min={min}
-        max={max}
-        step={1}
-        value={text}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={`${id}-range${error ? ` ${id}-error` : ""}`}
-        onChange={(event) => {
-          setText(event.target.value);
-          const problem = rangeProblem(event.target.value, min, max);
-          setError(problem);
-          if (!problem) onChange(Number(event.target.value));
-        }}
-        className={`field text-right ${width}`}
-      />
-      {unit ? <span>{unit}</span> : null}
-      <span id={`${id}-range`} className="text-[12px] text-faint">
+    <span className="inline-flex max-w-full flex-col items-end gap-1">
+      <span className={`field compound-field inline-flex items-center gap-1.5 ${width}`} title={`${min} to ${max}`} data-invalid={error ? true : undefined}>
+        <input
+          aria-label={label}
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          step={1}
+          value={text}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${id}-range${error ? ` ${id}-error` : ""}`}
+          onChange={(event) => {
+            setText(event.target.value);
+            const problem = rangeProblem(event.target.value, min, max);
+            setError(problem);
+            if (!problem) onChange(Number(event.target.value));
+          }}
+          className="min-w-0 flex-1 bg-transparent text-right tabular-nums outline-none"
+        />
+        {unit ? <span className="shrink-0 text-faint">{unit}</span> : null}
+      </span>
+      <span id={`${id}-range`} className="sr-only">
         {min}–{max}
       </span>
       {error ? (
-        <span id={`${id}-error`} role="alert" className="basis-full text-[12px] text-danger">
+        <span id={`${id}-error`} role="alert" className="max-w-[16rem] text-right text-[12px] text-danger">
           {error}
         </span>
       ) : null}

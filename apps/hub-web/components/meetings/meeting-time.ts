@@ -12,7 +12,7 @@ function dayStart(date: Date): number {
 /** When a meeting started, with its time: "Today, 2:30 pm", "Yesterday, 9:05 am", "Mon, 13 Oct, 4:00 pm", "3 Sept 2025, 11:00 am". */
 export function meetingWhen(value: string | Date | null | undefined, now = new Date()): string {
   const date = safeDate(value);
-  if (!date) return "—";
+  if (!date) return "No date";
   const time = TIME.format(date);
   const days = Math.round((dayStart(now) - dayStart(date)) / 86_400_000);
   if (days === 0) return `Today, ${time}`;
