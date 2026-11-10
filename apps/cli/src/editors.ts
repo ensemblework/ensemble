@@ -25,6 +25,9 @@ export const EDITORS = [
   "opencode",
   "jetbrains",
   "continue",
+  "qwen",
+  "kimi",
+  "vibe",
 ] as const;
 
 export type EditorName = (typeof EDITORS)[number];
@@ -111,6 +114,13 @@ export function editorConfigPath(editor: EditorName, input: PlatformInput = {}):
       return path.join(home, ".continue", "config.yaml");
     case "claude-code":
       return null;
+    case "qwen":
+      return path.join(home, ".qwen", "settings.json");
+    case "kimi":
+      return path.join(env.KIMI_CODE_HOME?.trim() || path.join(home, ".kimi-code"), "mcp.json");
+    case "vibe":
+      // Mistral Vibe keeps its servers as TOML tables; `vibe mcp add` writes them.
+      return null;
   }
 }
 
@@ -119,6 +129,7 @@ export function detectEditors(input: PlatformInput = {}): EditorDetection[] {
   const platform = platformOf(input);
   return EDITORS.map((editor) => {
     if (editor === "claude-code") return { editor, found: Boolean(isExecutableOnPath("claude", env, platform)) };
+    if (editor === "vibe") return { editor, found: Boolean(isExecutableOnPath("vibe", env, platform)) };
     if (editor === "jetbrains") return { editor, found: true, printOnly: true };
     if (editor === "continue") {
       const path = editorConfigPath(editor, input);
@@ -174,6 +185,7 @@ function serverValue(editor: EditorName, mode: SetupMode): unknown {
     case "windsurf":
       return { serverUrl: url, headers: hostedHeaders(mode) };
     case "gemini":
+    case "qwen":
       return { httpUrl: url, headers: hostedHeaders(mode) };
     case "copilot":
       return { type: "http", url, headers: hostedHeaders(mode), tools: ["*"] };
@@ -204,6 +216,8 @@ function jsonPathFor(editor: EditorName): Array<string | number> | null {
     case "windsurf":
     case "claude-desktop":
     case "gemini":
+    case "qwen":
+    case "kimi":
     case "cline":
       return ["mcpServers", MCP_NAME];
     case "copilot":
@@ -349,11 +363,29 @@ function snippetFor(editor: EditorName, mode: SetupMode): string {
     if (mode.hosted) return `claude mcp add --scope user --transport http ${MCP_NAME} ${hostedUrl(mode)} --header "Authorization: Bearer ${mode.token ?? TOKEN_ENV}"`;
     return `claude mcp add --scope user ${MCP_NAME} -- ${[local.command, ...local.args].join(" ")}`;
   }
+  if (editor === "vibe") return `vibe ${vibeAddArgs(mode, mode.token ?? TOKEN_ENV).map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg)).join(" ")}`;
   if (editor === "codex") return upsertCodexToml("", mode).trimEnd();
   const path = jsonPathFor(editor);
   if (!path) return "";
   const value = serverValue(editor, mode);
   return JSON.stringify(path[0] === "servers" ? { servers: { [MCP_NAME]: value } } : path[0] === "context_servers" ? { context_servers: { [MCP_NAME]: value } } : path[0] === "mcp" ? { mcp: { [MCP_NAME]: value } } : { mcpServers: { [MCP_NAME]: value } }, null, 2);
+}
+
+/** `vibe mcp add` for Ensemble: the local `ensemble mcp` over stdio, or the hosted address with the key as a header. */
+function vibeAddArgs(mode: SetupMode, token: string): string[] {
+  if (mode.hosted) return ["mcp", "add", MCP_NAME, "--url", hostedUrl(mode), "--transport", "streamable-http", "--header", `Authorization=Bearer ${token}`];
+  const local = localCommand(mode);
+  return ["mcp", "add", MCP_NAME, "--transport", "stdio", "--command", local.command, ...local.args.map((arg) => `--arg=${arg}`)];
+}
+
+async function configureVibe(mode: SetupMode, printOnly: boolean): Promise<EditorWriteResult> {
+  const command = isExecutableOnPath("vibe");
+  const snippet = snippetFor("vibe", mode);
+  if (printOnly || !command) return { editor: "vibe", changed: false, message: command ? snippet : `Mistral Vibe not found on PATH. Run:\n${snippet}` };
+  if (mode.hosted && !mode.token) throw new Error("Run `ensemble login` first before configuring Mistral Vibe hosted MCP.");
+  await run(command, ["mcp", "remove", MCP_NAME], true);
+  await run(command, vibeAddArgs(mode, mode.token ?? TOKEN_ENV), false);
+  return { editor: "vibe", changed: true, message: "Configured Mistral Vibe's MCP server." };
 }
 
 async function configureClaudeCode(mode: SetupMode, printOnly: boolean): Promise<EditorWriteResult> {
@@ -384,6 +416,7 @@ async function run(command: string, args: string[], allowFailure: boolean): Prom
 
 export async function setupEditor(editor: EditorName, mode: SetupMode, input: PlatformInput & { printOnly?: boolean } = {}): Promise<EditorWriteResult> {
   if (editor === "claude-code") return configureClaudeCode(mode, input.printOnly === true);
+  if (editor === "vibe") return configureVibe(mode, input.printOnly === true);
   if (editor === "jetbrains" || editor === "continue") return { editor, changed: false, message: snippetFor(editor, mode), path: editorConfigPath(editor, input) ?? undefined };
   if (mode.hosted && editor === "claude-desktop") {
     return {
@@ -417,6 +450,12 @@ export async function removeEditor(editor: EditorName, input: PlatformInput = {}
     await run(command, ["mcp", "remove", "--scope", "user", MCP_NAME], true);
     return { editor, changed: true, message: "Removed Claude Code Ensemble MCP server." };
   }
+  if (editor === "vibe") {
+    const command = isExecutableOnPath("vibe", envOf(input), platformOf(input));
+    if (!command) return { editor, changed: false, message: "Mistral Vibe not found on PATH." };
+    await run(command, ["mcp", "remove", MCP_NAME], true);
+    return { editor, changed: true, message: "Removed Mistral Vibe's Ensemble MCP server." };
+  }
   if (editor === "jetbrains" || editor === "continue") return { editor, changed: false, message: `${editor} is print-only; remove the Ensemble MCP entry manually.` };
   const path = editorConfigPath(editor, input);
   if (!path || !(await fileExists(path))) return { editor, changed: false, message: `${editor} is not configured.` };
@@ -443,7 +482,7 @@ export async function chooseEditors(input: PlatformInput = {}): Promise<EditorNa
 export async function configuredEditors(input: PlatformInput = {}): Promise<EditorName[]> {
   const configured: EditorName[] = [];
   for (const editor of EDITORS) {
-    if (editor === "claude-code" || editor === "jetbrains" || editor === "continue") continue;
+    if (editor === "claude-code" || editor === "vibe" || editor === "jetbrains" || editor === "continue") continue;
     const path = editorConfigPath(editor, input);
     if (!path) continue;
     let text = "";

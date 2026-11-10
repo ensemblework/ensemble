@@ -9,7 +9,7 @@ import { migrateLegacyData } from "./migrate.js";
 import { fileExists, resolveCliPaths, type CliPaths } from "./paths.js";
 import { resolveLauncherCommand } from "./launcher.js";
 import { VERSION } from "./version.js";
-import { DOWNLOAD_URL, TESTING, TESTING_API } from "./channel.js";
+import { COMMAND, DOWNLOAD_URL, TESTING, TESTING_API } from "./channel.js";
 
 export type Discovery = {
   port: number;
@@ -72,6 +72,45 @@ export async function readDiscovery(file: string): Promise<Discovery | null> {
     throw error;
   }
 }
+
+/** The runtime lock a sidecar holds from start to exit (hub-api `desktop/runtime-lock.ts`), in the data folder. */
+const LOCK_FILE_NAME = "runtime.lock";
+
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The pid of the live process holding this computer's runtime lock, or null. */
+export async function runtimeLockHolder(paths: CliPaths = resolveCliPaths(), isAlive: (pid: number) => boolean = processAlive): Promise<number | null> {
+  try {
+    const value = JSON.parse(await readFile(join(paths.dataHome, LOCK_FILE_NAME), "utf8")) as { pid?: unknown };
+    return typeof value.pid === "number" && value.pid !== process.pid && isAlive(value.pid) ? value.pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Waits until no live process holds the runtime lock. A runtime asked to stop answers /health no more
+ * well before it exits (it stops its queue, browser and remote loop, then flushes the database), and a
+ * new runtime cannot open the data folder until it has.
+ */
+export async function waitForLockRelease(paths: CliPaths, deadline: number, isAlive: (pid: number) => boolean = processAlive): Promise<boolean> {
+  for (;;) {
+    if (!(await runtimeLockHolder(paths, isAlive))) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+/** The new sidecar found another runtime holding the data folder that is not answering (still stopping or starting). */
+class OtherRuntimeBusy extends Error {}
 
 export async function checkHealth(discovery: Discovery, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   try {
@@ -215,26 +254,54 @@ export async function spawnSidecar(input: {
   await rotateLog(logPath);
   const logFd = openSync(logPath, "a", 0o600);
   const node = join(input.sidecarDir, process.platform === "win32" ? "node.exe" : "node");
-  const child = spawn(node, ["--import", "tsx", "src/desktop/main.ts"], {
-    cwd: join(input.sidecarDir, "app"),
-    env: sidecarEnv({ paths, token, adminOnly: input.adminOnly, apiBase: input.apiBase }),
-    detached: !input.foreground,
-    stdio: ["ignore", logFd, logFd],
-    windowsHide: true,
-  });
-  if (!input.foreground) child.unref();
-  const discovery = await waitForSidecar(paths.discoveryFile, token, input.timeoutMs ?? 30_000, child);
-  if (discovery.token !== token) {
+  const timeoutMs = input.timeoutMs ?? 30_000;
+  // A runtime still stopping (after an update) or still starting holds the data folder: wait for it to go,
+  // or attach to it once it answers, instead of starting a sidecar that can only exit.
+  const settle = async (): Promise<Discovery | null> => {
+    const deadline = Date.now() + Math.max(timeoutMs, 60_000);
+    for (;;) {
+      const holder = await runtimeLockHolder(paths);
+      if (!holder) return null;
+      const other = await readDiscovery(paths.discoveryFile).catch(() => null);
+      if (other && (await checkHealth(other))) return other;
+      if (Date.now() >= deadline) {
+        throw new Error(`Another Ensemble process (pid ${holder}) holds this computer's Ensemble data but is not answering. If it does not exit by itself, end that process, then run ${COMMAND} again. See ${logPath}.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  };
+  let child: ChildProcess | undefined;
+  let discovery: Discovery | undefined;
+  for (let attempt = 0; !discovery; attempt += 1) {
+    const other = await settle();
+    if (other) return { discovery: other, stop: async () => undefined };
+    child = spawn(node, ["--import", "tsx", "src/desktop/main.ts"], {
+      cwd: join(input.sidecarDir, "app"),
+      env: sidecarEnv({ paths, token, adminOnly: input.adminOnly, apiBase: input.apiBase }),
+      detached: !input.foreground,
+      stdio: ["ignore", logFd, logFd],
+      windowsHide: true,
+    });
+    if (!input.foreground) child.unref();
+    try {
+      discovery = await waitForSidecar(paths.discoveryFile, token, timeoutMs, child, logPath);
+    } catch (error) {
+      // Lost the data folder to a runtime that was stopping or starting at that moment: wait, then start again.
+      if (!(error instanceof OtherRuntimeBusy) || attempt >= 2) throw error instanceof OtherRuntimeBusy ? new Error(error.message) : error;
+    }
+  }
+  if (discovery.token !== token || !child) {
     // The desktop app (or another runner) started first and holds the data folder: use that runtime.
     return { discovery, stop: async () => undefined };
   }
+  const started = child;
   return {
     discovery,
-    child,
+    child: started,
     stop: async () => {
-      if (!child.killed && child.pid) {
+      if (!started.killed && started.pid) {
         try {
-          process.kill(child.pid, "SIGTERM");
+          process.kill(started.pid, "SIGTERM");
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }
@@ -243,22 +310,22 @@ export async function spawnSidecar(input: {
   };
 }
 
-async function waitForSidecar(file: string, expectedToken: string, timeoutMs: number, child: ChildProcess): Promise<Discovery> {
+async function waitForSidecar(file: string, expectedToken: string, timeoutMs: number, child: ChildProcess, logPath: string): Promise<Discovery> {
   const started = Date.now();
-  let lastError = "Sidecar did not publish a discovery file.";
   while (Date.now() - started < timeoutMs) {
     if (child.exitCode === ALREADY_RUNNING_EXIT) {
-      const other = await readDiscovery(file);
+      const other = await readDiscovery(file).catch(() => null);
       if (other && (await checkHealth(other))) return other;
+      // The other runtime is not answering: it is stopping or still starting.
+      throw new OtherRuntimeBusy(`Another Ensemble process holds this computer's Ensemble data and is not answering. Run ${COMMAND} again in a moment. See ${logPath}.`);
     } else if (child.exitCode !== null) {
-      throw new Error(`Sidecar exited with code ${child.exitCode}.`);
+      throw new Error(`Ensemble stopped while starting (exit code ${child.exitCode}). See ${logPath}.`);
     }
-    const discovery = await readDiscovery(file);
+    const discovery = await readDiscovery(file).catch(() => null);
     if (discovery?.token === expectedToken && (await checkHealth(discovery))) return discovery;
-    if (discovery && discovery.token !== expectedToken) lastError = "Sidecar discovery file belongs to another launch.";
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error(lastError);
+  throw new Error(`Ensemble did not start within ${Math.round(timeoutMs / 1000)} seconds. See ${logPath}.`);
 }
 
 export async function startRunner(input: { sidecarDir: string; paths?: CliPaths; foreground?: boolean }): Promise<SidecarSession | null> {
@@ -288,7 +355,7 @@ export class DesktopOwnsRuntimeError extends Error {
   }
 }
 
-export async function stopRunner(paths: CliPaths = resolveCliPaths(), waitMs = 10_000): Promise<boolean> {
+export async function stopRunner(paths: CliPaths = resolveCliPaths(), waitMs = 10_000, exitMs = 60_000): Promise<boolean> {
   const recorded = await readRunnerPid(paths);
   const live = await runningRunner(paths);
   if (live?.owner === "desktop") throw new DesktopOwnsRuntimeError();
@@ -304,6 +371,8 @@ export async function stopRunner(paths: CliPaths = resolveCliPaths(), waitMs = 1
   }
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline && (await checkHealth(live))) await new Promise((resolve) => setTimeout(resolve, 250));
+  // Not answering is not gone: it still closes its database, and holds the data folder until it exits.
+  if (exitMs > 0) await waitForLockRelease(paths, Date.now() + exitMs);
   await clearRunnerPid(paths);
   return true;
 }

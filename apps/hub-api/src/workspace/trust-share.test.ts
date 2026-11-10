@@ -7,7 +7,7 @@ import { test } from "node:test";
 process.env.DATABASE_URL ??= "postgresql://x";
 const workspace = mkdtempSync(join(tmpdir(), "trust-share-ws-"));
 process.env.ENSEMBLE_WORKSPACE_ROOT = workspace;
-const { claudeTrust, codexTrust, copilotTrust, cursorSlug, geminiTrust, setToolTrust, syncSharedTrust, setSharedTrust, loadSharedTrust } = await import("./trust-share.js");
+const { claudeTrust, codexTrust, copilotTrust, cursorSlug, geminiTrust, setToolTrust, syncSharedTrust, setSharedTrust, loadSharedTrust, vibeTrust } = await import("./trust-share.js");
 
 test("Claude Code: trusted per folder, and untrusting keeps the folder's own history", () => {
   const before = JSON.stringify({ numStartups: 3, projects: { "/w/a": { allowedTools: ["Bash(ls)"] } } });
@@ -126,4 +126,20 @@ test("Claude Code's config is changed under its own lock, and a stale lock is cl
   assert.equal((await setToolTrust("claude", "/w/a", true, { homes, backups })).changed, true);
   assert.equal(existsSync(lock), false, "the lock is released");
   assert.equal(JSON.parse(readFileSync(join(homes.home, ".claude.json"), "utf8")).projects["/w/a"].hasTrustDialogAccepted, true);
+});
+
+test("Mistral Vibe's trusted_folders.toml: added and removed in its own arrays, an earlier untrusted mark put back", () => {
+  const on = vibeTrust("", "/w/a", true);
+  assert.equal(on.text, 'trusted = [\n    "/w/a",\n]\n');
+  assert.equal(vibeTrust(on.text!, "/w/a", true).already, true);
+  assert.equal(vibeTrust(on.text!, "/w/a", false).text, "trusted = []\n");
+  const theirs = '# kept\ntrusted = [\n    "/w/mine",\n]\nuntrusted = [\n    "/w/a",\n    \'/w/b\',\n]\n';
+  const moved = vibeTrust(theirs, "/w/a", true);
+  assert.equal(moved.was, "untrusted");
+  assert.equal(moved.text, '# kept\ntrusted = [\n    "/w/mine",\n    "/w/a",\n]\nuntrusted = [\n    "/w/b",\n]\n');
+  assert.equal(vibeTrust(moved.text!, "/w/a", false, "untrusted").text, '# kept\ntrusted = [\n    "/w/mine",\n]\nuntrusted = [\n    "/w/b",\n    "/w/a",\n]\n');
+  const windows = vibeTrust("", "C:\\Users\\a [x]", true).text!;
+  assert.equal(windows, 'trusted = [\n    "C:\\\\Users\\\\a [x]",\n]\n');
+  assert.equal(vibeTrust(windows, "C:\\Users\\a [x]", true).already, true, "escapes and brackets inside a string read back");
+  assert.throws(() => vibeTrust("trusted = [nonsense]", "/w/a", true), "a file it cannot read is never rewritten");
 });

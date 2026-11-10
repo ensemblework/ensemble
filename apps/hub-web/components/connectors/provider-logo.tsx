@@ -17,7 +17,7 @@ export function modelBrand(model?: string | null, provider?: string | null): str
   if (/mistral|mixtral|codestral|devstral|ministral/.test(value)) return "mistral";
   if (/llama/.test(value)) return "meta";
   const key = (provider ?? (model?.includes("::") ? model.split("::")[0] : model) ?? "").toLowerCase();
-  return ({ qwen: "qwen", kimi: "kimi", openrouter: "openrouter", anthropic: "claude", "claude-code": "claude", codex: "openai", openai: "openai", chatgpt: "openai", "cursor-agent": "cursor", cursor: "cursor", "copilot-cli": "copilot", copilot: "copilot", google: "gemini", gemini: "gemini", "gemini-cli": "gemini", antigravity: "google", opencode: "opencode", microsoft: "microsoft", github: "github", deepseek: "deepseek", mistral: "mistral", ollama: "ollama", ensemble: "ensemble" } as Record<string, string>)[key] ?? null;
+  return ({ qwen: "qwen", kimi: "kimi", openrouter: "openrouter", anthropic: "claude", "claude-code": "claude", codex: "openai", openai: "openai", chatgpt: "openai", "cursor-agent": "cursor", cursor: "cursor", "copilot-cli": "copilot", copilot: "copilot", google: "gemini", gemini: "gemini", "gemini-cli": "gemini", antigravity: "google", "mistral-vibe": "mistral", "qwen-code": "qwen", "kimi-code": "kimi", opencode: "opencode", microsoft: "microsoft", github: "github", deepseek: "deepseek", mistral: "mistral", ollama: "ollama", ensemble: "ensemble" } as Record<string, string>)[key] ?? null;
 }
 
 export function ProviderLogo({ id, size = 16, decorative = true, className = "" }: { id: string; size?: number; decorative?: boolean; className?: string }) {

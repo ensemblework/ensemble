@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { lstat, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
@@ -127,10 +127,42 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
     await removeHistory(join(root, "brain"), [sessionId]);
     return;
   }
+  if (engine === "mistral-vibe") {
+    // Vibe 2: one folder per session under $VIBE_HOME/logs/session, named by its prefix and short id, its meta.json naming the full id.
+    const root = join(process.env.VIBE_HOME || join(homedir(), ".vibe"), "logs", "session");
+    for (const folder of await folders(root)) {
+      if (!folder.includes(sessionId.slice(0, 8))) continue;
+      const meta = await readFile(join(root, folder, "meta.json"), "utf8").then((text) => JSON.parse(text) as { session_id?: unknown }).catch(() => null);
+      if (meta?.session_id === sessionId) await removeHistory(root, [folder]);
+    }
+    return;
+  }
+  if (engine === "qwen-code") {
+    // Qwen Code: <home>/projects/<project>/chats/<id>.jsonl, with a title file beside it.
+    const root = join(process.env.QWEN_HOME || join(homedir(), ".qwen"), "projects");
+    for (const project of await folders(root)) {
+      const chats = join(root, project, "chats");
+      let names: string[] = [];
+      try { names = await readdir(chats); } catch (error) { if (!missing(error)) throw error; }
+      for (const name of names) if (name === `${sessionId}.jsonl` || name.startsWith(`${sessionId}.`)) await removeHistory(chats, [name]);
+    }
+    return;
+  }
+  if (engine === "kimi-code") {
+    // Kimi Code deletes a session and everything it saved through its own ACP server.
+    const launch = await ACP_AGENTS["kimi-code"].launch({ root: cwd, sandboxed: false, trusted: false });
+    if (!launch) throw new Error("Install or update Kimi Code on this computer to delete its saved session.");
+    await rpcDelete(launch.program, launch.args, launch.env, async rpc => {
+      await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" } });
+      try { await rpc.request("session/delete", { sessionId }); }
+      catch (error) { if (!(error instanceof Error && (absentSession(error.message, sessionId) || /unknown sessionid|invalid params|-32602/i.test(error.message)))) throw error; }
+    });
+    return;
+  }
   const launch = await ACP_AGENTS[engine].launch({ root: cwd, sandboxed: false, trusted: false });
   if (!launch) throw new Error(`The ${engine} agent is not installed. Install it on this computer and retry deletion.`);
-  if (engine === "grok-cli") { await command(launch.program, ["sessions", "delete", sessionId], cwd, launch.env); return; }
-  if (engine === "opencode") { await command(launch.program, ["session", "delete", sessionId], cwd, launch.env); return; }
-  if (engine === "gemini-cli") { await command(launch.program, ["--delete-session", sessionId], cwd, launch.env); return; }
+  if (engine === "grok-cli") { await command(launch.program, [...launch.base, "sessions", "delete", sessionId], cwd, launch.env); return; }
+  if (engine === "opencode") { await command(launch.program, [...launch.base, "session", "delete", sessionId], cwd, launch.env); return; }
+  if (engine === "gemini-cli") { await command(launch.program, [...launch.base, "--delete-session", sessionId], cwd, launch.env); return; }
   throw new Error("This agent has no verified native session deletion method. Its history has not been hidden.");
 }

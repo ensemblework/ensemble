@@ -16,7 +16,7 @@ import { terminalBrand } from "@ensemble/brand/cli";
 import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { asksForIds, formatEntityText, INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type AssistantRef, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { ACP_ENGINES, asksForIds, formatEntityText, INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type AssistantRef, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import { PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
@@ -75,13 +75,19 @@ const SIGN_IN: Record<AgentEngine, string> = {
   opencode: "opencode auth login",
   "gemini-cli": "gemini (then Sign in with Google)",
   antigravity: "Sign in for Antigravity in Ensemble's Settings → Models",
+  "mistral-vibe": "vibe --setup",
+  "qwen-code": "qwen (then /auth)",
+  "kimi-code": "kimi login",
 };
 /** Where each of the ACP agents comes from, for /agent when this computer does not have it yet. */
-const ACP_INSTALL: Record<"grok-cli" | "opencode" | "gemini-cli" | "antigravity", string> = {
+const ACP_INSTALL: Record<(typeof ACP_ENGINES)[number], string> = {
   "grok-cli": "https://x.ai/cli",
   opencode: "curl -fsSL https://opencode.ai/install | bash",
   "gemini-cli": "npm install -g @google/gemini-cli",
   antigravity: "press Sign in for Antigravity in Settings → Models (Ensemble installs it)",
+  "mistral-vibe": "curl -LsSf https://mistral.ai/vibe/install.sh | bash",
+  "qwen-code": "npm install -g @qwen-code/qwen-code@latest",
+  "kimi-code": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
 };
 /** How long /agent waits for this computer's agent check before it shows what it has. */
 const AGENT_CHECK_WAIT_MS = 3000;
@@ -615,8 +621,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (the ChatGPT app's)"}` : "not found · the ChatGPT app, or npm i -g @openai/codex" },
       { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not found · curl https://cursor.com/install -fsS | bash" },
       { id: "copilot-cli", note: copilotNote(copilotOf(agents ?? detected), Boolean(has("copilot")?.cli)) },
-      // Grok Build, OpenCode, Gemini CLI and Antigravity, as this computer's agent check found them.
-      ...(["grok-cli", "opencode", "gemini-cli", "antigravity"] as const).map((id) => {
+      // The ACP agents (Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code), as this computer's agent check found them.
+      ...ACP_ENGINES.map((id) => {
         const row = (agents ?? detected)?.find((agent) => agent.id === id);
         const note = !row ? `not found · ${ACP_INSTALL[id]}` : row.signedIn === false ? `not signed in · ${SIGN_IN[id]}` : `your ${ENGINE_LABEL[id]} sign-in`;
         return { id, note };

@@ -183,7 +183,7 @@ hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.y
 
 ## 9. Client setup
 
-Prefer **Connect your apps** in the Hub or `ensemble mcp setup`. Connect your apps has CLI, hosted-URL and from-source guides for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue and opencode on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`).
+Prefer **Connect your apps** in the Hub or `ensemble mcp setup`. Connect your apps has CLI, hosted-URL and from-source guides for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue, opencode, Qwen Code, Kimi Code and Mistral Vibe (through `vibe mcp add`) on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`).
 
 The from-source samples are in `apps/context-bridge/clients/`. Build first (`pnpm bridge:build`), use absolute paths and never commit a real token. Committed project files use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}`. `${input:…}` is avoided because it drops the server from VS Code's Agent Host. One-click links (`vscode:mcp/install`, `cursor://anysphere.cursor-deeplink/mcp/install`) keep the key in the environment, not the URL.
 

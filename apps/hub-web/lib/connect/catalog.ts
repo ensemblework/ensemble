@@ -13,6 +13,9 @@ export const APP_IDS = [
   "cline",
   "continue",
   "opencode",
+  "qwen-code",
+  "kimi-code",
+  "mistral-vibe",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -109,10 +112,31 @@ export const APPS: AppCard[] = [
     get: "opencode can use either the local Ensemble CLI server or the hosted URL.",
     setupId: "opencode",
   },
+  {
+    id: "qwen-code",
+    name: "Qwen Code",
+    get: "Qwen Code can read Ensemble context before it answers in your terminal.",
+    setupId: "qwen",
+  },
+  {
+    id: "kimi-code",
+    name: "Kimi Code",
+    get: "Kimi Code CLI can look up your tasks, people and notes while it works in a folder.",
+    setupId: "kimi",
+  },
+  {
+    id: "mistral-vibe",
+    name: "Mistral Vibe",
+    get: "Mistral Vibe can read the same Ensemble context in your terminal and editor.",
+    setupId: "vibe",
+  },
 ];
 
 const ALIASES: Record<string, AppId> = {
   copilot: "copilot-cli",
+  qwen: "qwen-code",
+  kimi: "kimi-code",
+  vibe: "mistral-vibe",
 };
 
 export function normalizeAppId(value: string): AppId | undefined {

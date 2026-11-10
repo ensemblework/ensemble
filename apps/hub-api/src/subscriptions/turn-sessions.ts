@@ -14,6 +14,7 @@
  * sessions by folder. Sessions unused for 30 days (a node's: 7, `keepDays`) are dropped with their
  * folders and the agent's own history of them, and a session another one replaced is dropped at once.
  */
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -32,7 +33,9 @@ export const ROTATE_MESSAGES = 80;
  * `text`: the instructions it last had, to send only what changed. `folder`: its group's folder, when
  * not the chat's own. `keep`: days unused before it is dropped.
  */
-type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number };
+/** `usage`: the session's token totals as its agent last reported them (Copilot reports the whole session's, not a turn's). */
+type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage };
+export type SessionUsage = { in: number; out: number };
 type Store = Record<string, Entry>;
 
 const file = () => join(stateDir(), "assistant-sessions.json");
@@ -67,7 +70,7 @@ async function write(store: Store): Promise<void> {
 }
 
 /** What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's). */
-export type Found = { id: string; text: string | null };
+export type Found = { id: string; text: string | null; usage?: SessionUsage };
 
 /**
  * The session to resume for this chat: the same agent, where the chat was when it last ran, and not
@@ -84,7 +87,7 @@ export function findSession(key: string, agent: SubscriptionProvider, instructio
     if (position !== undefined && entry.next !== undefined && entry.next !== position) return null;
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return null;
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return null;
-    return { id: entry.id, text: perTurn ? null : (entry.text ?? null) };
+    return { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}) };
   });
 }
 
@@ -116,7 +119,7 @@ export function instructionsUpdate(before: string, now: string): string | null {
     .join("\n\n");
 }
 
-export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean };
+export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null };
 
 /**
  * Remembers the chat's session after a turn, and drops sessions unused for their keeping days, and the
@@ -151,6 +154,7 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
       ...(opts.perTurn ? {} : { text: instructions }),
       ...(opts.folder ? { folder: opts.folder } : {}),
       ...(opts.keepDays ? { keep: opts.keepDays } : {}),
+      ...(opts.usage ? { usage: opts.usage } : {}),
     };
     await write(store);
     return old;
@@ -173,6 +177,17 @@ async function dropNative(entries: Array<[string, Entry]>): Promise<void> {
     // A group's folder (a node's project) is shared: only a chat's own folder goes with it.
     if (!entry.folder) await rm(sessionFolder(key), { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/**
+ * A one-off turn's own session (a quick call: triage, a summary, a title), deleted from the agent once the turn
+ * is over, so the person's Copilot, Cursor or ACP agent does not fill up with them. Never fails the turn.
+ */
+export function dropOneOff(agent: SubscriptionProvider, id: string): void {
+  void (async () => {
+    const { deleteNativeSession } = dropForTests ? { deleteNativeSession: dropForTests } : await import("../workspace/engines/delete-session.js");
+    await deleteNativeSession(agent, id, tmpdir()).catch(() => undefined);
+  })().catch(() => undefined);
 }
 
 /** Forgets a chat's session (it could not be reopened). */

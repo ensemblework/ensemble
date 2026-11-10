@@ -2,12 +2,13 @@
  * The person's own AI subscriptions as model providers and coding agents. Each runs as that
  * vendor's own agent on the person's paired computer, signed in with the vendor's own sign-in:
  * Claude Code (the CLI, or the copy the Claude app ships), Codex (the CLI, or the copy the ChatGPT
- * app ships), Cursor's agent, Copilot CLI, Grok Build, OpenCode, Gemini CLI and Google Antigravity.
+ * app ships), Cursor's agent, Copilot CLI, Grok Build, OpenCode, Gemini CLI, Google Antigravity, Mistral
+ * Vibe, Qwen Code and Kimi Code.
  * Ensemble never holds their credentials. docs/30.
  */
 import { z } from "zod";
 
-export const SUBSCRIPTION_PROVIDERS = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
+export const SUBSCRIPTION_PROVIDERS = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity", "mistral-vibe", "qwen-code", "kimi-code"] as const;
 export type SubscriptionProvider = (typeof SUBSCRIPTION_PROVIDERS)[number];
 
 export function isSubscriptionProvider(provider: string | null | undefined): provider is SubscriptionProvider {
@@ -74,13 +75,31 @@ export const SUBSCRIPTION_INFO: Record<SubscriptionProvider, SubscriptionInfo> =
     program: "Google Antigravity's agent server, which Ensemble installs",
     install: { label: "Install with Sign in", url: "https://antigravity.google" },
   },
+  "mistral-vibe": {
+    label: "Mistral",
+    plan: "your Mistral plan (Le Chat Pro, Team or Enterprise) or a Mistral API key",
+    program: "Mistral Vibe (the vibe command)",
+    install: { label: "Install Mistral Vibe", url: "https://docs.mistral.ai/vibe/code/cli/install-setup" },
+  },
+  "qwen-code": {
+    label: "Qwen",
+    plan: "your Qwen account (Qwen Plus or Pro) or a provider key set up in Qwen Code",
+    program: "Qwen Code (the qwen command)",
+    install: { label: "Install Qwen Code", url: "https://github.com/QwenLM/qwen-code" },
+  },
+  "kimi-code": {
+    label: "Kimi",
+    plan: "your Kimi Code plan or a Moonshot AI API key",
+    program: "Kimi Code CLI (the kimi command)",
+    install: { label: "Install Kimi Code", url: "https://github.com/MoonshotAI/kimi-code" },
+  },
 };
 
 /**
  * The coding agents that can do a code task on the person's computer (docs/30 §1–§4), each with
  * their own sign-in. Ensemble's own agent is "ensemble" and is not listed here.
  */
-export const CODE_ENGINES = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
+export const CODE_ENGINES = ["claude-code", "codex", "cursor-agent", "copilot-cli", "grok-cli", "opencode", "gemini-cli", "antigravity", "mistral-vibe", "qwen-code", "kimi-code"] as const;
 export type CodeEngine = (typeof CODE_ENGINES)[number];
 export const ENGINE_LABELS: Record<CodeEngine, string> = {
   "claude-code": "Claude Code",
@@ -91,9 +110,12 @@ export const ENGINE_LABELS: Record<CodeEngine, string> = {
   opencode: "OpenCode",
   "gemini-cli": "Gemini CLI",
   antigravity: "Antigravity",
+  "mistral-vibe": "Mistral Vibe",
+  "qwen-code": "Qwen Code",
+  "kimi-code": "Kimi Code",
 };
 /** The agents driven through ACP, the Agent Client Protocol, by one shared runner (docs/30 §3.3). */
-export const ACP_ENGINES = ["grok-cli", "opencode", "gemini-cli", "antigravity"] as const;
+export const ACP_ENGINES = ["grok-cli", "opencode", "gemini-cli", "antigravity", "mistral-vibe", "qwen-code", "kimi-code"] as const;
 export type AcpEngine = (typeof ACP_ENGINES)[number];
 export function isAcpEngine(value: string | null | undefined): value is AcpEngine {
   return (ACP_ENGINES as readonly string[]).includes(value ?? "");
@@ -105,11 +127,12 @@ export function isCodeEngine(value: string | null | undefined): value is CodeEng
 
 /**
  * Whether the agent runs in its own OS sandbox on that platform ("macos", "darwin", "linux"…): Grok
- * Build, OpenCode and Antigravity have none Ensemble can turn on, and Gemini CLI has one on macOS
- * only. A run with the sandbox on stops at once with any other (docs/30 §3.3).
+ * Build, OpenCode, Antigravity, Mistral Vibe and Kimi Code have none Ensemble can turn on, and Gemini CLI
+ * and Qwen Code (built from it) have one on macOS only. A run with the sandbox on stops at once with any
+ * other (docs/30 §3.3).
  */
 export function engineHasSandbox(engine: CodeEngine, platform: string | null | undefined): boolean {
-  if (engine === "gemini-cli") return /^(mac|darwin)/i.test(platform ?? "");
+  if (engine === "gemini-cli" || engine === "qwen-code") return /^(mac|darwin)/i.test(platform ?? "");
   return !isAcpEngine(engine);
 }
 

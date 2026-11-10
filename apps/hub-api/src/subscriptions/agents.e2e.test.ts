@@ -148,22 +148,33 @@ const args = process.argv.slice(2);
 if (args.includes('--help')) { console.log('Copilot'); process.exit(0); }
 if (args.includes('--version')) { console.log('1.0.89'); process.exit(0); }
 if (args[args.indexOf('--output-format') + 1] !== 'json') process.exit(7);
+// Copilot 1.0.78 and later read a prompt piped on stdin when there is no -p.
+const prompt = args.includes('-p') ? args[args.indexOf('-p') + 1] : readFileSync(0, 'utf8');
 if (process.env.STANDIN_SESSIONS) {
   const at = args.indexOf('--session-id');
-  require('node:fs').appendFileSync(process.env.STANDIN_SESSIONS, JSON.stringify({ cwd: process.cwd(), session: at >= 0 ? args[at + 1] : null, prompt: args[args.indexOf('-p') + 1] }) + "\\n");
+  require('node:fs').appendFileSync(process.env.STANDIN_SESSIONS, JSON.stringify({ cwd: process.cwd(), session: at >= 0 ? args[at + 1] : null, prompt }) + "\\n");
 }
 if (process.env.STANDIN_LOG) {
   const attached = args.flatMap((arg, index) => arg === '--attachment' ? [args[index + 1]] : []);
   const server = JSON.parse(readFileSync(args[args.indexOf('--additional-mcp-config') + 1].slice(1), 'utf8')).mcpServers.ensemble;
-  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ cwd: process.cwd(), prompt: args[args.indexOf('-p') + 1], attached: attached.map((path) => ({ path, data: readFileSync(path).toString('base64') })), toolTimeout: server.timeout }));
+  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({ cwd: process.cwd(), prompt, attached: attached.map((path) => ({ path, data: readFileSync(path).toString('base64') })), toolTimeout: server.timeout }));
 }
 const say = (type, data) => console.log(JSON.stringify({type, data}));
 say('session.usage_info', {currentTokens:999999, tokenLimit:1000000});
 say('assistant.message_delta', {deltaContent:'Plan '});
 say('assistant.message_delta', {deltaContent:'ready.'});
 say('assistant.message', {content:'Plan ready.'});
-say('assistant.usage', {model:'gpt-copilot-test', inputTokens:123, outputTokens:12, cost:1});
-say('assistant.usage', {model:'gpt-copilot-test', inputTokens:10, outputTokens:2, cost:1});
+if (process.env.STANDIN_TOTALS) {
+  // A newer Copilot: no per-call events, the whole session's tokens in its usage file.
+  const at = args.indexOf('--session-id'), id = at >= 0 ? args[at + 1] : 'none', file = process.env.STANDIN_TOTALS;
+  const counts = require('node:fs').existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  counts[id] = (counts[id] ?? 0) + 1;
+  writeFileSync(file, JSON.stringify(counts));
+  writeFileSync(args[args.indexOf('--usage-output-file') + 1], JSON.stringify({ modelMetrics: { 'gpt-copilot-test': { usage: { inputTokens: 1000 * counts[id], outputTokens: 10 * counts[id] } } } }));
+} else {
+  say('assistant.usage', {model:'gpt-copilot-test', inputTokens:123, outputTokens:12, cost:1});
+  say('assistant.usage', {model:'gpt-copilot-test', inputTokens:10, outputTokens:2, cost:1});
+}
 `);
   chmodSync(program, 0o755);
   return bin;
@@ -224,6 +235,9 @@ test("a turn's files are fetched into its folder and attached to Copilot; one th
 test("one chat is one Copilot session: the first turn starts it with the instructions and the chat so far, the next resumes it with just the message", async () => {
   const root = mkdtempSync(join(tmpdir(), "ensemble-turn-sessions-"));
   const log = join(root, "calls.jsonl");
+  const { setNativeDropForTests } = await import("./turn-sessions.js");
+  const dropped: string[] = [];
+  setNativeDropForTests(async (_agent, id) => void dropped.push(id));
   const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_SESSIONS: process.env.STANDIN_SESSIONS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
   process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
   process.env.ENSEMBLE_DESKTOP = "1";
@@ -254,9 +268,12 @@ test("one chat is one Copilot session: the first turn starts it with the instruc
     assert.notEqual(calls[2]!.session, calls[0]!.session);
     assert.match(calls[2]!.prompt, /^New instructions\.\n\n---\n\nThis chat so far/);
     assert.notEqual(calls[3]!.session, calls[2]!.session);
-    assert.equal(calls[4]!.session, null, "a one-off completion keeps no session");
+    assert.match(calls[4]!.session ?? "", /^[0-9a-f-]{36}$/, "a one-off completion names its own Copilot session…");
+    for (let wait = 0; wait < 50 && !dropped.includes(calls[4]!.session!); wait += 1) await new Promise((done) => setTimeout(done, 20));
+    assert.ok(dropped.includes(calls[4]!.session!), "…and it is deleted from Copilot afterwards");
     assert.equal(calls[4]!.prompt, "Instructions.\n\n---\n\nClassify");
   } finally {
+    setNativeDropForTests(null);
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(root, { recursive: true, force: true });
   }
@@ -306,6 +323,26 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     assert.equal(calls[2]!.params.threadId, "thread-1");
     assert.equal(calls[2]!.params.baseInstructions, "Instructions.", "the instructions go with every turn");
     for (const index of [1, 3]) assert.deepEqual(calls[index]!.params.environments, [], "no shell or file tools, on a resumed thread too");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a Copilot that reports its session's totals is charged per turn: what the turn added", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-totals-"));
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_TOTALS: process.env.STANDIN_TOTALS, ENSEMBLE_REMOTE_STATE_DIR: process.env.ENSEMBLE_REMOTE_STATE_DIR };
+  process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_TOTALS = join(root, "totals.json");
+  process.env.ENSEMBLE_REMOTE_STATE_DIR = join(root, "state");
+  try {
+    const turn = (prompt: string, position: number) =>
+      runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Instructions.", prompt, tools: [], maxTurns: 4, session: { key: "chat-totals-1", history: "", position } }, { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal });
+    const first = await turn("One", 0);
+    const second = await turn("Two", 2);
+    assert.deepEqual([first.tokensIn, first.tokensOut, second.resumed], [1000, 10, true]);
+    assert.deepEqual([second.tokensIn, second.tokensOut], [1000, 10], "not the session's 2000 so far");
   } finally {
     for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     rmSync(root, { recursive: true, force: true });

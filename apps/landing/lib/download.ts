@@ -285,4 +285,27 @@ export const editors: Editor[] = [
     hosted: json({ mcp: { ensemble: { type: "remote", url: HOSTED_MCP_URL, headers: hostedHeaders } } }),
     note: "Config file: ~/.config/opencode/opencode.json.",
   },
+  {
+    id: "qwen",
+    name: "Qwen Code",
+    setupId: "qwen",
+    local: json({ mcpServers: { ensemble: { command: "ensemble", args: ["mcp"] } } }),
+    hosted: json({ mcpServers: { ensemble: { httpUrl: HOSTED_MCP_URL, headers: hostedHeaders } } }),
+    note: "Config file: ~/.qwen/settings.json.",
+  },
+  {
+    id: "kimi",
+    name: "Kimi Code",
+    setupId: "kimi",
+    local: json({ mcpServers: { ensemble: { command: "ensemble", args: ["mcp"] } } }),
+    hosted: json({ mcpServers: { ensemble: { url: HOSTED_MCP_URL, headers: hostedHeaders } } }),
+    note: "Config file: ~/.kimi-code/mcp.json.",
+  },
+  {
+    id: "vibe",
+    name: "Mistral Vibe",
+    setupId: "vibe",
+    local: "vibe mcp add ensemble --transport stdio --command ensemble --arg=mcp",
+    hosted: `vibe mcp add ensemble --url ${HOSTED_MCP_URL} --transport streamable-http --header "Authorization=Bearer KEY"`,
+  },
 ];
