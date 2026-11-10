@@ -25,8 +25,8 @@ import {
   ArrowUpRight,
   MessageSquarePlus,
   Paperclip,
-  Sparkles,
 } from "lucide-react";
+import { EnsembleIcon } from "@/components/agent-icon";
 import { copyText } from "@/components/context-menu/builders";
 import type { MenuAction, MenuSection, MenuSpec } from "@/components/context-menu/menu-store";
 import { api, type CodeDownload } from "@/lib/api";
@@ -121,7 +121,7 @@ function codeAskItems(ctx: CodeMenuContext, path: string, selection?: { text: st
     {
       id: "ask",
       label: "Ask Ensemble",
-      icon: Sparkles,
+      icon: EnsembleIcon,
       submenu: () => ({
         sections: [
           { items: CODE_ASKS.map((preset) => ({ id: `ask-${preset.id}`, label: preset.label, run: ask(preset.prompt) })) },

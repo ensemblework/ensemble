@@ -301,7 +301,7 @@ Run output is immutable evidence. A run's card on its task shows the agent's out
 
 ### Selection comments and inline questions
 
-Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model.
+Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model. While it is typed in the caret's line, `@ensemble` shows as Ensemble's chip, the question is tinted and the line ends with *↵ Ask Ensemble* (an empty one says what it can do); these are editor decorations only (`components/editor/ensemble-ask.ts`), and only where Enter sends a request (a page, task or meeting notes, not a public link). In the @ menu the row carries Ensemble's mark and an *AI* badge.
 
 Comments never reserve document width or change the focus-mode reading column. Small gutter markers show thread counts; clicking a marker or highlighted text opens one compact, viewport-bounded thread overlay. Long quotes are limited to two lines; the thread scrolls independently. Close or Escape returns to writing. Page comments and selection drafts use the same overlay, with edits, resolution and delete confirmation (`components/comments/comment-layer.tsx`, `.comment-*` rules in `app/globals.css`).
 

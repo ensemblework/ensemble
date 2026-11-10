@@ -24,7 +24,8 @@ export function ensembleSlice(block: string, caretOffset: number): EnsembleSlice
   return { prompt, at, caret };
 }
 
-export function ensembleNodeRequest(block: Node, caretOffset: number): (EnsembleSlice & { mentions: PageMention[] }) | null {
+/** Where the last "@ensemble" before the caret starts in this block, or -1. */
+export function ensembleTokenAt(block: Node, caretOffset: number): number {
   const caret = Math.min(caretOffset, block.content.size);
   let at = -1;
   block.forEach((node, offset) => {
@@ -32,6 +33,12 @@ export function ensembleNodeRequest(block: Node, caretOffset: number): (Ensemble
     const text = (node.text ?? "").slice(0, caret - offset);
     for (const match of text.matchAll(/@ensemble(?=\s|:|$)/gi)) at = offset + match.index!;
   });
+  return at;
+}
+
+export function ensembleNodeRequest(block: Node, caretOffset: number): (EnsembleSlice & { mentions: PageMention[] }) | null {
+  const caret = Math.min(caretOffset, block.content.size);
+  const at = ensembleTokenAt(block, caret);
   if (at < 0) return null;
   const prompt = block.textBetween(at + "@ensemble".length, caret, " ", (node) => node.type.name === "mention" ? `@${node.attrs.label ?? ""}` : "").trim();
   if (!prompt) return null;

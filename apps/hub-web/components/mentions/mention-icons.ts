@@ -1,6 +1,7 @@
 import { fileFormat, type FileKind } from "@ensemble/shared-types";
 import {
   AtSign,
+  BookOpen,
   Calendar,
   ChartSpline,
   CheckSquare,
@@ -17,11 +18,11 @@ import {
   Presentation,
   Target,
   User,
-  Wand2,
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
 import type { MentionMenuItem } from "@/lib/mentions/menu";
+import { EnsembleIcon } from "@/components/agent-icon";
 
 const KIND_ICON: Record<string, LucideIcon> = {
   people: User,
@@ -29,13 +30,13 @@ const KIND_ICON: Record<string, LucideIcon> = {
   repo: GitBranch,
   task: CheckSquare,
   deliverable: Target,
-  skill: Wand2,
+  skill: BookOpen,
   diagram: Waypoints,
   plot: ChartSpline,
   "plot-space": ChartSpline,
   dataset: ChartSpline,
   file: Paperclip,
-  ensemble: Wand2,
+  ensemble: EnsembleIcon,
   date: Calendar,
 };
 
@@ -62,6 +63,8 @@ export function mentionIcon(item: MentionMenuItem): LucideIcon | null {
 /** The small text at the end of a row: the kind ("Person") or the group's prefix ("@people:"). */
 export function mentionBadge(item: MentionMenuItem): string | null {
   if (item.type === "entity") return item.kindLabel ?? null;
+  // Picking it asks the AI, not a mention: say so before it is picked.
+  if (item.type === "action" && item.kind === "ensemble") return "AI";
   if (item.type === "group") return item.shortcut ?? null;
   return null;
 }
