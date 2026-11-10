@@ -6,6 +6,7 @@
  */
 import type { Device, PrismaClient } from "@prisma/client";
 import { currentDevice } from "./successor.js";
+import { sessionDeletionOf } from "../workspace/sessions.js";
 
 export type EarlierRun = {
   jobId: string;
@@ -17,6 +18,8 @@ export type EarlierRun = {
   repoUrl: string | null;
   branch: string;
   createdAt: string;
+  /** Its agent session was deleted: continuing it works in its folder, in a new agent session. */
+  sessionDeleted?: boolean;
 };
 
 const WAITING = ["queued", "claimed", "running", "waiting_approval", "stopping"] as const;
@@ -54,7 +57,7 @@ export async function earlierRuns(
     },
     orderBy: { createdAt: "desc" },
     take: 100,
-    select: { id: true, taskId: true, status: true, folderLabel: true, repoUrl: true, branch: true, createdAt: true, continueFromJobId: true, task: { select: { title: true } } },
+    select: { id: true, taskId: true, status: true, folderLabel: true, repoUrl: true, branch: true, createdAt: true, continueFromJobId: true, context: true, task: { select: { title: true } } },
   });
   const parentOf = new Map(jobs.map((job) => [job.id, job.continueFromJobId]));
   const rootOf = (id: string) => {
@@ -81,6 +84,8 @@ export async function earlierRuns(
       repoUrl: job.repoUrl,
       branch: job.branch,
       createdAt: job.createdAt.toISOString(),
+      // Its folder can still be continued; its agent session cannot, so the run starts a new one.
+      ...(sessionDeletionOf(job.context)?.state === "deleted" ? { sessionDeleted: true } : {}),
     });
   }
   const own = input.taskId ? rows.filter((row) => row.taskId === input.taskId) : [];

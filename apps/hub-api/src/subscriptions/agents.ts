@@ -33,7 +33,7 @@ import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
 import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
-import { copilotEnv } from "./copilot.js";
+import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
@@ -583,6 +583,8 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
 }
 
 const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, session }) => {
+  // `--session-id` would quietly start a new, empty session under the id of one deleted in Copilot.
+  if (session?.resume && (await copilotHasSession(session.id)) === false) throw new SessionGone(`Copilot no longer has session ${session.id}`);
   const mcpFile = join(own ?? folder, "mcp.json");
   // A tool call may take minutes (a browser task, a slow connected app); Copilot's own MCP timeout is shorter.
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"], timeout: TOOL_TIMEOUT_MS } } }), "utf8");

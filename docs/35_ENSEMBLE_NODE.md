@@ -404,6 +404,8 @@ The node chooses (`sessionRules` in `node/brain.ts`): the same line of work in t
 
 **A node's own sessions stay together.** A fresh run the node starts for itself in a coding agent (no repository, folder or session to continue) works in the node's project folder (`nodeProjectBrief` in `workspace/agent-projects.ts`: "<Name> (Ensemble Node)", with its role and charter as the brief), the same folder its conversation uses when it runs on an AI plan, unless `orchestration.projectFolders` is off. A session the node started for itself and has not used for 7 days is deleted from its agent ([30](30_ENGINES.md), Cleaning up sessions).
 
+**A session that no longer exists.** When the owner deleted a session in the agent's own app (or the agent expired it), `node_session_send` still works: the agent cannot reopen it, so the run goes on in a new session in the same folder with the brief and the earlier task's summary, and the node's run note says the agent did not remember the earlier conversation ([30](30_ENGINES.md), Agent sessions). A session deleted in Ensemble is gone from `node_sessions`, and `node_session_send` refuses it. The node's own conversation on an AI plan whose session was deleted goes on in a new session with the conversation so far.
+
 **Isolation.** A session belongs to the node of its first node run (`sessionOwners`). Other nodes never see it, and `node_sessions`, `node_session_send` and `node_session_stop` refuse it. A session started outside Node (the Hub, the CLI) belongs to no node until one continues it; then it is that node's.
 
 ### 8.3 Queue, steer, replace, stop

@@ -19,6 +19,10 @@ import { PriorityTag, Tag, cx } from "../ui";
 import { MarkdownText } from "../markdown-text";
 import { LinkifiedText } from "../linkified-text";
 import { sameModel, usd } from "@/lib/run-trace";
+import { ENGINE_LABELS, isCodeEngine } from "@ensemble/shared-types";
+
+/** A coding agent's name, for a run's provider. */
+const agentName = (provider: string | null) => (isCodeEngine(provider) ? ENGINE_LABELS[provider] : "the agent");
 
 export const JOB_STATE: Record<AgentJob["status"], { label: string; tone: "green" | "red" | "yellow" | "gray" | "blue" | "orange" }> = {
   queued: { label: "Queued", tone: "gray" },
@@ -264,6 +268,13 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
           ) : (
             <span className="truncate">{job.progress}</span>
           )}
+        </div>
+      ) : null}
+      {job.sessionRestart ? (
+        <div className="mt-1.5 text-[12px] leading-[17px] text-muted" data-testid="job-session-restart">
+          {job.sessionRestart === "gone"
+            ? `The earlier task's session no longer exists in ${agentName(job.provider)} (deleted or expired there), so this run started a new session in the same folder, with the earlier task's summary.`
+            : "The earlier task's agent session was deleted in Ensemble, so this run started a new session in the same folder, with the earlier task's summary."}
         </div>
       ) : null}
       {job.sessionChoice ? (

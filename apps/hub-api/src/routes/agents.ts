@@ -25,7 +25,8 @@ import { liveLog } from "../workspace/live-log.js";
 import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
 import { contextTierOf, fastOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
-import { listSessions, resolveSession, sessionOfJob } from "../workspace/sessions.js";
+import { listSessions, resolveSession, sessionDeletionOf, sessionOfJob } from "../workspace/sessions.js";
+import { sessionRestartOf } from "../workspace/session-continuity.js";
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
@@ -254,7 +255,9 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     });
     const host = await canUseHostCredentials(request.userId);
     await onCurrentDevices(prisma, jobs);
-    return { jobs: jobs.map((job) => ({ ...card(job, undefined, { paths: host }), reviewId: job.review?.id ?? null })) };
+    // A continued run whose agent session was gone (session-continuity.ts): the task page says so.
+    const restarts = await Promise.all(jobs.map((job) => sessionRestartOf(prisma, job).catch(() => null)));
+    return { jobs: jobs.map((job, index) => ({ ...card(job, undefined, { paths: host }), reviewId: job.review?.id ?? null, sessionRestart: restarts[index] })) };
   });
 
   app.get("/api/agent/jobs/:id", async (request, reply) => {
@@ -271,6 +274,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       job: {
         ...card(job, undefined, { paths: host }),
         reviewId: job.review?.id ?? null,
+        sessionRestart: await sessionRestartOf(prisma, job).catch(() => null),
         // The coding agent's session this run is part of (workspace/sessions.ts); null for Ensemble's own agent.
         session: await sessionOfJob(prisma, job),
         instructions: job.instructions,
@@ -335,7 +339,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       if (seen.has(key)) continue;
       seen.add(key);
       if (folder && !(await stat(folder).then(() => true).catch(() => false))) continue;
-      rows.push({ jobId: job.id, taskId: job.taskId, title: job.task.title, status: job.status, folder, branch: job.branch, createdAt: job.createdAt.toISOString() });
+      rows.push({ jobId: job.id, taskId: job.taskId, title: job.task.title, status: job.status, folder, branch: job.branch, createdAt: job.createdAt.toISOString(), ...(sessionDeletionOf(job.context)?.state === "deleted" ? { sessionDeleted: true } : {}) });
     }
     // The task's own runs first: carrying on a run of this task is the usual reason to continue.
     const own = taskId ? rows.filter((row) => row.taskId === taskId) : [];

@@ -18,6 +18,7 @@ import { LOGIN_CARD, loginCardClosed } from "./logins.js";
 import { sweepHelpers } from "./helpers.js";
 import { finishStep, loadPlan, runIsStale, stepPending, stepRow } from "./plans.js";
 import { askForReport } from "./dispatch.js";
+import { sessionRestartOf } from "../workspace/session-continuity.js";
 import { evidenceOf } from "../evidence/store.js";
 import { startOutbox, stopOutbox } from "./outbox.js";
 import { parseReport } from "./report.js";
@@ -139,6 +140,9 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     ? await prisma.workspaceJob.findMany({ where: { id: { in: queued.map((row) => row.jobId) }, status: { in: ["queued", "claimed", "running", "waiting_approval"] } }, select: { task: { select: { title: true } } } })
     : [];
   const named = run.direct ? `“${title.replace(/[“”]/g, "")}”` : `[${title.replace(/[[\]]/g, "")}](ensemble://task/${run.taskId})`;
+  // The session it was sent to no longer existed (deleted in the agent's app, or in Ensemble): the agent did not remember it.
+  const ranJob = await prisma.workspaceJob.findUnique({ where: { id: run.jobId }, select: { id: true, kind: true, provider: true, continueFromJobId: true, context: true } });
+  const restart = ranJob ? await sessionRestartOf(prisma, ranJob).catch(() => null) : null;
   const queuedTurn = await enqueueTurn(app, {
     nodeId: run.nodeId,
     roomId: run.roomId,
@@ -146,6 +150,9 @@ async function followRun(app: FastifyInstance, run: NodeRun, job: JobView | null
     triggerMessageId: null,
     note: [
       `The ${run.sessionId ? "session" : "computer"} run for ${named} ${words}.${run.sessionId ? ` (Its session's id, for your tools only: ${run.sessionId}.)` : ""}`,
+      restart
+        ? `Its agent's earlier conversation ${restart === "gone" ? "no longer existed in the agent (deleted or expired there)" : "had been deleted"}, so it worked in a new conversation from the task's brief and the earlier task's summary: it did not remember what was said before. Say so if it matters.`
+        : "",
       report ? `The agent reported: ${report.outcome}. ${truncateText(report.summary, 1500)}${report.checks?.length ? `\nChecks: ${report.checks.map((check) => `${check.verdict} ${check.name}`).join("; ")}` : ""}` : "",
       job?.summary ? `Its summary: ${truncateText(job.summary, 3000)}` : "",
       await evidenceLine(prisma, run),
