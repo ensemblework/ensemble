@@ -154,7 +154,7 @@ export type MemberDecision = { allow: true; personal: boolean } | { allow: false
 const READ = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** A viewer may ask the assistant about the space, never apply what it proposes. */
-const VIEWER_ASSISTANT = new Set(["POST /api/assistant/turn", "POST /api/assistant/conversations", "POST /api/assistant/conversations/:id/stop", "POST /api/ask"]);
+const VIEWER_ASSISTANT = new Set(["POST /api/assistant/turn", "POST /api/assistant/conversations", "DELETE /api/assistant/conversations/:id", "POST /api/assistant/conversations/:id/stop", "POST /api/ask"]);
 
 /** A whole-space member's request. The owner never reaches this. */
 export function memberDecision(method: string, url: string, role: "viewer" | "editor", ownerName: string): MemberDecision {

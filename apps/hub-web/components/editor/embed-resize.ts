@@ -1,5 +1,7 @@
 /** Bottom-edge height handle shared by diagram and plot embeds. Width always follows the page. */
 
+import { perFrame } from "@/lib/motion/drag";
+
 export const EMBED_MIN_HEIGHT = 160;
 export const EMBED_MAX_HEIGHT = 1400;
 const STEP = 24;
@@ -43,18 +45,40 @@ export function createHeightHandle(options: {
   handle.addEventListener("pointerenter", refresh);
 
   let start: { y: number; height: number; pointer: number } | null = null;
-  const move = (event: PointerEvent) => {
-    if (!start || event.pointerId !== start.pointer) return;
-    const next = clampEmbedHeight(start.height + event.clientY - start.y, min);
+  // One height a frame at most: each one lays the page out again below the embed.
+  const resize = perFrame((clientY: number) => {
+    if (!start) return;
+    const next = clampEmbedHeight(start.height + clientY - start.y, min);
     options.apply(next);
     sync(next);
+  });
+  const move = (event: PointerEvent) => {
+    if (!start || event.pointerId !== start.pointer) return;
+    resize(event.clientY);
+  };
+  const stop = (pointer: number) => {
+    start = null;
+    handle.classList.remove("is-dragging");
+    delete document.documentElement.dataset.embedResizing;
+    document.removeEventListener("keydown", escape, true);
+    if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
   };
   const end = (event: PointerEvent) => {
     if (!start || event.pointerId !== start.pointer) return;
-    start = null;
-    handle.classList.remove("is-dragging");
-    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    resize.flush();
+    stop(event.pointerId);
     options.commit(options.read());
+  };
+  // Escape puts the height back where the drag started.
+  const escape = (event: KeyboardEvent) => {
+    if (event.key !== "Escape" || !start) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resize.cancel();
+    const { height, pointer } = start;
+    stop(pointer);
+    options.apply(height);
+    sync(height);
   };
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
@@ -62,6 +86,8 @@ export function createHeightHandle(options: {
     event.stopPropagation();
     start = { y: event.clientY, height: options.read(), pointer: event.pointerId };
     handle.classList.add("is-dragging");
+    document.documentElement.dataset.embedResizing = "1";
+    document.addEventListener("keydown", escape, true);
     handle.setPointerCapture(event.pointerId);
   });
   handle.addEventListener("pointermove", move);

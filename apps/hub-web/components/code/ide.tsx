@@ -14,6 +14,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -21,7 +22,9 @@ import {
   CheckCheck,
   ChevronRight,
   ChevronsDownUp,
+  Code2,
   Columns2,
+  Copy,
   Download,
   Eye,
   FilePlus2,
@@ -35,6 +38,7 @@ import {
   House,
   Keyboard,
   Laptop,
+  ListChecks,
   Lock,
   Maximize2,
   Minimize2,
@@ -45,19 +49,20 @@ import {
   TerminalSquare,
   Undo2,
   Upload,
+  WifiOff,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { ActivityBar, BottomPanel, FontSizeControl, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
-import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
+import { ActivityBar, BottomPanel, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout, type IdeLayout } from "@/components/code/ide-chrome";
+import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
 import { CommitPanel } from "@/components/code/commit-panel";
 import { SourceControl } from "@/components/code/source-control";
 import { Terminal } from "@/components/code/terminal";
 import { useToast } from "@/components/toast";
-import { Spinner, cx } from "@/components/ui";
+import { MenuItem, Popover, SkeletonRows, Spinner, cx } from "@/components/ui";
 import { useSpaceAccess } from "@/lib/access";
 import { api, ApiError, type ChangedFile, type CodeCreated, type CodeTreeEntry, type CodeVersions } from "@/lib/api";
 import { useCodeApi, type Source } from "@/lib/code-target";
@@ -68,9 +73,13 @@ import { usePersistentState } from "@/lib/prefs";
 import { Fold } from "./code-lists";
 import { FileIcon } from "./file-icon";
 import { FilePreview } from "./file-preview";
-import { codeEditorMenu, downloadFromCode, explorerMenu, folderMenu, folderOf, nameOf, tabMenu, type CodeMenuContext } from "./code-menus";
+import { CODE_ASKS, askEnsemble, codeEditorMenu, downloadFromCode, explorerMenu, folderMenu, folderOf, nameOf, tabMenu, type CodeMenuContext } from "./code-menus";
 import { openContextMenu } from "@/components/context-menu/menu-store";
+import { copyText } from "@/components/context-menu/builders";
 import { previewOf } from "@/lib/file-kinds";
+import { desktopShell } from "@/lib/desktop-param";
+import { parseQuickInput, rankByLabel, rankFiles } from "@/lib/code-quick-open";
+import { QuickOpen, useKeyLabel, type QuickItem, type QuickList } from "./quick-open";
 
 type EditorModule = typeof import("@/components/code/review-editor");
 let editorModule: EditorModule | null = null;
@@ -97,6 +106,24 @@ const STATUS_COLOR: Record<string, string> = { A: "text-ok", U: "text-ok", M: "t
 const SAVE_MS = 700;
 
 type Panel = "files" | "search" | "scm";
+/** What the command palette asks of the explorer. */
+type ExplorerAsk = "new-file" | "new-folder" | "collapse";
+
+/** Whether this browser is online (`navigator.onLine`), kept up to date. */
+function useOnline(): boolean {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine !== false);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+  return online;
+}
 type SaveState = "saved" | "dirty" | "saving" | "error" | "conflict";
 type Buffer = { text: string; dirty: boolean; hash: string | null };
 
@@ -123,22 +150,32 @@ function Ring({ done, total }: { done: number; total: number }) {
   );
 }
 
+/** The shortcut sheet, as `keyLabel` chords (`mod` is ⌘ on a Mac, Ctrl elsewhere). */
 const SHORTCUTS: Array<[string, string]> = [
-  ["Alt+Y", "Accept the agent's change at the cursor (in a checkout: stage it)"],
-  ["Alt+N", "Reject the agent's change, or revert your edit"],
-  ["Ctrl+Z", "Undo, including a reject"],
-  ["F7 / Shift+F7", "Next / previous change (crosses files)"],
-  ["Alt+→ / Alt+←", "Next / previous changed file"],
-  ["F4", "Changes ↔ whole file"],
-  ["Ctrl+Shift+V", "Preview ↔ source (Markdown, HTML, SVG, CSV)"],
-  ["F2", "Rename the file or folder picked in the explorer"],
-  ["Ctrl+S", "Save now (it also saves by itself)"],
-  ["Ctrl+F", "Find and replace in the file"],
-  ["Ctrl+B", "Show or hide the explorer"],
-  ["Ctrl+`", "Terminal"],
-  ["Ctrl+Shift+= / - / 0", "Code text bigger / smaller / reset"],
-  ["Alt+Shift+T", "Next starred theme"],
-  ["Esc", "Leave full screen"],
+  ["mod+p", "Go to file (type :12 after the name for a line)"],
+  ["mod+shift+p / f1", "Show all commands"],
+  ["ctrl+g", "Go to line"],
+  ["mod+shift+f", "Find in files (with the selection)"],
+  ["mod+shift+e", "Explorer"],
+  ["ctrl+shift+g", "Source control"],
+  ["alt+y", "Accept the agent's change at the cursor (in a checkout: stage it)"],
+  ["alt+n", "Reject the agent's change, or revert your edit"],
+  ["mod+z", "Undo, including a reject"],
+  ["f7 / shift+f7", "Next / previous change (crosses files)"],
+  ["alt+arrowright / alt+arrowleft", "Next / previous changed file"],
+  ["f4", "Changes ↔ whole file"],
+  ["mod+shift+v", "Preview ↔ source (Markdown, HTML, SVG, CSV)"],
+  ["f2", "Rename the file or folder picked in the explorer"],
+  ["mod+s", "Save now (it also saves by itself)"],
+  ["alt+w", "Close the file"],
+  ["alt+1 / alt+9", "The first to eighth open file; 9 the last"],
+  ["ctrl+pagedown / ctrl+pageup", "Next / previous open file"],
+  ["mod+f", "Find and replace in the file"],
+  ["mod+b", "Show or hide the side panel"],
+  ["ctrl+`", "Terminal"],
+  ["mod+shift+= / mod+shift+- / mod+shift+0", "Code text bigger / smaller / reset"],
+  ["alt+shift+t", "Next starred theme"],
+  ["escape", "Leave full screen"],
   ["?", "These shortcuts (outside the editor)"],
 ];
 
@@ -150,7 +187,8 @@ export function CodeIde({ source }: { source: Source }) {
   const ReviewEditor = useReviewEditor();
   const viewOnly = access.guest;
 
-  const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: target.kind === "device", staleTime: 60_000 });
+  // A paired computer's online state is read again every 30 s while its code is open.
+  const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: target.kind === "device", staleTime: 30_000, refetchInterval: target.kind === "device" ? 30_000 : false });
   const computer = target.kind === "device" ? computers.data?.devices.find((row) => row.id === target.deviceId) ?? null : null;
   const info = useQuery({ queryKey: ["code-source", key, source], queryFn: () => code.codeSource(source), retry: false });
   const isReview = info.data?.kind === "review";
@@ -161,8 +199,27 @@ export function CodeIde({ source }: { source: Source }) {
 
   const [panel, setPanel] = usePersistentState<Panel>("ensemble.code.sidebarPanel", "files");
   const layout = useIdeLayout();
-  useIdeKeys(layout);
+  const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
+  const openQuick = useCallback((text: string) => setQuick({ text, nonce: Date.now() }), []);
+  useIdeKeys(layout, openQuick);
+  const label = useKeyLabel();
   const { sideOpen, setSideOpen, closeOverlay, fontSize, setFontSize, terminal, setTerminal } = layout;
+  // Saving waits while this browser or the computer is offline, and resumes when both are back.
+  const online = useOnline();
+  const reachable = online && (target.kind !== "device" || computer?.online !== false);
+  const reachableRef = useRef(reachable);
+  reachableRef.current = reachable;
+  const [recent, setRecent] = useState<string[]>([]);
+  const [searchAsk, setSearchAsk] = useState<{ text: string; nonce: number } | null>(null);
+  const [explorerAsk, setExplorerAsk] = useState<{ kind: ExplorerAsk; nonce: number } | null>(null);
+  const [flash, setFlash] = useState<{ path: string; text: string } | null>(null);
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (!flash) return;
+    const timer = window.setTimeout(() => setFlash(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [flash]);
+  const files = useQuery({ queryKey: ["code-files", key, source], queryFn: () => code.files(source), enabled: quick !== null && !quick.text.startsWith(">"), staleTime: 30_000 });
   const [full, setFull] = useState(false);
   const [help, setHelp] = useState(false);
   const [tabs, setTabs] = useState<string[]>([]);
@@ -187,13 +244,15 @@ export function CodeIde({ source }: { source: Source }) {
   const changed: ChangedFile[] = useMemo(() => info.data?.files ?? [], [info.data]);
   const progressOf = useCallback((path: string) => progress.data?.files.find((row) => row.path === path) ?? null, [progress.data]);
 
-  // The first changed file opens by itself.
+  // The first changed file opens by itself, once: closing every file leaves the editor empty.
   useEffect(() => {
-    if (!info.data || active) return;
+    if (!info.data || active || autoOpened.current) return;
+    autoOpened.current = true;
     const first = changed[0]?.path;
     if (first) {
       setTabs([first]);
       setActive(first);
+      setRecent([first]);
     }
   }, [info.data, changed, active]);
 
@@ -205,6 +264,8 @@ export function CodeIde({ source }: { source: Source }) {
       window.clearTimeout(timers.current.get(path));
       const buffer = buffers.current.get(path);
       if (!buffer?.dirty) return;
+      // Offline: the edit stays here, marked unsaved, and is written when the connection is back.
+      if (!reachableRef.current) return;
       const text = buffer.text;
       setState(path, "saving");
       try {
@@ -232,6 +293,13 @@ export function CodeIde({ source }: { source: Source }) {
     await Promise.all([...buffers.current.entries()].filter(([, buffer]) => buffer.dirty).map(([path]) => save(path)));
   }, [save]);
 
+  // Back online: what waited is saved, and closed files' text then leaves the browser.
+  useEffect(() => {
+    if (reachable) void saveAll().then(() => {
+      for (const path of [...buffers.current.keys()]) releaseRef.current(path);
+    });
+  }, [reachable, saveAll]);
+
   const onChange = useCallback(
     (path: string, text: string) => {
       const buffer = buffers.current.get(path);
@@ -243,6 +311,7 @@ export function CodeIde({ source }: { source: Source }) {
     [save, setState],
   );
 
+  const releaseRef = useRef<(path: string) => void>(() => undefined);
   /** Drops a closed file's text from the browser once it is saved; an unsaved edit stays until it is. */
   const release = useCallback(
     (path: string) => {
@@ -254,6 +323,7 @@ export function CodeIde({ source }: { source: Source }) {
     },
     [client, key, source],
   );
+  releaseRef.current = release;
 
   const open = useCallback(
     (path: string, line?: number) => {
@@ -267,6 +337,7 @@ export function CodeIde({ source }: { source: Source }) {
       setTabs(next.tabs);
       if (next.closed) release(next.closed);
       setActive(path);
+      setRecent((current) => (current[0] === path ? current : [path, ...current.filter((row) => row !== path)].slice(0, 30)));
       closeOverlay();
       if (line) setReveal({ path, line, nonce: Date.now() });
     },
@@ -310,6 +381,7 @@ export function CodeIde({ source }: { source: Source }) {
         timers.current.delete(path);
       }
       const remap = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).map(([path, value]) => [map(path), value]));
+      setRecent((current) => current.map(map));
       setModes(remap);
       setPreviews(remap);
       setSaveState(remap);
@@ -330,6 +402,7 @@ export function CodeIde({ source }: { source: Source }) {
       const next = tabs.filter((row) => !gone(row));
       openTabs.current = next;
       setTabs(next);
+      setRecent((current) => current.filter((row) => !gone(row)));
       if (active && gone(active)) setActive(next[next.length - 1] ?? null);
     },
     [active, tabs],
@@ -371,16 +444,69 @@ export function CodeIde({ source }: { source: Source }) {
     setModes((current) => ({ ...current, [active]: next }));
   };
 
+  const showPanel = (id: Panel) => {
+    setPanel(id);
+    setSideOpen(true);
+  };
+  /** Find in files, with the editor's selection when it is one short line, searched at once. */
+  const findInFiles = () => {
+    const picked = editor.current?.selected().text ?? "";
+    showPanel("search");
+    setSearchAsk({ text: picked && !picked.includes("\n") && picked.length <= 200 ? picked : "", nonce: Date.now() });
+  };
+  const tabAt = (index: number) => {
+    const path = index < 0 ? tabs[tabs.length - 1] : tabs[index];
+    if (path) open(path);
+  };
+  const stepTab = (delta: number) => {
+    if (!tabs.length) return;
+    const from = active ? tabs.indexOf(active) : 0;
+    tabAt((from + delta + tabs.length) % tabs.length);
+  };
+
   // The editor's own keys (the window's are in useIdeKeys). None is a bare letter: every letter types.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
+      const letter = event.key.length === 1 ? event.key.toLowerCase() : "";
+      // Option on a Mac turns letters and digits into other characters: read the physical key.
+      const physical = /^(?:Key|Digit)(.)$/.exec(event.code ?? "")?.[1]?.toLowerCase() ?? letter;
+      const writing = typing(event.target) && !inEditor(event.target);
+      if (event.defaultPrevented) return;
       if (event.key === "F4") {
         event.preventDefault();
         setMode(mode === "changes" ? "file" : "changes");
       } else if (mod && event.shiftKey && (event.key === "V" || event.key === "v") && active && previewOf(active)) {
         event.preventDefault();
         showPreview(active);
+      } else if (mod && !event.shiftKey && !event.altKey && letter === "s") {
+        event.preventDefault();
+        void saveAll();
+      } else if (mod && event.shiftKey && !event.altKey && letter === "f") {
+        event.preventDefault();
+        findInFiles();
+      } else if (mod && event.shiftKey && !event.altKey && letter === "e") {
+        event.preventDefault();
+        showPanel("files");
+      } else if (event.ctrlKey && !event.metaKey && event.shiftKey && letter === "g" && !viewOnly) {
+        event.preventDefault();
+        showPanel("scm");
+      } else if (event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && letter === "g") {
+        event.preventDefault();
+        openQuick(":");
+      } else if (event.ctrlKey && !event.metaKey && (event.key === "PageDown" || event.key === "PageUp")) {
+        event.preventDefault();
+        stepTab(event.key === "PageDown" ? 1 : -1);
+      } else if (event.altKey && !mod && !event.shiftKey && !writing && physical === "w") {
+        event.preventDefault();
+        if (active) close(active);
+      } else if (mod && !event.altKey && !event.shiftKey && letter === "w" && active) {
+        // Only the desktop app gets this far: a browser keeps Ctrl/⌘+W for its own tab.
+        event.preventDefault();
+        close(active);
+      } else if (event.altKey && !mod && !event.shiftKey && !writing && /^[1-9]$/.test(physical)) {
+        event.preventDefault();
+        tabAt(physical === "9" ? -1 : Number(physical) - 1);
       } else if (event.altKey && !mod && event.key === "ArrowRight" && !typing(event.target)) {
         event.preventDefault();
         goFile(1);
@@ -452,19 +578,31 @@ export function CodeIde({ source }: { source: Source }) {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
 
-  if (info.isLoading) return <div className="p-10"><Spinner /></div>;
+  if (info.isLoading) return <IdeLoading layout={layout} />;
   if (info.error || !info.data) {
     return (
-      <div className="p-10 text-[13px] text-muted">
-        {(info.error as Error | null)?.message ?? "Could not open this checkout."}{" "}
-        <Link href="/code" className="text-accent hover:underline">Back to Code</Link>
-      </div>
+      <IdeSpace className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-bg" root>
+        <IdeEmpty
+          icon={<AlertTriangle size={40} strokeWidth={1.25} />}
+          title="This folder could not be opened"
+          message={(info.error as Error | null)?.message ?? "Code could not read it."}
+          actions={
+            <>
+              <button type="button" className="btn" onClick={() => void info.refetch()}>
+                <RefreshCw size={13} /> Try again
+              </button>
+              <Link href="/code" className="btn-ghost">Back to Code</Link>
+            </>
+          }
+        />
+      </IdeSpace>
     );
   }
   const data = info.data;
   const totals = progress.data;
   const activeState = active ? saveState[active] ?? "saved" : "saved";
   const where = target.kind === "device" ? computer?.name ?? "your computer" : null;
+  const placeName = where ?? (desktopShell() ? "This computer" : "This server");
   const repoView = viewFor(data.repo, repoViews(knownRepos.data));
   const repoLabel = repoName(repoView);
   // A run's checkout is a folder named by its job id: it is shown by its task or origin instead.
@@ -485,12 +623,136 @@ export function CodeIde({ source }: { source: Source }) {
       setRevealInTree({ path, nonce: Date.now() });
     },
   };
+  const canDecide = !viewOnly && isReview && Boolean(data.review) && !data.review?.completedAt;
+  const absolute = (path: string) => `${data.repo.replace(/[\\/]+$/, "")}/${path}`;
+  const goHome = () => document.querySelector<HTMLAnchorElement>("[data-ide-home]")?.click();
+
+  /** Every command the palette lists (Ctrl/⌘+Shift+P), in the order it lists them before you type. */
+  const commands = (): Array<{ id: string; label: string; keys?: string; run: () => void }> => {
+    const picked = editor.current?.selected();
+    const selection = picked?.text.trim() ? picked : undefined;
+    const fileCommands = active
+      ? [
+          { id: "save", label: "Save", keys: "mod+s", run: () => void save(active) },
+          { id: "close", label: "Close the file", keys: "alt+w", run: () => close(active) },
+          ...(changed.length ? [{ id: "view", label: mode === "changes" ? "Show the whole file" : "Show only the changes", keys: "f4", run: () => setMode(mode === "changes" ? "file" : "changes") }] : []),
+          ...(previewOf(active) && previewOf(active) !== "image" ? [{ id: "preview", label: previews[active] ? "Show the source" : "Open preview", keys: "mod+shift+v", run: () => showPreview(active) }] : []),
+          { id: "next-change", label: "Next change", keys: "f7", run: () => { editor.current?.focus(); editor.current?.next(); } },
+          { id: "previous-change", label: "Previous change", keys: "shift+f7", run: () => { editor.current?.focus(); editor.current?.previous(); } },
+          { id: "reveal", label: "Reveal the file in the explorer", run: () => menuBase.reveal!(active) },
+          { id: "copy-path", label: "Copy the file's path", run: () => void copyText(absolute(active)) },
+          { id: "copy-relative", label: "Copy the file's relative path", run: () => void copyText(active) },
+          ...CODE_ASKS.map((ask) => ({ id: `ask-${ask.id}`, label: `Ask Ensemble: ${ask.label}${selection ? " (selection)" : ""}`, run: () => void askEnsemble(menuBase, active, ask.prompt, selection) })),
+          { id: "attach", label: selection ? "Attach the selection to the assistant" : "Attach the file to the assistant", run: () => void askEnsemble(menuBase, active, undefined, selection) },
+          { id: "download-file", label: "Download the file", run: () => void downloadFromCode(code, source, active, toast) },
+        ]
+      : [];
+    return [
+      { id: "go-file", label: "Go to file", keys: "mod+p", run: () => openQuick("") },
+      ...(active ? [{ id: "go-line", label: "Go to line", keys: "ctrl+g", run: () => openQuick(":") }] : []),
+      { id: "find", label: "Find in files", keys: "mod+shift+f", run: findInFiles },
+      { id: "explorer", label: "Show the explorer", keys: "mod+shift+e", run: () => showPanel("files") },
+      ...(viewOnly ? [] : [{ id: "scm", label: "Show source control", keys: "ctrl+shift+g", run: () => showPanel("scm") }]),
+      { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
+      ...(viewOnly ? [] : [{ id: "terminal", label: terminal ? "Hide the terminal" : "Show the terminal", keys: "ctrl+`", run: () => setTerminal(!terminal) }]),
+      ...fileCommands,
+      ...(changed.length > 1 ? [
+        { id: "next-file", label: "Next changed file", keys: "alt+arrowright", run: () => goFile(1) },
+        { id: "previous-file", label: "Previous changed file", keys: "alt+arrowleft", run: () => goFile(-1) },
+      ] : []),
+      ...(tabs.length ? [{ id: "save-all", label: "Save all", run: () => void saveAll() }] : []),
+      ...(tabs.length > 1 ? [{ id: "close-others", label: "Close the other files", run: () => closeMany(tabs.filter((row) => row !== active)) }] : []),
+      ...(tabs.length ? [{ id: "close-all", label: "Close all files", run: () => closeMany(tabs) }] : []),
+      ...(viewOnly ? [] : [
+        { id: "new-file", label: "New file…", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-file", nonce: Date.now() }); } },
+        { id: "new-folder", label: "New folder…", run: () => { showPanel("files"); setExplorerAsk({ kind: "new-folder", nonce: Date.now() }); } },
+      ]),
+      { id: "collapse", label: "Collapse folders in the explorer", run: () => setExplorerAsk({ kind: "collapse", nonce: Date.now() }) },
+      { id: "refresh", label: "Refresh the explorer", run: () => { for (const query of [["code-tree", key], ["code-files", key], ["code-source", key], ["scm"]]) void client.invalidateQueries({ queryKey: query }); } },
+      ...(canDecide ? [
+        { id: "accept-all", label: "Accept all agent changes", run: () => accept.mutate() },
+        { id: "discard-all", label: "Discard all agent changes…", run: () => setConfirmDiscard(true) },
+      ] : []),
+      ...(!viewOnly && isReview && !data.review ? [{ id: "mark-reviewed", label: "Mark reviewed", run: () => complete.mutate() }] : []),
+      ...(!viewOnly && isReview && data.review?.completedAt && data.review.canPush ? [{ id: "push", label: `Push ${data.branch}`, run: () => push.mutate() }] : []),
+      { id: "download-repo", label: "Download the repository as a zip", run: () => void downloadFromCode(code, source, "", toast) },
+      { id: "copy-folder", label: "Copy the folder's path", run: () => void copyText(data.repo) },
+      { id: "theme", label: "Color theme…", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
+      { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
+      { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
+      { id: "full", label: full ? "Leave full screen" : "Full screen", run: () => setFull(!full) },
+      { id: "shortcuts", label: "Keyboard shortcuts", keys: "?", run: () => setHelp(true) },
+      { id: "home", label: "Back to Code home", run: goHome },
+    ];
+  };
+
+  const fileItem = (path: string, run: () => void, extra: Partial<QuickItem> = {}): QuickItem => ({
+    id: path,
+    label: nameOf(path),
+    detail: folderOf(path),
+    icon: <FileIcon name={path} size={14} />,
+    run,
+    ...extra,
+  });
+  const resolveQuick = (text: string): QuickList => {
+    const input = parseQuickInput(text);
+    if (input.mode === "commands") {
+      return {
+        placeholder: "Type the name of a command",
+        empty: "No command matches.",
+        items: rankByLabel(input.query, commands()).map((row) => ({ id: row.id, label: row.label, keys: row.keys, hits: row.hits, run: row.run })),
+      };
+    }
+    if (input.mode === "line") {
+      if (!active) return { placeholder: "Go to line", empty: "Open a file first.", items: [] };
+      const lines = (buffers.current.get(active)?.text ?? "").split("\n").length;
+      const line = input.line ? Math.min(input.line, lines) : null;
+      return {
+        placeholder: "Go to line",
+        note: `Type a line number between 1 and ${lines} in ${nameOf(active)}.`,
+        empty: "",
+        items: line ? [{ id: "line", label: `Go to line ${line}`, detail: nameOf(active), run: () => open(active, line) }] : [],
+      };
+    }
+    const goTo = (path: string) => () => {
+      open(path, input.line ?? undefined);
+      focusEditorSoon();
+    };
+    if (!input.query) {
+      const history = recent.length ? recent : changed.map((row) => row.path);
+      return {
+        placeholder: "Go to file by name. > for commands, : for a line",
+        empty: "Type to find a file.",
+        items: history.map((path) => fileItem(path, goTo(path), { group: recent.length ? "recently opened" : "changed" })),
+        // The first is the file in view: Enter goes back to the one before it.
+        preselect: history[0] === active && history.length > 1 ? 1 : 0,
+      };
+    }
+    return {
+      placeholder: "Go to file by name. > for commands, : for a line",
+      empty: files.error ? (files.error as Error).message : "No file matches.",
+      loading: files.isLoading,
+      items: rankFiles(input.query, files.data?.files ?? []).map((row) => fileItem(row.path, goTo(row.path), { hits: row.nameHits, detailHits: row.folderHits })),
+    };
+  };
+  /** Quick open hands the keyboard to the editor once the file it opened is there. */
+  function focusEditorSoon() {
+    let tries = 0;
+    const tick = () => {
+      if (editor.current && !document.querySelector(".quick-open")) {
+        editor.current.focus();
+        return;
+      }
+      if ((tries += 1) < 40) window.setTimeout(tick, 50);
+    };
+    window.setTimeout(tick, 50);
+  }
 
   return (
     <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")} root>
       {/* Title bar */}
       <div className="flex h-10 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-2 text-[13px]" data-testid="ide-titlebar">
-        <Link href="/code" className="icon-btn" title="Back to Code"><ArrowLeft size={15} /></Link>
+        <Link href="/code" className="icon-btn" title="Back to Code" aria-label="Back to Code" data-ide-home><ArrowLeft size={15} /></Link>
         <span className="truncate font-semibold">{title}</span>
         <span className="truncate text-muted" title={data.repo}>
           {repoLabel === title ? "" : `${repoLabel} · `}
@@ -543,25 +805,22 @@ export function CodeIde({ source }: { source: Source }) {
             { id: "home", icon: House, label: "Code home", href: "/code" },
             ...(
               [
-                ["files", Files, "Explorer (Ctrl+B)"],
-                ["search", Search, "Find in files"],
-                ...(viewOnly ? [] : [["scm", GitBranch, "Source control"] as const]),
+                ["files", Files, `Explorer (${label("mod+b")})`],
+                ["search", Search, `Find in files (${label("mod+shift+f")})`],
+                ...(viewOnly ? [] : [["scm", GitBranch, `Source control (${label("ctrl+shift+g")})`] as const]),
               ] satisfies Array<readonly [Panel, typeof Files, string]>
-            ).map(([id, icon, label]) => ({
+            ).map(([id, icon, name]) => ({
               id,
               icon,
-              label,
+              label: name,
               active: sideOpen && panel === id,
               onClick: () => {
                 if (sideOpen && panel === id) setSideOpen(false);
-                else {
-                  setPanel(id);
-                  setSideOpen(true);
-                }
+                else showPanel(id);
               },
             })),
           ]}
-          bottom={viewOnly ? [] : [{ id: "terminal", icon: TerminalSquare, label: "Terminal (Ctrl+`)", active: terminal, onClick: () => setTerminal(!terminal) }]}
+          bottom={viewOnly ? [] : [{ id: "terminal", icon: TerminalSquare, label: `Terminal (${label("ctrl+`")})`, active: terminal, onClick: () => setTerminal(!terminal) }]}
         />
 
         <SidePanel layout={layout}>
@@ -579,57 +838,56 @@ export function CodeIde({ source }: { source: Source }) {
               reveal={revealInTree}
               onMoved={moved}
               onRemoved={removed}
+              ask={explorerAsk}
+              onQuickOpen={() => openQuick("")}
+              folderName={repoLabel || title}
             />
           ) : panel === "search" ? (
-            <SearchPanel source={source} onOpen={open} />
+            <SearchPanel source={source} onOpen={open} ask={searchAsk} />
           ) : (
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Source control</div>
-              <CommitPanel source={source} draftKey={source.review ?? `${target.kind === "device" ? `${target.deviceId}:` : ""}${data.repo}`} beforeCommit={saveAll} pending={progress.data?.pending ?? 0} />
-              <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} commitForm={false} />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <PanelHeader title="Source control" />
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <CommitPanel source={source} draftKey={source.review ?? `${target.kind === "device" ? `${target.deviceId}:` : ""}${data.repo}`} beforeCommit={saveAll} pending={progress.data?.pending ?? 0} />
+                <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} commitForm={false} />
+              </div>
             </div>
           )}
         </SidePanel>
 
         {/* Editor column */}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-line bg-sidebar text-[12.5px]" role="tablist" aria-label="Open files">
-            <button type="button" className="icon-btn my-auto ml-1 h-7 w-7 shrink-0" title="Show or hide the explorer (Ctrl+B)" onClick={() => setSideOpen(!sideOpen)}>
+          <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-sidebar text-[12.5px]">
+            <button type="button" className="icon-btn my-auto ml-1 mr-0.5 h-7 w-7 shrink-0" title={`Show or hide the side panel (${label("mod+b")})`} aria-label="Show or hide the side panel" onClick={() => setSideOpen(!sideOpen)}>
               <PanelLeft size={14} />
             </button>
-            {tabs.map((path) => {
-              const state = saveState[path];
-              const name = path.split("/").pop();
-              return (
-                <div
-                  key={path}
-                  role="tab"
-                  aria-selected={path === active}
-                  className={cx("code-tab group flex max-w-[220px] shrink-0 items-center gap-1.5 border-r border-line pl-2.5 pr-2", path === active ? "bg-bg text-ink" : "text-muted hover:text-ink")}
-                  onMouseDown={(event) => {
-                    if (event.button === 1) {
-                      event.preventDefault();
-                      close(path);
-                    }
-                  }}
-                  onContextMenu={(event) => openContextMenu(event, () => tabMenu(menuBase, path, tabs, closeMany))}
-                >
-                  <FileIcon name={path} size={14} />
-                  <button type="button" className={cx("min-w-0 truncate", previews[path] && "italic")} title={path} onClick={() => open(path)}>{previews[path] ? `Preview ${name}` : name}</button>
-                  <button type="button" className="icon-btn h-4 w-4 shrink-0" title={state === "dirty" || state === "saving" ? "Unsaved changes" : "Close"} onClick={() => close(path)}>
-                    {state === "dirty" || state === "saving" ? <span className="block h-2 w-2 rounded-full bg-current" /> : <X size={11} className="opacity-60 group-hover:opacity-100" />}
-                  </button>
-                </div>
-              );
-            })}
+            <TabStrip
+              tabs={tabs}
+              active={active}
+              saveState={saveState}
+              previews={previews}
+              closeLabel={label("alt+w")}
+              onOpen={(path) => open(path)}
+              onClose={close}
+              onMenu={(event, path) => openContextMenu(event, () => tabMenu(menuBase, path, tabs, closeMany))}
+            />
           </div>
+
+          {!reachable ? (
+            <div className="ide-notice" role="status" data-testid="ide-offline">
+              <WifiOff size={13} className="shrink-0" />
+              <span className="min-w-0 truncate">
+                {online ? `${placeName} is offline. Your edits stay here and are saved when it is back.` : "You are offline. Your edits stay here and are saved when you are back online."}
+              </span>
+            </div>
+          ) : null}
 
           {data.planted?.length ? (
             <div className="shrink-0 border-b border-line bg-raised px-3 py-2 text-[12.5px]">
               <div className="font-medium text-warn">These files can run later, outside the sandbox, when this folder is opened.</div>
               <ul className="mt-1 space-y-0.5 text-muted">
                 {data.planted.map((hit) => (
-                  <li key={`${hit.kind}:${hit.path}`}><span className="font-mono text-ink">{hit.path}</span> - {hit.reason}</li>
+                  <li key={`${hit.kind}:${hit.path}`}><span className="font-mono text-ink">{hit.path}</span> · {hit.reason}</li>
                 ))}
               </ul>
             </div>
@@ -661,6 +919,11 @@ export function CodeIde({ source }: { source: Source }) {
               onSave={() => void save(active)}
               onKeepMine={() => void save(active, true)}
               onUseDisk={() => void reload(active)}
+              onChangedOnDisk={() => {
+                void reload(active);
+                setFlash({ path: active, text: "Updated from disk" });
+              }}
+              onReveal={(path) => menuBase.reveal!(path)}
               onEdge={(direction) => goFile(direction)}
               onAccepted={() => void client.invalidateQueries({ queryKey: ["code-progress", key, source] })}
               preview={Boolean(previews[active])}
@@ -672,9 +935,16 @@ export function CodeIde({ source }: { source: Source }) {
               }}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center p-10 text-center text-[13px] text-muted">
-              {changed.length ? "Pick a file in the explorer." : `No changes to review. Everything on disk matches ${isReview ? "the tree this run started from" : "the index"}. Open any file from the explorer to edit it.`}
-            </div>
+            <Watermark
+              message={changed.length ? "Pick a file in the explorer, or find one by name." : `No changes to review. Everything on disk matches ${isReview ? "the tree this run started from" : "the index"}.`}
+              rows={[
+                ["Show all commands", "mod+shift+p", () => openQuick(">")],
+                ["Go to file", "mod+p", () => openQuick("")],
+                ["Find in files", "mod+shift+f", findInFiles],
+                ...(viewOnly ? [] : [["Show or hide the terminal", "ctrl+`", () => setTerminal(!terminal)] as [string, string, () => void]]),
+                ["Show or hide the side panel", "mod+b", () => setSideOpen(!sideOpen)],
+              ]}
+            />
           )}
 
           {terminal && !viewOnly ? (
@@ -686,31 +956,247 @@ export function CodeIde({ source }: { source: Source }) {
       </div>
 
       <StatusBar>
-        <StatusItem icon={GitBranch} title={scm.data?.branch ?? data.branch}>{shortBranch(scm.data?.branch ?? data.branch)}</StatusItem>
+        <PlaceIndicator
+          name={placeName}
+          online={reachable}
+          browserOnline={online}
+          folder={data.repo}
+          onTerminal={viewOnly ? null : () => setTerminal(true)}
+          onHome={goHome}
+        />
+        <StatusItem icon={GitBranch} title={scm.data?.branch ?? data.branch} onClick={viewOnly ? undefined : () => showPanel("scm")}>{shortBranch(scm.data?.branch ?? data.branch)}</StatusItem>
         {scm.data?.ahead ? <StatusItem icon={ArrowUp} title="Commits to push">{scm.data.ahead}</StatusItem> : null}
         {scm.data?.behind ? <StatusItem icon={ArrowDown} title="Commits to pull">{scm.data.behind}</StatusItem> : null}
         {isReview && totals ? (
-          <span className="px-1.5" data-testid="ide-progress">
-            {totals.total - totals.pending} / {totals.total} · {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
-          </span>
+          <StatusItem icon={ListChecks} title="Agent changes decided" onClick={() => showPanel("files")}>
+            <span data-testid="ide-progress">
+              {totals.total - totals.pending} / {totals.total} · {totals.filesLeft ? `${totals.filesLeft} file${totals.filesLeft === 1 ? "" : "s"} left` : "all decided"}
+            </span>
+          </StatusItem>
         ) : null}
-        {where ? <StatusItem icon={Laptop}>{where}</StatusItem> : null}
         <div className="flex-1" />
-        {active ? <span className="px-1.5">Ln {cursor.line}, Col {cursor.column}</span> : null}
+        {active ? <StatusItem title={`Go to line (${label("ctrl+g")})`} onClick={() => openQuick(":")}>Ln {cursor.line}, Col {cursor.column}</StatusItem> : null}
         {active ? <span className="px-1.5">{languageFor(active)}</span> : null}
         {active ? <EolLabel source={source} path={active} /> : null}
-        <span className="px-1.5">UTF-8</span>
+        {active ? <span className="px-1.5 max-md:hidden">UTF-8</span> : null}
         {active ? (
-          <span className={cx("px-1.5", (activeState === "error" || activeState === "conflict") && "text-danger")} data-testid="ide-save-state">
-            {activeState === "dirty" ? "• Unsaved" : activeState === "saving" ? "Saving…" : activeState === "error" ? "Not saved" : activeState === "conflict" ? "Changed on disk" : "Saved"}
+          <span className={cx("px-1.5", (activeState === "error" || activeState === "conflict") && "text-danger", flash?.path === active && activeState === "saved" && "text-ink")} data-testid="ide-save-state">
+            {activeState === "dirty" ? (reachable ? "• Unsaved" : "• Unsaved, offline") : activeState === "saving" ? "Saving…" : activeState === "error" ? "Not saved" : activeState === "conflict" ? "Changed on disk" : flash?.path === active ? flash.text : "Saved"}
           </span>
         ) : null}
         <FontSizeControl fontSize={fontSize} setFontSize={setFontSize} />
         {data.model ? <span className="hidden px-1.5 lg:inline">agent · {data.model} · {data.createdAt ? dateTime(data.createdAt) : ""}</span> : null}
       </StatusBar>
 
+      {quick ? <QuickOpen key={quick.nonce} initial={quick.text} resolve={resolveQuick} onClose={() => setQuick(null)} /> : null}
       {help ? <ShortcutSheet onClose={() => setHelp(false)} /> : null}
     </IdeSpace>
+  );
+}
+
+/**
+ * The open files, as VS Code's tabs: the whole tab opens its file, a middle click closes it, the close
+ * button shows on hover and on the file in view, and an unsaved file shows a dot that turns into the
+ * close button on hover. Two files with one name show their folder. The strip scrolls sideways with the
+ * wheel and keeps the file in view on screen; arrow keys move between tabs.
+ */
+function TabStrip({
+  tabs,
+  active,
+  saveState,
+  previews,
+  closeLabel,
+  onOpen,
+  onClose,
+  onMenu,
+}: {
+  tabs: string[];
+  active: string | null;
+  saveState: Record<string, SaveState>;
+  previews: Record<string, boolean>;
+  closeLabel: string;
+  onOpen: (path: string) => void;
+  onClose: (path: string) => void;
+  onMenu: (event: React.MouseEvent, path: string) => void;
+}) {
+  const strip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active, tabs.length]);
+  const names = new Map<string, number>();
+  for (const path of tabs) names.set(nameOf(path), (names.get(nameOf(path)) ?? 0) + 1);
+  const focusTab = (path: string) => window.requestAnimationFrame(() => strip.current?.querySelector<HTMLElement>(`[data-tab-path="${CSS.escape(path)}"]`)?.focus());
+  return (
+    <div
+      ref={strip}
+      className="code-tab-strip flex min-w-0 flex-1 items-stretch overflow-x-auto"
+      role="tablist"
+      aria-label="Open files"
+      onWheel={(event) => {
+        if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) event.currentTarget.scrollLeft += event.deltaY;
+      }}
+    >
+      {tabs.map((path, index) => {
+        const state = saveState[path];
+        const dirty = state === "dirty" || state === "saving";
+        const name = nameOf(path);
+        const folder = folderOf(path);
+        const selected = path === active;
+        return (
+          <div
+            key={path}
+            role="tab"
+            aria-selected={selected}
+            tabIndex={selected || (!active && index === 0) ? 0 : -1}
+            title={dirty ? `${path} · unsaved` : path}
+            data-tab-path={path}
+            data-dirty={dirty || undefined}
+            className="code-tab"
+            onClick={() => {
+              if (!selected) onOpen(path);
+            }}
+            onMouseDown={(event) => {
+              if (event.button === 1) {
+                event.preventDefault();
+                onClose(path);
+              }
+            }}
+            onKeyDown={(event) => {
+              const next = event.key === "ArrowRight" ? tabs[index + 1] : event.key === "ArrowLeft" ? tabs[index - 1] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : undefined;
+              if (next) {
+                event.preventDefault();
+                onOpen(next);
+                focusTab(next);
+              } else if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpen(path);
+              }
+            }}
+            onContextMenu={(event) => onMenu(event, path)}
+          >
+            {previews[path] ? <Eye size={14} className="shrink-0 text-muted" /> : <FileIcon name={path} size={14} />}
+            <span className="min-w-0 truncate">{previews[path] ? `Preview ${name}` : name}</span>
+            {(names.get(name) ?? 0) > 1 && folder ? <span className="code-tab-folder">{folder.split("/").pop()}</span> : null}
+            <button
+              type="button"
+              className="code-tab-close"
+              tabIndex={-1}
+              aria-label={`Close ${name}`}
+              title={dirty ? "Unsaved. It saves by itself; close it anyway" : `Close (${closeLabel})`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose(path);
+              }}
+            >
+              <span className="code-tab-dot" aria-hidden />
+              <X size={13} className="code-tab-x" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The editor with no file open, as VS Code's watermark: what to do next and its keys. */
+function Watermark({ message, rows }: { message: string; rows: Array<[string, string, () => void]> }) {
+  const label = useKeyLabel();
+  return (
+    <div className="ide-watermark" data-testid="ide-watermark">
+      <Code2 size={64} strokeWidth={1} className="ide-watermark-mark" aria-hidden />
+      <p className="max-w-md text-center text-[13px] text-muted">{message}</p>
+      <div className="ide-watermark-keys">
+        {rows.map(([name, keys, run]) => (
+          <button key={name} type="button" onClick={run}>
+            <span>{name}</span>
+            <kbd>{label(keys)}</kbd>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A centred message in the editor area: an icon, what happened and what to do. */
+function IdeEmpty({ icon, title, message, actions }: { icon: React.ReactNode; title: string; message: string; actions?: React.ReactNode }) {
+  return (
+    <div className="ide-watermark" role="alert">
+      <span className="ide-watermark-mark">{icon}</span>
+      <div className="max-w-md text-center">
+        <p className="text-[14px] font-medium text-ink">{title}</p>
+        <p className="mt-1 text-[13px] text-muted [overflow-wrap:anywhere]">{message}</p>
+      </div>
+      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+    </div>
+  );
+}
+
+/** The window's frame while the folder is read, so nothing jumps when it arrives. */
+function IdeLoading({ layout }: { layout: IdeLayout }) {
+  return (
+    <IdeSpace className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-bg" root>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-2" data-testid="ide-loading">
+        <Link href="/code" className="icon-btn" title="Back to Code" aria-label="Back to Code"><ArrowLeft size={15} /></Link>
+        <span className="h-3 w-40 rounded bg-raised" aria-hidden />
+      </div>
+      <div className="flex min-h-0 flex-1">
+        <div className="w-11 shrink-0 border-r border-line bg-sidebar" />
+        {layout.sideOpen && !layout.phone ? (
+          <div className="shrink-0 border-r border-line bg-sidebar px-3 pt-12" style={{ width: Math.max(200, layout.width) }}>
+            <SkeletonRows count={7} rowClassName="h-[14px]" className="space-y-2" />
+          </div>
+        ) : null}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="h-9 shrink-0 border-b border-line bg-sidebar" />
+          <div className="ide-progress" role="progressbar" aria-label="Opening the folder" />
+        </div>
+      </div>
+      <div className="h-[22px] shrink-0 border-t border-line bg-sidebar" />
+    </IdeSpace>
+  );
+}
+
+/**
+ * The status bar's first item, like VS Code's remote indicator: which computer this window works on,
+ * whether it can be reached now, and its folder.
+ */
+function PlaceIndicator({ name, online, browserOnline, folder, onTerminal, onHome }: { name: string; online: boolean; browserOnline: boolean; folder: string; onTerminal: (() => void) | null; onHome: () => void }) {
+  const state = online ? "online" : browserOnline ? "offline" : "this browser is offline";
+  return (
+    <Popover
+      align="left"
+      width={300}
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} aria-expanded={open} className="ide-status-place" data-offline={online ? undefined : ""} title={`${name} · ${state}\n${folder}`} data-testid="ide-place">
+          <Laptop size={11} className="shrink-0" />
+          <span className="max-w-[14rem] truncate">{name}</span>
+          <OnlineDot online={online} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <div className="px-2.5 pb-1.5 pt-1 text-[12px]">
+            <div className="flex items-center gap-1.5 font-medium text-ink">
+              <Laptop size={12} /> {name}
+              <span className={cx("ml-auto text-[11px] font-normal", online ? "text-ok" : "text-muted")}>{state}</span>
+            </div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-muted" title={folder}>{folder}</div>
+          </div>
+          <MenuItem onClick={() => { void copyText(folder); close(); }}>
+            <span className="flex items-center gap-2"><Copy size={13} /> Copy the folder&apos;s path</span>
+          </MenuItem>
+          {onTerminal ? (
+            <MenuItem onClick={() => { onTerminal(); close(); }}>
+              <span className="flex items-center gap-2"><TerminalSquare size={13} /> Open the terminal here</span>
+            </MenuItem>
+          ) : null}
+          <MenuItem onClick={() => { onHome(); close(); }}>
+            <span className="flex items-center gap-2"><House size={13} /> Back to Code</span>
+          </MenuItem>
+        </>
+      )}
+    </Popover>
   );
 }
 
@@ -722,24 +1208,27 @@ function EolLabel({ source, path }: { source: Source; path: string }) {
 }
 
 function ShortcutSheet({ onClose }: { onClose: () => void }) {
+  const label = useKeyLabel();
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-label="Keyboard shortcuts" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-lg border border-line bg-panel p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex max-h-full w-full max-w-lg flex-col rounded-lg border border-line bg-panel p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
         <div className="mb-2 flex items-center gap-2 font-semibold">
           <HelpCircle size={15} /> Code shortcuts
           <div className="flex-1" />
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X size={14} /></button>
         </div>
-        <table className="w-full text-[12.5px]">
-          <tbody>
-            {SHORTCUTS.map(([keys, what]) => (
-              <tr key={keys} className="border-t border-line">
-                <td className="py-1 pr-3 font-mono text-[12px]">{keys}</td>
-                <td className="py-1 text-muted">{what}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="min-h-0 overflow-y-auto">
+          <table className="w-full text-[12.5px]">
+            <tbody>
+              {SHORTCUTS.map(([keys, what]) => (
+                <tr key={keys} className="border-t border-line">
+                  <td className="whitespace-nowrap py-1 pr-3 font-mono text-[12px]">{label(keys).replace("Alt+1 / Alt+9", "Alt+1…9").replace("⌥1 / ⌥9", "⌥1…9")}</td>
+                  <td className="py-1 text-muted">{what}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
         <p className="mt-2 text-[11.5px] text-faint">No shortcut is a bare letter: every letter types.</p>
       </div>
     </div>
@@ -785,6 +1274,9 @@ function Explorer({
   reveal,
   onMoved,
   onRemoved,
+  ask,
+  onQuickOpen,
+  folderName,
 }: {
   source: Source;
   changed: ChangedFile[];
@@ -798,11 +1290,14 @@ function Explorer({
   reveal: { path: string; nonce: number } | null;
   onMoved: (from: string, to: string) => void;
   onRemoved: (path: string) => void;
+  /** A command palette request: a new file or folder where the explorer would put it, or fold every folder. */
+  ask: { kind: ExplorerAsk; nonce: number } | null;
+  onQuickOpen: () => void;
+  folderName: string;
 }) {
   const { code, key } = useCodeApi();
   const client = useQueryClient();
   const toast = useToast();
-  const [filter, setFilter] = useState("");
   // The folders open in the tree, and the one a new file goes in: the folder last clicked, or the open file's.
   const [openDirs, setOpenDirs] = useState<ReadonlySet<string>>(() => new Set());
   const [here, setHere] = useState<string | null>(null);
@@ -850,7 +1345,6 @@ function Explorer({
   // "Reveal in explorer": every folder on the way opens and the row scrolls into view.
   useEffect(() => {
     if (!reveal) return;
-    setFilter("");
     openFolders(ancestors(reveal.path));
     const timer = window.setTimeout(() => {
       const row = treeBox.current?.querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(reveal.path)}"]`);
@@ -889,7 +1383,6 @@ function Explorer({
       newEntry: (kind, folder) => {
         setHere(folder);
         if (folder) openFolders([...ancestors(folder), folder]);
-        setFilter("");
         setCreating(kind);
       },
       rename: (path) => {
@@ -976,126 +1469,106 @@ function Explorer({
     menu: (event, entry) => openContextMenu(event, () => explorerMenu(ctx, entry)),
   };
 
-  const [wantFiles, setWantFiles] = useState(false);
-  const all = useQuery({ queryKey: ["code-files", key, source], queryFn: () => code.files(source), enabled: wantFiles, staleTime: 30_000 });
-  const matches = filter.trim() ? (all.data?.files ?? []).filter((path) => path.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 50) : [];
+  // The command palette's New file, New folder and Collapse folders.
+  useEffect(() => {
+    if (!ask) return;
+    if (ask.kind === "collapse") {
+      setOpenDirs(new Set());
+      setHere(null);
+    } else ctx.newEntry?.(ask.kind === "new-file" ? "file" : "folder", base);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask?.nonce]);
+
+  const label = useKeyLabel();
   return (
     <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
-      <div className="p-2">
-        <div className="tile flex items-center gap-1.5 rounded-md bg-panel px-2 py-1">
-          <Search size={12} className="text-faint" />
-          <input
-            value={filter}
-            onFocus={() => setWantFiles(true)}
-            onChange={(event) => setFilter(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && matches[0]) {
-                onOpen(matches[0]);
-                setFilter("");
-              }
-            }}
-            placeholder="Go to file"
-            aria-label="Go to file"
-            className="flex-1 bg-transparent outline-none placeholder:text-faint"
-          />
-        </div>
+      <PanelHeader title="Explorer" />
+      <div className="px-2 pb-1.5">
+        <button type="button" className="code-goto" onClick={onQuickOpen} title={`Go to file (${label("mod+p")})`}>
+          <Search size={12} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-left">Go to file</span>
+          <kbd>{label("mod+p")}</kbd>
+        </button>
       </div>
       <div ref={treeBox} className="min-h-0 flex-1 overflow-y-auto pb-3">
-        {filter.trim() ? (
-          <ul className="px-1">
-            {all.isLoading ? <li className="px-2 py-1"><Spinner size={11} /></li> : null}
-            {matches.map((path) => (
-              <li key={path}>
-                <button type="button" className="row-tile flex w-full min-w-0 items-center gap-1.5 rounded px-2 py-[3px] text-left" onClick={() => { onOpen(path); setFilter(""); }} onContextMenu={(event) => tree.menu(event, { path, dir: false })}>
-                  <FileIcon name={path} size={14} />
-                  <span className="truncate">{path.split("/").pop()}</span>
-                  <span className="truncate text-[11px] text-faint">{path.split("/").slice(0, -1).join("/")}</span>
-                </button>
-              </li>
-            ))}
-            {all.data && !matches.length ? <li className="px-2 py-1 text-muted">No file matches.</li> : null}
+        <Fold title={review ? "Changes from this run" : "Changes"} count={changed.length} persist="changes">
+          <ul>
+            {changed.map((row) => {
+              const counts = progressOf(row.path);
+              return (
+                <li key={row.path}>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(row.path)}
+                    onContextMenu={(event) => tree.menu(event, { path: row.path, dir: false })}
+                    data-active={row.path === active || undefined}
+                    className="code-tree-row pl-2"
+                    title={row.path}
+                  >
+                    <FileIcon name={row.path} size={14} />
+                    <span className={cx("min-w-0 flex-1 truncate", STATUS_COLOR[row.status])}>
+                      {nameOf(row.path)}
+                      <span className="ml-1.5 text-[11px] text-faint">{folderOf(row.path)}</span>
+                    </span>
+                    {counts?.pending ? <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[10.5px] font-medium leading-4">{counts.pending}</span> : null}
+                    {counts ? <Ring done={counts.total - counts.pending} total={counts.total} /> : <span className="shrink-0 text-2xs"><span className="text-ok">+{row.added}</span> <span className="text-danger">−{row.removed}</span></span>}
+                    <span className={cx("w-3 shrink-0 text-center font-mono text-[11px]", STATUS_COLOR[row.status])}>{row.status === "U" ? "A" : row.status}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
-        ) : (
-          <>
-            <Fold title={review ? "Changes from this run" : "Changes"} count={changed.length} persist="changes">
-            <ul className="px-1">
-              {changed.map((row) => {
-                const counts = progressOf(row.path);
-                return (
-                  <li key={row.path}>
-                    <button
-                      type="button"
-                      onClick={() => onOpen(row.path)}
-                      onContextMenu={(event) => tree.menu(event, { path: row.path, dir: false })}
-                      data-active={row.path === active || undefined}
-                      className="row-tile flex min-h-6 w-full items-center gap-1.5 rounded px-2 py-1 text-left"
-                      title={row.path}
-                    >
-                      <FileIcon name={row.path} size={14} />
-                      <span className={cx("min-w-0 flex-1 truncate", STATUS_COLOR[row.status])}>
-                        {row.path.split("/").pop()}
-                        <span className="ml-1.5 text-[11px] text-faint">{row.path.split("/").slice(0, -1).join("/")}</span>
-                      </span>
-                      {counts?.pending ? <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 text-[10.5px] font-medium">{counts.pending}</span> : null}
-                      {counts ? <Ring done={counts.total - counts.pending} total={counts.total} /> : <span className="shrink-0 text-2xs"><span className="text-ok">+{row.added}</span> <span className="text-danger">−{row.removed}</span></span>}
-                      <span className={cx("w-3 shrink-0 text-center font-mono text-[11px]", STATUS_COLOR[row.status])}>{row.status === "U" ? "A" : row.status}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            </Fold>
-            {unreviewable.length ? (
-              <Fold title="Changed, can't be reviewed" count={unreviewable.length} persist="unreviewable">
-                {unreviewable.map((row) => (
-                  <div key={row.path} className="truncate px-3 py-0.5 text-[12px] text-faint" title={row.path}>{row.path}</div>
-                ))}
-              </Fold>
-            ) : null}
-            <Fold
-              title="Folder"
-              persist="folder"
-              actions={
-                <span className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-                  {canCreate ? (
-                    <>
-                      <button type="button" className="icon-btn h-6 w-6" title={`New file in ${base || "the top folder"}`} aria-label="New file" onClick={() => setCreating("file")}>
-                        <FilePlus2 size={13} />
-                      </button>
-                      <button type="button" className="icon-btn h-6 w-6" title={`New folder in ${base || "the top folder"}`} aria-label="New folder" onClick={() => setCreating("folder")}>
-                        <FolderPlus size={13} />
-                      </button>
-                    </>
-                  ) : null}
-                  <button type="button" className="icon-btn h-6 w-6" title="Refresh" aria-label="Refresh the folder" onClick={refresh}>
-                    <RefreshCw size={12} />
+          {!changed.length ? <p className="px-5 py-0.5 text-[12px] text-faint">{review ? "Nothing left from this run." : "Nothing changed since the last commit."}</p> : null}
+        </Fold>
+        {unreviewable.length ? (
+          <Fold title="Changed, can't be reviewed" count={unreviewable.length} persist="unreviewable">
+            {unreviewable.map((row) => (
+              <div key={row.path} className="truncate px-5 py-0.5 text-[12px] text-faint" title={row.path}>{row.path}</div>
+            ))}
+          </Fold>
+        ) : null}
+        <Fold
+          title={<span title={menuBase.repo}>{folderName}</span>}
+          persist="folder"
+          actions={
+            <span className="code-fold-actions">
+              {canCreate ? (
+                <>
+                  <button type="button" className="icon-btn" title={`New file in ${base || "the top folder"}`} aria-label="New file" onClick={() => setCreating("file")}>
+                    <FilePlus2 size={14} />
                   </button>
-                  <button type="button" className="icon-btn h-6 w-6" title="Collapse folders" aria-label="Collapse folders" onClick={() => { setOpenDirs(new Set()); setHere(null); }}>
-                    <ChevronsDownUp size={13} />
+                  <button type="button" className="icon-btn" title={`New folder in ${base || "the top folder"}`} aria-label="New folder" onClick={() => setCreating("folder")}>
+                    <FolderPlus size={14} />
                   </button>
-                  <button type="button" className="icon-btn h-6 w-6" title="Download the repository as a zip (up to 20 MB)" aria-label="Download the repository" onClick={() => void downloadFromCode(code, source, "", toast)}>
-                    <Download size={13} />
-                  </button>
-                </span>
-              }
-            >
-              <div
-                className={cx("code-tree min-h-16", dropDir === "" && "is-drop-root")}
-                onContextMenu={(event) => openContextMenu(event, () => folderMenu(ctx))}
-                onDragOver={(event) => tree.dragOver(event, "")}
-                onDrop={(event) => tree.drop(event, "")}
-                onDragLeave={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDir(null);
-                }}
-              >
-                {creating ? <CreateRow kind={creating} base={base} source={source} onDone={made} onCancel={() => setCreating(null)} /> : null}
-                <TreeContext.Provider value={tree}>
-                  <TreeNode path="" depth={0} />
-                </TreeContext.Provider>
-              </div>
-            </Fold>
-          </>
-        )}
+                </>
+              ) : null}
+              <button type="button" className="icon-btn" title="Refresh" aria-label="Refresh the folder" onClick={refresh}>
+                <RefreshCw size={13} />
+              </button>
+              <button type="button" className="icon-btn" title="Collapse folders" aria-label="Collapse folders" onClick={() => { setOpenDirs(new Set()); setHere(null); }}>
+                <ChevronsDownUp size={14} />
+              </button>
+              <button type="button" className="icon-btn" title="Download the repository as a zip (up to 20 MB)" aria-label="Download the repository" onClick={() => void downloadFromCode(code, source, "", toast)}>
+                <Download size={14} />
+              </button>
+            </span>
+          }
+        >
+          <div
+            className={cx("code-tree min-h-16", dropDir === "" && "is-drop-root")}
+            onContextMenu={(event) => openContextMenu(event, () => folderMenu(ctx))}
+            onDragOver={(event) => tree.dragOver(event, "")}
+            onDrop={(event) => tree.drop(event, "")}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropDir(null);
+            }}
+          >
+            {creating ? <CreateRow kind={creating} base={base} source={source} onDone={made} onCancel={() => setCreating(null)} /> : null}
+            <TreeContext.Provider value={tree}>
+              <TreeNode path="" depth={0} />
+            </TreeContext.Provider>
+          </div>
+        </Fold>
       </div>
     </div>
   );
@@ -1270,20 +1743,52 @@ function TreeNode({ path, depth }: { path: string; depth: number }) {
   );
 }
 
-function SearchPanel({ source, onOpen }: { source: Source; onOpen: (path: string, line?: number) => void }) {
+/** The matched text in a result line, marked as VS Code marks it. */
+function MatchLine({ text, query, matchCase }: { text: string; query: string; matchCase: boolean }) {
+  const at = matchCase ? text.indexOf(query) : text.toLowerCase().indexOf(query.toLowerCase());
+  if (at < 0 || !query) return <span className="truncate">{text}</span>;
+  // Long lines start a little before the match so it is on screen.
+  const from = at > 40 ? at - 24 : 0;
+  return (
+    <span className="truncate">
+      {from ? "…" : ""}
+      {text.slice(from, at)}
+      <mark className="code-search-hit">{text.slice(at, at + query.length)}</mark>
+      {text.slice(at + query.length)}
+    </span>
+  );
+}
+
+function SearchPanel({ source, onOpen, ask }: { source: Source; onOpen: (path: string, line?: number) => void; ask: { text: string; nonce: number } | null }) {
   const { code, key } = useCodeApi();
   const [text, setText] = useState("");
   const [asked, setAsked] = useState<{ q: string; matchCase: boolean } | null>(null);
   const [matchCase, setMatchCase] = useState(false);
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
+  const field = useRef<HTMLInputElement>(null);
   const found = useQuery({ queryKey: ["code-search", key, source, asked], queryFn: () => code.search(source, asked!.q, asked!.matchCase), enabled: Boolean(asked?.q), retry: false });
   const grouped = useMemo(() => {
     const map = new Map<string, Array<{ line: number; text: string }>>();
     for (const row of found.data?.results ?? []) map.set(row.path, [...(map.get(row.path) ?? []), { line: row.line, text: row.text }]);
     return [...map.entries()];
   }, [found.data]);
+  // Ctrl/⌘+Shift+F: focus the box; with a selection, search for it at once.
+  useEffect(() => {
+    if (!ask) return;
+    if (ask.text) {
+      setText(ask.text);
+      setAsked({ q: ask.text, matchCase });
+    }
+    window.requestAnimationFrame(() => {
+      field.current?.focus();
+      field.current?.select();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ask?.nonce]);
+  const total = found.data?.results.length ?? 0;
   return (
     <div className="flex min-h-0 flex-1 flex-col text-[12.5px]">
-      <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Find in files</div>
+      <PanelHeader title="Find in files" />
       <form
         className="flex items-center gap-1 px-2 pb-2"
         onSubmit={(event) => {
@@ -1291,25 +1796,54 @@ function SearchPanel({ source, onOpen }: { source: Source; onOpen: (path: string
           if (text.trim()) setAsked({ q: text.trim(), matchCase });
         }}
       >
-        <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Search" aria-label="Find in files" className="field min-w-0 flex-1 py-1 text-[12.5px]" />
+        <input ref={field} value={text} onChange={(event) => setText(event.target.value)} placeholder="Search" aria-label="Find in files" className="field min-w-0 flex-1 py-1 text-[12.5px]" />
         <button type="button" className={cx("icon-btn h-7 w-7 font-mono text-[11px]", matchCase && "bg-hover text-ink")} title="Match case" aria-pressed={matchCase} onClick={() => setMatchCase(!matchCase)}>Aa</button>
       </form>
+      {found.data && grouped.length ? (
+        <div className="px-3 pb-1 text-[11.5px] text-muted">
+          {total}{found.data.truncated ? "+" : ""} {total === 1 ? "result" : "results"} in {grouped.length} {grouped.length === 1 ? "file" : "files"}
+        </div>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-        {found.isLoading && asked ? <div className="px-3"><Spinner size={12} /></div> : null}
+        {found.isLoading && asked ? <div className="ide-progress" role="progressbar" aria-label="Searching" /> : null}
         {found.error ? <div className="px-3 text-danger">{(found.error as Error).message}</div> : null}
         {found.data && !grouped.length ? <div className="px-3 text-muted">Nothing found.</div> : null}
-        {grouped.map(([path, rows]) => (
-          <div key={path} className="mb-1">
-            <div className="truncate px-3 py-0.5 font-medium" title={path}>{path}</div>
-            {rows.map((row) => (
-              <button key={row.line} type="button" className="row-tile flex w-full min-w-0 gap-2 px-3 py-[2px] text-left font-mono text-[11.5px]" onClick={() => onOpen(path, row.line)}>
-                <span className="w-8 shrink-0 text-right text-faint">{row.line}</span>
-                <span className="truncate">{row.text}</span>
+        {grouped.map(([path, rows]) => {
+          const closed = folded.has(path);
+          return (
+            <div key={path}>
+              <button
+                type="button"
+                className="code-tree-row pl-1.5"
+                title={path}
+                aria-expanded={!closed}
+                onClick={() => setFolded((current) => {
+                  const next = new Set(current);
+                  if (next.has(path)) next.delete(path);
+                  else next.add(path);
+                  return next;
+                })}
+              >
+                <ChevronRight size={11} className={cx("shrink-0 text-faint transition-transform", !closed && "rotate-90")} />
+                <FileIcon name={path} size={14} />
+                <span className="min-w-0 flex-1 truncate">
+                  {nameOf(path)}
+                  <span className="ml-1.5 text-[11px] text-faint">{folderOf(path)}</span>
+                </span>
+                <span className="shrink-0 rounded-full bg-raised px-1.5 text-[10.5px] tabular-nums leading-4 text-muted">{rows.length}</span>
               </button>
-            ))}
-          </div>
-        ))}
-        {found.data?.truncated ? <div className="px-3 text-[11px] text-faint">The first 500 results.</div> : null}
+              {closed
+                ? null
+                : rows.map((row) => (
+                    <button key={row.line} type="button" className="code-tree-row code-search-line pl-7" title={`${path}:${row.line}`} onClick={() => onOpen(path, row.line)}>
+                      <MatchLine text={row.text} query={asked?.q ?? ""} matchCase={asked?.matchCase ?? false} />
+                      <span className="ml-auto shrink-0 text-[10.5px] text-faint">{row.line}</span>
+                    </button>
+                  ))}
+            </div>
+          );
+        })}
+        {found.data?.truncated ? <div className="px-3 pt-1 text-[11px] text-faint">The first 500 results.</div> : null}
       </div>
     </div>
   );
@@ -1340,6 +1874,10 @@ function FilePane(props: {
   onSave: () => void;
   onKeepMine: () => void;
   onUseDisk: () => void;
+  /** The file changed on the computer and nothing is typed here: it reloads. */
+  onChangedOnDisk: () => void;
+  /** A breadcrumb was clicked: that folder or file in the explorer. */
+  onReveal: (path: string) => void;
   onEdge: (direction: 1 | -1) => void;
   onAccepted: () => void;
   /** Markdown, HTML, SVG and tables: rendered instead of the source. */
@@ -1380,7 +1918,7 @@ function FilePane(props: {
   const changedOnDisk = Boolean(data && opened.current && data.hash !== buffers.current.get(path)?.hash);
   const dirty = buffers.current.get(path)?.dirty ?? false;
   useEffect(() => {
-    if (changedOnDisk && !dirty) props.onUseDisk();
+    if (changedOnDisk && !dirty) props.onChangedOnDisk();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changedOnDisk, dirty]);
 
@@ -1400,15 +1938,17 @@ function FilePane(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 shrink-0 items-center gap-2 overflow-x-auto whitespace-nowrap border-b border-line px-3 text-[12px]" data-testid="ide-filebar">
-        <span className="flex min-w-0 items-center gap-1 truncate text-muted">
+        <nav className="flex min-w-0 items-center gap-0.5 truncate text-muted" aria-label="Breadcrumbs">
           {parts.map((part, index) => (
-            <span key={index} className="flex items-center gap-1">
-              {index ? <ChevronRight size={10} className="text-faint" /> : null}
-              {index === parts.length - 1 ? <FileIcon name={part} size={13} /> : null}
-              <span className={index === parts.length - 1 ? "font-medium text-ink" : undefined}>{part}</span>
+            <span key={index} className="flex items-center gap-0.5">
+              {index ? <ChevronRight size={11} className="shrink-0 text-faint" /> : null}
+              <button type="button" className={cx("code-crumb", index === parts.length - 1 && "font-medium text-ink")} title={index === parts.length - 1 ? "Reveal in the explorer" : `Show ${parts.slice(0, index + 1).join("/")} in the explorer`} onClick={() => props.onReveal(parts.slice(0, index + 1).join("/"))}>
+                {index === parts.length - 1 ? <FileIcon name={part} size={13} /> : null}
+                {part}
+              </button>
             </span>
           ))}
-        </span>
+        </nav>
         {props.changed ? <span><span className="text-ok">+{props.changed.added}</span> <span className="text-danger">−{props.changed.removed}</span></span> : null}
         <div className="flex-1" />
         {props.review && counts ? (
@@ -1464,15 +2004,25 @@ function FilePane(props: {
         ) : props.preview && canPreview && opened.current && !opened.current.binary && !opened.current.tooLarge ? (
           <FilePreview path={path} text={buffers.current.get(path)?.text ?? opened.current.current ?? ""} code={code} source={source} />
         ) : versions.isLoading || !props.Editor ? (
-          <div className="p-6"><Spinner /></div>
-        ) : versions.error ? (
-          <div className="p-6 text-[13px] text-danger">{(versions.error as Error).message}</div>
+          <div className="ide-progress" role="progressbar" aria-label="Opening the file" />
+        ) : versions.error && !opened.current ? (
+          // A later read that fails (offline, the computer asleep) keeps the editor; only a first read shows this.
+          <IdeEmpty
+            icon={<AlertTriangle size={36} strokeWidth={1.25} />}
+            title={`${nameOf(path)} could not be opened`}
+            message={(versions.error as Error).message}
+            actions={
+              <button type="button" className="btn" onClick={() => void versions.refetch()}>
+                <RefreshCw size={13} /> Try again
+              </button>
+            }
+          />
         ) : !opened.current ? null : opened.current.binary ? (
-          <div className="p-6 text-[13px] text-muted">A binary file. It is not shown.</div>
+          <IdeEmpty icon={<FileText size={36} strokeWidth={1.25} />} title="A binary file" message="It is not shown here. Download it to open it." />
         ) : opened.current.tooLarge ? (
-          <div className="p-6 text-[13px] text-muted">Files over 5 MB are not opened here.</div>
+          <IdeEmpty icon={<FileText size={36} strokeWidth={1.25} />} title="Too large to open here" message="Files over 5 MB are not opened in the browser." />
         ) : !opened.current.exists.current && !opened.current.exists.start && !opened.current.exists.agent ? (
-          <div className="p-6 text-[13px] text-muted">This file is not there.</div>
+          <IdeEmpty icon={<FileText size={36} strokeWidth={1.25} />} title="This file is not there" message="It was moved or deleted on the computer." />
         ) : (
           <props.Editor
             ref={props.editorRef}

@@ -78,3 +78,384 @@ html[data-ide-resizing="horizontal"] * {
 .ide-statusbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Editor tabs (ide.tsx TabStrip): the whole tab opens its file; the close button shows on hover and on
+   the file in view; an unsaved file shows a dot that becomes the close button on hover. */
+.code-tab-strip {
+  scrollbar-width: none;
+}
+.code-tab-strip::-webkit-scrollbar {
+  display: none;
+}
+.code-tab {
+  position: relative;
+  display: flex;
+  max-width: 220px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.code-tab:hover {
+  color: var(--ink);
+}
+.code-tab[aria-selected="true"] {
+  background: var(--bg);
+  color: var(--ink);
+}
+.code-tab:focus-visible {
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / 0.75);
+}
+.code-tab[aria-selected="true"]:focus-visible {
+  box-shadow: inset 0 1px 0 rgb(var(--accent-rgb)), inset 0 0 0 1px rgb(var(--accent-rgb) / 0.75);
+}
+.code-tab-folder {
+  flex-shrink: 0;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--faint);
+}
+.code-tab-close {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.code-tab-close:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.code-tab-close > * {
+  grid-area: 1 / 1;
+}
+.code-tab-x {
+  opacity: 0;
+}
+.code-tab:hover .code-tab-x,
+.code-tab[aria-selected="true"] .code-tab-x {
+  opacity: 1;
+}
+.code-tab-dot {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.code-tab[data-dirty] .code-tab-dot {
+  display: block;
+}
+.code-tab[data-dirty] .code-tab-x,
+.code-tab[data-dirty] .code-tab-close:hover .code-tab-dot {
+  display: none;
+}
+.code-tab[data-dirty] .code-tab-close:hover .code-tab-x {
+  display: block;
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-tab .code-tab-x {
+    opacity: 1;
+  }
+}
+
+/* Breadcrumbs above the editor: each part shows itself in the explorer. */
+.code-crumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.code-crumb:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* The explorer's Go to file: a button that looks like a search box and opens quick open. */
+.code-goto {
+  display: flex;
+  width: 100%;
+  height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--faint);
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.code-goto:hover {
+  border-color: var(--line-strong);
+  color: var(--muted);
+}
+.code-goto kbd,
+.ide-watermark-keys kbd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.code-fold-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.group:hover .code-fold-actions,
+.code-fold-actions:focus-within {
+  opacity: 1;
+}
+@media (hover: none) {
+  .code-fold-actions {
+    opacity: 1;
+  }
+}
+.code-fold-actions .icon-btn {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  border-radius: 4px;
+}
+
+/* Find in files: a result line and the text it matched. */
+.code-tree-row.code-search-line {
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+}
+.code-search-hit {
+  border-radius: 2px;
+  background: rgb(var(--accent-rgb) / 0.34);
+  color: var(--ink);
+}
+
+/* VS Code's progress bar: a thin accent line moving along the top of what is loading. */
+.ide-progress {
+  position: relative;
+  height: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.ide-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: rgb(var(--accent-rgb));
+  animation: ide-progress 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes ide-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ide-progress::after {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+
+/* The editor with nothing open: a faint mark, a line about why, and the keys that get started. */
+.ide-watermark {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  overflow: auto;
+  padding: 32px;
+}
+.ide-watermark-mark {
+  color: var(--faint);
+  opacity: 0.55;
+}
+.ide-watermark-keys {
+  display: grid;
+  min-width: 280px;
+  gap: 2px;
+}
+.ide-watermark-keys button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.ide-watermark-keys button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* A one-line notice under the tabs (offline): calm, not an alarm. */
+.ide-notice {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  font-size: 12px;
+  color: var(--ink);
+}
+.ide-notice svg {
+  color: var(--warn);
+}
+
+/* The status bar's computer, like VS Code's remote indicator. */
+.ide-status-place {
+  display: flex;
+  height: 100%;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  margin-left: -6px;
+  margin-right: 2px;
+  padding: 0 8px 0 9px;
+  background: rgb(var(--accent-rgb) / 0.16);
+  color: var(--ink);
+  transition: background-color 120ms ease;
+}
+.ide-status-place:hover,
+.ide-status-place[aria-expanded="true"] {
+  background: rgb(var(--accent-rgb) / 0.26);
+}
+.ide-status-place[data-offline] {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+/* Quick open (quick-open.tsx): one box at the top of the window, as VS Code's. */
+.quick-open-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 75;
+}
+.quick-open {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  display: flex;
+  width: min(640px, calc(100% - 24px));
+  max-height: min(460px, calc(100% - 24px));
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.5), 0 2px 6px rgb(0 0 0 / 0.12);
+}
+.quick-open-field {
+  display: flex;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  margin: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.quick-open-field input {
+  min-width: 0;
+  flex: 1;
+  font: inherit;
+  color: var(--ink);
+}
+.quick-open-field input::placeholder {
+  color: var(--faint);
+}
+.quick-open-note {
+  padding: 0 12px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.quick-open-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 6px;
+}
+.quick-open-row {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 6px;
+  padding: 0 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.quick-open-row[aria-selected="true"] {
+  background: rgb(var(--accent-rgb) / 0.2);
+}
+.quick-open-icon {
+  display: grid;
+  width: 16px;
+  flex-shrink: 0;
+  place-items: center;
+}
+.quick-open-label {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quick-open-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--muted);
+}
+.quick-open-hit {
+  color: rgb(var(--accent-rgb));
+  font-weight: 600;
+}
+.quick-open-group {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--faint);
+}
+.quick-open-keys {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--muted);
+}
+.quick-open-empty {
+  padding: 4px 14px 2px;
+  font-size: 12.5px;
+  color: var(--muted);
+}

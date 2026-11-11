@@ -67,3 +67,19 @@ export function layoutInBackground(model: DiagramModel, fit?: LayoutFit): Promis
     }
   });
 }
+
+/** True when a block or text box has no stored position yet. Diagrams written as text (by a person, an agent or the API) start that way. */
+export function needsLayout(model: DiagramModel): boolean {
+  const layout = model.layout ?? {};
+  return Object.keys(model.nodes ?? {}).some((id) => !layout[id]) || Object.keys(model.texts ?? {}).some((id) => !layout[id]);
+}
+
+/** The model with every block placed. Pictures drawn outside the editor (list thumbnails, page cards, exports) use this. */
+export async function laidOut(model: DiagramModel): Promise<DiagramModel> {
+  if (!needsLayout(model)) return model;
+  try {
+    return await layoutInBackground(model);
+  } catch {
+    return model;
+  }
+}

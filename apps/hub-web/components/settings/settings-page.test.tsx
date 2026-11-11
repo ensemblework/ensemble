@@ -141,17 +141,17 @@ test("tabs switch by click and arrow keys, and every tab is a real link", async 
     const tabs = Array.from(view.host.querySelectorAll<HTMLAnchorElement>('[role="tab"]'));
     assert.deepEqual(
       tabs.map((tab) => tab.querySelector("span")?.textContent),
-      ["Account", "Appearance", "Spaces", "Sharing", "Assistant", "Connections", "Notifications", "Shortcuts", "Data"],
+      ["Account", "Appearance", "Notifications", "Shortcuts", "Assistant", "Agents", "Connections", "Spaces", "Sharing", "Data"],
     );
-    assert.equal(tabs[8]!.getAttribute("href"), "?tab=data");
+    assert.equal(tabs[9]!.getAttribute("href"), "?tab=data");
     await act(async () => {
-      tabs[8]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      tabs[9]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await settle(2);
     assert.match(view.selected(), /^Data/);
     assert.equal(new URL(window.location.href).searchParams.get("tab"), "data");
     await act(async () => {
-      tabs[8]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      tabs[9]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
     await settle(2);
     assert.match(view.selected(), /^Account/, "wraps around");

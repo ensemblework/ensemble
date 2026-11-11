@@ -110,13 +110,20 @@ const attachmentFor = (ctx: CodeMenuContext, path: string, text: string, lines?:
   source: { kind: "file", id: ctx.repoLabel, title: lines ? `${path}:${lines}` : path },
 });
 
+type Picked = { text: string; line: number; endLine: number };
+const linesOf = (selection?: Picked) => (selection ? (selection.line === selection.endLine ? `${selection.line}` : `${selection.line}-${selection.endLine}`) : undefined);
+
+/** Hands a file, or what is picked in it, to the assistant: with `prompt` it asks at once, without it the file is attached. */
+export async function askEnsemble(ctx: CodeMenuContext, path: string, prompt?: string, selection?: Picked): Promise<void> {
+  const text = selection ? selection.text : await ctx.text(path);
+  attachToAssistant({ attachment: attachmentFor(ctx, path, text, linesOf(selection)), ...(prompt ? { prompt, send: true } : {}) });
+}
+
 /** Ask, attach and make a task from a file (its text read when the item is picked). */
-function codeAskItems(ctx: CodeMenuContext, path: string, selection?: { text: string; line: number; endLine: number }): MenuAction[] {
-  const lines = selection ? (selection.line === selection.endLine ? `${selection.line}` : `${selection.line}-${selection.endLine}`) : undefined;
+function codeAskItems(ctx: CodeMenuContext, path: string, selection?: Picked): MenuAction[] {
+  const lines = linesOf(selection);
   const load = async () => (selection ? selection.text : await ctx.text(path));
-  const ask = (prompt?: string) => async () => {
-    attachToAssistant({ attachment: attachmentFor(ctx, path, await load(), lines), ...(prompt ? { prompt, send: true } : {}) });
-  };
+  const ask = (prompt?: string) => () => askEnsemble(ctx, path, prompt, selection);
   return [
     {
       id: "ask",

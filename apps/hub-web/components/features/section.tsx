@@ -70,7 +70,7 @@ export function FeaturesSection() {
       title="Features"
       description="Turn a part of Ensemble on or off. Turning one off hides it. Notes, diagrams, and reviews stay where they are."
     >
-      <div data-features>
+      <div data-features className="divide-y divide-[var(--line)]">
         {modules.map((id) => {
           const feature = featureCopy(id);
           const on = hasModule(shell.data?.modules, id);
@@ -88,8 +88,9 @@ export function FeaturesSection() {
       </div>
       {offered.length ? (
         <div className="mt-4 border-t border-line pt-3" data-desk-extras>
-          <div data-jump-label="Desk extras" className="text-[13px] font-medium">Desk extras</div>
+          <div data-jump-label="Desk extras" className="text-[13.5px] font-medium">Desk extras</div>
           <p className="mt-0.5 text-[12.5px] text-muted">Optional tiles for your current profile. Turning one off hides it. The rows stay.</p>
+          <div className="divide-y divide-[var(--line)]">
           {offered.map((extra) => (
             <SettingRow key={extra.id} title={extra.label} description={onByDefault.has(extra.id) ? `${extra.line} On for this desk until you turn it off.` : extra.line}>
               <Toggle
@@ -100,6 +101,7 @@ export function FeaturesSection() {
               />
             </SettingRow>
           ))}
+          </div>
         </div>
       ) : null}
     </SectionCard>

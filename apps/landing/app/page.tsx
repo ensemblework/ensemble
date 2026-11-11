@@ -47,7 +47,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   { icon: "graph", title: "Your engineer graph", body: "People, projects, repos and preferences learned from your own work, so nobody re-types context." },
   { icon: "quill", title: "Skills in your style", body: "Versioned skills for how you write PRs, commits and replies. Edit them like any other page." },
   { icon: "chain", title: "Tamper-evident ledger", body: "A hash-chained, insert-only audit log. Every run is replayable, with its inputs and approvals." },
-  { icon: "plug", title: "Context in your editor", body: "A read-only MCP bridge hands VS Code, Cursor and Copilot CLI the same briefs and skills." },
+  { icon: "plug", title: "Context in your editor", body: "An MCP bridge hands VS Code, Cursor and Copilot CLI the same briefs and skills, and can update your tasks when you allow it." },
   { icon: "chip", title: "Any model, your key", body: "Gemini, OpenAI, Claude, OpenRouter, Ollama or Copilot. Keys are encrypted and never leave the runtime." },
 ];
 

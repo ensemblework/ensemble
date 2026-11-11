@@ -12,7 +12,7 @@
  *
  */
 import {
-  DragOverlay, KeyboardSensor, MeasuringStrategy, MouseSensor, TouchSensor, defaultDropAnimationSideEffects,
+  DragOverlay, KeyboardSensor, MeasuringStrategy, defaultDropAnimationSideEffects,
   useDndContext, useDndMonitor, useSensor, useSensors,
   type Announcements, type DropAnimation, type ScreenReaderInstructions, type UniqueIdentifier,
   type KeyboardCoordinateGetter,
@@ -20,6 +20,7 @@ import {
 import { defaultAnimateLayoutChanges, sortableKeyboardCoordinates, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { FramedMouseSensor, FramedTouchSensor } from "@/lib/motion/dnd-sensors";
 import * as BDNamespace from "./board-drag";
 import type { Lift, MotionTheme } from "./board-drag";
 
@@ -50,11 +51,12 @@ export function useMotionPrefs(): { theme: MotionTheme; reduced: boolean } {
 }
 
 /* ---------- sensors ---------- */
+/** Mouse and touch moves render before the frame paints (lib/motion/dnd-sensors.ts): the card never trails the pointer. */
 export function useBoardDragSensors(coordinateGetter: KeyboardCoordinateGetter = sortableKeyboardCoordinates) {
   return useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: BD.MOUSE.distance } }),
+    useSensor(FramedMouseSensor, { activationConstraint: { distance: BD.MOUSE.distance } }),
     // long-press so column/page scrolling still works; dnd-kit prevents touchmove once active
-    useSensor(TouchSensor, { activationConstraint: { delay: BD.TOUCH.delay, tolerance: BD.TOUCH.tolerance } }),
+    useSensor(FramedTouchSensor, { activationConstraint: { delay: BD.TOUCH.delay, tolerance: BD.TOUCH.tolerance } }),
     useSensor(KeyboardSensor, { coordinateGetter, keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] } }),
   );
 }
@@ -129,14 +131,17 @@ function LiftLayer({ children, theme, reduced }: { children: ReactNode; theme: M
 }
 
 /** Expressive only: 12 violet beads from the landing gap ([data-bdg-ph]) to the overlay. transform/opacity only. */
+/** Reads the DOM on each frame instead of dnd-kit's context, so a pointer move does not render the beads again. */
 function Tether() {
-  const { dragOverlay } = useDndContext();
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let id = 0;
     const beads = [...(host.current?.children ?? [])] as HTMLElement[];
+    // The landing gap remounts when the card changes column; look it up again only then.
+    let ph: Element | null = null, ov: Element | null = null;
     const tick = () => {
-      const ph = document.querySelector("[data-bdg-ph]"), ov = dragOverlay.nodeRef.current;
+      if (!ph?.isConnected || !ph.hasAttribute("data-bdg-ph")) ph = document.querySelector("[data-bdg-ph]");
+      if (!ov?.isConnected) ov = document.querySelector(".bdg-float");
       if (ph && ov) {
         const a = ph.getBoundingClientRect(), b = ov.getBoundingClientRect();
         const ax = a.left + a.width / 2, ay = a.top + a.height / 2, bx = b.left + b.width / 2, by = b.top + b.height / 2;
@@ -152,7 +157,7 @@ function Tether() {
     };
     id = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(id);
-  }, [dragOverlay.nodeRef]);
+  }, []);
   return <div ref={host} className="bdg-layer" aria-hidden>{Array.from({ length: 12 }, (_, i) => <i key={i} className="bdg-bead" />)}</div>;
 }
 
@@ -223,6 +228,9 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
       previousOrder.current = "";
       previousScope.current = scope;
     }
+    // A card in the air is dnd-kit's to draw, and the user's drop is skipped below: measuring every card on
+    // each render of a drag (one per column change) would only force layout.
+    if (dragging) return;
     const cards = [...root.querySelectorAll<HTMLElement>("[data-bdg-card]")].filter((card) => !card.closest(".bdg-layer"));
     const tasks = new Map(rows.map((row) => [row.id, row]));
     const next = new Map<string, Spot>();
@@ -246,7 +254,7 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
       // React commits the query result before the column state catches up.
       if (!now || !task || task.column !== now.col) continue;
       const was = prevIds.get(id);
-      if (!was || dragging || skip.current) continue;
+      if (!was || skip.current) continue;
       const box = el.getBoundingClientRect();
       // Where this card would sit, at the current scroll, if it had not moved in content space.
       const from = { left: box.left - (now.x - was.x), top: box.top - (now.y - was.y), width: was.w, height: was.h };

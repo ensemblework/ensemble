@@ -9,6 +9,7 @@ import type { ModelProvider, Settings } from "@ensemble/shared-types";
 import { api, type Connection, type ConnectorApp } from "@/lib/api";
 import { plural, relative } from "@/lib/format";
 import { FetchGlyph } from "@/components/motion/slot";
+import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "../toast";
 import { Dialog, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 
@@ -609,7 +610,7 @@ export function EditorsSection() {
       info="Claude Code, Codex, Copilot, Cursor and other AI apps can read your Ensemble, and their “Allow this command?” prompts come to Needs me. A hook in the editor holds the tool call open and asks Ensemble; your answer goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt. The hook never allows by itself."
       description="Let your AI apps read Ensemble and ask you from Needs me."
     >
-      <SettingRow title="Connect an editor or AI app" description="A guide for each app, with a read-only key.">
+      <SettingRow title="Connect an editor or AI app" description="A guide for each app and AI extension, with its key.">
         <Link href="/connect" className="btn-primary">
           <Plug size={12} /> Connect an editor
         </Link>
@@ -675,7 +676,11 @@ export function EditorsSection() {
             {token.scope === "bridge" ? <Tag tone="blue">read-only</Tag> : null}{" "}
             <span className="text-faint">· {token.lastUsedAt ? `used ${relative(token.lastUsedAt)}` : "never used"}</span>
           </span>
-          <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => revoke.mutate(token.id)}>
+          <button
+            type="button"
+            className="btn-ghost py-0 text-[12px]"
+            onClick={() => void confirmAction({ title: token.name ? `Revoke the “${token.name}” token?` : "Revoke this token?", body: "Hooks and scripts that use it stop reaching your Ensemble.", confirm: "Revoke", danger: true }).then((yes) => yes && revoke.mutate(token.id))}
+          >
             Revoke
           </button>
         </div>

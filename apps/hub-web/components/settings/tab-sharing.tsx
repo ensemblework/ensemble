@@ -16,8 +16,9 @@ import { SpaceIcon } from "../shell/space-switcher";
 import { Avatar } from "../sharing/people";
 import { ContactLimitDialog } from "../sharing/sharing-limits";
 import { Meter, PersonPicker, ShareDialog } from "../sharing/share-dialog";
+import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "../toast";
-import { Dialog, SectionCard, SettingRow, SkeletonRows } from "../ui";
+import { Dialog, QueryError, SectionCard, SettingRow, SkeletonRows } from "../ui";
 
 export const KIND_NAMES: Record<ShareKind, string> = {
   page: "Page",
@@ -211,6 +212,7 @@ export function SharingTab() {
     onError: fail,
   });
 
+  if (overview.error && !overview.data) return <QueryError error={overview.error as Error} retry={() => void overview.refetch()} />;
   if (overview.isLoading || !overview.data) return <SkeletonRows count={6} />;
   const data = overview.data;
   const contactIds = new Set(data.contacts.map((row) => row.id));
@@ -265,8 +267,6 @@ export function SharingTab() {
         </div>
         {contactsFull ? <p className="mt-2 text-2xs text-faint">All slots are used. Remove someone to share with a new person.</p> : null}
       </SectionCard>
-
-      {data.caps ? <LimitsCard key={`${data.limits.contacts}:${data.limits.members}:${data.limits.roomPeople}:${data.limits.spaces}`} limits={data.limits} caps={data.caps} /> : null}
 
       <SectionCard title="Spaces you share" info={`Share work with up to ${data.limits.members} people. Settings, credentials and computers stay private.`}>
         <div className="divide-y divide-line">
@@ -342,7 +342,7 @@ export function SharingTab() {
                 <button type="button" className="btn h-7 gap-1.5 px-2.5 text-[12.5px]" onClick={() => void switchSpace(space.id, "/board")}>
                   <ExternalLink size={12} /> Open
                 </button>
-                <button type="button" className="icon-btn" title="Leave this space" aria-label={`Leave ${space.name}`} onClick={() => leave.mutate(space.id)}>
+                <button type="button" className="icon-btn" title="Leave this space" aria-label={`Leave ${space.name}`} onClick={() => void confirmAction({ title: `Leave ${space.name}?`, body: `You lose access until ${space.owner.name} shares it with you again. Their copy does not change.`, confirm: "Leave", danger: true }).then((yes) => yes && leave.mutate(space.id))}>
                   <LogOut size={13} />
                 </button>
               </div>
@@ -370,6 +370,8 @@ export function SharingTab() {
           <p className="text-[12.5px] text-muted">Nothing is shared with you yet.</p>
         )}
       </SectionCard>
+
+      {data.caps ? <LimitsCard key={`${data.limits.contacts}:${data.limits.members}:${data.limits.roomPeople}:${data.limits.spaces}`} limits={data.limits} caps={data.caps} /> : null}
 
       {removing ? <RemoveContact contact={removing} onClose={() => setRemoving(null)} /> : null}
       {sharingSpace ? <ShareDialog open onClose={() => { setSharingSpace(null); refresh(); }} target={{ kind: "space", spaceId: sharingSpace.id, name: sharingSpace.name }} /> : null}
@@ -422,7 +424,7 @@ function PublicLinks() {
               >
                 {copied === link.id ? <Check size={13} /> : <Link2 size={13} />}
               </button>
-              <button type="button" className="icon-btn" title="Turn the link off" aria-label={`Turn off the link to ${link.title}`} onClick={() => remove.mutate(link.id)}>
+              <button type="button" className="icon-btn" title="Turn the link off" aria-label={`Turn off the link to ${link.title}`} onClick={() => void confirmAction({ title: "Turn this link off?", body: "Anyone with the link loses access. A new link has a new address.", confirm: "Turn off", danger: true }).then((yes) => yes && remove.mutate(link.id))}>
                 <X size={13} />
               </button>
             </div>

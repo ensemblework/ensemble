@@ -520,6 +520,8 @@ function Surface(props: SurfaceProps) {
       // Double-click edits a label; it does not zoom.
       zoomOnDoubleClick={false}
       proOptions={{ hideAttribution: false }}
+      // The bottom corners hold the zoom pill, the block dock and the assistant button.
+      attributionPosition="top-right"
       deleteKeyCode={null}
       className="diagram-flow"
       tabIndex={0}

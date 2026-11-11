@@ -190,6 +190,25 @@ export function dropOneOff(agent: SubscriptionProvider, id: string): void {
   })().catch(() => undefined);
 }
 
+/**
+ * Deletes a chat's session now, because the person deleted the chat: Ensemble's entry for it, the
+ * agent's own history of it, and the chat's folder (never a group's). True when this computer had one.
+ */
+export async function dropSession(key: string): Promise<boolean> {
+  if (!SESSION_KEY.test(key)) return false;
+  const entry = await serial(async () => {
+    const store = await read();
+    const found = store[key];
+    if (!found) return null;
+    delete store[key];
+    await write(store);
+    return found;
+  });
+  if (entry) await dropNative([[key, entry]]);
+  else await rm(sessionFolder(key), { recursive: true, force: true }).catch(() => undefined);
+  return Boolean(entry);
+}
+
 /** Forgets a chat's session (it could not be reopened). */
 export function forgetSession(key: string): Promise<void> {
   return serial(async () => {

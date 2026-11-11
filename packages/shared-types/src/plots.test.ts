@@ -268,3 +268,15 @@ test("a dark canvas export paints every panel, its letter title, box whiskers, a
   const light = matplotlibPanels([{ title: "Curve", datasetName: "t", x: "step", ys: ["loss"], chart: "line" }], {});
   assert.doesNotMatch(light, /labelcolor|_drawn\['whiskers'\]|color="#f3eee6"/);
 });
+
+test("the Accent palette never puts a colour that looks like the accent right after it", async () => {
+  const { paletteColors, closeHue } = await import("./plots.js");
+  const gold = paletteColors("accent", "#D7B56F", true);
+  assert.equal(gold[0], "#D7B56F");
+  assert.equal(gold[1], "#56B4E9", "orange and yellow are skipped after a gold accent");
+  assert.ok(!gold.slice(1).some((color) => closeHue(color, "#D7B56F")));
+  const indigo = paletteColors("accent", "#5346d6");
+  assert.equal(indigo[1], "#E69F00", "an accent unlike orange keeps Okabe-Ito's order");
+  assert.equal(closeHue("#E69F00", "#D7B56F"), true);
+  assert.equal(closeHue("#000000", "#D7B56F"), false, "black and greys never count as close");
+});

@@ -1,0 +1,169 @@
+/* How the assistant shows its work in the dock (components/assistant/tool-calls.tsx).
+   Finished steps are a quiet timeline: one line per call, an icon for what it touched, state as a
+   small mark. Proposals sit in their own dashed card: nothing in it has happened yet. */
+
+/* ── The summary line a saved reply folds its steps behind ─────────────── */
+.assistant-activity { margin: 0 0 14px; }
+.assistant-activity[data-live] { margin-bottom: 12px; }
+.assistant-activity > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: -4px;
+  padding: 3px 9px 3px 4px;
+  border-radius: 8px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 20px;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.assistant-activity > summary::-webkit-details-marker { display: none; }
+.assistant-activity > summary:hover { background: var(--hover); color: var(--ink); }
+.assistant-activity > summary:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.7); outline-offset: 1px; }
+.tool-summary-mark { display: inline-flex; justify-content: center; width: 21px; color: var(--faint); }
+.assistant-activity > summary[data-failed] .tool-summary-mark { color: var(--danger); }
+.tool-summary-text { font-variant-numeric: tabular-nums; }
+.tool-summary-chevron { color: var(--faint); transition: transform var(--dur) var(--ease); }
+.assistant-activity[open] > summary .tool-summary-chevron { transform: rotate(180deg); }
+.assistant-activity[open] > .tool-timeline { margin-top: 6px; animation: tool-reveal var(--dur) var(--ease) both; }
+@keyframes tool-reveal { from { opacity: 0; transform: translateY(-3px); } }
+
+/* ── The timeline ──────────────────────────────────────────────────────── */
+.tool-timeline { position: relative; display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+/* The rail runs through the marks; each mark's own background cuts it between rows. */
+.tool-timeline:has(> li + li)::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 10px;
+  width: 1px;
+  background: var(--line-strong);
+}
+.tool-row { position: relative; min-width: 0; }
+.tool-line { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.tool-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 4px 4px 0;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 20px;
+  text-align: left;
+}
+button.tool-main { cursor: pointer; }
+button.tool-main:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.7); outline-offset: 1px; }
+button.tool-main:hover { color: var(--ink); }
+.tool-mark {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--faint);
+}
+.tool-mark[data-state="failed"] { color: var(--danger); }
+.tool-mark[data-state="proposed"] { color: var(--accent); }
+.tool-mark[data-state="undone"] { opacity: 0.6; }
+.tool-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tool-row[data-tool-state="undone"] .tool-title { color: var(--muted); }
+.tool-meta { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; color: var(--faint); font-size: 11.5px; }
+.tool-meta-failed { color: var(--danger); }
+.tool-chevron { flex-shrink: 0; color: var(--faint); opacity: 0; transition: opacity var(--dur-fast) var(--ease), transform var(--dur) var(--ease); }
+button.tool-main:is(:hover, :focus-visible) .tool-chevron, button.tool-main[aria-expanded="true"] .tool-chevron { opacity: 1; }
+button.tool-main[aria-expanded="true"] .tool-chevron { transform: rotate(90deg); }
+
+.tool-actions { display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; }
+.tool-actions:empty { display: none; }
+.tool-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tool-action:hover { background: var(--hover); color: var(--ink); }
+.tool-action:focus-visible { outline: 2px solid rgb(var(--accent-rgb) / 0.7); outline-offset: 1px; }
+.tool-apply { height: 26px; padding: 0 11px; font-size: 12px; }
+
+/* Under the line: an error says why; a proposal lists what it will set; details open on click. */
+.tool-error,
+.tool-fields,
+.tool-details { margin: 0 0 4px 29px; font-size: 12px; line-height: 18px; }
+.tool-error { color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-fields { display: flex; flex-direction: column; gap: 1px; padding: 0; list-style: none; }
+.tool-fields li { display: flex; gap: 8px; min-width: 0; }
+.tool-field-key { flex-shrink: 0; color: var(--faint); }
+.tool-field-key::after { content: ":"; }
+.tool-field-value { min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.tool-details { padding: 2px 0 6px; color: var(--muted); }
+.tool-details[hidden] { display: none; }
+.tool-details-text { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-details-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0 0 6px; }
+.tool-details-fields > div { display: contents; }
+.tool-details-fields dt { color: var(--faint); }
+.tool-details-fields dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+.tool-details-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0; color: var(--faint); }
+.tool-details-name code { font-family: var(--font-mono); font-size: 11px; }
+
+/* A folded run of reads: the count, then a glance at what they were. */
+.tool-run .tool-title { display: flex; gap: 8px; }
+.tool-run-count { flex-shrink: 0; color: var(--ink-2); }
+.tool-run-glance { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
+.tool-run .tool-chevron { opacity: 1; }
+
+/* The step a live turn is on. */
+.tool-running .tool-title { color: var(--muted); }
+.tool-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: tool-spin 0.9s linear infinite;
+}
+@keyframes tool-spin { to { transform: rotate(360deg); } }
+.tool-row[data-tool-state="running"] { animation: tool-reveal var(--dur) var(--ease) both; }
+.assistant-activity[data-live] .tool-row { animation: tool-reveal var(--dur) var(--ease) both; }
+
+/* ── Proposals: dashed, because nothing in here has happened yet ───────── */
+.tool-proposals {
+  margin: 16px 0 2px;
+  padding: 8px 10px 6px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  border-radius: 12px;
+}
+.tool-proposals-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 28px; margin-bottom: 4px; }
+.tool-proposals-title { color: var(--ink); font-size: 12.5px; font-weight: 600; }
+.tool-proposals-note { flex: 1; min-width: 0; color: var(--faint); font-size: 12px; }
+.tool-proposals .tool-row + .tool-row { margin-top: 2px; }
+.tool-row[data-proposal] .tool-title { color: var(--ink); white-space: normal; }
+
+/* The live turn's text takes the saved reply's place, so nothing moves when it lands. */
+.assistant-live-turn .assistant-answer-body { margin-top: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-activity[open] > .tool-timeline,
+  .tool-row[data-tool-state="running"],
+  .assistant-activity[data-live] .tool-row { animation: none; }
+  .tool-spinner { animation: none; border-color: var(--accent); }
+}
+[data-reduce-motion="true"] .assistant-activity[open] > .tool-timeline,
+[data-reduce-motion="true"] .tool-row[data-tool-state="running"],
+[data-reduce-motion="true"] .assistant-activity[data-live] .tool-row { animation: none; }
+[data-reduce-motion="true"] .tool-spinner { animation: none; border-color: var(--accent); }

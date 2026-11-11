@@ -4,6 +4,7 @@ import { renderDiagramSvg, type DiagramModel } from "@ensemble/block-diagrams";
 import { useEffect, useRef } from "react";
 import { ApiError, api } from "@/lib/api";
 import { clampEmbedHeight, createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
+import { laidOut } from "./layout-client";
 
 function themeOf(): "light" | "dark" {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -166,17 +167,20 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
   });
   observer?.observe(stage);
   let cancelled = false;
-  void api.diagram(id).then(({ diagram }) => {
+  void api.diagram(id).then(async ({ diagram }) => {
     if (cancelled) return;
     title.textContent = diagram.title || label || "Diagram";
     time.textContent = when(diagram.updatedAt);
-    const model = diagram.model as DiagramModel;
-    const svg = renderDiagramSvg(model, { theme: themeOf() }).replace(/^<\?xml[^>]*>\s*/, "");
+    const model = await laidOut(diagram.model as DiagramModel);
+    if (cancelled) return;
+    // The card's header names the diagram: the drawing leaves its own title out.
+    const svg = renderDiagramSvg({ ...model, meta: { ...model.meta, title: "" } }, { theme: themeOf() }).replace(/^<\?xml[^>]*>\s*/, "");
     inner.innerHTML = svg;
     const node = inner.querySelector("svg");
     // The canvas belongs to the viewport. Only diagram artwork is transformed.
     const backgrounds = node ? Array.from(node.children).filter((child) => child.tagName.toLowerCase() === "rect").slice(0, 2) : [];
-    stage.style.backgroundColor = backgrounds[0]?.getAttribute("fill") || "var(--panel)";
+    // The page's own diagram paper, so the card matches the editor in every colour theme.
+    stage.style.backgroundColor = `var(--diagram-paper, ${backgrounds[0]?.getAttribute("fill") || "var(--panel)"})`;
     backgrounds.forEach((background) => background.remove());
     const box = node?.getBoundingClientRect();
     const width = Number(node?.getAttribute("width")) || box?.width || 0;

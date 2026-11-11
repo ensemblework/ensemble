@@ -16,7 +16,7 @@ The root [README](../README.md) owns the first-run steps. `.env.example`, `infra
 | File originals | Postgres rows, or a private Azure Blob container with `ENSEMBLE_FILE_STORAGE=azure-blob` (`lib/blob-store.ts`) |
 | Plot computation | Browser runtime on the web; Python/server and native workers elsewhere |
 | Desktop and quick capture | Tauri 2 (Rust) |
-| Editor context | MCP SDK server over stdio/HTTP; hosted `/mcp` is read-only |
+| Editor context | MCP SDK server over stdio/HTTP; hosted `/mcp` reads, and writes with a key that allows changes |
 | Realtime | Scoped SSE; page co-editing has its own version protocol |
 | Logging | Pino (API), structlog (Python), plus the app's audit ledger |
 

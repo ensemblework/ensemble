@@ -8,22 +8,24 @@
  * keys, sign-in, sharing and space membership, connections, the assistant's own permissions,
  * sandbox, folders, retention and deletion. Appearance changes reach the active browser through an actor-only live event.
  */
-import { AppColorTheme, AccentPreset, AppFont, ReasoningEffort } from "./assistant.js";
+import { AppColorTheme, AccentPreset, AppDoodle, AppFont, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
 import { timeZoneName } from "./account.js";
 
-export type SettingsMapTab = "account" | "appearance" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
+export type SettingsMapTab = "account" | "appearance" | "notifications" | "shortcuts" | "assistant" | "agents" | "connections" | "spaces" | "sharing" | "data";
 
+/** The tabs in the order the Settings nav shows them. */
 export const SETTINGS_MAP_TABS: Readonly<Record<SettingsMapTab, string>> = {
   account: "Account",
   appearance: "Appearance",
-  spaces: "Spaces",
-  sharing: "Sharing",
-  assistant: "Assistant",
-  connections: "Connections",
   notifications: "Notifications",
   shortcuts: "Shortcuts",
+  assistant: "Assistant",
+  agents: "Agents",
+  connections: "Connections",
+  spaces: "Spaces",
+  sharing: "Sharing",
   data: "Data",
 };
 
@@ -82,18 +84,23 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ...group("account", "Avatar", [
     { id: "account.avatar", label: "Avatar", keywords: "profile picture photo initials face", about: "The picture or initials shown for you.", href: at("account", "jump-avatar-avatar") },
   ]),
-  ...group("account", "You", [
+  ...group("account", "Time zone and email", [
     { id: "account.email", label: "Email", keywords: "email address identity confirm", about: "Your address: recognises your own mail and confirms destructive actions.", href: at("account", "jump-you-email") },
     { id: "account.timezone", label: "Time zone", keywords: "timezone time zone local time scheduling clock", about: "Used for due times, reminders, quiet hours and the morning brief.", href: at("account", "jump-you-time-zone"), key: "timezone", rule: { type: "timezone" } },
   ]),
-  ...group("appearance", "Appearance", [
+  ...group("appearance", "Theme", [
     { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Light, dark or system mode; assistant changes also reach this browser.", href: at("appearance", "jump-appearance-theme"), key: "appearance.theme", rule: { type: "enum", values: ["dark", "light", "system"] } },
-    { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("appearance", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
+    { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere petrol aubergine graphite lagoon aurora juniper blueprint ensemble", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("appearance", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
+    { id: "appearance.doodle", label: "Doodle", keywords: "doodle doodles background pattern patterns wallpaper constellation orbits galaxy stardust ripples network graph contours waves weave dots circuits grid plain", about: "A faint pattern behind your work, in the theme's own colours: the theme's own, plain, or one of twelve.", href: at("appearance", "jump-appearance-doodle"), key: "appearance.doodle", rule: { type: "enum", values: AppDoodle.options } },
     { id: "appearance.accent", label: "Accent colour", keywords: "accent colour color palette gold satin indigo tide ember rose brass orchid moss sky", about: "The highlight colour, from nine presets, with Satin Gold as the default.", href: at("appearance", "jump-appearance-accent"), key: "appearance.accent", rule: { type: "enum", values: AccentPreset.options } },
     { id: "appearance.accent-custom", label: "Custom accent colour", keywords: "custom accent colour color hex", about: "Your own accent as #rrggbb; none goes back to the preset.", href: at("appearance", "jump-appearance-custom-accent"), key: "appearance.accentCustom", rule: { type: "color" } },
+  ]),
+  ...group("appearance", "Text", [
     { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-text-size"), key: "appearance.textScale", rule: { type: "int", min: 80, max: 130 } },
-    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-app-font"), key: "appearance.font", rule: { type: "enum", values: AppFont.options } },
-    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-reduce-motion"), key: "appearance.reduceMotion", rule: bool },
+    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "The typeface for the app in this browser.", href: at("appearance", "jump-appearance-app-font"), key: "appearance.font", rule: { type: "enum", values: AppFont.options } },
+  ]),
+  ...group("appearance", "Layout and motion", [
+    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Turns off movement and animation in this browser.", href: at("appearance", "jump-appearance-reduce-motion"), key: "appearance.reduceMotion", rule: bool },
   ]),
   ...group(
     "account",
@@ -155,35 +162,49 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ...group("assistant", "Watching for you", [
     { id: "assistant.watchers", label: "Watching for you", keywords: "watchers tell me when watch monitor cancel", about: "What the assistant watches after “tell me when …”, with Cancel.", href: at("assistant", "jump-watchers-watching-for-you") },
   ]),
-  ...group("assistant", "Autonomy", [
-    { id: "autonomy.level", label: "Default autonomy", keywords: "autonomy level assist supervised autonomous ask review only unattended delegate", about: "The default for newly delegated tasks.", href: at("assistant", "jump-autonomy-default-autonomy") },
-    { id: "autonomy.high-risk-limit", label: "Daily action safety limit", keywords: "high risk limit brake sends", about: "Beyond this, unattended sends ask you first.", href: at("assistant", "jump-autonomy-daily-action-safety-limit") },
-    { id: "autonomy.run-without-asking", label: "Run commands in the Ensemble workspace without asking", keywords: "run without asking trusted folder commands approval", about: "Commands in the trusted workspace folder run without an Allow prompt.", href: at("assistant", "jump-autonomy-run-commands-in-the-ensemble-workspace-without-asking") },
-    { id: "autonomy.trust-sharing", label: "Trust folders in your other AI tools too", keywords: "trust folders claude code codex cursor share trust", about: "Desktop app and CLI: folders you trust here are trusted in those tools.", href: at("assistant", "autonomy") },
-  ]),
-  ...group("assistant", "Orchestration", [
-    { id: "orchestration.concurrency", label: "Tasks that run at once", keywords: "parallel concurrency jobs at once queue", about: "How many agent tasks run at the same time.", href: at("assistant", "jump-orchestration-tasks-that-run-at-once") },
-    { id: "orchestration.turns", label: "Model turns per task", keywords: "turn limit agent turns", about: "A task stops at this many turns and keeps its progress.", href: at("assistant", "jump-orchestration-model-turns-per-task") },
-    { id: "orchestration.minutes", label: "Minutes per task", keywords: "timeout minutes duration time limit", about: "A task that takes longer is stopped; its work is kept.", href: at("assistant", "jump-orchestration-minutes-per-task") },
-    { id: "orchestration.sandbox", label: "Sandbox by default", keywords: "sandbox native isolation execution", about: "New code tasks start inside this computer's sandbox.", href: at("assistant", "jump-orchestration-sandbox-by-default") },
-    { id: "orchestration.network", label: "Internet for agent commands", keywords: "network internet sandbox commands", about: "Whether agent commands can reach the internet.", href: at("assistant", "jump-orchestration-internet-for-agent-commands") },
-    { id: "orchestration.outside", label: "Outside the Ensemble workspace", keywords: "outside access other folders read write work folder", about: "Whether tasks may read or change your folders beyond the Ensemble workspace without asking.", href: at("assistant", "orchestration") },
-  ]),
   ...group("assistant", "Automations", [
     { id: "automations.meetings", label: "Meeting automations", keywords: "automation meeting transcript notes action items tasks proposals prep brief recap recurring series ai", about: "After each meeting, a summary and proposed tasks to review; before a recurring one, a brief of last time.", href: at("assistant", "jump-automations-meeting-automations"), key: "automations.meetings.enabled", rule: bool },
     { id: "automations.meetings-tier", label: "Model for meeting automations", keywords: "automation meeting model tier", about: "Which of your model tiers runs the meeting automations.", href: at("assistant", "jump-automations-meeting-automations"), key: "automations.meetings.tier", rule: { type: "enum", values: ["easy", "medium", "high", "max"] } },
     { id: "automations.meetings-minutes", label: "Brief before a meeting", keywords: "automation meeting prep minutes before", about: "How long before a recurring meeting its brief is ready (5–240 minutes).", href: at("assistant", "jump-automations-brief-before-a-meeting"), key: "automations.meetings.minutesBefore", rule: { type: "int", min: 5, max: 240 } },
-    { id: "automations.file-summaries-tier", label: "Model for file summaries", keywords: "automation file summary model tier", about: "Which of your model tiers summarizes uploaded files.", href: at("assistant", "jump-automations-model-for-file-summaries"), key: "automations.fileSummaries.tier", rule: { type: "enum", values: ["easy", "medium", "high", "max"] } },
+    { id: "automations.file-summaries-tier", label: "Model for file summaries", keywords: "automation file summary model tier", about: "Which of your model tiers summarizes uploaded files.", href: at("assistant", "jump-automations-summarize-uploaded-files"), key: "automations.fileSummaries.tier", rule: { type: "enum", values: ["easy", "medium", "high", "max"] } },
     { id: "automations.file-summaries", label: "Summarize uploaded files", keywords: "automation file summary document enrichment upload", about: "A short summary of each file you upload, for search and lists.", href: at("assistant", "jump-automations-summarize-uploaded-files"), key: "automations.fileSummaries.enabled", rule: bool },
-    { id: "automations.review-notices", label: "Tell me when agent work waits for review", keywords: "automation review notification agent finished done", about: "A notification when an agent finishes a task and its work waits for you.", href: at("assistant", "jump-automations-tell-me-when-agent-work-waits-for-review"), key: "automations.reviewNotices", rule: bool },
-  ]),
-  ...group("assistant", "Quiet hours", [
-    { id: "quiet.enabled", label: "Quiet hours", keywords: "quiet hours do not disturb notifications night", about: "Notifications wait until morning during these hours.", href: at("assistant", "jump-quiet-quiet-hours"), key: "quietHours.enabled", rule: bool },
-    { id: "quiet.from", label: "Quiet hours start", keywords: "quiet hours start from evening", about: "When quiet hours begin (HH:MM).", href: at("assistant", "jump-quiet-quiet-hours-start"), key: "quietHours.from", rule: { type: "time" } },
-    { id: "quiet.until", label: "Quiet hours end", keywords: "quiet hours end until morning", about: "When quiet hours end (HH:MM).", href: at("assistant", "jump-quiet-quiet-hours-end"), key: "quietHours.until", rule: { type: "time" } },
   ]),
   ...group("assistant", "Prompts", [
     { id: "assistant.prompts", label: "Prompts", keywords: "prompts system instructions what is sent to models", about: "Every instruction Ensemble sends to a model, to read.", href: at("assistant", "jump-prompts-prompts") },
+  ]),
+
+  // ── Agents ────────────────────────────────────────────────────────────────
+  ...group("agents", "Autonomy", [
+    { id: "autonomy.level", label: "Default autonomy", keywords: "autonomy level assist supervised autonomous ask review only unattended delegate", about: "The default for newly delegated tasks.", href: at("agents", "jump-autonomy-default-autonomy") },
+    { id: "autonomy.high-risk-limit", label: "Daily action safety limit", keywords: "high risk limit brake sends", about: "Beyond this, unattended sends ask you first.", href: at("agents", "jump-autonomy-daily-action-safety-limit") },
+    { id: "autonomy.run-without-asking", label: "Run commands in the Ensemble workspace without asking", keywords: "run without asking trusted folder commands approval", about: "Commands in the trusted workspace folder run without an Allow prompt.", href: at("agents", "jump-autonomy-run-commands-in-the-ensemble-workspace-without-asking") },
+    { id: "autonomy.trust-sharing", label: "Trust folders in your other AI tools too", keywords: "trust folders claude code codex cursor share trust", about: "Desktop app and CLI: folders you trust here are trusted in those tools.", href: at("agents", "jump-autonomy-trust-folders-in-your-other-ai-tools-too") },
+  ]),
+  ...group("agents", "Run profiles", [
+    { id: "agents.run-profiles", label: "Run profiles", keywords: "run profile assign quick assign default star agent", about: "Up to three saved ways to run a task; Quick assign uses the starred one.", href: at("agents", "jump-run-profiles-run-profiles") },
+  ]),
+  ...group("agents", "Task limits", [
+    { id: "orchestration.concurrency", label: "Tasks that run at once", keywords: "parallel concurrency jobs at once queue", about: "How many agent tasks run at the same time.", href: at("agents", "jump-orchestration-tasks-that-run-at-once") },
+    { id: "orchestration.turns", label: "Model turns per task", keywords: "turn limit agent turns", about: "A task stops at this many turns and keeps its progress.", href: at("agents", "jump-orchestration-model-turns-per-task") },
+    { id: "orchestration.minutes", label: "Minutes per task", keywords: "timeout minutes duration time limit", about: "A task that takes longer is stopped; its work is kept.", href: at("agents", "jump-orchestration-minutes-per-task") },
+  ]),
+  ...group("agents", "Sandbox and access", [
+    { id: "orchestration.sandbox", label: "Sandbox by default", keywords: "sandbox native isolation execution", about: "New code tasks start inside this computer's sandbox.", href: at("agents", "jump-orchestration-sandbox-by-default") },
+    { id: "orchestration.network", label: "Internet for agent commands", keywords: "network internet sandbox commands", about: "Whether agent commands can reach the internet.", href: at("agents", "jump-orchestration-internet-for-agent-commands") },
+    { id: "orchestration.outside", label: "Outside the Ensemble workspace", keywords: "outside access other folders read write work folder", about: "Whether tasks may read or change your folders beyond the Ensemble workspace without asking.", href: at("agents", "jump-orchestration-outside-the-ensemble-workspace") },
+  ]),
+  ...group("agents", "Agent sessions", [
+    { id: "orchestration.project-folders", label: "One folder per project", keywords: "project folder agent claude codex cursor sessions", about: "Your own agent works on a project's tasks in one folder named after it.", href: at("agents", "jump-orchestration-one-folder-per-project") },
+    { id: "orchestration.linked-sessions", label: "Continue a fitting agent session", keywords: "continue session reuse related task", about: "A related task picks up in the agent session that did the earlier work.", href: at("agents", "jump-orchestration-continue-a-fitting-agent-session") },
+    { id: "orchestration.clean-sessions", label: "Clean up agent sessions", keywords: "delete clean sessions conversations", about: "Deletes an agent's saved conversation once its tasks are gone.", href: at("agents", "jump-orchestration-clean-up-agent-sessions") },
+  ]),
+  ...group("agents", "Terminal and commits", [
+    { id: "terminal.enabled", label: "Terminal on", keywords: "terminal shell on off code tab", about: "The guarded terminal in the Code tab.", href: at("agents", "jump-terminal-terminal-on"), ownerOnly: true },
+    { id: "code.folders", label: "Folders Code can use", keywords: "code folders repositories roots local repos add folder", about: "The folders the Code tab may list and review.", href: at("agents", "jump-terminal-folders-code-can-use"), ownerOnly: true },
+    { id: "terminal.folders", label: "Terminal folder", keywords: "terminal folder roots", about: "Folders the terminal may open.", href: at("agents", "jump-terminal-terminal-folder"), ownerOnly: true },
+    { id: "terminal.passkeys", label: "Passkeys", keywords: "passkey touch id fingerprint unlock terminal", about: "The passkeys that unlock the terminal.", href: at("agents", "jump-terminal-passkeys"), ownerOnly: true },
+    { id: "terminal.branch-prefix", label: "Branch prefix for agent work", keywords: "branch prefix git agent", about: "The prefix of branches agents create.", href: at("agents", "jump-terminal-branch-prefix-for-agent-work"), ownerOnly: true },
+    { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("agents", "jump-terminal-sign-commits"), ownerOnly: true },
   ]),
 
   // ── Connections ───────────────────────────────────────────────────────────
@@ -194,6 +215,9 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ...group("connections", "Sync people", [
     { id: "fetch.sync", label: "Sync people", keywords: "sync people contacts metadata fetch refresh", about: "Update real contacts only. Files and messages are saved when you ask.", href: at("connections", "jump-fetch-sync-people"), ownerOnly: true },
     { id: "fetch.lookback", label: "Look back", keywords: "look back days sync gap fetch", about: "How far back a sync reads after a gap: 1, 2, 3, 7, 14 or 30 days.", href: at("connections", "jump-fetch-look-back"), key: "fetch.lookbackDays", rule: { type: "int", min: 1, max: 30, values: [1, 2, 3, 7, 14, 30] }, ownerOnly: true },
+  ]),
+  ...group("connections", "Updates needing attention", [
+    { id: "data.failed", label: "Updates needing attention", keywords: "failed jobs errors retry sync background", about: "Connected apps that could not finish updating.", href: at("connections", "jump-failed-updates-needing-attention"), ownerOnly: true },
   ]),
   ...group("connections", "Editors & agents", [
     { id: "editors.connect", label: "Editors & agents", keywords: "editor vscode cursor claude code codex copilot mcp hooks connect", about: "Connect an editor or AI app to Ensemble (MCP and hooks).", href: at("connections", "jump-editors-editors-agents"), ownerOnly: true },
@@ -206,16 +230,25 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ]),
 
   // ── Notifications ─────────────────────────────────────────────────────────
+  ...group("notifications", "Quiet hours", [
+    { id: "quiet.enabled", label: "Quiet hours", keywords: "quiet hours do not disturb notifications night", about: "Notifications wait until morning during these hours.", href: at("notifications", "jump-quiet-quiet-hours"), key: "quietHours.enabled", rule: bool },
+    { id: "quiet.from", label: "Quiet hours start", keywords: "quiet hours start from evening", about: "When quiet hours begin (HH:MM).", href: at("notifications", "jump-quiet-quiet-hours-start"), key: "quietHours.from", rule: { type: "time" } },
+    { id: "quiet.until", label: "Quiet hours end", keywords: "quiet hours end until morning", about: "When quiet hours end (HH:MM).", href: at("notifications", "jump-quiet-quiet-hours-end"), key: "quietHours.until", rule: { type: "time" } },
+  ]),
   ...group("notifications", "Morning brief", [
     { id: "brief.enabled", label: "Morning brief", keywords: "morning brief daily summary digest", about: "A note inside Ensemble each morning; it never sends email.", href: at("notifications", "jump-brief-deliver-the-morning-brief"), key: "morningBrief.enabled", rule: bool },
     { id: "brief.time", label: "Morning brief time", keywords: "morning brief time when", about: "When the brief arrives (HH:MM).", href: at("notifications", "jump-brief-morning-brief-time"), key: "morningBrief.time", rule: { type: "time" } },
   ]),
-  ...group("notifications", "Quiet nudges", [
+  ...group("notifications", "Nudges", [
+    { id: "automations.review-notices", label: "Tell me when agent work waits for review", keywords: "automation review notification agent finished done", about: "A notification when an agent finishes a task and its work waits for you.", href: at("notifications", "jump-nudges-tell-me-when-agent-work-waits-for-review"), key: "automations.reviewNotices", rule: bool },
     { id: "nudges.enabled", label: "Quiet nudges", keywords: "nudges stale idle untouched reminders still relevant", about: "Items left alone ask whether they still matter.", href: at("notifications", "jump-nudges-ask-when-work-goes-quiet"), key: "staleNudge.enabled", rule: bool },
     { id: "nudges.days", label: "Days before a quiet nudge", keywords: "nudge days untouched stale", about: "How long an item sits untouched first (1–180 days).", href: at("notifications", "jump-nudges-days-before-a-quiet-nudge"), key: "staleNudge.untouchedDays", rule: { type: "int", min: 1, max: 180 } },
   ]),
-  ...group("notifications", "Desktop reminders", [
+  ...group("notifications", "Notifications on this device", [
     { id: "reminders.desktop", label: "Notifications on this device", keywords: "desktop notifications push browser reminders pop up native app", about: "Reminders use browser notifications on the web and native notifications in the desktop app.", href: at("notifications", "jump-reminders-show-reminders-as-desktop-notifications"), key: "desktopReminders", rule: bool },
+  ]),
+  ...group("notifications", "Routines", [
+    { id: "routines.enabled", label: "Routines", keywords: "routines schedule scheduled recurring assistant work", about: "Work the assistant does on a schedule; off, none run.", href: at("notifications", "jump-routines-run-my-routines") },
   ]),
   ...group("notifications", "Quick capture", [
     { id: "capture.shortcut", label: "Quick capture", keywords: "quick capture shortcut reminder anywhere", about: "The shortcut that captures a reminder from anywhere.", href: at("notifications", "jump-capture-quick-capture") },
@@ -227,8 +260,8 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ]),
 
   // ── Data ──────────────────────────────────────────────────────────────────
-  ...group("data", "Export", [
-    { id: "data.export", label: "Download this space", keywords: "export download zip backup space", about: "A zip of this space's pages, tasks and files.", href: at("data", "jump-export-export-space"), ownerOnly: true },
+  ...group("data", "Download this space", [
+    { id: "data.export", label: "Download this space", keywords: "export download zip backup space", about: "A zip of this space's pages, tasks and files.", href: at("data", "jump-export-download-this-space"), ownerOnly: true },
   ]),
   ...group("data", "Data retention", [
     { id: "retention.trash", label: "Trash retention", keywords: "trash purge deleted days", about: "Days deleted items stay in Trash before they are purged.", href: at("data", "jump-retention-trash-retention"), ownerOnly: true },
@@ -240,19 +273,9 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ]),
   ...group("data", "Completed and Trash", [
     { id: "data.completed", label: "Completed", keywords: "completed finished done list history", about: "Everything finished, with pin and restore.", href: at("data", "jump-completed-completed"), ownerOnly: true },
-    { id: "data.trash", label: "Trash", keywords: "trash deleted recover restore empty bin", about: "Restore or empty deleted items.", href: at("data", "jump-trash-trash"), ownerOnly: true },
+    { id: "data.trash", label: "Trash", keywords: "trash deleted recover restore empty bin", about: "Restore or empty deleted items.", href: at("data", "jump-completed-trash"), ownerOnly: true },
   ]),
-  ...group("data", "Terminal and commits", [
-    { id: "terminal.enabled", label: "Terminal on", keywords: "terminal shell on off code tab", about: "The guarded terminal in the Code tab.", href: at("data", "jump-terminal-terminal-on"), ownerOnly: true },
-    { id: "code.folders", label: "Folders Code can use", keywords: "code folders repositories roots local repos add folder", about: "The folders the Code tab may list and review.", href: at("data", "jump-terminal-folders-code-can-use"), ownerOnly: true },
-    { id: "terminal.folders", label: "Terminal folder", keywords: "terminal folder roots", about: "Folders the terminal may open.", href: at("data", "jump-terminal-terminal-folder"), ownerOnly: true },
-    { id: "terminal.passkeys", label: "Passkeys", keywords: "passkey touch id fingerprint unlock terminal", about: "The passkeys that unlock the terminal.", href: at("data", "jump-terminal-passkeys"), ownerOnly: true },
-    { id: "terminal.branch-prefix", label: "Branch prefix for agent work", keywords: "branch prefix git agent", about: "The prefix of branches agents create.", href: at("data", "jump-terminal-branch-prefix-for-agent-work"), ownerOnly: true },
-    { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("data", "jump-terminal-sign-commits"), ownerOnly: true },
-  ]),
-  ...group("data", "Delete my data", [
-    { id: "data.failed", label: "Updates needing attention", keywords: "failed jobs errors retry sync background", about: "Connected apps that could not finish updating.", href: at("data", "jump-failed-updates-needing-attention"), ownerOnly: true },
-    { id: "data.deleted", label: "Deleted items", keywords: "deleted items restore", about: "Items deleted from connected sources.", href: at("data", "jump-deleted-deleted-items"), ownerOnly: true },
+  ...group("data", "Danger zone", [
     { id: "data.delete", label: "Delete my data", keywords: "delete erase data wipe context", about: "Removes what Ensemble read from your apps, or everything.", href: at("data", "jump-danger-delete-my-data"), ownerOnly: true },
   ]),
 ];

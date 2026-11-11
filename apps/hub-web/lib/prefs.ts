@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { AppearanceSettings, MotionTheme } from "@ensemble/shared-types";
+import { AppDoodle, type AppearanceSettings, type MotionTheme } from "@ensemble/shared-types";
 import { colorTheme, colorThemeSurfaces } from "./color-themes";
 import { accentChoice, resolveAccent } from "@/lib/accent";
 
@@ -71,6 +71,7 @@ export const APPEARANCE_KEY = "ensemble.appearance";
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: "dark",
   colorTheme: "ensemble",
+  doodle: "theme",
   textScale: 100,
   font: "system",
   motion: "expressive",
@@ -108,7 +109,8 @@ export function completeAppearance(value: Partial<AppearanceSettings> | null | u
       if (id && colorTheme(id).id === id && (!raw.colorTheme || Number(stamp) > at)) palette = colorTheme(id).id;
     } catch {}
   }
-  return { ...DEFAULT_APPEARANCE, ...raw, colorTheme: palette, textScale, motion: "expressive" };
+  const doodle = AppDoodle.safeParse(raw.doodle).success ? (raw.doodle as AppDoodle) : DEFAULT_APPEARANCE.doodle;
+  return { ...DEFAULT_APPEARANCE, ...raw, colorTheme: palette, doodle, textScale, motion: "expressive" };
 }
 
 function storedPref<T>(key: string, _fallback: T, stored: T): T {
@@ -146,6 +148,7 @@ export function applyAppearance(appearance: AppearanceSettings): void {
       : appearance.theme;
   root.dataset.theme = theme;
   root.dataset.colorTheme = colorTheme(appearance.colorTheme).id;
+  root.dataset.doodle = AppDoodle.safeParse(appearance.doodle).success ? appearance.doodle : "theme";
   root.dataset.font = appearance.font;
   root.dataset.sidebarAuto = String(appearance.sidebarAutoCollapse);
   const osReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

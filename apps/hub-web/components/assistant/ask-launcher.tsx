@@ -15,6 +15,8 @@ export type LauncherBounds = { width: number; height: number; top: number; left?
 
 export const LAUNCHER_SIZE = 44;
 const MARGIN = 16;
+/** A bar at the foot of the work area (marked `data-launcher-floor`) appeared or went: measure again. */
+export const LAUNCHER_FLOOR_EVENT = "ensemble:launcher-floor";
 const DRAG_THRESHOLD = 4;
 export const DEFAULT_LAUNCHER_SPOT: EdgeSpot = { edge: "bottom", t: 1 };
 
@@ -74,9 +76,13 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
   const drag = useRef<{ x: number; y: number; moved: boolean; pointer: number } | null>(null);
 
   const measure = useCallback(() => {
-    // The work area is the main column: after the sidebar (and a docked Pages panel), below the top bar.
-    const rect = document.getElementById("main-content")?.getBoundingClientRect();
-    if (rect && rect.width > LAUNCHER_SIZE * 2 && rect.height > LAUNCHER_SIZE * 2) setBounds({ left: rect.left, top: rect.top, width: rect.right, height: rect.bottom });
+    // The work area is the main column: after the sidebar (and a docked Pages panel), below the top bar,
+    // and above a bar pinned to its bottom (Code's status bar).
+    const main = document.getElementById("main-content");
+    const rect = main?.getBoundingClientRect();
+    const floor = main?.querySelector<HTMLElement>("[data-launcher-floor]")?.getBoundingClientRect();
+    const bottom = rect && floor && floor.height > 0 && floor.top > rect.top + LAUNCHER_SIZE * 2 ? Math.min(rect.bottom, floor.top) : rect?.bottom;
+    if (rect && bottom && rect.width > LAUNCHER_SIZE * 2 && rect.height > LAUNCHER_SIZE * 2) setBounds({ left: rect.left, top: rect.top, width: rect.right, height: bottom });
     else setBounds({ left: 0, width: window.innerWidth, height: window.innerHeight, top: 0 });
   }, []);
 
@@ -88,7 +94,11 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
     observer.observe(area);
     const main = document.getElementById("main-content");
     if (main) observer.observe(main);
-    return () => observer.disconnect();
+    window.addEventListener(LAUNCHER_FLOOR_EVENT, measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener(LAUNCHER_FLOOR_EVENT, measure);
+    };
   }, [measure]);
 
   useEffect(() => {

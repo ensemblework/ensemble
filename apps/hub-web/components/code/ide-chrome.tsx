@@ -10,6 +10,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { cx } from "@/components/ui";
 import { usePersistentState } from "@/lib/prefs";
+import { LAUNCHER_FLOOR_EVENT } from "@/components/assistant/ask-launcher";
+import { useKeyLabel } from "./quick-open";
 
 export const SIDEBAR_DEFAULT = 260;
 export const SIDEBAR_MIN = 200;
@@ -56,14 +58,27 @@ export function useIdeLayout() {
   return { phone, sideOpen, setSideOpen, showSide, closeOverlay, width, setWidth, terminal, setTerminal, terminalHeight, setTerminalHeight, fontSize, setFontSize };
 }
 
-/** Keys both windows answer to. None is a bare letter: every letter types. */
-export function useIdeKeys(layout: IdeLayout) {
+/**
+ * Keys both windows answer to. None is a bare letter: every letter types. `onQuickOpen` opens quick
+ * open with its first text: `""` finds a file or repository (Ctrl/⌘+P), `">"` lists commands
+ * (Ctrl/⌘+Shift+P or F1).
+ */
+export function useIdeKeys(layout: IdeLayout, onQuickOpen?: (initial: string) => void) {
   const { terminal, setTerminal, sideOpen, setSideOpen, fontSize, setFontSize } = layout;
+  const quick = useRef(onQuickOpen);
+  quick.current = onQuickOpen;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "F1" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && quick.current) {
+        event.preventDefault();
+        quick.current(">");
+        return;
+      }
       const mod = event.ctrlKey || event.metaKey;
       if (!mod) return;
-      if (event.key === "`") setTerminal(!terminal);
+      if (!event.altKey && event.key.toLowerCase() === "p" && quick.current) quick.current(event.shiftKey ? ">" : "");
+      else if (event.key === "`") setTerminal(!terminal);
       else if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") setSideOpen(!sideOpen);
       else if (event.shiftKey && (event.key === "+" || event.key === "=")) setFontSize(Math.min(FONT_MAX, fontSize + 1));
       else if (event.shiftKey && (event.key === "_" || event.key === "-")) setFontSize(Math.max(FONT_MIN, fontSize - 1));
@@ -258,7 +273,7 @@ export function SidePanel({ layout, children }: { layout: IdeLayout; children: R
 /** A side panel's heading row, VS Code style: a small capital label and its actions. */
 export function PanelHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 pl-3 pr-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
+    <div className="flex h-[35px] shrink-0 items-center gap-1 pl-3 pr-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted">
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {children}
     </div>
@@ -301,8 +316,15 @@ export function BottomPanel({ layout, children }: { layout: IdeLayout; children:
 }
 
 export function StatusBar({ children }: { children: ReactNode }) {
+  // The assistant's floating button sits above this bar rather than over its right end.
+  useEffect(() => {
+    window.dispatchEvent(new Event(LAUNCHER_FLOOR_EVENT));
+    return () => {
+      window.dispatchEvent(new Event(LAUNCHER_FLOOR_EVENT));
+    };
+  }, []);
   return (
-    <div className="ide-statusbar flex h-6 shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-1.5 text-[11.5px] text-muted" data-testid="ide-statusbar">
+    <div data-launcher-floor className="ide-statusbar flex h-[22px] shrink-0 items-center gap-1 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-1.5 text-[11.5px] text-muted" data-testid="ide-statusbar">
       {children}
     </div>
   );
@@ -323,15 +345,16 @@ export function StatusItem({ icon: Icon, children, title, onClick, href, classNa
 }
 
 export function FontSizeControl({ fontSize, setFontSize }: { fontSize: number; setFontSize: (size: number) => void }) {
+  const label = useKeyLabel();
   return (
     <span className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Code text size">
-      <button type="button" className="icon-btn h-5 w-5" title="Smaller code (Ctrl+Shift+-)" aria-label="Smaller code" onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}>
+      <button type="button" className="icon-btn h-5 w-5" title={`Smaller code (${label("mod+shift+-")})`} aria-label="Smaller code" onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}>
         <Minus size={10} />
       </button>
-      <button type="button" className="tabular-nums hover:text-ink" title="Reset code size (Ctrl+Shift+0)" onClick={() => setFontSize(FONT_DEFAULT)}>
+      <button type="button" className="tabular-nums hover:text-ink" title={`Reset code size (${label("mod+shift+0")})`} onClick={() => setFontSize(FONT_DEFAULT)}>
         {fontSize}px
       </button>
-      <button type="button" className="icon-btn h-5 w-5" title="Bigger code (Ctrl+Shift+=)" aria-label="Bigger code" onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}>
+      <button type="button" className="icon-btn h-5 w-5" title={`Bigger code (${label("mod+shift+=")})`} aria-label="Bigger code" onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}>
         <Plus size={10} />
       </button>
     </span>

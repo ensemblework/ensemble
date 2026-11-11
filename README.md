@@ -58,7 +58,7 @@ Checks for the area you change are listed in [AGENTS.md](AGENTS.md#commands); th
 pnpm desktop:export && pnpm desktop:dev    # desktop app: static Hub + local API on PGlite (docs/DESKTOP.md)
 pnpm desktop:dmg                           # unsigned macOS disk image (docs/desktop/MAC_CHECKLIST.md)
 cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml -- --check   # quick capture (docs/20_QUICK_CAPTURE.md)
-pnpm bridge:build && pnpm bridge:verify    # Context Bridge, read-only MCP (docs/CONTEXT_BRIDGE.md)
+pnpm bridge:build && pnpm bridge:verify    # Context Bridge, the MCP server for editors (docs/CONTEXT_BRIDGE.md)
 pnpm cli:build                             # apps/cli/dist/ensemble.mjs (docs/26_CLI.md)
 ```
 

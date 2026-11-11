@@ -277,7 +277,7 @@ select:focus-visible {
    inside a box never draws a ring of its own: a transparent control, or anything inside .compound-field or
    one of the named composite boxes. The box draws the edge. */
 :is(input:not([type="checkbox"], [type="radio"]), textarea, select):is(.bg-transparent, .outline-none):not(.border, .field):is(:focus, :focus-visible),
-:is(.compound-field, .dp-type, .cm-search, .picker-search, .remote-link-field, .transcript-search, .meeting-search, .tile-gallery-search, .term-line, .otp-field) :is(input, textarea, select):is(:focus, :focus-visible) {
+:is(.compound-field, .dp-type, .cm-search, .picker-search, .remote-link-field, .transcript-search, .meeting-search, .tile-gallery-search, .term-line, .otp-field, .diagram-edge-label) :is(input, textarea, select):is(:focus, :focus-visible) {
   outline: none !important;
   outline-offset: 0 !important;
   box-shadow: none !important;
@@ -612,6 +612,7 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
 /* Where a block carried into another container (a list, a nested item, out of a list) will land. */
 .block-drop-line { position: absolute; z-index: 41; height: 3px; margin-top: -1.5px; border-radius: 2px; background: rgb(var(--accent-rgb)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent); pointer-events: none; transition: top 90ms ease, left 90ms ease, width 90ms ease; }
 .block-drop-line[hidden] { display: none; }
+.page-drop-cursor { border-radius: 2px; pointer-events: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--panel) 60%, transparent); }
 @media (prefers-reduced-motion: reduce) { .block-drop-line, .block-controls { transition: none; } }
 /* The empty line every page ends on (trailing-block.ts): drawn, and made real when clicked. */
 .ProseMirror .trailing-line { min-height: 1.65em; margin-top: 0.35em; cursor: text; border-radius: 4px; }
@@ -624,6 +625,8 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
 .block-editor-body[data-gutter-right="tight"] { padding-right: 28px; }
 .block-editor-body[data-gutter-right="tight"] .block-comment-action { right: 2px; }
 @media (prefers-reduced-motion: reduce) { .block-drag-ghost.ProseMirror { animation: none; } }
+[data-reduce-motion="true"] .block-drag-ghost.ProseMirror { animation: none; }
+[data-reduce-motion="true"] .block-drop-line { transition: none; }
 .toggle-block { position: relative; padding: 4px 0 4px 26px; }
 .toggle-block-trigger { position: absolute; left: 0; top: 5px; width: 22px; height: 25px; color: var(--muted); border-radius: 4px; }
 .toggle-block-trigger:hover { background: var(--hover); color: var(--ink); }
@@ -1358,6 +1361,87 @@ span.mention:not(.mention-off) {
 .connect-card:hover {
   transform: translateY(-2px);
 }
+/* An AI extension to pick on an editor's guide. */
+.connect-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink-2, var(--ink));
+  font-size: 13px;
+  font-weight: 500;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.connect-chip:hover {
+  border-color: var(--line-strong);
+}
+.connect-chip.is-on {
+  border-color: rgb(var(--accent-rgb) / 0.7);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.connect-steps {
+  counter-reset: connect-step;
+}
+.connect-steps > li {
+  position: relative;
+  padding-left: 28px;
+  counter-increment: connect-step;
+}
+.connect-steps > li::before {
+  content: counter(connect-step);
+  position: absolute;
+  left: 0;
+  top: 3px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ext-initial {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  background: var(--hover);
+  color: var(--ink);
+  font-weight: 650;
+  line-height: 1;
+}
+/* "Need a hand?": questions that open the assistant. */
+.connect-help {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+}
+.connect-question {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.35;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.connect-question:hover {
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
 @keyframes connect-hot {
   0%,
   100% {
@@ -1573,13 +1657,60 @@ span.mention:not(.mention-off) {
   border-radius: 99px;
   background: var(--diagram-paper);
 }
+/* Typing a label: the pill is the one focus edge (accent border plus a 1px ring); the input inside draws none. */
+.diagram-edge-label.is-editing {
+  padding: 2px 10px;
+  border-color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
+  color: var(--ink);
+  cursor: text;
+}
 .diagram-edge-input {
   min-width: 3ch;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--ink);
+  caret-color: rgb(var(--accent-rgb));
   outline: none;
   text-align: center;
+}
+.diagram-edge-input::placeholder {
+  color: var(--faint);
+}
+/* Recent chats: a row's delete button shows on hover or keyboard focus (always on touch), over the time. */
+.chat-row .chat-row-delete {
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+.chat-row:is(:hover, :focus-within) .chat-row-delete {
+  opacity: 1;
+}
+.chat-row:is(:hover, :focus-within) .chat-row-time {
+  visibility: hidden;
+}
+@media (hover: none) {
+  .chat-row .chat-row-delete {
+    opacity: 1;
+  }
+  .chat-row .chat-row-time {
+    display: none;
+  }
+}
+.chat-row .chat-row-delete:hover {
+  color: var(--danger);
+}
+.chat-row-confirm {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+/* A preview that scrolls inside a page (PDF pages, a Word file): a thin bar from the palette, and the focus edge inside the card. */
+.embed-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent) transparent;
+}
+.embed-scroll:focus-visible {
+  outline-offset: -2px;
 }
 .diagram-swatch {
   display: inline-block;
@@ -1756,6 +1887,11 @@ span.mention:not(.mention-off) {
 }
 .embed-resize:focus-visible {
   border-top-color: rgb(var(--accent-rgb) / 0.5);
+}
+:root[data-embed-resizing],
+:root[data-embed-resizing] * {
+  cursor: ns-resize !important;
+  user-select: none;
 }
 .diagram-inline.is-compact .embed-resize {
   display: none;
@@ -2446,7 +2582,7 @@ span.mention:not(.mention-off) {
   width: var(--sidebar-w, 192px);
 }
 /* Drag the right edge to resize; double-click resets. Hidden in the rail. */
-.sidebar-resize { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 30; width: 6px; cursor: col-resize; }
+.sidebar-resize { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 30; width: 6px; cursor: col-resize; touch-action: none; }
 .sidebar-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background 120ms ease; }
 .sidebar-resize:hover::after, .sidebar-resize[data-active]::after { background: rgb(var(--accent-rgb) / 0.45); }
 html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="true"]):not([data-sidebar-hover="true"]) .app-sidebar:not(.sidebar-mobile) .sidebar-resize { display: none; }
@@ -2624,15 +2760,7 @@ body[data-assistant-resizing="corner"], body[data-assistant-resizing="corner"] *
 .assistant-message-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; color: var(--faint); font-size: 10.5px; }
 .assistant-message-footer button { display: flex; align-items: center; gap: 5px; border-radius: 5px; padding: 3px 5px; }
 .assistant-message-footer button:hover { background: var(--hover); color: var(--ink); }
-.assistant-activity { margin: 0 0 15px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--raised) 40%, transparent); overflow: hidden; }
-.assistant-activity summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; list-style: none; cursor: pointer; color: var(--muted); font-size: 12px; }
-.assistant-activity summary::-webkit-details-marker { display: none; }
-.assistant-activity summary span { flex: 1; }
-.assistant-activity[open] summary > svg:last-child { transform: rotate(180deg); }
-.assistant-activity > div { padding: 0 7px 7px; }
-.assistant-tool { background: var(--panel); flex-wrap: wrap; border-color: var(--line); }
-.assistant-tool-name { display: none; }
-.assistant-tool > svg { flex-shrink: 0; }
+/* Steps, proposals and the live step: components/assistant/assistant-work.css. */
 /* The empty assistant fits the window it is in: the message area is a size container, so the greeting,
    mark and starters scale with its width and height (never under a readable floor) instead of leaving a
    scrollbar or a sea of space. */
@@ -2915,6 +3043,22 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 
 /* Background artwork is static, original, and painted behind content without an overlay. */
 [data-theme-canvas] { background-color: var(--bg); background-image: var(--theme-canvas-image, none); background-size: var(--theme-canvas-size, 900px 600px); background-position: right top; background-repeat: no-repeat; background-blend-mode: var(--theme-canvas-blend, normal); }
+/* A chosen doodle (Settings → Appearance) replaces the theme's own artwork: faint white marks blended with
+   difference, so the same tile lightens a dark theme and darkens a light one. It stays put while the page scrolls. */
+:root[data-doodle="none"] [data-theme-canvas] { background-image: none; }
+:root[data-doodle]:not([data-doodle="theme"]):not([data-doodle="none"]) [data-theme-canvas] { background-size: 480px 480px; background-position: 0 0; background-repeat: repeat; background-blend-mode: difference; }
+:root[data-doodle="constellation"] [data-theme-canvas] { background-image: url("/doodles/constellation.svg"); }
+:root[data-doodle="orbits"] [data-theme-canvas] { background-image: url("/doodles/orbits.svg"); }
+:root[data-doodle="galaxy"] [data-theme-canvas] { background-image: url("/doodles/galaxy.svg"); }
+:root[data-doodle="stardust"] [data-theme-canvas] { background-image: url("/doodles/stardust.svg"); }
+:root[data-doodle="ripples"] [data-theme-canvas] { background-image: url("/doodles/ripples.svg"); }
+:root[data-doodle="network"] [data-theme-canvas] { background-image: url("/doodles/network.svg"); }
+:root[data-doodle="contours"] [data-theme-canvas] { background-image: url("/doodles/contours.svg"); }
+:root[data-doodle="waves"] [data-theme-canvas] { background-image: url("/doodles/waves.svg"); }
+:root[data-doodle="weave"] [data-theme-canvas] { background-image: url("/doodles/weave.svg"); }
+:root[data-doodle="dots"] [data-theme-canvas] { background-image: url("/doodles/dots.svg"); }
+:root[data-doodle="circuits"] [data-theme-canvas] { background-image: url("/doodles/circuits.svg"); }
+:root[data-doodle="graph"] [data-theme-canvas] { background-image: url("/doodles/graph.svg"); }
 
 .main-sidebar-slot { position: relative; width: var(--sidebar-w, 192px); }
 html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="true"]) .main-sidebar-slot { width: 56px; }
@@ -3143,9 +3287,11 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
 /* Sidebar tabs dragged into another order (components/shell/sidebar.tsx): the tab follows the pointer
    and a line shows where it lands. */
 .nav-link[data-nav-href] { -webkit-user-drag: none; user-select: none; }
-.nav-link[data-dragging] { position: relative; z-index: 5; background: var(--raised); box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.45); pointer-events: none; transition: none; }
+.nav-link[data-dragging] { position: relative; z-index: 5; background: var(--raised); box-shadow: 0 10px 24px -10px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.25); pointer-events: none; transition: none; will-change: transform; }
 :root[data-nav-dragging], :root[data-nav-dragging] * { cursor: grabbing !important; }
-.nav-drop-line { position: absolute; left: 14px; right: 14px; height: 2px; margin-top: -1px; border-radius: 2px; background: rgb(var(--accent-rgb)); pointer-events: none; }
+.nav-drop-line { position: absolute; top: 0; left: 14px; right: 14px; height: 2px; margin-top: -1px; border-radius: 2px; background: rgb(var(--accent-rgb)); pointer-events: none; transition: transform 90ms var(--ease); }
+@media (prefers-reduced-motion: reduce) { .nav-drop-line { transition: none; } }
+[data-reduce-motion="true"] .nav-drop-line { transition: none; }
 .nav-drop-line::before { content: ""; position: absolute; left: -3px; top: -2px; width: 6px; height: 6px; border-radius: 999px; background: rgb(var(--accent-rgb)); }
 
 /* Code explorer (components/code/ide.tsx): VS Code-like rows with language marks, indent guides on

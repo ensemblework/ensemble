@@ -14,6 +14,7 @@ import { ConnectorStore } from "@/components/connectors/store-dialog";
 import { DevicesSection } from "./devices";
 import { FetchSection } from "./fetching";
 import { EditorsSection } from "./setup";
+import { FailedJobsSection } from "./sections";
 import { navigateSettings, useSettingsLocation } from "./url-state";
 
 type Plain = Record<string, unknown>;
@@ -34,18 +35,21 @@ export function ConnectionsTab({ settings, patch }: { settings: Settings; patch:
       <div id="calendars" className="scroll-mt-6">
         <CalendarLinksSection />
       </div>
-      <div id="imports" className="scroll-mt-6 empty:hidden">
-        <ImportsCard onImport={() => setImporting({})} />
-      </div>
-      <div id="fetch" className="scroll-mt-6">
-        <FetchSection settings={settings} patch={patch} />
-      </div>
       <div id="editors" className="scroll-mt-6">
         <span id="connect" className="block scroll-mt-6" aria-hidden />
         <EditorsSection />
       </div>
       <div id="devices" className="scroll-mt-6">
         <DevicesSection />
+      </div>
+      <div id="fetch" className="scroll-mt-6">
+        <FetchSection settings={settings} patch={patch} />
+      </div>
+      <div id="failed" className="scroll-mt-6">
+        <FailedJobsSection />
+      </div>
+      <div id="imports" className="scroll-mt-6 empty:hidden">
+        <ImportsCard onImport={() => setImporting({})} />
       </div>
       <ConnectorStore
         open={Boolean(location.store || location.connector)}

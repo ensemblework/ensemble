@@ -45,6 +45,7 @@ function server(options: { conflictOnce?: boolean; notes?: number } = {}) {
       const notes = Array.from({ length: options.notes ?? 0 }, (_, index) => ({ name: `note-${index}.md`, kind: "file", size: 10 }));
       return json({ path: "", entries: [{ name: "src", kind: "dir", size: null }, { name: "README.md", kind: "file", size: 10 }, ...notes], truncated: false });
     }
+    if (path.endsWith("/api/code/files")) return json({ files: ["src/name.ts", "README.md", "docs/guide.md"] });
     if (path.endsWith("/api/code/scm")) return json({ repo: "/work/app", name: "app", branch: "ensemble/job-1", upstream: null, ahead: 2, behind: 0, staged: [], unstaged: [], untracked: [], log: [], remote: "", github: null });
     if (path.endsWith("/api/code/file") && method === "PUT") {
       if (conflict) {
@@ -247,5 +248,86 @@ test("the terminal panel resizes from its top edge: arrow keys, at least 140 px,
     await view.done();
     fake.restore();
     window.localStorage.clear();
+  }
+});
+
+/** Types into the quick open box as a person would (React reads the native value setter). */
+async function typeQuick(text: string) {
+  const input = document.querySelector<HTMLInputElement>('[role="dialog"][aria-label="Quick open"] input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  return input;
+}
+
+test("Ctrl+P finds a file by name and opens it; Ctrl+Shift+P runs a command; closing every file leaves the editor empty with its keys", async () => {
+  window.localStorage.clear();
+  const fake = server();
+  const view = await mount();
+  try {
+    await press("p", { ctrlKey: true });
+    const box = () => document.querySelector('[role="dialog"][aria-label="Quick open"]');
+    assert.ok(box(), "quick open");
+    assert.match(box()?.textContent ?? "", /name\.ts/, "the file opened last, before anything is typed");
+    const input = await typeQuick("readme");
+    await settle(4);
+    assert.match(box()?.querySelector('[role="option"][aria-selected="true"]')?.textContent ?? "", /README\.md/);
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle(4);
+    assert.equal(box(), null, "it closes");
+    assert.ok(view.host.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("README.md"), "the file opened");
+
+    await press("p", { ctrlKey: true, shiftKey: true });
+    assert.equal(document.querySelector<HTMLInputElement>('[role="dialog"][aria-label="Quick open"] input')?.value, ">");
+    const commands = await typeQuick(">close all");
+    assert.match(box()?.querySelector('[role="option"][aria-selected="true"]')?.textContent ?? "", /Close all files/);
+    await act(async () => {
+      commands.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle(6);
+    assert.equal(view.host.querySelectorAll('[role="tab"]').length, 0, "every file closed, and the first changed file does not open again");
+    const watermark = view.host.querySelector('[data-testid="ide-watermark"]');
+    assert.ok(watermark);
+    assert.match(watermark.textContent ?? "", /Show all commands.*Ctrl\+Shift\+P/);
+  } finally {
+    await view.done();
+    fake.restore();
+  }
+});
+
+test("offline, an edit waits on the page, marked unsaved, and is saved when the connection is back", async () => {
+  window.localStorage.clear();
+  const fake = server();
+  const view = await mount();
+  const setOnline = (value: boolean) => Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => value });
+  try {
+    setOnline(false);
+    await act(async () => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    assert.match(view.host.querySelector('[data-testid="ide-offline"]')?.textContent ?? "", /You are offline/);
+    const reject = view.host.querySelector(".cm-chunkBar-agent .cm-chunkBar-reject") as HTMLElement;
+    await act(async () => {
+      reject.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    });
+    assert.equal(fake.calls.filter((call) => call.method === "PUT").length, 0, "nothing is sent while offline");
+    assert.match(view.host.querySelector('[data-testid="ide-save-state"]')?.textContent ?? "", /Unsaved, offline/);
+    setOnline(true);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    await settle();
+    assert.equal(fake.calls.filter((call) => call.method === "PUT").length, 1, "saved once back online");
+    assert.equal(view.host.querySelector('[data-testid="ide-offline"]'), null);
+  } finally {
+    setOnline(true);
+    await view.done();
+    fake.restore();
   }
 });

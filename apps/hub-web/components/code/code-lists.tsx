@@ -94,12 +94,12 @@ export function Fold({ title, count, open: initial = true, children, actions, ic
   const setOpen = (next: boolean) => (persist ? setSaved((current) => ({ ...current, [persist]: next })) : setLocal(next));
   return (
     <section className="min-w-0">
-      <div className="group flex h-7 items-center gap-1 pr-1.5">
+      <div className="group flex h-[22px] items-center gap-1 pr-1">
         <button type="button" className="flex min-w-0 flex-1 items-center gap-1 pl-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-ink" aria-expanded={open} onClick={() => setOpen(!open)}>
           <ChevronRight size={12} className={cx("shrink-0 transition-transform", open && "rotate-90")} />
           {icon}
           <span className="min-w-0 truncate">{title}</span>
-          {count !== undefined ? <span className="ml-1 rounded bg-raised px-1.5 font-normal normal-case tracking-normal tabular-nums">{count}</span> : null}
+          {count !== undefined ? <span className="ml-1 rounded bg-raised px-1.5 font-normal normal-case leading-4 tracking-normal tabular-nums">{count}</span> : null}
         </button>
         {actions}
       </div>

@@ -364,6 +364,77 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
   }
 });
 
+test("a recent chat is deleted after a one-line confirm, and the open chat starts over", async () => {
+  if (typeof Element !== "undefined" && typeof Element.prototype.scrollTo !== "function") {
+    Element.prototype.scrollTo = () => undefined;
+  }
+  const EARLIER = "33333333-3333-4333-8333-333333333333";
+  window.localStorage.setItem("ensemble.assistant.open", "true");
+  window.localStorage.setItem("ensemble.assistant.conversation", JSON.stringify(EARLIER));
+  const deleted: string[] = [];
+  const original = globalThis.fetch;
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  let chats = [
+    { id: CONVERSATION, title: "Plan my day", updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() },
+    { id: EARLIER, title: "Draft the launch note", updatedAt: new Date(Date.now() - 86_400_000).toISOString(), createdAt: new Date().toISOString() },
+  ];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === "DELETE") {
+      deleted.push(url);
+      chats = chats.filter((chat) => !url.endsWith(chat.id));
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/api/settings")) return json(settings);
+    if (url.includes("/api/assistant/conversations?chats=1")) return json({ conversations: chats });
+    if (url.includes(`/conversations/${EARLIER}/messages`)) return json({ messages: [{ id: "old-user", role: "user", content: "Draft the launch note", toolCalls: [], model: null, createdAt: "2026-10-12T09:00:00.000Z" }] });
+    return json({ messages: [] });
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const wait = (ms = 20) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const button = (label: string, within: ParentNode = document.body) => [...within.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === label || node.textContent?.trim() === label);
+  const click = (node: Element) => act(async () => { node.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  try {
+    await act(async () => {
+      root.render(
+        <PathnameContext.Provider value="/board">
+          <QueryClientProvider client={client}>
+            <AssistantDock />
+          </QueryClientProvider>
+        </PathnameContext.Provider>,
+      );
+    });
+    for (let attempt = 0; attempt < 20 && !button("Recent chats"); attempt += 1) await wait();
+    await click(button("Recent chats")!);
+    for (let attempt = 0; attempt < 20 && !button("Delete Draft the launch note"); attempt += 1) await wait();
+    const panel = () => document.body.querySelector("[data-chat-history]")!;
+    await click(button("Delete Draft the launch note", panel())!);
+    assert.match(panel().textContent ?? "", /Delete this chat\?/);
+    assert.deepEqual(deleted, [], "nothing is deleted before the confirm");
+    await click(button("Cancel", panel())!);
+    assert.doesNotMatch(panel().textContent ?? "", /Delete this chat\?/, "Cancel keeps the chat");
+    await click(button("Delete Draft the launch note", panel())!);
+    await click(button("Delete", panel())!);
+    for (let attempt = 0; attempt < 20 && !deleted.length; attempt += 1) await wait();
+    assert.equal(deleted.length, 1);
+    assert.match(deleted[0]!, new RegExp(`/api/assistant/conversations/${EARLIER}$`));
+    await wait(40);
+    assert.doesNotMatch(panel().textContent ?? "", /Draft the launch note/, "gone from the list");
+    assert.match(panel().textContent ?? "", /Plan my day/);
+    assert.equal(JSON.parse(window.localStorage.getItem("ensemble.assistant.conversation") ?? "null"), null, "the deleted chat was open, so the dock starts a new one");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = original;
+    client.clear();
+    window.localStorage.removeItem("ensemble.assistant.open");
+    window.localStorage.removeItem("ensemble.assistant.conversation");
+  }
+});
+
 test("the styled tier menu closes before the assistant on Escape", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).includes("/api/settings") ? settings : {}), { headers: { "Content-Type": "application/json" } })) as typeof fetch;

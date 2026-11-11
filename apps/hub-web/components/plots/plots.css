@@ -155,6 +155,16 @@
 .pl-tweak-title:hover {
   border-color: var(--line-strong);
 }
+/* One focus edge, on the field's own border (as .field does): no ring drawn a little way outside it. */
+.pl-input:focus-visible,
+.pl-select:focus-visible,
+.pl-tweak-title:focus-visible,
+.pl-textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  border-color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
+}
 .pl-textarea {
   height: 96px;
   padding: 8px 10px;
@@ -399,6 +409,7 @@
 }
 .pl-grid[data-stacked] .pl-tile-head {
   cursor: default;
+  touch-action: auto;
 }
 [data-packing] .pl-grid {
   background-image: radial-gradient(circle at 1px 1px, rgb(var(--accent-rgb) / 0.5) 1.2px, transparent 1.6px);
@@ -409,13 +420,11 @@
   border-radius: 12px;
   background: var(--panel);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  /* Place changes glide with a transform (FLIP in workspace.tsx), never by animating left, top, width or height. */
   transition:
-    left 160ms ease,
-    top 160ms ease,
-    width 160ms ease,
-    height 160ms ease,
     border-color 150ms var(--ease),
-    box-shadow 150ms var(--ease);
+    box-shadow 150ms var(--ease),
+    scale 160ms var(--ease);
 }
 .plot-tile:hover {
   border-color: var(--line-strong);
@@ -430,13 +439,47 @@
   outline: 2px solid rgb(var(--accent-rgb));
   outline-offset: 2px;
 }
-[data-packing] .plot-tile {
-  transition: none;
+/* Lifted: follows the pointer (translate, set while dragging), a little larger, with a soft offset shadow. */
+.plot-tile[data-dragging="move"] {
+  scale: 1.015;
+  opacity: 0.94;
+  cursor: grabbing;
+  will-change: translate;
+  box-shadow:
+    0 22px 44px -18px rgb(0 0 0 / 0.6),
+    0 6px 14px -6px rgb(0 0 0 / 0.35);
 }
-.plot-tile[data-dragging] {
-  transition: none;
-  opacity: 0.82;
-  box-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.55);
+.plot-tile[data-dragging="resize"] {
+  border-color: rgb(var(--accent-rgb) / 0.6);
+}
+[data-theme="light"] .plot-tile[data-dragging="move"] {
+  box-shadow:
+    0 22px 40px -18px rgb(28 25 21 / 0.32),
+    0 6px 12px -6px rgb(28 25 21 / 0.18);
+}
+/* The ghost marks the snapped place; it glides from cell to cell. */
+[data-tile-ghost] {
+  transition: left 120ms var(--ease), top 120ms var(--ease), width 120ms var(--ease), height 120ms var(--ease);
+}
+.pl-ghost-size {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink-2);
+  font: 500 11px var(--font-mono);
+}
+:root[data-tile-gesture] {
+  user-select: none;
+}
+:root[data-tile-gesture="move"] * {
+  cursor: grabbing !important;
+}
+:root[data-tile-gesture="resize"] * {
+  cursor: nwse-resize !important;
 }
 .plot-tile .tile-tools {
   opacity: 0;
@@ -460,6 +503,7 @@
   gap: 6px;
   padding: 0 6px 0 8px;
   cursor: grab;
+  touch-action: none;
 }
 .pl-tile-head:active {
   cursor: grabbing;
@@ -574,6 +618,7 @@
   right: 2px;
   bottom: 2px;
   z-index: 3;
+  touch-action: none;
   display: grid;
   width: 18px;
   height: 18px;
@@ -1083,7 +1128,12 @@
   }
 }
 
+[data-reduce-motion="true"] .plot-tile,
+[data-reduce-motion="true"] [data-tile-ghost] {
+  transition: none;
+}
 @media (prefers-reduced-motion: reduce) {
+  [data-tile-ghost],
   .plot-tile,
   .plot-empty-card,
   .plot-dialog-backdrop,

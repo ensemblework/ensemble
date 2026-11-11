@@ -294,11 +294,22 @@ function useIdeApi(): IdeApi {
   return controls;
 }
 
+/** Opens the theme picker of the window's Theme button (Code's command palette, "Color theme…"). */
+export const THEME_PICKER_EVENT = "ensemble:code-theme-picker";
+
 export function ThemeControl() {
   const controls = useIdeApi();
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    const show = () => {
+      setAnchor(button.current?.getBoundingClientRect() ?? null);
+      setOpen(true);
+    };
+    window.addEventListener(THEME_PICKER_EVENT, show);
+    return () => window.removeEventListener(THEME_PICKER_EVENT, show);
+  }, []);
   const close = () => {
     controls.setPreview(null);
     setOpen(false);

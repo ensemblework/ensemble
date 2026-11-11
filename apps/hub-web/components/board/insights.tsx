@@ -3,8 +3,9 @@ import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, Search, GripVertical } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DndContext, KeyboardSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { FramedPointerSensor } from "@/lib/motion/dnd-sensors";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { api, inItemView, type TaskRecord } from "@/lib/api";
@@ -32,7 +33,8 @@ export function insightSamples(role: Role, now = new Date()): TaskRecord[] {
 
 const LEGACY: Record<string, InsightId> = { "column-summary": "flow", wip: "capacity", blocked: "attention", "week-done": "done" };
 
-export function BoardInsights({ tasks, initialLayout, editing, onEditingChange, who, onOpen, onIdea, focus, onFocus, filtered = false, loading = false }: {
+/** Memoised: the board re-renders while a card is dragged, and the overview does not change then. */
+export const BoardInsights = memo(function BoardInsights({ tasks, initialLayout, editing, onEditingChange, who, onOpen, onIdea, focus, onFocus, filtered = false, loading = false }: {
   tasks: TaskRecord[]; initialLayout?: LayoutPayload | null; editing: boolean; onEditingChange: (editing: boolean) => void; who: OwnerContext; onOpen: (id: string) => void; onIdea?: () => void; focus: BoardFocus | null; onFocus: (focus: BoardFocus | null) => void; filtered?: boolean; loading?: boolean;
 }) {
   const client = useQueryClient();
@@ -71,7 +73,7 @@ export function BoardInsights({ tasks, initialLayout, editing, onEditingChange, 
     } catch (e) { setError((e as Error).message); toast((e as Error).message, { tone: "error" }); }
     finally { saving.current = false; setPending(false); }
   }
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const sensors = useSensors(useSensor(FramedPointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const change = (tiles: InsightId[]) => void save({ ...layout, tiles });
   return <div className="board-insights desk" data-board-strip>
     <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={pending || editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button>{filtered && <span>Matches your filters</span>}</div>
@@ -83,12 +85,15 @@ export function BoardInsights({ tasks, initialLayout, editing, onEditingChange, 
     </div></SortableContext></DndContext>}
     {editing && <InsightGallery role={role} layout={layout} cap={cap} editable={editable && prefs.isSuccess} pending={pending} error={error} onChange={change} onCapChange={(wipCap) => void save({ ...layout, wipCap })} onReset={() => void save({ v: 1, tiles: DEFAULT_INSIGHTS[role], collapsed: false })} onClose={() => onEditingChange(false)} />}
   </div>;
-}
+});
 
 function SortableInsight({ id, title, disabled, render }: { id: InsightId; title: string; disabled: boolean; render: (grip: ReactNode) => ReactNode }) {
   const { setNodeRef, transform, transition, attributes, listeners, isDragging } = useSortable({ id, disabled });
+  // dnd-kit renders every tile on each pointer move; the tile itself only changes with its grip.
+  const grip = useMemo(() => (disabled ? null : <button type="button" className="insight-grip" aria-label={`Move ${title}. Drag or press Space and use arrow keys.`} title="Drag to move" {...attributes} {...listeners}><GripVertical size={12} /></button>), [disabled, title, attributes, listeners]);
+  const body = useMemo(() => render(grip), [render, grip]);
   return <div ref={setNodeRef} className="board-insight-slot" style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? .6 : 1, zIndex: isDragging ? 2 : undefined }}>
-    {render(disabled ? null : <button type="button" className="insight-grip" aria-label={`Move ${title}. Drag or press Space and use arrow keys.`} title="Drag to move" {...attributes} {...listeners}><GripVertical size={12} /></button>)}
+    {body}
   </div>;
 }
 

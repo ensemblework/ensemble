@@ -6,6 +6,7 @@ import { Shapes } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useDiagramTheme } from "./glyph";
+import { laidOut } from "./layout-client";
 
 /**
  * A diagram's drawing on its list card. Fetched once it scrolls near the screen, keyed on the
@@ -36,13 +37,17 @@ export function DiagramThumb({ id, updatedAt }: { id: string; updatedAt: string 
   }, [near]);
   const query = useQuery({
     queryKey: ["diagram-thumb", id, updatedAt],
-    queryFn: () => api.diagram(id),
+    // A diagram written as text has no positions until someone arranges it: place its blocks first.
+    queryFn: async () => {
+      const { diagram } = await api.diagram(id);
+      return { model: diagram.model ? await laidOut(diagram.model as DiagramModel) : null };
+    },
     enabled: near,
     staleTime: Infinity,
     retry: false,
   });
   const src = useMemo(() => {
-    const model = query.data?.diagram.model as DiagramModel | undefined;
+    const model = query.data?.model ?? undefined;
     if (!model?.meta) return null;
     try {
       // The card shows the title, and its own paper: drop the drawing's title and background.

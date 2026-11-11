@@ -4,6 +4,7 @@ import { track } from "@/lib/telemetry";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { perFrame } from "@/lib/motion/drag";
 import { api } from "@/lib/api";
 import {
   PAGE_WIDTH_DEFAULT,
@@ -199,8 +200,11 @@ export function useResizablePeek(container: React.RefObject<HTMLDivElement | nul
       handle.dataset.pageWidth = String(percent);
       widthRef.current = percent;
     };
-    const move = (moveEvent: PointerEvent) => apply(moveEvent.clientX);
+    // Each width lays the page out again: once a frame at most.
+    const resize = perFrame(apply);
+    const move = (moveEvent: PointerEvent) => resize(moveEvent.clientX);
     const up = (upEvent: PointerEvent) => {
+      resize.flush();
       if (handle.hasPointerCapture(upEvent.pointerId)) handle.releasePointerCapture(upEvent.pointerId);
       setDragging(false);
       commit(widthRef.current);

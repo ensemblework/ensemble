@@ -33,8 +33,8 @@ export function AutomationsSection({ settings, patch }: { settings: Settings; pa
   return (
     <SectionCard
       title="Automations"
-      description="What Ensemble does without being asked."
-      info="A switch only stops the automatic run. Suggest tasks on a meeting, Prepare on a calendar event and the assistant still work when you ask."
+      description="What Ensemble does without being asked, and the model tier each uses."
+      info="A switch only stops the automatic run. Suggest tasks on a meeting, Prepare on a calendar event and the assistant still work when you ask. Notices about agent work are in Settings › Notifications › Nudges."
     >
       <div className="divide-y divide-[var(--line)]">
         <SettingRow
@@ -69,11 +69,6 @@ export function AutomationsSection({ settings, patch }: { settings: Settings; pa
           <Controls>
             <TierPicker label="Model for learning skills" value={auto.skillLearning.tier} settings={settings} disabled={!auto.skillLearning.enabled} onChange={(tier) => set({ skillLearning: { tier } })} />
             <Toggle label="Learn personal skills from completed work" checked={auto.skillLearning.enabled} onChange={(enabled) => set({ skillLearning: { enabled } })} />
-          </Controls>
-        </SettingRow>
-        <SettingRow title="Tell me when agent work waits for review" description="A notification when an agent finishes a task.">
-          <Controls>
-            <Toggle label="Tell me when agent work waits for review" checked={auto.reviewNotices} onChange={(reviewNotices) => set({ reviewNotices })} />
           </Controls>
         </SettingRow>
       </div>

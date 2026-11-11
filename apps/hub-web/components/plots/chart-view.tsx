@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { prepareSeries, type Frame, type PlotConfig } from "@ensemble/shared-types";
 import { chartOption, type PlotTheme } from "@/lib/plots/option";
-import { readPlotTheme } from "@/lib/plots/theme";
+import { printPlotTheme, readPlotTheme } from "@/lib/plots/theme";
 import { figureBytes } from "@/lib/plots/figure-file";
 
 export { readPlotTheme, usePlotTheme } from "@/lib/plots/theme";
@@ -76,12 +76,19 @@ export function ChartView({
     let observer: ResizeObserver | null = null;
     let themeObserver: MutationObserver | null = null;
     let frameId = 0;
+    let paintedWidth = 0;
     const resize = () => {
       cancelAnimationFrame(frameId);
-      frameId = requestAnimationFrame(() => chart.current?.resize());
+      frameId = requestAnimationFrame(() => {
+        // Whether category labels turn depends on the width: a big change draws the chart again.
+        const width = host.current?.clientWidth ?? 0;
+        if (painted.current && paintedWidth && Math.abs(width - paintedWidth) / paintedWidth > 0.15) paint(false);
+        else chart.current?.resize();
+      });
     };
     const paint = (firstDraw: boolean) => {
       if (!chart.current) return;
+      paintedWidth = host.current?.clientWidth ?? 0;
       const current = latest.current;
       const prepared = prepareSeries(current.frame, current.config);
       setWarnings(prepared.warnings);
@@ -89,6 +96,7 @@ export function ChartView({
       const option = chartOption(current.frame, current.config, readPlotTheme(), {
         compact: current.variant === "tile",
         showTitle: current.variant === "studio",
+        width: paintedWidth || undefined,
       });
       const animate = firstDraw && !log;
       option.animation = animate;
@@ -168,6 +176,7 @@ export function ChartView({
     const option = chartOption(current.frame, current.config, readPlotTheme(), {
       compact: current.variant === "tile",
       showTitle: current.variant === "studio",
+      width: host.current?.clientWidth || undefined,
     });
     option.animation = false;
     option.animationDuration = 0;
@@ -214,4 +223,32 @@ export async function exportChartSvg(frame: Frame, config: PlotConfig): Promise<
   instance.dispose();
   node.remove();
   return svg;
+}
+
+/**
+ * A chart as a picture on white paper for a document: PNG at `pixelRatio` and the same chart as
+ * SVG. `width` and `height` are CSS pixels.
+ */
+export async function renderChartForPrint(frame: Frame, config: PlotConfig, size: { width: number; height: number; pixelRatio?: number }): Promise<{ png: Blob; svg: string }> {
+  const echarts = await loadEcharts();
+  const theme = printPlotTheme();
+  const draw = (renderer: "canvas" | "svg") => {
+    const node = document.createElement("div");
+    node.style.cssText = `position:fixed;left:-10000px;top:0;width:${size.width}px;height:${size.height}px`;
+    document.body.appendChild(node);
+    const instance = echarts.init(node, undefined, { renderer });
+    const option = chartOption(frame, config, theme, { showTitle: false, print: true, width: size.width });
+    option.animation = false;
+    instance.setOption(option);
+    return { node, instance };
+  };
+  const raster = draw("canvas");
+  const url = raster.instance.getDataURL({ type: "png", pixelRatio: size.pixelRatio ?? 2, backgroundColor: theme.panel });
+  raster.instance.dispose();
+  raster.node.remove();
+  const vector = draw("svg");
+  const svg = vector.node.querySelector("svg")?.outerHTML ?? "";
+  vector.instance.dispose();
+  vector.node.remove();
+  return { png: figureBytes("png", url.slice(url.indexOf(",") + 1)), svg };
 }

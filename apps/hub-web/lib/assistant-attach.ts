@@ -11,7 +11,11 @@ import type { PageMention } from "@ensemble/shared-types";
 export type AttachSource = { kind: "page" | "task" | "meeting" | "project" | "deliverable" | "view" | "reply" | "plot" | "file"; id: string; title: string };
 /** `text` empty: the whole page or task. */
 export type AssistantAttachment = { text: string; source: AttachSource };
-export type AttachRequest = { attachment?: AssistantAttachment; mention?: PageMention; prompt?: string; send?: boolean };
+/**
+ * `context`: facts sent with the message as its reference (never shown in the chat). `tier`: the tier
+ * for this one message. `fresh`: ask in a new chat rather than the open one.
+ */
+export type AttachRequest = { attachment?: AssistantAttachment; mention?: PageMention; prompt?: string; send?: boolean; context?: string; tier?: "easy" | "medium" | "high" | "max"; fresh?: boolean };
 
 export const ATTACH_EVENT = "ensemble:assistant-attach";
 const MAX_TEXT = 6000;

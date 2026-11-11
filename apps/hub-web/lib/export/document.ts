@@ -4,6 +4,8 @@
  * browser, so exporting never costs the server anything.
  */
 
+import { mentionHref, type PageMention } from "@ensemble/shared-types";
+
 export type Run = { text: string; bold?: boolean; italic?: boolean; code?: boolean; strike?: boolean; href?: string };
 /** A table cell's text. A "\n" run is a line break inside the cell. */
 export type Cell = Run[];
@@ -16,7 +18,77 @@ export type Block =
   | { type: "code"; text: string }
   /** The first row is the header. */
   | { type: "table"; rows: Cell[][] }
-  | { type: "rule" };
+  | { type: "rule" }
+  /**
+   * A plot, diagram, file or image placed on the page. Exports that can draw pictures turn it into
+   * an `image` first (`resolveEmbeds` in `./embeds`); otherwise, and for files that are not
+   * pictures, it is written as a link back to the item in Ensemble.
+   */
+  | { type: "embed"; embed: EmbedRef }
+  | ImageBlock;
+
+export type EmbedKind = "plot" | "diagram" | "file" | "image";
+
+export type EmbedRef = {
+  kind: EmbedKind;
+  /** The plot, diagram or file id (a plot-space tile is `space/tile`). Empty for a web image. */
+  id: string;
+  label: string;
+  /** Absolute link to the item in Ensemble, or the image's own web address. */
+  href?: string;
+  /** Page images: a web address to fetch instead of a file. */
+  src?: string;
+  /** Page images: percent of the text width, and where the image sits. */
+  width?: number | null;
+  align?: "left" | "center" | "right";
+};
+
+/** A drawn picture. Sizes are CSS pixels at 1x; the bitmap itself is sharper (usually 2x). */
+export type ImageBlock = {
+  type: "image";
+  /** The bitmap's bytes, PNG unless `format` says JPEG. */
+  png: Uint8Array;
+  format?: "png" | "jpg";
+  /** Same picture as SVG, for formats that keep vectors (web page). */
+  svg?: string;
+  width: number;
+  height: number;
+  alt: string;
+  /** Shown under the picture, linked to `href` when there is one. */
+  caption?: string;
+  href?: string;
+  /** Percent of the text width. Without it a picture keeps its own size, or with `fill` spans the text width (at most 1.5x). */
+  scale?: number | null;
+  fill?: boolean;
+  align?: "left" | "center" | "right";
+  /** What it shows, for formats that only write words. */
+  kind?: EmbedKind;
+};
+
+/** The width a picture takes in a column `column` wide (same unit as the result). `unit` converts its CSS pixels to that unit. */
+export function imageWidth(image: Pick<ImageBlock, "width" | "scale" | "fill">, column: number, unit = 1): number {
+  const natural = image.width * unit;
+  if (image.scale && image.scale > 0) return Math.min(column, (column * Math.min(100, image.scale)) / 100);
+  return Math.min(column, image.fill ? natural * 1.5 : natural);
+}
+
+/** Base64 of bytes, in the browser and in Node. */
+export function base64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+export const imageMime = (image: Pick<ImageBlock, "format">) => (image.format === "jpg" ? "image/jpeg" : "image/png");
+
+/** The caption line under a picture, or the words that stand in for it. */
+function imageWords(image: ImageBlock): Run[] {
+  return embedLine({ kind: image.kind ?? "image", id: "", label: image.caption || image.alt, href: image.href });
+}
+
+/** Where links back to Ensemble point. Exports in the browser use the page's own origin. */
+export type ExportContext = { origin?: string };
 
 export type ExportDoc = {
   title: string;
@@ -27,7 +99,50 @@ export type ExportDoc = {
 
 type Json = { type?: string; text?: string; attrs?: Record<string, unknown>; marks?: Array<{ type: string; attrs?: Record<string, unknown> }>; content?: Json[] };
 
-function runsOf(node: Json | undefined): Run[] {
+/** Mentions that are pictures or attachments on the page, not inline chips. */
+const EMBED_KINDS = new Set(["plot", "diagram", "file"]);
+/** Mentions with a page of their own in Ensemble, linked from an export. People and dates stay text. */
+const LINKED_KINDS = new Set(["task", "project", "skill", "deliverable", "diagram", "plot", "file"]);
+
+const KIND_NOUN: Record<EmbedKind, string> = { plot: "Plot", diagram: "Diagram", file: "Attachment", image: "Image" };
+
+/** The words an export writes for an embed it does not draw: "Plot: Ablation bars". */
+export function embedLine(embed: EmbedRef): Run[] {
+  const label = embed.label || (embed.kind === "image" ? "Image" : "Untitled");
+  return [{ text: `${KIND_NOUN[embed.kind]}: ` }, { text: label, href: embed.href }];
+}
+
+function defaultOrigin(): string | undefined {
+  return typeof window !== "undefined" && /^https?:/.test(window.location?.origin ?? "") ? window.location.origin : undefined;
+}
+
+function absolute(path: string | undefined, origin: string | undefined): string | undefined {
+  if (!path) return undefined;
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!origin) return undefined;
+  try {
+    return new URL(path, origin).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function mentionLink(attrs: Record<string, unknown> | undefined, origin: string | undefined): string | undefined {
+  const kind = String(attrs?.kind ?? "people");
+  if (!LINKED_KINDS.has(kind)) return undefined;
+  const id = String(attrs?.id ?? "");
+  if (!id) return undefined;
+  return absolute(mentionHref({ id, label: String(attrs?.label ?? ""), kind } as PageMention), origin);
+}
+
+function mentionEmbed(attrs: Record<string, unknown> | undefined, origin: string | undefined): EmbedRef | null {
+  const kind = String(attrs?.kind ?? "");
+  const id = String(attrs?.id ?? "");
+  if (!EMBED_KINDS.has(kind) || !id) return null;
+  return { kind: kind as EmbedKind, id, label: String(attrs?.label ?? ""), href: mentionLink(attrs, origin) };
+}
+
+function runsOf(node: Json | undefined, origin?: string): Run[] {
   const runs: Run[] = [];
   const walk = (child: Json) => {
     if (child.type === "text") {
@@ -44,8 +159,10 @@ function runsOf(node: Json | undefined): Run[] {
       return;
     }
     if (child.type === "mention") {
-      const label = child.attrs?.label ?? child.attrs?.id ?? "";
-      runs.push({ text: `@${String(label)}` });
+      const label = String(child.attrs?.label ?? child.attrs?.id ?? "");
+      const href = mentionLink(child.attrs, origin);
+      // A plot, diagram or file named inside a sentence, list or table reads as its name, linked.
+      runs.push(EMBED_KINDS.has(String(child.attrs?.kind)) ? { text: label, href } : { text: `@${label}`, href });
       return;
     }
     if (child.type === "hardBreak") {
@@ -59,10 +176,10 @@ function runsOf(node: Json | undefined): Run[] {
 }
 
 /** A cell's paragraphs, list items and so on, each on its own line. */
-function cellRuns(cell: Json): Cell {
+function cellRuns(cell: Json, origin?: string): Cell {
   const lines: Run[][] = [];
   const visit = (node: Json) => {
-    if (node.content?.some((child) => child.type === "text" || child.type === "mention" || child.type === "hardBreak")) lines.push(runsOf(node));
+    if (node.content?.some((child) => child.type === "text" || child.type === "mention" || child.type === "hardBreak")) lines.push(runsOf(node, origin));
     else for (const child of node.content ?? []) visit(child);
   };
   visit(cell);
@@ -112,40 +229,88 @@ export function linkRuns(runs: Run[]): Run[] {
   });
 }
 
-/** A page body (TipTap JSON) as blocks. Embeds without text become a short line naming them. */
-export function blocksFromPage(doc: unknown): Block[] {
+/**
+ * A page body (TipTap JSON) as blocks. A plot, diagram or file card on its own line becomes an
+ * `embed` block (text beside it stays in paragraphs before and after); images become `embed`s of
+ * kind image; links to other pages become linked lines.
+ */
+export function blocksFromPage(doc: unknown, context: ExportContext = {}): Block[] {
+  const origin = context.origin ?? defaultOrigin();
   const blocks: Block[] = [];
+  const runs = (node: Json | undefined) => runsOf(node, origin);
+  /** A paragraph, split around the embeds in it. */
+  const paragraph = (node: Json) => {
+    let pending: Json[] = [];
+    const flush = () => {
+      const text = runs({ content: pending });
+      // The space the editor puts after a card is not a paragraph of its own.
+      if (plainText(text).trim()) blocks.push({ type: "paragraph", runs: text });
+      pending = [];
+    };
+    for (const child of node.content ?? []) {
+      const embed = child.type === "mention" ? mentionEmbed(child.attrs, origin) : null;
+      if (!embed) {
+        pending.push(child);
+        continue;
+      }
+      flush();
+      blocks.push({ type: "embed", embed });
+    }
+    flush();
+  };
   const visit = (node: Json) => {
     switch (node.type) {
       case "heading": {
         const level = Math.min(3, Math.max(1, Number(node.attrs?.level ?? 2))) as 1 | 2 | 3;
-        blocks.push({ type: "heading", level, runs: runsOf(node) });
+        blocks.push({ type: "heading", level, runs: runs(node) });
         return;
       }
       case "paragraph": {
-        const runs = runsOf(node);
-        if (runs.length) blocks.push({ type: "paragraph", runs });
+        if ((node.content ?? []).some((child) => child.type === "mention" && mentionEmbed(child.attrs, origin))) paragraph(node);
+        else {
+          const text = runs(node);
+          if (text.length) blocks.push({ type: "paragraph", runs: text });
+        }
         return;
       }
       case "bulletList":
       case "orderedList":
-        blocks.push({ type: "list", ordered: node.type === "orderedList", items: (node.content ?? []).map((item) => (item.content ?? []).flatMap((child) => runsOf(child).concat([{ text: " " }])).slice(0, -1)) });
+        blocks.push({ type: "list", ordered: node.type === "orderedList", items: (node.content ?? []).map((item) => (item.content ?? []).flatMap((child) => runs(child).concat([{ text: " " }])).slice(0, -1)) });
         return;
       case "taskList":
-        blocks.push({ type: "todo", items: (node.content ?? []).map((item) => ({ checked: Boolean(item.attrs?.checked), runs: (item.content ?? []).flatMap((child) => runsOf(child)) })) });
+        blocks.push({ type: "todo", items: (node.content ?? []).map((item) => ({ checked: Boolean(item.attrs?.checked), runs: (item.content ?? []).flatMap((child) => runs(child)) })) });
         return;
       case "blockquote":
-        blocks.push({ type: "quote", runs: (node.content ?? []).flatMap((child) => runsOf(child).concat([{ text: "\n" }])).slice(0, -1) });
+        blocks.push({ type: "quote", runs: (node.content ?? []).flatMap((child) => runs(child).concat([{ text: "\n" }])).slice(0, -1) });
         return;
       case "codeBlock":
-        blocks.push({ type: "code", text: plainText(runsOf(node)) });
+        blocks.push({ type: "code", text: plainText(runs(node)) });
         return;
       case "horizontalRule":
         blocks.push({ type: "rule" });
         return;
       case "table": {
-        const rows = (node.content ?? []).map((row) => (row.content ?? []).map(cellRuns));
+        const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => cellRuns(cell, origin)));
         if (rows.length) blocks.push({ type: "table", rows });
+        return;
+      }
+      case "image": {
+        const attrs = node.attrs ?? {};
+        const fileId = typeof attrs.fileId === "string" ? attrs.fileId : "";
+        const src = typeof attrs.src === "string" && /^https?:\/\//i.test(attrs.src) ? attrs.src : undefined;
+        if (!fileId && !src) return;
+        const width = Number(attrs.width);
+        const align = attrs.align === "left" || attrs.align === "right" ? attrs.align : "center";
+        blocks.push({
+          type: "embed",
+          embed: { kind: "image", id: fileId, label: typeof attrs.alt === "string" ? attrs.alt : "", href: fileId ? absolute(`/files/${encodeURIComponent(fileId)}`, origin) : src, src, width: Number.isFinite(width) && width > 0 ? width : null, align },
+        });
+        return;
+      }
+      case "pageLink": {
+        const pageId = typeof node.attrs?.pageId === "string" ? node.attrs.pageId : "";
+        const label = String(node.attrs?.label ?? "Untitled");
+        blocks.push({ type: "paragraph", runs: [{ text: label, href: pageId ? absolute(`/pages/${encodeURIComponent(pageId)}`, origin) : undefined }] });
         return;
       }
       case "ensembleReply": {
@@ -329,6 +494,15 @@ export function toMarkdown(doc: ExportDoc): string {
       case "rule":
         out.push("---", "");
         break;
+      case "embed":
+        out.push(mdRuns(embedLine(block.embed)), "");
+        break;
+      case "image": {
+        const alt = (block.alt || block.caption || "Image").replace(/[\[\]\n]/g, " ");
+        out.push(`![${alt}](data:${imageMime(block)};base64,${base64(block.png)})`, "");
+        if (block.caption) out.push(`*${mdRuns([{ text: block.caption, href: block.href }])}*`, "");
+        break;
+      }
     }
   }
   return `${out.join("\n").trim()}\n`;
@@ -378,6 +552,12 @@ export function toText(doc: ExportDoc): string {
         break;
       case "rule":
         out.push("---", "");
+        break;
+      case "embed":
+        out.push(`[${textRuns(embedLine(block.embed))}]`, "");
+        break;
+      case "image":
+        out.push(`[${textRuns(imageWords(block))}]`, "");
         break;
     }
   }
@@ -437,6 +617,17 @@ export function toHtml(doc: ExportDoc): string {
       case "rule":
         body.push("<hr>");
         break;
+      case "embed":
+        body.push(`<p class="embed">${htmlRuns(embedLine(block.embed))}</p>`);
+        break;
+      case "image": {
+        // Vectors stay sharp when there is an SVG; it goes in as an <img>, so nothing in it runs.
+        const src = block.svg ? `data:image/svg+xml;base64,${base64(new TextEncoder().encode(block.svg))}` : `data:${imageMime(block)};base64,${base64(block.png)}`;
+        const width = block.scale ? `${Math.min(100, block.scale)}%` : `${Math.round(block.fill ? block.width * 1.5 : block.width)}px`;
+        const caption = block.caption ? `<figcaption>${htmlRuns([{ text: block.caption, href: block.href }])}</figcaption>` : "";
+        body.push(`<figure class="${block.align ?? "center"}"><img src="${src}" alt="${escape(block.alt)}" style="width:${width}" width="${Math.round(block.width)}" height="${Math.round(block.height)}">${caption}</figure>`);
+        break;
+      }
     }
   }
   return `<!doctype html>
@@ -451,7 +642,9 @@ table.grid th,table.grid td{border:1px solid #ddd6cc;padding:6px 10px;text-align
 table.grid thead th{background:#f1ede5;font-weight:600}table.grid tbody tr:nth-child(even) td{background:#fbf9f5}
 pre{background:#f4f1ea;padding:12px;border-radius:6px;overflow:auto}code{font:13px ui-monospace,Menlo,monospace}
 blockquote{border-left:3px solid #ddd;margin:12px 0;padding-left:12px;color:#555}ul.todo{list-style:none;padding-left:4px}
-@media print{body{margin:0;max-width:none;padding:0}table.grid thead{display:table-header-group}table.grid tr{break-inside:avoid;page-break-inside:avoid}table.grid th,table.grid td{-webkit-print-color-adjust:exact;print-color-adjust:exact}pre{white-space:pre-wrap}}
+figure{margin:18px 0}figure img{display:block;max-width:100%;height:auto}figure.center img{margin:0 auto}figure.right img{margin-left:auto}
+figcaption{margin-top:6px;font-size:12.5px;color:#6b655c;text-align:center}figure.left figcaption{text-align:left}figure.right figcaption{text-align:right}p.embed{color:#6b655c}
+@media print{body{margin:0;max-width:none;padding:0}figure{break-inside:avoid;page-break-inside:avoid}table.grid thead{display:table-header-group}table.grid tr{break-inside:avoid;page-break-inside:avoid}table.grid th,table.grid td{-webkit-print-color-adjust:exact;print-color-adjust:exact}pre{white-space:pre-wrap}}
 </style></head><body>
 ${body.join("\n")}
 </body></html>

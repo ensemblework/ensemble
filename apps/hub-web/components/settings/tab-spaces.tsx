@@ -11,7 +11,7 @@ import { api, type SpaceSummary, type SpacesPayload } from "@/lib/api";
 import { announceSpace, enterSpace, SPACE_ICONS, spaceInitial, switchSpace } from "@/lib/spaces";
 import { SpaceIcon } from "../shell/space-switcher";
 import { useToast } from "../toast";
-import { Dialog, Popover, SectionCard, SettingRow, Toggle } from "../ui";
+import { Dialog, Popover, QueryError, SectionCard, SettingRow, Toggle } from "../ui";
 
 const templateName = (id: string | null) => TEMPLATE_CARDS.find((card) => card.id === id)?.name ?? null;
 
@@ -169,6 +169,7 @@ export function SpacesTab() {
         }
       >
         {spaces.isLoading ? <div className="skeleton h-24 rounded-md" /> : null}
+        {spaces.error && !data ? <QueryError error={spaces.error as Error} retry={() => void spaces.refetch()} /> : null}
         {(data?.spaces ?? []).map((space) => (
           <SpaceRow
             key={`${space.id}-${space.name}-${space.icon}`}

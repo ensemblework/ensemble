@@ -13,7 +13,7 @@ import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-ki
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Ellipsis, FilePlus2, LayoutGrid, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BoardDragOverlay, useBoardDragSensors, useBoardMotion, useBoardMoveMotion } from "@/components/motion/board-drag/board-drag-dnd-kit";
 import { api, currentShare, type Owner, type Priority, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { usePeek } from "../shell/peek";
@@ -42,6 +42,8 @@ import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { PRIORITY, PRIORITY_ORDER, PRIORITY_RANK } from "@/lib/format";
 import { CustomBoards } from "./custom-boards";
 
+const StillCustomBoards = memo(CustomBoards);
+
 type ColumnId = "proposed" | "todo" | "in_progress" | "done";
 
 const COLUMNS: Array<{ id: ColumnId; statuses: TaskStatus[]; drop: TaskStatus; pill: TaskStatus }> = [
@@ -53,6 +55,15 @@ const COLUMNS: Array<{ id: ColumnId; statuses: TaskStatus[]; drop: TaskStatus; p
 
 const columnOf = (status: TaskStatus): ColumnId | null =>
   COLUMNS.find((column) => column.statuses.includes(status))?.id ?? null;
+
+/** Same identity on every render, always calls the latest `fn`. For event handlers passed to memoised children. */
+function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  useLayoutEffect(() => {
+    ref.current = fn;
+  });
+  return useCallback((...args: A) => ref.current(...args), []);
+}
 
 function columnsFromTasks(rows: TaskRecord[], completedVisible: number): Record<ColumnId, string[]> {
   const next: Record<ColumnId, string[]> = { proposed: [], todo: [], in_progress: [], done: [] };
@@ -69,9 +80,14 @@ function columnsFromTasks(rows: TaskRecord[], completedVisible: number): Record<
   return next;
 }
 
-function Column({
+/**
+ * Memoised, with stable callbacks from Board: while a card is in the air the board re-renders on every
+ * column change, and only the two columns whose cards changed should render again.
+ */
+const Column = memo(function Column({
   id,
   pill,
+  drop,
   ids,
   tasks,
   activeId,
@@ -87,6 +103,8 @@ function Column({
 }: {
   id: ColumnId;
   pill: TaskStatus;
+  /** The status a new task in this column gets. */
+  drop: TaskStatus;
   ids: string[];
   tasks: Map<string, TaskRecord>;
   activeId: string | null;
@@ -94,7 +112,7 @@ function Column({
   over?: "yes" | "deny";
   motion: BoardCardMotion;
   onOpen: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (status: TaskStatus) => void;
   moreHref?: string;
   picked: string[];
   onToggleSelect: (id: string) => void;
@@ -111,7 +129,7 @@ function Column({
       count={ids.length}
       over={over}
       createLabel="New task"
-      onCreate={onCreate}
+      onCreate={() => onCreate(drop)}
       empty={filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "done" ? "Finished work lands here." : "Ready when you are."}
       footer={moreHref ? <Link href={moreHref} className="px-2 py-1 text-[12px] text-accent hover:underline">All completed</Link> : null}
     >
@@ -134,7 +152,7 @@ function Column({
       </SortableContext>
     </BoardColumn>
   );
-}
+});
 
 export function Board({ initialBoardLayout = null }: { initialBoardLayout?: LayoutPayload | null }) {
   const client = useQueryClient();
@@ -170,7 +188,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const access = useSpaceAccess();
   const [insightNow, setInsightNow] = useState(Date.now);
   useEffect(() => { const timer = window.setInterval(() => setInsightNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
-  const togglePick = (id: string) => setPicked((current) => (current.includes(id) ? current.filter((row) => row !== id) : [...current, id]));
+  const togglePick = useCallback((id: string) => setPicked((current) => (current.includes(id) ? current.filter((row) => row !== id) : [...current, id])), []);
   const origin = useRef<ColumnId | null>(null);
   const createGuard = useRef(false);
 
@@ -364,11 +382,15 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     onError: (error: Error) => toast(error.message, { tone: "error" }),
     onSettled: () => { createGuard.current = false; },
   });
-  const createNewTask = (status: TaskStatus) => {
+  const createNewTask = useStableCallback((status: TaskStatus) => {
     if (createGuard.current) return;
     createGuard.current = true;
     create.mutate(status);
-  };
+  });
+  const deleteTask = useStableCallback((id: string) => remove.mutate(id));
+  const canDelete = access.ready && access.canEdit;
+  const who = useMemo(() => ({ me: people.me, ownerId: people.ownerId }), [people.me, people.ownerId]);
+  const openIdea = useCallback(() => setIdeaOpen(true), []);
   const addPage = useMutation({
     mutationFn: async (id: string) => {
       const page = await api.standalonePage(id);
@@ -539,7 +561,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </button>
         </div>
       </div>
-      <BoardInsights tasks={baseVisible} initialLayout={initialBoardLayout} editing={layoutEdit} onEditingChange={setLayoutEdit} who={people} onOpen={peek.open} onIdea={access.ready && access.canEdit ? () => setIdeaOpen(true) : undefined} focus={focus} onFocus={setFocus} filtered={Boolean(search.trim() || owner !== "all" || priority !== "all")} loading={tasks.isPending} />
+      <BoardInsights tasks={baseVisible} initialLayout={initialBoardLayout} editing={layoutEdit} onEditingChange={setLayoutEdit} who={who} onOpen={peek.open} onIdea={canDelete ? openIdea : undefined} focus={focus} onFocus={setFocus} filtered={Boolean(search.trim() || owner !== "all" || priority !== "all")} loading={tasks.isPending} />
       {focus && <div className="board-focus-bar"><span>{focusLabel(focus)}<button type="button" aria-label="Clear board focus" onClick={() => setFocus(null)}><X size={13} /></button></span><small>{count} matching tasks</small></div>}
       {tasks.data && filtered && count === 0 ? (
         <div className="board-no-match" role="status">
@@ -594,17 +616,18 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   key={column.id}
                   id={column.id}
                   pill={column.pill}
+                  drop={column.drop}
                   ids={columns[column.id]}
                   tasks={byId}
                   activeId={peek.peekId}
                   over={overColumn === column.id && origin.current !== column.id ? "yes" : undefined}
                   motion={motion.sortable}
                   onOpen={peek.open}
-                  onCreate={() => createNewTask(column.drop)}
+                  onCreate={createNewTask}
                   moreHref={column.id === "done" ? "/settings#completed" : undefined}
                   picked={picked}
                   onToggleSelect={togglePick}
-                  onDelete={access.ready && access.canEdit ? (id) => remove.mutate(id) : undefined}
+                  onDelete={canDelete ? deleteTask : undefined}
                   filtered={filtered}
                 />
               ))}
@@ -622,7 +645,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </BoardDragOverlay>
         </DndContext>
       </Held>}</div>}
-      <CustomBoards />
+      <StillCustomBoards />
     </div>
   );
 }

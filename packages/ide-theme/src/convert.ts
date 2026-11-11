@@ -361,7 +361,8 @@ function chromeVars(colors: Map<string, Rgba>, editor: EditorColors, kind: Theme
   const foreground = parseColor(editor.foreground)!;
   const sidebar = colors.get("sideBar.background") ?? colors.get("activityBar.background") ?? background;
   const raised = colors.get("input.background") ?? colors.get("tab.inactiveBackground") ?? mix(foreground, background, kind === "light" ? 0.04 : 0.08);
-  const muted = mix(foreground, background, 0.72);
+  // Secondary text (descriptions, the status bar): about VS Code's descriptionForeground, readable on light themes too.
+  const muted = mix(foreground, background, 0.35);
   const faint = colors.get("editorLineNumber.foreground") ?? mix(foreground, background, 0.48);
   const line = visibleBorder(
     colors.get("sideBar.border") ?? colors.get("panel.border") ?? colors.get("editorGroup.border"),

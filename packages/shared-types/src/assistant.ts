@@ -126,9 +126,14 @@ export type MotionTheme = z.infer<typeof MotionTheme>;
 export const AppColorTheme = z.enum(["ensemble", "aubergine", "graphite", "lagoon", "aurora", "juniper", "blueprint"]);
 export type AppColorTheme = z.infer<typeof AppColorTheme>;
 
+/** The faint pattern behind the work area. `theme`: the color theme's own artwork (or none); `none`: plain. */
+export const AppDoodle = z.enum(["theme", "none", "constellation", "orbits", "galaxy", "stardust", "ripples", "network", "contours", "waves", "weave", "dots", "circuits", "graph"]);
+export type AppDoodle = z.infer<typeof AppDoodle>;
+
 export const AppearanceSettings = z.object({
   theme: z.enum(["dark", "light", "system"]).default("dark"),
   colorTheme: AppColorTheme.default("ensemble"),
+  doodle: AppDoodle.catch("theme").default("theme"),
   textScale: z.number().min(80).max(130).default(100),
   font: AppFont.default("system"),
   /** Legacy motion choices normalize to the single Expressive system. */

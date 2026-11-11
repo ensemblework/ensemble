@@ -143,7 +143,7 @@ export const METHOD_LABELS: Record<ConnectMethod, { title: string; short: string
   hosted: {
     title: "Hosted URL (no install)",
     short: "Hosted URL",
-    description: "Use the hosted read-only MCP endpoint with an `ens_` bridge key. Nothing runs on this computer.",
+    description: "Use the hosted MCP endpoint with an `ens_` key. It reads Ensemble, and makes changes when the key allows it. Nothing runs on this computer.",
   },
   source: {
     title: "From source (developers)",
@@ -467,7 +467,7 @@ export function hostedSnippet(app: AppId, facts: ConnectFacts, os: ConnectOs, or
   const path = editor.hostedPath?.[os] ?? editor.localPath[os];
   switch (app) {
     case "vscode":
-      return { label: "Hosted MCP config", text: vscodeHostedConfig(url, facts), format: "json", path, note: "Put this in your user profile mcp.json (MCP: Open User Configuration), not in a repository file. The key is read-only." };
+      return { label: "Hosted MCP config", text: vscodeHostedConfig(url, facts), format: "json", path, note: "Put this in your user profile mcp.json (MCP: Open User Configuration), not in a repository file, so the key is never committed." };
     case "cursor":
     case "jetbrains":
       return jsonSnippet("Hosted MCP config", { mcpServers: { ensemble: { url, headers } } }, path, editor.notes?.hosted);

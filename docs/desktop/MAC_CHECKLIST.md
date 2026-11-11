@@ -51,9 +51,9 @@ These steps pair an app kept local only from an earlier version; an app with an 
 
 ## Settings
 
-- [ ] **Code folders.** Settings → Data → Terminal and commits → Choose folder…: the Tauri dialog opens; the folder's git checkout appears in Code and can be reviewed.
+- [ ] **Code folders.** Settings → Agents → Terminal and commits → Choose folder…: the Tauri dialog opens; the folder's git checkout appears in Code and can be reviewed.
 - [ ] **Notifications.** Settings → Notifications → App notifications: grant macOS permission and send a test. Denying leaves the setting off; Focus modes still apply.
-- [ ] **Passkeys.** On the hosted Settings → Data → Terminal and commits, unlock passkey management and remove a disposable passkey. Removal while locked is refused.
+- [ ] **Passkeys.** On the hosted Settings → Agents → Terminal and commits, unlock passkey management and remove a disposable passkey. Removal while locked is refused.
 - [ ] **Files and data.** In a disposable space: attach an existing file from the assistant and confirm it becomes an `@file:` mention without a connector search. Check the board toolbar and the Metrics provider and date filters. Use Settings → Data → Danger zone (typed phrase, no paste or drop, then a final confirmation): deleting everything clears local usage details but not the account's credit consumption.
 
 ## Release
