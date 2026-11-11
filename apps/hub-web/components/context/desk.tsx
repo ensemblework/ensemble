@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -14,7 +15,7 @@ import { usePeek } from "@/components/shell/peek";
 
 const GraphTab = dynamic(() => import("./graph").then((mod) => mod.GraphTab), {
   ssr: false,
-  loading: () => <div className="skeleton h-[480px] w-full rounded-xl" />,
+  loading: () => <Skeleton className="h-[480px] w-full rounded-xl" />,
 });
 
 const VIEWS = [
@@ -436,7 +437,7 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
           </>
         )}
       </div>
-      {!data ? <div className="skeleton h-[280px] rounded-xl" /> : null}
+      {!data ? <Skeleton className="h-[280px] rounded-xl" /> : null}
       {data && allCards.length === 0 ? (
         <div className="empty-state mb-4">
           <div className="mb-1 font-medium text-ink">Nothing linked yet</div>

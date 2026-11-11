@@ -2,6 +2,8 @@
 
 Assigned work runs through a **Postgres-backed workspace queue in hub-api**, on the server (operators only) or on the person's paired computer. The Python runtime supplies hosted model calls and plot work; it does not plan or run assignments. See [06](06_MODULE_WORKSPACE_AND_SURFACES.md) for execution, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for device leases and [30](30_ENGINES.md) for external engines.
 
+The Hub separates an unfinished run from active execution (`apps/hub-web/lib/run-status.ts`). Queued, claimed/starting, stopping, approval, interrupted and ended jobs have static labels. Only actual running work gets motion in its focused detail; list rows remain still. Missing tool results never keep an ended run's loader alive.
+
 ## 1. Execution path
 
 ```text

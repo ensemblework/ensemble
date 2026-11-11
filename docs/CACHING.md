@@ -36,6 +36,8 @@ Tool results are never shared across accounts. Tool visibility, input schema and
 - File extraction, Office and plot work have explicit resource limits and run in workers or the browser. Hosted plotting downloads its browser runtime on first use.
 - The desktop app loads route bundles from its static export and calls the loopback API; there is no Next server in the webview.
 
+Initial missing content uses a 250 ms delayed structural placeholder; cached reads render immediately. Pages and Today keep usable data on a failed background refresh and show a local recovery action. Loader visibility never holds a completed response. The top-bar activity query also invalidates on private activity lifecycle events and SSE reconnect, retaining polling as reconciliation ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
+
 ## 4. Measuring
 
 Use a production build (`next build`), never `next dev`. Record the commit, OS and browser, viewport, network and CPU throttling, account size, warm or cold state and provider mode. Measure separately: shell paint, data ready, editor interactive, remote or model wait. Record route JavaScript, critical requests, payload sizes, input-to-paint and long tasks, and API p50/p95 with sample counts. For files and plots, give format and size, runtime start-up and warm export separately. For assistant changes, give input, output and cached tokens and whether the action succeeded.

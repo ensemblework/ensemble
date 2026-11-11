@@ -4,7 +4,7 @@
 
 import { CloudOff, RefreshCw, ServerCrash, TriangleAlert } from "lucide-react";
 import { describeLoadFailure } from "@/lib/load-failure";
-import { cx } from "./ui";
+import { Spinner, cx } from "./ui";
 
 /**
  * A screen whose data failed to load: says whether Ensemble is unreachable or its
@@ -51,7 +51,7 @@ export function LoadError({
           <p className="mt-1 text-muted">{detail}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" className="btn" onClick={onRetry} disabled={retrying} aria-busy={retrying || undefined}>
-              <RefreshCw size={13} className={retrying ? "animate-spin" : undefined} aria-hidden />
+              {retrying ? <Spinner /> : <RefreshCw size={14} aria-hidden />}
               {retrying ? "Retrying…" : "Retry"}
             </button>
             {children}

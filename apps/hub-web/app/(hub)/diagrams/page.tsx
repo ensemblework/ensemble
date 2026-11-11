@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { LoadError } from "@/components/load-error";
-import { PageHeader, Segmented } from "@/components/ui";
+import { PageHeader, Segmented, Skeleton } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api, type DiagramSummary } from "@/lib/api";
 import { relative } from "@/lib/format";
@@ -205,10 +205,10 @@ export default function DiagramsPage() {
         <ul className="dg-grid" aria-hidden>
           {[0, 1, 2].map((index) => (
             <li key={index} className="dg-card is-skeleton">
-              <div className="skeleton dg-thumb" />
+              <Skeleton className="dg-thumb" />
               <div className="dg-card-body">
-                <div className="skeleton h-4 w-2/3" />
-                <div className="skeleton mt-2 h-3 w-1/3" />
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="mt-2 h-3 w-1/3" />
               </div>
             </li>
           ))}

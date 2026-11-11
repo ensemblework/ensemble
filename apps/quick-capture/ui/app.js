@@ -3,7 +3,7 @@ const status = document.querySelector("#status");
 const tokenForm = document.querySelector("#token-form");
 const captureForm = document.querySelector("#capture-form");
 const saveMotion = document.querySelector("#save-motion");
-const beacon = window.EnsembleMorph.mount(saveMotion, { size: 20, kind: "beacon" });
+let saving = false;
 
 function setStatus(message) {
   status.textContent = message;
@@ -35,11 +35,14 @@ tokenForm.addEventListener("submit", async (event) => {
 
 captureForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (saving) return;
   const text = document.querySelector("#text").value.trim();
   if (!text) return;
+  saving = true;
+  const submit = captureForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
   setStatus("Saving…");
-  saveMotion.hidden = false;
-  beacon.loop({ delay: 180 });
+  const timer = window.setTimeout(() => { saveMotion.hidden = false; }, 250);
   try {
     const saved = await invoke("submit_capture", { text });
     const people = saved.people.length ? ` · ${saved.people.join(", ")}` : "";
@@ -50,8 +53,10 @@ captureForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setStatus(String(error));
   } finally {
-    beacon.idle();
+    window.clearTimeout(timer);
     saveMotion.hidden = true;
+    saving = false;
+    submit.disabled = false;
   }
 });
 

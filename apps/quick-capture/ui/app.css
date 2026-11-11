@@ -88,6 +88,17 @@ button#cancel {
   min-height: 1.2em;
 }
 
+#save-motion:not([hidden]) {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #526866;
+  border-top-color: #aec3bf;
+  border-radius: 50%;
+  animation: capture-working 1s linear infinite;
+}
+@keyframes capture-working { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

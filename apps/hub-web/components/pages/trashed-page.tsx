@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { Skeleton } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -77,7 +78,7 @@ export function TrashedPage({ pageId, onRestored }: { pageId: string; onRestored
             {Editor ? (
               <Editor initial={page.data.content ?? EMPTY_PAGE} entities={entities.get} onChange={() => undefined} editable={false} comments={false} placeholder="" />
             ) : (
-              <div className="skeleton mt-4 h-64 w-full" />
+              <Skeleton className="mt-4 h-64 w-full" />
             )}
           </div>
         </>

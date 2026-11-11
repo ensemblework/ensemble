@@ -193,7 +193,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
         event.preventDefault();
       }}
     >
-      <BrandMorph size={30} kind="infinity" state={working ? "loop" : "idle"} />
+      <BrandMorph size={32} kind="beacon" state={working ? "loop" : "idle"} />
     </button>, document.body
   );
 }

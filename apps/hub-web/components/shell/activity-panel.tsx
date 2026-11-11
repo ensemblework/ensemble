@@ -7,6 +7,7 @@ import { ArrowUpRight, CircleStop, Code2, FileText, MessageSquare, OctagonX, Pau
 import Link from "next/link";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { activityPollInterval } from "@/lib/activity-poll";
+import { activityStatus } from "@/lib/activity-status";
 import { api, type AgentCall, type AgentJob } from "@/lib/api";
 import { useElapsed } from "../agent/job-card";
 import { usePeek } from "./peek";
@@ -14,10 +15,8 @@ import { useToast } from "../toast";
 import { TrayDot } from "@/components/motion/slot";
 import { InfoTip, Spinner, cx, useClickOutside } from "../ui";
 
-const CALL_ICON: Record<string, typeof Orbit> = { assistant: MessageSquare, fetch: RefreshCw, run: Orbit, workspace: Orbit };
-const CALL_LABEL: Record<string, string> = { assistant: "Assistant", fetch: "Fetch", run: "Agent run", workspace: "Agent task" };
-
-type Tone = "offline" | "paused" | "working" | "needs" | "queued" | "idle";
+const CALL_ICON: Record<string, typeof Orbit> = { assistant: MessageSquare, model: Orbit, fetch: RefreshCw, run: Orbit, workspace: Orbit };
+const CALL_LABEL: Record<string, string> = { assistant: "Assistant", model: "AI", fetch: "Fetch", run: "Agent run", workspace: "Agent task" };
 
 function Row({ icon: Icon, title, detail, since, live, tone, onOpen, action }: { icon: typeof Orbit; title: string; detail?: string | null; since?: string | null; live?: boolean; tone?: "needs"; onOpen?: () => void; action?: React.ReactNode }) {
   const elapsed = useElapsed(since ?? null, Boolean(live));
@@ -82,14 +81,11 @@ export function ActivityControls({ connected = true, serverError = false }: { co
     return () => document.removeEventListener("keydown", onKey, true);
   }, [open]);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  const workspaceOn = hasModule(shell.data?.modules, "workspace");
   const state = useQuery({
     queryKey: ["agent-state"],
     queryFn: api.agentState,
-    enabled: workspaceOn,
     staleTime: 15_000,
     refetchInterval: (query) => {
-      if (!workspaceOn) return false;
       const body = query.state.data;
       const idle = body != null && !body.paused && body.calls.length + body.running.length + body.waiting.length + body.queued.length === 0;
       return activityPollInterval({ hidden, open, idle });
@@ -125,19 +121,8 @@ export function ActivityControls({ connected = true, serverError = false }: { co
   const running: AgentJob[] = data?.running ?? [];
   const waiting: AgentJob[] = data?.waiting ?? [];
   const queued: AgentJob[] = data?.queued ?? [];
-  const busy = calls.length + running.length;
-  const paused = data?.paused ?? false;
-  const label = !connected ? (serverError ? "Server error" : "Offline") : paused ? "Paused" : busy ? `Working · ${busy}` : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
-  const tone: Tone = !connected ? "offline" : paused ? "paused" : busy ? "working" : waiting.length ? "needs" : queued.length ? "queued" : "idle";
-  const word = !connected ? (serverError ? "Server error" : "Offline") : paused ? "Paused" : busy ? "Working" : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
-  const count = tone === "working" ? busy : tone === "needs" ? waiting.length : tone === "queued" ? queued.length : 0;
-  // Waiting for you is the one thing that needs a person; it gets a mark even while other work runs.
-  const attention = connected && !paused && waiting.length > 0;
-  const summary = paused
-    ? "Nothing calls a model until you resume."
-    : [busy ? `${busy} running` : "", waiting.length ? `${waiting.length} waiting for you` : "", queued.length ? `${queued.length} queued` : ""].filter(Boolean).join(" · ") || "No AI call is running or waiting.";
-  const heading = paused ? "Paused" : busy ? "Running now" : waiting.length ? "Needs you" : queued.length ? "Queued" : "Nothing running";
-  const anything = busy + waiting.length + queued.length > 0;
+  const { busy, starting, stopping, paused, label, tone, word, count, attention, summary, heading } = activityStatus({ data, connected, serverError, failed: state.isError });
+  const anything = busy + starting + stopping + waiting.length + queued.length > 0;
 
   const jobRow = (job: AgentJob, needs?: boolean) => (
     <Row
@@ -167,7 +152,7 @@ export function ActivityControls({ connected = true, serverError = false }: { co
         aria-label={connected ? `Activity: ${label}${attention && tone !== "needs" ? `, ${waiting.length} waiting for you` : ""}` : serverError ? "Ensemble's server is answering with errors" : "Reconnecting to the Hub"}
       >
         <span className="activity-pill-mark">
-          <TrayDot state={tone === "queued" ? "idle" : tone} />
+          <TrayDot state={tone === "queued" || tone === "unknown" || tone === "starting" || tone === "stopping" ? "idle" : tone} />
           {attention || tone === "paused" || tone === "offline" ? <span className="activity-pill-dot" data-tone={attention ? "needs" : tone} aria-hidden /> : null}
         </span>
         <span className="activity-pill-label">{word}</span>
@@ -191,10 +176,11 @@ export function ActivityControls({ connected = true, serverError = false }: { co
               <h2>{heading}</h2>
               <p>{summary}</p>
             </div>
-            <Link href="/runs" onClick={() => setOpen(false)} className="activity-runs">
+            {hasModule(shell.data?.modules, "runs") || hasModule(shell.data?.modules, "workspace") ? <Link href="/runs" onClick={() => setOpen(false)} className="activity-runs">
               Runs <ArrowUpRight size={13} aria-hidden />
-            </Link>
+            </Link> : null}
           </header>
+          {state.isError ? <div className="px-4 pb-3"><button type="button" className="btn" disabled={state.isFetching} onClick={() => void state.refetch()}>{state.isFetching ? "Checking…" : "Try again"}</button></div> : null}
           {anything ? (
             <div className="activity-feed">
               <Section title="Waiting for you" count={waiting.length}>

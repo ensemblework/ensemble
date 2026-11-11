@@ -44,6 +44,12 @@ Paths are under `apps/hub-api/src/` unless qualified.
 | `runtime/`, `apps/agent-runtime/ensemble_agent/` | TypeScript (in-process) and Python (hosted) provider adapters |
 | `apps/hub-web/components/assistant`, `lib/assistant-surface.ts` | Dock, proposals, current view |
 
+`lib/activity.ts` publishes `activity.changed` after a call starts, changes status or ends. Frames contain an activity ID and lifecycle phase, addressed only to its account (the owner when no request scope is present); a shared-space guest receives their own activity on their personal stream. `components/live.tsx` refreshes the `agent-state` query on these events and when the stream connects or reconnects. Polling reconciles missed events. The dock's working text belongs to its local turn; another conversation's broadcast frame cannot replace it.
+
+Direct completions in `lib/runtime.ts` (meeting preparation, meeting tasks, triage, document enrichment and model/skill tests) register their own activity until the call succeeds, fails or is stopped. Stop and Pause abort the HTTP, in-process or subscription call through its signal; the HTTP/in-process completion retains its two-minute timeout. A completion nested inside an assistant turn or workspace job inherits that operation's activity and cancellation through `withActivity`, so it is counted once. Ending one completion leaves other active calls alone.
+
+The top-bar activity endpoint and its pause, resume and stop controls are core routes, available without the optional Workspace module. `/api/agent/state` omits workspace jobs when that module is off. Until an activity snapshot is available, the pill says Checking; a failed check says Unavailable with Retry. Queued work, human decisions, stopping and paused states stay distinct from working.
+
 ## 3. Context and prompt size
 
 A turn has three layers:

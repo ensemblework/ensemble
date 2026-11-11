@@ -29,7 +29,7 @@ const OWNER_EVENTS = new Set(["reminder.due", "sync", "device"]);
 /** Live co-editing steps on a page or task page (pages/collab.ts). */
 const PAGE_STEPS = "page.steps";
 /** Reach you on your account channel wherever you are working. */
-const PERSONAL_EVENTS = new Set(["sharing.changed", "notification"]);
+const PERSONAL_EVENTS = new Set(["sharing.changed", "notification", "activity.changed"]);
 
 function ids(data: unknown): string[] {
   if (!data || typeof data !== "object") return [];

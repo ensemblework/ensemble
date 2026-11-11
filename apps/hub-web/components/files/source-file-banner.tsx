@@ -1,8 +1,8 @@
 "use client";
-import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { Spinner } from "@/components/ui";
 import { useState } from "react";
 import { FileOutput } from "lucide-react";
 import { fileFormat, type PageDocument } from "@ensemble/shared-types";
@@ -68,7 +68,7 @@ export function SourceFileBanner({ source, page, run = exportBack }: { source: P
                 title={`Export back as ${FORMAT[format].label} with the original's formatting`}
                 onClick={() => void exportAs(format)}
               >
-                {busy === format ? <BrandMorph size={12} kind="beacon" loader state="loop" /> : <FileOutput size={12} />}
+                {busy === format ? <Spinner size={14} /> : <FileOutput size={12} />}
                 Export back as {FORMAT[format].label}
               </button>
             ))}

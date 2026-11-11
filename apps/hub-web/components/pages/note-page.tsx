@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { Skeleton } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
 import { Trash2 } from "lucide-react";
@@ -238,7 +239,16 @@ export function NotePage({
     [router],
   );
 
-  if (page.isLoading) return <div className="p-10 text-muted">Loading…</div>;
+  if (page.isLoading) return <div className="mx-auto w-full max-w-[860px] p-6 sm:p-10" aria-busy="true">
+    <span className="sr-only" role="status">Opening the page…</span>
+    <Skeleton className="h-4 w-28" />
+    <Skeleton className="mt-8 h-10 w-3/5" />
+    <div className="mt-8 space-y-3">
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-11/12" />
+      <Skeleton className="h-4 w-4/5" />
+    </div>
+  </div>;
   if (!page.data) {
     if (!shared && inTrash(page.error)) return <TrashedPage pageId={pageId} onRestored={() => void page.refetch()} />;
     const missing = page.error instanceof ApiError && page.error.status === 404;
@@ -368,7 +378,7 @@ export function NotePage({
             </button>
           </div>
         ) : (
-          <div className="skeleton mt-4 h-64 w-full" />
+          <Skeleton className="mt-4 h-64 w-full" />
         )}
       </PageContent>
 

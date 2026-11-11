@@ -7,6 +7,7 @@ import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
 import { useToast } from "@/components/toast";
+import { LoadError } from "@/components/load-error";
 import { usePersistentState } from "@/lib/prefs";
 import Link from "next/link";
 import { resolveExtras } from "@/lib/desk-extras";
@@ -55,7 +56,7 @@ export function DeskView({
 
   const samplePref = flagValue(prefs.data?.preferences, SAMPLE_KEY);
   const plots = plotsQuery || flagValue(prefs.data?.preferences, PLOTS_KEY);
-  const liveQuery = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: prefs.isSuccess, staleTime: 15_000 });
+  const liveQuery = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: Boolean(prefs.data), staleTime: 15_000 });
 
   useLayoutEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
@@ -71,11 +72,12 @@ export function DeskView({
   const openPanel = plots ? panel : null;
   useEffect(() => setPanel(panelQuery), [panelQuery]);
   const liveData = liveQuery.data;
-  const ready = prefs.isSuccess && (sample || liveQuery.isFetched);
+  const ready = Boolean(prefs.data) && (sample || Boolean(liveData));
+  const failure = !prefs.data ? prefs.error : !sample && !liveData ? liveQuery.error : null;
   const filled = Boolean(liveData && ownCount(liveData) > 0);
   const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
-  const extras = resolveExtras(deskId, prefs.isSuccess ? extraValue : undefined);
-  const waiting = !((sample && ready) || (!sample && ready && liveData));
+  const extras = resolveExtras(deskId, prefs.data ? extraValue : undefined);
+  const waiting = !ready && !failure;
   const showSkeleton = useDelayedFlag(waiting);
   if (showSkeleton) sawLoader.current = true;
 
@@ -114,7 +116,7 @@ export function DeskView({
             {sample ? <span className="sample-mark">Sample</span> : null}
           </div>
           <h1 className="display" data-today-title suppressHydrationWarning>{greeting(new Date(), shell.data?.user.name)}</h1>
-          {sample ? (
+          {failure ? null : sample ? (
             <GlancePills live={sampleData} sample />
           ) : !liveQuery.isFetched ? (
             <div className="sub"><span className="sub-skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} data-motion-loading={showSkeleton ? "1" : "0"} aria-hidden /></div>
@@ -128,7 +130,7 @@ export function DeskView({
           <AddTileButton deskId={deskId} plots={plots} startOpen={add} />
         </div>
       </div>
-      {!sample && bannerReady && banner && liveQuery.isFetched && !filled ? (
+      {!sample && bannerReady && banner && liveData && !filled ? (
         <div className="today-hint" data-sample-hint>
           <span>Want to see what a full desk looks like first?</span>
           <button type="button" className="btn" onClick={() => void setFlag(SAMPLE_KEY, true)}>Show a sample</button>
@@ -149,11 +151,12 @@ export function DeskView({
           <div>{liveData.pinnedTasks.map(task => <Link key={task.id} href={`/tasks/${task.id}`} className="today-pin" title={task.title}>{task.title}</Link>)}</div>
         </section>
       ) : null}
-      <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk">
-        {sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
+      <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk" aria-busy={waiting || undefined}>
+        {failure ? <LoadError className="col-span-full w-full" error={failure} what="your desk" retrying={prefs.isFetching || liveQuery.isFetching} onRetry={() => { void (prefs.data ? liveQuery.refetch() : prefs.refetch()); }} /> : sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
           <div key={index} className="tile skel sk" data-span={phone ? 4 : span.c} data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${phone ? 4 : span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
         ))}
       </div>
+      {waiting ? <span className="sr-only" role="status">Loading your desk…</span> : null}
       <AddedTiles />
       {openPanel === "plots" ? <PlotsGalleryPanel onClose={() => { setPanel(null); window.history.replaceState(null, "", window.location.pathname); }} /> : null}
       {openPanel === "chart" ? <ChartTypePanel onClose={() => { setPanel(null); window.history.replaceState(null, "", window.location.pathname); }} /> : null}

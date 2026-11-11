@@ -195,7 +195,7 @@ Follows [CACHING.md](CACHING.md): keep caches small and drop them when the bytes
 
 ## 7. Performance
 
-ECharts and CodeMirror are dynamic imports from the studio and the code pane; the Plots list page does not import them. Loaders use `useDelayedFlag`, so a fast parse does not flash a spinner. Desk tiles do not import ECharts; the Saved plots tile is a list of links.
+ECharts and CodeMirror are dynamic imports from the studio and the code pane; the Plots list page does not import them. Loaders use `useDelayedFlag`, so a fast parse does not flash a spinner. The studio reserves its title, controls and figure area while its plot query loads, with Retry on failure. Inline plot cards reserve their saved height, or a 1.6 aspect ratio until the chart dimensions are known. Desk tiles do not import ECharts; the Saved plots tile is a list of links.
 
 ## 8. Tiled workspace
 
@@ -218,7 +218,7 @@ Add tile opens a gallery of chart types, grouped into Paper figures and Everyday
 
 ### Uploads belong to the workspace
 
-The **Add data** dialog takes a drop, a file from **Choose a file**, a public Sheets, Drive, OneDrive or SharePoint link, a paste, and the formats in §2. Progress is a percentage: reading the file, scanning a text file for rows, then the upload request (`loaded / total`); it reaches 100 when the server returns the column list. A link fetched by the server has no byte events, so the bar holds its last value until the response.
+The **Add data** dialog takes a drop, a file from **Choose a file**, a public Sheets, Drive, OneDrive or SharePoint link, a paste, and the formats in §2. Progress appears after the shared loading delay. File reading and upload each show their own measured percentage (`loaded / total`), labelled with that stage. Browser parsing, server parsing and fetching a link show a local activity indicator and the actual stage, without a percentage. The column summary appears as soon as the response arrives; no simulated scanning or minimum display time delays it.
 
 The next screen lists the file name, row count, columns and detected types, each overridable. OK keeps the dataset on the workspace; Cancel deletes it.
 

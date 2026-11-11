@@ -34,7 +34,6 @@ import "@/components/onboarding/tour.css";
 import "@/components/assistant/assistant-work.css";
 import "@/components/history/version-history.css";
 import { CelebrateHost } from "@/components/motion/celebrate";
-import { PageProgress } from "@/components/motion/page-progress";
 import { Splash } from "@/components/motion/skeletons";
 import { ModalScope, Skeleton, cx } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
@@ -145,7 +144,6 @@ function Frame({ children }: { children: React.ReactNode }) {
   if (pathname === "/start" || pathname === "/spaces/new") {
     return (
       <div className="h-screen overflow-y-auto bg-bg" data-focused-frame>
-        <PageProgress />
         <FeatureGate>{children}</FeatureGate>
       </div>
     );
@@ -164,7 +162,6 @@ function Frame({ children }: { children: React.ReactNode }) {
       >
         Skip to content
       </a>
-      <PageProgress />
       <SearchLanding />
       <div className="main-sidebar-slot h-full shrink-0 max-md:hidden">
         <Sidebar />

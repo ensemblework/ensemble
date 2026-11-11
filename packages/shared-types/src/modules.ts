@@ -90,9 +90,17 @@ export function hasModule(value: string | null | undefined, id: OptionalModule):
   return parseModules(value).has(id);
 }
 
+/** Personal AI activity and its stop controls also serve profiles without agent workspaces. */
+export function isActivityControlPath(path: string): boolean {
+  const raw = normalizePath(path);
+  return ["/api/agent/state", "/api/agent/pause", "/api/agent/resume", "/api/agent/stop-all"].includes(raw)
+    || /^\/api\/activity\/[^/]+\/stop$/.test(raw);
+}
+
 /** The optional module that owns this path, or null when the path is core or unknown. */
 export function moduleForPath(path: string): OptionalModule | null {
   const raw = normalizePath(path);
+  if (isActivityControlPath(raw)) return null;
   if (
     raw === "/code" ||
     raw.startsWith("/code/") ||

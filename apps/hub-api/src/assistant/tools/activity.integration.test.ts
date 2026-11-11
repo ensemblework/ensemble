@@ -87,6 +87,36 @@ const side = await seed(sideId, "side");
 const selfReply = await replying(mira.id, "this chat");
 selfChat = selfReply.slice("assistant:".length);
 
+test("profiles without workspace can inspect and stop their AI calls without exposing job rows", async () => {
+  const person = await harness.asUser();
+  const work = await seed(person.id, "activity-only");
+  await beginActivity(harness.app.redis, person.id, { id: `job:${work.running.id}`, kind: "workspace", label: "Hidden workspace task" });
+  await db.user.update({ where: { id: person.id }, data: { moduleSet: "" } });
+  await db.session.updateMany({ where: { userId: person.id }, data: { modules: "" } });
+  const state = await person.inject({ method: "GET", url: "/api/agent/state" });
+  assert.equal(state.statusCode, 200, state.body);
+  const body = state.json();
+  assert.deepEqual(body.calls.map((row: { id: string }) => row.id), [work.reply]);
+  assert.deepEqual(body.running, []);
+  assert.deepEqual(body.waiting, []);
+  assert.deepEqual(body.queued, []);
+  assert.equal(body.paused, false);
+  assert.doesNotMatch(state.body, /home |side |Hidden workspace/);
+  const stop = await person.inject({ method: "POST", url: `/api/activity/${encodeURIComponent(work.reply)}/stop` });
+  assert.equal(stop.statusCode, 204, stop.body);
+  assert.equal(await isCancelled(harness.app.redis, person.id, work.reply), true);
+  assert.equal(await isCancelled(harness.app.redis, mira.id, home.reply), false);
+  for (const url of ["/api/agent/pause", "/api/agent/resume", "/api/agent/stop-all"]) {
+    const response = await person.inject({ method: "POST", url });
+    assert.equal(response.statusCode, 200, response.body);
+    const checked = (await person.inject({ method: "GET", url: "/api/agent/state" })).json();
+    assert.equal(checked.paused, url === "/api/agent/pause");
+  }
+  assert.equal((await person.inject({ method: "POST", url: "/api/agent/assign", payload: {} })).statusCode, 404);
+  assert.equal((await person.inject({ method: "GET", url: `/api/agent/jobs/${work.running.id}` })).statusCode, 404);
+  assert.equal((await harness.app.inject({ method: "GET", url: "/api/agent/state" })).statusCode, 401);
+});
+
 test("hub_list_activity shows this space's running work only, and marks this chat's own reply", async () => {
   const result = await call("hub_list_activity", ctx(mira.id));
   const rows = (result.data as { activity: Array<{ id: string; kind: string; label: string; canStop: boolean; task?: { id: string } }> }).activity;
@@ -197,6 +227,7 @@ test("every new read tool takes no id of another space as an answer", async () =
 test("someone a space is shared with sees only this space's replies and runs, never their own other spaces' or the owner's imports", async () => {
   const guest = await harness.asUser();
   const theirs = await replying(guest.id, "guest's own space question");
+  await beginActivity(harness.app.redis, guest.id, { id: "model:guest-private", kind: "model", label: "Private meeting preparation" });
   const ownersRun = await db.workspaceJob.create({ data: { userId: mira.id, taskId: home.task.id, kind: "code", status: "running", executionMode: "sandbox", model: "m", startedAt: new Date() } });
   const ownersImport = await db.importJob.create({ data: { userId: mira.id, source: "trello", status: "running", startedAt: new Date() } });
   const forOwner = ((await call("hub_list_activity", ctx(mira.id))).data as { activity: Array<{ id: string }> }).activity.map((row) => row.id);
@@ -205,14 +236,18 @@ test("someone a space is shared with sees only this space's replies and runs, ne
   const scope = { spaceId: mira.id, accountId: guest.id, access: { kind: "member" as const, role: "editor" as const, ownerId: mira.id } };
   await runInScope(scope, async () => {
     const inShared = await replying(mira.id, "guest asks in the shared space");
+    await beginActivity(harness.app.redis, mira.id, { id: "model:guest-shared", kind: "model", label: "Shared meeting preparation" });
     const rows = ((await call("hub_list_activity", ctx(mira.id, { conversationId: undefined }))).data as { activity: Array<{ id: string; kind: string; canStop: boolean; note?: string }> }).activity;
     const ids = rows.map((row) => row.id);
     assert.ok(ids.includes(inShared));
     assert.ok(!ids.includes(theirs), "a reply in the guest's own space is another space's");
+    assert.ok(ids.includes("model:guest-shared"));
+    assert.ok(!ids.includes("model:guest-private"), "direct model calls keep their originating space");
     assert.ok(!rows.some((row) => row.kind === "import"), "imports are the owner's");
     assert.equal(rows.find((row) => row.id === `job:${ownersRun.id}`)?.canStop, false, "a run on the owner's computer is theirs to stop");
     await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: `job:${ownersRun.id}` }), /someone else's computer/);
     await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: `import:${ownersImport.id}` }), /no longer running in this space/);
+    await assert.rejects(() => call("hub_stop_activity", ctx(mira.id), { id: "model:guest-private" }), /no longer running in this space/);
   });
   assert.equal((await db.importJob.findUniqueOrThrow({ where: { id: ownersImport.id } })).status, "running");
   assert.equal((await db.workspaceJob.findUniqueOrThrow({ where: { id: ownersRun.id } })).status, "running");

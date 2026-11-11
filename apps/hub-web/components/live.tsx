@@ -35,6 +35,7 @@ const INVALIDATES: Record<string, string[][]> = {
   workspace: [["workspace"], ["runs"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"], ["notifications"]],
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],
+  "activity.changed": [["agent-state"]],
   deliverable: [["deliverables"], ["graph"]],
   // A meeting's AI read, project or prep brief changed (connectors/meetings/ai.ts, cowork/prep.ts).
   meetings: [["meeting-note"], ["meetings-imported"], ["meeting-sessions"], ["meeting-session"], ["meeting-cues"], ["meeting-calendar"], ["graph"]],
@@ -110,6 +111,8 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         setConnected(true);
         setDropped(false);
         setServerError(false);
+        // A call may start or end between the initial query and opening the stream.
+        invalidateSoon(client, ["agent-state"]);
         if (opened || sawError) {
           void client.invalidateQueries();
           // Live pages fetch the steps they missed while the stream was down.
@@ -211,14 +214,6 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
           window.dispatchEvent(new CustomEvent("ensemble:undo", { detail: data }));
         } catch {
           window.dispatchEvent(new CustomEvent("ensemble:undo"));
-        }
-      });
-      source.addEventListener("assistant.frame", (event) => {
-        try {
-          const data = JSON.parse((event as MessageEvent<string>).data) as { frame?: { type: string; text?: string } };
-          if (data.frame?.type === "status" && data.frame.text) setWorking(data.frame.text);
-        } catch {
-          // ignore malformed frames
         }
       });
     };

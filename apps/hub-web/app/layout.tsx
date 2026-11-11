@@ -12,6 +12,7 @@ import "@/components/shell/notifications.css";
 import "@/components/shell/topbar-surfaces.css";
 import "@/components/work-surfaces.css";
 import "@/components/motion/suite.css";
+import "@/components/motion/loading.css";
 import "@/components/motion/springs.css";
 import "@/components/motion/search-query.css";
 import "@/components/motion/morph.css";

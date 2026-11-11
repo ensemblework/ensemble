@@ -45,7 +45,7 @@ import { useToast } from "../toast";
 import { TaskSkeleton } from "@/components/motion/skeletons";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
-import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
+import { MenuItem, Popover, PriorityTag, Tag, cx, Skeleton } from "../ui";
 import { PageContent } from "../pages/page-content";
 import { PageTitleField } from "../pages/title-field";
 import { PageLoadFailure, inTrash } from "../pages/page-load";
@@ -814,7 +814,7 @@ export function TaskPage({
             </button>
           </div>
         ) : (
-          <div className="skeleton mt-4 h-64 w-full" />
+          <Skeleton className="mt-4 h-64 w-full" />
         )}
       </PageContent>
       {!currentLink() && !currentShare() ? <NestedPages parentTaskId={taskId} linked={linked} /> : null}

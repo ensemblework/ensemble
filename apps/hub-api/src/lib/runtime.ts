@@ -1,4 +1,5 @@
 import { ASSISTANT_UNAVAILABLE } from "@ensemble/shared-types";
+import { randomUUID } from "node:crypto";
 /**
  * Model calls. Hosted Ensemble posts them to the Python runtime.
  * The desktop sidecar runs the same calls in this process (ENSEMBLE_INPROCESS_RUNTIME,
@@ -8,7 +9,7 @@ import { isSubscriptionProvider, type Settings } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { dispatchRuntime, DispatchError } from "../runtime/dispatch.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
-import { isPaused } from "./activity.js";
+import { beginActivity, currentActivity, endActivity, isCancelled, isPaused, withActivity } from "./activity.js";
 import { recordMetric } from "./metrics.js";
 import { redis } from "./redis.js";
 import { callCost } from "./pricing.js";
@@ -49,6 +50,7 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
         signal: rest.signal ?? AbortSignal.timeout(timeoutMs),
       })) as T;
     } catch (error) {
+      if (rest.signal?.aborted) throw rest.signal.reason ?? error;
       if (error instanceof IncludedLimitError) throw error;
       if (error instanceof DispatchError) throw new RuntimeError(error.message, error.statusCode);
       throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
@@ -67,6 +69,7 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
       signal: rest.signal ?? AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    if (rest.signal?.aborted) throw rest.signal.reason ?? error;
     throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
   }
   if (!response.ok) {
@@ -100,14 +103,44 @@ export async function complete(args: {
   /** "triage" or "plan". The runtime skips JSON values that are not that shape. */
   jsonShape?: "triage" | "plan";
   purpose?: string;
+  signal?: AbortSignal;
 }): Promise<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null; credits?: number | null }> {
-  const tier = args.settings.models[args.tier ?? "easy"];
+  args.signal?.throwIfAborted();
   if (await isPaused(redis, args.userId)) {
     throw new RuntimeError("The agent is paused. Resume it from the top bar to allow model calls.", 409);
   }
-  if (isSubscriptionProvider(tier.provider)) return completeOnSubscription({ ...args, provider: tier.provider, model: tier.model, effort: tier.effort });
+  const parent = currentActivity(args.userId);
+  if (parent) return completeRequest(args, args.signal ? AbortSignal.any([parent.signal, args.signal]) : parent.signal);
+  const tier = args.settings.models[args.tier ?? "easy"];
+  const activityId = `model:${randomUUID()}`;
+  const stop = new AbortController();
+  const signal = args.signal ? AbortSignal.any([args.signal, stop.signal]) : stop.signal;
+  await beginActivity(redis, args.userId, { id: activityId, kind: "model", label: args.purpose || "Model response", model: tier.model });
+  let checking = false;
+  const monitor = setInterval(() => {
+    if (checking || signal.aborted) return;
+    checking = true;
+    void Promise.all([isPaused(redis, args.userId), isCancelled(redis, args.userId, activityId)])
+      .then(([paused, cancelled]) => { if (paused || cancelled) stop.abort(new DOMException("Stopped.", "AbortError")); })
+      .catch(() => stop.abort(new DOMException("Stop control is unavailable.", "AbortError")))
+      .finally(() => { checking = false; });
+  }, 750);
+  monitor.unref();
+  try {
+    return await withActivity(args.userId, activityId, signal, () => completeRequest(args, signal));
+  } finally {
+    clearInterval(monitor);
+    await endActivity(redis, args.userId, activityId);
+  }
+}
+
+async function completeRequest(args: Parameters<typeof complete>[0], signal: AbortSignal): ReturnType<typeof complete> {
+  signal.throwIfAborted();
+  const tier = args.settings.models[args.tier ?? "easy"];
+  if (isSubscriptionProvider(tier.provider)) return completeOnSubscription({ ...args, signal, provider: tier.provider, model: tier.model, effort: tier.effort });
   const result = await runtime<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null; credits?: number | null }>("/api/complete", {
     method: "POST",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
     json: {
       userId: args.userId,
       provider: tier.provider,
@@ -157,6 +190,7 @@ async function completeOnSubscription(args: Parameters<typeof complete>[0] & { p
     prompt: args.prompt,
     tools: [],
     maxTurns: 2,
+    signal: args.signal,
     call: async () => ({ text: "There are no tools in this request.", isError: true }),
   });
   const json = args.json ? jsonFrom(done.text) : undefined;
