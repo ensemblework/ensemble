@@ -4,7 +4,7 @@ export type SearchPhase = "idle" | "typing" | "searching" | "results" | "empty";
  * Which search.query state to paint.
  * `pending` is real in-flight work. A cached query passes false, so it never
  * becomes "searching". `showLoader` is the shared delay policy (already past
- * 180 ms, and held). An unknown count must not claim the list is empty.
+ * 250 ms, with no minimum hold). An unknown count must not claim the list is empty.
  */
 export function searchPhase(input: {
   focused: boolean;

@@ -50,7 +50,6 @@ export function SettingsNav({ value, onChange, onJump, hidden = [], guest = fals
           <Search size={15} />
         </button>
       </div>
-      <SettingsOutline tab={value} scroller={scroller} />
     </div>
   );
 }
@@ -162,8 +161,8 @@ export function SettingsSearch({ hidden, guest, focus, onJump, onDismiss }: { hi
 
 type OutlineItem = { label: string; node: HTMLElement };
 
-/** The open tab's cards, read from the page, with the one in view marked. Wide screens only. */
-function SettingsOutline({ tab, scroller }: { tab: SettingsTab; scroller: RefObject<HTMLElement | null> }) {
+/** The open tab's cards, read from the page, with the one in view marked. A slim rail on wide screens only. */
+export function SettingsOutline({ tab, scroller }: { tab: SettingsTab; scroller: RefObject<HTMLElement | null> }) {
   const [items, setItems] = useState<OutlineItem[]>([]);
   const [current, setCurrent] = useState(0);
   // After a click the clicked card stays marked while the page scrolls to it, even if the page cannot bring it to the top.
@@ -217,9 +216,9 @@ function SettingsOutline({ tab, scroller }: { tab: SettingsTab; scroller: RefObj
   }, [items, scroller]);
   if (items.length < 2) return null;
   return (
-    <nav aria-label="On this page" className="mt-6 hidden lg:block [@media(max-height:760px)]:hidden" data-settings-outline>
-      <div className="mb-2 px-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-faint">On this page</div>
-      <ul className="ml-2.5 border-l border-line">
+    <nav aria-label="On this page" className="settings-outline" data-settings-outline>
+      <div className="mb-2 pl-3 text-[10.5px] font-medium uppercase tracking-[0.08em] text-faint">On this page</div>
+      <ul className="border-l border-line">
         {items.map((item, index) => (
           <li key={`${item.label}-${index}`}>
             <button
@@ -233,7 +232,7 @@ function SettingsOutline({ tab, scroller }: { tab: SettingsTab; scroller: RefObj
                 item.node.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
               }}
               className={cx(
-                "-ml-px block w-full truncate border-l py-[5px] pl-3 pr-2 text-left text-[12.5px] transition-colors",
+                "-ml-px block w-full truncate border-l py-1 pl-3 pr-1 text-left text-[12px] leading-[18px] transition-colors",
                 index === current ? "border-accent font-medium text-ink" : "border-transparent text-muted hover:text-ink",
               )}
             >

@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/brand",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "private": true,
   "main": "index.js",
   "types": "index.d.ts",

@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
@@ -11,7 +12,7 @@ import type { Size } from "@ensemble/shared-types/widgets";
 
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
   ssr: false,
-  loading: () => <div className="skeleton h-full min-h-[96px] w-full flex-1" />,
+  loading: () => <Skeleton className="h-full min-h-[96px] w-full flex-1" />,
 });
 
 function useWhenVisible() {

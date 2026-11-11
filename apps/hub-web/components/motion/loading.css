@@ -1,0 +1,15 @@
+.m-local-spinner-slot { display: inline-flex; flex: none; vertical-align: middle; align-items: center; justify-content: center; }
+.m-local-spinner-slot[data-visible="0"] { visibility: hidden; }
+.m-local-spinner { display: block; width: 100%; height: 100%; border: 1.5px solid var(--line-strong); border-top-color: var(--muted); border-radius: 50%; }
+.m-local-spinner-slot[data-visible="1"] .m-local-spinner { animation: m-local-turn 1s linear infinite; }
+.m-loading-line { height: 3px; overflow: hidden; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.m-loading-line[data-visible="0"] { visibility: hidden; }
+.m-loading-line > span { display: block; width: 30%; height: 100%; background: var(--accent); animation: m-local-sweep 1.8s cubic-bezier(.45,0,.2,1) infinite; }
+.m-content-opening { width: min(440px, 85vw); display: grid; gap: 12px; }
+@keyframes m-local-turn { to { transform: rotate(360deg); } }
+@keyframes m-local-sweep { 0% { transform: translateX(-110%); } 75%,100% { transform: translateX(440%); } }
+[data-reduce-motion="true"] .m-local-spinner,
+[data-reduce-motion="true"] .m-loading-line > span { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .m-local-spinner, .m-loading-line > span { animation: none !important; }
+}

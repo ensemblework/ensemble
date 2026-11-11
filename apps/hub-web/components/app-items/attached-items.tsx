@@ -1,5 +1,4 @@
 "use client";
-import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -11,7 +10,7 @@ import { APP_ITEM_QUERY, appItemsApi, type AppItemOwner } from "@/lib/api-app-it
 import { relative } from "@/lib/format";
 import { BrandLogo } from "../connectors/brand-logo";
 import { useToast } from "../toast";
-import { cx } from "../ui";
+import { cx, Spinner } from "../ui";
 import { AppItemPicker } from "./app-item-picker";
 import { sourceInfo, useAppItemSources } from "./use-app-items";
 
@@ -98,7 +97,7 @@ export function AttachedItems({ taskId, projectId, className }: { taskId?: strin
                       disabled={refreshing}
                       onClick={() => refresh.mutate(item)}
                     >
-                      {refreshing ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={13} />}
+                      {refreshing ? <Spinner size={14} /> : <RefreshCw size={13} />}
                     </button>
                     <button
                       type="button"

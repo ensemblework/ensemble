@@ -5,7 +5,7 @@ import { ArrowDownLeft, ArrowUpRight, ChevronDown, Info, RefreshCw, Search } fro
 import { useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
 import { IncludedCreditsCard, IncludedLocalOnly } from "@/components/metrics/included-credits";
-import { Empty, InfoTip, PageHeader, cx } from "@/components/ui";
+import { Empty, InfoTip, PageHeader, Spinner, cx } from "@/components/ui";
 import { api, type MetricsSummary, type UsageCall } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import { creditAmount, useIncludedUsage } from "@/lib/included";
@@ -76,7 +76,7 @@ export default function MetricsPage() {
       <InfoTip label="About usage" text="Only calls through Ensemble appear here. Token counts come from provider responses. Other apps and AI plan balances are not read. Missing values mean not reported, not zero." />
       <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{providerChoices.map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
       <select aria-label="Usage period" value={windowDays} onChange={event => setWindowDays(Number(event.target.value))} className="field text-sm"><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select>
-      <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}><RefreshCw size={15} className={metrics.isFetching ? "animate-spin" : ""} /></button>
+      <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}>{metrics.isFetching ? <Spinner size={15} /> : <RefreshCw size={15} />}</button>
     </div>} />
     {metrics.error ? <p role="alert" className="mb-4 rounded-lg border border-danger/40 p-3 text-sm text-danger">{metrics.error.message}</p> : null}
     <div className="space-y-5">

@@ -1,4 +1,6 @@
 "use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
 
 /**
  * Ensemble's own date and time fields, in place of the browser's: a button that reads naturally

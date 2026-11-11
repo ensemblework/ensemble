@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { Skeleton } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -68,7 +69,7 @@ export function TrashedPage({ pageId, onRestored }: { pageId: string; onRestored
   const Editor = useBlockEditor();
   if (page.isLoading) return <div className="p-10 text-muted">Loading…</div>;
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10">
+    <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" data-plain-canvas>
       <TrashBanner kind="page" id={pageId} deletedAt={page.data?.deletedAt} onRestored={onRestored} />
       {page.data ? (
         <>
@@ -77,7 +78,7 @@ export function TrashedPage({ pageId, onRestored }: { pageId: string; onRestored
             {Editor ? (
               <Editor initial={page.data.content ?? EMPTY_PAGE} entities={entities.get} onChange={() => undefined} editable={false} comments={false} placeholder="" />
             ) : (
-              <div className="skeleton mt-4 h-64 w-full" />
+              <Skeleton className="mt-4 h-64 w-full" />
             )}
           </div>
         </>

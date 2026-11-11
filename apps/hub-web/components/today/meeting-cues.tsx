@@ -7,7 +7,7 @@ import { api, type MeetingCue } from "@/lib/api";
 import { meetingsApi } from "@/lib/api-meetings";
 import { MarkdownText } from "@/components/markdown-text";
 import { useToast } from "../toast";
-import { Spinner } from "../ui";
+import { ThinkingStatus } from "../motion/slot";
 
 function whenLabel(start: string): string {
   const date = new Date(start);
@@ -128,11 +128,12 @@ function CueCard({
                 <span>Last time</span>
                 {previousHref ? <Link href={previousHref} className="font-normal hover:underline">{previous.title} · {new Date(previous.at).toLocaleDateString()}</Link> : null}
                 {!cue.prep && cue.artifactId && cue.kind !== "follow_up" ? (
-                  <button type="button" className="btn-ghost ml-auto h-6 px-2 text-[12px]" disabled={prepare.isPending} onClick={() => prepare.mutate()}>
-                    {prepare.isPending ? <Spinner size={11} /> : null}Prepare
+                  <button type="button" className="btn-ghost ml-auto h-6 px-2 text-[12px]" disabled={prepare.isPending} aria-busy={prepare.isPending || undefined} onClick={() => prepare.mutate()}>
+                    {prepare.isPending ? "Preparing…" : "Prepare"}
                   </button>
                 ) : null}
               </div>
+              {prepare.isPending ? <div className="mt-2"><ThinkingStatus real="Preparing your meeting brief…" active /></div> : null}
               {previous.summary ? <p className="mt-1 text-muted">{previous.summary}</p> : null}
               {previous.openTasks.length ? (
                 <ul className="mt-1 space-y-1">

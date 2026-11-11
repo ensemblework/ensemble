@@ -46,13 +46,8 @@ import { useResizablePeek } from "../shell/peek";
 import { useModalFocus } from "@/lib/modal-focus";
 import { duration, modelsSeen, readableTraceValue, sameModel, toolStats, traceEntries, usd, type TraceCall, type TraceEntry, type TraceKind } from "@/lib/run-trace";
 
-export const RUN_OUTCOME: Record<string, { label: string; tone: "green" | "red" | "yellow" | "gray" | "orange" | "blue" }> = {
-  success: { label: "Done", tone: "green" },
-  failed: { label: "Failed", tone: "red" },
-  cancelled: { label: "Stopped", tone: "gray" },
-  needs_info: { label: "Needs info", tone: "orange" },
-  waiting_approval: { label: "Waiting for you", tone: "yellow" },
-};
+export { RUN_OUTCOME } from "@/lib/run-status";
+import { runPresentation } from "@/lib/run-status";
 
 const LIVE = new Set(["queued", "claimed", "running", "stopping", "waiting_approval"]);
 
@@ -95,7 +90,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
       <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop max-md:!w-full [overflow-wrap:anywhere]" style={{ width: fullscreen.active ? "100%" : "var(--page-width, 50%)" }}>
         {!fullscreen.active && <div role="separator" aria-orientation="vertical" aria-label="Run panel width" tabIndex={0} aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.width} onPointerDown={resize.onPointerDown} onKeyDown={resize.onKeyDown} onDoubleClick={resize.reset} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/30 focus-visible:bg-accent/30 max-md:hidden"/>}
         {detail.isLoading ? (
-          <div className="flex flex-1 items-center justify-center">
+          <div className="flex flex-1 items-center justify-center" role="status" aria-label="Opening run" aria-busy="true">
             <Spinner />
           </div>
         ) : !data ? (
@@ -117,11 +112,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
 function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDetail; job: RunJob | null; onClose: () => void; fullscreen: boolean; onFullscreen: React.MouseEventHandler<HTMLButtonElement> }) {
   const [tab, setTab] = useState<Tab>("result");
   const live = runIsLive(run, job);
-  const outcome = run.outcome
-    ? (RUN_OUTCOME[run.outcome] ?? { label: run.outcome, tone: "gray" as const })
-    : live
-      ? { label: "Running", tone: "blue" as const }
-      : { label: job?.status === "interrupted" ? "Interrupted" : "Ended", tone: "gray" as const };
+  const outcome = runPresentation({ outcome: run.outcome, endedAt: run.endedAt, jobStatus: job?.status });
   // A run an older server never closed ends when its job did.
   const endedAt = run.endedAt ?? (live ? null : (job?.finishedAt ?? null));
   const entries = useMemo(() => traceEntries(run.steps, run.startedAt, endedAt), [run.steps, run.startedAt, endedAt]);
@@ -170,7 +161,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
         <div className="mt-4">
           <Tabs label="Run sections" tabs={tabs} value={tab} onChange={setTab} />
         </div>
-        {tab === "trace" ? <Trace entries={entries} live={live} /> : null}
+        {tab === "trace" ? <Trace entries={entries} live={live} active={outcome.active} label={outcome.label} /> : null}
         {tab === "result" ? <><Result run={run} />{!live && <RunFeedback run={run}/>}</> : null}
         {tab === "files" ? job && (job.files.length || job.results.length) ? <Files job={job} /> : <p className="rounded-lg border border-dashed border-line p-6 text-center text-[13px] text-muted">{live ? "Files appear here as the run creates or changes them." : "This run did not create or change any files."}</p> : null}
       </div>
@@ -262,14 +253,15 @@ const FILTERS: Array<{ id: Filter; label: string; match: (kind: TraceKind) => bo
   { id: "messages", label: "Messages", match: (kind) => kind === "message" || kind === "result" || kind === "step" },
 ];
 
-function Trace({ entries, live }: { entries: TraceEntry[]; live: boolean }) {
+function Trace({ entries, live, active, label }: { entries: TraceEntry[]; live: boolean; active: boolean; label: string }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [openAll, setOpenAll] = useState<boolean | null>(null);
   const stats = useMemo(() => toolStats(entries), [entries]);
   if (!entries.length) {
     return (
-      <div className="rounded-md border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted">
-        {live ? "Nothing recorded yet. Steps show up here as the agent works." : "No steps were recorded for this run. Runs on a paired computer with Ensemble older than 0.3.5 report only the result."}
+      <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-line px-4 py-6 text-center text-[13px] text-muted" role="status">
+        {active ? <BrandMorph purpose="run" state="loop" loader /> : null}
+        {live ? active ? "Nothing recorded yet. Steps show up here as the agent works." : `${label}. Nothing recorded yet.` : "No steps were recorded for this run. Runs on a paired computer with Ensemble older than 0.3.5 report only the result."}
       </div>
     );
   }
@@ -327,11 +319,11 @@ function Trace({ entries, live }: { entries: TraceEntry[]; live: boolean }) {
       </div>
       <ol className="relative space-y-1.5">
         {shown.map((entry) => (
-          <TraceRow key={`${entry.id}:${openAll}`} entry={entry} defaultOpen={openAll ?? (entry.kind === "result" || entry.status === "failed")} />
+          <TraceRow key={`${entry.id}:${openAll}`} entry={entry} active={active} defaultOpen={openAll ?? (entry.kind === "result" || entry.status === "failed")} />
         ))}
         {live ? (
           <li className="flex items-center gap-2 px-2 py-1.5 text-[12.5px] text-muted">
-            <Spinner size={12} /> Working…
+            {active ? <BrandMorph purpose="run" state="loop" loader /> : <CircleDashed size={16} aria-hidden />} {active ? "Working…" : label}
           </li>
         ) : null}
       </ol>
@@ -339,10 +331,11 @@ function Trace({ entries, live }: { entries: TraceEntry[]; live: boolean }) {
   );
 }
 
-function StatusMark({ status, ok }: { status: string; ok?: boolean | null }) {
-  if (status === "running" || ok === null) return <BrandMorph size={18} kind="relay" state="loop" />;
-  if (status === "failed" || ok === false) return <XCircle size={14} className="shrink-0 text-danger" />;
-  return <CheckCircle2 size={14} className="shrink-0 text-ok" />;
+function StatusMark({ status, ok, active }: { status: string; ok?: boolean | null; active: boolean }) {
+  if (status === "failed" || ok === false) return <XCircle size={16} className="shrink-0 text-danger" aria-label="Failed" />;
+  if (status === "running") return <CircleDashed size={16} className="shrink-0 text-muted" aria-label={active ? "Running" : "No result reported"} />;
+  if (ok === null) return <CircleDashed size={16} className="shrink-0 text-muted" aria-label="No result reported" />;
+  return <CheckCircle2 size={16} className="shrink-0 text-ok" aria-label="Complete" />;
 }
 
 function Timeline({ entry }: { entry: TraceEntry }) {
@@ -357,7 +350,7 @@ function Timeline({ entry }: { entry: TraceEntry }) {
   );
 }
 
-function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: boolean }) {
+function TraceRow({ entry, defaultOpen, active }: { entry: TraceEntry; defaultOpen: boolean; active: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const single = entry.calls.length === 1 ? entry.calls[0]! : null;
   const Icon =
@@ -401,7 +394,7 @@ function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: bool
         {entry.tokensIn || entry.tokensOut ? <span className="hidden shrink-0 text-[11px] text-faint lg:inline">{((entry.tokensIn ?? 0) + (entry.tokensOut ?? 0)).toLocaleString()} tok</span> : null}
         <Timeline entry={entry} />
         <span className="w-14 shrink-0 text-right text-[11.5px] tabular-nums text-muted">{duration(entry.ms)}</span>
-        {entry.kind === "tools" || entry.status === "failed" || entry.status === "running" ? <StatusMark status={entry.status} ok={single ? single.ok : undefined} /> : <span className="w-[14px] shrink-0" />}
+        {entry.kind === "tools" || entry.status === "failed" || entry.status === "running" ? <StatusMark active={active} status={entry.status} ok={single ? single.ok : undefined} /> : <span className="w-[14px] shrink-0" />}
       </button>
       {open && hasBody ? (
         <div className="space-y-2.5 border-t border-line px-3 py-2.5">
@@ -411,7 +404,7 @@ function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: bool
             </Section>
           ) : null}
           {entry.calls.map((call) => (
-            <CallDetail key={call.key} call={call} many={entry.calls.length > 1} />
+            <CallDetail key={call.key} call={call} active={active} many={entry.calls.length > 1} />
           ))}
           {entry.text ? (
             entry.kind === "tools" ? (
@@ -429,7 +422,7 @@ function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: bool
   );
 }
 
-function CallDetail({ call, many }: { call: TraceCall; many: boolean }) {
+function CallDetail({ call, many, active }: { call: TraceCall; many: boolean; active: boolean }) {
   const Icon = toolIcon(call.name);
   return (
     <div className="space-y-1.5">
@@ -439,11 +432,11 @@ function CallDetail({ call, many }: { call: TraceCall; many: boolean }) {
           <span className="font-mono font-medium">{call.name}</span>
           {call.summary ? <span className="min-w-0 flex-1 truncate text-muted">{call.summary}</span> : <span className="flex-1" />}
           <span className="tabular-nums text-muted">{duration(call.ms)}</span>
-          <StatusMark status={call.running ? "running" : "done"} ok={call.ok} />
+          <StatusMark active={active} status={call.running ? "running" : "done"} ok={call.ok} />
         </div>
       ) : null}
       {call.args ? <CodeView label="Input" text={call.args} /> : null}
-      {call.output ? <CodeView label={call.ok === false ? "Error" : "Output"} text={call.output} output danger={call.ok === false} /> : call.running ? <div className="text-[12px] text-muted">Waiting for the result…</div> : null}
+      {call.output ? <CodeView label={call.ok === false ? "Error" : "Output"} text={call.output} output danger={call.ok === false} /> : call.running ? <div className="text-[12px] text-muted">{active ? "Waiting for the result…" : "No result was reported."}</div> : null}
     </div>
   );
 }

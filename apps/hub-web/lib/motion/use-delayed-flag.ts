@@ -21,5 +21,5 @@ export function useDelayedFlag(active: boolean, delay = MOTION_SHOW_DELAY_MS, mi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, delay, minVisible]);
 
-  return delayIsShown(snapshot);
+  return (active || minVisible > 0) && delayIsShown(snapshot);
 }

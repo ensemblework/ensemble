@@ -3,7 +3,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Skeleton } from "@/components/ui";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
-import { BrandMorph } from "./brand-morph";
 
 function Block({ className, index = 0 }: { className: string; index?: number }) {
   return <Skeleton index={index} className={className} />;
@@ -293,10 +292,21 @@ export function Splash({ active }: { active: boolean }) {
   const shown = useDelayedFlag(active);
   if (!shown) return null;
   return (
-    <div className="m-splash" data-motion-slot="brand.splash" data-state="reveal" data-motion-loading="1" aria-hidden>
-      <span className="m-splash-tile">
-        <BrandMorph size={56} kind="threadline" state={active ? "loop" : "idle"} />
-      </span>
+    <div className="m-splash" data-motion-slot="content.opening" data-state="loading" data-motion-loading="1" role="status" aria-label="Opening your workspace">
+      <div className="m-content-opening" aria-hidden>
+        <div className="skeleton h-7 w-40" data-visible="1" />
+        <div className="skeleton h-24 w-full" data-visible="1" />
+        <div className="skeleton h-16 w-full" data-visible="1" />
+      </div>
     </div>
   );
+}
+
+/** Route readiness follows Suspense, including query-only navigation and interrupted transitions. */
+export function ContentRouteSkeleton() {
+  return <div className="mx-auto w-full max-w-[1080px] space-y-6 p-6" data-route-loading role="status" aria-label="Opening content" aria-busy="true">
+    <Painted className="h-8 w-40" />
+    <Painted className="h-4 w-64 max-w-full" />
+    <div className="space-y-3"><Painted className="h-12 w-full" /><Painted className="h-12 w-full" /><Painted className="h-12 w-3/4" /></div>
+  </div>;
 }

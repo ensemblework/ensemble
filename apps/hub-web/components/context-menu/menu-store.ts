@@ -4,7 +4,8 @@
  * `openContextMenu(event, build)` from its `onContextMenu`; the nearest one wins (it prevents the
  * default, so the ones around it and the page-wide menu stand back).
  *
- * The browser's menu stays: in plain form fields (inputs, text areas, code editors), with Shift held, on a
+ * The browser's menu stays: in plain form fields (inputs, text areas, code editors; titles take ours, with
+ * spelling, through text-field-menu.ts), with Shift held, on a
  * second right-click at the same spot or on the "Browser menu" row while ours is open, for the one
  * right-click after "Browser menu" is clicked, and everywhere when Settings › Appearance turns ours off.
  */
@@ -33,6 +34,8 @@ export type MenuAction = {
   disabled?: boolean;
   danger?: boolean;
   checked?: boolean;
+  /** Set in bold, like a spelling suggestion. */
+  strong?: boolean;
   run?: () => unknown;
   /** Asked in the menu first; null goes straight on. */
   confirm?: () => MenuConfirm | null | Promise<MenuConfirm | null>;
@@ -111,7 +114,7 @@ export function notePointer(kind: string): void {
 }
 export const lastPointer = () => pointer;
 
-/** Text boxes keep the browser's menu (spelling suggestions, autofill); the page editor is ours. */
+/** Text boxes keep the browser's menu (spelling suggestions, autofill); the page editor and titles (text-field-menu.ts, with `inFields`) are ours. */
 export function plainField(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
   if (!element) return false;

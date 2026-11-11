@@ -11,7 +11,7 @@ import { api, type SpaceSummary } from "@/lib/api";
 import { followSpaceSwitches, spaceInitial, spaceLabel, switchSpace } from "@/lib/spaces";
 import { Splash } from "@/components/motion/skeletons";
 import { useToast } from "../toast";
-import { Popover, cx } from "../ui";
+import { Popover, cx, Skeleton } from "../ui";
 import { Avatar } from "../sharing/people";
 import { ShareDialog } from "../sharing/share-dialog";
 
@@ -76,7 +76,7 @@ function SpaceMenu({ shell, onPick, close, onShare }: { shell: Shell | undefined
           </button>
         );
       })}
-      {spaces.isLoading ? <div className="skeleton mx-2 my-1 h-8 rounded-md" /> : null}
+      {spaces.isLoading ? <Skeleton className="mx-2 my-1 h-8 rounded-md" /> : null}
       {spaces.data?.shared?.length ? (
         <>
           <div className="flex items-center gap-1.5 px-2 pb-1 pt-2 text-[11.5px] text-faint">

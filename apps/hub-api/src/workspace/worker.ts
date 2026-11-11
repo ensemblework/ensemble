@@ -8,7 +8,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
-import { activityIds, isPaused, requestCancel, setPaused } from "../lib/activity.js";
+import { activityIds, isPaused, requestCancel, setPaused, withActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
 import { HostedAccessError, requireHostAccess } from "../lib/hosted-access.js";
 import { sseHub } from "../lib/sse.js";
@@ -88,7 +88,7 @@ function start(app: FastifyInstance, job: WorkspaceJob): void {
       }
     }
   };
-  const done = executeJob(app, job.id, { signal: controller.signal, waitForPerson })
+  const done = withActivity(job.userId, `job:${job.id}`, controller.signal, () => executeJob(app, job.id, { signal: controller.signal, waitForPerson }))
     .catch(async (error: unknown) => {
       app.log.error({ err: error, jobId: job.id }, "agent job crashed");
       await app.prisma.workspaceJob

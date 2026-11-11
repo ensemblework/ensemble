@@ -388,7 +388,7 @@ function MeetingsBody() {
             </ul>
           </div>
           {note ? (
-            <article className="meeting-paper" data-meeting-id={note.id}>
+            <article className="meeting-paper" data-meeting-id={note.id} data-plain-canvas>
               <MeetingNoteDetail key={note.id} note={note} onDelete={(row) => void deleteNote(row)} />
             </article>
           ) : active?.kind === "note" ? (
@@ -398,7 +398,7 @@ function MeetingsBody() {
           ) : detail.isPending && sessionId ? (
             <SkeletonRows count={4} />
           ) : session ? (
-            <article className="meeting-paper" data-meeting-id={session.id}>
+            <article className="meeting-paper" data-meeting-id={session.id} data-plain-canvas>
               <div className="meeting-paper-kicker"><MessageSquare size={13} aria-hidden /><time dateTime={session.startedAt}>{meetingWhen(session.startedAt)}</time><span>{session.status !== "ended" ? "In progress" : "Meeting ended"}</span></div>
               <MeetingNotesFields
                 key={session.id}

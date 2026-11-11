@@ -5,7 +5,8 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { LinkifiedText } from "@/components/linkified-text";
 import { useSpaceAccess } from "@/lib/access";
-import { Dialog, PageHeader } from "./ui";
+import { Dialog, PageHeader, SkeletonRows } from "./ui";
+import { ThinkingStatus } from "./motion/slot";
 
 function BriefPreferences({ onSaved }: { onSaved?: () => void }) {
   const client = useQueryClient();
@@ -123,7 +124,7 @@ export function MorningBriefPage() {
         title="Morning brief"
         description="Your day, prepared the way you like it."
       />
-      {view.isLoading ? <p>Loading…</p> : null}
+      {view.isLoading ? <SkeletonRows count={3} /> : null}
       {view.error ? <p role="alert">{view.error.message}</p> : null}
       {view.data ? (
         <>
@@ -143,11 +144,13 @@ export function MorningBriefPage() {
               type="button"
               className="btn"
               disabled={preview.isPending}
+              aria-busy={preview.isPending || undefined}
               onClick={() => preview.mutate()}
             >
               {preview.isPending ? "Generating…" : "Test my brief"}
             </button>
           </div>
+          {preview.isPending ? <div className="mt-4"><ThinkingStatus real="Preparing your brief…" active /></div> : null}
           {preview.error ? (
             <p role="alert" className="mt-2 text-danger">
               {preview.error.message}

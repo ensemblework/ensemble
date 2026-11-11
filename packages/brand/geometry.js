@@ -1,89 +1,106 @@
 'use strict';
 const clamp = x => Math.max(0, Math.min(1, x));
-const ease = x => { x = clamp(x); return x * x * (3 - 2 * x); };
-const out = x => 1 - Math.pow(1 - clamp(x), 3);
+const ease = x => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10); };
 const lerp = (a, b, t) => a + (b - a) * t;
-const mix = (a, b, k) => a.map((p, i) => [lerp(p[0], b[i][0], k), lerp(p[1], b[i][1], k)]);
-const mixFrames = (a, b, k) => ({ pair: [mix(a.pair[0], b.pair[0], k), mix(a.pair[1], b.pair[1], k)], width: lerp(a.width, b.width, k) });
-const path = p => 'M' + p.map(q => q[0].toFixed(2) + ' ' + q[1].toFixed(2)).join('L');
-const kinds = { unfurl: { name: 'Unfurl', duration: 720, loop: 0 }, infinity: { name: 'Infinity weave', duration: 660, loop: 3400 }, relay: { name: 'Relay', duration: 620, loop: 5400 }, threadline: { name: 'Threadline', duration: 500, loop: 2200 }, beacon: { name: 'Beacon', duration: 560, loop: 3600 } };
-function createModel(data) {
-    const N = data.N, base = { pair: data.pair, width: 8 }, align = { infinity: [0, 0], relay: [0, 0] }, direction = { unfurl: [1, 1], infinity: [1, 1], relay: [1, 1], threadline: [1, 1], beacon: [1, 1] };
-    function curves(kind, phase, phases = align, directions = direction) {
-        return [0, 1].map(s => {
-            const points = [], sign = s ? 1 : -1;
-            for (let i = 0; i < N; i++) {
-                const u = directions[kind][s] === 1 ? i / (N - 1) : 1 - i / (N - 1), theta = 2 * Math.PI * u + (phases[kind]?.[s] || 0);
-                let x = 0, y = 0;
-                if (kind === 'infinity') {
-                    const r = 1 + .024 * Math.sin(phase), t = theta, xx = 98 * Math.sin(t), yy = 49 * Math.sin(2 * t), dx = 98 * Math.cos(t), dy = 98 * Math.cos(2 * t), length = Math.hypot(dx, dy) || 1;
-                    x = 160 + xx * r - sign * dy / length * 6;
-                    y = 160 + yy * r + sign * dx / length * 6;
-                }
-                else if (kind === 'relay') {
-                    const p = phase * .65, theta2 = theta + sign * p, cx = 160 + sign * 40 * Math.cos(p), cy = 160 + sign * 21 * Math.sin(p);
-                    x = cx + 58 * Math.cos(theta2);
-                    y = cy + 47 * Math.sin(theta2);
-                }
-                else if (kind === 'threadline') {
-                    x = 35 + 250 * u;
-                    y = 160 + sign * 7 + 7 * Math.sin(2 * Math.PI * u - phase + sign * .2);
-                }
-                else if (kind === 'beacon') {
-                    const r = s ? 49 : 77, a = (-.45 + (s ? .40 : 0) + u * .83) * 2 * Math.PI + sign * phase;
-                    x = 160 + r * Math.cos(a);
-                    y = 160 + r * Math.sin(a);
-                }
-                else {
-                    const a = (-.58 + u * 1.16) * Math.PI;
-                    x = 160 + sign * (61 * Math.cos(a) + 13);
-                    y = 160 + 72 * Math.sin(a);
-                }
-                points.push([x, y]);
-            }
-            return points;
-        });
-    }
-    for (const kind of ['unfurl', 'infinity', 'relay', 'threadline', 'beacon'])
-        for (let s = 0; s < 2; s++) {
-            let best = Infinity, phase = 0, dir = 1;
-            const count = ['infinity', 'relay'].includes(kind) ? 40 : 1;
-            align[kind] ??= [0, 0];
-            for (const sign of [-1, 1])
-                for (let k = 0; k < count; k++) {
-                    const trial = { ...align, [kind]: [...align[kind]] }, trialDir = { ...direction, [kind]: [...direction[kind]] };
-                    trial[kind][s] = k / count * 2 * Math.PI;
-                    trialDir[kind][s] = sign;
-                    const q = curves(kind, 0, trial, trialDir)[s];
-                    let score = 0;
-                    for (let j = 0; j < N; j += 4)
-                        score += (q[j][0] - base.pair[s][j][0]) ** 2 + (q[j][1] - base.pair[s][j][1]) ** 2;
-                    if (score < best) {
-                        best = score;
-                        phase = trial[kind][s];
-                        dir = sign;
-                    }
-                }
-            align[kind][s] = phase;
-            direction[kind][s] = dir;
-        }
-    const target = (kind, phase) => ({ pair: curves(kind, phase), width: kind === 'beacon' ? 11 : kind === 'threadline' ? 7 : 10 });
-    function gather(from, to, amount) { const k = clamp(amount), first = k < .5, r = first ? 1 - ease(k * 2) : ease((k - .5) * 2), shape = first ? from : to; return { pair: shape.pair.map((points, s) => points.map(p => { const cx = 160 + (s ? 2 : -2); return [cx + (p[0] - cx) * r, 160 + (p[1] - 160) * r]; })), width: lerp(6, shape.width, r) }; }
-    const pose = (kind, amount, phase = 0) => kind === 'unfurl' ? mixFrames(base, target(kind, phase), ease(amount)) : gather(base, target(kind, phase), amount);
-    const settle = (from, amount) => gather(from, base, amount);
-    function cycle(kind, seconds) {
-        if (kind === 'unfurl') {
-            const t = seconds % 4.8;
-            if (t < .25 || t > 1.25)
-                return { frame: base, rest: 1, phase: 0 };
-            const k = (t - .25) / 1;
-            const amount = k < .44 ? ease(k / .44) : 1 - ease((k - .44) / .56);
-            return { frame: pose(kind, amount), rest: amount < .08 ? 1 - amount / .08 : 0, phase: t };
-        }
-        const t = seconds % 4.8, phase = t / (kinds[kind].loop / 1000) * 2 * Math.PI;
-        let amount = t < .25 ? 0 : t < 1 ? (t - .25) / .75 : t < 3.6 ? 1 : t < 4.25 ? 1 - (t - 3.6) / .65 : 0;
-        return { frame: pose(kind, amount, phase), rest: amount < .08 ? 1 - amount / .08 : 0, phase };
-    }
-    return { base, target, pose, cycle, settle, align };
+const mix = (a, b, amount) => a.map((p, i) => [lerp(p[0], b[i][0], amount), lerp(p[1], b[i][1], amount)]);
+const mixFrames = (a, b, amount) => amount <= 0 ? a : amount >= 1 ? b : ({ pair: [mix(a.pair[0], b.pair[0], amount), mix(a.pair[1], b.pair[1], amount)], width: lerp(a.width, b.width, amount) });
+const path = points => 'M' + points.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L');
+const kinds = {
+    unfurl: { name: 'Unfurl', duration: 720, loop: 0 },
+    infinity: { name: 'Thought', duration: 850, loop: 7400 },
+    relay: { name: 'Handoff', duration: 850, loop: 7800 },
+    threadline: { name: 'Response wave', duration: 850, loop: 6800 },
+    beacon: { name: 'Quiet activity', duration: 700, loop: 8600 }
+};
+const SETTLE_MS = 340;
+const START_SECONDS = .45;
+const RETURN_SECONDS = .65;
+
+function resample(points, count) {
+    const distances = [0];
+    for (let i = 1; i < points.length; i++)
+        distances.push(distances[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
+    let next = 1;
+    return Array.from({ length: count }, (_, i) => {
+        const distance = distances[distances.length - 1] * i / (count - 1);
+        while (next < distances.length - 1 && distances[next] < distance)
+            next++;
+        const amount = (distance - distances[next - 1]) / (distances[next] - distances[next - 1] || 1);
+        return points[next - 1].map((value, axis) => lerp(value, points[next][axis], amount));
+    });
 }
-module.exports = { createModel, kinds, path, ease, clamp };
+
+function createModel(data) {
+    const N = data.N, base = { pair: data.pair, width: 9 };
+    // Shared correspondence selected against both approved strands. Keeping this phase
+    // avoids a dense alignment search on every web, SSR and native startup.
+    const infinityPhase = 173 / 256 * Math.PI * 2;
+    const center = resample(Array.from({ length: 1025 }, (_, i) => {
+        const t = infinityPhase - Math.PI * 2 * i / 1024;
+        return [160 + 104 * Math.sin(t), 160 + 52 * Math.sin(2 * t)];
+    }), N);
+    const infinity = [0, 1].map(strand => center.map((p, i) => {
+        const before = center[i ? i - 1 : N - 2], after = center[i === N - 1 ? 1 : i + 1];
+        const dx = after[0] - before[0], dy = after[1] - before[1], length = Math.hypot(dx, dy) || 1;
+        const sign = strand ? 1 : -1;
+        return [p[0] - sign * dy / length * 6, p[1] + sign * dx / length * 6];
+    }));
+    function curves(kind) {
+        if (kind === 'infinity' || kind === 'beacon')
+            return infinity;
+        return [0, 1].map(strand => Array.from({ length: N }, (_, i) => {
+            const u = i / (N - 1), sign = strand ? 1 : -1;
+            if (kind === 'relay') {
+                const theta = 5 * Math.PI / 4 - 2 * Math.PI * u;
+                return [160 + sign * 40 + 58 * Math.cos(theta), 160 + 47 * Math.sin(theta)];
+            }
+            if (kind === 'threadline')
+                return [35 + 250 * u, 160 + sign * 18 + 44 * Math.sin(2 * Math.PI * u + sign * .2)];
+            const theta = (-.58 + (1 - u) * 1.16) * Math.PI;
+            return [160 + sign * (61 * Math.cos(theta) + 13), 160 + 72 * Math.sin(theta)];
+        }));
+    }
+    const targets = Object.fromEntries(Object.keys(kinds).map(kind => [kind, { pair: curves(kind), width: 9 }]));
+    const target = kind => targets[kind] || targets.infinity;
+    const pose = (kind, amount) => mixFrames(base, target(kind), ease(amount));
+    const settle = (from, amount) => mixFrames(from, base, ease(amount));
+    function timing(kind, seconds) {
+        const role = kinds[kind] || kinds.infinity;
+        const duration = role.loop / 1000;
+        const remainder = seconds % duration;
+        const t = remainder < 0 ? remainder + duration : remainder;
+        const arrive = START_SECONDS + role.duration / 1000;
+        const release = kind === 'beacon' ? 2.45 : kind === 'infinity' ? 4.65 : 4.2;
+        const end = release + RETURN_SECONDS;
+        const moving = t >= START_SECONDS - 1e-9 && t < end - 1e-9;
+        return { t, duration, arrive, release, end, moving, wait: moving ? 0 : t < START_SECONDS ? START_SECONDS - t : duration - t + START_SECONDS };
+    }
+    function once(seconds) {
+        const progress = clamp(seconds / (kinds.unfurl.duration / 1000));
+        const amount = progress < .43 ? ease(progress / .43) : 1 - ease((progress - .43) / .57);
+        return { frame: mixFrames(base, targets.unfurl, amount), rest: 1 - clamp(amount * 9), phase: 'unfurl', moving: progress < 1, wait: 0 };
+    }
+    function cycle(kind, seconds) {
+        if (kind === 'unfurl')
+            return once(seconds);
+        const clock = timing(kind, seconds);
+        if (!clock.moving)
+            return { ...clock, frame: base, rest: 1, phase: 'rest' };
+        const { t, arrive, release } = clock;
+        const entering = t < arrive, leaving = t > release;
+        const amount = entering ? ease((t - START_SECONDS) / (arrive - START_SECONDS)) : leaving ? 1 - ease((t - release) / RETURN_SECONDS) : 1;
+        const held = clamp((t - arrive) / (release - arrive));
+        const envelope = Math.sin(Math.PI * held) ** 2;
+        const pair = target(kind).pair.map((strand, s) => strand.map(([x, y], i) => {
+            const u = i / (N - 1), lead = s ? .22 : 0;
+            if (kind === 'threadline')
+                return [x, y + envelope * 8 * Math.sin(u * Math.PI * 2 - held * Math.PI * 2 + lead)];
+            if (kind === 'relay')
+                return [x + envelope * (s ? -1 : 1) * 9 * Math.sin(held * Math.PI * 2), y + envelope * 7 * Math.sin(held * Math.PI * 2 + lead)];
+            return [160 + (x - 160) * (1 + envelope * .025), y + envelope * 3 * Math.sin(u * Math.PI * 2 + held * Math.PI * 2 + lead)];
+        }));
+        return { ...clock, frame: mixFrames(base, { pair, width: 9 }, amount), rest: 1 - clamp(amount * 9), phase: entering ? 'unweave' : leaving ? 'return' : kind === 'relay' ? 'handoff' : kind === 'threadline' ? 'wave' : 'flow' };
+    }
+    return { base, target, pose, timing, once, cycle, settle, mixFrames };
+}
+module.exports = { createModel, kinds, path, ease, clamp, SETTLE_MS };

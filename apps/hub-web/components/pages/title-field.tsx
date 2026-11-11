@@ -2,7 +2,10 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { FileText } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { usePageMenu } from "../context-menu/page-menu";
+import { titleMenuProps } from "../context-menu/text-field-menu";
 import { focusPageBody } from "../editor/page-body";
 
 /**
@@ -39,6 +42,9 @@ export function PageTitleField({
   const [draft, setDraft] = useState(shown(value));
   const ref = useRef<HTMLTextAreaElement>(null);
   const focused = useRef(false);
+  // Right-click: spelling, the clipboard, then the page's or task's own menu ("Page ▸"), as in its body.
+  const pageMenu = usePageMenu();
+  const menu = titleMenuProps(pageMenu ? () => [{ items: [{ id: "page-menu", label: pageMenu.label, icon: FileText, submenu: () => ({ sections: pageMenu.sections() }) }] }] : undefined);
   useEffect(() => setDraft(shown(value)), [value]);
   useEffect(() => {
     const element = ref.current;
@@ -72,6 +78,7 @@ export function PageTitleField({
     <>
     <textarea
       data-page-title
+      {...menu}
       ref={ref}
       rows={1}
       value={draft}

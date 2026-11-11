@@ -8,7 +8,8 @@ import type { Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
-import { ActAs, PageDocument, PageMention, documentMentions } from "@ensemble/shared-types";
+import { ActAs, PageDocument, PageMention, documentMentions, isSubscriptionProvider } from "@ensemble/shared-types";
+import { ASK_KEEP_DAYS, askAnswered, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
 import { diagramSources } from "../pages/agent-context.js";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
@@ -265,8 +266,11 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     if (recent >= 20) return reply.code(429).send({ error: "Too many Ensemble replies in a minute. Wait and try again." });
 
     const settings = await loadSettings(app.prisma, request.userId);
-    const tierName = body.tier ?? settings.assistant.defaultTier;
+    // Settings › Assistant › Ask Ensemble model (Medium unless changed), not the chat's default.
+    const tierName = body.tier ?? settings.assistant.askTier ?? "medium";
     const tier = settings.models[tierName];
+    // On an AI plan the page has one short-lived session of the person's agent; asks there continue it (ask-sessions.ts).
+    const sessionKey = isSubscriptionProvider(tier.provider) ? askSessionKey(actorFor(request.userId) ?? request.userId, kind, id) : null;
     const conversation = await app.prisma.assistantConversation.create({
       data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Comment" },
     });
@@ -312,6 +316,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     send("status", { text: "Thinking…", id: row.id, conversationId: conversation.id });
     let text = "";
     let lastFlush = 0;
+    if (sessionKey) await askStarted(app, request.userId, sessionKey, { kind, id }).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble session"));
     try {
       const result = await runAssistantTurn({
         requestHeaders: assistantHeaders(request),
@@ -328,6 +333,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         actAs: body.actAs ?? settings.assistant.actAs,
         preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
         inlineArtifacts: true,
+        ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS } } : {}),
         mentions: await resolveTypedMentions(app.prisma, request.userId, request.modules, body.prompt, [...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])]),
         referenceContext: [
           await commentPageText(app.prisma, request.userId, kind, id, body.content),
@@ -364,6 +370,8 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
       send("error", { message });
       send("done", { id: row.id, content: message, toolCalls: [], model: tier.model, tier: tierName });
     }
+    // The 30 minutes count from this answer.
+    if (sessionKey) await askAnswered(app, request.userId, sessionKey).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble answer"));
     sseHub.publish(request.userId, { event: "page", data: { pageId: id } });
     raw.end();
   });

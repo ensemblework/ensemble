@@ -11,7 +11,7 @@ import { editingText, undoButtonLabel } from "@/lib/undo-ui";
 import { useLive } from "../live";
 import { useToast } from "../toast";
 import { HomeLogoLink } from "../motion/brand-morph";
-import { MenuItem, Popover, cx } from "../ui";
+import { MenuItem, Popover, Spinner, cx } from "../ui";
 import { ActivityControls } from "./activity-panel";
 import { AccountMenu } from "./account-menu";
 import { AskBar } from "./ask-bar";
@@ -179,7 +179,7 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
         title="Fetch now: read every switched-on source"
         aria-label="Fetch now"
       >
-        <RefreshCw className={fetchNow.isPending ? "animate-spin" : undefined} size={15} />
+        {fetchNow.isPending ? <Spinner size={15} /> : <RefreshCw size={15} />}
       </button>
       <ActivityControls connected={connected} serverError={serverError} />
       <Popover

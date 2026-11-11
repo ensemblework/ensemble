@@ -38,7 +38,7 @@ cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml
 
 ## Look
 
-The app icon, header and tray mark are the generated Woven Chorus / Satin Gold assets from `pnpm brand:build` ([BRAND](BRAND.md)). The macOS tray uses a monochrome template; elsewhere the tray is gold on dark taskbars and ink on light ones. Saving plays a compact Beacon after 180 ms, stopped on success or error.
+The app icon, header and tray mark are the generated Woven Chorus / Satin Gold assets from `pnpm brand:build` ([BRAND](BRAND.md)). The macOS tray uses a monochrome template; elsewhere the tray is gold on dark taskbars and ink on light ones. Saving uses a local 16 px indicator after 250 ms and prevents duplicate submission. Success and failure clear the delay and indicator immediately. Reduced motion keeps the status text and a still indicator.
 
 ## Limits
 

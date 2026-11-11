@@ -68,8 +68,8 @@ async function askComputer(app: FastifyInstance, deviceId: string, key: string):
   return answer?.status === 200 && answer.body?.deleted === true;
 }
 
-/** Drops the chat's session on this computer (desktop or CLI runtime), or asks the person's paired computers. */
-async function dropChatSessions(app: FastifyInstance, userId: string, key: string): Promise<void> {
+/** Drops the chat's session on this computer (desktop or CLI runtime), or asks the person's paired computers (an ask's page session too, ask-sessions.ts). */
+export async function dropChatSessions(app: FastifyInstance, userId: string, key: string): Promise<void> {
   if (process.env.ENSEMBLE_DESKTOP === "1") {
     const { dropAssistantSession } = await import("../remote/assistant-session-delete.js");
     await dropAssistantSession(key);
