@@ -6,11 +6,18 @@ import { terminalBrand } from "@ensemble/brand/cli";
 export function WorkingMark() {
   const { stdout } = useStdout();
   const brand = terminalBrand(process.env, Boolean(stdout.isTTY));
-  const [frame, setFrame] = useState(0);
+  const [frame, setFrame] = useState(-1);
   useEffect(() => {
     if (!brand.animated) return;
-    const timer = setInterval(() => setFrame(value => (value + 1) % brand.frames.length), brand.interval);
-    return () => clearInterval(timer);
-  }, [brand.animated, brand.frames.length, brand.interval]);
-  return <Text color={brand.color}>{brand.animated ? brand.frames[frame] : brand.still}</Text>;
+    let index = -1;
+    let timer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      index = index + 1 < brand.frames.length ? index + 1 : -1;
+      setFrame(index);
+      timer = setTimeout(step, index === -1 ? brand.rest : brand.interval);
+    };
+    timer = setTimeout(step, 350);
+    return () => clearTimeout(timer);
+  }, [brand.animated, brand.frames.length, brand.interval, brand.rest]);
+  return <Text color={brand.color}>{brand.animated && frame >= 0 ? brand.frames[frame] : brand.still}</Text>;
 }

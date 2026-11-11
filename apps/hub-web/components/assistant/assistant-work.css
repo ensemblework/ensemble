@@ -130,8 +130,8 @@ button.tool-main[aria-expanded="true"] .tool-chevron { transform: rotate(90deg);
 /* The step a live turn is on. */
 .tool-running .tool-title { color: var(--muted); }
 .tool-spinner {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   border: 1.5px solid var(--line-strong);
   border-top-color: var(--accent);

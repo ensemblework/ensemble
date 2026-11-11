@@ -193,7 +193,7 @@ export function JobCard({ job }: { job: AgentJob }) {
       </div>
       {showProgress && job.progress ? (
         <div className="flex items-center gap-1.5 text-muted">
-          {job.status === "running" || job.status === "queued" ? <RunMark state={job.status === "queued" ? "queued" : "running"} /> : null}
+          {job.status === "running" || job.status === "queued" ? <RunMark animate={false} state={job.status === "queued" ? "queued" : "running"} /> : null}
           <span className="min-w-0 flex-1 truncate">{job.progress}</span>
         </div>
       ) : null}

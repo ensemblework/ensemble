@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
-import { Tabs } from "@/components/ui";
+import { Tabs, Skeleton } from "@/components/ui";
 import { WidgetShell } from "@/components/widgets/shell";
 import { defaultLayout } from "@ensemble/shared-types/widgets";
 import type { LayoutPayload } from "@/lib/server-layout";
@@ -14,7 +14,7 @@ const ReposTab = dynamic(() => import("@/components/context/repos-prefs").then((
 const PreferencesTab = dynamic(() => import("@/components/context/repos-prefs").then((mod) => mod.PreferencesTab));
 const SourcesTab = dynamic(() => import("@/components/context/sources").then((mod) => mod.SourcesTab));
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
-  loading: () => <div className="skeleton h-[420px] w-full" />,
+  loading: () => <Skeleton className="h-[420px] w-full" />,
 });
 
 const TABS = [

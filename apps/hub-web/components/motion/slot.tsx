@@ -6,6 +6,8 @@ import { createContext, useContext } from "react";
 import type { MotionTheme } from "@ensemble/shared-types";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { BrandMorph } from "./brand-morph";
+import { LocalSpinner } from "./loading";
+import { AI_SHOW_DELAY_MS } from "@/lib/motion/delay";
 
 export type MotionContextValue = { theme: MotionTheme; reduce: boolean };
 
@@ -20,7 +22,7 @@ export function useMotion(): MotionContextValue {
 }
 
 export function ThinkingStatus({ real, active, art = true }: { real: string | null; active: boolean; art?: boolean }) {
-  const shown = useDelayedFlag(active);
+  const shown = useDelayedFlag(active, AI_SHOW_DELAY_MS);
   if (!shown) return null;
   const text = real ?? "Working…";
   return (
@@ -40,7 +42,7 @@ export function ThinkingStatus({ real, active, art = true }: { real: string | nu
 function ThinkingArt() {
   return (
     <span className="m-think-art" aria-hidden>
-      <BrandMorph size={16} state="loop" />
+      <BrandMorph purpose="inline" state="loop" />
     </span>
   );
 }
@@ -56,13 +58,13 @@ export function FetchGlyph({
 }) {
   const shown = useDelayedFlag(active);
   const state = shown ? (slot === "connector.sync" ? "syncing" : "fetching") : "done";
-  return <span data-motion-slot={slot} data-state={state} data-motion-loading={shown ? "1" : "0"} aria-hidden><BrandMorph size={size} kind="beacon" state={shown ? "loop" : "idle"} /></span>;
+  return <span data-motion-slot={slot} data-state={state} data-motion-loading={shown ? "1" : "0"} aria-hidden><LocalSpinner size={size} active={active} /></span>;
 }
 
-export function RunMark({ state }: { state: "queued" | "running" | "done" }) {
-  return <span data-motion-slot="run.progress" data-state={state} aria-hidden><BrandMorph size={20} kind="relay" state={state === "running" ? "loop" : "idle"} loader={state === "running"} /></span>;
+export function RunMark({ state, animate = true }: { state: "queued" | "running" | "done"; animate?: boolean }) {
+  return <span data-motion-slot="run.progress" data-state={state} aria-hidden><BrandMorph purpose="run" state={animate && state === "running" ? "loop" : "idle"} /></span>;
 }
 
 export function TrayDot({ state }: { state: "idle" | "working" | "syncing" | "needs" | "paused" | "done" | "error" | "offline" }) {
-  return <span data-motion-slot="native.tray" data-state={state} aria-hidden><BrandMorph size={18} kind="beacon" state={state === "working" || state === "syncing" ? "loop" : "idle"} /></span>;
+  return <span data-motion-slot="native.tray" data-state={state} aria-hidden><BrandMorph purpose="peripheral" state={state === "working" ? "loop" : "idle"} /></span>;
 }

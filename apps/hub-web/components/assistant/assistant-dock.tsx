@@ -41,6 +41,8 @@ import { usePeek } from "../shell/peek";
 import { useToast } from "../toast";
 import { BrandMorph } from "@/components/motion/brand-morph";
 import { ThinkingStatus } from "@/components/motion/slot";
+import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
+import { AI_SHOW_DELAY_MS } from "@/lib/motion/delay";
 import { cx } from "../ui";
 import { pastedFiles } from "@/lib/files/pasted";
 import { AttachMenu, AttachmentShelf, MessageFiles, attachmentMentions, attachmentsOnlyMessage, fileCount, useChatAttachments, withAttachedFiles, type ChatAttachment } from "./chat-attachments";
@@ -50,14 +52,19 @@ import { openContextMenu } from "../context-menu/menu-store";
 import { mentionToken } from "@ensemble/shared-types";
 import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
-/** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
+/** Only the first useful output is awaited here; arriving content is never held. */
 function ReplyMorph({ waiting }: { waiting: boolean }) {
-  const [shown, setShown] = useState(waiting);
+  const shown = useDelayedFlag(waiting, AI_SHOW_DELAY_MS);
+  const [seconds, setSeconds] = useState(0);
   useEffect(() => {
-    if (waiting) setShown(true);
+    setSeconds(0);
+    if (!waiting) return;
+    const since = Date.now();
+    const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - since) / 1000)), 1000);
+    return () => window.clearInterval(timer);
   }, [waiting]);
-  if (!shown) return null;
-  return <BrandMorph size={48} state={waiting ? "loop" : "idle"} onIdle={() => { if (!waiting) setShown(false); }} />;
+  if (!waiting) return null;
+  return <span className="inline-flex flex-col items-center gap-2" aria-hidden><span className="inline-flex h-16 w-16 items-center justify-center">{shown ? <BrandMorph purpose="focused" state="loop" /> : null}</span>{seconds >= 10 ? <span className="text-[12px] tabular-nums text-muted">{seconds}s elapsed</span> : null}</span>;
 }
 
 /** Short, page-aware starters. They never quote a record title, so an Untitled task never shows up here. */
@@ -820,9 +827,8 @@ export function AssistantDock() {
     >
       {panelSize.enabled ? PANEL_EDGES.map((edge) => <div key={edge} {...panelSize.handleProps(edge)} />) : null}
       <div className="assistant-window-header flex shrink-0 items-center gap-2 px-4">
-        <BrandMorph size={24} state="once" kind="unfurl" />
+        <BrandMorph size={24} />
         <div className="min-w-0 flex-1"><span className="text-[14px] font-semibold">Ensemble assistant</span><span className="assistant-header-hint">Your workspace, in conversation</span></div>
-        {working && !pending ? <ThinkingStatus real={working === "Assistant is thinking…" || working === "Working…" ? null : working} active /> : null}
         <button
           type="button"
           className="icon-btn"
@@ -884,7 +890,7 @@ export function AssistantDock() {
         {pending ? (
           <div className="assistant-turn assistant-live-turn">
             {liveTools.length || streaming ? (
-              <div className="assistant-message-heading"><span className="assistant-message-avatar"><BrandMorph size={18} state="loop" /></span><span>Ensemble</span></div>
+              <div className="assistant-message-heading"><span className="assistant-message-avatar"><BrandMorph size={18} /></span><span>Ensemble</span></div>
             ) : null}
             {liveTools.length ? <ToolSteps live calls={liveTools} conversationId={conversationId} refs={liveRefs} running={streaming ? null : liveStep ?? "Thinking…"} /> : null}
             <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>

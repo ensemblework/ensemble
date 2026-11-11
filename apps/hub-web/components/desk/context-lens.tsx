@@ -1,6 +1,6 @@
 "use client";
 import { useAssistantSurface } from "@/lib/assistant-surface";
-import { InfoTip } from "@/components/ui";
+import { InfoTip, Skeleton } from "@/components/ui";
 
 import { Fragment } from "react";
 import dynamic from "next/dynamic";
@@ -54,13 +54,13 @@ import { arrange, hiddenTilesFor, isDefaultLayout, showTile } from "./layout";
 
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
   ssr: false,
-  loading: () => <div className="skeleton h-[480px] w-full rounded-xl" />,
+  loading: () => <Skeleton className="h-[480px] w-full rounded-xl" />,
 });
 const PeopleTab = dynamic(() => import("@/components/context/people").then((mod) => mod.PeopleTab), {
-  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
+  loading: () => <Skeleton className="h-[320px] w-full rounded-xl" />,
 });
 const ProjectsTab = dynamic(() => import("@/components/context/projects").then((mod) => mod.ProjectsTab), {
-  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
+  loading: () => <Skeleton className="h-[320px] w-full rounded-xl" />,
 });
 
 const MATTERS = [

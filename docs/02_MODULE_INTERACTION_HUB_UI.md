@@ -6,6 +6,8 @@ The Hub is the browser UI in `apps/hub-web`, also loaded by the desktop shell. I
 
 Tasks, pages and records keep one identity across views. Saved, pending, failed and completed states look different. Writing autosaves without calling a model; model sends, imports, approvals and irreversible actions are explicit. Drafts survive conflicts and errors. A queued job or a held assistant proposal is never shown as completed work.
 
+Loading feedback uses the smallest affected region (`components/motion/loading.tsx`, `skeletons.tsx`, `slot.tsx`). Ordinary actions have a delayed local indicator; boards, Today, pages and plot frames preserve their structure. Initial failures replace loaders with Retry, while usable cached content remains visible through refresh failures. Next loading boundaries own route readiness. AI waits use the context-sized woven treatments in [BRAND](BRAND.md#motion); queued work and requests waiting for a person stay still. The top bar reads personal AI activity even when the optional Workspace module is hidden, distinguishes checking/unavailable from confirmed idle, and reconciles activity on lifecycle events and reconnects. Activity events and ownership: [11](11_HOW_THE_ASSISTANT_WORKS.md).
+
 ## 2. Information architecture & navigation
 
 In the sidebar, the open tab's icon takes the accent (its light or dark variant); the label keeps the text colour.

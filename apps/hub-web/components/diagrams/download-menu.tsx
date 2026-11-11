@@ -1,5 +1,4 @@
 "use client";
-import { BrandMorph } from "@/components/motion/brand-morph";
 
 import { useState } from "react";
 import { ChevronDown, Copy, Download, FileCode2, FileImage, FileText, Image as ImageIcon, MoreHorizontal, Shapes, Trash2 } from "lucide-react";
@@ -7,7 +6,7 @@ import type { LucideIcon } from "lucide-react";
 import { parseDiagram, toMermaid, type DiagramModel } from "@ensemble/block-diagrams";
 
 import { api } from "@/lib/api";
-import { Popover } from "../ui";
+import { Popover, Spinner } from "../ui";
 import { useToast } from "../toast";
 import { copyDiagramPng, downloadDiagram, type DiagramExportKind } from "./export-image";
 
@@ -21,7 +20,7 @@ export const EXPORT_KINDS: Array<{ id: DiagramExportKind; label: string; icon: L
 function MenuRow({ icon: Icon, label, busy, danger, disabled, onClick }: { icon: LucideIcon; label: string; busy?: boolean; danger?: boolean; disabled?: boolean; onClick: () => void }) {
   return (
     <button type="button" role="menuitem" disabled={disabled} onClick={onClick} className="dg-pop-item" data-danger={danger || undefined}>
-      {busy ? <BrandMorph size={15} kind="beacon" loader state="loop" /> : <Icon size={15} aria-hidden className="dg-pop-icon" />}
+      {busy ? <Spinner size={15} /> : <Icon size={15} aria-hidden className="dg-pop-icon" />}
       <span className="min-w-0 flex-1 truncate">{label}</span>
     </button>
   );
@@ -88,7 +87,7 @@ export function DiagramExportMenu({ model, exporting, onExport }: { model: Diagr
       width={212}
       trigger={(open, toggle) => (
         <button type="button" className="btn-primary dg-primary" aria-haspopup="menu" aria-expanded={open} disabled={exporting} onClick={toggle}>
-          {exporting ? <BrandMorph size={14} kind="beacon" loader state="loop" /> : <Download size={15} aria-hidden />}
+          {exporting ? <Spinner size={14} /> : <Download size={15} aria-hidden />}
           {exporting ? "Exporting…" : "Export"}
           <ChevronDown size={14} aria-hidden className="dg-primary-chevron" />
         </button>

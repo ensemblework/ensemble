@@ -10,7 +10,7 @@ import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/ap
 import { relative, untilLabel } from "@/lib/format";
 import { modelFacts } from "@/lib/engine-models";
 import { useToast } from "../toast";
-import { cx, InfoTip, Tag } from "../ui";
+import { cx, InfoTip, Spinner, Skeleton, Tag } from "../ui";
 import { ConnectComputerButton } from "./connect-computer";
 import { navigateSettings, useSettingsLocation } from "./url-state";
 import { SubscriptionsDialog } from "./subscriptions-dialog";
@@ -250,7 +250,7 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
   );
   const checkButton = computer ? (
     <button type="button" className="btn shrink-0" onClick={() => check.mutate()} disabled={check.isPending || !computer.online || !computer.ready} title="Look for subscriptions on this computer again">
-      <RefreshCw size={12} className={cx((check.isPending || fast) && "animate-spin")} aria-hidden /> Check again
+      {check.isPending ? <Spinner /> : <RefreshCw size={14} aria-hidden />} Check again
     </button>
   ) : null;
   return (
@@ -270,7 +270,7 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
           </button>
         </div>
       </div>
-      {view.isLoading ? <div className="mt-4 h-24 animate-pulse rounded-xl bg-raised" /> : null}
+      {view.isLoading ? <Skeleton className="mt-4 h-24 rounded-xl" /> : null}
       {view.error ? <p className="mt-3 text-[12.5px] text-warn">{(view.error as Error).message}</p> : null}
       {view.data && !computers.length ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-line-strong p-4" data-testid="subscriptions-no-computer">

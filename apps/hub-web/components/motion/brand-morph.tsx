@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import * as morphNamespace from "./ensemble-morph";
 import type { MorphController, MorphState, MorphStyle, MorphKind } from "./ensemble-morph";
+import { AI_SHOW_DELAY_MS } from "@/lib/motion/delay";
 
 type MorphApi = typeof import("./ensemble-morph");
 
@@ -14,20 +15,28 @@ function morphApi(): MorphApi {
   return typeof record.mount === "function" ? record : record.default!;
 }
 
-export const MORPH_DELAY_MS = 180;
+export const MORPH_DELAY_MS = AI_SHOW_DELAY_MS;
 export const MORPH_ONCE_MS = morphApi().BASE.once * 1000;
 export const MORPH_LOOP_MS = morphApi().BASE.loop * 1000;
 export const MORPH_SETTLE_MS = morphApi().BASE.settle * 1000;
 
+export const AI_MARK = {
+  focused: { size: 64, kind: "infinity" },
+  inline: { size: 32, kind: "threadline" },
+  peripheral: { size: 24, kind: "beacon" },
+  run: { size: 28, kind: "relay" },
+} as const;
+
 export function BrandMorph({
-  size = 20,
+  size: requestedSize = 20,
   state = "idle",
   loader = false,
   label,
   style,
   className,
   motionStyle,
-  kind = "infinity",
+  kind: requestedKind = "infinity",
+  purpose,
   flat = false,
   onIdle,
 }: {
@@ -39,9 +48,12 @@ export function BrandMorph({
   className?: string;
   motionStyle?: MorphStyle;
   kind?: MorphKind;
+  purpose?: keyof typeof AI_MARK;
   flat?: boolean;
   onIdle?: () => void;
 }) {
+  const size = purpose ? AI_MARK[purpose].size : requestedSize;
+  const kind = purpose ? AI_MARK[purpose].kind : requestedKind;
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
   const ctl = useRef<MorphController | null>(null);
@@ -58,25 +70,19 @@ export function BrandMorph({
       ctl.current?.destroy();
       ctl.current = null;
     };
-  }, [size, kind, flat]);
+    // Kind changes retarget the existing controller below, preserving its current pose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, flat]);
   useEffect(() => {
     const apply = () => {
       const m = ctl.current;
       if (!m) return;
       if (state === "loop") m.loop({ delay: loader ? MORPH_DELAY_MS : 0, kind });
       else if (state === "once") void m.once();
-      else void m.settle();
+      else if (state === "settle") void m.settle();
+      else m.idle();
     };
     apply();
-    const root = document.documentElement;
-    const observer = new MutationObserver(apply);
-    observer.observe(root, { attributes: true, attributeFilter: ["data-reduce-motion"] });
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    media?.addEventListener("change", apply);
-    return () => {
-      observer.disconnect();
-      media?.removeEventListener("change", apply);
-    };
   }, [state, loader, size, kind, flat]);
   return (
     <span

@@ -466,12 +466,12 @@ function RunningStep({ status }: { status: string }) {
   }, []);
   const seconds = Math.floor((now - since) / 1000);
   return (
-    <li className="tool-row tool-running" data-tool-state="running" aria-live="polite">
+    <li className="tool-row tool-running" data-tool-state="running">
       <div className="tool-line">
         <span className="tool-main">
           <span className="tool-mark" data-state="running" aria-hidden><span className="tool-spinner" /></span>
-          <span className="tool-title">{status}</span>
-          {seconds >= 3 ? <span className="tool-meta tabular-nums">{seconds}s</span> : null}
+          <span className="tool-title" role="status">{status}</span>
+          {seconds >= 3 ? <span className="tool-meta tabular-nums" aria-hidden>{seconds}s</span> : null}
         </span>
       </div>
     </li>

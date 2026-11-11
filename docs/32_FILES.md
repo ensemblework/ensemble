@@ -24,7 +24,7 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format 
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
-A file's own screen (`components/files/file-screen.tsx`) is the file under one thin bar: back to Files, the name (its size, pages, source and any notes about it behind the information icon), the viewer's own controls (page, zoom, fit, sheets; `Toolbar` in `viewers/shared.tsx` draws into the bar there), and the actions as icons (Convert to a page, Full screen or Present, Download, Attach to a page, Delete). On a narrow screen the viewer's controls take a second row.
+A file's own screen (`components/files/file-screen.tsx`) is the file under one thin bar: back to Files, the name (its size, pages, source and any notes about it behind the information icon), the viewer's own controls (page, zoom, fit, sheets; `Toolbar` in `viewers/shared.tsx` draws into the bar there), and the actions as icons (Convert to a page, Full screen or Present, Download, Attach to a page, Delete). On a narrow screen the viewer's controls take a second row. Opening a file and its preview exposes a named loading status. Preview, conversion and export controls use the shared delayed local activity indicator; file transfers keep their measured byte progress.
 
 **Present and Full screen** (on a file's own screen):
 

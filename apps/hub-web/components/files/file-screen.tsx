@@ -67,7 +67,7 @@ export function FileScreen({ id }: { id: string }) {
   }
   if (!file) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center" role="status" aria-label="Opening the file" aria-busy="true">
         <Spinner />
       </div>
     );

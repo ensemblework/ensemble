@@ -260,6 +260,7 @@ html[data-ide-resizing="horizontal"] * {
   background: rgb(var(--accent-rgb));
   animation: ide-progress 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+.ide-progress[data-visible="false"]::after { display: none; }
 @keyframes ide-progress {
   from {
     transform: translateX(-100%);

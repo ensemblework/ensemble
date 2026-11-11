@@ -65,7 +65,8 @@ export default function PagesPage() {
 
   return <div className="mx-auto max-w-5xl px-6 pb-20 pt-10 sm:px-10">
     <PageHeader title="Pages" />
-    {pages.error ? <LoadError error={pages.error} what="your pages" retrying={pages.isFetching} onRetry={() => { void pages.refetch(); }} /> : pages.isLoading ? <SkeletonRows count={3} /> : <>
+    {pages.error && pages.data ? <div className="work-load-error" role="alert">Couldn't refresh your pages.<button type="button" className="btn" disabled={pages.isFetching} onClick={() => void pages.refetch()}>Try again</button></div> : null}
+    {pages.error && !pages.data ? <LoadError error={pages.error} what="your pages" retrying={pages.isFetching} onRetry={() => { void pages.refetch(); }} /> : pages.isLoading ? <div aria-busy="true"><span className="sr-only" role="status">Loading your pages…</span><SkeletonRows count={3} /></div> : <>
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <input
           type="search"

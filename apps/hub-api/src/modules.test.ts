@@ -30,9 +30,6 @@ const GATED: Array<[string, string]> = [
   ["/api/workspace", "workspace"],
   ["/api/workspace/checkouts", "workspace"],
   ["/api/agent/assign", "workspace"],
-  ["/api/agent/state", "workspace"],
-  ["/api/agent/pause", "workspace"],
-  ["/api/activity/abc/stop", "workspace"],
   ["/runs", "runs"],
   ["/api/runs", "runs"],
   ["/api/runs/abc", "runs"],
@@ -50,6 +47,16 @@ test("moduleForPath names every gated prefix and leaves core routes alone", () =
   for (const [path, id] of GATED) assert.equal(moduleForPath(path), id, path);
   for (const path of ["/today", "/api/today/home", "/api/tasks", "/api/context/board", "/api/auth/me", "/marketplace", "/unavailable", "/api/bridge/repos", "/api/bridge/repos/abc"]) {
     assert.equal(moduleForPath(path), null, path);
+  }
+});
+
+test("personal AI activity is core while agent jobs remain optional", () => {
+  for (const path of ["/api/agent/state", "/api/agent/pause", "/api/agent/resume", "/api/agent/stop-all", "/api/activity/assistant%3Aone/stop"]) {
+    assert.equal(moduleForPath(path), null, path);
+    assert.equal(moduleDenied(path, ""), false, path);
+  }
+  for (const path of ["/api/agent/assign", "/api/agent/jobs/one", "/api/agent/state/other", "/api/agent/pause/other", "/api/activity/one/other"]) {
+    assert.equal(moduleDenied(path, ""), true, path);
   }
 });
 

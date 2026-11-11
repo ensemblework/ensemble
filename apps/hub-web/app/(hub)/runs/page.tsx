@@ -9,7 +9,7 @@ import { useState } from "react";
 import { usePeek } from "@/components/shell/peek";
 import { Held } from "@/components/motion/held";
 import { RunsSkeleton } from "@/components/motion/skeletons";
-import { RUN_OUTCOME, RunPreview, RunWhere } from "@/components/runs/run-preview";
+import { RunPreview, RunWhere } from "@/components/runs/run-preview";
 import { RunQueue } from "@/components/runs/run-queue";
 import { Empty, PageHeader, QueryError, Tag } from "@/components/ui";
 import { api, type RunSummary } from "@/lib/api";
@@ -17,6 +17,7 @@ import { credits, plural, shortDate } from "@/lib/format";
 import { duration, usd } from "@/lib/run-trace";
 import { useModuleOn } from "@/lib/use-module";
 
+import { runPresentation } from "@/lib/run-status";
 const LIVE_JOB = new Set(["queued", "claimed", "running", "stopping", "waiting_approval"]);
 /** The run's state at a glance, in the row's first column. */
 const OUTCOME_GLYPH: Record<string, { icon: LucideIcon; className: string }> = {
@@ -24,7 +25,7 @@ const OUTCOME_GLYPH: Record<string, { icon: LucideIcon; className: string }> = {
   red: { icon: CircleX, className: "text-danger" },
   orange: { icon: CircleAlert, className: "text-warn" },
   yellow: { icon: CirclePause, className: "text-warn" },
-  blue: { icon: CircleDot, className: "animate-pulse text-accent" },
+  blue: { icon: CircleDot, className: "text-accent" },
   gray: { icon: CircleMinus, className: "text-faint" },
 };
 
@@ -35,11 +36,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
     mutationFn: () => api.deleteRun(run.id),
     onSuccess: () => client.invalidateQueries({ queryKey: ["runs"] }),
   });
-  const outcome = run.outcome
-    ? RUN_OUTCOME[run.outcome] ?? { label: run.outcome, tone: "gray" as const }
-    : run.jobStatus && !LIVE_JOB.has(run.jobStatus)
-      ? { label: "Ended", tone: "gray" as const }
-      : { label: "Running", tone: "blue" as const };
+  const outcome = runPresentation(run);
   const took = run.endedAt ? duration(Date.parse(run.endedAt) - Date.parse(run.startedAt)) : "";
   const cost = run.costUsd != null ? usd(run.costUsd) : run.credits ? `${credits(run.credits)} (est.)` : "";
   return (

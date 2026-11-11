@@ -69,6 +69,7 @@ async function liveWork(ctx: ToolContext): Promise<Live[]> {
   const own = ownTurn(ctx);
   const rows: Live[] = [];
   for (const call of calls) {
+    if (call.spaceId && call.spaceId !== ctx.userId) continue;
     if (jobIds.has(call.id)) continue;
     if (call.kind === "assistant" && !(call.conversationId && here.has(call.conversationId))) continue;
     const kind = call.kind === "assistant" || call.kind === "fetch" ? call.kind : "other";

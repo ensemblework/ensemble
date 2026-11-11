@@ -70,7 +70,7 @@ The Explorer's folder section has *New file*, *New folder*, *Refresh*, *Collapse
 
 ### The review
 
-The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (computer, branch with ahead/behind, review progress, line and column (opens *Go to line*), language, line endings, save state, code size). While this browser or the computer is offline a one-line notice says so under the tabs. The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
+The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (computer, branch with ahead/behind, review progress, line and column (opens *Go to line*), language, line endings, save state, code size). While this browser or the computer is offline a one-line notice says so under the tabs. The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`). While a folder opens, its window frame and explorer geometry stay in place. Opening a folder or file and searching within files show a local progress strip only after the shared loading delay (`IdeProgress`); cached reads paint without it.
 
 | You want to… | Do this |
 |---|---|

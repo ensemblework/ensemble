@@ -154,7 +154,7 @@
 .activity-pill[data-tone="needs"]:hover, .activity-pill[data-tone="needs"][aria-expanded="true"] { background: color-mix(in srgb, var(--warn) 18%, transparent); }
 .activity-pill[data-tone="paused"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .activity-pill[data-tone="offline"] { color: var(--faint); }
-.activity-pill-mark { position: relative; display: inline-grid; width: 18px; height: 18px; place-items: center; }
+.activity-pill-mark { position: relative; display: inline-grid; width: 24px; height: 24px; place-items: center; }
 .activity-pill-dot {
   position: absolute;
   right: -2px;

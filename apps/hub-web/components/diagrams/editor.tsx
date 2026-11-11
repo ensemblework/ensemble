@@ -1,5 +1,6 @@
 "use client";
 
+import { Spinner, Skeleton } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   MIN_VIEWPORT,
@@ -39,7 +40,6 @@ import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import { useToast } from "@/components/toast";
 import { ApiError, api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
-import { BrandMorph } from "@/components/motion/brand-morph";
 import { DiagramCanvas, ZoomPill, type DiagramCanvasHandle } from "./canvas";
 import type { DiagramCodeHandle } from "./diagram-code";
 import { DiagramFreshness, DiagramMoreMenu } from "./diagram-more";
@@ -55,7 +55,7 @@ import { ShareButton } from "../sharing/share-dialog";
 
 const DiagramCode = dynamic(() => import("./diagram-code").then((mod) => mod.DiagramCode), {
   ssr: false,
-  loading: () => <div className="skeleton h-full w-full" />,
+  loading: () => <Skeleton className="h-full w-full" />,
 });
 
 const SHAPES: Array<{ shape: ShapeId; label: string }> = [
@@ -658,8 +658,8 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
   if (!model || roomy === null) {
     return (
       <div className="p-8">
-        <div className="skeleton h-8 w-48" />
-        <div className="skeleton mt-4 h-64 w-full" />
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="mt-4 h-64 w-full" />
       </div>
     );
   }
@@ -751,7 +751,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       <ToolDivider />
       <span className="dg-menu-anchor dg-split">
         <ToolButton label={busy ? "Reorganizing…" : "Reorganize"} hint="Reorganize the layout" shortcut={shortcutLabel("diagram-reorganize")} tip="top" disabled={busy} onClick={() => void reorganize()}>
-          {busy ? <BrandMorph size={16} kind="beacon" loader state="loop" /> : <LayoutGrid size={16} aria-hidden />}
+          {busy ? <Spinner size={16} /> : <LayoutGrid size={16} aria-hidden />}
         </ToolButton>
         <ToolButton label="Layout direction" tip="top" tipAlign="end" className="is-chevron" disabled={busy} aria-haspopup="menu" aria-expanded={menu === "layout"} active={menu === "layout"} onClick={() => toggleMenu("layout")}>
           <ChevronUp size={13} aria-hidden />
@@ -830,7 +830,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
               {codeReady ? (
                 <DiagramCode ref={codeRef} value={text} diagnostics={diagnostics} model={model} onChange={(value) => onText(value)} />
               ) : (
-                <div className="skeleton min-h-0 flex-1" />
+                <Skeleton className="min-h-0 flex-1" />
               )}
               {problemsOpen ? (
                 <ul id="diagram-problems" className="diagram-problems" aria-label="Problems">
@@ -940,7 +940,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
               <div className="dg-float dg-focus-actions" role="toolbar" aria-label="Canvas only" data-diagram-menu>
                 <span className="dg-menu-anchor">
                   <ToolButton label="Export" text tip={false} aria-haspopup="menu" aria-expanded={menu === "export"} active={menu === "export"} disabled={exporting} onClick={() => toggleMenu("export")}>
-                    {exporting ? <BrandMorph size={15} kind="beacon" loader state="loop" /> : <Download size={15} aria-hidden />}
+                    {exporting ? <Spinner size={15} /> : <Download size={15} aria-hidden />}
                     Export
                     <ChevronDown size={13} aria-hidden className="dg-chevron" />
                   </ToolButton>

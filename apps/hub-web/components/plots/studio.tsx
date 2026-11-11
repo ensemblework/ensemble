@@ -31,7 +31,8 @@ import { figureBytes } from "@/lib/plots/figure-file";
 import { plottedCsv } from "@/lib/plots/option";
 import { seriesSwatchColor } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
-import { InfoTip, InlineEdit, Popover, Segmented, Toggle, cx } from "@/components/ui";
+import { InfoTip, InlineEdit, Popover, Segmented, Skeleton, Toggle, cx } from "@/components/ui";
+import { LoadError } from "@/components/load-error";
 
 const CodePane = dynamic(() => import("./code-pane").then((mod) => mod.PlotCodePane), { ssr: false });
 
@@ -217,7 +218,13 @@ export function PlotStudio({ plotId }: { plotId: string }) {
   });
 
   if (!config) {
-    return <div className="px-8 pt-8 text-[14px] text-muted">{plot.isError ? "That plot is not on your account." : slow ? "Opening the plot…" : ""}</div>;
+    if (plot.isError) return <LoadError error={plot.error} what="this plot" retrying={plot.isFetching} onRetry={() => void plot.refetch()} />;
+    return <div className="flex h-[calc(100dvh-4.5rem)] flex-col gap-6 px-4 pb-4 pt-3" aria-busy="true">
+      <span className="sr-only" role="status">Opening the plot…</span>
+      <Skeleton className="h-8 w-56" />
+      <Skeleton className="h-8 w-80 max-w-full" />
+      <Skeleton className="min-h-[280px] w-full flex-1" />
+    </div>;
   }
 
   const setType = async (column: PlotColumn, type: ColumnType) => {

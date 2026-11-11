@@ -17,7 +17,7 @@ import { ExportMenu } from "../export-menu";
 import { ShareButton } from "../sharing/share-dialog";
 import { confirmAction } from "../ask-dialog";
 import { useToast } from "../toast";
-import { MenuItem, Popover } from "../ui";
+import { MenuItem, Popover, Skeleton } from "../ui";
 
 /** Which project these notes belong to; they then also show on that project's page. */
 function MeetingProject({ session }: { session: MeetingSessionRecord }) {
@@ -232,7 +232,7 @@ export function MeetingNotesFields({ session, onRemoved, editor, details }: { se
           comments={false}
           remote={remote}
         />
-      ) : <div className="skeleton h-40 w-full" />}
+      ) : <Skeleton className="h-40 w-full" />}
     </PageContent>
   </>;
 }

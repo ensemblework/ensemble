@@ -45,6 +45,7 @@ import {
   isCancelled,
   isPaused,
   updateActivity,
+  withActivity,
 } from "../lib/activity.js";
 import { settleWriteBatch } from "./batch.js";
 import { reflectProposals } from "./reply.js";
@@ -254,7 +255,7 @@ export async function runAssistantTurn(args: AssistantTurnArgs): Promise<Assista
   }, 750);
 
   try {
-    return await drive(args, activityId, stop);
+    return await withActivity(userId, activityId, stop.signal, () => drive(args, activityId, stop));
   } finally {
     clearInterval(monitor);
     args.signal?.removeEventListener("abort", abort);

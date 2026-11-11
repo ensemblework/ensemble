@@ -1,5 +1,4 @@
 "use client";
-import { BrandMorph } from "@/components/motion/brand-morph";
 
 import { useState } from "react";
 import { Download, FileCode2, FileOutput, FileText, FileType2, Globe, NotebookPen, Type } from "lucide-react";
@@ -7,7 +6,7 @@ import type { LucideIcon } from "lucide-react";
 
 import type { ExportDoc } from "@/lib/export/document";
 import { DOC_FORMATS, downloadDocument, type DocFormat } from "@/lib/export/formats";
-import { Popover } from "./ui";
+import { Popover, Spinner } from "./ui";
 import { useToast } from "./toast";
 
 const ICONS: Record<DocFormat, LucideIcon> = {
@@ -87,7 +86,7 @@ export function ExportMenu({
                 onClick={() => void run(format.id, close)}
                 className="row-tile flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-50"
               >
-                {busy === format.id ? <BrandMorph size={14} kind="beacon" loader state="loop" /> : <Icon size={14} className="text-muted" />}
+                {busy === format.id ? <Spinner size={14} /> : <Icon size={14} className="text-muted" />}
                 <span className="flex-1">{format.label}</span>
                 <span className="text-2xs text-faint">{format.hint}</span>
               </button>
@@ -105,7 +104,7 @@ export function ExportMenu({
                   onClick={() => void perform(`extra:${item.id}`, item.run, close)}
                   className="row-tile flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-50"
                 >
-                  {busy === `extra:${item.id}` ? <BrandMorph size={14} kind="beacon" loader state="loop" /> : <FileOutput size={14} className="text-muted" />}
+                  {busy === `extra:${item.id}` ? <Spinner size={14} /> : <FileOutput size={14} className="text-muted" />}
                   <span className="flex-1">{item.label}</span>
                   <span className="text-2xs text-faint">{item.hint}</span>
                 </button>

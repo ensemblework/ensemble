@@ -1,5 +1,6 @@
 "use client";
 import { BrandMorph } from "./motion/brand-morph";
+import { LocalSpinner } from "./motion/loading";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -131,10 +132,8 @@ export function Toggle({
   );
 }
 
-export function Spinner({ size = 14, active = true }: { size?: number; active?: boolean }) {
-  const shown = useDelayedFlag(active);
-  if (!shown) return null;
-  return <span data-motion-slot="control.spinner" data-state="running" data-motion-loading="1" aria-hidden><BrandMorph size={size} kind="beacon" state="loop" /></span>;
+export function Spinner({ size = 16, active = true }: { size?: number; active?: boolean }) {
+  return <LocalSpinner size={size} active={active} />;
 }
 
 export function InfoTip({ text, label = "More information" }: { text: React.ReactNode; label?: string }) {
@@ -263,7 +262,7 @@ export function SkeletonRows({
   className?: string;
 }) {
   return (
-    <div className={className} aria-hidden>
+    <div className={className} role="status" aria-label="Loading content">
       {Array.from({ length: count }, (_, index) => (
         <Skeleton key={index} index={index} className={cx("w-full", rowClassName)} />
       ))}

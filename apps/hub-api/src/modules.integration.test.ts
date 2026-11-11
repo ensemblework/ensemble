@@ -24,9 +24,6 @@ const PATHS = [
   ["GET", "/api/workspace"],
   ["GET", "/api/workspace/checkouts"],
   ["POST", "/api/agent/assign"],
-  ["GET", "/api/agent/state"],
-  ["POST", "/api/agent/pause"],
-  ["POST", "/api/activity/job/stop"],
   ["GET", "/api/runs"],
   ["DELETE", "/api/runs/job"],
   ["GET", "/api/metrics/summary"],
@@ -109,6 +106,10 @@ test("removed modules 404 for cookie, bearer, and internal, and core routes stay
       }
       const home = await app.inject({ method: "GET", url: "/api/today/home", headers: via.headers });
       assert.equal(home.statusCode, 200, via.name);
+      for (const url of ["/api/agent/state", "/api/agent/pause", "/api/agent/resume", "/api/agent/stop-all", "/api/activity/call/stop"]) {
+        const activity = await app.inject({ method: url.endsWith("/state") ? "GET" : "POST", url, headers: via.headers });
+        assert.equal(activity.statusCode, 200, `${via.name} core activity ${url}`);
+      }
       const disguised = [
         ["GET", "/api/%73kills"],
         ["POST", "/api/%73kills"],
