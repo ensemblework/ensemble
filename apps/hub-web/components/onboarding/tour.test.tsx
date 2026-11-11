@@ -13,9 +13,10 @@ import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
 import { api } from "@/lib/api";
 import { OnboardingTour } from "./guided-tour";
 import { buildTour, canAutoStartTour, tourProfile } from "./tour-plan";
-import { demoBeat, CHAPTER_TRANSITION } from "./tour-playback";
+import { createSceneClock, demoBeat, CHAPTER_TRANSITION } from "./tour-playback";
 import { renderToStaticMarkup } from "react-dom/server";
-import { demoCursor, previewSize, TourScene } from "./tour-scenes";
+import { previewSize, TourScene } from "./tour-scenes";
+import { CURSOR_PATHS, PRESS_LEAD, createHandoff, cursorPose, cursorSegments, glide, type Box } from "./tour-cursor";
 
 (globalThis as { React?: typeof React }).React = React;
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
@@ -53,20 +54,87 @@ test("tour eligibility preserves established accounts and setup; progress reject
 test("demonstrations are paced, eased, bounded and held at their final frame", () => {
   const durations = Object.fromEntries(buildTour("branch-desk", "code").map((step) => [step.id, step.duration]));
   assert.deepEqual(durations, { welcome: 5000, today: 6000, arrange: 5000, board: 5000, pages: 8000, context: 6000, code: 6000, approvals: 10000, connections: 7000, assistant: 10000, finish: 5000 });
-  assert.equal(demoCursor("today", 900).x, 31);
-  assert.equal(demoCursor("today", 2700).x, 31, "pointer holds still for reading after a 400 ms move");
-  assert.equal(demoCursor("arrange", 3250).press, 1, "click coincides with Add to Today");
-  assert.deepEqual(demoCursor("arrange", 3250, { "place-tile": { x: 83, y: 74 } }), { x: 83, y: 74, press: 1 }, "click lands on the measured preview control");
+  const today = CURSOR_PATHS.today!;
+  assert.deepEqual(pick(cursorPose(today, 1150)), pick(cursorPose(today, 2000)), "pointer holds still for reading after a move");
+  assert.equal(cursorPose(CURSOR_PATHS.arrange!, 3250).press, 1, "click coincides with Add to Today");
+  assert.ok(cursorPose(CURSOR_PATHS.arrange!, 3250).ripple, "a click leaves a ripple where it lands");
+  assert.deepEqual(pick(cursorPose(CURSOR_PATHS.arrange!, 3250 - PRESS_LEAD, { "place-tile": { x: 80, y: 70, width: 6, height: 8 } })), { x: 83, y: 74 }, "click lands on the measured preview control");
   assert.ok(CHAPTER_TRANSITION >= 600);
   assert.equal(demoBeat(500, 1000, 3000), 0);
   assert.equal(demoBeat(2000, 1000, 3000), .5);
   assert.equal(demoBeat(14000, 1000, 3000), 1);
   for (const step of buildTour("branch-desk", "code")) {
     for (const ms of [0, 2000, 5000, 9000, 12000, 50000]) {
-      const pointer = demoCursor(step.id, ms);
+      const pointer = cursorPose(CURSOR_PATHS[step.id] ?? today, ms);
       assert.ok(pointer.x >= 0 && pointer.x <= 100 && pointer.y >= 0 && pointer.y <= 100);
     }
   }
+});
+
+const pick = ({ x, y }: { x: number; y: number }) => ({ x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
+
+test("the pointer moves like a hand: every move takes time, glides without jumps and carries a dragged card exactly", () => {
+  // The wide canvas (with sidebar and top bar) and the compact one, in canvas pixels.
+  const scenes: Box[] = [{ x: 134, y: 34, width: 906, height: 466 }, { x: 0, y: 34, width: 480, height: 466 }];
+  for (const scene of scenes) {
+    for (const [id, path] of Object.entries(CURSOR_PATHS)) {
+      for (const segment of cursorSegments(path, {}, scene)) {
+        const distance = Math.hypot(segment.to.x - segment.from.x, segment.to.y - segment.from.y);
+        if (distance > 40) assert.ok(segment.arrive - segment.depart >= 260, `${id}: a ${Math.round(distance)} px move gets ${segment.arrive - segment.depart} ms`);
+      }
+      let last = cursorPose(path, 0, {}, scene);
+      for (let ms = 1000 / 60; ms <= 10000; ms += 1000 / 60) {
+        const pose = cursorPose(path, ms, {}, scene);
+        const step = Math.hypot(pose.x - last.x, pose.y - last.y);
+        assert.ok(step <= 50, `${id} moves ${step.toFixed(1)} px in one frame at ${Math.round(ms)} ms`);
+        last = pose;
+      }
+    }
+  }
+  const board = CURSOR_PATHS.board!;
+  const targets = { "drag-card": { x: 160, y: 300, width: 260, height: 70 }, "drop-slot": { x: 460, y: 240, width: 260, height: 70 } };
+  for (const ms of [1350, 1500, 1700, 1950, 2000]) {
+    const pose = cursorPose(board, ms, targets);
+    const grab = cursorPose(board, 1340, targets);
+    assert.deepEqual(pick({ x: grab.x + pose.drag!.offset.x, y: grab.y + pose.drag!.offset.y }), pick(pose), "the card stays under the pointer");
+  }
+  assert.equal(cursorPose(board, 1340, targets).drag, null, "nothing is carried before the press");
+  assert.equal(glide(0), 0);
+  assert.equal(glide(1), 1);
+  assert.ok(glide(.02) < .01, "moves start gently instead of lurching");
+});
+
+test("a chapter change, restart or new layout eases the pointer from where it is drawn", () => {
+  const handoff = createHandoff();
+  const shown = { x: 700, y: 400 };
+  const pose = { x: 200, y: 120 };
+  handoff.rebase(1000, shown, pose, CHAPTER_TRANSITION);
+  assert.deepEqual(handoff.apply(1000, pose), shown, "no jump on the frame the scene changes");
+  let last = shown;
+  for (let now = 1000; now <= 1000 + CHAPTER_TRANSITION; now += 1000 / 60) {
+    const point = handoff.apply(now, pose);
+    assert.ok(Math.hypot(point.x - last.x, point.y - last.y) < 40, "glides at a readable speed");
+    last = point;
+  }
+  assert.deepEqual(handoff.apply(1000 + CHAPTER_TRANSITION, pose), pose, "lands on the new scene's pose");
+  handoff.rebase(2000, handoff.apply(2000, pose), { x: 210, y: 130 }, 320);
+  assert.deepEqual(pick(handoff.apply(2000, { x: 210, y: 130 })), pose, "a re-measure mid-glide starts from the drawn point");
+});
+
+test("the scene and the pointer read one clock; pause, resume and restart never skip", () => {
+  const clock = createSceneClock(5000);
+  clock.play();
+  assert.equal(clock.read(100), 0, "time starts on the first frame after play");
+  assert.equal(clock.read(1100), 1000);
+  assert.equal(clock.read(1100), clock.read(1100), "two readers in one frame get the same time");
+  clock.read(1600);
+  clock.pause();
+  assert.equal(clock.read(9000), 1500, "a paused scene holds the last frame shown");
+  clock.play();
+  assert.equal(clock.read(9000), 1500, "resuming continues from the paused frame");
+  assert.equal(clock.read(9016), 1516);
+  assert.equal(clock.read(99999), 5000, "held at the final frame");
+  assert.equal(createSceneClock(5000, 5000).read(), 5000, "reduced motion starts at the final frame");
 });
 
 test("the complete app canvas fits short windows and zoomed viewports without cropping", () => {
@@ -263,7 +331,11 @@ test("pause freezes the preview and chapter transitions keep the same Next butto
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 180)); });
     assert.equal(document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs, paused);
     const next = document.querySelector<HTMLButtonElement>("[data-tour-next]")!;
+    const playing = document.querySelector(".film-layer");
+    assert.equal(document.querySelectorAll(".film-pointer").length, 1);
     await click("[data-tour-next]");
+    assert.equal(document.querySelector('.film-layer[data-phase="out"]'), playing, "the leaving scene is the same element, not a remount");
+    assert.equal(document.querySelectorAll(".film-pointer").length, 1, "one pointer moves between chapters");
     assert.equal(document.querySelector("[data-tour-next]"), next);
     assert.equal(next.textContent, "Next");
     assert.equal(next.getAttribute("aria-disabled"), "true");

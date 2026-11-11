@@ -8,9 +8,10 @@ test("old one-page hashes land on the tab that now holds the section", () => {
   const cases: Array<[string, string]> = [
     ["#models", "assistant"],
     ["#assistant", "assistant"],
-    ["#autonomy", "assistant"],
+    ["#autonomy", "agents"],
+    ["#orchestration", "agents"],
     ["#prompts", "assistant"],
-    ["#quiet", "assistant"],
+    ["#quiet", "notifications"],
     ["#connections", "connections"],
     ["#connect", "connections"],
     ["#fetch", "connections"],
@@ -19,7 +20,8 @@ test("old one-page hashes land on the tab that now holds the section", () => {
     ["#retention", "data"],
     ["#completed", "data"],
     ["#trash", "data"],
-    ["#terminal", "data"],
+    ["#terminal", "agents"],
+    ["#failed", "connections"],
     ["#danger", "data"],
     ["#brief", "notifications"],
     ["#nudges", "notifications"],
@@ -88,4 +90,33 @@ test("old explicit Account appearance bookmarks now select Appearance", () => {
 
 test("old account-deletion links open Data's danger zone", () => {
   assert.equal(parseSettingsLocation("?tab=account", "#jump-account-delete-account").tab, "data");
+});
+
+test("links written before a section moved tab open where it is now", () => {
+  for (const [search, hash, tab] of [
+    ["?tab=assistant", "#quiet", "notifications"],
+    ["?tab=assistant", "#autonomy", "agents"],
+    ["?tab=assistant", "#orchestration", "agents"],
+    ["?tab=data", "#terminal", "agents"],
+    ["?tab=data", "#failed", "connections"],
+    ["?tab=assistant", "#jump-quiet-quiet-hours-start", "notifications"],
+    ["?tab=data", "#jump-terminal-folders-code-can-use", "agents"],
+    ["?tab=assistant", "#jump-automations-tell-me-when-agent-work-waits-for-review", "notifications"],
+    ["?tab=data", "#jump-trash-trash", "data"],
+  ] as const) {
+    assert.equal(parseSettingsLocation(search, hash).tab, tab, `${search}${hash}`);
+  }
+  // A section that never moved keeps the tab the link names.
+  assert.equal(parseSettingsLocation("?tab=data", "#models").tab, "data");
+});
+
+test("renamed controls keep their old jump ids", () => {
+  for (const [old, now] of [
+    ["jump-automations-tell-me-when-agent-work-waits-for-review", "jump-nudges-tell-me-when-agent-work-waits-for-review"],
+    ["jump-export-export-space", "jump-export-download-this-space"],
+    ["jump-trash-trash", "jump-completed-trash"],
+    ["jump-appearance-text-and-font", "jump-appearance-text"],
+  ]) {
+    assert.equal(SETTINGS_DESTINATION_BY_ID.get(old)?.id, now, old);
+  }
 });

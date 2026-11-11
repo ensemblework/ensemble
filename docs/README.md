@@ -45,7 +45,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [25 · Remote tasks](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | Pairing, leases, files, Code and terminal on a paired computer |
 | [26 · CLI](26_CLI.md) | Install, terminal UI, commands, runner, MCP, releases |
 | [Quick capture](20_QUICK_CAPTURE.md) | Tray app with a global shortcut |
-| [Context Bridge](CONTEXT_BRIDGE.md) | Read-only MCP server for editors |
+| [Context Bridge](CONTEXT_BRIDGE.md) | MCP server for editors: reads, and changes with a key that allows them |
 | [Brand](BRAND.md) | Shared artwork, palettes, motion, generated assets |
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
 | [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |

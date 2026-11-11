@@ -12,6 +12,9 @@ import { StatusPill } from "./bits";
 import { BridgeKey } from "./bridge-key";
 import { LocalMcp } from "./local-mcp";
 import { AppMark } from "./logos";
+import { ExtensionCards } from "./extensions";
+import { ConnectHelp } from "./help";
+import { hostedMcpUrl } from "@/lib/connect/configs";
 
 export function ConnectPage() {
   const bridge = useQuery({
@@ -96,6 +99,17 @@ export function ConnectPage() {
         ))}
       </ul>
 
+      <section className="mt-10" aria-labelledby="extensions-title">
+        <h2 id="extensions-title" className="text-[18px] font-semibold tracking-tight">
+          AI extensions inside your editor
+        </h2>
+        <p className="mt-1 max-w-2xl text-[13.5px] leading-5 text-muted">
+          Claude Code, Codex and other extensions keep their own list of MCP servers, apart from the editor&apos;s. Pick yours to see where it looks and what to add.
+        </p>
+        <div className="mt-3">
+          <ExtensionCards />
+        </div>
+      </section>
         </>
       )}
 
@@ -123,6 +137,15 @@ export function ConnectPage() {
           ))}
         </ul>
       </section>
+
+      <ConnectHelp
+        className="mt-10"
+        place={{
+          localOnly,
+          keys: { count: bridge.data?.tokens.length ?? 0, canWrite: (bridge.data?.tokens ?? []).filter((row) => row.canWrite !== false).length },
+          hostedUrl: hostedMcpUrl({ publicApiUrl: bridge.data?.publicApiUrl, origin: typeof window === "undefined" ? undefined : window.location.origin }),
+        }}
+      />
     </div>
   );
 }

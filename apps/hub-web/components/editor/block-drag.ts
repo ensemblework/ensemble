@@ -2,6 +2,7 @@ import type { Editor } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { moveBlock, moveBlockTo } from "./block-move";
 import { measureTargets, targetAt, type BlockTarget, type MeasuredTarget } from "./block-targets";
+import { motionReduced } from "@/lib/motion/drag";
 
 /**
  * Dragging a block by its handle, the way cards move on a board: the block lifts into a copy that
@@ -38,6 +39,9 @@ export class BlockDrag {
   private readonly ghost: HTMLElement | null;
   private readonly frame: HTMLElement;
   private readonly scroller: HTMLElement | null;
+  /** Reduced motion: neighbours and the drop still move, at once rather than gliding. */
+  private readonly slideTiming = motionReduced() ? { ...SLIDE, duration: 0 } : SLIDE;
+  private readonly settleTiming = motionReduced() ? { ...SETTLE, duration: 0 } : SETTLE;
   private readonly slides = new Map<HTMLElement, { to: number; animation: Animation | null }>();
   private index: number;
   private pointerY: number;
@@ -208,7 +212,7 @@ export class BlockDrag {
     const opacity = faded ? 0.16 : 1;
     const animation = element.animate(
       [{ transform: `translate3d(0, ${from}px, 0)`, opacity }, { transform: `translate3d(0, ${to}px, 0)`, opacity }],
-      SLIDE,
+      this.slideTiming,
     );
     this.slides.set(element, { to, animation });
   }
@@ -259,7 +263,7 @@ export class BlockDrag {
       if (was === undefined) continue;
       const delta = was - element.getBoundingClientRect().top;
       if (Math.abs(delta) < 0.5) continue;
-      element.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+      element.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], this.settleTiming);
     }
     return true;
   }
@@ -281,12 +285,12 @@ export class BlockDrag {
     for (const [element, was] of before) {
       if (!element.isConnected || !canAnimate(element)) continue;
       const delta = was - element.getBoundingClientRect().top;
-      if (Math.abs(delta) >= 0.5) element.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+      if (Math.abs(delta) >= 0.5) element.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], this.settleTiming);
     }
     const landed = view.nodeDOM(moved.at);
     if (landed instanceof HTMLElement && canAnimate(landed) && ghostTop !== null) {
       const delta = ghostTop - landed.getBoundingClientRect().top;
-      landed.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+      landed.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], this.settleTiming);
     }
     return true;
   }
@@ -300,7 +304,7 @@ export class BlockDrag {
     this.finish();
     if (ghostTop !== null && canAnimate(home)) {
       const delta = ghostTop - home.getBoundingClientRect().top;
-      if (Math.abs(delta) > 0.5) home.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], SETTLE);
+      if (Math.abs(delta) > 0.5) home.animate([{ transform: `translate3d(0, ${delta}px, 0)` }, { transform: "translate3d(0, 0, 0)" }], this.settleTiming);
     }
   }
 

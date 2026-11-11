@@ -295,10 +295,35 @@ export function seriesColor(args: {
   return color;
 }
 
+/** Hue in degrees and saturation 0..1 of a #rrggbb colour. */
+function hueOf(hex: string): { hue: number; sat: number } {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((value) => value / 255) as [number, number, number];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  const light = (max + min) / 2;
+  const sat = delta === 0 ? 0 : delta / (1 - Math.abs(2 * light - 1));
+  let hue = 0;
+  if (delta) hue = max === r ? 60 * (((g - b) / delta) % 6) : max === g ? 60 * ((b - r) / delta + 2) : 60 * ((r - g) / delta + 4);
+  return { hue: (hue + 360) % 360, sat };
+}
+
+/** True when two saturated colours sit within `degrees` of each other on the colour wheel (gold and orange). */
+export function closeHue(a: string, b: string, degrees = 28): boolean {
+  if (!/^#[0-9a-fA-F]{6}$/.test(a) || !/^#[0-9a-fA-F]{6}$/.test(b)) return false;
+  const one = hueOf(a);
+  const two = hueOf(b);
+  if (one.sat < 0.2 || two.sat < 0.2) return false;
+  const gap = Math.abs(one.hue - two.hue);
+  return Math.min(gap, 360 - gap) < degrees;
+}
+
 export function paletteColors(id: PaletteId, accent?: string, dark = false): string[] {
   if (id === "accent") {
     const first = accent && /^#[0-9a-fA-F]{6}$/.test(accent) ? accent : "#5346d6";
-    return [first, ...OKABE_ITO.filter((color) => color.toLowerCase() !== first.toLowerCase())];
+    // The series after the accent take Okabe–Ito colours that do not look like it (a gold accent skips orange and yellow).
+    return [first, ...OKABE_ITO.filter((color) => color.toLowerCase() !== first.toLowerCase() && !closeHue(color, first))];
   }
   if (id === "tableau10") return [...TABLEAU_10];
   if (id === "set2") return [...SET2];

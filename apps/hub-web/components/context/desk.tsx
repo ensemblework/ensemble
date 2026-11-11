@@ -567,13 +567,18 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
         </div>
       ) : null}
       {drag ? (
-        <div className="context-drag" style={{ left: Math.min(Math.max(8, drag.x - 16), window.innerWidth - 188), top: Math.min(Math.max(8, drag.y - 16), window.innerHeight - 48) }}>
+        <div className="context-drag" style={{ left: 0, top: 0, translate: chipAt(drag.x, drag.y) }}>
           {drag.linkId ? `Link ${drag.card.title}` : drag.card.title}
         </div>
       ) : null}
       {open ? <Peek card={open} cards={allCards} onOpen={showCard} onClose={() => setOpenId(null)} onChanged={() => void reload()} /> : null}
     </div>
   );
+}
+
+/** Where the dragged card's label sits: by the pointer, kept inside the window. A translate, so moving it is not layout. */
+function chipAt(x: number, y: number): string {
+  return `${Math.min(Math.max(8, x - 16), window.innerWidth - 188)}px ${Math.min(Math.max(8, y - 16), window.innerHeight - 48)}px`;
 }
 
 function Lane({
@@ -635,6 +640,7 @@ function Lane({
     let movedFar = false;
     let overId: string | null = null;
     let linkId: string | null = null;
+    let shown = false;
     let settled = false;
     let hold = 0;
     let edgeFrame = 0;
@@ -736,9 +742,17 @@ function Lane({
       const hitLane = hit?.closest("[data-lane]")?.getAttribute("data-lane");
       const targetId = hit?.getAttribute("data-card") ?? null;
       const targetKind = hit?.getAttribute("data-kind");
-      overId = hitLane === lane.id && targetId !== card.id ? targetId : null;
-      linkId = targetKind === "project" && targetId && targetId !== card.id && hitLane !== lane.id && (card.kind === "people" || card.kind === "repo") ? targetId : null;
-      onDrag({ card, laneId: lane.id, x: pointer.clientX, y: pointer.clientY, overId, linkId });
+      const nextOver = hitLane === lane.id && targetId !== card.id ? targetId : null;
+      const nextLink = targetKind === "project" && targetId && targetId !== card.id && hitLane !== lane.id && (card.kind === "people" || card.kind === "repo") ? targetId : null;
+      // The board renders only when the card is first lifted or its target changes; the label follows the pointer directly.
+      if (!shown || nextOver !== overId || nextLink !== linkId) {
+        shown = true;
+        overId = nextOver;
+        linkId = nextLink;
+        onDrag({ card, laneId: lane.id, x: pointer.clientX, y: pointer.clientY, overId, linkId });
+      }
+      const chip = document.querySelector<HTMLElement>(".context-drag");
+      if (chip) chip.style.translate = chipAt(pointer.clientX, pointer.clientY);
     };
     const up = (ev: Event) => finish(true, point(ev));
     const cancel = () => finish(false);
@@ -758,6 +772,7 @@ function Lane({
       hold = window.setTimeout(() => {
         if (settled) return;
         arm(pointerId, event.target);
+        shown = true;
         onDrag({ card, laneId: lane.id, x: lastX, y: lastY, overId: null, linkId: null });
       }, 420);
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { perFrame } from "@/lib/motion/drag";
 import { readPanelWidth, setPanelWidth, type PanelWidth } from "@/lib/panel-width";
 
 /**
@@ -42,10 +43,18 @@ export function PanelResize({ spec, edge, label, className }: { spec: PanelWidth
         let last = start;
         setActive(true);
         document.body.dataset.sidebarResizing = "1";
-        const move = (next: PointerEvent) => {
-          last = setPanelWidth(spec, start + (next.clientX - x0) * grow);
-        };
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // the pointer already ended
+        }
+        // Each width lays the page out again: once a frame at most.
+        const resize = perFrame((clientX: number) => {
+          last = setPanelWidth(spec, start + (clientX - x0) * grow);
+        });
+        const move = (next: PointerEvent) => resize(next.clientX);
         const end = () => {
+          resize.flush();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", end);
           window.removeEventListener("pointercancel", end);

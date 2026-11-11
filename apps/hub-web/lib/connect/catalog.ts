@@ -85,7 +85,7 @@ export const APPS: AppCard[] = [
   {
     id: "visual-studio",
     name: "Visual Studio",
-    get: "Visual Studio 2022 can use Ensemble as a read-only MCP source for code context.",
+    get: "Visual Studio 2022 can use Ensemble as an MCP source for code context.",
     setupId: "visual-studio",
   },
   {

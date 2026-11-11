@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Suspense } from "react";
 import { SkeletonRows } from "@/components/ui";
 
 const Guide = dynamic(() => import("@/components/connect/guide"), {
@@ -12,5 +13,10 @@ const Guide = dynamic(() => import("@/components/connect/guide"), {
 });
 
 export default function Page() {
-  return <Guide />;
+  // The guide reads ?ext= (the AI extension picked): search params need a boundary in the static export.
+  return (
+    <Suspense fallback={null}>
+      <Guide />
+    </Suspense>
+  );
 }

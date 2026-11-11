@@ -145,7 +145,8 @@ function idOf(variables: Record<string, unknown>, key = "id"): string {
 }
 
 /**
- * Read-only MCP server. Tools and resources call hub-api over HTTP.
+ * Ensemble's MCP server: read tools for every key, write tools for a key that may make changes.
+ * Tools and resources call hub-api over HTTP.
  * stdout is reserved for stdio JSON-RPC; this function does not log.
  */
 export function buildServer(deps: BridgeDeps = {}): McpServer {

@@ -66,11 +66,17 @@ function InlinePlot({ id, label, onRemove, height: storedHeight = null, onResize
       label: `Resize ${label || "plot"}`,
       min: PLOT_MIN_HEIGHT,
       read: () => heightRef.current ?? stageRef.current?.querySelector<HTMLElement>("[data-plot-figure]")?.clientHeight ?? 320,
+      // While the handle is dragged only the figures' boxes change; React renders the card once, on commit.
       apply: (next) => {
         heightRef.current = next;
-        setHeight(next);
+        stageRef.current?.querySelectorAll<HTMLElement>("[data-plot-figure]").forEach((figure) => {
+          figure.style.height = `${next}px`;
+        });
       },
-      commit: (next) => commitRef.current?.(next),
+      commit: (next) => {
+        setHeight(next);
+        commitRef.current?.(next);
+      },
     });
     host.append(handle);
     return () => handle.remove();

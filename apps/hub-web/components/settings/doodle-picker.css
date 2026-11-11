@@ -1,0 +1,14 @@
+.doodle-section { margin-top: 26px; }
+.doodle-heading { margin-bottom: 12px; }
+.doodle-heading h3 { font-size: 14px; font-weight: 550; }
+.doodle-heading p { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.doodle-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.doodle-grid > button { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); text-align: left; transition: border-color var(--dur-fast, 120ms) var(--ease); }
+.doodle-grid > button:hover { border-color: var(--faint); }
+.doodle-grid > button[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.doodle-grid > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.doodle-swatch { display: block; height: 58px; border-bottom: 1px solid var(--line); background-color: var(--bg); }
+.doodle-name { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 4px; padding: 6px 8px 7px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
+.doodle-name > svg { flex: none; color: var(--accent); }
+@media (max-width: 1100px) { .doodle-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .doodle-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

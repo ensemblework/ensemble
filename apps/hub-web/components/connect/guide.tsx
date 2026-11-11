@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDesktopParam } from "@/lib/desktop-param";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
@@ -62,6 +62,9 @@ import { BridgeKey } from "./bridge-key";
 import { CopyBlock, OsTabs, StatusPill } from "./bits";
 import { AppMark } from "./logos";
 import { Stage } from "./stage";
+import { ExtensionPanel } from "./extensions";
+import { ConnectHelp } from "./help";
+import { extensionsFor } from "@/lib/connect/extensions";
 
 const PLACEHOLDER: ConnectFacts = {
   repoRoot: "/ABSOLUTE/PATH/TO/ensemble",
@@ -80,6 +83,16 @@ export default function Guide() {
   const token = useBridgeToken();
   const [osPick, setOsPick] = useState<ConnectOs | null>(null);
   const [method, setMethod] = useState<ConnectMethod>("cli");
+  const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const extension = app ? (extensionsFor(app.id).find((item) => item.id === search.get("ext")) ?? null) : null;
+  const pickExtension = (next: string | null) => {
+    const params = new URLSearchParams(search.toString());
+    if (next) params.set("ext", next);
+    else params.delete("ext");
+    router.replace(`${pathname}${params.size ? `?${params}` : ""}`, { scroll: false });
+  };
   const os = osPick ?? (bridge.data ? osFromPlatform(bridge.data.platform) : "linux");
   const facts: ConnectFacts = bridge.data
     ? {
@@ -159,7 +172,21 @@ export default function Guide() {
       </div>
 
       {method !== "source" ? (
-        <MethodGuide app={app} method={method} os={os} onOsChange={setOsPick} facts={facts} tokens={bridge.data?.tokens ?? []} />
+        <>
+          <MethodGuide app={app} method={method} os={os} onOsChange={setOsPick} facts={facts} tokens={bridge.data?.tokens ?? []} />
+          <ExtensionPanel app={app} picked={extension} onPick={pickExtension} method={method} os={os} facts={facts} />
+          <ConnectHelp
+            className="mt-10"
+            place={{
+              app,
+              method,
+              os,
+              extension,
+              keys: { count: bridge.data?.tokens.length ?? 0, canWrite: (bridge.data?.tokens ?? []).filter((row) => row.canWrite !== false).length },
+              hostedUrl: hostedMcpUrl({ publicApiUrl: facts.publicApiUrl, origin: typeof window === "undefined" ? undefined : window.location.origin }),
+            }}
+          />
+        </>
       ) : (
       <>
       <div className="mb-5" aria-label="Progress">
@@ -325,7 +352,8 @@ function MethodGuide({
       <aside className="tile rounded-xl bg-panel p-4">
         <h2 className="text-[15px] font-semibold">What this allows</h2>
         <ul className="mt-3 space-y-2 text-[13px] leading-5 text-muted">
-          <li>• MCP access is read-only: editors can read your Ensemble context but cannot change it.</li>
+          <li>• A key reads your Ensemble. If changes were allowed when it was made, the app can also add and update tasks, pages, boards and more; each change can be undone in Ensemble.</li>
+          <li>• Using the Ensemble desktop app with Ensemble kept only on that computer? Its own Connect page gives a command for this, with no CLI or key.</li>
           <li>• Hosted MCP uses <span className="font-mono">https://api.ensemblework.com/mcp</span> with an <span className="font-mono">ens_</span> bridge key.</li>
           <li>• CLI runner tasks only run in folders you add with <span className="font-mono">ensemble folders add</span>.</li>
           <li>• Check setup with <span className="font-mono">ensemble status</span> and <span className="font-mono">ensemble doctor</span>.</li>

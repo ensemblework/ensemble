@@ -24,7 +24,7 @@ import {
 import { HomeLogoLink } from "../motion/brand-morph";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { hasModule, moduleFitsProfile, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
 import { shellProfile } from "@/components/desk/tile-catalog";
 import { api } from "@/lib/api";
@@ -42,6 +42,7 @@ import { navMenu, sidebarMenu } from "../context-menu/builders";
 import { openContextMenu } from "../context-menu/menu-store";
 import { useToast } from "../toast";
 import { usePersistentState } from "@/lib/prefs";
+import { measureBoxes, motionReduced, perFrame, playFlip, type Box } from "@/lib/motion/drag";
 import { SIDEBAR_ORDER_KEY, arrangeSidebar, isDefaultSidebar, moveSidebarTab, stepSidebarTab } from "@/lib/sidebar-order";
 
 /** The tabs that can be dragged into another order (lib/sidebar-order.ts keeps it). */
@@ -63,7 +64,7 @@ const TABS: Record<string, { label: string; icon: typeof CirclePlay }> = {
 
 const DRAG_START = 5;
 type Drop = { group: number; before: string | null; y: number };
-type Reorder = { start: (event: React.PointerEvent) => void; dragging: boolean; offset: number; up?: () => void; down?: () => void; reset?: () => void };
+type Reorder = { start: (event: React.PointerEvent) => void; dragging: boolean; up?: () => void; down?: () => void; reset?: () => void };
 
 /** Dynamic routes. Prefetch the full payload so a fast click never commits loading.tsx. */
 const EAGER = new Set(["/today", "/board", "/context", "/marketplace"]);
@@ -118,7 +119,6 @@ function NavItem({
       data-nav-href={reorder ? href : undefined}
       data-dragging={reorder?.dragging || undefined}
       draggable={false}
-      style={reorder?.dragging ? { transform: `translateY(${reorder.offset}px)` } : undefined}
       onPointerDown={reorder?.start}
       onContextMenu={(event) => openContextMenu(event, () => navMenu(href, label, router.push, reorder ? { up: reorder.up, down: reorder.down, reset: reorder.reset } : undefined))}
     >
@@ -204,7 +204,19 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const order = useMemo(() => arrangeSidebar(stored), [stored]);
   const shown = (href: string) => (href === "/marketplace" ? Boolean(shell.data?.devTools && !guest) : visible(href));
   const tabsArea = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ href: string; offset: number; drop: Drop | null } | null>(null);
+  const dropLine = useRef<HTMLDivElement>(null);
+  // Only which tab is held is state. Where it is and where it lands are drawn on the DOM directly,
+  // so a pointer move does not render the sidebar.
+  const [drag, setDrag] = useState<{ href: string } | null>(null);
+  // The tabs' places before a drop, so the new order glides in (FLIP) once it renders.
+  const settle = useRef<Map<string, Box> | null>(null);
+  useLayoutEffect(() => {
+    const before = settle.current;
+    const area = tabsArea.current;
+    if (!before || !area) return;
+    settle.current = null;
+    playFlip(area.querySelectorAll<HTMLElement>("[data-nav-href]"), (node) => node.dataset.navHref, before);
+  });
 
   // Where a dragged tab would land: before the first tab whose middle is below the pointer, or at the end of
   // the group just above a gap when the pointer is nearer that group.
@@ -230,21 +242,43 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
 
   const startDrag = (href: string) => (event: React.PointerEvent) => {
     if (event.button !== 0 || event.pointerType === "touch" || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.currentTarget as HTMLElement;
     const startY = event.clientY;
     let active = false;
     let last: Drop | null = null;
+    const line = () => dropLine.current;
+    // Where it lands: once a frame at most, and the line glides there.
+    const aim = perFrame((clientY: number) => {
+      const next = dropAt(clientY, href);
+      const el = line();
+      if (next && el) {
+        if (!last || el.hidden) el.style.transition = "none";
+        el.style.transform = `translateY(${next.y}px)`;
+        el.hidden = false;
+        if (el.style.transition === "none") requestAnimationFrame(() => { el.style.transition = ""; });
+      } else if (el) el.hidden = true;
+      last = next;
+    });
     const finish = (apply: boolean) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", key, true);
       delete document.documentElement.dataset.navDragging;
-      setDrag(null);
+      if (apply) aim.flush();
+      else aim.cancel();
+      const el = line();
+      if (el) el.hidden = true;
       if (!active) return;
       // The release ends a drag, not a click: the link must not open.
       const swallow = (click: MouseEvent) => { click.preventDefault(); click.stopPropagation(); };
       window.addEventListener("click", swallow, { capture: true, once: true });
       window.setTimeout(() => window.removeEventListener("click", swallow, true), 0);
+      const area = tabsArea.current;
+      // Measured with the drag offset still on, so the tab settles from where it was let go.
+      if (area && !motionReduced()) settle.current = measureBoxes(area.querySelectorAll<HTMLElement>("[data-nav-href]"), (node) => node.dataset.navHref);
+      link.style.transform = "";
+      setDrag(null);
       if (apply && last) {
         const target = order[last.group] ?? [];
         setStored(moveSidebarTab(order, href, last.group, last.before ? target.indexOf(last.before) : target.length));
@@ -255,9 +289,11 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
         if (Math.abs(ev.clientY - startY) < DRAG_START) return;
         active = true;
         document.documentElement.dataset.navDragging = "1";
+        setDrag({ href });
       }
-      last = dropAt(ev.clientY, href);
-      setDrag({ href, offset: ev.clientY - startY, drop: last });
+      // In the event itself, so the tab never trails the pointer.
+      link.style.transform = `translateY(${ev.clientY - startY}px)`;
+      aim(ev.clientY);
     };
     const up = () => finish(true);
     const cancel = () => finish(false);
@@ -276,7 +312,6 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const reorderFor = (href: string): Reorder => ({
     start: startDrag(href),
     dragging: drag?.href === href,
-    offset: drag?.href === href ? drag.offset : 0,
     up: () => setStored(stepSidebarTab(order, href, -1, shown)),
     down: () => setStored(stepSidebarTab(order, href, 1, shown)),
     reset: isDefaultSidebar(order) ? undefined : () => setStored(null),
@@ -327,7 +362,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
             </nav>
           );
         })}
-        {drag?.drop ? <div className="nav-drop-line" style={{ top: drag.drop.y }} aria-hidden /> : null}
+        <div ref={dropLine} className="nav-drop-line" hidden aria-hidden />
       </div>
       </div>
       <div className="border-t border-line px-2 pb-3 pt-2">

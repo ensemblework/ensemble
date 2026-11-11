@@ -14,6 +14,7 @@ const ASSETS = [
   "/providers/github.svg",
   "/providers/openai.svg",
   "/providers/claude.svg",
+  "/providers/opencode.svg",
   "/favicon.ico",
   "/robots.txt",
   "/apple-icon.png",

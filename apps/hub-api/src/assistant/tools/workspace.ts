@@ -17,7 +17,7 @@ import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types
 
 const LOOK_ONLY =
   "Look only: to change code, the person's editor works through Ensemble's MCP, or the person assigns the task to an agent.";
-const FOLDERS_SETTING = "/settings?tab=data#jump-terminal-folders-code-can-use";
+const FOLDERS_SETTING = "/settings?tab=agents#jump-terminal-folders-code-can-use";
 
 async function codeAccess(ctx: ToolContext): Promise<void> {
   if (ctx.modules !== undefined && !hasModule(ctx.modules, "code")) {

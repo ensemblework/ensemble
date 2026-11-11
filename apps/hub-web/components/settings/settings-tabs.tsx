@@ -2,12 +2,27 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { useEffect, useRef } from "react";
+import { Bell, CircleUser, Database, Keyboard, Layers, Palette, Plug, Sparkles, Users, type LucideIcon } from "lucide-react";
+import { Fragment, useEffect, useRef, type ComponentType } from "react";
+import { AgentIcon } from "../agent-icon";
 import { cx } from "../ui";
-import { SETTINGS_TABS, type SettingsTab } from "./url-state";
+import { SETTINGS_TAB_GROUPS, SETTINGS_TABS, type SettingsTab } from "./url-state";
+
+const ICONS: Record<SettingsTab, LucideIcon | ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }>> = {
+  account: CircleUser,
+  appearance: Palette,
+  notifications: Bell,
+  shortcuts: Keyboard,
+  assistant: Sparkles,
+  agents: AgentIcon,
+  connections: Plug,
+  spaces: Layers,
+  sharing: Users,
+  data: Database,
+};
 
 /**
- * Settings tabs: a vertical list on wide screens, a scrolling row on narrow
+ * Settings tabs: a grouped vertical list on wide screens, a scrolling row on narrow
  * ones. Arrow keys, Home and End move between tabs; each tab is also a real
  * link, so it can be opened in a new browser tab.
  */
@@ -56,36 +71,49 @@ export function SettingsTabs({ value, onChange, hidden = [] }: { value: Settings
       role="tablist"
       aria-label="Settings sections"
       onKeyDown={move}
-      className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
+      className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:px-0"
       data-settings-nav
     >
-      {tabs.map((tab) => {
-        const selected = tab.id === value;
+      {SETTINGS_TAB_GROUPS.map((group, groupIndex) => {
+        const rows = tabs.filter((tab) => tab.group === group.id);
+        if (!rows.length) return null;
         return (
-          <a
-            key={tab.id}
-            ref={(node) => {
-              refs.current[tab.id] = node;
-            }}
-            id={`settings-tab-${tab.id}`}
-            role="tab"
-            href={`?tab=${tab.id}`}
-            aria-selected={selected}
-            aria-controls="settings-panel"
-            tabIndex={selected ? 0 : -1}
-            onClick={(event) => {
-              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-              event.preventDefault();
-              if (!selected) onChange(tab.id);
-            }}
-            className={cx(
-              "shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] transition-colors lg:whitespace-normal lg:px-2.5 lg:py-2",
-              selected ? "bg-accent-soft font-medium text-ink" : "text-muted hover:bg-hover hover:text-ink",
-            )}
-          >
-            <span className="block">{tab.label}</span>
-            <span className={cx("hidden text-[11.5px] font-normal leading-4 lg:block", selected ? "text-muted" : "text-faint")}>{tab.hint}</span>
-          </a>
+          <Fragment key={group.id}>
+            <div role="presentation" aria-hidden className={cx("hidden px-2.5 pb-1 text-[11px] font-medium uppercase tracking-[0.08em] text-faint lg:block", groupIndex > 0 && "pt-4")}>
+              {group.label}
+            </div>
+            {rows.map((tab) => {
+              const selected = tab.id === value;
+              const Icon = ICONS[tab.id];
+              return (
+                <a
+                  key={tab.id}
+                  ref={(node) => {
+                    refs.current[tab.id] = node;
+                  }}
+                  id={`settings-tab-${tab.id}`}
+                  role="tab"
+                  href={`?tab=${tab.id}`}
+                  title={tab.hint}
+                  aria-selected={selected}
+                  aria-controls="settings-panel"
+                  tabIndex={selected ? 0 : -1}
+                  onClick={(event) => {
+                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                    event.preventDefault();
+                    if (!selected) onChange(tab.id);
+                  }}
+                  className={cx(
+                    "shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] transition-colors lg:flex lg:items-center lg:gap-2.5 lg:px-2.5 lg:py-[7px] lg:text-[13.5px]",
+                    selected ? "bg-accent-soft font-medium text-ink" : "text-muted hover:bg-hover hover:text-ink",
+                  )}
+                >
+                  <Icon size={15} aria-hidden className={cx("hidden shrink-0 lg:block", selected ? "text-accent" : "text-faint")} />
+                  <span className="block min-w-0 truncate">{tab.label}</span>
+                </a>
+              );
+            })}
+          </Fragment>
         );
       })}
     </div>

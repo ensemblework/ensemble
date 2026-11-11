@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   chartFrame,
   duplicateGroups,
@@ -34,6 +34,7 @@ import { BarChart3, Check, ChevronDown, Code2, Download, Eye, GripVertical, Layo
 import Link from "next/link";
 import { readPlotTheme, seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
+import { measureBoxes, perFrame, playFlip, type Box } from "@/lib/motion/drag";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
 import { useToast } from "@/components/toast";
 import { useSpaceAccess } from "@/lib/access";
@@ -129,6 +130,10 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
   const [linksHidden, setLinksHidden] = useState(false);
   const [preview, setPreview] = useState<PackItem[] | null>(null);
   const [ghost, setGhost] = useState<PackItem | null>(null);
+  // The tile being moved or resized keeps its own place and size until the release; the ghost shows where it lands.
+  const [held, setHeld] = useState<{ id: string; mode: "move" | "resize"; col: number; row: number; w: number; h: number } | null>(null);
+  // Where the tiles were drawn before a layout change, so the change can glide (FLIP) instead of jumping.
+  const flipFrom = useRef<Map<string, Box> | null>(null);
   const hydrated = useRef(false);
   const fromServer = useRef(false);
   const savedSnapshot = useRef("");
@@ -324,43 +329,112 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
     setSelected(id);
   };
 
+  /** `skip`: the tile under the pointer, which is not FLIPped while it follows the pointer. */
+  const rememberTiles = (skip?: string) => {
+    const grid = canvasRef.current?.querySelector(".pl-grid");
+    if (!grid) return;
+    flipFrom.current = measureBoxes(grid.querySelectorAll<HTMLElement>(":scope > [data-plot-tile]"), (node) => node.dataset.plotTile);
+    if (skip) flipFrom.current.delete(skip);
+  };
+  useLayoutEffect(() => {
+    const before = flipFrom.current;
+    if (!before) return;
+    flipFrom.current = null;
+    const grid = canvasRef.current?.querySelector(".pl-grid");
+    if (grid) playFlip(grid.querySelectorAll<HTMLElement>(":scope > [data-plot-tile]"), (node) => node.dataset.plotTile, before);
+  });
+
   const layoutTiles = (packed: ReturnType<typeof packOf>) => {
+    rememberTiles();
     setPreview(null);
     setGhost(null);
     setConfig((current) => (current ? { ...current, tiles: withPack(current.tiles, packed) } : current));
   };
 
+  /**
+   * Moving a tile by its header or resizing it by its corner. A moved tile follows the pointer exactly
+   * (translate, written in the event); a resized one keeps its size, and a dashed ghost shows the snapped
+   * place either way. The other tiles re-pack only when the snapped place changes, and glide there.
+   */
   const gesture = (id: string, mode: "move" | "resize", event: React.PointerEvent) => {
+    if (event.button !== 0) return;
     if (mode === "move" && (event.target as HTMLElement).closest("button, input, select")) return;
     event.preventDefault();
     const items = packOf(tilesRef.current);
     const origin = items.find((item) => item.id === id);
-    if (!origin) return;
+    const node = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-plot-tile]");
+    if (!origin || !node) return;
+    const handle = event.currentTarget as HTMLElement;
+    try {
+      handle.setPointerCapture(event.pointerId);
+    } catch {
+      // the pointer already ended
+    }
     const startX = event.clientX;
     const startY = event.clientY;
     const cellNow = cellRef.current;
-    let frame = 0;
+    let active = false;
+    let shownKey = "";
     const placed = (dx: number, dy: number) => (
       mode === "move"
         ? moveItem(items, id, origin.x + Math.round(dx / cellNow), origin.y + Math.round(dy / ROW))
         : resizeItem(items, id, origin.w + Math.round(dx / cellNow), origin.h + Math.round(dy / ROW))
     );
+    // Hit the grid once a frame, and render only when the snapped arrangement changes.
+    const repack = perFrame((dx: number, dy: number) => {
+      const packed = placed(dx, dy);
+      const key = packed.map((item) => `${item.id}:${item.x},${item.y},${item.w},${item.h}`).join("|");
+      if (key === shownKey) return;
+      shownKey = key;
+      rememberTiles(id);
+      setPreview(packed);
+      setGhost(packed.find((item) => item.id === id) ?? null);
+    });
     const move = (ev: PointerEvent) => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const packed = placed(ev.clientX - startX, ev.clientY - startY);
-        setPreview(packed);
-        setGhost(packed.find((item) => item.id === id) ?? null);
-      });
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!active) {
+        if (Math.hypot(dx, dy) < 3) return;
+        active = true;
+        document.documentElement.dataset.tileGesture = mode;
+        setHeld({ id, mode, col: origin.x, row: origin.y, w: origin.w, h: origin.h });
+      }
+      if (mode === "move") node.style.translate = `${dx}px ${dy}px`;
+      repack(dx, dy);
     };
-    const up = (ev: PointerEvent) => {
-      cancelAnimationFrame(frame);
-      layoutTiles(placed(ev.clientX - startX, ev.clientY - startY));
+    const finish = (ev: PointerEvent | null) => {
+      repack.cancel();
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key, true);
+      if (!active) return;
+      delete document.documentElement.dataset.tileGesture;
+      // Measured with the drag offset still on, so the tile lands from where it was let go.
+      rememberTiles();
+      node.style.translate = "";
+      setHeld(null);
+      if (ev) {
+        const before = flipFrom.current;
+        layoutTiles(placed(ev.clientX - startX, ev.clientY - startY));
+        flipFrom.current = before;
+      } else {
+        setPreview(null);
+        setGhost(null);
+      }
+    };
+    const up = (ev: PointerEvent) => finish(ev);
+    const cancel = () => finish(null);
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || !active) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      finish(null);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key, true);
   };
 
   if (!config) {
@@ -589,7 +663,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
             ) : null}
             {ghost ? (
               <div
-                data-tile-ghost
+                data-tile-ghost={held?.mode ?? ""}
                 className="pointer-events-none absolute rounded-xl border-2 border-dashed"
                 style={{
                   left: ghost.x * cell + GUTTER / 2,
@@ -600,7 +674,9 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                   background: "rgb(var(--accent-rgb) / 0.12)",
                   zIndex: 6,
                 }}
-              />
+              >
+                {held?.mode === "resize" ? <span className="pl-ghost-size">{ghost.w} × {ghost.h}</span> : null}
+              </div>
             ) : null}
             {shown.map((tile) => (
               <Tile
@@ -610,7 +686,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                 links={config.links}
                 cell={cell}
                 selected={selected === tile.id}
-                dragging={ghost?.id === tile.id}
+                gesture={held?.id === tile.id ? held.mode : undefined}
                 onSelect={() => setSelected(tile.id)}
                 onOpen={() => setFocus(tile.id)}
                 menu={{ workspaceId, canvasTitle: title, readOnly }}
@@ -639,7 +715,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                 onChange={(next) => setConfig((current) => (current ? { ...current, tiles: current.tiles.map((item) => (item.id === next.id ? next : item)) } : current))}
                 onLayout={layoutTiles}
                 onGesture={stacked ? () => undefined : gesture}
-                place={places.get(tile.id)}
+                place={held?.id === tile.id ? held : places.get(tile.id)}
                 siblings={packOf(config.tiles)}
               />
             ))}
@@ -686,7 +762,8 @@ export function PlotWorkspace({ shared }: { shared?: SharedPlots } = {}) {
 }
 
 function TileChart({ tile, datasets, links, onOpen }: { tile: WorkspaceTile; datasets: PoolDataset[]; links: WorkspaceConfig["links"]; onOpen: () => void }) {
-  const settings = JSON.stringify({ ...tile, code: null });
+  // Place and size are not part of the chart: moving or resizing a tile must not rebuild it.
+  const settings = JSON.stringify({ ...tile, code: null, col: 0, row: 0, w: 0, h: 0 });
   const view = useMemo(() => {
     const drawn = JSON.parse(settings) as WorkspaceTile;
     const next = chartFrame(datasets, drawn, links);
@@ -728,7 +805,7 @@ function Tile({
   links,
   cell,
   selected,
-  dragging,
+  gesture,
   siblings,
   onSelect,
   onOpen,
@@ -747,7 +824,8 @@ function Tile({
   links: WorkspaceConfig["links"];
   cell: number;
   selected: boolean;
-  dragging: boolean;
+  /** This tile is being moved or resized by the pointer. */
+  gesture?: "move" | "resize";
   siblings: Array<{ id: string; x: number; y: number; w: number; h: number }>;
   onSelect: () => void;
   onOpen: () => void;
@@ -776,14 +854,14 @@ function Tile({
         top: box.row * ROW + GUTTER / 2,
         width: Math.max(0, box.w * cell - GUTTER),
         height: Math.max(0, box.h * ROW - GUTTER),
-        zIndex: dragging ? 4 : 2,
+        zIndex: gesture ? 4 : 2,
       }}
       data-plot-tile={tile.id}
       data-col={tile.col}
       data-row={tile.row}
       data-w={tile.w}
       data-h={tile.h}
-      data-dragging={dragging ? "1" : undefined}
+      data-dragging={gesture}
       tabIndex={0}
       onClick={onSelect}
       onDoubleClick={onOpen}

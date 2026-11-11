@@ -618,6 +618,7 @@ The Diagrams list (`app/(hub)/diagrams/page.tsx`) is a grid of cards, each with 
 The editor (`components/diagrams/editor.tsx`, styles in `diagrams.css`) has one top bar: a *Diagrams* breadcrumb, the title (edit it in place), the save state, Share, **Canvas only**, **More actions** (Explain this diagram, Duplicate, Version history) and **Export** (PNG, SVG, PDF, JPG; Copy as image; Copy as Mermaid). On the canvas, controls float:
 
 - **The dock** (bottom centre): rectangle, rounded, diamond, circle and database in one click; **Add block** with every shape; **Text box**; **Lock**; **Reorganize** with a menu for Fit vertically and Fit horizontally. On a canvas narrower than 640 px the one-click shapes hide.
+- **Opening a diagram whose blocks have no stored position** (written as text): the canvas shows "Arranging blocks…" until layout has placed them (at most 6 seconds), then fades in fitted, instead of showing a rough stack first.
 - **Zoom** (bottom left; centred with the dock on a narrow canvas): out, the zoom level (click for 100%), in, and fit (`ZoomPill` in `canvas.tsx`).
 - **The format bar** (top centre) while something is selected.
 - **Canvas only** puts the canvas in the browser's full screen with the title and save state at the top left and Export and Exit at the top right.
@@ -643,4 +644,4 @@ Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is on
 
 ### History browser
 
-**More actions › Version history** (`components/diagrams/diagram-more.tsx`) opens the shared `components/history/version-history.tsx` dialog also used by pages. Entries show saved time and title; selecting one enables Restore. When the work a diagram was drawn from has changed, a notice under the top bar offers **Refresh with AI**, which asks the assistant with the current diagram as context.
+**More actions › Version history** (`components/diagrams/diagram-more.tsx`) opens the shared `components/history/version-history.tsx` dialog also used by pages. Entries are grouped by day and show the saved time and title; Restore asks once before it replaces the diagram. When the work a diagram was drawn from has changed, a notice under the top bar offers **Refresh with AI**, which asks the assistant with the current diagram as context.

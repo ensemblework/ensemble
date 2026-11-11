@@ -66,7 +66,7 @@
   border: 1px solid var(--line);
   padding: 14px 16px 14px;
   overflow: hidden;
-  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
 /* The lift is a transform. Floating layers that also use transform for placement
    must be excluded, or hovering them replaces translateX(-50%) and the layer jumps. */
@@ -263,6 +263,16 @@
 .desk .tile[data-drop="after"]::before { right: 3px; }
 body[data-desk-resizing="1"], body[data-desk-resizing="1"] * { cursor: nwse-resize !important; user-select: none; }
 body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !important; user-select: none; }
+/* Moving a tile: its label, lifted, follows the pointer (components/desk/arrange.tsx). Placed with transform only. */
+.desk-drag-ghost { position: fixed; left: 0; top: 0; z-index: 90; display: flex; align-items: center; gap: 8px; max-width: 280px; padding: 8px 14px 8px 10px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; pointer-events: none; scale: 1.02; will-change: transform; box-shadow: 0 16px 32px -14px rgb(0 0 0 / 0.55), 0 4px 10px -4px rgb(0 0 0 / 0.3); }
+.desk-drag-ghost svg { flex: none; width: 13px; height: 13px; color: var(--accent); }
+.desk-drag-ghost span { overflow: hidden; text-overflow: ellipsis; }
+[data-theme="light"] .desk-drag-ghost { box-shadow: 0 16px 32px -16px rgb(28 25 21 / 0.3), 0 4px 10px -4px rgb(28 25 21 / 0.16); }
+/* Resizing a tile: the snapped size as an outline with its cells; the tiles move once, on release. */
+.desk-resize-outline { position: fixed; left: 0; top: 0; z-index: 90; box-sizing: border-box; border: 1.5px dashed rgb(var(--accent-rgb) / 0.75); border-radius: var(--radius-tile); background: rgb(var(--accent-rgb) / 0.06); pointer-events: none; contain: layout style; transition: width 120ms var(--ease), height 120ms var(--ease); }
+.desk-resize-outline span { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--raised); color: var(--ink-2); font: 500 11px var(--font-mono); }
+@media (prefers-reduced-motion: reduce) { .desk-resize-outline { transition: none; } }
+[data-reduce-motion="true"] .desk-resize-outline { transition: none; }
 
 /* A tile with nothing in it says so plainly, top-left, with one quiet action. */
 .desk .ghost .gx:empty { display: none; }

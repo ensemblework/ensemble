@@ -3,8 +3,6 @@
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
-  TouchSensor,
   closestCenter,
   pointerWithin,
   rectIntersection,
@@ -18,7 +16,7 @@ import {
   type Modifier,
 } from "@dnd-kit/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { MARKET_CARDS } from "@ensemble/shared-types/marketplace-manifest";
 import {
@@ -45,6 +43,8 @@ import {
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import { confirmAction } from "@/components/ask-dialog";
+import { FramedPointerSensor, FramedTouchSensor } from "@/lib/motion/dnd-sensors";
+import { measureBoxes, playFlip, type Box } from "@/lib/motion/drag";
 
 const XL_LIMIT = "Only one extra-large tile fits on this page. Shrink the other one first.";
 
@@ -113,9 +113,24 @@ export function EditCanvas({
     return count < (spec.repeatable ? 2 : 1);
   });
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 160, tolerance: 8 } }),
+    useSensor(FramedPointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(FramedTouchSensor, { activationConstraint: { delay: 160, tolerance: 8 } }),
   );
+  // Tiles glide to their new places after a drop, an arrow key or a size change (FLIP), instead of jumping.
+  const grid = useRef<HTMLDivElement>(null);
+  const flipFrom = useRef<Map<string, Box> | null>(null);
+  const tiles = () => grid.current?.querySelectorAll<HTMLElement>(":scope > [data-tile-key]") ?? [];
+  const tileKey = (node: HTMLElement) => node.dataset.tileKey;
+  const arrange = (next: LayoutDocument) => {
+    flipFrom.current = measureBoxes(tiles(), tileKey);
+    setDraft(next);
+  };
+  useLayoutEffect(() => {
+    const before = flipFrom.current;
+    if (!before) return;
+    flipFrom.current = null;
+    playFlip(tiles(), tileKey, before);
+  });
 
   const save = async () => {
     setBusy(true);
@@ -151,7 +166,7 @@ export function EditCanvas({
       toast(XL_LIMIT);
       return;
     }
-    setDraft({ ...draft, placements: withSize(draft.placements, type, size, columns, phone) });
+    arrange({ ...draft, placements: withSize(draft.placements, type, size, columns, phone) });
   };
 
   const resize = (type: string, direction: 1 | -1) => {
@@ -184,7 +199,7 @@ export function EditCanvas({
       event.key === "ArrowLeft" ? [-1, 0] : event.key === "ArrowRight" ? [1, 0] : event.key === "ArrowUp" ? [0, -1] : event.key === "ArrowDown" ? [0, 1] : null;
     if (!delta) return;
     event.preventDefault();
-    setDraft({ ...draft, placements: moveByCell(draft.placements, focus, delta[0]!, delta[1]!, columns, phone) });
+    arrange({ ...draft, placements: moveByCell(draft.placements, focus, delta[0]!, delta[1]!, columns, phone) });
   };
 
   const onDragOver = (event: DragOverEvent) => {
@@ -200,7 +215,7 @@ export function EditCanvas({
     if (!over || over === active) return;
     const index = draft.placements.findIndex((row) => placementKey(row) === over);
     if (index < 0) return;
-    setDraft({ ...draft, placements: moveToIndex(draft.placements, active, index) });
+    arrange({ ...draft, placements: moveToIndex(draft.placements, active, index) });
     setFocus(active);
   };
 
@@ -262,6 +277,7 @@ export function EditCanvas({
         onDragEnd={onDragEnd}
       >
         <div
+          ref={grid}
           className="grid gap-3"
           data-widget-grid={surface}
           data-columns={columns}
@@ -280,7 +296,7 @@ export function EditCanvas({
                 xlBlocked={cell.size !== "xl" && xlTaken(key)}
                 onFocus={() => setFocus(key)}
                 onSize={(size) => applySize(key, size)}
-                onRemove={() => setDraft({ ...draft, placements: draft.placements.filter((row) => placementKey(row) !== key) })}
+                onRemove={() => arrange({ ...draft, placements: draft.placements.filter((row) => placementKey(row) !== key) })}
                 onConfig={(config) =>
                   setDraft({
                     ...draft,
@@ -331,6 +347,8 @@ function EditTile({
   const [settings, setSettings] = useState(false);
   const drag = useDraggable({ id: key });
   const drop = useDroppable({ id: key });
+  // The tile's contents do not change while a tile is dragged, and dnd-kit renders every tile on each move.
+  const body = useMemo(() => render(cell.type, cell.size, cell), [render, cell]);
   return (
     <section
       ref={(node) => {
@@ -340,6 +358,7 @@ function EditTile({
       role="region"
       aria-label={tileLabel(cell)}
       data-widget={cell.type}
+      data-tile-key={key}
       data-accent={cell.config?.accent || undefined}
       data-density={cell.config?.density ?? "comfortable"}
       data-size={cell.size}
@@ -390,7 +409,7 @@ function EditTile({
         </div>
       </div>
       {settings ? <TileSettings cell={cell} onChange={onConfig} /> : null}
-      <div className="widget-body px-3 pb-2">{render(cell.type, cell.size, cell)}</div>
+      <div className="widget-body px-3 pb-2">{body}</div>
       <button
         type="button"
         aria-label={`Resize ${spec.label}, ${sizeName(cell.size)}`}
@@ -415,9 +434,11 @@ function EditTile({
           const up = () => {
             handle.removeEventListener("pointermove", move);
             handle.removeEventListener("pointerup", up);
+            handle.removeEventListener("pointercancel", up);
           };
           handle.addEventListener("pointermove", move);
           handle.addEventListener("pointerup", up);
+          handle.addEventListener("pointercancel", up);
         }}
       />
     </section>

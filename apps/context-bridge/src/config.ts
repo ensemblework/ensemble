@@ -69,7 +69,7 @@ export function resolveAuth(env: NodeJS.ProcessEnv): BridgeAuth {
       return {
         kind: "missing",
         message:
-          "ENSEMBLE_BRIDGE_TOKEN must be a personal Ensemble token starting with ens_. Create a read-only key under Connect your apps. The bridge will not send it.",
+          "ENSEMBLE_BRIDGE_TOKEN must be a personal Ensemble token starting with ens_. Create a key under Connect your apps. The bridge will not send it.",
       };
     }
     return { kind: "bearer", token: personal };
@@ -95,7 +95,7 @@ export function resolveAuth(env: NodeJS.ProcessEnv): BridgeAuth {
   return {
     kind: "missing",
     message:
-      "Set ENSEMBLE_BRIDGE_TOKEN to a personal Ensemble token (ens_…). Create a read-only key in the Hub under Connect your apps. The bridge does not fall back to the default internal token.",
+      "Set ENSEMBLE_BRIDGE_TOKEN to a personal Ensemble token (ens_…). Create a key in the Hub under Connect your apps. The bridge does not fall back to the default internal token.",
   };
 }
 

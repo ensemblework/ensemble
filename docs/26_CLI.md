@@ -114,7 +114,7 @@ Every action is also a plain command; `ensemble help commands` lists them (`ense
 | `ensemble secrets mode [named\|all]` | How a run that names no secrets gets them: `all` (compatibility mode, the default) gives it every environment secret, which a program it runs can read; `named` gives it only the secrets its run profile, task or node step names |
 | `ensemble secrets fingerprint` | The fingerprint of this computer's key, which Ensemble on the web encrypts secrets for (`7F98 5267 E5FD 5A05`); compare it with the secret card and the computer's details on the web. Each pairing makes a new key |
 | `ensemble web [status] \| files on\|off \| edit on\|off \| terminal on\|off` | What Ensemble on the web may do here, each on by default: `files` (same switch as `browse`, plus reading code in the web's Code tab), `edit` (accept or reject an agent's changes, edit files, commit, push, pull), `terminal` (open the terminal here after a passkey unlock on the web). The computer checks each on every request ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web)) |
-| `ensemble mcp` | Read-only MCP server on stdio (editors run this) |
+| `ensemble mcp` | MCP server on stdio (editors run this); writes only with a key that may make changes |
 | `ensemble mcp setup [editor…] [--all] [--print] [--hosted]`, `mcp remove <editor>`, `mcp editors` | Write editor config (§6) |
 | `ensemble update` | Installs the newest CLI release (§4, Updates) |
 | `ensemble version`, `--version` | The release version |
@@ -171,7 +171,7 @@ There is no OAuth authorization-server flow for external MCP clients; clients th
 
 | Editor (`setup` id) | File or command |
 |---|---|
-| VS Code (`vscode`, `vscode-insiders`) | user `mcp.json`: macOS `~/Library/Application Support/Code/User/`, Windows `%APPDATA%\Code\User\`, Linux `~/.config/Code/User/`; key `servers`. Hosted mode puts the read-only key in this user profile file, because a `${input:…}` secret drops the server from VS Code's Agent Host |
+| VS Code (`vscode`, `vscode-insiders`) | user `mcp.json`: macOS `~/Library/Application Support/Code/User/`, Windows `%APPDATA%\Code\User\`, Linux `~/.config/Code/User/`; key `servers`. Hosted mode puts the key in this user profile file, because a `${input:…}` secret drops the server from VS Code's Agent Host |
 | Cursor (`cursor`) | `~/.cursor/mcp.json`, `mcpServers` |
 | Windsurf (`windsurf`) | `~/.codeium/windsurf/mcp_config.json`, `mcpServers` (hosted uses `serverUrl`) |
 | Claude Desktop (`claude-desktop`) | `claude_desktop_config.json` in `~/Library/Application Support/Claude/`, `%APPDATA%\Claude\`, `~/.config/Claude/`. Local only |

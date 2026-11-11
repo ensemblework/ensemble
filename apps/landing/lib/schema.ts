@@ -47,7 +47,7 @@ export const softwareApplication = {
     "Plan your day: a Today page with calendar, reminders and proposed todos",
     "AI context management: people, projects, notes and skills in one place",
     "A shared board for you and your AI agents, with approvals",
-    "Read-only MCP context for Claude Code, Cursor, VS Code, Codex and other editors",
+    "MCP context and actions for Claude Code, Cursor, VS Code, Codex and other editors",
     "Bring your own model: Gemini, OpenAI, Claude, OpenRouter, Ollama or GitHub Copilot",
   ],
   publisher: { "@id": ORG_ID },

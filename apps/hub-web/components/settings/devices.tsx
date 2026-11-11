@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { confirmAction } from "@/components/ask-dialog";
 import { ConnectComputerButton } from "./connect-computer";
 import { useToast } from "@/components/toast";
 import { InfoTip, SectionCard, Spinner, cx } from "@/components/ui";
@@ -36,7 +37,15 @@ export function DevicesSection() {
       description="Where tasks run, with that computer's own plans and sign-ins."
       actions={<ConnectComputerButton />}
     >
-      {devices.isLoading ? <Spinner size={14} /> : null}{devices.error ? <p role="alert" className="text-[13px] text-danger">Could not load connected computers. <button className="btn" onClick={() => void devices.refetch()}>Retry</button></p> : null}
+      {devices.isLoading ? <Spinner size={14} /> : null}
+      {devices.error ? (
+        <p role="alert" className="flex flex-wrap items-center gap-2 text-[13px] text-danger">
+          Could not load connected computers.
+          <button type="button" className="btn" onClick={() => void devices.refetch()}>
+            Try again
+          </button>
+        </p>
+      ) : null}
       {rows.length ? (
         <ul className="divide-y divide-line">
           {rows.map((device) => (
@@ -80,7 +89,14 @@ export function DevicesSection() {
                   )}
                 </div>
               </div>
-              <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => revoke.mutate(device.id)} disabled={revoke.isPending}>
+              <button
+                type="button"
+                className="btn-ghost py-0 text-[12px]"
+                disabled={revoke.isPending}
+                onClick={() =>
+                  void confirmAction({ title: `Revoke ${device.name}?`, body: "Tasks stop running there and it can no longer reach your Ensemble. Pair it again to use it.", confirm: "Revoke", danger: true }).then((yes) => yes && revoke.mutate(device.id))
+                }
+              >
                 <Trash2 size={12} /> Revoke
               </button>
             </li>

@@ -153,6 +153,8 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     });
   };
   const [fitTick, setFitTick] = useState(0);
+  /** Blocks without stored positions are being placed: the canvas waits instead of showing a rough stack. */
+  const [arranging, setArranging] = useState(false);
   const [busy, setBusy] = useState(false);
   // A saved layout that has blocks or group frames on top of each other offers a one-click tidy up.
   const [overlapNotice, setOverlapNotice] = useState<"hidden" | "shown" | "dismissed">("hidden");
@@ -208,7 +210,16 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       return;
     }
     const ticket = ++epoch.current;
+    setArranging(true);
+    // Never wait forever: after a few seconds the rough positions are better than nothing.
+    const giveUp = window.setTimeout(() => setArranging(false), 6_000);
+    const settle = () => {
+      window.clearTimeout(giveUp);
+      setArranging(false);
+    };
     void layoutInBackground(parsed.model).then((laid) => {
+      // One render: the placed blocks, the fit and the canvas showing again.
+      settle();
       if (ticket !== epoch.current) return;
       if (dirtyRef.current || modelRef.current?.meta.title !== parsed.model.meta.title) return;
       // Keep a broken document as the user wrote it. Printing would rewrite typos and drop the lines they still need to fix.
@@ -216,7 +227,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       // would mark a diagram the person has not edited as unsaved.
       setModel(laid);
       setFitTick((value) => value + 1);
-    });
+    }, settle);
   }, [query.data, id]);
 
   const adopt = (source: string, nextVersion: number) => {
@@ -675,7 +686,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
             Preview only. Pan and zoom to look around; editing needs a window of at least {MIN_VIEWPORT.width} × {MIN_VIEWPORT.height} px.
           </span>
         </p>
-        <div className="diagram-stage min-h-0 flex-1">
+        <div className="diagram-stage min-h-0 flex-1" data-arranging={arranging || undefined}>
           <DiagramCanvas ref={canvasRef} model={model} readOnly fitTick={fitTick} onSelection={select} onRename={() => undefined} onMove={() => undefined} onConnect={() => undefined} overlay={zoomOnly} />
         </div>
       </IdeSpace>
@@ -876,7 +887,12 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
             />
           </>
         )}
-        <div ref={stageRef} className={focus ? "diagram-stage is-focus" : "diagram-stage"}>
+        <div ref={stageRef} className={focus ? "diagram-stage is-focus" : "diagram-stage"} data-arranging={arranging || undefined}>
+          {arranging ? (
+            <span className="diagram-arranging" role="status">
+              Arranging blocks…
+            </span>
+          ) : null}
           <DiagramCanvas
             ref={canvasRef}
             diagramId={id}

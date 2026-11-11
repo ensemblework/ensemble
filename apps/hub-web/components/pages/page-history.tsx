@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { VersionHistoryDialog } from "../history/version-history";
-import { MarkdownText } from "../markdown-text";
+import { PreviewSkeleton, VersionHistoryDialog } from "../history/version-history";
+import { PageVersionPreview } from "../history/version-diff-view";
 
 export function PageHistory({ kind, id, open, onClose }: { kind: "page" | "task"; id: string; open: boolean; onClose: () => void }) {
   const client = useQueryClient();
@@ -11,6 +11,13 @@ export function PageHistory({ kind, id, open, onClose }: { kind: "page" | "task"
   const list = useQuery({ queryKey: ["page-versions", kind, id], queryFn: () => api.pageVersions(kind, id), enabled: open });
   useEffect(() => { if (open && list.data?.versions.length && !list.data.versions.some(row => row.id === selected)) setSelected(list.data.versions[0]!.id); }, [open, list.data, selected]);
   const preview = useQuery({ queryKey: ["page-version", selected], queryFn: () => api.pageVersion(selected!), enabled: open && Boolean(selected) });
+  // The page as it is now, to mark what each version changes. Read after the list, which saves pending edits first.
+  const current = useQuery({
+    queryKey: ["page-history-current", kind, id, list.dataUpdatedAt],
+    queryFn: async () => ({ content: (kind === "page" ? await api.standalonePage(id) : await api.page(id)).content }),
+    enabled: open && list.isSuccess,
+    gcTime: 0,
+  });
   const restore = useMutation({ mutationFn: () => api.restorePageVersion(selected!, list.data!.revision, list.data!.updatedAt!), onSuccess: async () => { window.dispatchEvent(new CustomEvent("ensemble:page", { detail: { action: "restore", ...(kind === "page" ? { id } : { taskId: id }) } })); await client.invalidateQueries(); onClose(); } });
-  return <VersionHistoryDialog open={open} onClose={onClose} title="Page" versions={list.data?.versions ?? []} selected={selected} onSelect={setSelected} loading={list.isPending} restoring={restore.isPending} restoreDisabled={preview.isPending || Boolean(preview.error || list.error)} error={restore.error?.message ?? list.error?.message ?? preview.error?.message} onRetry={() => { void list.refetch(); if (selected) void preview.refetch(); }} onRestore={() => restore.mutate()} preview={preview.data ? <div className="prose-page"><h2 className="mb-4 text-[24px] font-semibold">{preview.data.version.title}</h2><MarkdownText text={preview.data.version.markdown} /></div> : <p className="text-[13px] text-muted">{selected ? "Loading preview…" : "Choose a version to preview it."}</p>} />;
+  return <VersionHistoryDialog open={open} onClose={onClose} title="Page" versions={list.data?.versions ?? []} selected={selected} onSelect={setSelected} loading={list.isPending} restoring={restore.isPending} restoreDisabled={preview.isPending || Boolean(preview.error || list.error)} error={restore.error?.message ?? list.error?.message ?? preview.error?.message} onRetry={() => { void list.refetch(); if (selected) void preview.refetch(); }} onRestore={() => restore.mutate()} preview={preview.data ? <PageVersionPreview key={selected} version={preview.data.version} current={current.data ? { title: list.data?.title ?? null, content: current.data.content } : null} unavailable={current.isError} /> : preview.isError ? <p className="vh-note">This version could not be loaded.</p> : selected || list.isPending ? <PreviewSkeleton /> : null} />;
 }

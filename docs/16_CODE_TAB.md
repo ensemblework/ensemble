@@ -16,7 +16,7 @@ On the web the tab works on your paired computers (`lib/code-home.ts`). The Expl
 
 The computer must be online with CLI 0.3.8+ or desktop app 0.3.5+ (0.3.9+ / 0.3.6+ for the full editor); otherwise its Explorer section or the editor says what is missing. With no paired computer, the Welcome says so in one line and offers *Pair a computer*.
 
-Failed review or repository queries show the error and Retry; they never claim there is no work. A denied terminal-status request shows an error, not "Opening the terminal…".
+Failed review or repository queries show the error and Retry; they never claim there is no work. A folder that cannot be opened shows the error with *Try again*, and a file that cannot be read shows its error in the editor; a later read that fails (offline, the computer asleep) keeps the editor as it is. A denied terminal-status request shows an error, not "Opening the terminal…".
 
 Ensemble Node has a separate chat-side original-file editor using this relay and the same colour-theme conversion, including non-Git text folders, autosave with version conflicts, and selected-line quotes. It needs Code API 3 (CLI/desktop 0.6.4+); it does not change this tab's repository reviews or terminal unlock. See [35 §8.18](35_ENSEMBLE_NODE.md#818-original-files-in-the-node-workspace).
 
@@ -32,28 +32,32 @@ The task page's *Review changes* opens the same review. A repository the agent c
 
 `/code` (`components/code/code-home.tsx`) and a review or repository (`/code/review`, `components/code/ide.tsx`) are the same window, built from `components/code/ide-chrome.tsx` and themed by `ide-theme.tsx`; it fills the main area. An editor theme colours the surfaces, text and status colours, never the accent: icons, the active tab and selections keep the accent picked in Settings › Appearance, adjusted for the theme's light or dark surfaces.
 
-- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*. In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and *Folder* sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); what is folded is kept in `ensemble.code.folds`.
-- **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl+B shows or hides it.
+- **Activity bar**: *Welcome* (Home), *Explorer*, *Search* (*Find in files* in a repository), *Source control* (*Changes to review* on the Welcome, with a count) and, at its foot, *Terminal*. In a review or repository the Explorer's *Changes from this run* (*Changes*), *Changed, can't be reviewed* and folder sections fold like VS Code's (`Fold` in `components/code/code-lists.tsx`); the folder's section is named after the repository, and what is folded is kept in `ensemble.code.folds`. Every side panel starts with a heading row; rows are 22 px, as in VS Code.
+- **Side panel**: drag its edge, 200 px to half the window; double-click resets (260 px); arrow keys move it 16 px (48 with Shift) when it has focus. Ctrl/⌘+B shows or hides it.
 - **Terminal panel** under the editor: drag its top edge, 140 px to three quarters of the window; double-click resets (280 px); arrow keys as above. Ctrl+` shows or hides it. On the web it is the selected computer's terminal (§5).
-- **Status bar**: on the Welcome the computer with an online dot (a menu when there are several), Ensemble's version there, changes to review, code runs working now and the code size; in a review, the items in the next paragraph.
+- **Status bar**: it starts with the computer, as VS Code's remote indicator: its name and an online dot, tinted while it cannot be reached. On the Welcome it is a menu when there are several computers, followed by Ensemble's version there, changes to review, code runs working now and the code size; in a review it opens a menu with the folder's path, *Copy the folder's path*, *Open the terminal here* and *Back to Code*, followed by the items in the next paragraph.
+- **Quick open** (`components/code/quick-open.tsx`, matching in `lib/code-quick-open.ts`): one box at the top of the window, as VS Code's. Ctrl/⌘+P (or the Explorer's *Go to file*) finds a file by fuzzy name, the files opened last first, with Enter going back to the one before; `name.ts:12` opens it at line 12. `>`, Ctrl/⌘+Shift+P or F1 lists the window's commands with their keys (view, save, close, next change, reveal, copy paths, *Ask Ensemble* about the file or selection, new file or folder, Accept all, Discard all, push, colour theme, text size, full screen). `:` or Ctrl+G goes to a line. On the Welcome, Ctrl/⌘+P lists every repository by name and `>` the Welcome's commands. Shortcuts are written as the platform writes them (⇧⌘P on a Mac, Ctrl+Shift+P elsewhere).
 
 Panel sizes, which panels are open, the selected computer and the theme are kept in this browser (`ensemble.code.*`). Below 768 px the side panel is an overlay (below).
 
 ### New files and folders
 
-The Explorer's *Folder* section has *New file*, *New folder*, *Refresh* and *Collapse folders* on its heading, as in VS Code. A new file or folder goes in the folder last clicked (or the open file's): its name is typed in place, Enter makes it and Esc cancels; nothing is asked. A path (`lib/util/new.ts`) makes the folders on the way too. A full path (`/…` or `~/…`) makes it elsewhere, only inside the workspace or a folder Code can use; paths outside the repository are never listed, only typed. Nothing already there is overwritten. A new file opens in the editor. `POST /api/code/create` (`createRepoEntry`, `createInRoots` in `lib/git.ts`); a paired computer answers it from Code API 4 (an older one makes files in folders that exist, not folders).
+The Explorer's folder section has *New file*, *New folder*, *Refresh*, *Collapse folders* and *Download* on its heading, as in VS Code; the command palette has *New file…* and *New folder…* too. A new file or folder goes in the folder last clicked (or the open file's): its name is typed in place, Enter makes it and Esc cancels; nothing is asked. A path (`lib/util/new.ts`) makes the folders on the way too. A full path (`/…` or `~/…`) makes it elsewhere, only inside the workspace or a folder Code can use; paths outside the repository are never listed, only typed. Nothing already there is overwritten. A new file opens in the editor. `POST /api/code/create` (`createRepoEntry`, `createInRoots` in `lib/git.ts`); a paired computer answers it from Code API 4 (an older one makes files in folders that exist, not folders).
 
 ### Explorer, tabs and the editor, as in VS Code
 
 - **Marks**: every file in the explorer, the Changes list, Go to file, the tabs and the path bar has its language mark (TypeScript, React, Python, Java, Go, Rust, Markdown, JSON, YAML, images, lockfiles, Dockerfile, package.json, next.config and about seventy more), and the status bar names its language (`lib/file-kinds.ts`, `components/code/file-icon.tsx`). A file the run or you changed is coloured by its git status, with the letter at the right.
-- **Move and rename**: drag a file or folder onto a folder (or the Folder section's empty space for the top) to move it; holding over a closed folder opens it. F2, or *Rename…*, renames in place (the name without its extension is picked). Nothing already there is overwritten, a folder cannot go into itself, and open tabs follow what moved. `POST /api/code/move` (`moveRepoEntry`).
+- **Move and rename**: drag a file or folder onto a folder (or the folder section's empty space for the top) to move it; holding over a closed folder opens it. F2, or *Rename…*, renames in place (the name without its extension is picked). Nothing already there is overwritten, a folder cannot go into itself, and open tabs follow what moved. `POST /api/code/move` (`moveRepoEntry`).
 - **Right-click**: a file has Open, Open preview, Ask Ensemble ▸ (Explain, Find bugs, Suggest improvements, Write tests, Doc comments), Attach file to assistant, New task about this file, Copy path / relative path / name, Rename, Delete (asked in the menu) and Download; a folder has New file, New folder, the copies, Rename, Delete and Download as zip; the empty space has New file/folder, Refresh, Collapse and Download repository as zip. A tab has Close, Close others, Close to the right, Close all, the copies, Reveal in explorer and Download. In the editor it has Ask and Attach for the selection (or the file), New task from selection, Cut · Copy · Paste, Copy path with line, Reveal in explorer and Download. `components/code/code-menus.ts`. `POST /api/code/delete` (`deleteRepoEntry`).
 - **Download**: a file, or a folder or the whole repository as a zip of what git would show (tracked and new files, not ignored ones, never files of keys or secrets), up to 20 MB; more is refused rather than cut short. `GET /api/code/download` (`packRepoEntry`), base64 in JSON so a paired computer answers the same way (Code API 5, CLI 0.6.9 and later; its answers are capped at 3 MB). An older CLI on that computer answers moving, deleting and downloading with "Update Ensemble on …".
 - **Preview**: only Markdown, HTML, SVG and CSV/TSV have a **Preview** button beside Changes and File (Ctrl+Shift+V): Markdown as a page, HTML in a frame with no scripts, SVG as a picture and tables as a grid. An image opens as the picture itself, on a checkerboard with its size.
+- **Tabs**: the whole tab opens its file; a middle click or Alt+W closes it (Ctrl/⌘+W in the desktop app, where the browser does not keep it); the close button shows on hover and on the file in view, and an unsaved file shows a dot that turns into the close button on hover. Two open files with one name show their folder. The strip scrolls sideways with the wheel and keeps the file in view on screen; Alt+1…8 opens the first to eighth tab, Alt+9 the last, Ctrl+PageDown / PageUp the next or previous, and arrow keys move between focused tabs.
+- **Breadcrumbs** above the editor: each folder, and the file, shows itself in the Explorer.
+- **Nothing open**: the editor shows what to do next with its keys (*Show all commands*, *Go to file*, *Find in files*, the terminal, the side panel). The first changed file opens by itself once; closing every file leaves the editor empty.
 
 ### The Welcome
 
-- **Start**: *Open a repository…* (opens the Explorer and its *Find a repository* box), *Review agent changes*, *Open terminal*, and *Folders Code can use* (on the web, *Your computers*).
+- **Start**: *Open a repository…* (quick open, listing every repository by name), *Review agent changes*, *Open terminal*, *Show all commands*, and *Folders Code can use* (on the web, *Your computers*).
 - **Needs review**: agent changes not yet reviewed, newest first: task, repository, branch, files, model, when, lines added and removed. Six show; *View all* lists the rest in place.
 - **Recent repositories**: up to eight, most recently used first, with branch and (on the web) computer.
 - **Recent agent runs**: the last five code runs with their state, repository and computer, opening the run (`/runs?run=<id>`).
@@ -66,7 +70,7 @@ The Explorer's *Folder* section has *New file*, *New folder*, *Refresh* and *Col
 
 ### The review
 
-The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (branch with ahead/behind, review progress, computer, line and column, language, line endings, save state, code size). The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
+The review is an IDE (`components/code/ide.tsx`): the window above with the run's or repository's Explorer, *Find in files*, Source control, file tabs, the editor and a status bar (computer, branch with ahead/behind, review progress, line and column (opens *Go to line*), language, line endings, save state, code size). While this browser or the computer is offline a one-line notice says so under the tabs. The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
 
 | You want to… | Do this |
 |---|---|
@@ -76,11 +80,13 @@ The review is an IDE (`components/code/ide.tsx`): the window above with the run'
 | Change something yourself | Type, in either view. Your edits show in **blue** with *Revert* (Alt+N) |
 | Put a file back as the run left it | *Restore the run's version* in the file bar (drops your edits and rejects in that file) |
 | Read or edit the whole file | *File*, or F4: folding and change bars, same document as Changes. A file with nothing to review opens whole |
-| Open any file | The explorer's *Folder* tree, or *Go to file* (tracked and new files) |
-| Find text in the files | *Find in files* (fixed text, optional match case, up to 500 results) |
+| Open any file | The explorer's folder tree, or Ctrl/⌘+P *Go to file* (tracked and new files) |
+| Run any command | Ctrl/⌘+Shift+P or F1 |
+| Go to a line | Ctrl+G, or the status bar's line and column |
+| Find text in the files | *Find in files*, or Ctrl/⌘+Shift+F with the selection (fixed text, optional match case, up to 500 results, grouped by file with the match marked) |
 | Move around | F7 / Shift+F7 next/previous change (past the last, the next file); Alt+→ / Alt+← next/previous changed file |
 | Find / replace in the file | Ctrl+F |
-| Focus | Full screen (Esc leaves), Ctrl+B explorer, `?` shortcuts (outside the editor) |
+| Focus | Full screen (Esc leaves), Ctrl/⌘+B side panel, Ctrl/⌘+Shift+E Explorer, Ctrl+Shift+G Source control, `?` shortcuts (outside the editor) |
 | Resize the explorer or the terminal | Drag the edge (§1 *The window*; double-click resets; arrow keys when focused) |
 | Code text size | Status bar size, or Ctrl+Shift+= / - / 0 (10–24 px, editor and terminal only) |
 | Commit / push | *Source control* |
@@ -88,7 +94,7 @@ The review is an IDE (`components/code/ide.tsx`): the window above with the run'
 
 **At most 10 files are open** (`MAX_OPEN_FILES` in `lib/code-tabs.ts`). Opening one more closes the oldest open file that has nothing unsaved and is not in view; when every other open file still has an edit being saved, the new one is refused with that reason. A closed file's text is dropped from the browser's memory once it is saved (an edit that failed to save stays until it does). On the web a file over 1 MB opens read-only (`CODE_EDIT_BYTES`), and an answer over 3 MB (`CODE_ANSWER_BYTES`, a file and its versions together) is not shown: open it on the computer. Files and edits pass through Ensemble on the web without being stored: each call is relayed through Redis, held in memory only until it is answered or its time limit passes, then deleted (`devices/file-relay.ts`). Web terminal output is held there for up to an hour so the page can catch up (`RUN_TTL_SECONDS` in `devices/code-routes.ts`). The hosted Redis writes nothing to disk (`--save "" --appendonly no`, `infra/deploy/home/compose.yml`). Nothing about your code is written to the browser's storage either; only the editor's theme, sizes and panels are remembered.
 
-It is an **editor first**. Typing in either view saves automatically: 0.7 s after you stop, on Ctrl+S, when you switch file or view, and before a commit or push. The status bar and tab show `• Unsaved` → `Saving…` → `Saved`. A save names the version the editor read (`expectedHash`), so nothing is overwritten if the file changed meanwhile (below). The editor works on LF text; saves restore the file's own line endings and byte-order mark (`lib/code-versions.ts`). No shortcut is a bare letter or an editing key.
+It is an **editor first**. Typing in either view saves automatically: 0.7 s after you stop, on Ctrl/⌘+S, when you switch file or view, and before a commit or push. The status bar and tab show `• Unsaved` → `Saving…` → `Saved`. While this browser or the computer is offline nothing is sent: the edit stays on the page as `• Unsaved, offline` and is saved when both are back (a computer's state is read again every 30 s). A save names the version the editor read (`expectedHash`), so nothing is overwritten if the file changed meanwhile (below). The editor works on LF text; saves restore the file's own line endings and byte-order mark (`lib/code-versions.ts`). No shortcut is a bare letter or an editing key.
 
 On the computer, binary files are not shown and files over 5 MB are not opened.
 
@@ -109,13 +115,13 @@ The file **now** against **before the run** plus the agent changes you accepted 
 
 - **Green / red** with *Accept · Reject*: an agent change, exactly as the agent made it, not yet decided. It is drawn as GitHub and Cursor draw a diff: added lines on a soft green with a tinted line number and a +, the removed lines above them on a soft red with a −, and the words that changed inside a line on a stronger tint (`githubDiff` in `components/code/review-editor.tsx`). The File view keeps only the change bars.
 - **Blue** with *Your edit · Revert*: anything else that differs, including an agent change you typed over (here, in another editor or in the terminal; git cannot tell who typed). Your edits never need review.
-- Accepted and rejected changes leave the diff; a file with nothing left shows *Reviewed — edit freely*.
+- Accepted and rejected changes leave the diff; a file with nothing left shows *Reviewed. Edit freely*.
 
 Whether a change is decided is read from the **text**: type over it and it is yours, reject it and it is rejected, Ctrl+Z either and it is pending again. Changes on neighbouring lines (or separated only by an empty line) count as one.
 
-Progress shows as *"17 / 23 — 2 files left"* in the status bar, a ring per file and a badge in the list (`GET /api/code/progress`).
+Progress shows as *"17 / 23 · 2 files left"* in the status bar, a ring per file and a badge in the list (`GET /api/code/progress`).
 
-If another program writes the file while you have unsaved typing, **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays until you choose. With nothing unsaved the file simply reloads (it is reread every 10 seconds and when the window regains focus).
+If another program writes the file while you have unsaved typing, **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays until you choose. With nothing unsaved the file simply reloads and the status bar says *Updated from disk* for a moment (it is reread every 10 seconds and when the window regains focus).
 
 In a repository opened from the Explorer the same editor compares with the index: *Stage* (Alt+Y) stages that change as shown, *Discard* (Alt+N) puts the staged lines back.
 

@@ -2004,7 +2004,7 @@ export const api = bindClient({
   updateDiagram: (id: string, body: { source?: string; title?: string; version: number }) =>
     patch<{ diagram: DiagramDetail }>(`/api/diagrams/${id}`, body),
   deleteDiagram: (id: string) => del<void>(`/api/diagrams/${id}`),
-  pageVersions: (kind: "page" | "task", id: string) => get<{ revision: number; updatedAt: string | null; versions: Array<{ id: string; revision: number; title: string; createdAt: string; author: string }> }>(`/api/page-versions?kind=${kind}&id=${encodeURIComponent(id)}`),
+  pageVersions: (kind: "page" | "task", id: string) => get<{ revision: number; updatedAt: string | null; title?: string; versions: Array<{ id: string; revision: number; title: string; createdAt: string; author: string }> }>(`/api/page-versions?kind=${kind}&id=${encodeURIComponent(id)}`),
   pageVersion: (id: string) => get<{ version: { id: string; title: string; content: PageDocument; markdown: string } }>(`/api/page-versions/${id}`),
   restorePageVersion: (id: string, revision: number, updatedAt: string) => post<{ restored: { id: string } }>(`/api/page-versions/${id}/restore`, { revision, updatedAt }),
   duplicatePage: (id: string) => post<{ page: { id: string; title: string } }>(`/api/pages/${id}/duplicate`, {}),

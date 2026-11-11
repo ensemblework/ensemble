@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw, Square } from "lucide-react";
+import { ArrowUpRight, CircleStop, Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { activityPollInterval } from "@/lib/activity-poll";
@@ -12,21 +12,28 @@ import { useElapsed } from "../agent/job-card";
 import { usePeek } from "./peek";
 import { useToast } from "../toast";
 import { TrayDot } from "@/components/motion/slot";
-import { Spinner, cx, useClickOutside } from "../ui";
+import { InfoTip, Spinner, cx, useClickOutside } from "../ui";
 
 const CALL_ICON: Record<string, typeof Orbit> = { assistant: MessageSquare, fetch: RefreshCw, run: Orbit, workspace: Orbit };
 const CALL_LABEL: Record<string, string> = { assistant: "Assistant", fetch: "Fetch", run: "Agent run", workspace: "Agent task" };
 
-function Row({ icon: Icon, title, detail, since, live, action }: { icon: typeof Orbit; title: string; detail?: string | null; since?: string | null; live?: boolean; action?: React.ReactNode }) {
+type Tone = "offline" | "paused" | "working" | "needs" | "queued" | "idle";
+
+function Row({ icon: Icon, title, detail, since, live, tone, onOpen, action }: { icon: typeof Orbit; title: string; detail?: string | null; since?: string | null; live?: boolean; tone?: "needs"; onOpen?: () => void; action?: React.ReactNode }) {
   const elapsed = useElapsed(since ?? null, Boolean(live));
+  const body = (
+    <>
+      <span className="activity-row-icon" data-tone={tone} aria-hidden><Icon size={14} /></span>
+      <span className="activity-row-text">
+        <span className="activity-row-title">{title}</span>
+        {detail ? <span className="activity-row-detail">{detail}</span> : null}
+      </span>
+      {elapsed ? <span className="activity-row-time">{elapsed}</span> : null}
+    </>
+  );
   return (
-    <div className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-hover">
-      <Icon size={13} className="mt-0.5 shrink-0 text-muted" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[12.5px] font-medium">{title}</div>
-        {detail ? <div className="truncate text-[11.5px] text-muted">{detail}</div> : null}
-      </div>
-      {elapsed ? <span className="shrink-0 pt-0.5 text-[11px] text-faint">{elapsed}</span> : null}
+    <div className="activity-row">
+      {onOpen ? <button type="button" className="activity-row-main" onClick={onOpen}>{body}</button> : <div className="activity-row-main">{body}</div>}
       {action}
     </div>
   );
@@ -35,12 +42,18 @@ function Row({ icon: Icon, title, detail, since, live, action }: { icon: typeof 
 function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   if (!count) return null;
   return (
-    <div className="py-1">
-      <div className="px-2 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
-        {title} · {count}
-      </div>
+    <section className="activity-section">
+      <h3>{title}<span className="activity-section-count">{count}</span></h3>
       {children}
-    </div>
+    </section>
+  );
+}
+
+function StopButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" title={label} aria-label={label} className="activity-stop" onClick={onClick}>
+      <CircleStop size={14} />
+    </button>
   );
 }
 
@@ -57,7 +70,17 @@ export function ActivityControls({ connected = true, serverError = false }: { co
     return () => document.removeEventListener("visibilitychange", sync);
   }, []);
   const ref = useRef<HTMLDivElement>(null);
+  const pill = useRef<HTMLButtonElement>(null);
   useClickOutside(ref, () => setOpen(false), open);
+  useEffect(() => {
+    if (!open) return;
+    // Escape (handled by useClickOutside) hands focus back to the pill when it was in the panel.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && ref.current?.contains(document.activeElement)) pill.current?.focus();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [open]);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const workspaceOn = hasModule(shell.data?.modules, "workspace");
   const state = useQuery({
@@ -105,44 +128,51 @@ export function ActivityControls({ connected = true, serverError = false }: { co
   const busy = calls.length + running.length;
   const paused = data?.paused ?? false;
   const label = !connected ? (serverError ? "Server error" : "Offline") : paused ? "Paused" : busy ? `Working · ${busy}` : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
+  const tone: Tone = !connected ? "offline" : paused ? "paused" : busy ? "working" : waiting.length ? "needs" : queued.length ? "queued" : "idle";
+  const word = !connected ? (serverError ? "Server error" : "Offline") : paused ? "Paused" : busy ? "Working" : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
+  const count = tone === "working" ? busy : tone === "needs" ? waiting.length : tone === "queued" ? queued.length : 0;
+  // Waiting for you is the one thing that needs a person; it gets a mark even while other work runs.
+  const attention = connected && !paused && waiting.length > 0;
+  const summary = paused
+    ? "Nothing calls a model until you resume."
+    : [busy ? `${busy} running` : "", waiting.length ? `${waiting.length} waiting for you` : "", queued.length ? `${queued.length} queued` : ""].filter(Boolean).join(" · ") || "No AI call is running or waiting.";
+  const heading = paused ? "Paused" : busy ? "Running now" : waiting.length ? "Needs you" : queued.length ? "Queued" : "Nothing running";
+  const anything = busy + waiting.length + queued.length > 0;
 
-  const jobRow = (job: AgentJob) => (
-    <div key={job.id} role="button" onClick={() => (peek.open(job.taskId), setOpen(false))} className="cursor-pointer">
-      <Row
-        icon={job.kind === "code" ? Code2 : FileText}
-        title={job.title}
-        detail={job.status === "queued" ? `#${job.position} · ${job.waitingFor ?? job.model}` : job.progress ?? job.model}
-        since={job.status === "queued" ? null : job.startedAt}
-        live={job.status !== "queued"}
-        action={
-          <button
-            type="button"
-            title={job.status === "queued" ? "Remove from the queue" : "Stop this task now"}
-            className="icon-btn h-6 w-6 shrink-0"
-            onClick={(event) => {
-              event.stopPropagation();
-              stopJob.mutate(job.id);
-            }}
-          >
-            <Square size={11} />
-          </button>
-        }
-      />
-    </div>
+  const jobRow = (job: AgentJob, needs?: boolean) => (
+    <Row
+      key={job.id}
+      icon={job.kind === "code" ? Code2 : FileText}
+      title={job.title}
+      detail={job.status === "queued" ? `#${job.position} · ${job.waitingFor ?? job.model}` : job.progress ?? job.model}
+      since={job.status === "queued" ? null : job.startedAt}
+      live={job.status !== "queued"}
+      tone={needs ? "needs" : undefined}
+      onOpen={() => (peek.open(job.taskId), setOpen(false))}
+      action={<StopButton label={job.status === "queued" ? "Remove from the queue" : "Stop this task now"} onClick={() => stopJob.mutate(job.id)} />}
+    />
   );
 
   return (
     <div ref={ref} className="relative flex items-center gap-1">
       <button
+        ref={pill}
         type="button"
         onClick={() => setOpen(!open)}
-        className={cx("flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] hover:bg-hover", paused ? "text-danger" : "text-muted")}
+        className="activity-pill"
+        data-tone={tone}
+        aria-expanded={open}
+        aria-haspopup="dialog"
         title={connected ? "Live updates. What the AI is doing right now." : serverError ? "Ensemble's server is answering with errors. Retrying…" : "Reconnecting to the Hub…"}
-        aria-label={connected ? `Activity: ${label}` : serverError ? "Ensemble's server is answering with errors" : "Reconnecting to the Hub"}
+        aria-label={connected ? `Activity: ${label}${attention && tone !== "needs" ? `, ${waiting.length} waiting for you` : ""}` : serverError ? "Ensemble's server is answering with errors" : "Reconnecting to the Hub"}
       >
-        <TrayDot state={!connected ? "offline" : paused ? "paused" : busy ? "working" : waiting.length ? "needs" : "idle"} />
-        <span className="hidden whitespace-nowrap lg:inline">{label}</span>
-        {!paused && queued.length ? <span className="hidden rounded bg-raised px-1 text-[11px] text-muted lg:inline">+{queued.length}</span> : null}
+        <span className="activity-pill-mark">
+          <TrayDot state={tone === "queued" ? "idle" : tone} />
+          {attention || tone === "paused" || tone === "offline" ? <span className="activity-pill-dot" data-tone={attention ? "needs" : tone} aria-hidden /> : null}
+        </span>
+        <span className="activity-pill-label">{word}</span>
+        {count ? <span className="activity-pill-count">{count}</span> : null}
+        {!paused && busy && queued.length ? <span className="activity-pill-more" title={`${queued.length} queued`}>+{queued.length}</span> : null}
       </button>
       <button
         type="button"
@@ -150,64 +180,61 @@ export function ActivityControls({ connected = true, serverError = false }: { co
         disabled={kill.isPending || !data}
         className={cx("icon-btn", paused ? "bg-[var(--tag-red-bg)] text-[var(--tag-red-fg)] hover:text-ink" : "hover:text-danger")}
         title={paused ? "Resume: allow model calls again" : "Kill switch: stop every AI call and task now, start nothing new"}
+        aria-label={paused ? "Resume model calls" : "Kill switch: pause every AI call and task"}
       >
         {kill.isPending ? <Spinner size={13} /> : paused ? <Play size={14} /> : <Pause size={14} />}
       </button>
       {open ? (
-        <div className="pop-in fixed inset-x-3 top-12 z-50 rounded-lg bg-raised p-1.5 shadow-pop lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-1 lg:w-[380px]">
-          <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
-            <span className="text-[13px] font-semibold">{paused ? "Paused, nothing calls a model" : busy ? "Running now" : "Nothing running"}</span>
-            <Link href="/runs" onClick={() => setOpen(false)} className="text-[12px] text-accent hover:underline">
-              Runs
-            </Link>
-          </div>
-          <div className="max-h-[420px] overflow-y-auto">
-            <Section title="Model calls" count={calls.length}>
-              {calls.map((call) => (
-                <Row
-                  key={call.id}
-                  icon={CALL_ICON[call.kind] ?? Orbit}
-                  title={`${CALL_LABEL[call.kind] ?? call.kind}: ${call.label}`}
-                  detail={[call.model, call.detail].filter(Boolean).join(" · ")}
-                  since={call.startedAt}
-                  live
-                  action={
-                    <button type="button" title="Stop this call" className="icon-btn h-6 w-6 shrink-0" onClick={() => stop.mutate(call.id)}>
-                      <Square size={11} />
-                    </button>
-                  }
-                />
-              ))}
-            </Section>
-            <Section title="Agent tasks" count={running.length}>
-              {running.map(jobRow)}
-            </Section>
-            <Section title="Waiting for you" count={waiting.length}>
-              {waiting.map(jobRow)}
-            </Section>
-            <Section title="Queued" count={queued.length}>
-              {queued.map(jobRow)}
-            </Section>
-            {!busy && !waiting.length && !queued.length ? <div className="px-2 py-3 text-[12.5px] text-muted">No AI call is running or waiting.</div> : null}
-          </div>
-          {shell.data?.space?.shared ? (
-            <div className="mt-1 border-t border-line px-2 pb-0.5 pt-1.5 text-[11px] leading-4 text-faint">
-              The kill switch here is {shell.data.space.shared.owner.name}'s. Stop your own runs from their cards; they run on your computer.
+        <div data-activity-panel role="dialog" aria-label="Activity" className="activity-panel pop-in fixed inset-x-3 top-12 z-50 lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-2 lg:w-[380px]">
+          <header className="activity-head">
+            <div className="min-w-0 flex-1">
+              <h2>{heading}</h2>
+              <p>{summary}</p>
             </div>
+            <Link href="/runs" onClick={() => setOpen(false)} className="activity-runs">
+              Runs <ArrowUpRight size={13} aria-hidden />
+            </Link>
+          </header>
+          {anything ? (
+            <div className="activity-feed">
+              <Section title="Waiting for you" count={waiting.length}>
+                {waiting.map((job) => jobRow(job, true))}
+              </Section>
+              <Section title="Model calls" count={calls.length}>
+                {calls.map((call) => (
+                  <Row
+                    key={call.id}
+                    icon={CALL_ICON[call.kind] ?? Orbit}
+                    title={`${CALL_LABEL[call.kind] ?? call.kind}: ${call.label}`}
+                    detail={[call.model, call.detail].filter(Boolean).join(" · ")}
+                    since={call.startedAt}
+                    live
+                    action={<StopButton label="Stop this call" onClick={() => stop.mutate(call.id)} />}
+                  />
+                ))}
+              </Section>
+              <Section title="Agent tasks" count={running.length}>
+                {running.map((job) => jobRow(job))}
+              </Section>
+              <Section title="Queued" count={queued.length}>
+                {queued.map((job) => jobRow(job))}
+              </Section>
+            </div>
+          ) : null}
+          {shell.data?.space?.shared ? (
+            <p className="activity-note">
+              The kill switch here is {shell.data.space.shared.owner.name}'s. Stop your own runs from their cards; they run on your computer.
+            </p>
           ) : (
-          <>
-          <div className="mt-1 flex items-center gap-2 border-t border-line px-1 pt-1.5">
-            <button type="button" className="btn flex-1 justify-center text-danger" disabled={stopAll.isPending || (!busy && !queued.length && !waiting.length)} onClick={() => stopAll.mutate()}>
-              <OctagonX size={13} /> Stop everything
-            </button>
-            <button type="button" className={cx("btn flex-1 justify-center", paused && "border-ok text-ok")} disabled={kill.isPending} onClick={() => kill.mutate()}>
-              {paused ? <Play size={13} /> : <Pause size={13} />} {paused ? "Resume" : "Pause (kill switch)"}
-            </button>
-          </div>
-          <div className="px-2 pb-0.5 pt-1.5 text-[11px] leading-4 text-faint">
-            Stop kills running commands and aborts model requests at once. A provider may still bill a request it already received.
-          </div>
-          </>
+            <div className="activity-foot">
+              <button type="button" className="btn flex-1 justify-center text-danger" disabled={stopAll.isPending || !anything} onClick={() => stopAll.mutate()}>
+                <OctagonX size={13} /> Stop everything
+              </button>
+              <button type="button" className={cx("btn flex-1 justify-center", paused && "border-ok text-ok")} disabled={kill.isPending} onClick={() => kill.mutate()}>
+                {paused ? <Play size={13} /> : <Pause size={13} />} {paused ? "Resume" : "Pause (kill switch)"}
+              </button>
+              <InfoTip label="About stopping" text="Stop kills running commands and aborts model requests at once. A provider may still bill a request it already received." />
+            </div>
           )}
         </div>
       ) : null}

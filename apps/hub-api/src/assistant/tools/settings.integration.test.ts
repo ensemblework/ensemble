@@ -66,7 +66,7 @@ test("hub_find_setting gives the link, and the key and current value when the as
   const rows = (quiet.data as { settings: Array<{ label: string; link: string; where: string; change: { key: string; current: unknown } | string }> }).settings;
   const start = rows.find((row) => row.label === "Quiet hours start");
   assert.ok(start);
-  assert.equal(start.link, "/settings?tab=assistant#jump-quiet-quiet-hours-start");
+  assert.equal(start.link, "/settings?tab=notifications#jump-quiet-quiet-hours-start");
   assert.deepEqual(start.change, { key: "quietHours.from", values: "HH:MM (24-hour)", current: "19:00" });
 
   const keys = await call("hub_find_setting", ctx(mira.id), { query: "api key" });
