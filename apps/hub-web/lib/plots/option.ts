@@ -209,8 +209,16 @@ function annotations(config: PlotConfig, horizontal: boolean, panel: string) {
   return { lines, areas };
 }
 
-export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, opts?: { compact?: boolean; showTitle?: boolean }): Record<string, unknown> {
+/** Room the zoom slider takes under the plot: its height and the gap above it. */
+const SLIDER_BAND = 22;
+
+/**
+ * `print` is a still picture for a document: full size, but without the zoom slider and brush,
+ * which only work on screen.
+ */
+export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, opts?: { compact?: boolean; showTitle?: boolean; print?: boolean; width?: number }): Record<string, unknown> {
   const compact = Boolean(opts?.compact);
+  const still = compact || Boolean(opts?.print);
   const showTitle = opts?.showTitle !== false && Boolean(config.title);
   const palette = colorsOf(config, theme);
   const text = { color: theme.ink, fontSize: config.fontSize };
@@ -590,7 +598,11 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
   const refs = (side: "left" | "right") => config.annotations.flatMap((note) => note.kind === "hline" && (note.axis === "right" ? "right" : "left") === side ? [note.y] : []);
   const leftBounds = valueAxisBounds({ zero: axisZero("left"), values: nums("left"), reference: refs("left"), min: config.yMinLeft, max: config.yMaxLeft, log: config.yLogLeft });
   const rightBounds = valueAxisBounds({ zero: axisZero("right"), values: nums("right"), reference: refs("right"), min: config.yMinRight, max: config.yMaxRight, log: config.yLogRight });
-  const longLabel = categories.some((label) => label.length > 8);
+  // Labels turn only when they would run into each other: long ones, and more of them than the axis has room for
+  // side by side. With the chart's width known that is measured (about 0.6 em a character); without it, guessed.
+  const labelChars = categories.reduce((sum, label) => sum + Math.min(24, label.length) + 2, 0);
+  const labelRoom = opts?.width ? (opts.width - 90) / (Math.max(8, config.fontSize - 1) * 0.6) : compact ? 40 : 72;
+  const longLabel = categories.some((label) => label.length > 8) && labelChars > labelRoom;
   const sideBits = (side: "x" | "y", log: boolean, bounds?: { min: number | null; max: number | null }, plan?: AxisPlan | null) => {
     const mode = side === "x" ? config.xTicks : config.yTicks;
     const step = side === "x" ? config.xTickStep : config.yTickStep;
@@ -625,7 +637,8 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
     ...axis,
     ...sideBits("x", false),
     name: config.xTitle || config.x || "",
-    nameGap: longLabel ? (compact ? 36 : 46) : (compact ? 20 : 28),
+    // Clear of the tick labels, so the title does not read as their second line.
+    nameGap: longLabel ? (compact ? 36 : 46) : (compact ? 26 : 30),
     axisLabel: { ...axis.axisLabel, ...sideBits("x", false).axisLabel, interval: 0, hideOverlap: false },
     axisLine: config.despine ? { show: true, lineStyle: { color: theme.muted } } : axis.axisLine,
   };
@@ -644,6 +657,7 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
   const leftName = config.yTitleLeft || built.find((series) => series.axis !== "right")?.name || "";
   const rightName = config.yTitleRight || built.find((series) => series.axis === "right")?.name || "";
   const legendBottom = config.legend === "bottom";
+  const xTitled = Boolean(config.xTitle || config.x);
   const withError = (side: "left" | "right", bounds: { min: number | null; max: number | null }, log: boolean) => {
     if (log) return bounds;
     const values = nums(side);
@@ -763,12 +777,13 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
 
   return {
     ...base,
-    grid: { left: leftTitle.pad, right: right ? Math.max(rightTitle.pad, 16) : 12, top: showTitle ? (compact ? 22 : 36) : (compact ? 16 : 12), bottom: compact ? (longLabel ? 18 : 26) : legendBottom ? 48 : 24, containLabel: true },
-    dataZoom: compact ? [] : [
+    // The x title sits under the tick labels, outside what containLabel measures, so the slider and legend start below it.
+    grid: { left: leftTitle.pad, right: right ? Math.max(rightTitle.pad, 16) : 12, top: showTitle ? (compact ? 22 : 36) : (compact ? 16 : 12), bottom: compact ? (longLabel ? 18 : 30) : (legendBottom ? 30 : 6) + (still ? 0 : SLIDER_BAND) + (xTitled ? 18 : 6), containLabel: true },
+    dataZoom: still ? [] : [
       { type: "inside", filterMode: "none", zoomOnMouseWheel: true, moveOnMouseMove: true },
-      { type: "slider", filterMode: "none", height: 12, bottom: legendBottom ? 32 : 8, borderColor: theme.line, fillerColor: "rgba(127,127,127,0.12)", textStyle: { color: theme.muted, fontSize: 10 }, showDetail: false, showDataShadow: !heavy, brushSelect: false },
+      { type: "slider", filterMode: "none", height: 12, bottom: legendBottom ? 30 : 6, borderColor: theme.line, fillerColor: "rgba(127,127,127,0.12)", textStyle: { color: theme.muted, fontSize: 10 }, showDetail: false, showDataShadow: !heavy, brushSelect: false },
     ],
-    brush: compact ? { toolbox: [] as string[], xAxisIndex: 0 } : { toolbox: ["lineX", "clear"], xAxisIndex: 0, brushStyle: { color: "rgba(83,70,214,0.08)", borderColor: theme.accent } },
+    brush: still ? { toolbox: [] as string[], xAxisIndex: 0 } : { toolbox: ["lineX", "clear"], xAxisIndex: 0, brushStyle: { color: "rgba(83,70,214,0.08)", borderColor: theme.accent } },
     legend: compact && config.legend !== "none"
       ? { ...base.legend, top: 0, right: 14, left: undefined, bottom: undefined }
       : base.legend,

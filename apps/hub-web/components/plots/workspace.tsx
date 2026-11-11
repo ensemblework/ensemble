@@ -30,7 +30,8 @@ import { openContextMenu } from "@/components/context-menu/menu-store";
 import { canvasSource } from "@/lib/plots/tile-code";
 import { InfoTip, InlineEdit, Popover } from "@/components/ui";
 import "./plots.css";
-import { Check, ChevronDown, Code2, Download, Eye, GripVertical, LayoutGrid, Link2, Maximize2, Plus, Trash2, Upload, X } from "lucide-react";
+import { BarChart3, Check, ChevronDown, Code2, Download, Eye, GripVertical, LayoutGrid, Link2, Maximize2, Plus, Trash2, Upload, X } from "lucide-react";
+import Link from "next/link";
 import { readPlotTheme, seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
@@ -445,6 +446,25 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                     <button type="button" role="menuitem" className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => { close(); void openSpace(undefined, true); }} data-plot-new-space>
                       <Plus size={14} aria-hidden /> New space
                     </button>
+                    {(() => {
+                      // Single charts saved outside a space (from a page's @ensemble, the assistant, or Duplicate) open in their own editor.
+                      const saved = (spaces.data?.plots ?? []).filter((plot) => !isWorkspace(plot.config));
+                      if (!saved.length) return null;
+                      return (
+                        <>
+                          <div className="my-1 border-t border-line" />
+                          <div className="pl-menu-label">Saved plots</div>
+                          <div className="max-h-56 overflow-y-auto" data-saved-plots>
+                            {saved.map((plot) => (
+                              <Link key={plot.id} href={`/plots/${plot.id}`} role="menuitem" className="menu-item text-left" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={close}>
+                                <BarChart3 size={14} className="shrink-0 text-muted" aria-hidden />
+                                <span className="min-w-0 flex-1 truncate">{plot.title || "Untitled plot"}</span>
+                              </Link>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </Popover>

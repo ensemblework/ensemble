@@ -556,6 +556,11 @@ test("assistant conversations and stop actions stay private without invoking a p
   await hidden("POST", `/api/assistant/conversations/${id}/stop`);
   await check(a, "POST", `/api/assistant/conversations/${id}/stop`, 204, "happy-path");
   await check(a, "POST", "/api/assistant/conversations", 400, "invalid-input", { title: false });
+  await hidden("DELETE", `/api/assistant/conversations/${id}`);
+  await check(a, "DELETE", `/api/assistant/conversations/${id}`, 204, "happy-path");
+  assert.equal(await harness.prisma.assistantMessage.count({ where: { conversationId: id } }), 0, "its messages go with it");
+  assert.ok(!(await check(a, "GET", "/api/assistant/conversations", 200, "happy-path")).conversations.some((row: { id: string }) => row.id === id));
+  await check(a, "DELETE", `/api/assistant/conversations/${id}`, 404, "unknown-id");
 });
 
 test("decisions, cancel and saved rules are scoped before long polling or writes", async () => {

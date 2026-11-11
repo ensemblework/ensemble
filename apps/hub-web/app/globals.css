@@ -277,7 +277,7 @@ select:focus-visible {
    inside a box never draws a ring of its own: a transparent control, or anything inside .compound-field or
    one of the named composite boxes. The box draws the edge. */
 :is(input:not([type="checkbox"], [type="radio"]), textarea, select):is(.bg-transparent, .outline-none):not(.border, .field):is(:focus, :focus-visible),
-:is(.compound-field, .dp-type, .cm-search, .picker-search, .remote-link-field, .transcript-search, .meeting-search, .tile-gallery-search, .term-line, .otp-field) :is(input, textarea, select):is(:focus, :focus-visible) {
+:is(.compound-field, .dp-type, .cm-search, .picker-search, .remote-link-field, .transcript-search, .meeting-search, .tile-gallery-search, .term-line, .otp-field, .diagram-edge-label) :is(input, textarea, select):is(:focus, :focus-visible) {
   outline: none !important;
   outline-offset: 0 !important;
   box-shadow: none !important;
@@ -1573,13 +1573,60 @@ span.mention:not(.mention-off) {
   border-radius: 99px;
   background: var(--diagram-paper);
 }
+/* Typing a label: the pill is the one focus edge (accent border plus a 1px ring); the input inside draws none. */
+.diagram-edge-label.is-editing {
+  padding: 2px 10px;
+  border-color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
+  color: var(--ink);
+  cursor: text;
+}
 .diagram-edge-input {
   min-width: 3ch;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--ink);
+  caret-color: rgb(var(--accent-rgb));
   outline: none;
   text-align: center;
+}
+.diagram-edge-input::placeholder {
+  color: var(--faint);
+}
+/* Recent chats: a row's delete button shows on hover or keyboard focus (always on touch), over the time. */
+.chat-row .chat-row-delete {
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+.chat-row:is(:hover, :focus-within) .chat-row-delete {
+  opacity: 1;
+}
+.chat-row:is(:hover, :focus-within) .chat-row-time {
+  visibility: hidden;
+}
+@media (hover: none) {
+  .chat-row .chat-row-delete {
+    opacity: 1;
+  }
+  .chat-row .chat-row-time {
+    display: none;
+  }
+}
+.chat-row .chat-row-delete:hover {
+  color: var(--danger);
+}
+.chat-row-confirm {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+/* A preview that scrolls inside a page (PDF pages, a Word file): a thin bar from the palette, and the focus edge inside the card. */
+.embed-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent) transparent;
+}
+.embed-scroll:focus-visible {
+  outline-offset: -2px;
 }
 .diagram-swatch {
   display: inline-block;

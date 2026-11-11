@@ -207,7 +207,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |
 | Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary?provider=<id>&days=14` (1–90 days), `/api/ledger/verify`; `routes/runs.ts`. `/api/metrics/credits`; `routes/included.ts` |
 | Interaction log | `POST /api/telemetry` (the Hub's own usage events, signed-in browser sessions only; [07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)); `analytics/telemetry.ts` |
-| Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`; `routes/assistant.ts` |
+| Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`, `DELETE /conversations/:id` (also drops the chat's agent session on the person's computers); `routes/assistant.ts`, `assistant/delete-chat.ts` |
 | Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts` (native desks use preferences instead) |
 | Workspace/agent | `/api/workspace`, `/api/agent/assign`, `/api/agent/sessions` and job/control routes; `routes/agents.ts`, `job-files.ts` |
 | Node session deletion | `DELETE /api/node/sessions/:id {confirmed:true}`: owner's browser only; stops work and requires native-agent deletion acknowledgement on the computer. Project files stay; [35 §8.9](35_ENSEMBLE_NODE.md#89-session-control-from-the-card). |

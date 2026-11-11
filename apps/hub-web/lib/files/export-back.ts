@@ -23,7 +23,11 @@ export function downloadName(title: string, extension: string): string {
 
 /** Builds the PDF or Word file from the page with the original's formatting and downloads it. */
 export async function exportBack(input: { title: string; doc: PageDocument; fileId: string; format: ExportBackFormat }): Promise<void> {
-  const blocks = blocksFromPage(input.doc);
+  let blocks = blocksFromPage(input.doc);
+  if (blocks.some((block) => block.type === "embed")) {
+    const { resolveEmbeds } = await import("@/lib/export/embeds");
+    blocks = (await resolveEmbeds({ title: input.title, blocks })).blocks;
+  }
   if (input.format === "pdf") {
     const { style } = await filesApi.style(input.fileId);
     const blob = await toPdf({ title: input.title, blocks }, { style: style ?? { source: "pdf" } });

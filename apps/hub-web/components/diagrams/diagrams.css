@@ -634,6 +634,12 @@
 .dg-title:focus {
   background: var(--hover);
 }
+/* Typing the title: the pill itself is the edge, not a ring 2px outside it. */
+.dg-title:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb));
+}
 .dg-save {
   display: inline-flex;
   flex: none;

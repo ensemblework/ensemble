@@ -5,8 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
-import { chartFrame, isWorkspace, plotConfigSchema, workspaceSchema, type Frame, type PlotConfig } from "@ensemble/shared-types";
-import { ApiError, api } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { inlinePlotRatio, loadPlotFigures, type PlotFigure } from "@/lib/plots/figures";
 import { ChartView } from "./chart-view";
 import { createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
 
@@ -20,12 +20,9 @@ export function mountPlotOff(host: HTMLElement, label: string): void {
   host.textContent = `@${label || "Plot"} · not part of your template`;
 }
 
-export function inlinePlotRatio(chart: string, tile?: { w: number; h: number }): number {
-  if (tile) return Math.min(3, Math.max(0.5, (tile.w * 80) / (tile.h * 78)));
-  return ["heatmap", "pie", "donut"].includes(chart) ? 1 : 1.6;
-}
+export { inlinePlotRatio };
 
-type Figure = { id: string; title: string; frame: Frame; config: PlotConfig; ratio: number; warnings: string[] };
+type Figure = PlotFigure;
 
 type InlinePlotProps = { id: string; label: string; onRemove?: () => void; height?: number | null; onResize?: (height: number) => void };
 
@@ -47,39 +44,11 @@ function InlinePlot({ id, label, onRemove, height: storedHeight = null, onResize
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const [plotId, encodedTile] = id.split("/");
-      const { plot } = await api.plot(plotId!);
+      const loaded = await loadPlotFigures(id, label);
       if (cancelled) return;
-      const tileId = encodedTile ? decodeURIComponent(encodedTile) : null;
-      let next: Figure[];
-      if (isWorkspace(plot.config)) {
-        const config = workspaceSchema.parse(plot.config);
-        const datasets = await Promise.all(config.datasetIds.map(async (datasetId) => (await api.plotDataset(datasetId, true)).dataset));
-        const tiles = tileId ? config.tiles.filter((tile) => tile.id === tileId) : config.tiles;
-        if (tileId && !tiles.length) throw new Error("This tile was removed from its plot space.");
-        next = tiles.map((tile) => {
-          const view = chartFrame(datasets, tile, config.links);
-          view.config.series = view.config.series.map((series, index) => ({
-            ...series,
-            color: tile.series[index]?.color ?? series.color,
-            lineStyle: tile.series[index]?.lineStyle ?? series.lineStyle,
-          }));
-          return { id: tile.id, title: tile.title, ...view, ratio: inlinePlotRatio(tile.chart, tile) };
-        });
-        if (cancelled) return;
-        setTitle(tileId ? tiles[0]!.title || label : plot.title);
-        setHref(`/plots?space=${plot.id}${encodedTile ? `&tile=${encodedTile}` : ""}`);
-      } else {
-        const config = plotConfigSchema.parse(plot.config);
-        if (!plot.datasetId) next = [];
-        else {
-          const { dataset } = await api.plotDataset(plot.datasetId, true);
-          next = [{ id: plot.id, title: plot.title, frame: { columns: dataset.columns, rows: dataset.rows }, config, ratio: inlinePlotRatio(config.chart), warnings: [] }];
-        }
-        if (cancelled) return;
-        setTitle(plot.title || label || "Plot");
-      }
-      setFigures(next);
+      setTitle(loaded.title || label || "Plot");
+      setHref(loaded.href);
+      setFigures(loaded.figures);
     };
     void load().catch((failure: unknown) => {
       if (cancelled) return;

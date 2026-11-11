@@ -386,3 +386,17 @@ test("a box plot leaves empty cells out instead of counting them as zero", () =>
   const outliers = (option.series as Array<{ name?: string }>).find((series) => series.name === "Outliers");
   assert.equal(outliers, undefined);
 });
+
+test("category labels turn only when the chart is too narrow for them, and print leaves out the zoom slider", () => {
+  const frame = { columns: [{ name: "variant", type: "category" as const }, { name: "accuracy", type: "number" as const }], rows: [["baseline", 71.2], ["no-dropout", 68.4], ["no-augment", 66.9], ["small-lr", 73.5], ["full", 78.1]] };
+  const config = { ...defaultPlotConfig(), chart: "bar" as const, x: "variant", series: [{ y: "accuracy", axis: "left" as const }] };
+  const rotate = (option: Record<string, unknown>) => ((option.xAxis as { axisLabel?: { rotate?: number } }).axisLabel?.rotate ?? 0);
+  assert.equal(rotate(chartOption(frame, config, theme, { compact: true, width: 760 })), 0, "a page-wide card has room");
+  assert.equal(rotate(chartOption(frame, config, theme, { compact: true, width: 260 })), 32, "a small tile turns them");
+  assert.equal(rotate(chartOption(frame, config, theme)), 0, "the studio guesses from the labels alone");
+  const screen = chartOption(frame, config, theme);
+  const print = chartOption(frame, config, theme, { print: true, width: 720 });
+  assert.equal((screen.dataZoom as unknown[]).length, 2);
+  assert.equal((print.dataZoom as unknown[]).length, 0, "a picture has nothing to drag");
+  assert.ok(((screen.grid as { bottom: number }).bottom) > ((print.grid as { bottom: number }).bottom), "the slider's room is only kept on screen");
+});

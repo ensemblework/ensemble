@@ -155,6 +155,16 @@
 .pl-tweak-title:hover {
   border-color: var(--line-strong);
 }
+/* One focus edge, on the field's own border (as .field does): no ring drawn a little way outside it. */
+.pl-input:focus-visible,
+.pl-select:focus-visible,
+.pl-tweak-title:focus-visible,
+.pl-textarea:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  border-color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
+}
 .pl-textarea {
   height: 96px;
   padding: 8px 10px;

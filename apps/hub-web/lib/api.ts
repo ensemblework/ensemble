@@ -1846,6 +1846,8 @@ export const api = bindClient({
       failed?: ApplyFailure[];
     }>("/api/assistant/apply", data),
   stopAssistant: (id: string) => post<void>(`/api/assistant/conversations/${id}/stop`),
+  /** Deletes a chat; its agent session on the person's computers goes too. */
+  deleteAssistantChat: (id: string) => del<void>(`/api/assistant/conversations/${encodeURIComponent(id)}`),
   ensembleReplies: (surface: string, anchorKey: string) =>
     get<{
       replies: Array<{

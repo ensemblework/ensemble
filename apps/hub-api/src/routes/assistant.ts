@@ -18,6 +18,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { appendLedger } from "../lib/ledger.js";
 import { abortAssistantTurn, runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
+import { deleteAssistantChat } from "../assistant/delete-chat.js";
 import { resolveTypedMentions } from "../assistant/mentions.js";
 import { loadSettings } from "../lib/settings.js";
 import { requestCancel } from "../lib/activity.js";
@@ -327,6 +328,13 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     }
     const refs = mergeRefs(landed.map((piece) => piece.refs), MAX_CALL_REFS);
     return { summary, href, undoEntryId, replies, ...(refs.length ? { refs } : {}), ...(partial ? { partial: true, failed } : {}) };
+  });
+
+  /** Deletes the chat and its messages; the agent session behind it on the person's computers goes too (assistant/delete-chat.ts). */
+  app.delete("/api/assistant/conversations/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1).max(100) }).parse(request.params);
+    if (!(await deleteAssistantChat(app, request.userId, id))) return reply.code(404).send({ error: "Conversation not found." });
+    return reply.code(204).send();
   });
 
   app.post("/api/assistant/conversations/:id/stop", async (request, reply) => {

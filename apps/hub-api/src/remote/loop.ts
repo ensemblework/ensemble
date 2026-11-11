@@ -27,6 +27,7 @@ import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteEr
 import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerSessionDelete, SESSION_DELETE_API } from "./session-delete.js";
+import { answerAssistantSessionDelete } from "./assistant-session-delete.js";
 import { answerSecretSave, SECRETS_API } from "./secrets.js";
 import { credentialCapabilities } from "../credentials/capabilities.js";
 import { changedFileIdentity, flushFileChanges } from "./node-files.js";
@@ -43,7 +44,7 @@ import { setLoginStateSink } from "../logins/requests.js";
 import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
-import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
 import { BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
@@ -122,6 +123,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     webTerminal: settings.webTerminal,
     // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
     assistantTurns: ASSISTANT_TURNS_API,
+    assistantSessionDelete: ASSISTANT_SESSION_DELETE_API,
     agents: await agentsNow(),
     // Coding agents this runtime can run a code task with; the web refuses others for this computer.
     engines: [...CODE_ENGINES],
@@ -371,6 +373,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
         if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
         if (event === "assistant.stop") stopAssistantTurn(data);
+        // The person deleted a chat: its agent session here goes too (docs/25 §4.9).
+        if (event === "assistant.session.delete") void answerAssistantSessionDelete(client, data).catch(() => undefined);
         if (event === "agents.refresh") void detectAgents({ force: true }).then(() => beat(app, client, signal)).catch(fail);
         if (event === "agents.signin") {
           const agent = typeof data === "object" && data !== null ? (data as { agent?: unknown }).agent : null;

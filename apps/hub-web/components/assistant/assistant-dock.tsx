@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { LayerFloor, Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Unplug, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Trash2, Unplug, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
@@ -354,21 +354,27 @@ function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: st
   );
 }
 
-/** Recent chats, newest first. Picking one opens it in the dock. */
+/**
+ * Recent chats, newest first. Picking one opens it in the dock. Each can be deleted after a
+ * one-line confirm; the agent session behind it on the person's computers goes too (server side).
+ */
 function ChatHistory({
   chats,
   loading,
   current,
   onPick,
+  onDelete,
   onClose,
 }: {
   chats: ConversationRecord[];
   loading: boolean;
   current: string | null;
   onPick: (id: string) => void;
+  onDelete: (id: string) => void;
   onClose: () => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   useEffect(() => {
     panel.current?.querySelector<HTMLElement>("[data-chat-current], button")?.focus();
     const onDown = (event: PointerEvent) => {
@@ -379,6 +385,8 @@ function ChatHistory({
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [onClose]);
+  /** Focus goes back to the row (or the one after a deleted row), never to the page behind. */
+  const focusRow = (id: string | null) => window.setTimeout(() => panel.current?.querySelector<HTMLElement>(id ? `[data-chat-row="${id}"] [data-chat-open]` : "[data-chat-open]")?.focus(), 0);
   return (
     <div
       ref={panel}
@@ -389,6 +397,12 @@ function ChatHistory({
         if (event.key !== "Escape") return;
         event.preventDefault();
         event.stopPropagation();
+        if (confirming) {
+          const id = confirming;
+          setConfirming(null);
+          focusRow(id);
+          return;
+        }
         onClose();
       }}
       data-chat-history
@@ -400,22 +414,59 @@ function ChatHistory({
         ) : chats.length === 0 ? (
           <div className="px-2 py-3 text-[12.5px] text-muted">No earlier chats yet.</div>
         ) : (
-          chats.map((chat) => (
-            <button
-              key={chat.id}
-              type="button"
-              onClick={() => onPick(chat.id)}
-              aria-current={chat.id === current ? "true" : undefined}
-              data-chat-current={chat.id === current ? "" : undefined}
-              className={cx(
-                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-hover focus-visible:bg-hover focus-visible:outline-none",
-                chat.id === current && "bg-hover",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{chat.title || "New chat"}</span>
-              <span className="shrink-0 text-[11.5px] text-faint">{relative(chat.updatedAt)}</span>
-            </button>
-          ))
+          chats.map((chat, index) =>
+            confirming === chat.id ? (
+              <div key={chat.id} role="group" aria-label={`Delete ${chat.title || "New chat"}?`} className="chat-row-confirm flex items-center gap-2 rounded-md px-2 py-1 text-[13px]" data-chat-row={chat.id}>
+                <span className="min-w-0 flex-1 truncate text-ink">Delete this chat?</span>
+                <button type="button" className="btn-ghost h-7 px-2 text-[12.5px]" onClick={() => { setConfirming(null); focusRow(chat.id); }}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn h-7 border-danger/40 px-2 text-[12.5px] text-danger hover:bg-danger/10"
+                  autoFocus
+                  onClick={() => {
+                    setConfirming(null);
+                    focusRow(chats[index + 1]?.id ?? chats[index - 1]?.id ?? null);
+                    onDelete(chat.id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div key={chat.id} className="chat-row group relative flex items-center rounded-md" data-chat-row={chat.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(chat.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Delete" && event.key !== "Backspace") return;
+                    event.preventDefault();
+                    setConfirming(chat.id);
+                  }}
+                  aria-current={chat.id === current ? "true" : undefined}
+                  data-chat-current={chat.id === current ? "" : undefined}
+                  data-chat-open
+                  className={cx(
+                    "flex min-w-0 flex-1 items-baseline gap-2 rounded-md py-1.5 pl-2 pr-9 text-left text-[13px] hover:bg-hover focus-visible:bg-hover focus-visible:outline-none",
+                    chat.id === current && "bg-hover",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{chat.title || "New chat"}</span>
+                  <span className="chat-row-time shrink-0 text-[11.5px] text-faint">{relative(chat.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="chat-row-delete icon-btn absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2"
+                  aria-label={`Delete ${chat.title || "New chat"}`}
+                  title="Delete chat"
+                  onClick={() => setConfirming(chat.id)}
+                >
+                  <Trash2 size={13} aria-hidden />
+                </button>
+              </div>
+            ),
+          )
         )}
       </div>
     </div>
@@ -462,6 +513,25 @@ export function AssistantDock() {
   useAutoGrow(input, open ? draft : "", 8);
   const [history, setHistory] = useState(false);
   const closeHistory = useCallback(() => setHistory(false), []);
+  /** Gone from the list at once; back with a notice if the server refuses. */
+  const deleteChat = async (id: string) => {
+    const previous = client.getQueryData<{ conversations: ConversationRecord[] }>(["assistant-chats"]);
+    client.setQueryData<{ conversations: ConversationRecord[] }>(["assistant-chats"], (data) => (data ? { ...data, conversations: data.conversations.filter((chat) => chat.id !== id) } : data));
+    if (conversationRef.current === id) {
+      setTurnError(null);
+      setOptimistic([]);
+      setConversationId(null);
+    }
+    try {
+      await api.deleteAssistantChat(id);
+      client.removeQueries({ queryKey: ["assistant-messages", id] });
+    } catch (error) {
+      if (previous) client.setQueryData(["assistant-chats"], previous);
+      toast(error instanceof Error && error.message ? `Couldn't delete the chat: ${error.message}` : "Couldn't delete the chat.", { tone: "error" });
+    } finally {
+      void client.invalidateQueries({ queryKey: ["assistant-chats"] });
+    }
+  };
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
@@ -906,6 +976,7 @@ export function AssistantDock() {
             setConversationId(id);
             window.setTimeout(() => input.current?.focus(), 30);
           }}
+          onDelete={(id) => void deleteChat(id)}
         />
       ) : null}
 

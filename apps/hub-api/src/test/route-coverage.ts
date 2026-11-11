@@ -146,6 +146,7 @@ export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[
   "POST /api/assistant/conversations": ["happy-path", "invalid-input"],
   "GET /api/assistant/conversations/:id/messages": ["happy-path", "isolation", "unknown-id"],
   "POST /api/assistant/conversations/:id/stop": ["happy-path", "isolation", "unknown-id"],
+  "DELETE /api/assistant/conversations/:id": ["happy-path", "isolation", "unknown-id"],
   "GET /api/decisions": ["happy-path", "isolation", "invalid-input"],
   "POST /api/decisions": ["happy-path", "invalid-input"],
   "GET /api/decisions/:id/wait": ["happy-path", "isolation", "unknown-id", "invalid-input"],

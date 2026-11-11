@@ -1,8 +1,8 @@
 "use client";
 
 import type { FileStyleProfile } from "@ensemble/shared-types";
-import type { Block, Cell, ExportDoc, Run } from "./document";
-import { linkRuns, plainText, safeHref, toHtml, toMarkdown, toText } from "./document";
+import type { Block, Cell, ExportDoc, ImageBlock, Run } from "./document";
+import { embedLine, imageWidth, linkRuns, plainText, safeHref, toHtml, toMarkdown, toText } from "./document";
 
 export type DocFormat = "md" | "pdf" | "docx" | "pages" | "html" | "txt";
 
@@ -541,7 +541,50 @@ export async function toPdf(doc: ExportDoc, options: { style?: FileStyleProfile 
         pdf.line(margins.left, y + 6, width - margins.right, y + 6);
         y += 16;
         break;
+      case "embed":
+        text(embedLine(item.embed), { ...plain, color: muted });
+        break;
+      case "image":
+        picture(item);
+        break;
     }
+  };
+  /** A picture, scaled to the column and to one page, with its caption under it. */
+  const picture = (item: ImageBlock) => {
+    const captionSize = Math.max(7, body.size - 2);
+    const captionRoom = item.caption ? captionSize * 1.5 + 4 : 0;
+    let w = imageWidth(item, usable, 0.75);
+    let h = (w * item.height) / Math.max(1, item.width);
+    const page = bottom - margins.top - captionRoom - 8;
+    if (h > page) {
+      h = page;
+      w = (h * item.width) / Math.max(1, item.height);
+    }
+    if (y + h + captionRoom + 8 > bottom && y > margins.top) newPage();
+    y += 4;
+    const x = item.align === "left" ? margins.left : item.align === "right" ? margins.left + usable - w : margins.left + (usable - w) / 2;
+    try {
+      pdf.addImage(item.png, item.format === "jpg" ? "JPEG" : "PNG", x, y, w, h, undefined, "FAST");
+    } catch {
+      // A bitmap jsPDF cannot read is named instead of drawn.
+      y -= 4;
+      text(embedLine({ kind: item.kind ?? "image", id: "", label: item.caption || item.alt, href: item.href }), { ...plain, color: muted });
+      return;
+    }
+    const href = safeHref(item.href);
+    if (href) pdf.link(x, y, w, h, { url: href });
+    y += h + 4;
+    if (item.caption) {
+      const caption: PdfTextStyle = { ...plain, size: captionSize, color: muted };
+      const lines = layoutRuns([{ text: item.caption, href: item.href }], caption, usable, measure);
+      const line = lines.length === 1 ? lines[0]! : null;
+      if (line) {
+        const cx = item.align === "left" ? margins.left : item.align === "right" ? margins.left + usable - line.width : margins.left + (usable - line.width) / 2;
+        drawLine(line, cx, y + captionSize);
+        y += captionSize * 1.5;
+      } else text([{ text: item.caption, href: item.href }], caption, { gap: 0 });
+    }
+    y += 10;
   };
   for (const item of doc.blocks) block(item);
   return pdf.output("blob");
@@ -552,7 +595,8 @@ const PDF_FONT_TEXT = /^[\t\n\r\x20-\x7e\xa0-\xff€‚ƒ„…†‡ˆ‰Š‹�
 
 /** Whether every character of the document can be drawn in a PDF made here (Latin text only). */
 export function pdfCanDraw(doc: ExportDoc): boolean {
-  return PDF_FONT_TEXT.test(toMarkdown(doc));
+  // Pictures are drawn as pictures; only their words have to fit the fonts.
+  return PDF_FONT_TEXT.test(toMarkdown({ ...doc, blocks: doc.blocks.map((block): Block => (block.type === "image" ? { type: "paragraph", runs: [{ text: `${block.alt} ${block.caption ?? ""}` }] } : block)) }));
 }
 
 /**
@@ -588,7 +632,7 @@ const DOCX_TEXT_WIDTH = 9026;
 /** A Word document. Apple Pages, Google Docs and LibreOffice all open it. */
 export async function toDocx(doc: ExportDoc): Promise<Blob> {
   const docx = await import("docx");
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, Table, TableRow, TableCell, WidthType, TableLayoutType, BorderStyle, ShadingType } = docx;
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, Table, TableRow, TableCell, WidthType, TableLayoutType, BorderStyle, ShadingType, ImageRun, AlignmentType } = docx;
   const runs = (value: Run[], extra: { bold?: boolean } = {}) =>
     linkRuns(value).flatMap((run): Array<InstanceType<typeof TextRun> | InstanceType<typeof ExternalHyperlink>> => {
       const href = safeHref(run.href);
@@ -663,6 +707,29 @@ export async function toDocx(doc: ExportDoc): Promise<Blob> {
       case "rule":
         children.push(new Paragraph({ text: "", border: { bottom: { color: "DDDDDD", space: 1, style: "single", size: 6 } } }));
         break;
+      case "embed":
+        children.push(new Paragraph({ children: runs(embedLine(block.embed)) }));
+        break;
+      case "image": {
+        // Word measures pictures in pixels at 96 per inch: 15 twips each.
+        const w = imageWidth(block, DOCX_TEXT_WIDTH / 15);
+        const h = (w * block.height) / Math.max(1, block.width);
+        const alignment = block.align === "left" ? AlignmentType.LEFT : block.align === "right" ? AlignmentType.RIGHT : AlignmentType.CENTER;
+        const alt = block.alt || block.caption || "Image";
+        children.push(
+          new Paragraph({
+            alignment,
+            spacing: { before: 120, after: block.caption ? 40 : 160 },
+            children: [new ImageRun({ type: block.format === "jpg" ? "jpg" : "png", data: block.png, transformation: { width: Math.round(w), height: Math.round(h) }, altText: { name: alt, title: alt, description: alt } })],
+          }),
+        );
+        if (block.caption) {
+          const href = safeHref(block.href);
+          const words = new TextRun({ text: block.caption, size: 18, color: "6B655C", style: href ? "Hyperlink" : undefined });
+          children.push(new Paragraph({ alignment, spacing: { after: 160 }, children: href ? [new ExternalHyperlink({ link: href, children: [words] })] : [words] }));
+        }
+        break;
+      }
     }
   }
   return Packer.toBlob(new Document({ creator: "Ensemble", title: doc.title, sections: [{ children }] }));
@@ -686,8 +753,15 @@ export async function renderDocument(doc: ExportDoc, format: DocFormat): Promise
   }
 }
 
-/** Saves the file, or for a PDF the built-in fonts can't draw, opens the print dialog instead ("printed"). */
+/**
+ * Saves the file, or for a PDF the built-in fonts can't draw, opens the print dialog instead ("printed").
+ * Plots, diagrams and pictures on the page are drawn into every format that can hold a picture first.
+ */
 export async function downloadDocument(doc: ExportDoc, format: DocFormat): Promise<"saved" | "printed"> {
+  if (format !== "txt" && doc.blocks.some((block) => block.type === "embed")) {
+    const { resolveEmbeds } = await import("./embeds");
+    doc = await resolveEmbeds(doc);
+  }
   if (format === "pdf" && !pdfCanDraw(doc)) {
     await printDocument(doc);
     return "printed";

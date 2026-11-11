@@ -126,7 +126,7 @@ export function DiagramEdgeView({ id, source, target, selected, data }: EdgeProp
               "nodrag nopan",
               showPill ? "diagram-edge-label" : "diagram-bend-handle",
               selected ? "is-selected" : "",
-              canBend ? "can-bend" : "",
+              data.editing ? "is-editing" : canBend ? "can-bend" : "",
             ].filter(Boolean).join(" ")}
             style={{
               transform: `translate(-50%, -50%) translate(${route.label.x}px, ${route.label.y}px)`,
