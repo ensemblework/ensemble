@@ -461,6 +461,16 @@ select:focus-visible {
   .icon-btn {
     @apply inline-flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-muted transition-colors hover:bg-hover hover:text-ink;
   }
+  /* Touch: small buttons keep their look but answer a finger anywhere in at least 40 × 40 px around them.
+     In this layer, so a button placed with .absolute or .fixed keeps that position. */
+  @media (pointer: coarse) {
+    :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"], .topbar :is(a[href], button)) { position: relative; }
+    :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"], .topbar :is(a[href], button))::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); transform: translate(-50%, -50%); }
+    /* Not inside a sideways-scrolling strip: the taller hit area would make the strip scroll up and down too. */
+    :is(.overflow-x-auto, .overflow-x-scroll, .context-tabs, .nc-tabs, .recap-tabs, .work-view-tabs, .board-insight-row, .tile-gallery-categories, .calendar-meetings-grid) :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"])::after { content: none; }
+    /* Rows in a menu are a finger tall. */
+    [data-popover] .row-tile { min-height: 40px; }
+  }
 
   .tag {
     @apply inline-flex min-w-0 max-w-full items-center rounded-md px-1.5 py-px text-[11.5px] font-medium leading-4;
@@ -689,7 +699,12 @@ body.block-marquee-active .block-controls, body.block-marquee-active .block-comm
 .notion-bg-blue { background: color-mix(in srgb, #639bc9 20%, transparent); }
 .notion-bg-purple { background: color-mix(in srgb, #ac87ce 20%, transparent); }
 .notion-bg-pink, .notion-bg-red { background: color-mix(in srgb, #d98591 20%, transparent); }
-@media (max-width: 640px) { .block-editor-body { padding-left: 52px; } .block-controls { left: var(--controls-indent, 0px); } }
+/* A phone keeps the narrow gutter: the block handle only (its menu adds blocks, as / does), so text gets the width. */
+@media (max-width: 640px) {
+  .block-editor-body { padding-left: 28px; }
+  .block-controls { left: calc(var(--controls-indent, 0px) + 1px); }
+  .block-controls button[aria-label="Add block"] { display: none; }
+}
 
 /* Agent-written sections: editable, but always visibly the agent's. */
 .agent-block {
@@ -1679,6 +1694,27 @@ span.mention:not(.mention-off) {
 .diagram-edge-input::placeholder {
   color: var(--faint);
 }
+/* Settings: "On this page" is a slim rail of its own on the right, sticky and scrolling apart from the page. Wide windows only. */
+.settings-shell { max-width: 1060px; }
+.settings-rail { display: none; }
+@media (min-width: 1024px) {
+  .settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); column-gap: 2.5rem; }
+}
+@media (min-width: 1360px) {
+  .settings-shell { max-width: 1300px; }
+  .settings-layout { grid-template-columns: 208px minmax(0, 760px) 152px; }
+  .settings-rail {
+    position: sticky;
+    top: 1.5rem;
+    display: block;
+    align-self: start;
+    max-height: calc(100dvh - 8rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-top: 2px;
+    scrollbar-width: thin;
+  }
+}
 /* Recent chats: a row's delete button shows on hover or keyboard focus (always on touch), over the time. */
 .chat-row .chat-row-delete {
   opacity: 0;
@@ -1829,25 +1865,41 @@ span.mention:not(.mention-off) {
   border-bottom: 1px solid var(--line);
 }
 .diagram-inline-title {
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .diagram-inline-time {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .diagram-inline-edit {
+  flex: none;
   font-size: 12.5px;
   font-weight: 600;
+  white-space: nowrap;
 }
 .diagram-inline-compact {
+  flex: none;
   border: 0;
   background: transparent;
   padding: 0;
   font-size: 12.5px;
   color: var(--muted);
+  white-space: nowrap;
   cursor: pointer;
+}
+@media (pointer: coarse) {
+  .diagram-inline-head { align-items: center; padding-block: 0; }
+  .diagram-inline-edit, .diagram-inline-compact { display: inline-flex; min-height: 40px; align-items: center; }
 }
 .diagram-inline.is-compact .diagram-inline-stage {
   display: none;
@@ -2429,6 +2481,14 @@ span.mention:not(.mention-off) {
   .file-bar-slot { order: 3; flex-basis: 100%; justify-content: flex-start; }
   .file-bar-slot > .file-bar-tools { justify-content: flex-start; }
 }
+/* Keyboard shortcut hints mean nothing without a keyboard and mouse. */
+@media (hover: none) { .key-hint { display: none !important; } }
+/* Touch: the bar's controls are finger-sized. */
+@media (pointer: coarse) {
+  .file-bar .icon-btn { width: 40px; height: 40px; }
+  .file-bar-slot .btn-ghost, .file-bar-slot .btn { height: 40px; }
+  .file-bar-slot .field { height: 36px; }
+}
 
 .file-mark {
   display: inline-flex;
@@ -2638,6 +2698,8 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 .task-peek.is-full { width: 100%; }
 @media (max-width: 767px) {
   .task-peek { width: 100%; }
+  /* Full width, there is nothing to resize against. */
+  .task-peek .page-resize { display: none; }
 }
 
 /* ── account avatar (top right) ─────────────────────────────────────────── */
@@ -2696,6 +2758,10 @@ button.account-avatar:focus-visible {
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 .ask-launcher[hidden] {
+  display: none;
+}
+/* A dialog, the phone navigation, a sheet or full screen owns the screen: the button would float over it. */
+body:has([aria-modal="true"]) > .ask-launcher {
   display: none;
 }
 .ask-launcher[data-nudged="1"] {
@@ -2810,7 +2876,8 @@ body[data-assistant-resizing="corner"], body[data-assistant-resizing="corner"] *
 a.assistant-sent-file:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 @media (prefers-reduced-motion: reduce) { .assistant-attachment-progress { transition: none; } }
 @media (max-width: 640px) {
-  .assistant-window { border-radius: 15px; }
+  /* A phone: the panel takes the screen with even margins, top bar included, so nothing opens unseen beneath it. */
+  .assistant-window { inset: 8px; width: auto; height: auto; border-radius: 15px; }
   .assistant-resize { display: none; }
   .assistant-conversation { padding: 20px 16px 10px; }
   .assistant-composer-area { padding: 10px 12px 12px; }
@@ -3059,6 +3126,8 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 :root[data-doodle="dots"] [data-theme-canvas] { background-image: url("/doodles/dots.svg"); }
 :root[data-doodle="circuits"] [data-theme-canvas] { background-image: url("/doodles/circuits.svg"); }
 :root[data-doodle="graph"] [data-theme-canvas] { background-image: url("/doodles/graph.svg"); }
+/* Writing stays on plain paper: a page, task, meeting note or other document view drops any doodle or theme artwork. */
+[data-theme-canvas]:has([data-plain-canvas]) { background-image: none !important; }
 
 .main-sidebar-slot { position: relative; width: var(--sidebar-w, 192px); }
 html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="true"]) .main-sidebar-slot { width: 56px; }
@@ -3078,9 +3147,11 @@ html[data-sidebar-hover="true"] .main-sidebar-slot .app-sidebar { position: abso
 .pages-panel[data-side="left"] { border-right-width: 1px; }
 .pages-panel[data-side="right"] { border-left-width: 1px; }
 .pages-browser .field { background: rgb(var(--panel-rgb) / .45); }
+/* A phone opens Pages as the full-screen /pages list. If the panel is open as the window narrows, it fills the screen as a sheet. */
 @media (max-width: 767px) {
-  .pages-panel { position: fixed; inset: 0 auto 0 0; z-index: 65; width: min(88vw, 340px); }
-  .pages-panel[data-side="right"] { inset: 0 0 0 auto; }
+  .pages-panel { display: none; }
+  .pages-panel[data-sheet] { display: flex; position: fixed; inset: 0; z-index: 65; width: 100%; border-width: 0; }
+  .pages-panel[data-sheet] .icon-btn { width: 40px; height: 40px; }
 }
 
 .vendor-signin-monochrome { filter: invert(1); }

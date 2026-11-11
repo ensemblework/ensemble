@@ -133,6 +133,16 @@
 @media (max-width: 639px), (hover: none) {
   .cmdk-foot-keys, .cmdk-keys { display: none; }
 }
+/* Search and jump is modal and takes the keyboard, so it sits above the assistant's panel too. */
+.cmdk-backdrop { z-index: 2050 !important; }
+/* A phone: the box sits at the top, so the on-screen keyboard leaves the results above it, and rows are finger-sized. */
+@media (max-width: 639px) {
+  .cmdk-backdrop { padding: 8px 8px 0 !important; }
+  .cmdk-dialog { max-height: calc(100dvh - 16px); }
+}
+@media (pointer: coarse) {
+  .cmdk-item { min-height: 44px; }
+}
 
 /* ── Activity pill and its panel ─────────────────────────────────────────── */
 .activity-pill {
@@ -154,7 +164,7 @@
 .activity-pill[data-tone="needs"]:hover, .activity-pill[data-tone="needs"][aria-expanded="true"] { background: color-mix(in srgb, var(--warn) 18%, transparent); }
 .activity-pill[data-tone="paused"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .activity-pill[data-tone="offline"] { color: var(--faint); }
-.activity-pill-mark { position: relative; display: inline-grid; width: 18px; height: 18px; place-items: center; }
+.activity-pill-mark { position: relative; display: inline-grid; width: 24px; height: 24px; place-items: center; }
 .activity-pill-dot {
   position: absolute;
   right: -2px;

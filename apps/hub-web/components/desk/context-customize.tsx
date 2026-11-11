@@ -16,7 +16,7 @@ export function CustomizeContext({ role, tabs, ready }: { role: Role; tabs: stri
   const [open, setOpen] = useState(false);
   const client = useQueryClient();
   const save = useMutation({ mutationFn: (next: string[]) => api.putPreference(`context.tabs.${role}`, next), onSuccess: () => client.invalidateQueries({ queryKey: ["preferences"] }) });
-  return <><button type="button" className="btn shrink-0" disabled={!ready} onClick={() => setOpen(true)}><Plus size={14} />Add a tab</button>
+  return <><button type="button" className="btn shrink-0 max-sm:h-10 max-sm:w-10 max-sm:justify-center max-sm:px-0" title="Add a tab" disabled={!ready} onClick={() => setOpen(true)}><Plus size={14} aria-hidden /><span className="max-sm:sr-only">Add a tab</span></button>
     <Dialog open={open} onClose={() => setOpen(false)} title="Make Context yours" width={620}>
       <p className="mb-4 text-[13px] text-muted">Choose what belongs in your work. Removing a tab keeps its data. Your choices follow you across Ensemble.</p>
       <div className="space-y-2">{PROFILE_CONTEXT[role].optional.map(label => { const active = tabs.includes(label); return <button type="button" key={label} aria-pressed={active} disabled={save.isPending} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${active ? "border-accent bg-accent-soft" : "border-line hover:bg-hover"}`} onClick={() => save.mutate(active ? tabs.filter(tab => tab !== label) : [...tabs, label])}><span className="min-w-0 flex-1"><strong className="block text-[14px]">{label}</strong><span className="mt-1 block text-[12px] text-muted">{CONTEXT_DESCRIPTIONS[label]}</span></span>{active ? <Check size={18} className="text-accent" /> : <Plus size={18} className="text-muted" />}</button>; })}</div>

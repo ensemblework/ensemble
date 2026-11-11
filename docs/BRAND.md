@@ -27,19 +27,21 @@ Satin Gold is the default accent (`#D7B56F` dark, `#876324` light; `apps/hub-web
 
 ## Motion
 
-One Expressive system; timings from `packages/brand/geometry.js`:
+One Expressive system; geometry and cadence come from `packages/brand/geometry.js`:
 
 | Role | Timing | Used for |
 |---|---|---|
-| Unfurl | 720 ms once | Assistant opening, home navigation, completion |
-| Infinity | 660 ms entrance, 3.4 s loop | Assistant pending/streaming, including the minimized launcher; desktop first connection |
-| Relay | 620 ms entrance, 5.4 s loop | Running agent tasks and terminal work |
-| Threadline | 500 ms entrance, 2.2 s loop | Pages, documents and narrow loading surfaces |
-| Beacon | 560 ms entrance, 3.6 s loop | Top bar, refresh, compact controls, saves, imports, exports |
+| Unfurl | 720 ms once | Explicit home navigation and completion gestures |
+| Infinity | 850 ms opening, 7.4 s phrase | Focused assistant waiting for its first useful output; native first connection |
+| Relay | 850 ms opening, 7.8 s phrase | Focused agent task and run activity |
+| Threadline | 850 ms opening, 6.8 s phrase | Inline Ask Ensemble, meeting preparation and other compact model waits |
+| Beacon | 700 ms opening, 8.6 s phrase, 5.95 s fully still between gestures | Top-bar activity and minimized assistant |
 
-`packages/brand/motion.js` gathers the strands before larger moves and settles from the current pose in 340 ms; the rest frame is the approved artwork. One scheduler runs visible marks at up to 30 fps; intersection observers pause offscreen marks and hidden documents stop scheduling. Destroying a controller clears its pending delay, observers and completion promise.
+Both infinity strands share an arc-length alignment. The mark transforms continuously, with a gentler held deformation, a 650 ms return, and still intervals. Beacon uses the compact infinity gesture. `motion.js` uses the same evaluator for playback and seeking and settles from the current pose in 340 ms. The resting artwork is unchanged. One scheduler runs visible moving marks at up to 30 fps, sleeps until the next gesture during a rest, and suspends in hidden documents or offscreen. Teardown clears timers, observers and completion promises.
 
-`BrandMorph` is the React wrapper. Loaders wait 180 ms before appearing; finished results are not held. Queued, paused, cancelled, error, offline and needs-human states stay still. Text carries the actual status (frames are not announced), and real progress percentages are shown where available.
+`BrandMorph` has purpose sizes: focused 64 px, inline 32 px, run 28 px and peripheral 24 px; the minimized assistant uses 32 px. Threadline has a taller wave envelope, and marks at 32 px and below use a 1.5 px optical stroke at 32 px. Existing identity slots remain visible before motion begins.
+
+AI-only loading marks wait 350 ms before appearing. Ordinary controls use `LocalSpinner` (minimum 14 px) and a 250 ms delay. Structural skeletons and IDE loading strips also wait 250 ms. Results are never held to finish an animation. Route feedback follows Suspense loading boundaries, including the general Hub fallback, rather than a click-triggered global logo. Queued, starting, stopping, paused, cancelled, failed, offline and needs-human states stay still. Running lists keep static status cues; a focused run can animate. The assistant avatar becomes still once tools or streamed text provide progress. Status text carries meaning; elapsed seconds and graphic frames are not live announcements. Only measured bytes or items have percentages.
 
 Reduced motion (the OS preference or `data-reduce-motion`) shows the still mark with no frame scheduling. Settings → Appearance → **Reduce motion** is independent of the OS. There is no motion-style picker; the settings schema maps old `minimal-quiet` and `minimal-dot` values to `expressive`. The native startup screen follows the OS preference only.
 
@@ -47,7 +49,7 @@ The landing hero arrives once (CSS, off under reduced motion); clicking it plays
 
 ## CLI
 
-`packages/brand/cli.js` owns the four-cell braille infinity and the terminal policy; `apps/cli/src/tui/brand.tsx` redraws only its own Ink component at 8 fps while work runs. Idle shows `[e]` with no timer. Redirected output or `TERM=dumb` uses ASCII; `NO_COLOR` removes colour independently of motion; truecolor terminals get Satin Gold, others ANSI yellow; `ENSEMBLE_REDUCE_MOTION=1` stops the loop. The CLI bundle includes these assets.
+`packages/brand/cli.js` owns the four-cell braille infinity and the terminal policy; `apps/cli/src/tui/brand.tsx` redraws only its own Ink component at 8 fps for one working phrase, then keeps the still mark for 5.95 s before repeating. Idle shows `[e]` with no timer. Redirected output or `TERM=dumb` uses ASCII; `NO_COLOR` removes colour independently of motion; truecolor terminals get Satin Gold, others ANSI yellow; `ENSEMBLE_REDUCE_MOTION=1` stops the loop. The CLI bundle includes these assets.
 
 ## Agent mark
 

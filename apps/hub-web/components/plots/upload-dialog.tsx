@@ -2,11 +2,13 @@
 
 import { ClipboardPaste, Link2, UploadCloud } from "lucide-react";
 import { useRef, useState } from "react";
-import { MAX_UPLOAD_BYTES, UPLOAD_TOO_LARGE, stagePercent, type LinkChoice } from "@ensemble/shared-types";
+import { MAX_UPLOAD_BYTES, UPLOAD_TOO_LARGE, type LinkChoice } from "@ensemble/shared-types";
 import { API, ApiError, api } from "@/lib/api";
 import { parseTableInBrowser, usePythonStatus } from "@/lib/plots/browser-python";
 import { plotsRunOnServer } from "@/lib/plots/render";
 import { PlotDialog } from "@/components/plots/plot-dialog";
+import { Spinner } from "@/components/ui";
+import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 
 type Dataset = {
   id: string;
@@ -20,17 +22,19 @@ const TYPES = ["number", "date", "category", "text"] as const;
 const FORMATS = ["CSV", "TSV", "JSON", "Excel", "Numbers", "Parquet", "Feather"];
 const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.ndjson,.xlsx,.xls,.xlsm,.ods,.numbers,.parquet,.feather,.arrow";
 
-async function readBytes(file: File, onProgress: (percent: number, label: string) => void): Promise<Uint8Array> {
+type ReportProgress = (percent: number | null, label: string) => void;
+
+async function readBytes(file: File, onProgress: ReportProgress): Promise<Uint8Array> {
   const reader = file.stream().getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
+  onProgress(0, "Reading the file");
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     received += value.byteLength;
-    onProgress(stagePercent("read", file.size ? received / file.size : 1), "Reading");
-    if (file.size > 20_000) await new Promise((resolve) => setTimeout(resolve, 16));
+    onProgress(file.size ? Math.round(received / file.size * 100) : null, "Reading the file");
   }
   const bytes = new Uint8Array(received);
   let offset = 0;
@@ -41,29 +45,27 @@ async function readBytes(file: File, onProgress: (percent: number, label: string
   return bytes;
 }
 
-async function scanText(text: string, onProgress: (percent: number, label: string) => void) {
-  const steps = text.length > 20_000 ? 12 : 1;
-  for (let step = 1; step <= steps; step += 1) {
-    onProgress(stagePercent("scan", step / steps), "Reading columns");
-    if (steps > 1) await new Promise((resolve) => setTimeout(resolve, 40));
-  }
-}
-
-function postDataset(body: unknown, onProgress: (percent: number, label: string) => void): Promise<Dataset> {
+function postDataset(body: unknown, onProgress: ReportProgress, processingLabel = "Reading the table"): Promise<Dataset> {
   const payload = JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API}/api/plots/datasets`);
     xhr.setRequestHeader("content-type", "application/json");
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(stagePercent("upload", event.loaded / event.total), "Uploading");
+      onProgress(event.lengthComputable && event.total > 0 ? Math.round(event.loaded / event.total * 100) : null, "Uploading");
     };
+    xhr.upload.onload = () => onProgress(null, processingLabel);
     xhr.onerror = () => reject(new ApiError("Ensemble can't reach its server right now.", 0));
     xhr.onload = () => {
       const text = xhr.responseText || "";
       if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress(stagePercent("done", 1), "Done");
-        resolve((JSON.parse(text) as { dataset: Dataset }).dataset);
+        try {
+          const result = JSON.parse(text) as { dataset: Dataset };
+          onProgress(100, "Done");
+          resolve(result.dataset);
+        } catch {
+          reject(new ApiError("Ensemble returned an unreadable table. Try again.", xhr.status));
+        }
         return;
       }
       let message = "Could not read that file.";
@@ -77,21 +79,22 @@ function postDataset(body: unknown, onProgress: (percent: number, label: string)
       }
       reject(new ApiError(message, xhr.status, code));
     };
+    onProgress(null, "Uploading");
     xhr.send(payload);
   });
 }
 
-function Bar({ percent, label }: { percent: number; label: string }) {
-  const turn = Math.max(0, Math.min(100, percent));
+function Bar({ percent, label }: { percent: number | null; label: string }) {
+  const turn = percent === null ? null : Math.max(0, Math.min(100, percent));
   return (
     <div data-upload-progress data-upload-percent={turn}>
       <div className="mb-2 flex items-baseline justify-between">
-        <span className="text-[28px] font-semibold leading-none">{turn}%</span>
-        <span className="text-[13px] text-muted">{label}</span>
+        <span className="flex items-center gap-2 text-[13px] text-muted" role="status">{turn === null ? <Spinner /> : null}{label}</span>
+        {turn !== null ? <span className="text-[20px] font-medium tabular-nums leading-none">{turn}%</span> : null}
       </div>
-      <div className="h-2 overflow-hidden rounded-full" style={{ background: "var(--line)" }}>
+      {turn !== null ? <div className="h-1 overflow-hidden rounded-full" style={{ background: "var(--line)" }} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={turn}>
         <div className="h-full rounded-full" style={{ width: `${turn}%`, background: "var(--accent)" }} />
-      </div>
+      </div> : null}
     </div>
   );
 }
@@ -107,9 +110,10 @@ export function UploadDialog({
   onClose: () => void;
   onAccept: (dataset: Dataset, links: Record<string, LinkChoice>) => void;
 }) {
-  const [percent, setPercent] = useState(0);
+  const [percent, setPercent] = useState<number | null>(null);
   const [label, setLabel] = useState("Ready");
   const [busy, setBusy] = useState(false);
+  const showProgress = useDelayedFlag(busy);
   const [error, setError] = useState("");
   const [url, setUrl] = useState("");
   const [paste, setPaste] = useState("");
@@ -121,7 +125,7 @@ export function UploadDialog({
   const fileInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
-  const report = (next: number, text: string) => {
+  const report: ReportProgress = (next, text) => {
     setPercent(next);
     setLabel(text);
   };
@@ -131,7 +135,7 @@ export function UploadDialog({
     setError("");
     setPending(null);
     setChoose(null);
-    setPercent(0);
+    setPercent(null);
     setLabel("Ready");
     setLinks({});
   };
@@ -154,7 +158,7 @@ export function UploadDialog({
   const addInBrowser = async (file: File, bytes: Uint8Array, sheet = "") => {
     setBusy(true);
     setChoose(null);
-    report(stagePercent("scan", 0.3), "Reading in your browser");
+    report(null, "Reading in your browser");
     const table = await parseTableInBrowser(file.name, bytes, sheet);
     if (!sheet && table.sheets.length > 1) {
       setChoose({ file, bytes, sheets: table.sheets, sheet: table.sheet });
@@ -180,11 +184,10 @@ export function UploadDialog({
       const textLike = /\.(csv|tsv|txt|json|jsonl)$/i.test(file.name) || file.type.startsWith("text/");
       if (textLike) {
         const text = new TextDecoder().decode(bytes);
-        await scanText(text, report);
         finish(await postDataset({ name: file.name.replace(/\.[^.]+$/, ""), filename: file.name, text }, report));
       } else {
         if (!(await plotsRunOnServer())) return await addInBrowser(file, bytes);
-        report(stagePercent("scan", 1), "Reading columns");
+        report(null, "Preparing the file");
         let binary = "";
         const chunk = 0x8000;
         for (let index = 0; index < bytes.length; index += chunk) binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
@@ -276,11 +279,11 @@ export function UploadDialog({
           </div>
         </div>
       ) : busy ? (
-        <div className="py-6" data-upload-busy>
-          <Bar percent={percent} label={label} />
-          <p className="mt-3 text-[12px] text-muted">
-            {python === "loading" ? "Starting Python in your browser to read this file (the first time only, about 30 MB)." : "Parsing finishes when the bar reaches 100. Nothing here spins."}
-          </p>
+        <div className="min-h-[120px] py-6" data-upload-busy aria-busy="true">
+          <div style={{ visibility: showProgress ? "visible" : "hidden" }}>
+            <Bar percent={percent} label={python === "loading" ? "Starting Python in your browser" : label} />
+            {python === "loading" ? <p className="mt-3 text-[12px] text-muted">The first download is about 30 MB. Your browser keeps it for next time.</p> : null}
+          </div>
         </div>
       ) : (
         <div className="space-y-4" data-upload-start>
@@ -338,8 +341,7 @@ export function UploadDialog({
                 onClick={() => {
                   setBusy(true);
                   setError("");
-                  report(stagePercent("upload", 0), "Fetching the link");
-                  void postDataset({ url: url.trim() }, report).then(finish).catch((reason: unknown) => {
+                  void postDataset({ url: url.trim() }, report, "Fetching the link").then(finish).catch((reason: unknown) => {
                     setBusy(false);
                     // On Ensemble on the web the server does not read spreadsheets; the browser can, from a file.
                     if (reason instanceof ApiError && reason.status === 403 && reason.code === "HOST_ACCESS_DENIED") {
@@ -369,7 +371,7 @@ export function UploadDialog({
                   }
                   setBusy(true);
                   setError("");
-                  void scanText(paste, report).then(() => postDataset({ text: paste, filename: "pasted.csv" }, report)).then(finish).catch((reason: unknown) => {
+                  void postDataset({ text: paste, filename: "pasted.csv" }, report).then(finish).catch((reason: unknown) => {
                     setBusy(false);
                     setError(reason instanceof Error ? reason.message : "Could not read that paste.");
                   });

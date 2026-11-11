@@ -2,7 +2,8 @@
  * In-process scheduler (docs/05 §2): the fetch times each person set (paused
  * unless ENSEMBLE_SCHEDULED_FETCH=on), the Today calendar's 30-minute refresh
  * (calendar/sync.ts), the assistant's routines that are due (routines/service.ts), a daily retention pass, expiry of
- * editor decisions nobody answered, and an hourly sweep of blobs nothing uses (jobs/blob-sweep.ts).
+ * editor decisions nobody answered, an hourly sweep of blobs nothing uses (jobs/blob-sweep.ts), and the
+ * inline asks' agent sessions 30 minutes after their last answer (assistant/ask-sessions.ts).
  *
  * One minute tick. A slot runs once per user per local day, recorded in
  * sync_state so a restart inside the same minute does not run it twice.
@@ -25,6 +26,7 @@ import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
 import { runDueRoutines } from "../routines/service.js";
 import { sweepWhenDue } from "../workspace/session-cleanup.js";
+import { sweepAskSessions } from "../assistant/ask-sessions.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -77,6 +79,8 @@ async function tick(app: FastifyInstance): Promise<void> {
       if (swept && (swept.moved || swept.originals || swept.datasets || swept.evidence)) app.log.info(swept, "blob sweep");
     })
     .catch((error: unknown) => app.log.error({ err: error }, "blob sweep failed"));
+  // Inline asks' agent sessions, 30 minutes after their last answer (assistant/ask-sessions.ts).
+  void sweepAskSessions(app).catch((error: unknown) => app.log.error({ err: error }, "ask session sweep failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {

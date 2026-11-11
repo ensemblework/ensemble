@@ -1,5 +1,4 @@
 "use client";
-import { BrandMorph } from "@/components/motion/brand-morph";
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, FileUp } from "lucide-react";
@@ -16,7 +15,7 @@ import {
   type ImportSourceInfo,
 } from "@/lib/api-imports";
 import { BrandLogo } from "../connectors/brand-logo";
-import { Dialog, cx } from "../ui";
+import { Dialog, cx, Spinner } from "../ui";
 import { ImportSummary, plural, summaryTitle } from "./import-summary";
 
 type Step = "source" | "connect" | "choose" | "review" | "progress" | "summary";
@@ -307,7 +306,7 @@ function SourceStep({ sources, onPick }: { sources: ImportSourceInfo[] | null; o
       </p>
       {!sources ? (
         <p className="flex items-center gap-2 text-muted" role="status">
-          <BrandMorph size={14} kind="beacon" loader state="loop" /> Loading sources…
+          <Spinner size={14} /> Loading sources…
         </p>
       ) : (
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Apps you can import from">
@@ -358,7 +357,7 @@ function ConnectStep({
         <div className="card flex flex-wrap items-center justify-between gap-2 p-3">
           <span>Your {source.name} account is connected.</span>
           <button type="button" className="btn-primary" disabled={busy} onClick={() => onConnect()}>
-            {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : null} Use connected account
+            {busy ? <Spinner size={14} /> : null} Use connected account
           </button>
         </div>
       ) : null}
@@ -433,7 +432,7 @@ function ConnectStep({
               if (file && !busy) onUpload(file);
             }}
           >
-            {busy ? <BrandMorph size={18} kind="beacon" loader state="loop" /> : <FileUp size={18} aria-hidden />}
+            {busy ? <Spinner size={18} /> : <FileUp size={18} aria-hidden />}
             <span>{busy ? "Reading the file…" : `Drop the ${source.files.map((format) => `.${format}`).join(" or ")} file here, or choose it`}</span>
             <span className="text-[11.5px] text-faint">Up to 50 MB</span>
           </label>
@@ -515,7 +514,7 @@ function ChooseStep({
       ) : null}
       <div className="flex justify-end">
         <button type="button" className="btn-primary" disabled={busy || !selected.length} onClick={onNext}>
-          {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : null} Review
+          {busy ? <Spinner size={14} /> : null} Review
         </button>
       </div>
     </div>
@@ -686,7 +685,7 @@ function ReviewStep({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[12px] text-faint">Running this again later updates these items instead of adding copies.</span>
         <button type="button" className="btn-primary" disabled={busy || !selected.length} onClick={onStart}>
-          {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : <Check size={13} aria-hidden />}
+          {busy ? <Spinner size={14} /> : <Check size={13} aria-hidden />}
           {total !== null ? `Import ${plural(total, "item")}` : "Start import"}
         </button>
       </div>
@@ -701,7 +700,7 @@ function ProgressStep({ job, onCancel }: { job: ImportJobRecord; onCancel: () =>
   return (
     <div className="space-y-3">
       <StepHeading step="progress">Importing from {job.sourceLabel}…</StepHeading>
-      <div
+      {percent !== null ? <div
         role="progressbar"
         aria-label="Import progress"
         aria-valuemin={0}
@@ -710,9 +709,10 @@ function ProgressStep({ job, onCancel }: { job: ImportJobRecord; onCancel: () =>
         aria-valuetext={max ? `${written} of ${max}` : `${written} imported`}
         className="h-2 w-full overflow-hidden rounded-full bg-line"
       >
-        <div className={cx("h-full bg-accent transition-[width]", percent === null && "animate-pulse")} style={{ width: `${percent ?? 35}%` }} />
-      </div>
-      <p aria-live="polite" className="text-muted">
+        <div className="h-full bg-accent transition-[width]" style={{ width: `${percent}%` }} />
+      </div> : null}
+      <p aria-live="polite" className="flex items-center gap-2 text-muted">
+        {percent === null ? <Spinner /> : null}
         {max ? `${written.toLocaleString()} of ${max.toLocaleString()} done` : `${written.toLocaleString()} done, ${fetched.toLocaleString()} read`}
         {job.status === "cancelling" ? " · stopping after this batch…" : ""}
       </p>

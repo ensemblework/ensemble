@@ -248,17 +248,23 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
   const urls = useMediaUrls(deck);
   const [index, setIndex] = useState(0);
   const [stage, size] = useSize<HTMLDivElement>();
+  const [body, bodySize] = useSize<HTMLDivElement>();
   const strip = useRef<HTMLDivElement>(null);
+  const swipe = useRef<{ x: number; y: number; id: number } | null>(null);
   const count = deck?.slides.length ?? 0;
   const go = (next: number) => setIndex(Math.max(0, Math.min(count - 1, next)));
+  // A phone-width viewer: the slide fills the width at the top and the slides run in a row below it.
+  const narrow = !compact && bodySize.width > 0 && bodySize.width < 640;
   useEffect(() => {
-    strip.current?.querySelector<HTMLElement>(`[data-thumb="${index}"]`)?.scrollIntoView?.({ block: "nearest" });
+    strip.current?.querySelector<HTMLElement>(`[data-thumb="${index}"]`)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [index]);
   const slideWidth = useMemo(() => {
     if (!deck || !size.width) return 0;
-    const pad = compact ? 0 : 32;
-    return Math.max(80, Math.min(size.width - pad, ((size.height - pad) * deck.width) / deck.height));
-  }, [deck, size, compact]);
+    const pad = compact ? 0 : narrow ? 24 : 32;
+    // Narrow, the stage is as tall as the slide, so only the viewer's own height limits a tall slide.
+    const height = narrow ? bodySize.height * 0.7 : size.height;
+    return Math.max(80, Math.min(size.width - pad, ((height - pad) * deck.width) / deck.height));
+  }, [deck, size, compact, narrow, bodySize.height]);
 
   const context = useContext(PresentContext);
   const present = compact ? null : context;
@@ -287,8 +293,29 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
     else return;
     event.preventDefault();
   };
+  // A sideways swipe on a touch screen moves between slides; up and down still scroll.
+  const swipeHandlers = {
+    onPointerDown: (event: React.PointerEvent) => {
+      swipe.current = event.pointerType === "mouse" ? null : { x: event.clientX, y: event.clientY, id: event.pointerId };
+    },
+    onPointerUp: (event: React.PointerEvent) => {
+      const start = swipe.current;
+      swipe.current = null;
+      if (!start || start.id !== event.pointerId) return;
+      const dx = event.clientX - start.x;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(event.clientY - start.y) * 1.5) go(index + (dx < 0 ? 1 : -1));
+    },
+    onPointerCancel: () => {
+      swipe.current = null;
+    },
+  };
   const main = (
-    <div ref={stage} className={cx("relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden", compact ? "bg-raised" : "bg-raised p-4")}>
+    <div
+      ref={stage}
+      {...swipeHandlers}
+      style={{ touchAction: "pan-y pinch-zoom" }}
+      className={cx("relative flex min-h-0 min-w-0 justify-center overflow-hidden bg-raised", narrow ? "flex-none items-start p-3" : "flex-1 items-center", compact ? null : narrow ? null : "p-4")}
+    >
       {deck && slide && slideWidth ? <SlideView deck={deck} slide={slide} urls={urls} width={slideWidth} /> : <Spinner />}
     </div>
   );
@@ -324,10 +351,17 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
             <EyeOff size={13} aria-hidden /> Hidden in the slideshow
           </span>
         ) : null}
-        <span className="ml-auto pr-1 text-faint">← → to move between slides</span>
+        <span className="ml-auto pr-1 text-faint [@media(hover:none)]:hidden">← → to move between slides</span>
       </Toolbar>
-      <div className="flex min-h-0 flex-1">
-        <div ref={strip} className="hidden w-[176px] shrink-0 space-y-3 overflow-y-auto border-r border-line p-3 sm:block" aria-label="Slides">
+      <div ref={body} className={cx("flex min-h-0 flex-1", narrow && "flex-col bg-raised")}>
+        <div
+          ref={strip}
+          className={cx(
+            "shrink-0 overscroll-contain",
+            narrow ? "order-2 flex gap-2 overflow-x-auto overflow-y-hidden px-3 pb-3" : "hidden w-[176px] space-y-3 overflow-y-auto border-r border-line p-3 sm:block",
+          )}
+          aria-label="Slides"
+        >
           {deck?.slides.map((entry, number) => (
             <button
               key={entry.number}
@@ -336,12 +370,12 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
               onClick={() => go(number)}
               aria-current={number === index ? "true" : undefined}
               aria-label={`Slide ${entry.number}`}
-              className={cx("flex w-full items-start gap-1.5 rounded-md p-1 text-left", number === index ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-hover")}
-              style={{ contentVisibility: "auto", containIntrinsicSize: `auto ${Math.round((136 * deck.height) / deck.width) + 8}px` }}
+              className={cx("flex items-start gap-1.5 rounded-md p-1 text-left", narrow ? "shrink-0" : "w-full", number === index ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-hover")}
+              style={narrow ? undefined : { contentVisibility: "auto", containIntrinsicSize: `auto ${Math.round((136 * deck.height) / deck.width) + 8}px` }}
             >
               <span className="w-4 shrink-0 pt-0.5 text-right text-[11px] text-faint">{entry.number}</span>
               <span className={cx("pointer-events-none", entry.hidden && "opacity-50")}>
-                <SlideView deck={deck} slide={entry} urls={urls} width={128} />
+                <SlideView deck={deck} slide={entry} urls={urls} width={narrow ? 104 : 128} />
               </span>
             </button>
           ))}

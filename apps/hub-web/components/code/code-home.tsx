@@ -732,7 +732,7 @@ function RecentRuns({ home }: { home: Home }) {
             const meta = [tone.label, repo, job.deviceId && (home.mode === "local" || home.states.length > 1) ? job.deviceName : null].filter(Boolean).join(" · ");
             return (
               <li key={job.id} className="relative pb-1 pl-3">
-                <span className={cx("absolute -left-[4.5px] top-[11px] h-2 w-2 rounded-full ring-[3px] ring-[rgb(var(--bg-rgb))]", TONE_DOT[tone.tone] ?? "bg-faint", busy && "animate-pulse")} aria-hidden />
+                <span className={cx("absolute -left-[4.5px] top-[11px] h-2 w-2 rounded-full ring-[3px] ring-[rgb(var(--bg-rgb))]", TONE_DOT[tone.tone] ?? "bg-faint")} aria-hidden />
                 <div className="group flex min-w-0 items-center gap-1 rounded-md hover:bg-hover">
                   <Link href={job.runId ? `/runs?run=${encodeURIComponent(job.runId)}` : "/runs"} className="min-w-0 flex-1 px-2 py-1">
                     <span className="flex min-w-0 items-baseline gap-2">

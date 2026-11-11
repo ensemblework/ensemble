@@ -6,13 +6,13 @@ import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { MODULE_DENIED, hasModule, isActivityControlPath } from "@ensemble/shared-types/modules";
 import { isPaused, listActivities, requestCancel } from "../lib/activity.js";
 import { git } from "../lib/git.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { OCCUPIED, queueWaitReason } from "../workspace/queue-policy.js";
 import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.js";
-import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
 import { currentDevice, currentDevices } from "../devices/successor.js";
 import { earlierRuns } from "../devices/earlier.js";
@@ -157,7 +157,11 @@ function card(job: JobRow, position?: number, options: { paths?: boolean } = {})
 }
 
 export async function agentRoutes(app: FastifyInstance): Promise<void> {
-  declareModule(app, "workspace");
+  app.addHook("preHandler", async (request, reply) => {
+    if (!isActivityControlPath(request.routeOptions.url ?? "") && !hasModule(request.modules, "workspace")) {
+      return reply.code(404).send({ error: MODULE_DENIED });
+    }
+  });
   // The board is the person's own job rows (their paired computers' work included), so it is open to
   // everyone; the routes under it that read this server's folders, branches and trust stay host-only.
   app.addHook("preHandler", async (request) => {
@@ -477,14 +481,15 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/agent/state", async (request) => {
     const userId = request.userId;
-    const activities = await listActivities(app.redis, userId);
+    const activities = await listActivities(app.redis, userId, true);
+    const workspaceOn = hasModule(request.modules, "workspace");
     const [paused, jobs, settings] = await Promise.all([
       isPaused(app.redis, userId),
-      prisma.workspaceJob.findMany({
+      workspaceOn ? prisma.workspaceJob.findMany({
         where: { userId, status: { in: ["queued", "claimed", "running", "stopping", "waiting_approval"] } },
         orderBy: { sequence: "asc" },
         include: { task: { select: { id: true, title: true, priority: true, status: true, projectId: true, repoId: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
-      }),
+      }) : Promise.resolve([]),
       loadSettings(prisma, userId),
     ]);
     await onCurrentDevices(prisma, jobs);
@@ -492,7 +497,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     const host = await canUseHostCredentials(userId);
     return {
       paused,
-      calls: activities.filter((row) => !jobIds.has(row.id)).sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
+      calls: activities.filter((row) => !jobIds.has(row.id) && (workspaceOn || (row.kind !== "workspace" && row.kind !== "run"))).sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
       running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job, undefined, { paths: host })),
       waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job, undefined, { paths: host })),
       queued: jobs.filter((job) => job.status === "queued").map((job, index) => ({ ...card(job, index + 1, { paths: host }), waitingFor: waitReason(job, jobs, settings.orchestration.maxConcurrentJobs, paused) })),

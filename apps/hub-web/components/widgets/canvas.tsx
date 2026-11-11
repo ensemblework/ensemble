@@ -1,4 +1,5 @@
 "use client";
+import { Skeleton } from "@/components/ui";
 import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import dynamic from "next/dynamic";
@@ -200,7 +201,7 @@ export function WidgetCanvas({
             className={`widget-grid${settle ? " is-settling" : ""}`}
           >
             {!ready ? (
-              <div className="skeleton col-span-full h-[212px] rounded-xl" />
+              <Skeleton className="col-span-full h-[212px] rounded-xl" />
             ) : (
               visible.map((cell, index) => (
                 <section

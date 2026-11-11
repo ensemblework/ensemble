@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api";
 import { inlinePlotRatio, loadPlotFigures, type PlotFigure } from "@/lib/plots/figures";
 import { ChartView } from "./chart-view";
 import { createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
+import { Skeleton } from "../ui";
 
 const PLOT_MIN_HEIGHT = 180;
 
@@ -95,7 +96,10 @@ function InlinePlot({ id, label, onRemove, height: storedHeight = null, onResize
       </div>
       {!compact ? (
         <div ref={stageRef} className="space-y-3 p-2">
-          {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : figures === null ? <p className="p-3 text-[13px] text-muted">Loading plot…</p> : !figures.length ? <p className="p-3 text-[13px] text-muted">No chart yet. Open this plot to add data and choose columns.</p> : figures.map((figure) => (
+          {error ? <div style={height ? { height } : { aspectRatio: 1.6 }}><p role="alert" className="p-3 text-[13px] text-danger">{error}</p></div> : figures === null ? <div className="relative w-full" style={height ? { height } : { aspectRatio: 1.6 }} aria-busy="true" data-plot-loading>
+            <span className="sr-only" role="status">Loading plot…</span>
+            <Skeleton className="h-full w-full" />
+          </div> : !figures.length ? <p className="p-3 text-[13px] text-muted">No chart yet. Open this plot to add data and choose columns.</p> : figures.map((figure) => (
             <div key={figure.id}>
               {figures.length > 1 ? <p className="mb-1 text-[12px] text-muted">{figure.title}</p> : null}
               <div className="relative w-full" data-plot-figure style={height ? { height } : { aspectRatio: figure.ratio }}>

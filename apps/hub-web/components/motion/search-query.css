@@ -1,9 +1,4 @@
-/* ── search.query ───────────────────────────────────────────────────────────────────────────────
-   Ask bar and ⌘K search. One markup contract for three styles; everything keys off
-     [data-motion-theme] (nearest ancestor)  ·  [data-state="typing|searching|results|empty"] on .sq[data-motion-slot="search.query"]
-   Pure CSS. No delay logic: the app's shared loader delay (180 ms before show, 300 ms minimum) decides
-   when data-state becomes "searching". Palette hooks fall back to the round-3 tokens.css names. */
-@property --sq-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+/* Search keeps one local pending indicator; results and keyboard actions remain immediate. */
 .sq[data-motion-slot="search.query"] {
   --sq-h: 40px; --sq-radius: 6px;
   --sq-bg: var(--raise, #211d19); --sq-ink: var(--ink, #F2F0E9); --sq-muted: var(--muted, #b7ae9f); --sq-faint: var(--faint, #8a8276);
@@ -22,7 +17,7 @@
 .sq-input:focus,
 .sq-input:focus-visible { outline: none !important; outline-offset: 0 !important; box-shadow: none !important; border-radius: 0; }
 /* One focus edge, on the container, including keyboard focus inside the field. While searching, the rim is that edge. */
-.sq[data-motion-slot="search.query"]:not([data-state="searching"]):focus-within:has(:focus-visible) .sq-field {
+.sq[data-motion-slot="search.query"]:focus-within:has(:focus-visible) .sq-field {
   border-color: var(--sq-accent);
   box-shadow: 0 0 0 1px var(--sq-accent), 0 0 0 4px color-mix(in srgb, var(--sq-accent) 16%, transparent);
 }
@@ -48,12 +43,9 @@
 .sq-empty [data-copy="empty-hint"] { margin: 0; font-size: 12.5px; color: var(--sq-muted); max-width: 42ch; }
 .sq-empty-actions { display: flex; gap: 8px; margin-top: 10px; }
 .sq-empty-actions > * { font: 500 12.5px var(--font-sans, system-ui, sans-serif); color: var(--sq-ink); background: none; border: 1px solid var(--sq-line); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
-.sq-empty > * { opacity: 0; }
+.sq-empty > * { opacity: 1; }
 .sq[data-motion-slot="search.query"][data-state="results"] .sq-results { display: block; }
 .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty { display: flex; }
-.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > * { animation: sq-fade var(--m-dur-move, 640ms) var(--m-ease-enter, ease-out) both; }
-.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(2) { animation-delay: 60ms; } .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(3) { animation-delay: 120ms; } .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(4) { animation-delay: 180ms; }
-.sq[data-motion-slot="search.query"][data-state="results"] .sq-item { animation: sq-in var(--sq-in-dur) var(--sq-in-ease) both; animation-delay: calc(min(var(--i, 0), 7) * var(--sq-stagger)); }
 @keyframes sq-in { from { opacity: 0; transform: translateY(var(--sq-rise)); } }
 @keyframes sq-fade { from { opacity: 0; } to { opacity: 1; } }
 /* focused-ish states share the field look */
@@ -64,12 +56,7 @@
 .sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="results"], [data-state="empty"]) .sq-field, .sq[data-motion-slot="search.query"]:focus-within .sq-field {
   border-color: color-mix(in srgb, var(--sq-accent) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 16%, transparent); }
 .sq[data-motion-slot="search.query"][data-state="typing"] .sq-ic { color: var(--sq-accent); }
-.sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { border-color: transparent; border-width: 2px;
-  background: linear-gradient(var(--sq-bg), var(--sq-bg)) padding-box,
-    conic-gradient(from var(--sq-a), transparent 0 6%, var(--sq-agent) 16% 38%, transparent 48% 58%, color-mix(in srgb, var(--sq-you) 85%, transparent) 68% 82%, transparent 92%) border-box;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 28%, transparent); animation: sq-rim 1.6s linear infinite; }
 .sq[data-motion-slot="search.query"][data-state="searching"] .sq-ic { color: var(--sq-accent); }
-@keyframes sq-rim { to { --sq-a: 360deg; } }
 .sq-empty-mark .thread { stroke: var(--sq-accent); transform-origin: 50% 0; transform-box: fill-box; }
 .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty-mark .thread { animation: sq-sway 4.8s var(--m-ease-loop, ease-in-out) infinite alternate; }
 @keyframes sq-sway { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }

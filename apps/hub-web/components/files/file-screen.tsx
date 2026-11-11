@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, FilePlus2, Info, Maximize2, Paperclip, Presentation, Trash2, X } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, FilePlus2, Info, Maximize2, MoreHorizontal, Paperclip, Presentation, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -15,12 +15,12 @@ import { relative } from "@/lib/format";
 import { useFullscreen } from "@/lib/fullscreen";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
 import { useToast } from "../toast";
-import { InfoTip, Spinner, cx } from "../ui";
+import { InfoTip, MenuItem, Popover, Spinner, cx } from "../ui";
 import { AttachToPage } from "./attach-to-page";
 import { FileIcon } from "./file-icon";
 import { FilePreview } from "./file-preview";
 import { DeleteFileDialog } from "./delete-file";
-import { useFileRecord } from "./use-file";
+import { downloadFile, useFileRecord } from "./use-file";
 import { DownloadButton, PresentContext, ToolbarSlot, type PresentControl } from "./viewers/shared";
 
 /** Previews that can fill the screen as they are, with their own zoom. Slides present instead; audio has nothing to fill it with. */
@@ -67,7 +67,7 @@ export function FileScreen({ id }: { id: string }) {
   }
   if (!file) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center" role="status" aria-label="Opening the file" aria-busy="true">
         <Spinner />
       </div>
     );
@@ -148,14 +148,15 @@ export function FileScreen({ id }: { id: string }) {
         <div ref={setToolbarSlot} className="file-bar-slot" />
         <div className="file-bar-actions">
           {converting ? (
-            <span className="max-w-[16rem] truncate text-[12px] text-muted max-sm:hidden" role="status" aria-live="polite">
-              {converting}
+            <span className="max-w-[16rem] truncate text-[12px] text-muted max-sm:flex max-sm:w-8 max-sm:justify-center" role="status" aria-live="polite">
+              <span className="max-sm:sr-only">{converting}</span>
+              <span className="sm:hidden"><Spinner size={12} /></span>
             </span>
           ) : null}
           {way ? (
             <button
               type="button"
-              className="btn h-8 px-2.5"
+              className="btn h-8 px-2.5 max-sm:hidden"
               disabled={Boolean(converting)}
               onClick={() => void convert()}
               aria-label={keepsFormatting ? "Convert to a page" : "Make a page"}
@@ -181,13 +182,43 @@ export function FileScreen({ id }: { id: string }) {
               <Maximize2 size={15} aria-hidden />
             </button>
           ) : null}
-          <DownloadButton file={file} iconOnly />
-          <button type="button" className="icon-btn" aria-label="Attach to a page" title="Attach to a page…" onClick={() => setAttaching(true)}>
+          <DownloadButton file={file} iconOnly className="max-sm:hidden" />
+          <button type="button" className="icon-btn max-sm:hidden" aria-label="Attach to a page" title="Attach to a page…" onClick={() => setAttaching(true)}>
             <Paperclip size={15} aria-hidden />
           </button>
-          <button type="button" className="icon-btn hover:text-danger" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
+          <button type="button" className="icon-btn hover:text-danger max-sm:hidden" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
             <Trash2 size={15} />
           </button>
+          {/* A phone keeps the name readable: the file's other actions share one menu. */}
+          <Popover
+            align="right"
+            width={220}
+            className="sm:hidden"
+            trigger={(open, toggle) => (
+              <button type="button" className="icon-btn" aria-label="File actions" aria-expanded={open} onClick={toggle}>
+                <MoreHorizontal size={16} aria-hidden />
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
+                {way ? (
+                  <MenuItem disabled={Boolean(converting)} onClick={() => { close(); void convert(); }}>
+                    <FilePlus2 size={14} aria-hidden /> {keepsFormatting ? "Convert to a page" : "Make a page"}
+                  </MenuItem>
+                ) : null}
+                <MenuItem onClick={() => { close(); void downloadFile(file).catch((error: unknown) => toast(error instanceof Error ? error.message : "Could not download the file.", { tone: "error" })); }}>
+                  <Download size={14} aria-hidden /> Download
+                </MenuItem>
+                <MenuItem onClick={() => { close(); setAttaching(true); }}>
+                  <Paperclip size={14} aria-hidden /> Attach to a page
+                </MenuItem>
+                <MenuItem onClick={() => { close(); setDeleting(true); }}>
+                  <Trash2 size={14} aria-hidden /> Delete
+                </MenuItem>
+              </>
+            )}
+          </Popover>
         </div>
       </header>
       <div

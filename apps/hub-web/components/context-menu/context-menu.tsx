@@ -53,6 +53,9 @@ const BROWSER_SECTION = (onArm: () => void): MenuSection => ({
   items: [{ id: BROWSER_ID, label: "Browser menu", icon: AppWindow, hint: "Right-click here", run: onArm }],
 });
 
+/** Shortcuts are written "Ctrl+B"; a Mac shows them as ⌘B, as its own menus do. */
+const keys = (hint: string) => (MAC ? hint.replace(/\bCtrl\+/g, "⌘").replace(/\bAlt\+/g, "⌥").replace(/\bShift\+/g, "⇧") : hint);
+
 const matches = (item: MenuAction, query: string) => `${item.label} ${item.keywords ?? ""}`.toLowerCase().includes(query.toLowerCase());
 
 function filtered(sections: MenuSection[], query: string): MenuSection[] {
@@ -154,9 +157,9 @@ function ItemButton({ item, open, iconGap, onActivate, onHover }: { item: MenuAc
       onPointerEnter={(event) => onHover(event.currentTarget)}
     >
       {Icon ? <Icon size={14} className="cm-icon" aria-hidden /> : iconGap ? <span className="cm-icon" aria-hidden /> : null}
-      <span className="cm-label">{item.label}</span>
+      <span className={cx("cm-label", item.strong && "font-semibold")}>{item.label}</span>
       {item.checked ? <Check size={13} className="cm-check" aria-hidden /> : null}
-      {item.hint ? <span className="cm-hint">{item.hint}</span> : null}
+      {item.hint ? <span className="cm-hint">{keys(item.hint)}</span> : null}
       {item.submenu ? <ChevronRight size={13} className="cm-chevron" aria-hidden /> : null}
     </button>
   );
@@ -182,7 +185,7 @@ function Entries({ sections, levelIndex, openId, onActivate, onHover }: { sectio
                     data-cm-item=""
                     data-cm-label={part.label}
                     disabled={part.disabled}
-                    title={part.hint ? `${part.label} · ${part.hint}` : part.label}
+                    title={part.hint ? `${part.label} · ${keys(part.hint)}` : part.label}
                     className="cm-row-part"
                     onClick={(event) => onActivate({ id: part.id, label: part.label, run: part.run }, event.currentTarget)}
                     onPointerEnter={(event) => onHover(null, event.currentTarget)}
@@ -206,7 +209,7 @@ function Toolbar({ tools, onRun }: { tools: MenuTool[]; onRun: (tool: MenuTool) 
   return (
     <div role="group" aria-label="Format" className="cm-toolbar" data-cm-inline="">
       {tools.map((tool) => (
-        <button key={tool.id} type="button" role="menuitem" tabIndex={-1} data-cm-item="" data-cm-label={tool.label} aria-pressed={tool.active || undefined} title={tool.hint ? `${tool.label} · ${tool.hint}` : tool.label} aria-label={tool.label} className="cm-tool" data-active={tool.active || undefined} onClick={() => onRun(tool)}>
+        <button key={tool.id} type="button" role="menuitem" tabIndex={-1} data-cm-item="" data-cm-label={tool.label} aria-pressed={tool.active || undefined} title={tool.hint ? `${tool.label} · ${keys(tool.hint)}` : tool.label} aria-label={tool.label} className="cm-tool" data-active={tool.active || undefined} onClick={() => onRun(tool)}>
           <tool.icon size={14} aria-hidden />
         </button>
       ))}
@@ -491,7 +494,7 @@ function SheetMenu({ menu }: { menu: OpenMenu }) {
                   ) : (
                     <button key={entry.id} type="button" role="menuitem" disabled={entry.disabled} className={cx("cm-sheet-item", entry.danger && "cm-danger")} onClick={() => void open(entry)}>
                       {entry.icon ? <entry.icon size={17} className="cm-icon" aria-hidden /> : <span className="cm-icon" aria-hidden />}
-                      <span className="min-w-0 flex-1 truncate text-left">{entry.label}</span>
+                      <span className={cx("min-w-0 flex-1 truncate text-left", entry.strong && "font-semibold")}>{entry.label}</span>
                       {entry.checked ? <Check size={15} className="cm-check" aria-hidden /> : null}
                       {entry.submenu ? <ChevronRight size={16} className="cm-chevron" aria-hidden /> : null}
                     </button>

@@ -79,7 +79,7 @@ export function ProposalsWidget() {
     return () => window.removeEventListener("keydown", key);
   }, [proposals, selected, busy, options, peek.peekId, decide.mutate, quick.mutate, peek.open]);
   return <div className="proposal-inbox flex min-h-0 flex-1 flex-col overflow-y-auto" data-proposals-widget>
-    <p className="mb-2 text-[11px] text-muted">M · me &nbsp; A · default agent &nbsp; L · later &nbsp; D · drop</p>
+    <p className="key-hint mb-2 text-[11px] text-muted">M · me &nbsp; A · default agent &nbsp; L · later &nbsp; D · drop</p>
     {!proposals.length ? <p className="py-2 text-[12px] text-muted">No proposals waiting. Snoozed work returns tomorrow.</p> : proposals.map((task, index) => <div key={task.id} className={cx("mb-2 rounded-lg border border-transparent p-2", selected === index && "border-line bg-raised")} onMouseEnter={() => setSelected(index)} onFocus={() => setSelected(index)}>
       <button type="button" className="flex w-full items-start gap-2 text-left text-[13px] font-medium leading-5" onClick={() => peek.open(task.id)}><span className="min-w-0 flex-1">{task.title}</span><ArrowUpRight size={12} className="mt-1 shrink-0 text-faint" /></button>
       {task.rationale ? <p className="mt-1 line-clamp-2 text-[11.5px] leading-4 text-muted">{task.rationale}</p> : null}
@@ -90,10 +90,10 @@ export function ProposalsWidget() {
           <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => answer.mutate({ task, action: "decline" })}>Decline</button>
         </> : <span className="text-[11px] text-muted">Asked in an Ensemble Node room. Waiting for the person asked.</span>}
       </div> : <div className="mt-2 flex flex-wrap gap-1">
-        <button type="button" className="btn-primary px-2 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "mine" })}>Me <kbd>M</kbd></button>
-        <button type="button" className="btn px-2 py-0.5 text-[11px]" disabled={busy} title="Use the default run profile" onClick={() => quick.mutate(task.id)}><Orbit size={11} /> Agent <kbd>A</kbd></button>
-        <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "later" })}>Later <kbd>L</kbd></button>
-        <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "drop" })}>Drop <kbd>D</kbd></button>
+        <button type="button" className="btn-primary px-2 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "mine" })}>Me <kbd className="key-hint">M</kbd></button>
+        <button type="button" className="btn px-2 py-0.5 text-[11px]" disabled={busy} title="Use the default run profile" onClick={() => quick.mutate(task.id)}><Orbit size={11} /> Agent <kbd className="key-hint">A</kbd></button>
+        <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "later" })}>Later <kbd className="key-hint">L</kbd></button>
+        <button type="button" className="btn-ghost px-1.5 py-0.5 text-[11px]" disabled={busy} onClick={() => decide.mutate({ task, action: "drop" })}>Drop <kbd className="key-hint">D</kbd></button>
       </div>}
     </div>)}
     <AssignDialog open={Boolean(options)} taskId={options ?? undefined} onClose={() => setOptions(null)} />

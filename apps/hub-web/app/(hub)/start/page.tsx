@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
@@ -109,9 +110,9 @@ export default function StartPage() {
 
         {!me.isSuccess ? (
           <div className="onboard-form" aria-busy="true">
-            <div className="skeleton h-9 w-4/5 rounded-md" />
-            <div className="skeleton h-4 w-3/5 rounded" />
-            <div className="skeleton h-44 w-full rounded-md" />
+            <Skeleton className="h-9 w-4/5 rounded-md" />
+            <Skeleton className="h-4 w-3/5 rounded" />
+            <Skeleton className="h-44 w-full rounded-md" />
           </div>
         ) : step === "you" ? (
           <form

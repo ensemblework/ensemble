@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { searchPhase, type SearchPhase } from "@/lib/motion/search-phase";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { BrandMorph } from "./brand-morph";
+import { LocalSpinner } from "./loading";
 import { cx } from "@/components/ui";
 
 function EmptyMark() { return <BrandMorph size={32} />; }
@@ -142,10 +143,7 @@ export function SearchQuery({
             onBlur={() => setFocused(false)}
             onKeyDown={onKeyDown}
           />
-          {phase === "searching" ? <BrandMorph size={18} kind="beacon" state="loop" /> : null}
-          <span className="sq-trk" aria-hidden>
-            <i />
-          </span>
+          {phase === "searching" ? <LocalSpinner size={16} delay={0} /> : null}
           {kbd ? <kbd className="sq-kbd">{kbd}</kbd> : null}
         </label>
       </form>

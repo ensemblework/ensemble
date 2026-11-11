@@ -13,6 +13,7 @@
  * never overwritten: a bar offers Keep mine or Use the version on disk.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import {
   AlertTriangle,
   ArrowDown,
@@ -1131,6 +1132,11 @@ function IdeEmpty({ icon, title, message, actions }: { icon: React.ReactNode; ti
   );
 }
 
+function IdeProgress({ label }: { label: string }) {
+  const shown = useDelayedFlag(true);
+  return <div className="ide-progress" data-visible={shown} role="progressbar" aria-label={label} aria-hidden={!shown} />;
+}
+
 /** The window's frame while the folder is read, so nothing jumps when it arrives. */
 function IdeLoading({ layout }: { layout: IdeLayout }) {
   return (
@@ -1148,7 +1154,7 @@ function IdeLoading({ layout }: { layout: IdeLayout }) {
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="h-9 shrink-0 border-b border-line bg-sidebar" />
-          <div className="ide-progress" role="progressbar" aria-label="Opening the folder" />
+          <IdeProgress label="Opening the folder" />
         </div>
       </div>
       <div className="h-[22px] shrink-0 border-t border-line bg-sidebar" />
@@ -1805,7 +1811,7 @@ function SearchPanel({ source, onOpen, ask }: { source: Source; onOpen: (path: s
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-        {found.isLoading && asked ? <div className="ide-progress" role="progressbar" aria-label="Searching" /> : null}
+        {found.isLoading && asked ? <IdeProgress label="Searching" /> : null}
         {found.error ? <div className="px-3 text-danger">{(found.error as Error).message}</div> : null}
         {found.data && !grouped.length ? <div className="px-3 text-muted">Nothing found.</div> : null}
         {grouped.map(([path, rows]) => {
@@ -2004,7 +2010,7 @@ function FilePane(props: {
         ) : props.preview && canPreview && opened.current && !opened.current.binary && !opened.current.tooLarge ? (
           <FilePreview path={path} text={buffers.current.get(path)?.text ?? opened.current.current ?? ""} code={code} source={source} />
         ) : versions.isLoading || !props.Editor ? (
-          <div className="ide-progress" role="progressbar" aria-label="Opening the file" />
+          <IdeProgress label="Opening the file" />
         ) : versions.error && !opened.current ? (
           // A later read that fails (offline, the computer asleep) keeps the editor; only a first read shows this.
           <IdeEmpty

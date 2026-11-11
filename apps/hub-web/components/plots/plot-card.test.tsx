@@ -11,6 +11,27 @@ test("inline plot sizing follows chart shape and tile proportions", () => {
   assert.equal(inlinePlotRatio("scatter", { w: 6, h: 4 }), 480 / 312);
   assert.equal(inlinePlotRatio("line", { w: 12, h: 3 }), 3);
 });
+test("a pending plot reserves its saved height and a failed fetch stops loading", async () => {
+  const original = globalThis.fetch;
+  let respond: (response: Response) => void = () => {};
+  globalThis.fetch = () => new Promise<Response>((resolve) => { respond = resolve; });
+  const host = document.createElement("span");
+  document.body.append(host);
+  let stop = () => {};
+  try {
+    await act(async () => { stop = mountPlotCard(host, "slow", "Plot", undefined, { height: 360 }).destroy; });
+    const pending = host.querySelector<HTMLElement>("[data-plot-loading]");
+    assert.equal(pending?.style.height, "360px");
+    assert.equal(pending?.getAttribute("aria-busy"), "true");
+    await act(async () => respond(new Response(JSON.stringify({ error: "This plot is unavailable." }), { status: 500, headers: { "content-type": "application/json" } })));
+    assert.equal(host.querySelector("[data-plot-loading]"), null);
+    assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", /unavailable/);
+  } finally {
+    await act(async () => stop());
+    host.remove();
+    globalThis.fetch = original;
+  }
+});
 test("an empty plot shows a useful state, compacts, and removes just its page embed", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ plot: { id: "plot", title: "Empty plot", datasetId: null, config: defaultPlotConfig() }, spark: [] }), { headers: { "content-type": "application/json" } });

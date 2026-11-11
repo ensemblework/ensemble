@@ -22,6 +22,14 @@ test("versions group by the day they were saved", () => {
   ]);
 });
 
+/** The dialog groups by the real clock: versions saved just now, the day before yesterday and long ago. */
+const recent: SavedVersion[] = [
+  { ...versions[0]!, createdAt: new Date().toISOString() },
+  { ...versions[1]!, createdAt: new Date(Date.now() - 1000).toISOString() },
+  { ...versions[2]!, createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString() },
+  versions[3]!,
+];
+
 function Harness({ list, onRestore, onClose }: { list: SavedVersion[]; onRestore: () => void; onClose: () => void }) {
   const [selected, setSelected] = useState<string | null>(list[0]?.id ?? null);
   return <VersionHistoryDialog open onClose={onClose} title="Page" versions={list} selected={selected} onSelect={setSelected} preview={<p>Preview of {selected}</p>} onRestore={onRestore} restoring={false} />;
@@ -37,7 +45,7 @@ test("arrow keys move through the list, and Restore asks once before it replaces
   const click = (target: Element) => act(async () => { target.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   const button = (name: string) => [...document.body.querySelectorAll("button")].find((node) => node.textContent?.trim() === name);
   try {
-    await act(async () => root.render(<Harness list={versions} onRestore={() => restored++} onClose={() => closed++} />));
+    await act(async () => root.render(<Harness list={recent} onRestore={() => restored++} onClose={() => closed++} />));
     const listbox = document.body.querySelector('[role="listbox"][aria-label="Saved versions"]')!;
     assert.ok(listbox);
     const selected = () => document.body.querySelector('[role="option"][aria-selected="true"]')?.getAttribute("data-version-id");

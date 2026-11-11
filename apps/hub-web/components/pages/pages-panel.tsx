@@ -22,15 +22,15 @@ export function PagesPanel({ side, onClose, onSide }: { side: "left" | "right"; 
     return () => media.removeEventListener("change", read);
   }, []);
   useModalFocus(ref, mobile, onClose);
-  const panel = <aside className="pages-panel flex h-full shrink-0 flex-col border-line bg-sidebar" data-side={side} aria-label="Pages browser" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } }}>
+  const panel = <aside className="pages-panel flex h-full shrink-0 flex-col border-line bg-sidebar" data-side={side} data-sheet={mobile || undefined} aria-label="Pages browser" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } }}>
     <div className="flex items-center gap-2 px-4 pb-4 pt-5">
       <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold tracking-tight">Pages</h2>
-      <button type="button" className="icon-btn" aria-label={`Move pages panel ${side === "left" ? "right" : "left"}`} title={`Move to the ${side === "left" ? "right" : "left"}`} onClick={onSide}>{side === "left" ? <PanelRight size={15} /> : <PanelLeft size={15} />}</button>
+      {mobile ? null : <button type="button" className="icon-btn" aria-label={`Move pages panel ${side === "left" ? "right" : "left"}`} title={`Move to the ${side === "left" ? "right" : "left"}`} onClick={onSide}>{side === "left" ? <PanelRight size={15} /> : <PanelLeft size={15} />}</button>}
       <button type="button" className="icon-btn" aria-label="Close pages browser" onClick={onClose}><X size={16} /></button>
     </div>
     <PagesBrowser />
     {mobile ? null : <PanelResize spec={PAGES_PANEL_WIDTH} edge={side === "left" ? "right" : "left"} label="Resize pages panel" />}
   </aside>;
   if (!mobile) return panel;
-  return createPortal(<ModalScope.Provider value="pages-browser"><div ref={ref} role="dialog" aria-modal="true" aria-label="Pages browser" tabIndex={-1} data-modal-layer="pages-browser" className="fixed inset-0 z-[65] bg-black/35" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>{panel}</div></ModalScope.Provider>, document.body);
+  return createPortal(<ModalScope.Provider value="pages-browser"><div ref={ref} role="dialog" aria-modal="true" aria-label="Pages browser" tabIndex={-1} data-modal-layer="pages-browser" className="fixed inset-0 z-[65]">{panel}</div></ModalScope.Provider>, document.body);
 }

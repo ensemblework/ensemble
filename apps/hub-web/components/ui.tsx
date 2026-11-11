@@ -1,5 +1,6 @@
 "use client";
 import { BrandMorph } from "./motion/brand-morph";
+import { LocalSpinner } from "./motion/loading";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -117,7 +118,7 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
-        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border disabled:opacity-50",
+        "tap-area relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border disabled:opacity-50",
         checked ? "border-accent bg-accent" : "border-line-strong bg-raised",
       )}
     >
@@ -131,10 +132,8 @@ export function Toggle({
   );
 }
 
-export function Spinner({ size = 14, active = true }: { size?: number; active?: boolean }) {
-  const shown = useDelayedFlag(active);
-  if (!shown) return null;
-  return <span data-motion-slot="control.spinner" data-state="running" data-motion-loading="1" aria-hidden><BrandMorph size={size} kind="beacon" state="loop" /></span>;
+export function Spinner({ size = 16, active = true }: { size?: number; active?: boolean }) {
+  return <LocalSpinner size={size} active={active} />;
 }
 
 export function InfoTip({ text, label = "More information" }: { text: React.ReactNode; label?: string }) {
@@ -188,7 +187,7 @@ export function InfoTip({ text, label = "More information" }: { text: React.Reac
   }, [open]);
   return (
     <span ref={anchor} className="inline-flex shrink-0 align-middle" onMouseEnter={keep} onMouseLeave={leave}>
-      <button type="button" className="inline-flex size-6 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-ink"
+      <button type="button" className="tap-area inline-flex size-6 items-center justify-center rounded-md text-faint hover:bg-hover hover:text-ink"
         aria-label={label} aria-expanded={open} aria-describedby={open ? id : undefined}
         onClick={keep}
         onFocus={keep}
@@ -263,7 +262,7 @@ export function SkeletonRows({
   className?: string;
 }) {
   return (
-    <div className={className} aria-hidden>
+    <div className={className} role="status" aria-label="Loading content">
       {Array.from({ length: count }, (_, index) => (
         <Skeleton key={index} index={index} className={cx("w-full", rowClassName)} />
       ))}

@@ -36,6 +36,9 @@ const ASSETS = [
   "/offline.html",
   "/404.html",
   "/500.html",
+  "/spelling/en-us.aff",
+  "/spelling/en-us.dic",
+  "/spelling/en-gb.dic",
 ];
 
 test("brand files are anonymous assets and hub routes are not", () => {
@@ -45,6 +48,7 @@ test("brand files are anonymous assets and hub routes are not", () => {
   assert.equal(isAnonymousAsset("/providers/unknown"), false);
   assert.equal(isAnonymousAsset("/login"), false);
   assert.equal(isAnonymousAsset("/icon-192.png.bak"), false);
+  assert.equal(isAnonymousAsset("/spelling/fr.dic"), false);
 });
 
 test("the middleware matcher skips brand files and still runs for the hub", () => {

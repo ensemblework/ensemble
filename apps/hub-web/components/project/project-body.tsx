@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton } from "@/components/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -136,7 +137,7 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
           comments={false}
           remote={remote}
         />
-      ) : <div className="skeleton h-24 w-full" />}
+      ) : <Skeleton className="h-24 w-full" />}
     </section>
   );
 }

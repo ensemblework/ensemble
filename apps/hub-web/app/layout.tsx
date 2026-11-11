@@ -12,6 +12,7 @@ import "@/components/shell/notifications.css";
 import "@/components/shell/topbar-surfaces.css";
 import "@/components/work-surfaces.css";
 import "@/components/motion/suite.css";
+import "@/components/motion/loading.css";
 import "@/components/motion/springs.css";
 import "@/components/motion/search-query.css";
 import "@/components/motion/morph.css";
@@ -74,6 +75,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // The on-screen keyboard shrinks the app (h-dvh) instead of covering the field being typed in.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#10282b" },
     { media: "(prefers-color-scheme: light)", color: "#faf7f2" },

@@ -105,6 +105,12 @@ export const AssistantSettings = z.object({
   model: z.string().default("auto"),
   reasoningEffort: z.string().optional(),
   defaultTier: z.enum(["easy", "medium", "high", "max"]).default("medium"),
+  /**
+   * The tier an inline "Ask Ensemble" (@ensemble in a page, task, deliverable or meeting notes) runs on.
+   * On an AI plan each page keeps one short-lived chat with the person's agent: later asks there continue
+   * it, one at a time, and it is deleted 30 minutes after the last answer (hub-api assistant/ask-sessions.ts).
+   */
+  askTier: z.enum(["easy", "medium", "high", "max"]).default("medium"),
   /** Tone and suggested actions only. Never permissions or tools. */
   actAs: ActAs.default("general"),
   /** Lets the assistant propose changes in connected apps (calendar events, documents, MCP tools). Each one still waits for Apply. */
