@@ -74,6 +74,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // The on-screen keyboard shrinks the app (h-dvh) instead of covering the field being typed in.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#10282b" },
     { media: "(prefers-color-scheme: light)", color: "#faf7f2" },

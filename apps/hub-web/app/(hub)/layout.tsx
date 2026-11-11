@@ -75,12 +75,13 @@ function Frame({ children }: { children: React.ReactNode }) {
     else delete root.dataset.pagesPanel;
     return () => { delete root.dataset.pagesPanel; };
   }, [pagesOpen, panelSide]);
+  // On a phone the /pages list is Pages, full screen; the panel would only cover most of it.
   useEffect(() => {
-    const open = () => { setPagesOpen(true); setDrawer(false); };
+    const open = () => { setDrawer(false); if (!window.matchMedia("(max-width: 767px)").matches) setPagesOpen(true); };
     window.addEventListener("ensemble:pages-open", open);
     return () => window.removeEventListener("ensemble:pages-open", open);
   }, []);
-  useEffect(() => { setPagesOpen(window.matchMedia("(max-width: 767px)").matches ? pathname === "/pages" : pathname.startsWith("/pages")); }, [pathname]);
+  useEffect(() => { setPagesOpen(!window.matchMedia("(max-width: 767px)").matches && pathname.startsWith("/pages")); }, [pathname]);
   const pagesPanel = pagesOpen ? <PagesPanel side={panelSide} onClose={() => setPagesOpen(false)} onSide={() => {
     const next = { ...appearance, pagesPanelSide: panelSide === "left" ? "right" as const : "left" as const };
     publishAppearance(next);

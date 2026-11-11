@@ -281,6 +281,7 @@ export function NotePage({
       className={focusMode.active ? PAGE_FOCUS_CLASS : inPeek ? "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-8" : "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10"}
       inert={leaving}
       data-page-focus={focusMode.active ? "true" : undefined}
+      data-plain-canvas
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[12.5px] text-muted">

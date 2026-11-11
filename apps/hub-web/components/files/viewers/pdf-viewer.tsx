@@ -198,7 +198,11 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
   const doc = state?.doc;
   const first = state && "first" in state ? state.first : null;
   const pages = doc?.numPages ?? 0;
-  const fit = first && width ? Math.max(0.1, (width - (compact ? 0 : 48)) / first.width) : CSS_PER_PT;
+  // A phone-width viewer gives the page its width: an 8 px margin instead of 16. Touch screens draw
+  // their scrollbar over the page, so only a mouse needs room left for one.
+  const gap = width && width < 640 ? 8 : 16;
+  const bar = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches ? 0 : 16;
+  const fit = first && width ? Math.max(0.1, (width - (compact ? 0 : gap * 2 + bar)) / first.width) : CSS_PER_PT;
   const scale = zoom === "fit" ? fit : zoom * CSS_PER_PT;
   const sizeOf = (number: number) => sizes[number] ?? first!;
 
@@ -219,14 +223,14 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
   };
   const goTo = (number: number) => {
     const target = scroller?.querySelector<HTMLElement>(`[data-pdf-page="${number}"]`);
-    if (target && scroller) scroller.scrollTo({ top: target.offsetTop - 16 });
+    if (target && scroller) scroller.scrollTo({ top: target.offsetTop - gap });
   };
   const onScroll = () => {
     if (!scroller) return;
     const middle = scroller.scrollTop + scroller.clientHeight / 3;
-    let top = 16;
+    let top = gap;
     for (let number = 1; number <= pages; number += 1) {
-      const height = sizeOf(number).height * scale + 16;
+      const height = sizeOf(number).height * scale + gap;
       if (middle < top + height) {
         if (number !== current) setCurrent(number);
         return;
@@ -269,14 +273,14 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
             <Plus size={14} />
           </button>
           <button type="button" className="btn-ghost" aria-pressed={zoom === "fit"} onClick={() => setZoom("fit")}>
-            <MoveHorizontal size={13} aria-hidden /> Fit width
+            <MoveHorizontal size={13} aria-hidden /> Fit<span className="max-sm:hidden"> width</span>
           </button>
         </span>
       </Toolbar>
       <div ref={frame} className="min-h-0 flex-1">
         <div ref={setScroller} onScroll={onScroll} className="h-full overflow-auto bg-raised" tabIndex={0} aria-label={`${file.filename}, ${pages} pages`}>
           {doc && first && width ? (
-            <div className="flex min-w-max flex-col items-center gap-4 p-4 sm:min-w-0">
+            <div className="flex min-w-max flex-col items-center sm:min-w-0" style={{ gap, padding: gap }}>
               {Array.from({ length: pages }, (_, index) => (
                 <PdfPage key={index + 1} doc={doc} number={index + 1} scale={scale} size={sizeOf(index + 1)} root={scroller} onSize={onSize} />
               ))}

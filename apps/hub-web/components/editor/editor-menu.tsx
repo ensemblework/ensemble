@@ -10,7 +10,8 @@
  * - anywhere else on a block: Ask, Attach, Turn into, Duplicate, Comment, Copy, Delete; blocks already
  *   picked (a rectangle, Shift+click) act together.
  * The page itself is one submenu away ("Page ▸"). A right-click that only made the browser pick a word
- * (macOS does) counts as a click on the block, not as picked text.
+ * (macOS does) counts as a click on the block, not as picked text. A misspelled word under the pointer
+ * puts its suggestions on top (spelling.ts).
  */
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
@@ -45,6 +46,7 @@ import type { PageMention } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { attachToAssistant, type AttachSource } from "@/lib/assistant-attach";
 import { askItems, copyText, openPalette } from "../context-menu/builders";
+import { spellingSection, warmSpelling, wordAt } from "../context-menu/spelling";
 import type { MenuAction, MenuSection, MenuSpec, MenuTool } from "../context-menu/menu-store";
 import { blockTargets, measureTargets, targetAt } from "./block-targets";
 import { BlockSelection, duplicateBlocks, selectedBlocks } from "./block-selection";
@@ -102,8 +104,61 @@ async function imageBlob(attrs: { fileId?: string; src?: string }): Promise<Blob
 
 const normalUrl = (value: string) => (/^(https?:|mailto:|tel:|\/|#)/i.test(value.trim()) ? value.trim() : `https://${value.trim()}`);
 
+/** The menu for a right-click in the editor, with spelling suggestions on top when the word under the pointer is misspelled. */
 export function editorMenu(editor: Editor, event: MouseEvent, context: EditorMenuContext): MenuSpec | null {
   if (editor.isDestroyed) return null;
+  // Before the block menu, which can pick the block (and so move the selection).
+  const spelling = context.editable ? editorSpelling(editor, event) : null;
+  const spec = blockMenu(editor, event, context);
+  if (!spelling) return spec;
+  return spec ? { ...spec, sections: [spelling, ...spec.sections] } : { sections: [spelling] };
+}
+
+/** Whether the pointer is on the text between from and to (it may wrap onto a second line). */
+function onRange(editor: Editor, from: number, to: number, x: number, y: number): boolean {
+  const start = editor.view.coordsAtPos(from, 1);
+  const end = editor.view.coordsAtPos(to, -1);
+  if (y < start.top - 3 || y > end.bottom + 3) return false;
+  if (Math.abs(start.top - end.top) < 2) return x >= start.left - 3 && x <= end.right + 3;
+  return (y <= start.bottom + 3 ? x >= start.left - 3 : true) && (y >= end.top - 3 ? x <= end.right + 3 : true);
+}
+
+/** Suggestions for the misspelled word under the pointer (or at the caret), each replacing it. */
+function editorSpelling(editor: Editor, event: MouseEvent): MenuSection | null {
+  warmSpelling();
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target || target.closest("a.mention, img, pre, code, [data-block-position], [contenteditable='false']")) return null;
+  const keyboard = event.clientX === 0 && event.clientY === 0;
+  const pos = keyboard ? editor.state.selection.from : editor.view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+  if (pos === undefined) return null;
+  const $pos = editor.state.doc.resolve(pos);
+  const parent = $pos.parent;
+  if (!parent.isTextblock || parent.type.spec.code) return null;
+  const offset = $pos.parentOffset;
+  for (const child of [parent.childAfter(offset), parent.childBefore(offset)]) {
+    const node = child.node;
+    if (!node?.isText || node.marks.some((mark) => mark.type.name === "code")) continue;
+    const hit = wordAt(node.text ?? "", offset - child.offset);
+    if (!hit) continue;
+    const from = $pos.start() + child.offset + hit.start;
+    const to = from + hit.word.length;
+    if (!keyboard && !onRange(editor, from, to, event.clientX, event.clientY)) continue;
+    return spellingSection(hit.word, (next) => {
+      if (editor.isDestroyed || editor.state.doc.textBetween(from, to) !== hit.word) return;
+      editor
+        .chain()
+        .focus()
+        .command(({ tr }) => {
+          tr.insertText(next, from, to);
+          return true;
+        })
+        .run();
+    });
+  }
+  return null;
+}
+
+function blockMenu(editor: Editor, event: MouseEvent, context: EditorMenuContext): MenuSpec | null {
   const view = editor.view;
   const target = event.target instanceof Element ? event.target : null;
   if (!target) return null;

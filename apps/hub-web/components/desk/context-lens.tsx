@@ -2,7 +2,7 @@
 import { useAssistantSurface } from "@/lib/assistant-surface";
 import { InfoTip } from "@/components/ui";
 
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -228,6 +228,15 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
   const tabs = selectedContextTabs(role, prefs.data?.preferences.find(row => row.key === `context.tabs.${role}`)?.value);
   const mocks = mockServices(prefs.data?.preferences.find(row => row.key === "context.mock-services")?.value);
   const [active, choose] = useLensTab(tabs, initialTab);
+  // On a phone the tab strip scrolls sideways: keep the open tab in view (a link can open the last one).
+  const tabStrip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const strip = tabStrip.current;
+    const tab = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !tab || strip.scrollWidth <= strip.clientWidth) return;
+    const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+    if (left < strip.scrollLeft || left + tab.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = Math.max(0, left - 16);
+  }, [active]);
   const shared = ["people", "projects", "graph"].includes(tabKey(active));
   const rich = state === "populated" && (deskId === "chambers" || deskId === "literature") && active === "Overview";
   const live = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: state !== "populated", staleTime: 15_000 });
@@ -256,7 +265,7 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
           </div> : null}
         </div>
       </div>
-      <div className="flex items-start gap-3"><div className="context-tabs min-w-0 flex-1" role="tablist" aria-label="Context sections">
+      <div className="flex items-start gap-3"><div ref={tabStrip} className="context-tabs min-w-0 flex-1" role="tablist" aria-label="Context sections">
         {tabs.map((label) => (
           <button
             key={label}

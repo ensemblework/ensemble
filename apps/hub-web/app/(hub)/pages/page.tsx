@@ -2,11 +2,16 @@
 /** @jsxImportSource react */
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronRight, Columns3, FileText } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpRight, ChevronRight, Columns3, FileText, Import, Plus } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
+import { useToast } from "@/components/toast";
+import { standalonePageHref } from "@/components/pages/page-href";
 import { plural, relative, shortDate } from "@/lib/format";
 import { usePersistentState } from "@/lib/prefs";
 import { PageHeader, SkeletonRows } from "@/components/ui";
@@ -14,6 +19,35 @@ import { LoadError } from "@/components/load-error";
 import { PAGE_SORTS, PAGE_STEP, isPageSort, parentTrail, searchPages, type PageSort } from "@/components/pages/pages-list";
 import { boardHref, boardPageHref, groupBoardPages } from "@/lib/page-boards";
 import type { DirectoryPage } from "@ensemble/shared-types";
+
+const ImportDialog = dynamic(() => import("@/components/imports/import-dialog").then((mod) => mod.ImportDialog), { ssr: false });
+
+/**
+ * On a phone this list is Pages itself (the Pages panel never opens there), so it carries the
+ * panel's New page and Import. On wider screens the panel beside it has them.
+ */
+function PhoneActions() {
+  const access = useSpaceAccess();
+  const router = useRouter();
+  const client = useQueryClient();
+  const toast = useToast();
+  const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  if (!access.ready || !access.canEdit) return null;
+  const create = () => {
+    if (creating) return;
+    setCreating(true);
+    void api.createPage()
+      .then((result) => { void client.invalidateQueries({ queryKey: ["pages"] }); router.push(standalonePageHref(result.page.id, true)); })
+      .catch((error: Error) => toast(error.message, { tone: "error" }))
+      .finally(() => setCreating(false));
+  };
+  return <div className="flex gap-2 md:hidden">
+    <button type="button" className="btn-primary min-h-10 px-3.5" disabled={creating} onClick={create}><Plus size={15} aria-hidden />New page</button>
+    {access.guest ? null : <button type="button" className="btn min-h-10 px-3.5" onClick={() => setImporting(true)}><Import size={15} aria-hidden />Import</button>}
+    {importing ? <ImportDialog open onClose={() => setImporting(false)} initialSource="notion" /> : null}
+  </div>;
+}
 
 export default function PagesPage() {
   const pages = useQuery({ queryKey: ["pages", "directory"], queryFn: api.pageDirectory });
@@ -64,7 +98,7 @@ export default function PagesPage() {
   };
 
   return <div className="mx-auto max-w-5xl px-6 pb-20 pt-10 sm:px-10">
-    <PageHeader title="Pages" />
+    <PageHeader title="Pages" actions={<PhoneActions />} />
     {pages.error ? <LoadError error={pages.error} what="your pages" retrying={pages.isFetching} onRetry={() => { void pages.refetch(); }} /> : pages.isLoading ? <SkeletonRows count={3} /> : <>
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <input
@@ -88,7 +122,7 @@ export default function PagesPage() {
           ? `${plural(found.length, "page")} match${found.length === 1 ? "es" : ""}${text.isFetching ? " · searching page text…" : ""}`
           : plural(all.length, "page")}
       </p>
-      {visible.length ? <ul ref={list} className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">{visible.map(row)}</ul> : <p className="mt-4 text-[14px] text-muted">{searching ? (text.isFetching ? "Searching page text…" : found.length ? "Matching pages are grouped by board below." : "No page title or text matches that search.") : grouped.boards.length ? "Your board pages are below. Create a page for independent notes." : "Create a page or import from Notion using the pages panel."}</p>}
+      {visible.length ? <ul ref={list} className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">{visible.map(row)}</ul> : <p className="mt-4 text-[14px] text-muted">{searching ? (text.isFetching ? "Searching page text…" : found.length ? "Matching pages are grouped by board below." : "No page title or text matches that search.") : grouped.boards.length ? "Your board pages are below. Create a page for independent notes." : "Create a page, or import pages from Notion."}</p>}
       {left > 0 ? <button type="button" className="btn mt-4" onClick={showMore}>Show {Math.min(PAGE_STEP, left)} more <span className="text-muted">({left} left)</span></button> : null}
       {grouped.boards.length > 0 && <div className="mt-8 space-y-3">
         <h2 className="mb-3 text-[11px] font-medium uppercase tracking-widest text-muted">Pages in boards</h2>

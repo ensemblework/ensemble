@@ -14,6 +14,7 @@ import { NotePage } from "../pages/note-page";
 import { isFreshPage } from "../pages/fresh-page";
 import { PersonPanel, personRef } from "../context/person-panel";
 import { useContextItem } from "../context/item-relations";
+import { titleMenuProps } from "../context-menu/text-field-menu";
 
 
 export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }) {
@@ -89,6 +90,7 @@ function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | unde
     <div className="mx-auto max-w-[720px] px-6 py-8">
       <input
         data-peek-escape
+        {...titleMenuProps()}
         aria-label="Deliverable title"
         defaultValue={row.title}
         key={row.title}

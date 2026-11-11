@@ -8,7 +8,7 @@ import { useToast } from "@/components/toast";
 import { Empty, PageHeader, SkeletonRows, Tag, Toggle, cx } from "@/components/ui";
 import { api, type SkillRecord } from "@/lib/api";
 import { ShareButton } from "@/components/sharing/share-dialog";
-import { dateTime } from "@/lib/format";
+import { dateTime, plural } from "@/lib/format";
 import { askText } from "@/components/ask-dialog";
 import { ExportMenu } from "@/components/export-menu";
 import { skillDoc } from "@/lib/export/items";
@@ -58,9 +58,9 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
 
   return (
     <div className="tile min-w-0 rounded-lg bg-panel p-5">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="min-w-0 truncate text-[18px] font-semibold">{skill.name}</h2>
-        <div className="flex shrink-0 items-center gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="min-w-0 max-w-full truncate text-[18px] font-semibold">{skill.name}</h2>
+        <div className="flex shrink-0 items-center gap-1 max-sm:ml-auto">
           <div className="flex overflow-hidden rounded-md border border-line text-[12px]" role="group" aria-label="View">
             {(["edit", "preview"] as const).map((value) => (
               <button
@@ -68,7 +68,7 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
                 type="button"
                 aria-pressed={view === value}
                 onClick={() => setView(value)}
-                className={cx("flex items-center gap-1 px-2 py-0.5", view === value ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")}
+                className={cx("flex items-center gap-1 px-2 py-0.5 [@media(pointer:coarse)]:min-h-10 [@media(pointer:coarse)]:px-3", view === value ? "bg-hover font-medium text-ink" : "text-muted hover:text-ink")}
               >
                 {value === "edit" ? <PenLine size={11} /> : <Eye size={11} />} {value === "edit" ? "Edit" : "Preview"}
               </button>
@@ -193,7 +193,7 @@ export default function SkillsPage() {
             />
           </div>
           <div className="mb-2 mt-3 flex items-center justify-between text-[12.5px] text-muted">
-            <span>{list.length} skills</span>
+            <span>{plural(list.length, "skill")}</span>
             <button type="button" className="btn-ghost py-0.5" onClick={() => create.mutate()}>
               <Plus size={13} /> New skill
             </button>

@@ -203,7 +203,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
             <Plus size={14} />
           </button>
           <button type="button" className="btn-ghost" aria-pressed={zoom === "fit"} onClick={() => setZoom("fit")}>
-            <MoveHorizontal size={13} aria-hidden /> Fit width
+            <MoveHorizontal size={13} aria-hidden /> Fit<span className="max-sm:hidden"> width</span>
           </button>
         </span>
       </Toolbar>

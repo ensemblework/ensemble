@@ -23,6 +23,7 @@ import { markFreshPage } from "../pages/fresh-page";
 import { useToast } from "../toast";
 import { openContextMenu } from "../context-menu/menu-store";
 import { usePageMenu } from "../context-menu/page-menu";
+import { warmSpelling } from "../context-menu/spelling";
 import { editorMenu } from "./editor-menu";
 import { EnsembleAsk } from "./ensemble-ask";
 
@@ -192,6 +193,13 @@ export function BlockEditor({
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  // A page you can write in loads the spelling dictionary in the background, so the first right-click on a misspelled word already has suggestions.
+  useEffect(() => {
+    if (!editable) return;
+    const timer = window.setTimeout(warmSpelling, 1500);
+    return () => window.clearTimeout(timer);
+  }, [editable]);
 
   useEffect(() => {
     if (!editor || !collab || editor.isDestroyed) return;

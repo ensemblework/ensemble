@@ -347,6 +347,13 @@ export function AssistantDock() {
   const mod = useModKey();
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
+  // On a phone the panel covers the screen: going somewhere (a link in an answer, the navigation) closes it, so the page shows.
+  const shownPath = useRef(pathname);
+  useEffect(() => {
+    if (shownPath.current === pathname) return;
+    shownPath.current = pathname;
+    if (window.matchMedia("(max-width: 640px)").matches) setOpen(false);
+  }, [pathname, setOpen]);
   useTrackOpen("assistant.open", open);
   const [expanded, setExpanded] = usePersistentState("ensemble.assistant.expanded", false);
   const panel = useRef<HTMLDivElement>(null);

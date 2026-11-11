@@ -133,6 +133,16 @@
 @media (max-width: 639px), (hover: none) {
   .cmdk-foot-keys, .cmdk-keys { display: none; }
 }
+/* Search and jump is modal and takes the keyboard, so it sits above the assistant's panel too. */
+.cmdk-backdrop { z-index: 2050 !important; }
+/* A phone: the box sits at the top, so the on-screen keyboard leaves the results above it, and rows are finger-sized. */
+@media (max-width: 639px) {
+  .cmdk-backdrop { padding: 8px 8px 0 !important; }
+  .cmdk-dialog { max-height: calc(100dvh - 16px); }
+}
+@media (pointer: coarse) {
+  .cmdk-item { min-height: 44px; }
+}
 
 /* ── Activity pill and its panel ─────────────────────────────────────────── */
 .activity-pill {

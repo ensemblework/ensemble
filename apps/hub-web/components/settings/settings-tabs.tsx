@@ -23,7 +23,7 @@ const ICONS: Record<SettingsTab, LucideIcon | ComponentType<{ size?: number; cla
 
 /**
  * Settings tabs: a grouped vertical list on wide screens, a scrolling row on narrow
- * ones. Arrow keys, Home and End move between tabs; each tab is also a real
+ * ones (fading at its right edge, so a cut-off tab reads as "more this way"). Arrow keys, Home and End move between tabs; each tab is also a real
  * link, so it can be opened in a new browser tab.
  */
 export function SettingsTabs({ value, onChange, hidden = [] }: { value: SettingsTab; onChange: (tab: SettingsTab) => void; hidden?: SettingsTab[] }) {
@@ -38,7 +38,8 @@ export function SettingsTabs({ value, onChange, hidden = [] }: { value: Settings
     const box = row.getBoundingClientRect();
     const tab = node.getBoundingClientRect();
     if (tab.left < box.left) row.scrollLeft -= box.left - tab.left + 12;
-    else if (tab.right > box.right) row.scrollLeft += tab.right - box.right + 12;
+    // The row fades out at its right edge: bring a tab clear of the fade.
+    else if (tab.right > box.right - 28) row.scrollLeft += tab.right - box.right + 36;
   }, [value]);
   const move = (event: React.KeyboardEvent) => {
     const index = tabs.findIndex((tab) => tab.id === value);
@@ -71,7 +72,7 @@ export function SettingsTabs({ value, onChange, hidden = [] }: { value: Settings
       role="tablist"
       aria-label="Settings sections"
       onKeyDown={move}
-      className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:px-0"
+      className="-mx-1 flex gap-1 overflow-x-auto pl-1 pr-7 [mask-image:linear-gradient(to_right,#000_calc(100%-28px),transparent)] [scrollbar-width:none] lg:mx-0 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:px-0 lg:[mask-image:none]"
       data-settings-nav
     >
       {SETTINGS_TAB_GROUPS.map((group, groupIndex) => {

@@ -577,8 +577,11 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
   .desk .bento > .tile { grid-row: auto !important; min-height: 220px; }
   .desk .bento .visual-body { overflow: visible; }
   .desk[data-context-lens] .bento { grid-template-columns: minmax(0, 1fr); }
-  .desk[data-context-lens] .context-tabs { flex-wrap: nowrap; overflow-x: auto; }
-  .desk[data-context-lens] .context-tab { flex-shrink: 0; white-space: nowrap; }
+  /* Sideways only: overflow-x alone would make the strip scroll up and down by the underline's pixel too. */
+  .desk[data-context-lens] .context-tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); }
+  .desk[data-context-lens] .context-tabs::-webkit-scrollbar { display: none; }
+  .desk[data-context-lens] .context-tab { flex-shrink: 0; min-height: 40px; white-space: nowrap; }
+  .desk[data-context-lens] .context-tab[aria-selected="true"]::after { bottom: 0; }
 }
 
 /* Today, Context and Board tiles: the calm empty state, light list rows, the day-at-a-glance pills,

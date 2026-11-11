@@ -373,6 +373,7 @@ export function TaskPage({
       }
       inert={leaving}
       data-page-focus={focusMode.active ? "true" : undefined}
+      data-plain-canvas
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       {variant === "page" ? (

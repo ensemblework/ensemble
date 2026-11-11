@@ -7,7 +7,7 @@ import type { Settings } from "@ensemble/shared-types";
 import { findSettingsTarget, flashSetting, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
 import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
-import { SettingsNav } from "@/components/settings/settings-nav";
+import { SettingsNav, SettingsOutline } from "@/components/settings/settings-nav";
 import type { SettingsHit } from "@/components/settings/settings-search";
 import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
 import { confirmLeaveSettings, hasUnsaved } from "@/components/settings/unsaved";
@@ -220,7 +220,7 @@ export default function SettingsPage() {
   return (
     <div className="absolute inset-0 overflow-hidden">
       <div ref={mainRef} className="h-full overflow-y-auto" data-settings-main>
-        <div className="mx-auto w-full max-w-[1060px] px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
+        <div className="settings-shell mx-auto w-full px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           <PageHeader
             title="Settings"
             actions={
@@ -235,8 +235,8 @@ export default function SettingsPage() {
               shortcuts. Connected apps and the space&apos;s data belong to them; switch to one of your spaces to manage yours.
             </div>
           ) : null}
-          <div className="lg:grid lg:grid-cols-[208px_minmax(0,1fr)] lg:gap-10">
-            <div className="sticky top-0 z-20 -mx-4 mb-5 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-6 lg:mx-0 lg:mb-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+          <div className="settings-layout">
+            <div className="sticky top-0 z-20 -mx-4 mb-5 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-6 lg:mx-0 lg:mb-0 lg:max-h-[calc(100dvh-8rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
               <SettingsNav value={location.tab} onChange={selectTab} onJump={jumpTo} hidden={guestTabs} guest={access.guest} scroller={mainRef} />
             </div>
             <div
@@ -269,6 +269,9 @@ export default function SettingsPage() {
               ) : (
                 <AccountTab {...props} />
               )}
+            </div>
+            <div className="settings-rail">
+              <SettingsOutline tab={location.tab} scroller={mainRef} />
             </div>
           </div>
         </div>

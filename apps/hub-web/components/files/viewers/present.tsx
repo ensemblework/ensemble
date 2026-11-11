@@ -24,7 +24,7 @@ function useViewport(): Box {
   return box;
 }
 
-const control = "grid h-8 w-8 place-items-center rounded-md text-white/85 hover:bg-white/15 hover:text-white disabled:opacity-35 disabled:hover:bg-transparent";
+const control = "grid h-8 w-8 place-items-center rounded-md text-white/85 hover:bg-white/15 hover:text-white disabled:opacity-35 disabled:hover:bg-transparent [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
 
 /**
  * A slideshow over the whole screen: one slide or page at a time, fitted and letterboxed on
@@ -56,6 +56,7 @@ export function Presenter({
   const [index, setIndex] = useState(() => Math.max(0, Math.min(count - 1, start)));
   const [awake, setAwake] = useState(true);
   const timer = useRef(0);
+  const swipe = useRef<{ x: number; y: number; id: number; moved: boolean } | null>(null);
   const box = useViewport();
   const go = useCallback((next: number) => setIndex(Math.max(0, Math.min(count - 1, next))), [count]);
 
@@ -93,7 +94,25 @@ export function Presenter({
 
   const onClick = (event: React.MouseEvent) => {
     if ((event.target as HTMLElement).closest("[data-present-controls]")) return;
+    if (swipe.current?.moved) {
+      swipe.current = null;
+      return;
+    }
     go(event.clientX < window.innerWidth / 3 ? index - 1 : index + 1);
+  };
+  // On a touch screen a sideways swipe moves, as in any slideshow app; a tap still works as a click.
+  const onPointerDown = (event: React.PointerEvent) => {
+    wake();
+    swipe.current = event.pointerType === "mouse" ? null : { x: event.clientX, y: event.clientY, id: event.pointerId, moved: false };
+  };
+  const onPointerUp = (event: React.PointerEvent) => {
+    const start = swipe.current;
+    if (!start || start.id !== event.pointerId) return;
+    const dx = event.clientX - start.x;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(event.clientY - start.y)) {
+      start.moved = true;
+      go(index + (dx < 0 ? 1 : -1));
+    } else swipe.current = null;
   };
 
   const shown = [index - 1, index, index + 1].filter((item) => item >= 0 && item < count);
@@ -104,9 +123,11 @@ export function Presenter({
       aria-modal="true"
       aria-label={label}
       tabIndex={-1}
-      className={cx("fixed inset-0 z-[100] select-none overflow-hidden bg-black outline-none", !awake && "cursor-none")}
+      className={cx("fixed inset-0 z-[100] touch-none select-none overflow-hidden bg-black outline-none", !awake && "cursor-none")}
       onPointerMove={wake}
-      onPointerDown={wake}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => { swipe.current = null; }}
       onClick={onClick}
       // Keys inside the portal would otherwise reach the viewer's own key handler through React.
       // Esc goes on to the full-screen mode's listener on window.

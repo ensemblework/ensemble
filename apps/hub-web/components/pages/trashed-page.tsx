@@ -68,7 +68,7 @@ export function TrashedPage({ pageId, onRestored }: { pageId: string; onRestored
   const Editor = useBlockEditor();
   if (page.isLoading) return <div className="p-10 text-muted">Loading…</div>;
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10">
+    <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" data-plain-canvas>
       <TrashBanner kind="page" id={pageId} deletedAt={page.data?.deletedAt} onRestored={onRestored} />
       {page.data ? (
         <>

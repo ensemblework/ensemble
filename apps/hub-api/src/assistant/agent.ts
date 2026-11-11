@@ -184,7 +184,11 @@ export interface AssistantTurnArgs {
    * project (`group`, whose folder its chats share), its sessions' keeping days and more tool calls
    * (`maxCalls`); `ownWeb` (default on) lets the agent search and read the web on its plan.
    */
-  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean };
+  /**
+   * `sessionKey`: the agent session to run in instead of the chat's own, resumed whatever the chat's
+   * length (an inline ask's page session, assistant/ask-sessions.ts).
+   */
+  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string };
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -423,9 +427,11 @@ async function drive(
         system: conversation.system,
         prompt: conversation.prompt,
         history: conversation.history,
-        // One chat is one session of the person's agent: a new chat starts a new one.
-        sessionKey: args.conversationId,
-        position: await app.prisma.assistantMessage.count({ where: { conversationId: args.conversationId, ...(args.messageId ? { id: { not: args.messageId } } : {}) } }),
+        // One chat is one session of the person's agent: a new chat starts a new one. An inline ask runs in its page's session.
+        sessionKey: args.subscription?.sessionKey ?? args.conversationId,
+        ...(args.subscription?.sessionKey
+          ? {}
+          : { position: await app.prisma.assistantMessage.count({ where: { conversationId: args.conversationId, ...(args.messageId ? { id: { not: args.messageId } } : {}) } }) }),
         ...(attached?.files.length
           ? {
               files: {

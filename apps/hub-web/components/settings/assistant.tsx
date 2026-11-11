@@ -55,6 +55,19 @@ export function AssistantSection({ settings, patch }: Props) {
             ))}
           </select>
         </SettingRow>
+        <SettingRow
+          title="Ask Ensemble model"
+          description="The tier @ensemble answers with in pages, tasks and deliverables."
+          info="On an AI plan, each page gets one short chat with your agent: asking again there continues it (a second ask waits for the first), and the chat is deleted from your agent 30 minutes after its last answer."
+        >
+          <select aria-label="Ask Ensemble model" value={assistant.askTier ?? "medium"} onChange={(event) => patch({ assistant: { askTier: event.target.value } })} className="field w-56 truncate">
+            {TIERS.map((tier) => (
+              <option key={tier.id} value={tier.id}>
+                {tier.label.replace(" model", "")} · {tierModelName(settings.models[tier.id].provider, settings.models[tier.id].model)}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
         <SettingRow title="What it may change" description={<span data-testid="changes-summary">{changesSummary(assistant)}</span>}>
           <button type="button" className="btn" aria-haspopup="dialog" onClick={() => navigateSettings({ dialog: "changes" })}>
             Change…
