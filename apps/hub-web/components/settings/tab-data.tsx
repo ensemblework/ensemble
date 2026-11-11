@@ -4,30 +4,45 @@ import { useClientPlatform } from "@/lib/platform";
 import type { Settings } from "@ensemble/shared-types";
 
 import Link from "next/link";
-import { ArrowUpRight, Trash2 } from "lucide-react";
-import { SectionCard } from "../ui";
+import { ArrowUpRight } from "lucide-react";
+import { SectionCard, SettingRow } from "../ui";
 import { SpaceExportSection } from "./space-export";
 import { DeleteAccountSection } from "./account";
-import { DeleteDataSection, FailedJobsSection, RetentionSection, TerminalSection } from "./sections";
+import { DeleteDataSection, RetentionSection } from "./sections";
 
 type Plain = Record<string, unknown>;
 
+/** Settings › Data: take it with you, how long it is kept, where finished and deleted work is, and the danger zone. */
 export function DataTab({ settings, patch }: { settings: Settings; patch: (value: Plain) => void }) {
   const props = { settings, patch };
   const { native } = useClientPlatform();
+  const open = (href: string, label: string) => (
+    <Link href={href} target={native ? undefined : "_blank"} rel="noopener" className="btn">
+      {label} <ArrowUpRight size={14} />
+    </Link>
+  );
   return (
     <>
       <div id="export" className="scroll-mt-6"><SpaceExportSection /></div>
       <div id="retention" className="scroll-mt-6"><RetentionSection {...props} /></div>
-      <div id="completed" className="scroll-mt-6"><SectionCard title="Completed" description="Everything finished, including older tasks hidden from the board."><Link href="/completed" target={native ? undefined : "_blank"} rel="noopener" className="btn mt-2">Open Completed <ArrowUpRight size={14} /></Link></SectionCard></div>
-      <div id="deleted" className="scroll-mt-6"><span id="trash" /><SectionCard title="Trash" description="Restore or empty deleted pages, files, tasks and comments."><Link href="/trash" target={native ? undefined : "_blank"} rel="noopener" className="btn mt-2"><Trash2 size={14} /> Open Trash <ArrowUpRight size={14} /></Link></SectionCard></div>
-      <div id="terminal" className="scroll-mt-6"><TerminalSection {...props} /></div>
-      <div id="danger" className="scroll-mt-6 space-y-5">
-        <h2 className="text-[17px] font-semibold text-danger">Danger zone</h2>
-        <div id="failed" className="scroll-mt-6"><FailedJobsSection /></div>
-
-        <DeleteDataSection settings={settings} />
-        <DeleteAccountSection />
+      <div id="completed" className="scroll-mt-6">
+        <span id="trash" className="block scroll-mt-6" aria-hidden />
+        <span id="deleted" className="block scroll-mt-6" aria-hidden />
+        <SectionCard title="Completed and Trash" description="Finished work and deleted items, each on a page of its own.">
+          <div className="divide-y divide-[var(--line)]">
+            <SettingRow title="Completed" description="Everything finished, including older tasks hidden from the board.">
+              {open("/completed", "Open Completed")}
+            </SettingRow>
+            <SettingRow title="Trash" description="Restore or empty deleted pages, files, tasks and comments.">
+              {open("/trash", "Open Trash")}
+            </SettingRow>
+          </div>
+        </SectionCard>
+      </div>
+      <div id="danger" className="scroll-mt-6">
+        <DeleteDataSection settings={settings}>
+          <DeleteAccountSection />
+        </DeleteDataSection>
       </div>
     </>
   );

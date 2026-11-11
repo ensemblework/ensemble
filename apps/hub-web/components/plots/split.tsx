@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState, type RefObject } from "react";
+import { perFrame } from "@/lib/motion/drag";
 
 /** The code side of a Plots split: never under a quarter of the room, never over 60%. */
 export const SPLIT_MIN = 0.25;
@@ -96,8 +97,11 @@ export function SplitHandle({
         handle.setPointerCapture(event.pointerId);
         setActive(true);
         document.documentElement.dataset.splitting = "1";
-        const move = (ev: PointerEvent) => onChange(share(ev.clientX), false);
+        // The panes render at most once a frame, however often the pointer reports.
+        const resize = perFrame((clientX: number) => onChange(share(clientX), false));
+        const move = (ev: PointerEvent) => resize(ev.clientX);
         const up = (ev: PointerEvent) => {
+          resize.cancel();
           onChange(share(ev.clientX));
           setActive(false);
           delete document.documentElement.dataset.splitting;

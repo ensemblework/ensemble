@@ -13,7 +13,7 @@ import { clearBrowserTabSession } from "@/lib/tab-session";
 import { showAppAccountScreen } from "@/lib/native-app";
 import { Modal } from "./modal";
 import { BrandLogo } from "../connectors/brand-logo";
-import { InfoTip, SectionCard } from "../ui";
+import { SectionCard, SettingRow } from "../ui";
 import { hasUnsaved, markUnsaved } from "./unsaved";
 
 export function AccountSection() {
@@ -234,7 +234,6 @@ export function AccountSection() {
               />
             </div>
           </div>
-          <button type="button" className="btn" data-jump-label="Change password" disabled={save.isPending} onClick={() => setPasswordOpen(true)}>{needsCurrent ? "Change password" : "Add a password"}</button>
           <Modal open={passwordOpen} onClose={() => { setPasswordOpen(false); setCurrent(""); setPassword(""); setRepeat(""); setPasswordError(null); setRepeatError(null); }} title={needsCurrent ? "Change password" : "Add a password"} width={480}>
           <form
             className="space-y-3"
@@ -284,24 +283,31 @@ export function AccountSection() {
         </div>
       )}
       {!local ? (
-        <div className="mt-5 space-y-4">
-          <div>
-            <h3 className="flex items-center gap-1.5 text-[13px] font-medium">Linked login methods <InfoTip text="Sign-in methods do not connect mail or repositories. Changes may require a recent sign-in." /></h3>
-            {identities.error ? <p role="alert" className="mt-2 text-[13px] text-muted">{identities.error.message}</p> : null}
-            <div className="mt-2 flex flex-wrap gap-2">
-              {identities.data?.providers.map((provider) => {
-                const linked = identities.data.identities.some((identity) => identity.provider === provider);
-                const label = provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft";
-                return linked ? (
-                  <button key={provider} type="button" className="btn" disabled={unlink.isPending || (!me.data.user.hasPassword && identities.data.identities.length <= 1)} onClick={() => {setSecurityPassword("");setUnlinking(provider);}}><BrandLogo id={provider} size={18} />Unlink {label}</button>
-                ) : <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start?link=1`} className="btn"><BrandLogo id={provider} size={18} />Link {label}</a>;
-              })}
-            </div>
-          </div>
-          <div className="border-t border-line pt-4">
-            <button type="button" className="btn" disabled={exported.isPending} onClick={() => exported.mutate()}>{exported.isPending ? "Exporting..." : "Export account data (JSON)"}</button>
-            <p className="mt-2 text-[12px] text-muted">Exports your data, not API tokens, connector secrets, or model keys.</p>
-          </div>
+        <div className="mt-3 divide-y divide-[var(--line)]">
+          <SettingRow title="Password" description={needsCurrent ? "Other devices are signed out when it changes." : "You sign in with a linked login. Add a password to sign in without it."}>
+            <button type="button" className="btn" data-jump-label="Change password" disabled={save.isPending} onClick={() => setPasswordOpen(true)}>{needsCurrent ? "Change password" : "Add a password"}</button>
+          </SettingRow>
+          {identities.error || identities.data?.providers.length ? (
+            <SettingRow
+              title="Linked login methods"
+              info="Sign-in methods do not connect mail or repositories. Changes may require a recent sign-in."
+              description={identities.error ? <span role="alert">{identities.error.message}</span> : "Other ways to sign in to this account."}
+            >
+              <div className="flex flex-wrap justify-end gap-2">
+                {identities.data?.providers.map((provider) => {
+                  const linked = identities.data.identities.some((identity) => identity.provider === provider);
+                  const label = provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft";
+                  const last = !me.data.user.hasPassword && identities.data.identities.length <= 1;
+                  return linked ? (
+                    <button key={provider} type="button" className="btn" title={last ? "Add a password first, so you can still sign in." : undefined} disabled={unlink.isPending || last} onClick={() => {setSecurityPassword("");setUnlinking(provider);}}><BrandLogo id={provider} size={18} />Unlink {label}</button>
+                  ) : <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start?link=1`} className="btn"><BrandLogo id={provider} size={18} />Link {label}</a>;
+                })}
+              </div>
+            </SettingRow>
+          ) : null}
+          <SettingRow title="Export account data" description="Your data as JSON. Never API tokens, connector secrets or model keys.">
+            <button type="button" className="btn" data-jump-label="Export account data" disabled={exported.isPending} onClick={() => exported.mutate()}>{exported.isPending ? "Exporting…" : "Export (JSON)"}</button>
+          </SettingRow>
         </div>
       ) : null}
       <Modal open={Boolean(unlinking)} onClose={()=>{setUnlinking(null);setSecurityPassword("");}} title="Remove this sign-in method?" width={440}><p className="mb-3 text-[13px] text-muted">Your work stays in Ensemble. You can sign in with your other methods.</p>{me.data.user.hasPassword ? <PasswordField label="Password to remove this method" autoComplete="current-password" value={securityPassword} onChange={setSecurityPassword}/> : <p className="text-[13px] text-muted">For an older session, sign in again before removing a login method.</p>}<div className="mt-4 flex justify-end gap-2"><button className="btn" onClick={()=>setUnlinking(null)}>Cancel</button><button className="btn btn-danger" disabled={unlink.isPending||(me.data.user.hasPassword&&!securityPassword)} onClick={()=>unlinking&&unlink.mutate(unlinking)}>Remove method</button></div></Modal>
@@ -324,7 +330,10 @@ export function DeleteAccountSection() {
   if (!me.data || me.data.via === "bypass" || me.data.via === "desktop") return null;
   const close = () => { if (!deletion.isPending) { setOpen(false); setConfirmation(""); setPassword(""); } };
   return (
-    <SectionCard title="Delete account" description="Permanently delete your hosted account." actions={<button type="button" className="btn text-danger" onClick={() => setOpen(true)}>Delete account…</button>}>
+    <div className="py-1">
+      <SettingRow title="Delete account" description="Your hosted account and every space in it. Paired computers are revoked; files on them stay.">
+        <button type="button" className="btn border-danger/50 text-danger" onClick={() => setOpen(true)}>Delete account…</button>
+      </SettingRow>
       <Modal open={open} onClose={close} title="Delete your account?" width={440}>
         <p className="text-[13px] leading-5 text-muted">This cannot be undone. Hosted data is removed and paired devices are revoked; files on your computer stay. Stop active runs first.</p>
         <label className="mt-4 block text-[13px]">Type DELETE to confirm
@@ -338,6 +347,6 @@ export function DeleteAccountSection() {
           </button>
         </div>
       </Modal>
-    </SectionCard>
+    </div>
   );
 }

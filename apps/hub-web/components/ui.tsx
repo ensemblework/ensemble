@@ -741,7 +741,8 @@ export function SettingRow({
 }) {
   return (
     // Wraps instead of squeezing: on a narrow screen the control drops below the text.
-    <div data-setting-label={typeof title === "string" ? title : undefined} className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-3">
+    // A row with no description centres its title on the control; with one, the title lines up with the control's top.
+    <div data-setting-label={typeof title === "string" ? title : undefined} className={cx("flex flex-wrap justify-between gap-x-6 gap-y-2 py-3", description ? "items-start" : "items-center")}>
       <div className="min-w-0 max-w-[560px] flex-[1_1_15rem]">
         <div className="flex items-center gap-1.5 text-[13.5px] font-medium">{title}{info ? <InfoTip text={info} /> : null}</div>
         {description ? <div className="mt-0.5 text-[12.5px] leading-[18px] text-muted">{description}</div> : null}

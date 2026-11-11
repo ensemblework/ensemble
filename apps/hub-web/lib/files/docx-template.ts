@@ -4,12 +4,18 @@
  * rebuilt from the page, using the original's own paragraph and table styles.
  */
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import type { Block, Run } from "@/lib/export/document";
+import { embedLine, imageWidth, type Block, type Run } from "@/lib/export/document";
 
 const W_MAIN = ["http://schemas.openxmlformats.org/wordprocessingml/2006/main", "http://purl.oclc.org/ooxml/wordprocessingml/main"];
 const R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const HYPERLINK = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 const NUMBERING_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture";
+/** English Metric Units per CSS pixel. */
+const EMU = 9525;
 const NUMBERING_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
 
 export type DocxStyleIds = {
@@ -223,6 +229,22 @@ export function rebuildDocx(original: Uint8Array, blocks: Block[]): Uint8Array {
   const paragraph = (content: string, props = "") => `<${w}:p>${props ? `<${w}:pPr>${props}</${w}:pPr>` : ""}${content}</${w}:p>`;
   const styleRef = (id: string | undefined) => (id ? `<${w}:pStyle ${w}:val="${escapeXml(id)}"/>` : "");
 
+  const media: Array<{ path: string; bytes: Uint8Array; extension: "png" | "jpeg" }> = [];
+  /** An inline picture, as Word writes one: the bytes go in media/, the run points at them. */
+  const picture = (block: Extract<Block, { type: "image" }>): string => {
+    const extension = block.format === "jpg" ? "jpeg" : "png";
+    const number = media.length + 1;
+    const target = `media/ensemble-picture-${number}.${extension}`;
+    media.push({ path: `${dir ? `${dir}/` : ""}${target}`, bytes: block.png, extension });
+    const id = rels.add(IMAGE_REL, target, false);
+    const widthPx = imageWidth(block, textWidth / 15);
+    const cx = Math.round(widthPx * EMU);
+    const cy = Math.round(((widthPx * block.height) / Math.max(1, block.width)) * EMU);
+    const alt = escapeXml(block.alt || block.caption || "Picture");
+    return `<${w}:r><${w}:drawing><wp:inline xmlns:wp="${WP_NS}" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${4000 + number}" name="Picture ${number}" descr="${alt}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A_NS}" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="${A_NS}"><a:graphicData uri="${PIC_NS}"><pic:pic xmlns:pic="${PIC_NS}"><pic:nvPicPr><pic:cNvPr id="${number}" name="Picture ${number}" descr="${alt}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip ${r}:embed="${id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></${w}:drawing></${w}:r>`;
+  };
+  const jc = (align: "left" | "center" | "right" | undefined) => `<${w}:jc ${w}:val="${align === "left" ? "left" : align === "right" ? "right" : "center"}"/>`;
+
   const body: string[] = [];
   blocks.forEach((block, index) => {
     switch (block.type) {
@@ -254,6 +276,13 @@ export function rebuildDocx(original: Uint8Array, blocks: Block[]): Uint8Array {
         break;
       case "rule":
         body.push(paragraph("", `<${w}:pBdr><${w}:bottom ${w}:val="single" ${w}:sz="6" ${w}:space="1" ${w}:color="auto"/></${w}:pBdr>`));
+        break;
+      case "embed":
+        body.push(paragraph(runs(embedLine(block.embed))));
+        break;
+      case "image":
+        body.push(paragraph(picture(block), jc(block.align)));
+        if (block.caption) body.push(paragraph(run({ text: block.caption, href: block.href }, { size: 18 }), jc(block.align)));
         break;
       case "table": {
         const width = Math.max(1, ...block.rows.map((row) => row.length));
@@ -288,6 +317,18 @@ export function rebuildDocx(original: Uint8Array, blocks: Block[]): Uint8Array {
     if (types && !types.includes(`PartName="${partName}"`)) {
       next[typesPath] = strToU8(types.replace(/<\/Types>\s*$/, `<Override PartName="${partName}" ContentType="${NUMBERING_TYPE}"/></Types>`));
     }
+  }
+  if (media.length) {
+    for (const item of media) next[item.path] = item.bytes;
+    const typesPath = "[Content_Types].xml";
+    let types = next[typesPath] ? strFromU8(next[typesPath]!) : "";
+    for (const extension of new Set(media.map((item) => item.extension))) {
+      const file = extension === "jpeg" ? ["jpeg", "jpg"] : ["png"];
+      if (types && !file.some((ext) => new RegExp(`<Default\\b[^>]*Extension="${ext}"`, "i").test(types))) {
+        types = types.replace(/<\/Types>\s*$/, `<Default Extension="${extension}" ContentType="image/${extension}"/></Types>`);
+      }
+    }
+    if (types) next[typesPath] = strToU8(types);
   }
   if (rels.xml !== (files[relsPath] ? strFromU8(files[relsPath]) : null)) next[relsPath] = strToU8(rels.xml);
   return zipSync(next);

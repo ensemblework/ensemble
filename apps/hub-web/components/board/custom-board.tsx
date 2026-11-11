@@ -5,7 +5,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSo
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Ellipsis, FilePlus2, FileText, Plus, Settings2 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BoardPage, PageBoardColumn, PatchPageBoard } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
@@ -147,6 +147,19 @@ export function CustomBoard({ id }: { id: string }) {
     }
     remove.mutate(page);
   };
+  const deleteLatest = useRef(deletePage);
+  deleteLatest.current = deletePage;
+  const removeCard = useCallback((page: BoardPage) => deleteLatest.current(page), []);
+  // Card contents are built once per data change. While a card is in the air the board renders on every
+  // column change, and the cards' contents do not change then.
+  const bodies = useMemo(() => {
+    const out = new Map<string, ReactNode>();
+    for (const page of query.data?.pages ?? []) {
+      const task = page.kind === "task" ? taskById.get(page.id) : undefined;
+      out.set(page.id, task ? <CardBody task={{ ...task, title: page.title || task.title }} onDelete={editable ? () => removeCard(page) : undefined} /> : <PageCardBody page={page} onDelete={editable ? removeCard : undefined} />);
+    }
+    return out;
+  }, [query.data?.pages, taskById, editable, removeCard]);
   const openPage = (pageId: string) => {
     const page = byId.get(pageId);
     if (page) peek.open(page.id, page.kind === "task" ? "task" : "page");
@@ -312,7 +325,7 @@ export function CustomBoard({ id }: { id: string }) {
                                 : pageMenu({ id: page.id, title: page.title }, { client, toast, navigate: router.push, peek: openPage, remove: editable ? () => deletePage(page) : undefined }),
                           })}
                         >
-                          {task ? <CardBody task={{ ...task, title: page.title || task.title }} onDelete={editable ? () => deletePage(page) : undefined} /> : <PageCardBody page={page} onDelete={editable ? deletePage : undefined} />}
+                          {bodies.get(page.id)}
                         </SortableBoardCard>
                       ) : null;
                     })}

@@ -728,6 +728,11 @@ const DRIVERS: Record<SubscriptionProvider, Driver> = {
 /** Turns of one chat, one at a time: they share its session and its folder. */
 const chats = new Map<string, Promise<unknown>>();
 
+/** Resolves once the chat's turn in progress here (if any) has ended, so its session is not saved again after it is deleted. */
+export async function chatSettled(key: string): Promise<void> {
+  while (chats.has(key)) await chats.get(key)!.catch(() => undefined);
+}
+
 /** A node's project folder in the Ensemble workspace (agent-projects.ts); null when there is none here. */
 async function groupFolder(group: SessionGroup): Promise<string | null> {
   try {

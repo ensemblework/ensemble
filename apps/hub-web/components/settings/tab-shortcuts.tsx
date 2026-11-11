@@ -16,6 +16,7 @@ import {
 import { api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
 import { SHORTCUTS_PREFERENCE, useShortcuts } from "@/lib/shortcut-store";
+import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "../toast";
 import { SectionCard, cx } from "../ui";
 
@@ -76,21 +77,23 @@ export function ShortcutsTab() {
     <>
       <SectionCard
         title="Keyboard shortcuts"
-        description={
-          apple
-            ? "Change any shortcut marked Change. Use Command or Option with a key. Shortcuts your browser or macOS already uses are refused, so nothing like Command-P stops printing."
-            : "Change any shortcut marked Change. Use Ctrl or Alt with a key. Shortcuts your browser or system already uses are refused, so nothing like Ctrl+P stops printing."
+        description={changed ? `Any shortcut marked Change can take new keys. ${changed} changed.` : "Any shortcut marked Change can take new keys."}
+        info={
+          <>
+            {apple
+              ? "Use Command or Option with a key. Shortcuts your browser or macOS already uses are refused, so nothing like Command-P stops printing."
+              : "Use Ctrl or Alt with a key. Shortcuts your browser or system already uses are refused, so nothing like Ctrl+P stops printing."}{" "}
+            Two-key shortcuts such as G then T work anywhere you are not typing; a chord you add works alongside them.
+          </>
         }
         actions={
           changed ? (
-            <button type="button" className="btn" disabled={save.isPending} onClick={() => save.mutate({})}>
+            <button type="button" className="btn" disabled={save.isPending} onClick={() => void confirmAction({ title: "Reset every shortcut?", body: "All shortcuts go back to the keys Ensemble came with.", confirm: "Reset all" }).then((yes) => yes && save.mutate({}))}>
               Reset all
             </button>
           ) : null
         }
-      >
-        <p className="text-[12.5px] text-muted">Two-key shortcuts such as <span className="kbd">G</span> then <span className="kbd">T</span> work anywhere you are not typing. A chord you add works alongside them.</p>
-      </SectionCard>
+      />
       {groups.map(({ group, rows }) => (
         <SectionCard key={group} title={group}>
           <ul className="divide-y divide-line" data-shortcut-group={group}>

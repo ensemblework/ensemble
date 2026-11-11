@@ -187,7 +187,8 @@ export function CalendarLinksSection() {
   return (
     <SectionCard
       title="Calendars on Today"
-      description="Google Calendar, Outlook and these calendar links show on Today as one calendar: a meeting or holiday in several of them shows once. They are read every 30 minutes and when you sync."
+      description="Google Calendar, Outlook and these links, as one calendar on Today."
+      info="A meeting or holiday in several of them shows once. They are read every 30 minutes and when you sync."
       actions={
         <>
           <button type="button" className="btn" onClick={() => sync.mutate()} disabled={sync.isPending}>

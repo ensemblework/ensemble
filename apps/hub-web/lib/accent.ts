@@ -158,6 +158,7 @@ function paintStoredAppearance(): void {
     theme?: string;
     colorTheme?: string;
     font?: string;
+    doodle?: string;
     textScale?: number;
     reduceMotion?: boolean;
     sidebarAutoCollapse?: boolean;
@@ -184,6 +185,8 @@ function paintStoredAppearance(): void {
   const localPalette = palettes.includes(raw.colorTheme || "") ? raw.colorTheme : undefined;
   const cookiePalette = palettes.includes(paletteParts[0] || "") ? paletteParts[0] : undefined;
   root.dataset.colorTheme = cookiePalette && (!localPalette || Number(paletteParts[1]) > localAt) ? cookiePalette : localPalette || cookiePalette || "ensemble";
+  const doodles = ["theme", "none", "constellation", "orbits", "galaxy", "stardust", "ripples", "network", "contours", "waves", "weave", "dots", "circuits", "graph"];
+  root.dataset.doodle = doodles.includes(raw.doodle || "") ? raw.doodle! : "theme";
   root.dataset.font = raw.font || "system";
   root.dataset.sidebarAuto = String(!!raw.sidebarAutoCollapse);
   if (raw.textScale) root.style.setProperty("--text-scale", String(Math.max(80, Math.min(130, raw.textScale)) / 100));

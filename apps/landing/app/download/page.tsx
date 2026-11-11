@@ -184,8 +184,8 @@ export default function DownloadPage() {
               <h3>Where do keys live?</h3>
               <p>
                 Model keys you add with <code>/keys</code> or in the desktop app stay encrypted on your computer and are never sent to Ensemble. Claude Code,
-                Codex and Cursor use their own sign-in. MCP is read-only: the <code>ens_</code> key the CLI or the Connect page creates can read your
-                Ensemble context and cannot change anything.
+                Codex and Cursor use their own sign-in. The <code>ens_</code> key the CLI or the Connect page creates reads your Ensemble context, and makes
+                changes only if you allowed that when you made it.
               </p>
             </article>
             <article>

@@ -125,6 +125,64 @@ function PdfPage({ doc, number, scale, size, root, onSize }: { doc: PDFDocumentP
   );
 }
 
+/**
+ * The PDF on a page or task: every page, fitted to the card's width, in its own scroll box. Pages
+ * draw as they come near. The page count follows the scroll.
+ */
+function CompactPdf({ file, doc, first, pages }: { file: ViewerProps["file"]; doc: PDFDocumentProxy; first: Size; pages: number }) {
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  const [sizes, setSizes] = useState<Record<number, Size>>({});
+  const [current, setCurrent] = useState(1);
+  const onSize = useCallback((number: number, size: Size) => setSizes((all) => (all[number] ? all : { ...all, [number]: size })), []);
+  useLayoutEffect(() => {
+    if (!scroller) return;
+    setWidth(scroller.clientWidth);
+    const observer = new ResizeObserver(() => setWidth(scroller.clientWidth));
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [scroller]);
+  const gap = 8;
+  const scale = width ? Math.max(0.1, (width - 2 * gap) / first.width) : 0;
+  const sizeOf = (number: number) => sizes[number] ?? first;
+  const onScroll = () => {
+    if (!scroller || !scale) return;
+    const middle = scroller.scrollTop + scroller.clientHeight / 3;
+    let top = gap;
+    for (let number = 1; number <= pages; number += 1) {
+      top += sizeOf(number).height * scale + gap;
+      if (middle < top) {
+        if (number !== current) setCurrent(number);
+        return;
+      }
+    }
+  };
+  return (
+    <div className="relative h-full bg-raised" data-pdf-compact>
+      <div
+        ref={setScroller}
+        onScroll={onScroll}
+        className="embed-scroll h-full overflow-y-auto overflow-x-hidden"
+        tabIndex={0}
+        aria-label={`${file.filename}, ${pages} ${pages === 1 ? "page" : "pages"}`}
+      >
+        {scale ? (
+          <div className="flex flex-col items-center" style={{ gap, padding: gap }}>
+            {Array.from({ length: pages }, (_, index) => (
+              <PdfPage key={index + 1} doc={doc} number={index + 1} scale={scale} size={sizeOf(index + 1)} root={scroller} onSize={onSize} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {pages ? (
+        <span className="pointer-events-none absolute bottom-2 right-3 rounded-md bg-black/60 px-1.5 py-0.5 text-[11.5px] tabular-nums text-white" aria-hidden>
+          {pages > 1 ? `${current} of ${pages}` : "1 page"}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /** PDF pages drawn with pdf.js: pages render as they scroll into view; zoom and page count in the toolbar. */
 export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
   const state = usePdf(bytes);
@@ -145,10 +203,11 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
   const sizeOf = (number: number) => sizes[number] ?? first!;
 
   if (compact) {
-    return (
-      <div ref={frame} className="relative h-full overflow-hidden bg-raised" data-pdf-compact>
-        {doc && first && width ? <PdfPage doc={doc} number={1} scale={fit} size={first} root={null} /> : <div className="flex h-full items-center justify-center"><Spinner /></div>}
-        {pages ? <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11.5px] text-white">1 of {pages} {pages === 1 ? "page" : "pages"}</span> : null}
+    return doc && first ? (
+      <CompactPdf file={file} doc={doc} first={first} pages={pages} />
+    ) : (
+      <div className="flex h-full items-center justify-center bg-raised" data-pdf-compact>
+        <Spinner />
       </div>
     );
   }

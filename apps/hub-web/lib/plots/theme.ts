@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { seriesColor, type PlotConfig } from "@ensemble/shared-types";
 import type { PlotTheme } from "@/lib/plots/option";
+import { ACCENT_PRESETS, resolveAccent } from "@/lib/accent";
 
 export function readPlotTheme(): PlotTheme {
   const style = getComputedStyle(document.documentElement);
@@ -15,6 +16,24 @@ export function readPlotTheme(): PlotTheme {
     accent: pick("--accent", "#5346d6"),
     dark: document.documentElement.dataset.theme !== "light",
   };
+}
+
+/**
+ * Light colours for charts that leave the screen (page exports, printing): white paper and dark
+ * ink whatever the app's theme, with the person's accent in its light shade.
+ */
+export function printPlotTheme(): PlotTheme {
+  const live = hexColor(readPlotTheme().accent, "#5346d6");
+  const preset = ACCENT_PRESETS.find((option) => option.dark.toLowerCase() === live || option.light.toLowerCase() === live);
+  let accent = preset?.light ?? live;
+  if (!preset) {
+    try {
+      accent = resolveAccent(live, "light").hex;
+    } catch {
+      accent = live;
+    }
+  }
+  return { ink: "#1c1915", muted: "#6d675e", line: "#e4ddd2", panel: "#ffffff", accent, dark: false };
 }
 
 /** Theme colours read after mount, so swatches show what the chart draws (and SSR does not touch the DOM). */

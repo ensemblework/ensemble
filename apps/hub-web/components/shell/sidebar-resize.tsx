@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { perFrame } from "@/lib/motion/drag";
 import { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN, setSidebarWidth } from "@/lib/sidebar-rail";
 
 /** The sidebar's right edge: drag to resize (184 to 360 px), double-click for the default. Arrow keys work too. */
@@ -36,10 +37,18 @@ export function SidebarResize() {
         let last = start;
         setActive(true);
         document.body.dataset.sidebarResizing = "1";
-        const move = (next: PointerEvent) => {
-          last = setSidebarWidth(start + next.clientX - x0);
-        };
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // the pointer already ended
+        }
+        // Each width lays the whole app out again: once a frame at most.
+        const resize = perFrame((clientX: number) => {
+          last = setSidebarWidth(start + clientX - x0);
+        });
+        const move = (next: PointerEvent) => resize(next.clientX);
         const end = () => {
+          resize.flush();
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", end);
           window.removeEventListener("pointercancel", end);

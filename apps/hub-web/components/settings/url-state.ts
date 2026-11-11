@@ -1,20 +1,31 @@
 "use client";
 
-import { SETTINGS_DESTINATIONS } from "./navigation";
+import { SETTINGS_DESTINATION_BY_ID } from "./navigation";
 import { useMemo, useSyncExternalStore } from "react";
 
-export type SettingsTab = "account" | "appearance" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
+export type SettingsTab = "account" | "appearance" | "notifications" | "shortcuts" | "assistant" | "agents" | "connections" | "spaces" | "sharing" | "data";
 
-export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint: string }> = [
-  { id: "account", label: "Account", hint: "Profile, security, features" },
-  { id: "appearance", label: "Appearance", hint: "Theme, colors, text, navigation" },
-  { id: "spaces", label: "Spaces", hint: "Your spaces, and shared settings" },
-  { id: "sharing", label: "Sharing", hint: "Contacts, what you share, shared with you" },
-  { id: "assistant", label: "Assistant", hint: "Models, autonomy, what it may change" },
-  { id: "connections", label: "Connections", hint: "Apps, calendars, imports, editors, devices" },
-  { id: "notifications", label: "Notifications", hint: "Brief, nudges, reminders" },
-  { id: "shortcuts", label: "Shortcuts", hint: "See and change key bindings" },
-  { id: "data", label: "Data", hint: "Retention, trash, deletion" },
+export type SettingsTabGroup = "personal" | "ai" | "workspace";
+
+/** The groups the Settings nav shows, in order. */
+export const SETTINGS_TAB_GROUPS: ReadonlyArray<{ id: SettingsTabGroup; label: string }> = [
+  { id: "personal", label: "Personal" },
+  { id: "ai", label: "AI" },
+  { id: "workspace", label: "Workspace" },
+];
+
+/** The tabs in nav order: what most people open first leads each group. `hint` is search words and the tab's tooltip. */
+export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint: string; group: SettingsTabGroup }> = [
+  { id: "account", label: "Account", hint: "Profile, sign-in, time zone, features", group: "personal" },
+  { id: "appearance", label: "Appearance", hint: "Theme, colors, text, layout", group: "personal" },
+  { id: "notifications", label: "Notifications", hint: "Desktop, quiet hours, brief, nudges, reminders", group: "personal" },
+  { id: "shortcuts", label: "Shortcuts", hint: "See and change key bindings", group: "personal" },
+  { id: "assistant", label: "Assistant", hint: "Models, keys, what it may change, automations", group: "ai" },
+  { id: "agents", label: "Agents", hint: "Autonomy, run profiles, limits, sandbox, code", group: "ai" },
+  { id: "connections", label: "Connections", hint: "Apps, calendars, editors, computers, imports", group: "workspace" },
+  { id: "spaces", label: "Spaces", hint: "Your spaces, and shared settings", group: "workspace" },
+  { id: "sharing", label: "Sharing", hint: "Contacts, what you share, shared with you", group: "workspace" },
+  { id: "data", label: "Data", hint: "Export, retention, trash, deletion", group: "workspace" },
 ];
 
 /**
@@ -23,12 +34,13 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint
  * from elsewhere in the app and from older bookmarks still land.
  */
 export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
-  ...Object.fromEntries(SETTINGS_DESTINATIONS.map(row => [row.id, row.tab])),
+  ...Object.fromEntries([...SETTINGS_DESTINATION_BY_ID].map(([id, row]) => [id, row.tab])),
   export: "data",
   account: "account",
   profile: "account",
   avatar: "account",
   features: "account",
+  about: "account",
   appearance: "appearance",
   you: "account",
   "this-mac": "account",
@@ -37,21 +49,26 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   keys: "assistant",
   changes: "assistant",
   watchers: "assistant",
-  autonomy: "assistant",
-  orchestration: "assistant",
-  quiet: "assistant",
+  automations: "assistant",
   prompts: "assistant",
+  autonomy: "agents",
+  orchestration: "agents",
+  "run-profiles": "agents",
+  terminal: "agents",
   connections: "connections",
   calendars: "connections",
   imports: "connections",
   fetch: "connections",
+  failed: "connections",
   connect: "connections",
   editors: "connections",
   devices: "connections",
+  reminders: "notifications",
+  quiet: "notifications",
+  "quiet-hours": "notifications",
   brief: "notifications",
   routines: "notifications",
   nudges: "notifications",
-  reminders: "notifications",
   capture: "notifications",
   shortcuts: "shortcuts",
   keyboard: "shortcuts",
@@ -61,11 +78,23 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   retention: "data",
   completed: "data",
   trash: "data",
-  terminal: "data",
-  failed: "data",
   deleted: "data",
   danger: "data",
   "jump-account-delete-account": "data",
+};
+
+/**
+ * Sections that moved to another tab, by the tab that used to hold them. A link written then
+ * (`?tab=assistant#quiet`) opens where the section is now.
+ */
+const MOVED_FROM: Readonly<Record<string, SettingsTab>> = {
+  appearance: "account",
+  quiet: "assistant",
+  autonomy: "assistant",
+  orchestration: "assistant",
+  "run-profiles": "assistant",
+  terminal: "data",
+  failed: "data",
 };
 
 /** Dialogs that can be opened from the address: /settings?tab=assistant&dialog=keys. */
@@ -95,10 +124,11 @@ export function parseSettingsLocation(search: string, hash: string): SettingsLoc
   const rawDialog = params.get("dialog");
   const dialog = DIALOGS.includes(rawDialog as SettingsDialog) ? (rawDialog as SettingsDialog) : null;
   const rawTab = params.get("tab");
-  const tab: SettingsTab = anchor === "jump-account-delete-account"
-    ? "data"
-    : rawTab === "account" && anchor && SECTION_TAB[anchor] === "appearance"
-    ? "appearance"
+  // A control's jump anchor names exactly one place, so it wins over a ?tab= written before that control moved.
+  const jump = anchor ? SETTINGS_DESTINATION_BY_ID.get(anchor) : undefined;
+  const moved = anchor && rawTab && (jump ? jump.tab !== rawTab : MOVED_FROM[anchor] === rawTab) ? SECTION_TAB[anchor] : undefined;
+  const tab: SettingsTab = moved
+    ? moved
     : isSettingsTab(rawTab)
     ? rawTab
     : anchor && SECTION_TAB[anchor]

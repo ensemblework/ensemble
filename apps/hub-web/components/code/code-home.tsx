@@ -11,6 +11,7 @@ import {
   Check,
   ChevronDown,
   Code2,
+  Command,
   FileCode2,
   FolderGit2,
   FolderOpen,
@@ -34,8 +35,9 @@ import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 
 import { jobTone } from "@/components/agent/job-card";
 import { Fold, InlineError, Lines, RepoList, ReviewItem } from "@/components/code/code-lists";
 import { ComputersCode, matchRepos } from "@/components/code/computers-code";
-import { ActivityBar, BottomPanel, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
-import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
+import { ActivityBar, BottomPanel, FONT_DEFAULT, FONT_MAX, FONT_MIN, FontSizeControl, OnlineDot, PanelHeader, SidePanel, StatusBar, StatusItem, useIdeKeys, useIdeLayout } from "@/components/code/ide-chrome";
+import { IdeSpace, THEME_PICKER_EVENT, ThemeControl } from "@/components/code/ide-theme";
+import { QuickOpen, useKeyLabel, useLinkNavigate, type QuickList } from "@/components/code/quick-open";
 import { RunCode } from "@/components/code/run-code";
 import { Terminal } from "@/components/code/terminal";
 import { ShareButton } from "@/components/sharing/share-dialog";
@@ -44,6 +46,7 @@ import { useSpaceAccess } from "@/lib/access";
 import { api, type AgentJob } from "@/lib/api";
 import { repoHref, useCodeHome, type CodeHome as Home, type CodePlace, type HomeRepo, type HomeReview } from "@/lib/code-home";
 import { remoteLabel, repoName, repoSecond, repoView, usedWithin, viewFor } from "@/lib/code-repos";
+import { parseQuickInput, rankByLabel } from "@/lib/code-quick-open";
 import { relative } from "@/lib/format";
 import { usePersistentState } from "@/lib/prefs";
 
@@ -61,7 +64,11 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
   const viewOnly = access.guest;
   const home = useCodeHome();
   const layout = useIdeLayout();
-  useIdeKeys(layout);
+  const [quick, setQuick] = useState<{ text: string; nonce: number } | null>(null);
+  const openQuick = (text: string) => setQuick({ text, nonce: Date.now() });
+  useIdeKeys(layout, openQuick);
+  const label = useKeyLabel();
+  const navigate = useLinkNavigate();
   const { sideOpen, setSideOpen, showSide, terminal, setTerminal, fontSize, setFontSize } = layout;
   const [panel, setPanel] = usePersistentState<HomePanel>("ensemble.code.homePanel", "repos");
   const [computerId, setComputerId] = usePersistentState<string | null>("ensemble.code.computer", null);
@@ -76,10 +83,6 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
   const openPanel = (id: HomePanel) => {
     setPanel(id);
     showSide();
-  };
-  const openRepos = () => {
-    openPanel("repos");
-    window.setTimeout(() => filterField.current?.focus(), 30);
   };
 
   // Search and jump's destinations (`/code#local-repositories`, `/code#reviews`).
@@ -113,6 +116,44 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
 
   const job = useQuery({ queryKey: ["job", jobId], queryFn: () => api.job(jobId!), enabled: Boolean(jobId) });
 
+  /** Quick open on the Welcome: repositories by name (Ctrl/⌘+P), or the window's commands (`>`). */
+  const resolveQuick = (text: string): QuickList => {
+    const input = parseQuickInput(text);
+    if (input.mode === "commands") {
+      const commands = [
+        { id: "open-repo", label: "Open a repository…", keys: "mod+p", run: () => openQuick("") },
+        { id: "reviews", label: "Show the changes to review", run: () => openPanel("scm") },
+        { id: "explorer", label: "Show the explorer", run: () => openPanel("repos") },
+        { id: "side", label: sideOpen ? "Hide the side panel" : "Show the side panel", keys: "mod+b", run: () => setSideOpen(!sideOpen) },
+        ...(canTerminal ? [{ id: "terminal", label: terminal ? "Hide the terminal" : "Show the terminal", keys: "ctrl+`", run: () => setTerminal(!terminal) }] : []),
+        { id: "theme", label: "Color theme…", run: () => window.dispatchEvent(new Event(THEME_PICKER_EVENT)) },
+        { id: "bigger", label: "Bigger code text", keys: "mod+shift+=", run: () => setFontSize(Math.min(FONT_MAX, fontSize + 1)) },
+        { id: "smaller", label: "Smaller code text", keys: "mod+shift+-", run: () => setFontSize(Math.max(FONT_MIN, fontSize - 1)) },
+        { id: "reset-size", label: "Reset code text size", keys: "mod+shift+0", run: () => setFontSize(FONT_DEFAULT) },
+        { id: "full", label: full ? "Leave full screen" : "Full screen", run: () => setFull(!full) },
+        { id: "runs", label: "Show agent runs", run: () => navigate.go("/runs") },
+        home.mode === "computers" ? { id: "computers", label: "Your computers", run: () => navigate.go("/settings#devices") } : { id: "folders", label: "Folders Code can use", run: () => navigate.go("/settings#terminal") },
+      ];
+      return { placeholder: "Type the name of a command", empty: "No command matches.", items: rankByLabel(input.query, commands).map((row) => ({ id: row.id, label: row.label, keys: row.keys, hits: row.hits, run: row.run })) };
+    }
+    const several = home.states.length > 1;
+    const repos = home.repos.map((repo) => ({ repo, label: repo.name }));
+    const query = input.mode === "files" ? input.query : "";
+    return {
+      placeholder: "Open a repository by name. > for commands",
+      empty: home.reposLoading ? "Reading the repositories…" : query ? "No repository matches." : "No repositories yet.",
+      items: rankByLabel(query, repos).slice(0, 50).map(({ repo, hits }) => ({
+        id: `${repo.place.key}:${repo.path}`,
+        label: repo.name,
+        hits,
+        detail: [repoSecond(repo, several ? repo.place.name : null)].filter(Boolean).join(" · ") || undefined,
+        icon: <FolderGit2 size={14} className="text-muted" />,
+        group: repo.kind === "run" ? "agent worktree" : undefined,
+        run: () => navigate.go(repo.href),
+      })),
+    };
+  };
+
   return (
     <IdeSpace className={cx("flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg", full ? "fixed inset-0 z-[70]" : "relative h-full")} root>
       <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -144,7 +185,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
           {panel === "repos" ? (
             <ExplorerPanel home={home} filter={filter} setFilter={setFilter} field={filterField} selected={selected} onTerminal={(place) => openTerminal(place)} noComputer={noComputer} />
           ) : panel === "search" ? (
-            <SearchPanel onOpenRepos={openRepos} />
+            <SearchPanel onOpenRepos={() => openQuick("")} />
           ) : (
             <ReviewsPanel home={home} />
           )}
@@ -195,9 +236,10 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
               noComputer={noComputer}
               viewOnly={viewOnly}
               canTerminal={canTerminal}
-              onOpenRepos={openRepos}
+              onOpenRepos={() => openQuick("")}
               onReviews={() => openPanel("scm")}
               onTerminal={() => openTerminal()}
+              onCommands={() => openQuick(">")}
             />
           )}
 
@@ -215,7 +257,7 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
             align="left"
             width={260}
             trigger={(open, toggle) => (
-              <button type="button" onClick={toggle} aria-expanded={open} title="Which computer the terminal and this bar are about" className="flex h-full items-center gap-1 rounded-sm px-1.5 hover:bg-hover hover:text-ink">
+              <button type="button" onClick={toggle} aria-expanded={open} title="Which computer the terminal and this bar are about" className="ide-status-place" data-offline={selected?.online === false ? "" : undefined}>
                 <PlaceLabel place={selected} />
                 <ChevronDown size={10} />
               </button>
@@ -238,9 +280,9 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
             }
           </Popover>
         ) : selected ? (
-          <StatusItem title={selected.online ? "Online" : "Offline"}>
+          <span className="ide-status-place" data-offline={selected.online ? undefined : ""} title={selected.online ? "Online" : "Offline"}>
             <PlaceLabel place={selected} />
-          </StatusItem>
+          </span>
         ) : null}
         {selected?.version ? <StatusItem className="max-sm:hidden" title={selected.target.kind === "local" ? "Ensemble's version" : "Ensemble's version on this computer"}>v{selected.version}</StatusItem> : null}
         {home.mode !== "loading" && !noComputer ? (
@@ -256,6 +298,8 @@ export function CodeHome({ jobId, file, onCloseRun }: { jobId: string | null; fi
         <div className="flex-1" />
         <FontSizeControl fontSize={fontSize} setFontSize={setFontSize} />
       </StatusBar>
+      {quick ? <QuickOpen key={quick.nonce} initial={quick.text} resolve={resolveQuick} onClose={() => setQuick(null)} /> : null}
+      {navigate.link}
     </IdeSpace>
   );
 }
@@ -476,6 +520,7 @@ function Welcome({
   onOpenRepos,
   onReviews,
   onTerminal,
+  onCommands,
 }: {
   home: Home;
   needs: HomeReview[];
@@ -485,8 +530,10 @@ function Welcome({
   onOpenRepos: () => void;
   onReviews: () => void;
   onTerminal: () => void;
+  onCommands: () => void;
 }) {
   const several = home.states.length > 1;
+  const label = useKeyLabel();
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden" data-testid="code-welcome">
       <div className="mx-auto w-full max-w-[1040px] px-4 pb-16 pt-8 sm:px-10 md:pt-14">
@@ -521,9 +568,10 @@ function Welcome({
             <div className="min-w-0 space-y-10">
               <Section title="Start">
                 <div className="space-y-0.5">
-                  <StartItem icon={FolderOpen} label="Open a repository…" hint="Ctrl+B" onClick={onOpenRepos} />
+                  <StartItem icon={FolderOpen} label="Open a repository…" hint={label("mod+p")} onClick={onOpenRepos} />
                   <StartItem icon={GitPullRequestArrow} label="Review agent changes" hint={needs.length ? String(needs.length) : undefined} onClick={onReviews} />
-                  {viewOnly ? null : <StartItem icon={TerminalSquare} label="Open terminal" hint="Ctrl+`" onClick={onTerminal} disabled={!canTerminal} />}
+                  {viewOnly ? null : <StartItem icon={TerminalSquare} label="Open terminal" hint={label("ctrl+`")} onClick={onTerminal} disabled={!canTerminal} />}
+                  <StartItem icon={Command} label="Show all commands" hint={label("mod+shift+p")} onClick={onCommands} />
                   {home.mode === "computers" ? (
                     <StartItem icon={Laptop} label="Your computers" href="/settings#devices" />
                   ) : (

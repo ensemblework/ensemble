@@ -231,7 +231,8 @@ export function editorExtensions(
   return [
     // dir="auto" lets each line of Arabic, Hebrew or Persian run right to left on its own. It is
     // only how lines render, not part of the saved page. Lists, quotes, cells and summaries hold these lines.
-    StarterKit.configure({ heading: { levels: [1, 2, 3], HTMLAttributes: { dir: "auto" } }, paragraph: { HTMLAttributes: { dir: "auto" } } }),
+    // The line where dropped files, links and text land: the accent, like the line a dragged block shows.
+    StarterKit.configure({ heading: { levels: [1, 2, 3], HTMLAttributes: { dir: "auto" } }, paragraph: { HTMLAttributes: { dir: "auto" } }, dropcursor: { color: "rgb(var(--accent-rgb))", width: 3, class: "page-drop-cursor" } }),
     Placeholder.configure({
       // Only an empty line shows a hint. A collapsible block's summary has its own (toggle-block.ts);
       // an empty table, list or quote is not an empty line.

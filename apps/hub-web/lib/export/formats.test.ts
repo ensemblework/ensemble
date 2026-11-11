@@ -93,3 +93,48 @@ test("a Word table has a repeating, shaded, bold header row and keeps formatting
   assert.match(xml, /<w:hyperlink [^>]*><w:r><w:rPr><w:rStyle w:val="Hyperlink"\/><w:b\/><w:bCs\/><\/w:rPr><w:t xml:space="preserve">docs<\/w:t>/);
   assert.match(xml, /<w:i\/><w:iCs\/><\/w:rPr><w:t xml:space="preserve">Decent<\/w:t>/);
 });
+
+// A 1×1 PNG.
+const PNG = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="), (char) => char.charCodeAt(0));
+
+test("a PDF draws plots and diagrams as pictures with a linked caption, and names what it could not draw", async () => {
+  const blob = await toPdf({
+    title: "Results",
+    blocks: [
+      { type: "image", kind: "plot", png: PNG, width: 720, height: 360, alt: "Ablation bars", caption: "Ablation bars", href: "https://app.example.com/plots/p-1", fill: true },
+      { type: "embed", embed: { kind: "file", id: "f-1", label: "sample.pdf", href: "https://app.example.com/files/f-1" } },
+    ],
+  });
+  const raw = new TextDecoder("latin1").decode(await blob.arrayBuffer());
+  assert.ok(/\/Subtype \/Image/.test(raw), "the chart is an image in the PDF");
+  assert.ok(raw.includes("(Ablation bars) Tj"), "its caption is under it");
+  assert.ok(raw.includes("/URI (https://app.example.com/plots/p-1)"), "the picture and caption link back to the plot");
+  assert.ok(raw.includes("(sample.pdf) Tj") && raw.includes("/URI (https://app.example.com/files/f-1)"), "an attachment is a link to it");
+  assert.ok(!raw.includes("@sample"));
+  assert.ok(!raw.includes("(Plot: ) Tj"), "a drawn plot is not also named as a link");
+});
+
+test("a bitmap the PDF cannot read is named and linked instead of breaking the file", async () => {
+  const blob = await toPdf({ title: "Results", blocks: [{ type: "image", kind: "plot", png: new Uint8Array([1, 2, 3]), width: 720, height: 360, alt: "Broken", caption: "Broken", href: "https://app.example.com/plots/p-2", fill: true }] });
+  const raw = new TextDecoder("latin1").decode(await blob.arrayBuffer());
+  assert.ok(raw.includes("(Plot: ) Tj") && raw.includes("(Broken) Tj"));
+  assert.ok(raw.includes("/URI (https://app.example.com/plots/p-2)"));
+});
+
+test("a Word file holds the picture as media and the attachment as a hyperlink", async () => {
+  const blob = await toDocx({
+    title: "Results",
+    blocks: [
+      { type: "image", kind: "diagram", png: PNG, width: 400, height: 200, alt: "Pipeline", caption: "Pipeline", href: "https://app.example.com/diagrams/d-1", fill: true },
+      { type: "embed", embed: { kind: "file", id: "f-1", label: "notes.docx", href: "https://app.example.com/files/f-1" } },
+    ],
+  });
+  const files = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+  assert.ok(Object.keys(files).some((name) => /^word\/media\/.+\.png$/.test(name)), "the picture is stored in the file");
+  const xml = strFromU8(files["word/document.xml"]!);
+  assert.match(xml, /<w:drawing>/);
+  assert.match(xml, /descr="Pipeline"/);
+  // 400 px at 1.5x is 600 px, inside A4's 601 px text column; 9525 EMU each.
+  assert.match(xml, /<wp:extent cx="5715000" cy="2857500"\/>/);
+  assert.match(xml, /<w:t xml:space="preserve">notes\.docx<\/w:t>/);
+});

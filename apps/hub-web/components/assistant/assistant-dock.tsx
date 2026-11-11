@@ -7,13 +7,13 @@ import { createPortal } from "react-dom";
 
 import { LayerFloor, Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Unplug, X } from "lucide-react";
-import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, History, Maximize2, Minimize2, Plus, Quote, RotateCcw, Trash2, Unplug, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
+import { ToolProposals, ToolSteps } from "./tool-calls";
 import { asksForIds, assistantErrorText, ASSISTANT_UNAVAILABLE, CHAT_FILES_MAX, CONNECT_COMPUTER_HREF, formatChord, formatEntityText, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type AssistantRef, type PageMention } from "@ensemble/shared-types";
 import { callRefs, replyContext, savedRefs, type ReplyContext } from "@/lib/assistant-refs";
 import { isApplePlatform } from "@/lib/platform";
@@ -21,9 +21,9 @@ import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
-import { applyNotice, applyRepliesToCache, refreshAfterAssistantWrite } from "@/lib/assistant-apply";
+import { refreshAfterAssistantWrite } from "@/lib/assistant-apply";
 import { useAutoGrow } from "@/lib/auto-grow";
-import { plural, relative } from "@/lib/format";
+import { relative } from "@/lib/format";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
 import { includedLocalOnly, includedNote, includedRefusal, INCLUDED_USAGE_KEY, needsConnection, refreshIncluded, tierModelLabel, tierModelName, useIncludedUsage } from "@/lib/included";
 import { IncludedLocalOnly } from "@/components/metrics/included-credits";
@@ -81,6 +81,7 @@ export function starterPrompts(pathname: string, now = new Date()): string[] {
   if (on("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?", "How can I spend less?"];
   if (on("/settings")) return ["Which settings should I check?", "Connect my calendar.", "Turn on quiet hours."];
   if (on("/shared")) return ["What was shared with me lately?", "Summarize what my team shared.", "Which shared pages changed?"];
+  if (on("/connect")) return ["Connect Ensemble to Claude Code in VS Code.", "Which way should I connect my editor?", "My editor does not show Ensemble."];
   if (hour >= 17) return ["Wrap up my day.", "What is left for tomorrow?", "Turn today's notes into tasks."];
   return ["Plan my day.", "What is due this week?", "Turn a note into tasks."];
 }
@@ -96,131 +97,6 @@ export function greeting(name: string | null | undefined, now = new Date()): str
 const ASSISTANT_LAYER = 2000;
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
-
-function ToolCall({ call, conversationId, refs }: { call: AssistantToolCallRecord; conversationId: string | null; refs?: readonly AssistantRef[] }) {
-  const toast = useToast();
-  const client = useQueryClient();
-  const [local, setLocal] = useState<{ phase: "applied" | "undone"; entryId: string | null } | null>(null);
-  const entryId = local?.entryId ?? call.undoEntryId ?? null;
-  const phase = local?.phase ?? (call.state === "undone" ? "undone" : call.state === "ok" ? "applied" : "pending");
-  useEffect(() => {
-    const onUndo = (event: Event) => {
-      const detail = (event as CustomEvent<{ entryId?: string; direction?: string }>).detail;
-      if (!entryId || detail?.entryId !== entryId) return;
-      setLocal({ phase: detail.direction === "redo" ? "applied" : "undone", entryId });
-    };
-    window.addEventListener("ensemble:undo", onUndo);
-    return () => window.removeEventListener("ensemble:undo", onUndo);
-  }, [entryId]);
-  const apply = useMutation({
-    mutationFn: () => api.applyAssistant({ name: call.name, input: call.input ?? {}, conversationId: conversationId ?? undefined, callId: call.id }),
-    onSuccess: (result) => {
-      const failedHere = result.failed?.some(item => item.callId === call.id);
-      setLocal(failedHere ? null : { phase: "applied", entryId: result.undoEntryId ?? null });
-      if (conversationId && result.replies?.length) {
-        client.setQueryData(["assistant-messages", conversationId], (current: { messages: AssistantMessageRecord[] } | undefined) =>
-          current ? applyRepliesToCache(current, result.replies) ?? current : current,
-        );
-      }
-      const notice = applyNotice(result);
-      toast(notice.text, {
-        tone: notice.tone,
-        action: result.undoEntryId
-          ? {
-              label: "Undo",
-              run: () => {
-                void api
-                  .undo(result.undoEntryId ?? undefined)
-                  .then(() => client.invalidateQueries())
-                  .catch((error: Error) => toast(error.message, { tone: "error" }));
-              },
-            }
-          : undefined,
-      });
-      void client.invalidateQueries();
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-  const history = async (direction: "undo" | "redo") => {
-    if (!entryId) return;
-    try {
-      if (direction === "undo") await api.undo(entryId);
-      else await api.redo(entryId);
-      setLocal({ phase: direction === "undo" ? "undone" : "applied", entryId });
-      void client.invalidateQueries();
-    } catch (error) {
-      toast((error as Error).message, { tone: "error" });
-    }
-  };
-  const icon =
-    call.state === "failed" ? (
-      <CircleAlert size={12} className="text-danger" />
-    ) : phase === "pending" ? (
-      <Clock3 size={12} className="text-warn" />
-    ) : (
-      <Check size={12} className="text-ok" />
-    );
-  const motion =
-    call.state === "failed" ? "failed" : call.state === "awaiting_approval" ? "pending" : call.state === "ok" || phase === "applied" || phase === "undone" ? "done" : "running";
-  return (
-    <div className="assistant-tool tile m-tool flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]" data-motion-slot="tool.call" data-state={motion}>
-      {icon}
-      <span className="assistant-tool-name" title={call.name}>{call.name.replace(/^(hub_|apps_)/, "").replace(/_/g, " ")}</span>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{formatEntityText(call.error ?? call.summary ?? "", [...(call.refs ?? []), ...(refs ?? [])], { plain: true })}</span>
-      {phase === "applied" ? <span className="text-faint">{call.isWrite === false ? "Read" : "Applied"}</span> : null}
-      {phase === "undone" ? <span className="text-faint">Undone</span> : null}
-      {call.href ? (
-        <Link href={call.href} className="text-accent hover:underline">
-          Open
-        </Link>
-      ) : null}
-      {phase === "pending" && (call.state !== "failed" || call.name === "hub_run_workflow" && Array.isArray(call.input?.steps) && !/interrupted|uncertain|may have completed/i.test(call.error ?? "")) ? (
-        <button type="button" className="btn-primary px-2 py-0.5 text-[11.5px]" onClick={() => apply.mutate()} disabled={apply.isPending}>
-          {call.state === "failed" ? "Retry remaining steps" : "Apply"}
-        </button>
-      ) : null}
-      {phase === "applied" && entryId ? (
-        <button type="button" className="btn px-2 py-0.5 text-[11.5px]" onClick={() => void history("undo")}>
-          Undo
-        </button>
-      ) : null}
-      {phase === "undone" && entryId ? (
-        <button type="button" className="btn px-2 py-0.5 text-[11.5px]" onClick={() => void history("redo")}>
-          Redo
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function ApplyAll({ calls, conversationId }: { calls: AssistantToolCallRecord[]; conversationId: string | null }) {
-  const toast = useToast();
-  const client = useQueryClient();
-  const apply = useMutation({
-    mutationFn: () =>
-      api.applyAssistant({
-        conversationId: conversationId ?? undefined,
-        calls: calls.map((call) => ({ name: call.name, input: call.input ?? {}, callId: call.id })),
-      }),
-    onSuccess: (result) => {
-      if (conversationId && result.replies?.length) {
-        client.setQueryData(["assistant-messages", conversationId], (current: { messages: AssistantMessageRecord[] } | undefined) =>
-          current ? applyRepliesToCache(current, result.replies) ?? current : current,
-        );
-      }
-      // A partial batch: the rows already show which calls landed and which failed; the toast says it too.
-      const notice = applyNotice(result);
-      toast(notice.text, { tone: notice.tone });
-      void client.invalidateQueries();
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-  return (
-    <button type="button" className="btn-primary px-2 py-0.5 text-[11.5px]" onClick={() => apply.mutate()} disabled={apply.isPending}>
-      Apply all
-    </button>
-  );
-}
 
 function CopyReply({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
@@ -271,8 +147,6 @@ export function Message({
     );
   }
   if (message.role === "error" || /^The model runtime (?:is not running|could not be reached)/i.test(message.content)) return <AssistantFailure message={message.content} onRetry={onRetry} />;
-  const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
-  const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
   // Records show by title; the saved text keeps the model's words.
   const { refs, showIds } = context ?? replyContext([message], 0);
   const shown = formatEntityText(message.content, refs, { showIds });
@@ -303,19 +177,7 @@ export function Message({
   return (
     <article className="assistant-turn assistant-answer-turn" onContextMenu={menu}>
       <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
-      {message.toolCalls?.length ? (
-        <details className="assistant-activity" open={pending.length > 0 || message.toolCalls.some((call) => call.state === "failed")} >
-          <summary>{failed ? <CircleAlert size={13} /> : <Check size={13} />}<span>{pending.length ? `${plural(pending.length, "action")} to review` : failed ? `${plural(failed, "step")} ${failed === 1 ? "needs" : "need"} attention` : `${plural(message.toolCalls.length, "step")} completed`}</span><ChevronDown size={13} /></summary>
-          <div className="space-y-1.5">
-          {pending.length > 1 ? (
-            <ApplyAll calls={pending} conversationId={conversationId} />
-          ) : null}
-          {message.toolCalls.map((call) => (
-            <ToolCall key={call.id} call={call} conversationId={conversationId} refs={refs} />
-          ))}
-          </div>
-        </details>
-      ) : null}
+      {message.toolCalls?.length ? <ToolSteps calls={message.toolCalls} conversationId={conversationId} refs={refs} /> : null}
       <div className="assistant-answer-body"><AssistantAnswer content={shown} /></div>
       {onChoose
         ? choiceLines(answer.body).map((choice) => (
@@ -324,6 +186,7 @@ export function Message({
             </button>
           ))
         : null}
+      <ToolProposals calls={message.toolCalls ?? []} conversationId={conversationId} refs={refs} />
       <div className="assistant-message-footer">
         {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} provider={included ? INCLUDED_PROVIDER : undefined} size={11} />{included ? includedModelName(message.model) : message.model}</span> : null}
         {source ? <span className="min-w-0 break-words">{source}</span> : null}
@@ -354,21 +217,30 @@ function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: st
   );
 }
 
-/** Recent chats, newest first. Picking one opens it in the dock. */
+/** A turn asked for from elsewhere in the app: its own tier, and a new chat instead of the open one. */
+type TurnExtra = { tier?: Complexity; fresh?: boolean };
+
+/**
+ * Recent chats, newest first. Picking one opens it in the dock. Each can be deleted after a
+ * one-line confirm; the agent session behind it on the person's computers goes too (server side).
+ */
 function ChatHistory({
   chats,
   loading,
   current,
   onPick,
+  onDelete,
   onClose,
 }: {
   chats: ConversationRecord[];
   loading: boolean;
   current: string | null;
   onPick: (id: string) => void;
+  onDelete: (id: string) => void;
   onClose: () => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   useEffect(() => {
     panel.current?.querySelector<HTMLElement>("[data-chat-current], button")?.focus();
     const onDown = (event: PointerEvent) => {
@@ -379,6 +251,8 @@ function ChatHistory({
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [onClose]);
+  /** Focus goes back to the row (or the one after a deleted row), never to the page behind. */
+  const focusRow = (id: string | null) => window.setTimeout(() => panel.current?.querySelector<HTMLElement>(id ? `[data-chat-row="${id}"] [data-chat-open]` : "[data-chat-open]")?.focus(), 0);
   return (
     <div
       ref={panel}
@@ -389,6 +263,12 @@ function ChatHistory({
         if (event.key !== "Escape") return;
         event.preventDefault();
         event.stopPropagation();
+        if (confirming) {
+          const id = confirming;
+          setConfirming(null);
+          focusRow(id);
+          return;
+        }
         onClose();
       }}
       data-chat-history
@@ -400,22 +280,59 @@ function ChatHistory({
         ) : chats.length === 0 ? (
           <div className="px-2 py-3 text-[12.5px] text-muted">No earlier chats yet.</div>
         ) : (
-          chats.map((chat) => (
-            <button
-              key={chat.id}
-              type="button"
-              onClick={() => onPick(chat.id)}
-              aria-current={chat.id === current ? "true" : undefined}
-              data-chat-current={chat.id === current ? "" : undefined}
-              className={cx(
-                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-hover focus-visible:bg-hover focus-visible:outline-none",
-                chat.id === current && "bg-hover",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{chat.title || "New chat"}</span>
-              <span className="shrink-0 text-[11.5px] text-faint">{relative(chat.updatedAt)}</span>
-            </button>
-          ))
+          chats.map((chat, index) =>
+            confirming === chat.id ? (
+              <div key={chat.id} role="group" aria-label={`Delete ${chat.title || "New chat"}?`} className="chat-row-confirm flex items-center gap-2 rounded-md px-2 py-1 text-[13px]" data-chat-row={chat.id}>
+                <span className="min-w-0 flex-1 truncate text-ink">Delete this chat?</span>
+                <button type="button" className="btn-ghost h-7 px-2 text-[12.5px]" onClick={() => { setConfirming(null); focusRow(chat.id); }}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn h-7 border-danger/40 px-2 text-[12.5px] text-danger hover:bg-danger/10"
+                  autoFocus
+                  onClick={() => {
+                    setConfirming(null);
+                    focusRow(chats[index + 1]?.id ?? chats[index - 1]?.id ?? null);
+                    onDelete(chat.id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div key={chat.id} className="chat-row group relative flex items-center rounded-md" data-chat-row={chat.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(chat.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Delete" && event.key !== "Backspace") return;
+                    event.preventDefault();
+                    setConfirming(chat.id);
+                  }}
+                  aria-current={chat.id === current ? "true" : undefined}
+                  data-chat-current={chat.id === current ? "" : undefined}
+                  data-chat-open
+                  className={cx(
+                    "flex min-w-0 flex-1 items-baseline gap-2 rounded-md py-1.5 pl-2 pr-9 text-left text-[13px] hover:bg-hover focus-visible:bg-hover focus-visible:outline-none",
+                    chat.id === current && "bg-hover",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{chat.title || "New chat"}</span>
+                  <span className="chat-row-time shrink-0 text-[11.5px] text-faint">{relative(chat.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="chat-row-delete icon-btn absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2"
+                  aria-label={`Delete ${chat.title || "New chat"}`}
+                  title="Delete chat"
+                  onClick={() => setConfirming(chat.id)}
+                >
+                  <Trash2 size={13} aria-hidden />
+                </button>
+              </div>
+            ),
+          )
         )}
       </div>
     </div>
@@ -444,6 +361,8 @@ export function AssistantDock() {
   const [includedPick, setIncludedPick] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
   const [liveTools, setLiveTools] = useState<AssistantToolCallRecord[]>([]);
+  /** The step a live turn is on: the last status line, until a call's result arrives after it. */
+  const [liveStep, setLiveStep] = useState<string | null>(null);
   /** Records the turn showed the model by id, sent before its text (the `refs` frame). */
   const [turnRefs, setTurnRefs] = useState<AssistantRef[]>([]);
   const [pending, setPending] = useState(false);
@@ -462,6 +381,25 @@ export function AssistantDock() {
   useAutoGrow(input, open ? draft : "", 8);
   const [history, setHistory] = useState(false);
   const closeHistory = useCallback(() => setHistory(false), []);
+  /** Gone from the list at once; back with a notice if the server refuses. */
+  const deleteChat = async (id: string) => {
+    const previous = client.getQueryData<{ conversations: ConversationRecord[] }>(["assistant-chats"]);
+    client.setQueryData<{ conversations: ConversationRecord[] }>(["assistant-chats"], (data) => (data ? { ...data, conversations: data.conversations.filter((chat) => chat.id !== id) } : data));
+    if (conversationRef.current === id) {
+      setTurnError(null);
+      setOptimistic([]);
+      setConversationId(null);
+    }
+    try {
+      await api.deleteAssistantChat(id);
+      client.removeQueries({ queryKey: ["assistant-messages", id] });
+    } catch (error) {
+      if (previous) client.setQueryData(["assistant-chats"], previous);
+      toast(error instanceof Error && error.message ? `Couldn't delete the chat: ${error.message}` : "Couldn't delete the chat.", { tone: "error" });
+    } finally {
+      void client.invalidateQueries({ queryKey: ["assistant-chats"] });
+    }
+  };
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
@@ -512,7 +450,14 @@ export function AssistantDock() {
     }
     if (request.send && request.prompt && !abortRef.current) {
       const token = request.mention ? `${mentionToken(request.mention.kind, request.mention.label)} ` : "";
-      send(`${token}${request.prompt}`, typed, next);
+      // A help question from elsewhere in the app (Connect) starts its own chat, with its facts and tier.
+      if (request.fresh) {
+        setHistory(false);
+        setTurnError(null);
+        setOptimistic([]);
+        setConversationId(null);
+      }
+      send(`${token}${request.prompt}`, typed, next, { context: request.context, tier: request.tier, fresh: request.fresh });
       return;
     }
     if (request.mention) {
@@ -554,7 +499,7 @@ export function AssistantDock() {
     if (open) window.setTimeout(() => input.current?.focus(), 30);
   }, [open]);
 
-  const lastRequest = useRef<{ text: string; mentions: PageMention[]; sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }; context?: string } | null>(null);
+  const lastRequest = useRef<{ text: string; mentions: PageMention[]; sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }; context?: string; extra?: TurnExtra } | null>(null);
   // What a right-click handed over (a part of a page, a block, a reply): sent quoted, with where it is from.
   const [attached, setAttached] = useState<AssistantAttachment[]>([]);
   useEffect(() => {
@@ -568,9 +513,10 @@ export function AssistantDock() {
     return () => window.removeEventListener("keydown", dismiss);
   }, [open, setOpen]);
   /** `sent`: what the person had written and attached, put back when the turn never reached the assistant. */
-  const sendText = async (text: string, mentions: PageMention[] = [], sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }, context?: string) => {
+  const sendText = async (text: string, mentions: PageMention[] = [], sent?: { draft: string; files: ChatAttachment[]; attached?: AssistantAttachment[] }, context?: string, extra?: TurnExtra) => {
     if (abortRef.current) return;
-    lastRequest.current = { text, mentions, sent, context };
+    lastRequest.current = { text, mentions, sent, context, extra };
+    const chatId = extra?.fresh ? null : conversationId;
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
@@ -578,10 +524,11 @@ export function AssistantDock() {
     setTurnError(null);
     setStreaming("");
     setLiveTools([]);
+    setLiveStep(null);
     setTurnRefs([]);
     setWorking("Assistant is thinking…");
     setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, mentions, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
-    let nextId = conversationId;
+    let nextId = chatId;
     const held: { reply: { messageId?: string; content: string; failed?: boolean; refs?: AssistantRef[] } | null } = { reply: null };
     try {
       const response = await fetch(`${API}/api/assistant/turn`, {
@@ -589,11 +536,11 @@ export function AssistantDock() {
         credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({
-          conversationId: conversationId ?? undefined,
+          conversationId: chatId ?? undefined,
           message: text,
           ...(mentions.length ? { mentions } : {}),
           ...(context ? { referenceContext: context } : {}),
-          ...(picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
+          ...(extra?.tier ? { tier: extra.tier } : picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
           page: {
             path: pathname + (() => { const params = new URLSearchParams(); const current = new URLSearchParams(window.location.search); for (const key of ["q", "search", "who", "ids", "status", "owner", "project", "projectId", "view", "tab", "run", "session", "note", "skill", "item", "space"]) { const value = current.get(key); if (value) params.set(key, value.slice(0, 200)); } return params.size ? `?${params}` : ""; })(),
             selection: window.getSelection()?.toString().slice(0, 2000) || undefined,
@@ -645,7 +592,10 @@ export function AssistantDock() {
         };
         if (event === "status") {
           if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
-          if (frame.text) setWorking(frame.text);
+          if (frame.text) {
+            setWorking(frame.text);
+            setLiveStep(frame.text);
+          }
           if (frame.conversationId) {
             nextId = frame.conversationId;
             conversationRef.current = frame.conversationId;
@@ -657,6 +607,7 @@ export function AssistantDock() {
         if ((event === "tool" || event === "pending") && frame.call) {
           const call = frame.preview ? { ...frame.call, summary: frame.preview } : frame.call;
           setLiveTools((rows) => [...rows.filter((row) => row.id !== call.id), call]);
+          setLiveStep(null);
           if (event === "tool" && call.state === "ok" && call.isWrite) refreshAfterAssistantWrite(client);
         }
         if (event === "error") {
@@ -713,6 +664,7 @@ export function AssistantDock() {
       setOptimistic([]);
       setStreaming("");
       setLiveTools([]);
+      setLiveStep(null);
       if (sent) attachments.release(sent.files);
       setTurnRefs([]);
     } catch (error) {
@@ -768,7 +720,7 @@ export function AssistantDock() {
   }, [all.length, pending, streaming]);
 
   /** Sends `text` with the files on the shelf. False when it could not go yet, with the reason on the shelf. */
-  const send = (text: string, typed: PageMention[] = [], handed: AssistantAttachment[] = attached): boolean => {
+  const send = (text: string, typed: PageMention[] = [], handed: AssistantAttachment[] = attached, extra?: TurnExtra & { context?: string }): boolean => {
     if (abortRef.current) return false;
     if (attachments.uploading) {
       attachments.setNotice("Wait for the uploads to finish, or cancel them, then send.");
@@ -784,7 +736,8 @@ export function AssistantDock() {
     const head = quoteAttachments(handed);
     const message = [head, text].filter(Boolean).join("\n\n") || (files.length ? attachmentsOnlyMessage(files.length) : "");
     if (!message) return false;
-    void sendText(message, mentions, { draft: text, files, attached: handed }, attachmentContext(handed) || undefined);
+    const context = [attachmentContext(handed), extra?.context ?? ""].filter(Boolean).join("\n\n") || undefined;
+    void sendText(message, mentions, { draft: text, files, attached: handed }, context, extra?.tier || extra?.fresh ? { tier: extra.tier, fresh: extra.fresh } : undefined);
     setAttached([]);
     return true;
   };
@@ -797,11 +750,11 @@ export function AssistantDock() {
     const request = lastRequest.current;
     if (!request) return;
     const sent = request.sent;
-    if (!sent) return void sendText(request.text, request.mentions, undefined, request.context);
+    if (!sent) return void sendText(request.text, request.mentions, undefined, request.context, request.extra?.tier ? { tier: request.extra.tier } : undefined);
     const attached = new Set(sent.files.flatMap((file) => (file.fileId ? [file.fileId] : [])));
     const typed = request.mentions.filter((mention) => !(mention.kind === "file" && attached.has(mention.id)));
     const taken = sent.files.length ? attachments.take(sent.files) : [];
-    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken, attached: sent.attached }, request.context);
+    void sendText(request.text, withAttachedFiles(typed, attachmentMentions(taken)), { draft: sent.draft, files: taken, attached: sent.attached }, request.context, request.extra?.tier ? { tier: request.extra.tier } : undefined);
   };
 
   const submit = () => {
@@ -906,36 +859,46 @@ export function AssistantDock() {
             setConversationId(id);
             window.setTimeout(() => input.current?.focus(), 30);
           }}
+          onDelete={(id) => void deleteChat(id)}
         />
       ) : null}
 
       <div ref={scroller} className="assistant-conversation min-h-0 flex-1 overflow-y-auto">
         {all.length === 0 ? (
-          <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void send(text)} />
+          <EmptyAssistant
+            pathname={pathname}
+            name={shell.data?.user?.name ?? null}
+            onPick={(text) => {
+              // On Connect a starter is a setup question: it goes with the same setup facts as Need a hand?.
+              if (!pathname.startsWith("/connect")) return void send(text);
+              void Promise.all([import("@/lib/connect/help"), import("@/lib/connect/configs")]).then(([help, configs]) => {
+                send(text, [], attached, { context: help.helpContext({ hostedUrl: configs.hostedMcpUrl({ origin: window.location.origin }) }) });
+              }, () => send(text));
+            }}
+          />
         ) : (
           all.map((message, index) => (
             <Message key={message.id} message={message} context={replyContext(all, index)} conversationId={conversationId} onChoose={(choice) => void send(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
           ))
         )}
         {pending ? (
-          <div className="assistant-turn space-y-2">
-            {liveTools.map((call) => (
-              <ToolCall key={call.id} call={call} conversationId={conversationId} refs={liveRefs} />
-            ))}
+          <div className="assistant-turn assistant-live-turn">
+            {liveTools.length || streaming ? (
+              <div className="assistant-message-heading"><span className="assistant-message-avatar"><BrandMorph size={18} state="loop" /></span><span>Ensemble</span></div>
+            ) : null}
+            {liveTools.length ? <ToolSteps live calls={liveTools} conversationId={conversationId} refs={liveRefs} running={streaming ? null : liveStep ?? "Thinking…"} /> : null}
             <div className="m-stream" data-motion-slot="reply.stream" data-state={streaming ? "streaming" : "done"}>
-              <div className={streaming ? "mb-3 flex justify-center" : "flex flex-col items-center gap-3 py-4"}>
-                <ReplyMorph waiting={!streaming} />
-                {streaming ? null : <ThinkingStatus real={working && working !== "Assistant is thinking…" && working !== "Working…" ? working : null} active art={false} />}
+              <div className={!streaming && !liveTools.length ? "flex flex-col items-center gap-3 py-4" : "flex justify-center"}>
+                <ReplyMorph waiting={!streaming && !liveTools.length} />
+                {streaming || liveTools.length ? null : <ThinkingStatus real={working && working !== "Assistant is thinking…" && working !== "Working…" ? working : null} active art={false} />}
               </div>
               {streaming ? (
-                <div className="flex items-start gap-2">
-                  <BrandMorph size={16} state="loop" />
-                  <div className="min-w-0 flex-1">
-                    <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
-                  </div>
+                <div className="assistant-answer-body">
+                  <MarkdownText text={formatEntityText(streaming, liveRefs, { streaming: true, showIds: liveShowIds })} />
                 </div>
               ) : null}
             </div>
+            <ToolProposals calls={liveTools} conversationId={conversationId} refs={liveRefs} />
           </div>
         ) : null}
       </div>

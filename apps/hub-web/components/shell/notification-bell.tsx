@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { Bell, CalendarClock, CircleAlert, ClipboardCheck, Eye, NotebookPen, Repeat, Share2, Sparkles, Sun, Timer, X, type LucideIcon } from "lucide-react";
+import { Bell, CalendarClock, CheckCheck, CircleAlert, ClipboardCheck, Eye, NotebookPen, Repeat, Share2, Sparkles, Sun, Timer, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -108,7 +108,7 @@ export function NotificationContent({ rows, loading, error, busy, onRead, onClea
   return <div className="nc">
     <header className="nc-head">
       <h2>Notifications</h2>
-      {shown.length > 1 ? <button type="button" className="nc-clear" disabled={busy} onClick={() => onClear(shown.map((row) => row.id))}>Clear {filter === "unread" ? "all" : "these"}</button> : null}
+      {shown.length > 1 ? <button type="button" className="nc-clear" disabled={busy} title="Mark these as read" onClick={() => onClear(shown.map((row) => row.id))}><CheckCheck size={14} aria-hidden />Clear {filter === "unread" ? "all" : "these"}</button> : null}
       <button type="button" className="icon-btn" aria-label="Close notifications" onClick={onClose}><X size={15} /></button>
     </header>
     <div ref={tabs} className="nc-tabs" role="tablist" aria-label="Notification views" onKeyDown={(event) => {
@@ -129,8 +129,8 @@ export function NotificationContent({ rows, loading, error, busy, onRead, onClea
     </div>
     <div ref={feed} className="nc-feed" role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${filter}`}>
       {loading ? <div className="px-3 py-2"><SkeletonRows count={3} rowClassName="h-12" /></div>
-        : error ? <div className="nc-empty" role="alert"><CircleAlert size={18} /><strong>Couldn't load notifications</strong><p>{error}</p><button type="button" className="btn" onClick={onRetry}>Try again</button></div>
-        : !shown.length ? <div className="nc-empty"><Bell size={18} /><strong>{title}</strong><p>{line}</p></div>
+        : error ? <div className="nc-empty" role="alert"><span className="nc-empty-mark" aria-hidden><CircleAlert size={18} /></span><strong>Couldn't load notifications</strong><p>{error}</p><button type="button" className="btn" onClick={onRetry}>Try again</button></div>
+        : !shown.length ? <div className="nc-empty"><span className="nc-empty-mark" aria-hidden><Bell size={18} /></span><strong>{title}</strong><p>{line}</p></div>
         : groupNotifications(shown).map((group) => <section key={group.label}>
           <h3>{group.label}</h3>
           <ul>{group.rows.map((row) => <NotificationRow key={row.id} row={row} leaving={leaving.has(row.id)} onOpen={() => { onRead(row.id); onClose(); }} onDismiss={(button) => dismiss(row.id, button)} />)}</ul>

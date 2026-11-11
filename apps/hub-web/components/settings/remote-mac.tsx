@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { SectionCard, SettingRow, Toggle } from "@/components/ui";
+import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { desktopShell } from "@/lib/desktop-param";
@@ -109,6 +110,8 @@ function RemoteMacSettings() {
           Pair
         </button>
       </div>
+      {mac && !mac.paired ? <p className="mt-3 text-[12px] text-muted">Pair this computer to turn on the switches below.</p> : null}
+      <div className="mt-2 divide-y divide-[var(--line)]">
       <SettingRow title="Allow remote tasks" description="Web tasks run here, in the same sandbox." info="Tasks assigned on the web run on this computer, with this computer's model key and the same sandbox. Off until you turn it on.">
         <Toggle checked={Boolean(mac?.enabled)} disabled={!mac?.paired || save.isPending} label="Allow remote tasks" onChange={(enabled) => save.mutate({ enabled })} />
       </SettingRow>
@@ -160,8 +163,15 @@ function RemoteMacSettings() {
           onChange={(webTerminal) => save.mutate({ webTerminal })}
         />
       </SettingRow>
+      </div>
       {mac?.paired ? (
-        <button type="button" className="btn-ghost mt-1 text-[12.5px]" data-testid="remote-unpair" disabled={unpair.isPending} onClick={() => unpair.mutate()}>
+        <button
+          type="button"
+          className="btn-ghost mt-1 text-[12.5px]"
+          data-testid="remote-unpair"
+          disabled={unpair.isPending}
+          onClick={() => void confirmAction({ title: "Unpair this computer?", body: "Tasks from the web stop running here. Pair it again with a new code to bring them back.", confirm: "Unpair", danger: true }).then((yes) => yes && unpair.mutate())}
+        >
           Unpair
         </button>
       ) : null}

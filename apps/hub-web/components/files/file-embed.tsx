@@ -13,6 +13,7 @@ import { saveBlob } from "@/lib/export/formats";
 import { emitToast } from "@/lib/toast-bus";
 import { createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
 import { FilePreview } from "./file-preview";
+import { attachScrollHandoff } from "@/lib/scroll-handoff";
 
 const KIND_ICON: Record<FileKind, LucideIcon> = {
   pdf: FileText,
@@ -68,7 +69,10 @@ export function FileEmbed({ id, label, height: storedHeight = null, onResize, on
   const [height, setHeight] = useState<number | null>(() => storedEmbedHeight(storedHeight));
   const heightRef = useRef(height);
   heightRef.current = height;
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  // A preview that scrolls (PDF pages, a sheet, text) does not catch a page scroll that runs over it.
+  useEffect(() => (body ? attachScrollHandoff(body, body) : undefined), [body]);
   const handleHost = useRef<HTMLDivElement>(null);
   const commitRef = useRef(onResize);
   commitRef.current = onResize;
@@ -119,7 +123,13 @@ export function FileEmbed({ id, label, height: storedHeight = null, onResize, on
           {record.error.message || "Could not load this file."}
         </p>
       ) : (
-        <div ref={bodyRef} className="file-embed-body">
+        <div
+          ref={(node) => {
+            bodyRef.current = node;
+            setBody(node);
+          }}
+          className="file-embed-body"
+        >
           <FilePreview fileId={id} compact height={height ?? undefined} />
         </div>
       )}

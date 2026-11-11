@@ -4,7 +4,6 @@
 
 import { friendlyDateTime } from "@/lib/format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PauseCircle } from "lucide-react";
 import type { Settings } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { plural } from "@/lib/format";
@@ -39,21 +38,17 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
   return (
     <SectionCard
       title="Sync people"
+      description={last && new Date(last).getTime() <= Date.now() ? `Contact details from your connected apps. Last synced ${friendlyDateTime(last)}.` : "Contact details from your connected apps. No sync yet."}
+      info="Sync when you need it: it reads contact details only. Messages, files and other items are saved only when you ask the assistant or upload them."
       actions={
         <button type="button" className="btn-primary" onClick={() => syncAll.mutate()} disabled={syncAll.isPending}>
           <FetchGlyph active={syncAll.isPending} slot="connector.sync" size={12} /> Sync people
         </button>
       }
     >
-      <div role="note" className="-mt-1 flex items-start gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-[12.5px] text-muted" data-testid="fetch-paused">
-        <PauseCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
-        <span>
-          <span className="font-medium text-ink">Sync when you need it.</span> Sync people reads contact details from your connected apps. Messages, files and other items are saved only when you ask the assistant or upload them. {last && new Date(last).getTime() <= Date.now() ? `Last synced ${friendlyDateTime(last)}.` : "No sync completed yet."}
-        </span>
-      </div>
-      <div className="mt-1 divide-y divide-[var(--line)]">
+      <div className="divide-y divide-[var(--line)]" data-testid="fetch-paused">
         <SettingRow title="Look back" description="How far back a sync reads after a gap.">
-          <select aria-label="Fetch look-back days" value={fetch.lookbackDays} onChange={(event) => patch({ fetch: { lookbackDays: Number(event.target.value) } })} className="field">
+          <select aria-label="Fetch look-back days" value={fetch.lookbackDays} onChange={(event) => patch({ fetch: { lookbackDays: Number(event.target.value) } })} className="field w-32">
             {[1, 2, 3, 7, 14, 30].map((days) => (
               <option key={days} value={days}>
                 {days} day{days === 1 ? "" : "s"}
@@ -61,7 +56,6 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
             ))}
           </select>
         </SettingRow>
-
       </div>
     </SectionCard>
   );

@@ -1,6 +1,6 @@
 /**
  * "Ready for review": an agent finished a task and its work waits for the person (the task is not
- * marked done by the run). One notification per run, unless Settings › Assistant › Automations
+ * marked done by the run). One notification per run, unless Settings › Notifications › Nudges
  * turns review notices off. Failures and stops notify on their own (workspace/agent.ts, devices/finish.ts).
  */
 import type { Prisma, PrismaClient } from "@prisma/client";

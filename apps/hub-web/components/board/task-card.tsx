@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { memo } from "react";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
 import { GripVertical, Trash2 } from "lucide-react";
@@ -178,7 +179,8 @@ export function SortableBoardCard({
   );
 }
 
-export function SortableCard({
+/** Memoised: a column re-renders when a dragged card enters or leaves it, and only the cards that changed should follow. */
+export const SortableCard = memo(function SortableCard({
   task,
   active,
   selected,
@@ -211,4 +213,4 @@ export function SortableCard({
       <CardBody task={task} onDelete={onDelete} />
     </SortableBoardCard>
   );
-}
+});

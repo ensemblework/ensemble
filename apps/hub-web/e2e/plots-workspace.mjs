@@ -180,10 +180,12 @@ async function main() {
     await page.mouse.down();
     await page.mouse.move(header.x + 460, header.y + 30, { steps: 10 });
     await page.locator("[data-tile-ghost]").waitFor();
-    const mid = await page.locator("[data-plot-tile]").evaluateAll((nodes) => nodes.map((node) => {
+    // The lifted tile follows the pointer over the others; the rest re-pack around its ghost and never overlap.
+    const mid = await page.locator("[data-plot-tile]:not([data-dragging]), [data-tile-ghost]").evaluateAll((nodes) => nodes.map((node) => {
       const box = node.getBoundingClientRect();
       return { x: box.x, y: box.y, width: box.width, height: box.height };
     }));
+    assert.equal(await page.locator('[data-plot-tile][data-dragging="move"]').count(), 1);
     const visualOverlap = mid.some((item, index) => mid.some((other, otherIndex) => index !== otherIndex && (
       item.x < other.x + other.width - 2 && item.x + item.width > other.x + 2 && item.y < other.y + other.height - 2 && item.y + item.height > other.y + 2
     )));

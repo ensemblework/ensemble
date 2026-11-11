@@ -6,6 +6,7 @@ import { Minus, MoveHorizontal, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Spinner } from "../../ui";
 import { Toolbar, ViewerNote, type ViewerProps } from "./shared";
+import { attachScrollHandoff } from "@/lib/scroll-handoff";
 
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -13,9 +14,10 @@ const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 function viewerStyles(background: string, compact: boolean): string {
   return `
 html,body{margin:0;background:${background};-webkit-text-size-adjust:none;text-size-adjust:none;}
-body{overflow:${compact ? "hidden" : "auto"};}
-.docx-wrapper{background:transparent!important;padding:${compact ? "0" : "16px"}!important;}
-.docx-wrapper>section.docx{box-shadow:0 1px 4px rgba(0,0,0,.18);margin:0 auto ${compact ? "0" : "16px"}!important;}
+body{overflow-x:hidden;overflow-y:auto;}
+html{scrollbar-width:thin;scrollbar-color:rgba(127,127,127,.45) transparent;}
+.docx-wrapper{background:transparent!important;padding:${compact ? "8px" : "16px"}!important;}
+.docx-wrapper>section.docx{box-shadow:0 1px 4px rgba(0,0,0,.18);margin:0 auto ${compact ? "8px" : "16px"}!important;}
 a{color:#0563c1;}
 body[data-reading=true] .docx-wrapper{padding:0!important;width:100%!important;transform:none!important;}
 body[data-reading=true] section.docx{width:100%!important;min-height:0!important;height:auto!important;padding:24px 20px!important;box-sizing:border-box;box-shadow:none;}
@@ -117,11 +119,20 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
     };
   }, [loaded, bytes, compact]);
 
+  // On a page, the frame's own wheel events never reach the page: hand them over while the page is scrolling.
+  useEffect(() => {
+    const node = frame.current;
+    const inner = node?.contentWindow;
+    if (!compact || !loaded || !node || !inner) return;
+    return attachScrollHandoff(inner, node);
+  }, [compact, loaded]);
+
   const [fitScale, setFitScale] = useState(1);
   useEffect(() => {
     const node = frame.current;
     if (!node || !rendered) return;
-    const measure = () => { setPhone(node.clientWidth < 600); setFitScale(Math.max(0.2, Math.min(compact ? 1 : 1.5, (node.clientWidth - (compact ? 0 : 40)) / pageWidth))); };
+    // A compact preview scrolls, so its scrollbar takes part of the width.
+    const measure = () => { setPhone(node.clientWidth < 600); setFitScale(Math.max(0.2, Math.min(compact ? 1 : 1.5, (node.clientWidth - (compact ? 28 : 40)) / pageWidth))); };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -139,7 +150,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
     body.style.removeProperty("zoom");
     wrapper.style.transformOrigin = "top left";
     wrapper.style.transform = reading ? "none" : `scale(${scale})`;
-    wrapper.style.width = reading ? "100%" : `${Math.max(pageWidth + (compact ? 0 : 32), node.clientWidth / scale)}px`;
+    wrapper.style.width = reading ? "100%" : `${Math.max(pageWidth + (compact ? 16 : 32), (node.clientWidth - (compact ? 12 : 0)) / scale)}px`;
     wrapper.style.boxSizing = "border-box";
     const size = () => {
       viewport.style.overflow = reading ? "visible" : "hidden";
@@ -163,7 +174,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
         srcDoc={frameDocument(background, compact)}
         onLoad={() => setLoaded(true)}
         className="block h-full w-full border-0"
-        tabIndex={compact ? -1 : 0}
+        tabIndex={0}
       />
       {rendered ? null : (
         <span className="absolute inset-0 flex items-center justify-center">

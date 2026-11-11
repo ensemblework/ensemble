@@ -50,6 +50,44 @@ async function verifyPageStory(request) {
   console.log("Page → Add to board → explicit due date → Context mention edges verified against the real local API");
 }
 
+/** Records the simulated pointer every frame, in canvas pixels, so a resize of the dialog is not mistaken for a jump. */
+async function samplePointer(page) {
+  await page.evaluate(() => {
+    const samples = [];
+    window.__pointerSamples = samples;
+    const loop = (t) => {
+      const canvas = document.querySelector(".film-canvas");
+      if (canvas) {
+        const c = canvas.getBoundingClientRect();
+        const k = c.width / canvas.offsetWidth || 1;
+        const pointers = [...document.querySelectorAll(".film-pointer")].map((node) => {
+          const b = node.getBoundingClientRect();
+          return { x: (b.left - c.left) / k, y: (b.top - c.top) / k, shown: Number(getComputedStyle(node).opacity) > .05 };
+        });
+        samples.push({ t, step: document.querySelector("[data-onboarding-tour]")?.dataset.onboardingTour, pointers });
+      }
+      if (document.querySelector("[data-onboarding-tour]")) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+}
+
+async function assertPointerGlides(page) {
+  const samples = await page.evaluate(() => window.__pointerSamples ?? []);
+  assert.ok(samples.length > 100, "pointer was sampled");
+  assert.ok(samples.every((sample) => sample.pointers.length <= 1), "one pointer for the whole film, also across chapter changes");
+  let previous = null;
+  for (const sample of samples) {
+    const pointer = sample.pointers[0];
+    if (pointer?.shown && previous) {
+      const distance = Math.hypot(pointer.x - previous.x, pointer.y - previous.y);
+      const perFrame = distance / Math.max(sample.t - previous.t, 1000 / 60) * (1000 / 60);
+      assert.ok(distance <= 60 || perFrame <= 45, `pointer jumped ${Math.round(distance)} px in ${Math.round(sample.t - previous.t)} ms on ${sample.step}`);
+    }
+    previous = pointer?.shown ? { ...pointer, t: sample.t } : null;
+  }
+}
+
 async function bounds(page) {
   const result = await page.locator(".walkthrough").evaluate((card) => {
     const rect = card.getBoundingClientRect();
@@ -89,6 +127,7 @@ try {
     const appUrl = page.url();
     const originalFrame = await page.locator(".walkthrough").boundingBox();
     const originalButton = await page.locator("[data-tour-next]").boundingBox();
+    if (!scenario.reduce) await samplePointer(page);
     assert.equal(await page.locator(".film-app").getAttribute("inert"), "");
     assert.equal(await page.locator(".film-app button, .film-app a, .film-app input").count(), 0);
     const visited = [];
@@ -142,8 +181,10 @@ try {
       if (shots && ["today", "arrange", "pages", "context", "approvals", scenario.stop].includes(step)) await page.screenshot({ path: `${shots}/${scenario.name ?? scenario.role}-${step}.png` });
       if (step === "board" && !resumed) {
         await page.waitForFunction(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((key) => key.startsWith("ensemble.tour:"))))?.step === "board");
+        if (!scenario.reduce) await assertPointerGlides(page);
         await page.reload({ waitUntil: "domcontentloaded" });
         await page.locator('[data-onboarding-tour="board"]').waitFor();
+        if (!scenario.reduce) await samplePointer(page);
         resumed = true;
       }
       if (step === "finish") break;
@@ -152,6 +193,7 @@ try {
       await page.waitForFunction((previous) => document.querySelector("[data-onboarding-tour]")?.dataset.onboardingTour !== previous, step);
     }
     assert.ok(visited.includes(scenario.stop), `${scenario.role} gets ${scenario.stop}`);
+    if (!scenario.reduce) await assertPointerGlides(page);
     await page.locator("[data-tour-next]").click();
     await page.locator("[data-onboarding-tour]").waitFor({ state: "detached" });
     const after = await fixture.request("/api/tasks");

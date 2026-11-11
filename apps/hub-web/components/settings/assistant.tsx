@@ -37,17 +37,17 @@ export function AssistantSection({ settings, patch }: Props) {
   const assistant = settings.assistant;
   const location = useSettingsLocation();
   return (
-    <SectionCard title="The assistant">
+    <SectionCard title="The assistant" description="How it changes things, and what it may change.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="When it wants to change something" info="Apply changes immediately with Undo, preview them in chat, or queue them in Needs me. Connected-app and settings changes always need Apply.">
-          <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field">
+        <SettingRow title="When it wants to change something" description="Connected apps and settings always wait for Apply." info="Apply changes immediately with Undo, preview them in chat, or queue them in Needs me. Connected-app and settings changes always need Apply.">
+          <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field w-56 truncate">
             <option value="immediate">Just do it (undoable)</option>
             <option value="preview">Show me a preview first</option>
             <option value="needs-me">Queue it on Needs me</option>
           </select>
         </SettingRow>
-        <SettingRow title="Default model preset" info="Starting model for chat. Override it per message.">
-          <select aria-label="Default complexity" value={assistant.defaultTier} onChange={(event) => patch({ assistant: { defaultTier: event.target.value } })} className="field">
+        <SettingRow title="Default model preset" description="The tier a new chat starts on." info="Starting model for chat. Override it per message.">
+          <select aria-label="Default complexity" value={assistant.defaultTier} onChange={(event) => patch({ assistant: { defaultTier: event.target.value } })} className="field w-56 truncate">
             {TIERS.map((tier) => (
               <option key={tier.id} value={tier.id}>
                 {tier.label.replace(" model", "")} · {tierModelName(settings.models[tier.id].provider, settings.models[tier.id].model)}
@@ -57,7 +57,7 @@ export function AssistantSection({ settings, patch }: Props) {
         </SettingRow>
         <SettingRow title="What it may change" description={<span data-testid="changes-summary">{changesSummary(assistant)}</span>}>
           <button type="button" className="btn" aria-haspopup="dialog" onClick={() => navigateSettings({ dialog: "changes" })}>
-            Change
+            Change…
           </button>
         </SettingRow>
       </div>

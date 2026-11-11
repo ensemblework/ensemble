@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Settings } from "@ensemble/shared-types";
 import { SHORTCUTS, SKILL_LEARNING_MIN_ITEMS, formatBinding } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
@@ -38,10 +38,10 @@ export function AutonomySection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   return (
-    <SectionCard title="Autonomy" info="Default for new tasks; override it when assigning. At every level, anything leaving your domain or mentioning money, legal or HR matters still needs your approval.">
+    <SectionCard title="Autonomy" description="How much agents do before they ask you." info="The default for new tasks; override it when assigning. At every level, anything leaving your domain or mentioning money, legal or HR matters still needs your approval.">
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Default autonomy" description={AUTONOMY[settings.autonomy as keyof typeof AUTONOMY] ?? ""}>
-          <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-36">
+          <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-32">
             <option value="assist">Assist</option>
             <option value="supervised">Supervised</option>
             <option value="autonomous">Autonomous</option>
@@ -57,7 +57,6 @@ export function AutonomySection({ settings, patch }: Props) {
           <Toggle label="Run without asking" checked={orchestration.runWithoutAsking} onChange={(runWithoutAsking) => set({ runWithoutAsking })} />
         </SettingRow>
         <TrustSharingRow />
-
       </div>
     </SectionCard>
   );
@@ -83,59 +82,55 @@ function TrustSharingRow() {
   );
 }
 
-export function OrchestrationSection({ settings, patch }: Props) {
+type OrchestrationSet = (value: Partial<Settings["orchestration"]>) => void;
+
+/** How many tasks run at once and how long one may take. */
+export function TaskLimitsSection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
-  const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
-  const number = (key: "maxConcurrentJobs" | "maxTurns" | "maxMinutes", min: number, max: number) => (
+  const set: OrchestrationSet = (value) => patch({ orchestration: value });
+  const number = (key: "maxConcurrentJobs" | "maxTurns" | "maxMinutes", min: number, max: number, unit?: string) => (
     <NumberField
       label={{ maxConcurrentJobs: "Tasks that run at once", maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
       min={min}
       max={max}
+      unit={unit}
       value={orchestration[key]}
       onChange={(value) => set({ [key]: value })}
     />
   );
   return (
-    <SectionCard title="Orchestration" info="Tasks queue in assignment order. Work in the same folder runs sequentially. A long-waiting question can release one extra slot.">
+    <SectionCard title="Task limits" description="Agent tasks queue in the order you assign them." info="Work in the same project or folder runs one task at a time. A question that has waited long can release one extra slot.">
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Tasks that run at once" description="Tasks in the same project or folder wait their turn.">
           {number("maxConcurrentJobs", 1, 8)}
         </SettingRow>
         <SettingRow title="Model turns per task" description="A task stops here and keeps its progress." info="You can raise it for one task when you assign it.">
-          {number("maxTurns", 5, 200)}
+          {number("maxTurns", 5, 200, "turns")}
         </SettingRow>
         <SettingRow title="Minutes per task" description="A slower task stops; its work is kept.">
-          {number("maxMinutes", 5, 480)}
+          {number("maxMinutes", 5, 480, "min")}
         </SettingRow>
-        <SettingRow title="Sandbox by default" info="Isolate commands with this computer's OS sandbox. Override per task; keys and browser data stay private.">
+      </div>
+    </SectionCard>
+  );
+}
+
+/** Where agent commands run and what they may reach. */
+export function SandboxSection({ settings, patch }: Props) {
+  const orchestration = settings.orchestration;
+  const set: OrchestrationSet = (value) => patch({ orchestration: value });
+  return (
+    <SectionCard title="Sandbox and access" description="Defaults for new tasks; change them per task when you assign.">
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Sandbox by default" description="Commands run inside this computer's sandbox." info="Isolate commands with this computer's OS sandbox. Override per task; keys and browser data stay private.">
           <Toggle label="Sandbox by default" checked={orchestration.defaultExecution === "sandbox"} onChange={(on) => set({ defaultExecution: on ? "sandbox" : "native" })} />
         </SettingRow>
         <SettingRow title="Internet for agent commands" description="For cloning, installing packages and the web." info="The default for new tasks. Turn it off for tasks whose inputs you do not trust.">
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
         <SettingRow
-          title="One folder per project"
-          description="Your agent sees a project's tasks together."
-          info="Your own agent (Claude Code, Codex, Cursor, Copilot…) works on a project's tasks in one folder named after the project, so its app shows them together. The project's brief is kept in the folder's AGENTS.md and CLAUDE.md and rewritten when you change the project."
-        >
-          <Toggle label="A project's tasks share the project's folder" checked={orchestration.projectFolders} onChange={(projectFolders) => set({ projectFolders })} />
-        </SettingRow>
-        <SettingRow
-          title="Continue a fitting agent session"
-          description="A related task picks up where the agent left off."
-          info="A new task goes on in one of the agent's sessions on that computer when it clearly fits: it mentions or depends on a task done there, shares its deliverable or meeting, or names the same files and topic. The agent keeps what it learned. Only within one project, and never when the session is nearly full. Assign › More options starts a new session instead."
-        >
-          <Toggle label="Continue a fitting agent session" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
-        </SettingRow>
-        <SettingRow
-          title="Clean up agent sessions"
-          description="Once their tasks are gone. Project files stay."
-          info="Deletes the agent's saved conversation once all its tasks are deleted, or retired after the completed window (Data retention)."
-        >
-          <Toggle label="Clean up agent sessions" checked={orchestration.cleanSessions} onChange={(cleanSessions) => set({ cleanSessions })} />
-        </SettingRow>
-        <SettingRow
           title="Outside the Ensemble workspace"
+          description="Your folders beyond the workspace."
           info="Inside the workspace a task may read any folder, and asks once before changing one (Run unattended does not ask). Beyond it: Read only reads freely and asks once per folder before changing it; Read and write permits both; No access asks before reading too. Keys, system files and Ensemble's own code stay off limits."
         >
           <select
@@ -154,19 +149,72 @@ export function OrchestrationSection({ settings, patch }: Props) {
   );
 }
 
+/** How your own agent's sessions and folders follow a project. */
+export function AgentSessionsSection({ settings, patch }: Props) {
+  const orchestration = settings.orchestration;
+  const set: OrchestrationSet = (value) => patch({ orchestration: value });
+  return (
+    <SectionCard title="Agent sessions" description="How your own agent keeps a project's work together.">
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow
+          title="One folder per project"
+          description="Your agent sees a project's tasks together."
+          info="Your own agent (Claude Code, Codex, Cursor, Copilot…) works on a project's tasks in one folder named after the project, so its app shows them together. The project's brief is kept in the folder's AGENTS.md and CLAUDE.md and rewritten when you change the project."
+        >
+          <Toggle label="A project's tasks share the project's folder" checked={orchestration.projectFolders} onChange={(projectFolders) => set({ projectFolders })} />
+        </SettingRow>
+        <SettingRow
+          title="Continue a fitting agent session"
+          description="A related task picks up where the agent left off."
+          info="A new task goes on in one of the agent's sessions on that computer when it clearly fits: it mentions or depends on a task done there, shares its deliverable or meeting, or names the same files and topic. The agent keeps what it learned. Only within one project, and never when the session is nearly full. Assign › More options starts a new session instead."
+        >
+          <Toggle label="Continue a fitting agent session" checked={orchestration.linkedSessions} onChange={(linkedSessions) => set({ linkedSessions })} />
+        </SettingRow>
+        <SettingRow
+          title="Clean up agent sessions"
+          description="Once their tasks are gone. Project files stay."
+          info="Deletes the agent's saved conversation once all its tasks are deleted, or retired after the completed window (Settings › Data › Data retention)."
+        >
+          <Toggle label="Clean up agent sessions" checked={orchestration.cleanSessions} onChange={(cleanSessions) => set({ cleanSessions })} />
+        </SettingRow>
+      </div>
+    </SectionCard>
+  );
+}
+
+/** Task limits, sandbox and sessions: the three cards the orchestration settings live in. */
+export function OrchestrationSection(props: Props) {
+  return (
+    <div className="space-y-5">
+      <TaskLimitsSection {...props} />
+      <SandboxSection {...props} />
+      <AgentSessionsSection {...props} />
+    </div>
+  );
+}
+
 export function PromptsSection() {
   const [open, setOpen] = useState(false);
   const prompts = useQuery({ queryKey: ["prompts"], queryFn: api.prompts, enabled: open });
   return (
-    <SectionCard title="Prompts" info="Inspect the instructions Ensemble sends to models.">
-      <button type="button" className="text-[13px] text-accent underline-offset-2 hover:underline" onClick={() => setOpen(!open)}>
-        {open ? "Hide prompts" : "Open prompts"}
-      </button>
+    <SectionCard
+      title="Prompts"
+      description="Every instruction Ensemble sends to a model, to read."
+      actions={
+        <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Hide prompts" : "Show prompts"}
+        </button>
+      }
+    >
       {open ? (
         prompts.isLoading ? (
           <Spinner />
+        ) : prompts.error ? (
+          <p role="alert" className="text-[13px] text-danger">
+            Prompts didn&apos;t load. <button type="button" className="underline underline-offset-2" onClick={() => void prompts.refetch()}>Try again</button>
+          </p>
         ) : (
-          <div className="mt-3 divide-y divide-[var(--line)]">
+          <div className="divide-y divide-[var(--line)]">
             {prompts.data?.prompts.map((prompt) => (
               <div key={prompt.id} className="py-2.5 text-[13px]">
                 <div className="flex items-center gap-2 font-medium">
@@ -189,11 +237,13 @@ export function PromptsSection() {
 // ── quiet hours ────────────────────────────────────────────────────────────
 
 export function QuietHoursSection({ settings, patch }: Props) {
+  const on = settings.quietHours.enabled;
   return (
-    <SectionCard title="Quiet hours" description="Notifications hold until morning. Nothing is lost, the digest carries it over.">
+    <SectionCard title="Quiet hours" description="Notifications wait until the end of quiet hours." info="Nothing is lost: what arrives meanwhile is in the bell when quiet hours end, and the morning digest carries it over. Times are in your time zone (Settings › Account).">
+      <span id="quiet-hours" className="block scroll-mt-6" aria-hidden />
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Hold notifications">
-          <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
+        <SettingRow title="Hold notifications" description={on ? `Every day from ${settings.quietHours.from} to ${settings.quietHours.until}.` : "Off: notifications arrive at any hour."}>
+          <Toggle label="Quiet hours" checked={on} onChange={(enabled) => patch({ quietHours: { enabled } })} />
         </SettingRow>
         <SettingRow title="From">
           <TimeInput label="Quiet hours start" value={settings.quietHours.from} step={30} onChange={(from) => patch({ quietHours: { from } })} className="w-32" />
@@ -220,7 +270,8 @@ export function RetentionSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Data retention"
-      info={`Trash and completed work run on separate clocks; active work is never purged. Once ${SKILL_LEARNING_MIN_ITEMS} completed items pass their window, Ensemble learns your skills from them (Settings › Automations), then moves them to Trash.`}
+      description="How long things are kept, and how much is shown."
+      info={`Trash and completed work run on separate clocks; active work is never purged. Once ${SKILL_LEARNING_MIN_ITEMS} completed items pass their window, Ensemble learns your skills from them (Settings › Assistant › Automations), then moves them to Trash.`}
     >
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Keep items in Trash">
@@ -293,40 +344,46 @@ export function RemindersSection({ settings, patch }: Props) {
   // The setting is per account; whether this browser may show it is not. Off here unless both say yes.
   const on = settings.desktopReminders && permission === "granted";
   const blocked = permission === "denied" || permission === "unsupported";
+  const action =
+    permission === "granted" ? (
+      <button type="button" className="btn" onClick={() => (on ? test() : void enable())}>
+        {on ? "Send a test" : "Turn on and test"}
+      </button>
+    ) : permission === "default" ? (
+      <button type="button" className="btn" onClick={() => void enable()}>
+        Allow notifications
+      </button>
+    ) : permission === "denied" ? (
+      <button
+        type="button"
+        className="btn"
+        onClick={() => {
+          void refreshNotificationPermission().then((now) => {
+            setPermission(now);
+            if (now === "denied") toast(desktop ? "Allow Ensemble notifications in your system settings." : "Allow notifications in the site settings, then reload this page.", { tone: "error" });
+          });
+        }}
+      >
+        Check again
+      </button>
+    ) : null;
   return (
     <SectionCard
-      title={desktop ? "App notifications" : "Browser notifications"}
-      info="Uses this platform’s notification permissions and focus settings."
+      title="Notifications on this device"
+      info="Uses this platform’s notification permissions and focus settings. The bell in Ensemble shows every notification either way."
       description={desktop ? "Native reminders while the Ensemble app is running." : "Reminders while an Ensemble tab is open in this browser."}
+      actions={action}
     >
       <SettingRow title="Show reminders as desktop notifications" description={notificationNote(permission)}>
         <Toggle label="Desktop reminders" checked={on} disabled={blocked} onChange={(next) => (next ? void enable() : patch({ desktopReminders: false }))} />
       </SettingRow>
       {settings.desktopReminders && blocked ? (
-        <p role="alert" className="mb-2 text-[12.5px] text-danger">
+        <p role="alert" className="mb-1 text-[12.5px] text-danger">
           Reminders are switched on for your account, but this device can&apos;t show them.{" "}
           <button type="button" className="font-medium underline underline-offset-2" onClick={() => patch({ desktopReminders: false })}>
             Switch them off
           </button>
         </p>
-      ) : null}
-      {permission === "granted" ? (
-        <button type="button" className="btn" onClick={() => (on ? test() : void enable())}>
-          {on ? "Send a test notification" : "Turn on and send a test"}
-        </button>
-      ) : permission === "default" ? (
-        <button type="button" className="btn" onClick={() => void enable()}>
-          Allow notifications
-        </button>
-      ) : permission === "denied" ? (
-        <button type="button" className="btn" onClick={() => {
-          void refreshNotificationPermission().then((now) => {
-          setPermission(now);
-          if (now === "denied") toast(desktop ? "Allow Ensemble notifications in your system settings." : "Allow notifications in the site settings, then reload this page.", { tone: "error" });
-          });
-        }}>
-          Check again
-        </button>
       ) : null}
     </SectionCard>
   );
@@ -425,7 +482,7 @@ export function TerminalSection({ settings, patch }: Props) {
   };
   if (!codeOn) return null;
   return (
-    <SectionCard title="Terminal and commits" info="The terminal in the Code tab is for you only: it opens with Touch ID, runs an allow-list of commands one at a time, and every command runs in the macOS sandbox, confined to the folder it is in.">
+    <SectionCard title="Terminal and commits" description="The folders Code uses, its terminal, and how agents commit." info="The terminal in the Code tab is for you only: it opens with Touch ID, runs an allow-list of commands one at a time, and every command runs in the macOS sandbox, confined to the folder it is in.">
       {desktop ? (
         <div role="note" data-testid="terminal-desktop-note" className="mb-3 rounded-md border border-warn/50 bg-panel px-3 py-2 text-[12.5px]">
           <div className="font-medium">{TERMINAL_DESKTOP_TITLE}</div>
@@ -605,35 +662,38 @@ export function IdentitySection({ settings, patch }: Props) {
   useEffect(() => setEmail(settings.email), [settings.email]);
   const emailError = left && !isEmailAddress(email) ? "Enter an email address like name@example.com." : null;
   return (
-    <SectionCard title="Scheduling and confirmations" description="Your time zone, and where sensitive changes are confirmed." info="Your time zone sets scheduled tasks, the morning brief and quiet hours. The email confirms sensitive workspace changes; it does not change your sign-in email.">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="text-[13px] font-medium">
-          <label htmlFor="settings-email">Email</label>
-          <input
-            id="settings-email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-              // Saved once it is a whole address; until then the last good one stays.
-              if (isEmailAddress(event.target.value)) patch({ email: event.target.value.trim() });
-            }}
-            onBlur={() => setLeft(true)}
-            aria-invalid={emailError ? true : undefined}
-            aria-describedby={emailError ? "settings-email-error" : undefined}
-            className="field mt-1.5 w-full"
-          />
-          {emailError ? (
-            <span id="settings-email-error" role="alert" className="mt-1 block text-[12px] font-normal text-danger">
-              {emailError}
-            </span>
-          ) : null}
-        </div>
-        <div className="text-[13px] font-medium">
-          <label htmlFor="settings-timezone">Time zone</label>
-          <div className="mt-1.5"><TimezonePicker value={settings.timezone} automatic={settings.timezoneMode === "auto"} onChange={(timezone, timezoneMode) => patch({ timezone, timezoneMode })} /></div>
-        </div>
+    <SectionCard title="Time zone and email" info="Your time zone sets due times, reminders, scheduled tasks, the morning brief and quiet hours. The email confirms sensitive workspace changes; it does not change the email you sign in with.">
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Time zone" description="For due times, reminders and quiet hours.">
+          <div className="w-64 max-w-full">
+            <TimezonePicker value={settings.timezone} automatic={settings.timezoneMode === "auto"} onChange={(timezone, timezoneMode) => patch({ timezone, timezoneMode })} />
+          </div>
+        </SettingRow>
+        <SettingRow title="Email" description="Where sensitive changes are confirmed. Not your sign-in.">
+          <div className="w-64 max-w-full">
+            <input
+              id="settings-email"
+              type="email"
+              aria-label="Email for confirmations"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                // Saved once it is a whole address; until then the last good one stays.
+                if (isEmailAddress(event.target.value)) patch({ email: event.target.value.trim() });
+              }}
+              onBlur={() => setLeft(true)}
+              aria-invalid={emailError ? true : undefined}
+              aria-describedby={emailError ? "settings-email-error" : undefined}
+              className="field w-full"
+            />
+            {emailError ? (
+              <span id="settings-email-error" role="alert" className="mt-1 block text-[12px] text-danger">
+                {emailError}
+              </span>
+            ) : null}
+          </div>
+        </SettingRow>
       </div>
     </SectionCard>
   );
@@ -645,7 +705,7 @@ export function FailedJobsSection() {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
   const failed = (connections.data?.connections ?? []).filter((row) => row.enabled && row.lastError);
   return (
-    <SectionCard title="Updates needing attention" description="Connected apps that could not finish updating. Try syncing them again.">
+    <SectionCard title="Updates needing attention" description="Connected apps that could not finish updating. Sync people tries them again.">
       {connections.isPending ? <p role="status" className="text-[13px] text-muted">Checking for updates…</p> : connections.error ? <p role="alert" className="text-[13px] text-danger">Could not check connected apps.<button type="button" className="btn ml-2" onClick={() => void connections.refetch()}>Retry</button></p> : failed.length === 0 ? (
         <div className="flex items-center gap-2 text-[13px]">
           No updates need attention.
@@ -725,7 +785,8 @@ export function DeletedSection() {
   );
 }
 
-export function DeleteDataSection({ settings: _settings }: { settings: Settings }) {
+/** Settings › Data's danger zone: erase data from this space; `children` adds further rows (Delete account). */
+export function DeleteDataSection({ settings: _settings, children }: { settings: Settings; children?: ReactNode }) {
   const toast = useToast();
   const client = useQueryClient();
   const [scope, setScope] = useState<"context" | "everything">("context");
@@ -745,20 +806,29 @@ export function DeleteDataSection({ settings: _settings }: { settings: Settings 
   });
   const close = () => { if (!remove.isPending) { setStep(null); setConfirm(""); remove.reset(); } };
   return (
-    <section className="overflow-hidden rounded-xl border border-danger/50" aria-labelledby="data-danger-title">
+    <section data-setting-label="Danger zone" className="overflow-hidden rounded-xl border border-danger/50" aria-labelledby="data-danger-title">
       <div className="border-b border-danger/25 bg-danger/5 px-5 py-4">
-        <h2 id="data-danger-title" className="flex items-center gap-2 text-[15px] font-semibold"><AlertTriangle size={17} className="text-danger" /> Danger zone</h2>
-        <p className="mt-1 text-[13px] text-muted">Permanently delete data from this Ensemble space. These actions cannot be undone.</p>
+        <h2 id="data-danger-title" className="flex items-center gap-2 text-[17px] font-semibold"><AlertTriangle size={17} className="text-danger" /> Danger zone</h2>
+        <p className="mt-1 text-[13px] text-muted">These actions are permanent. There is no undo.</p>
       </div>
-      <div className="space-y-4 bg-panel p-5">
+      <div className="divide-y divide-[var(--line)] bg-panel px-5">
+      <div className="space-y-3 py-4" data-jump-label="Delete my data">
+        <div>
+          <h3 className="text-[13.5px] font-medium">Delete data from this space</h3>
+          <p className="mt-0.5 text-[12.5px] leading-[18px] text-muted">Pick what goes. Your account, sign-ins, computers, connections, model keys and settings stay.</p>
+        </div>
         <div className="grid gap-2 sm:grid-cols-2">
           {([ ["context", "People and app information", "Saved people, files, imported messages, meeting notes and repository context."], ["everything", "Everything in this space", "All workspace content, including tasks, projects, pages, skills, chats and usage history."] ] as const).map(([value, title, detail]) => <label key={value} className={cx("flex cursor-pointer gap-3 rounded-lg border p-3", scope === value ? "border-danger/50 bg-danger/5" : "border-line")}>
             <input type="radio" name="delete-scope" value={value} checked={scope === value} onChange={() => { setScope(value); setConfirm(""); }} className="mt-1 accent-[rgb(var(--danger-rgb))]" />
             <span><strong className="block text-[13px] font-medium">{title}</strong><span className="mt-1 block text-xs leading-5 text-muted">{detail}</span></span>
           </label>)}
         </div>
-        <p className="text-xs leading-5 text-muted">Your account, sign-ins, computers, connections, model keys and settings stay. Credits already used still count toward your monthly allowance. Stop active agent work before continuing.</p>
-        <button type="button" className="btn border-danger/50 text-danger" onClick={() => { remove.reset(); setStep("type"); }}><Trash2 size={14} /> Delete selected data…</button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="flex items-center gap-1 text-[12px] text-muted">Stop active agent work first.<InfoTip text="Credits already used still count toward your monthly allowance." /></p>
+          <button type="button" className="btn border-danger/50 text-danger" onClick={() => { remove.reset(); setStep("type"); }}><Trash2 size={14} /> Delete selected data…</button>
+        </div>
+      </div>
+      {children}
       </div>
       <Modal open={step !== null} onClose={close} title={step === "review" ? "Permanently delete this data?" : "Confirm data deletion"} footer={<div className="flex justify-end gap-2">
         <button type="button" className="btn" disabled={remove.isPending} onClick={close}>Cancel</button>
@@ -776,22 +846,16 @@ export function DeleteDataSection({ settings: _settings }: { settings: Settings 
 }
 
 export function MorningBriefSection({ settings, patch }: Props) {
+  const on = settings.morningBrief.enabled;
   return (
-    <SectionCard
-      title="Morning brief"
-      description="A note in Ensemble at the time you pick."
-      info="It reuses today's focus, proposals, meetings and deliverables. It never sends email."
-    >
-      <SettingRow title="Deliver the morning brief" description="Shows in the bell and on Today.">
-        <Toggle
-          label="Morning brief"
-          checked={settings.morningBrief.enabled}
-          onChange={(enabled) => patch({ morningBrief: { enabled } })}
-        />
-      </SettingRow>
-      <div className="mt-3 flex items-center gap-3 text-[13px]">
-        <span>Time</span>
-        <TimeInput label="Morning brief time" value={settings.morningBrief.time} step={15} className="w-32" onChange={(time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && patch({ morningBrief: { time } })} />
+    <SectionCard title="Morning brief" description="A note in Ensemble each morning: shows in the bell and on Today." info="It reuses today's focus, proposals, meetings and deliverables. It never sends email.">
+      <div className="divide-y divide-[var(--line)]">
+        <SettingRow title="Deliver the morning brief" description={on ? `Every day at ${settings.morningBrief.time}.` : "Off: no brief."}>
+          <Toggle label="Morning brief" checked={on} onChange={(enabled) => patch({ morningBrief: { enabled } })} />
+        </SettingRow>
+        <SettingRow title="Time">
+          <TimeInput label="Morning brief time" value={settings.morningBrief.time} step={15} className="w-32" onChange={(time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && patch({ morningBrief: { time } })} />
+        </SettingRow>
       </div>
     </SectionCard>
   );
@@ -801,31 +865,42 @@ export function MorningBriefSection({ settings, patch }: Props) {
 export function RoutinesSection({ settings, patch }: Props) {
   const on = settings.routines?.enabled !== false;
   return (
-    <SectionCard title="Routines" description="Work the assistant does on a schedule." info="With your apps and your settings. Each result arrives in the bell.">
-      <SettingRow title="Run my routines" description={on ? "Manage them on the Routines page." : "Off: none run, and Routines leaves the sidebar."}>
+    <SectionCard title="Routines" description="Work the assistant does on a schedule; each result arrives in the bell." info="Routines use your apps and your settings. Off: none run, and Routines leaves the sidebar.">
+      <SettingRow
+        title="Run my routines"
+        description={
+          on ? (
+            <>
+              Add and change them on the{" "}
+              <Link href="/routines" className="text-accent underline-offset-2 hover:underline">
+                Routines page
+              </Link>
+              .
+            </>
+          ) : (
+            "Off: none run, and Routines leaves the sidebar."
+          )
+        }
+      >
         <Toggle label="Routines" checked={on} onChange={(enabled) => patch({ routines: { enabled } })} />
       </SettingRow>
-      {on ? (
-        <Link href="/routines" className="mt-2 inline-flex items-center gap-1 text-[13px] text-accent hover:underline">
-          Open Routines <ChevronRight size={13} />
-        </Link>
-      ) : null}
     </SectionCard>
   );
 }
 
-export function StaleSection({ settings, patch }: Props) {
+/** Notes in the bell when something waits for you: agent work to review, and work left alone. */
+export function NudgesSection({ settings, patch }: Props) {
+  const quiet = settings.staleNudge.enabled;
   return (
-    <SectionCard
-      title="Quiet nudges"
-      description="Ask about work left alone too long."
-      info="Items left alone, and due items that were never started, ask if they are still relevant: keep, snooze, done, or Trash."
-    >
+    <SectionCard title="Nudges" description="Notes in the bell when work waits for you." info="Items left alone, and due items that were never started, ask if they are still relevant: keep, snooze, done, or Trash.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Ask when work goes quiet">
-          <Toggle label="Quiet nudges" checked={settings.staleNudge.enabled} onChange={(enabled) => patch({ staleNudge: { enabled } })} />
+        <SettingRow title="Tell me when agent work waits for review" description="When an agent finishes a task and its work waits for you.">
+          <Toggle label="Tell me when agent work waits for review" checked={settings.automations.reviewNotices} onChange={(reviewNotices) => patch({ automations: { reviewNotices } })} />
         </SettingRow>
-        <SettingRow title="Untouched for">
+        <SettingRow title="Ask when work goes quiet" description="Asks whether work left alone still matters.">
+          <Toggle label="Quiet nudges" checked={quiet} onChange={(enabled) => patch({ staleNudge: { enabled } })} />
+        </SettingRow>
+        <SettingRow title="Untouched for" description={quiet ? "How long an item sits before it asks." : "Turn on Ask when work goes quiet to use this."}>
           <NumberField label="Days before a quiet nudge" min={1} max={180} unit="days" value={settings.staleNudge.untouchedDays} onChange={(untouchedDays) => patch({ staleNudge: { untouchedDays } })} />
         </SettingRow>
       </div>

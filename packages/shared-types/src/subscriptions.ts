@@ -230,3 +230,8 @@ export const ASSISTANT_TURNS_MIN = 1;
 export const ASSISTANT_TURN_FILES = 2;
 /** The first `assistantTurns` that keeps a chat's agent session; older computers get the chat so far in every message. */
 export const ASSISTANT_TURN_SESSIONS = 3;
+/**
+ * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
+ * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).
+ */
+export const ASSISTANT_SESSION_DELETE_API = 1;

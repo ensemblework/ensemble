@@ -161,3 +161,21 @@ test("export back is offered for Word always and for PDF when its formatting was
   assert.equal(downloadName("Lease: Unit 4/B", "docx"), "Lease- Unit 4-B.docx");
   assert.equal(downloadName("   ", "pdf"), "Untitled.pdf");
 });
+
+test("pictures go into the rebuilt Word file as media, and attachments as links", () => {
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="), (char) => char.charCodeAt(0));
+  const files = unzipSync(
+    rebuildDocx(original(), [
+      { type: "image", kind: "plot", png, width: 720, height: 360, alt: "Ablation bars", caption: "Ablation bars", href: "https://app.example.com/plots/p-1", fill: true },
+      { type: "embed", embed: { kind: "file", id: "f-1", label: "sample.pdf", href: "https://app.example.com/files/f-1" } },
+    ]),
+  );
+  assert.deepEqual(files["word/media/ensemble-picture-1.png"], png);
+  const doc = strFromU8(files["word/document.xml"]!);
+  const rels = strFromU8(files["word/_rels/document.xml.rels"]!);
+  const id = /<a:blip r:embed="([^"]+)"\/>/.exec(doc)?.[1];
+  assert.ok(id, "the picture points at its media");
+  assert.match(rels, new RegExp(`<Relationship Id="${id}" Type="[^"]+/image" Target="media/ensemble-picture-1.png"/>`));
+  assert.match(strFromU8(files["[Content_Types].xml"]!), /<Default Extension="png" ContentType="image\/png"\/>/);
+  assert.match(doc, /<w:t xml:space="preserve">sample\.pdf<\/w:t>/);
+});

@@ -31,6 +31,8 @@ import dynamic from "next/dynamic";
 import "@/components/calendar/agenda.css";
 import "@/components/desk/desk.css";
 import "@/components/onboarding/tour.css";
+import "@/components/assistant/assistant-work.css";
+import "@/components/history/version-history.css";
 import { CelebrateHost } from "@/components/motion/celebrate";
 import { PageProgress } from "@/components/motion/page-progress";
 import { Splash } from "@/components/motion/skeletons";

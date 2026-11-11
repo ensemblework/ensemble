@@ -4,10 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
+import { findSettingsTarget, flashSetting, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
 import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
-import { SettingsTabs } from "@/components/settings/settings-tabs";
+import { SettingsNav } from "@/components/settings/settings-nav";
+import type { SettingsHit } from "@/components/settings/settings-search";
 import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
 import { confirmLeaveSettings, hasUnsaved } from "@/components/settings/unsaved";
 import { useToast } from "@/components/toast";
@@ -18,6 +19,7 @@ import { useClientPlatform } from "@/lib/platform";
 
 const loading = () => <SkeletonRows count={4} rowClassName="h-28" className="space-y-5" />;
 const AssistantTab = dynamic(() => import("@/components/settings/tab-assistant").then((mod) => mod.AssistantTab), { ssr: false, loading });
+const AgentsTab = dynamic(() => import("@/components/settings/tab-agents").then((mod) => mod.AgentsTab), { ssr: false, loading });
 const ConnectionsTab = dynamic(() => import("@/components/settings/tab-connections").then((mod) => mod.ConnectionsTab), { ssr: false, loading });
 const NotificationsTab = dynamic(() => import("@/components/settings/tab-notifications").then((mod) => mod.NotificationsTab), { ssr: false, loading });
 const SpacesTab = dynamic(() => import("@/components/settings/tab-spaces").then((mod) => mod.SpacesTab), { ssr: false, loading });
@@ -64,6 +66,8 @@ export default function SettingsPage() {
   const timer = useRef<number | undefined>(undefined);
   const mainRef = useRef<HTMLDivElement>(null);
   const scrolled = useRef<string | null>(null);
+  // Bumped by a search jump, so jumping again to the same place scrolls and highlights again.
+  const [jumps, setJumps] = useState(0);
 
   useEffect(() => {
     if (query.data && !draft) setDraft(query.data.settings);
@@ -94,21 +98,55 @@ export default function SettingsPage() {
     if (!draft || !anchor) return;
     const key = `${location.tab}#${anchor}`;
     if (scrolled.current === key) return;
+    const destination = SETTINGS_DESTINATION_BY_ID.get(anchor);
+    const followUps: number[] = [];
     let tries = 0;
+    // The tab and its cards load lazily, so look again until the control is there.
+    const find = (): HTMLElement | null => {
+      if (!destination) return document.getElementById(anchor);
+      const section = document.getElementById(destination.section);
+      const panel = mainRef.current;
+      return (
+        (section ? findSettingsTarget(section, destination.target) : null) ??
+        // A control that moved to another card on the same tab is still found, a moment later.
+        (tries > 10 && panel ? findSettingsTarget(panel, destination.target) : null) ??
+        (tries > 40 && section?.childElementCount ? section : null)
+      );
+    };
     const timer = window.setInterval(() => {
-      const destination = SETTINGS_DESTINATION_BY_ID.get(anchor);
-      const section = destination ? document.getElementById(destination.section) ?? mainRef.current : null;
-      const node = destination && section ? findSettingsTarget(section, destination.target) ?? (tries > 40 ? section : null) : document.getElementById(anchor);
       tries += 1;
-      if (node) {
-        scrolled.current = key;
-        if (destination) node.style.scrollMarginTop = "6rem";
-        node.scrollIntoView?.({ block: "start" });
+      const node = find();
+      if (!node) {
+        if (tries > 120) window.clearInterval(timer);
+        return;
       }
-      if (node || tries > 60) window.clearInterval(timer);
+      window.clearInterval(timer);
+      scrolled.current = key;
+      node.style.scrollMarginTop = "6rem";
+      const block = node.matches("section, [id]") && !node.closest("div[data-setting-label]") ? "start" : "center";
+      node.scrollIntoView?.({ block });
+      if (destination && node.id !== destination.section) flashSetting(node);
+      // Cards above it can still be filling in. If they push it out of view before the person scrolls, bring it back.
+      const root = mainRef.current;
+      let landed = root?.scrollTop ?? 0;
+      for (const delay of [400, 1200]) {
+        followUps.push(
+          window.setTimeout(() => {
+            if (!root || Math.abs(root.scrollTop - landed) > 1) return;
+            const box = node.getBoundingClientRect();
+            const view = root.getBoundingClientRect();
+            if (box.top >= view.top && box.bottom <= view.bottom) return;
+            node.scrollIntoView?.({ block });
+            landed = root.scrollTop;
+          }, delay),
+        );
+      }
     }, 50);
-    return () => window.clearInterval(timer);
-  }, [draft, location.tab, location.anchor]);
+    return () => {
+      window.clearInterval(timer);
+      followUps.forEach((id) => window.clearTimeout(id));
+    };
+  }, [draft, location.tab, location.anchor, jumps]);
 
   const selectTab = useCallback((tab: SettingsTab) => {
     const go = () => {
@@ -120,6 +158,19 @@ export default function SettingsPage() {
     if (hasUnsaved()) void confirmLeaveSettings().then((leave) => leave && go());
     else go();
   }, []);
+
+  const jumpTo = useCallback((hit: SettingsHit) => {
+    const go = () => {
+      scrolled.current = null;
+      const view = { store: null, connector: null };
+      if (hit.dialog) navigateSettings({ ...view, tab: hit.tab, anchor: null, dialog: hit.dialog }, "push");
+      else navigateSettings({ ...view, tab: hit.tab, anchor: hit.anchor ?? null, dialog: null }, "push");
+      if (!hit.anchor) mainRef.current?.scrollTo?.({ top: 0 });
+      setJumps((count) => count + 1);
+    };
+    if (hit.tab !== location.tab && hasUnsaved()) void confirmLeaveSettings().then((leave) => leave && go());
+    else go();
+  }, [location.tab]);
 
   const flush = useCallback(async () => {
     const patch = pending.current;
@@ -184,9 +235,9 @@ export default function SettingsPage() {
               shortcuts. Connected apps and the space&apos;s data belong to them; switch to one of your spaces to manage yours.
             </div>
           ) : null}
-          <div className="lg:grid lg:grid-cols-[196px_minmax(0,1fr)] lg:gap-10">
-            <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-8 lg:mx-0 lg:mb-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
-              <SettingsTabs value={location.tab} onChange={selectTab} hidden={guestTabs} />
+          <div className="lg:grid lg:grid-cols-[208px_minmax(0,1fr)] lg:gap-10">
+            <div className="sticky top-0 z-20 -mx-4 mb-5 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-6 lg:mx-0 lg:mb-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+              <SettingsNav value={location.tab} onChange={selectTab} onJump={jumpTo} hidden={guestTabs} guest={access.guest} scroller={mainRef} />
             </div>
             <div
               role="tabpanel"
@@ -201,6 +252,8 @@ export default function SettingsPage() {
                 <div id="appearance" className="scroll-mt-6"><AppearanceSection patch={patch} /></div>
               ) : location.tab === "assistant" ? (
                 <AssistantTab {...props} />
+              ) : location.tab === "agents" ? (
+                <AgentsTab {...props} />
               ) : location.tab === "connections" ? (
                 <ConnectionsTab {...props} />
               ) : location.tab === "notifications" ? (

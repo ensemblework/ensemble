@@ -40,7 +40,7 @@ function Hot({ children }: { children: ReactNode }) {
 function KeyScene({ hotspot }: { hotspot: string }) {
   return (
     <div className="flex h-[210px] flex-col justify-center gap-3">
-      <div className="text-[12px] text-muted">Read-only key</div>
+      <div className="text-[12px] text-muted">Your key</div>
       <div className="rounded-lg border border-line bg-raised px-3 py-2 font-mono text-[12px] text-faint">ens_••••••••</div>
       <div>
         <Hot>

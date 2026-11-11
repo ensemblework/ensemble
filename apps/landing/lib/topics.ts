@@ -44,7 +44,7 @@ export const TOPICS: Topic[] = [
       {
         icon: "plug",
         title: "Notes that AI agents can read",
-        body: "The assistant can search your notes. Editors and coding agents read the same notes, tasks and people through Ensemble's read-only MCP bridge: one command sets it up for VS Code, Cursor, Claude Code, Codex, Gemini CLI, Windsurf, Zed and more.",
+        body: "The assistant can search your notes. Editors and coding agents read the same notes, tasks and people through Ensemble's MCP bridge: one command sets it up for VS Code, Cursor, Claude Code, Codex, Gemini CLI, Windsurf, Zed and more.",
       },
       {
         icon: "chain",
@@ -74,7 +74,7 @@ export const TOPICS: Topic[] = [
       },
       {
         q: "Can AI agents read my Ensemble notes?",
-        a: "Yes, when you connect them. The Ensemble assistant reads your workspace. Editors and coding agents use a read-only key from the Connect page or the ensemble mcp command; that key can read your notes and context and cannot change anything.",
+        a: "Yes, when you connect them. The Ensemble assistant reads your workspace. Editors and coding agents use a key from the Connect page or the ensemble mcp command. The key reads your notes and context; it makes changes (tasks, pages, boards) only if you allowed that when you made it, and each change can be undone in Ensemble.",
       },
       {
         q: "Can I import my notes from Notion?",
@@ -200,11 +200,11 @@ export const TOPICS: Topic[] = [
       },
       {
         q: "How do I give Claude Code, Cursor or Copilot my context?",
-        a: "Install the Ensemble CLI and run ensemble mcp setup for your editor, or add the hosted MCP address with a read-only key from the Connect page. The editor can then read your briefs, notes, tasks, people and skills from Ensemble.",
+        a: "Install the Ensemble CLI and run ensemble mcp setup for your editor, or add the hosted MCP address with a key from the Connect page. The editor can then read your briefs, notes, tasks, people and skills from Ensemble, and with a key that allows changes, update your tasks and pages too. AI extensions such as Claude Code inside VS Code have their own setup, which the Connect page shows.",
       },
       {
         q: "What is MCP?",
-        a: "MCP, the Model Context Protocol, is an open standard that lets AI apps and agents read tools and context from other software. Ensemble's MCP server is read-only: an agent can read your context through it and cannot change anything.",
+        a: "MCP, the Model Context Protocol, is an open standard that lets AI apps and agents read tools and context from other software. Through Ensemble's MCP server an agent reads your context, and with a key that allows changes it can also update tasks, pages, boards, diagrams and plots; each change can be undone in Ensemble.",
       },
       {
         q: "Is my context sent to AI providers?",
