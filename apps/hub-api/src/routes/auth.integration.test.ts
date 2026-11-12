@@ -52,6 +52,7 @@ async function signup(email = address()) {
   const response = await harness.app.inject({ method: "POST", url: "/api/auth/signup", payload: { email, password, name: "Mira", turnstileToken: "test-challenge" } });
   assert.equal(response.statusCode, 200, response.body);
   const body = response.json<{ user: { id: string; email: string; emailVerified: boolean } }>();
+  assert.match(response.json().user.avatar, /^dots\.(?:[1-9]|1[0-2])\./, "new accounts start with a pixel avatar");
   createdIds.push(body.user.id);
   return { ...body.user, cookie: cookie(response) };
 }
@@ -283,10 +284,10 @@ test("account validation, signup kill switches and password changes have explici
   assert.equal(identity.statusCode, 200, identity.body);
   assert.equal(identity.json().settings.email, "mira@fieldnote.example");
   assert.equal(identity.json().settings.timezone, "Europe/London");
-  // Avatars: ten faces a group and an optional background; anything else is refused.
+  // Stale clients can save a legacy selection; storage uses the universal pixel format.
   const avatar = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { avatar: "lawyer.f.10.mint" } });
   assert.equal(avatar.statusCode, 200, avatar.body);
-  assert.equal(avatar.json().user.avatar, "lawyer.f.10.mint");
+  assert.equal(avatar.json().user.avatar, "dots.10.teal.hills");
   for (const bad of ["lawyer.f.11", "lawyer.f.3.purple", "lawyer.f.3.mint.x"]) assert.equal((await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { avatar: bad } })).statusCode, 400, bad);
   assert.equal((await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { password: "new-password-123", current: "wrong" } })).statusCode, 400);
   const changed = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { name: "Updated Mira", password: "new-password-123", current: password } });

@@ -17,7 +17,8 @@ import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
 import { revokePairedDevice } from "../devices/revoke.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
-import { isAvatarId, passwordProblem } from "@ensemble/shared-types";
+import { avatarId, defaultAvatarId, isAvatarId, parseAvatar, passwordProblem } from "@ensemble/shared-types";
+import { randomUUID } from "node:crypto";
 import { forgetPerson } from "../sharing/presence.js";
 
 const Credentials = z.object({
@@ -125,7 +126,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (taken && (taken.passwordHash || taken.authIdentities.length || !first || taken.id !== env.ENSEMBLE_DEV_USER_ID)) {
       return reply.code(409).send({ error: "An account with that email already exists. Sign in instead." });
     }
-    const data = { email: body.email, name: body.name, passwordHash: await hashPassword(body.password), lastLoginAt: new Date(), emailVerifiedAt: null };
+    const data = { email: body.email, name: body.name, avatar: defaultAvatarId(randomUUID()), passwordHash: await hashPassword(body.password), lastLoginAt: new Date(), emailVerifiedAt: null };
     const user = await prisma.$transaction(async (tx) => {
       if (!first) return tx.user.create({ data });
       const placeholder = await tx.user.findUnique({ where: { id: env.ENSEMBLE_DEV_USER_ID }, include: { authIdentities: { select: { id: true } } } });
@@ -222,7 +223,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const updated = await prisma.user.update({
       where: { id: user.id },
-      data: { name: body.name, ...(body.avatar !== undefined ? { avatar: body.avatar } : {}), ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}) },
+      data: { name: body.name, ...(body.avatar !== undefined ? { avatar: body.avatar === null ? null : avatarId(parseAvatar(body.avatar)!) } : {}), ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}) },
     });
     if (body.avatar !== undefined || body.name !== undefined) forgetPerson(user.id);
     if (body.password) {

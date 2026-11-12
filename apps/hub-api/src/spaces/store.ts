@@ -127,7 +127,7 @@ export async function listSpaces(db: Db, accountId: string): Promise<{ account: 
 }
 
 /** Account fields a space mirrors: who you are, not what you work on. */
-const MIRRORED = { name: true, gender: true, profession: true, organization: true, heardFrom: true, profileCompletedAt: true, emailVerifiedAt: true, tester: true } as const;
+const MIRRORED = { name: true, avatar: true, gender: true, profession: true, organization: true, heardFrom: true, profileCompletedAt: true, emailVerifiedAt: true, tester: true } as const;
 
 /** Copies the account's identity fields onto every space it owns. Call after a profile or verification change. */
 export async function mirrorAccount(db: Db, accountId: string): Promise<void> {
