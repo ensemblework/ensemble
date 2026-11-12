@@ -14,7 +14,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
-import { claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
@@ -50,6 +50,16 @@ test("Codex keeps the variable its own model provider reads its key from; other 
     assert.equal(codexEnv().OPENAI_API_KEY, undefined, "an API account billed instead of the plan is never passed");
     setCodexProviderKeyForTests("OPENAI_API_KEY");
     assert.equal(codexEnv().OPENAI_API_KEY, "sk-own-provider", "the person's own provider in config.toml reads it");
+    // Started as a GUI app or a login service, the runtime lacks what the shell profile exports: the login shell's value goes to Codex.
+    setCodexProviderKeyForTests("ZEPHYR_PROVIDER_KEY", "sk-from-profile");
+    assert.equal(codexEnv().ZEPHYR_PROVIDER_KEY, "sk-from-profile");
+    assert.deepEqual(codexProviderKeyEnv(), { ZEPHYR_PROVIDER_KEY: "sk-from-profile" });
+    process.env.ZEPHYR_PROVIDER_KEY = "sk-inherited";
+    assert.equal(codexEnv().ZEPHYR_PROVIDER_KEY, "sk-inherited", "an inherited value wins");
+    assert.deepEqual(codexProviderKeyEnv(), {});
+    delete process.env.ZEPHYR_PROVIDER_KEY;
+    setCodexProviderKeyForTests("ZEPHYR_PROVIDER_KEY", "");
+    assert.equal(codexEnv().ZEPHYR_PROVIDER_KEY, undefined, "not found in the shell either");
   } finally {
     setCodexProviderKeyForTests(null);
     if (saved === undefined) delete process.env.OPENAI_API_KEY;
