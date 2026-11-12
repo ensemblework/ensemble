@@ -14,7 +14,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
-import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, codexSignIn, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
@@ -36,6 +36,25 @@ test("Codex runs when signed in with ChatGPT, with an API key, or on its own mod
   assert.deepEqual(codexSignIn({ account: null, requiresOpenaiAuth: false }), { signedIn: true, plan: "own model provider", chatgpt: false });
   assert.deepEqual(codexSignIn({ account: null, requiresOpenaiAuth: true }), { signedIn: false, plan: null, chatgpt: false });
   assert.deepEqual(codexSignIn(null), { signedIn: false, plan: null, chatgpt: false });
+});
+
+test("Codex keeps the variable its own model provider reads its key from; other agents never get it", () => {
+  const body = { config: { model_provider: "copilot_api", model_providers: { copilot_api: { env_key: "GITHUB_COPILOT_API_KEY" } } } };
+  assert.equal(codexProviderKeyOf(body), "GITHUB_COPILOT_API_KEY");
+  assert.equal(codexProviderKeyOf({ config: { model_provider: null, model_providers: {} } }), null, "OpenAI's own sign-in has no provider key");
+  assert.equal(codexProviderKeyOf({ config: { model_provider: "x", model_providers: { x: { env_key: "BAD NAME; rm" } } } }), null);
+  const saved = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-own-provider";
+  try {
+    setCodexProviderKeyForTests(null);
+    assert.equal(codexEnv().OPENAI_API_KEY, undefined, "an API account billed instead of the plan is never passed");
+    setCodexProviderKeyForTests("OPENAI_API_KEY");
+    assert.equal(codexEnv().OPENAI_API_KEY, "sk-own-provider", "the person's own provider in config.toml reads it");
+  } finally {
+    setCodexProviderKeyForTests(null);
+    if (saved === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = saved;
+  }
 });
 
 test("thinking levels come from each tool's own help", () => {

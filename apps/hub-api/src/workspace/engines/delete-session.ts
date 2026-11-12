@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type CodeEngine } from "@ensemble/shared-types";
 import { copilotBinary, withCopilotServer } from "../../subscriptions/copilot.js";
 import { antigravityDir } from "../../subscriptions/antigravity.js";
-import { agentEnv } from "../../subscriptions/detect.js";
+import { codexEnv } from "../../subscriptions/detect.js";
 import { ACP_AGENTS } from "./acp.js";
 import { codexBinary } from "./codex.js";
 import { RpcConnection } from "./rpc.js";
@@ -113,7 +113,7 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
   if (engine === "codex") {
     const program = await codexBinary();
     if (!program) throw new Error("Install or update Codex on this computer to delete its saved thread.");
-    await rpcDelete(program, ["app-server"], agentEnv(), async rpc => {
+    await rpcDelete(program, ["app-server"], codexEnv(), async rpc => {
       await rpc.request("initialize", { clientInfo: { name: "ensemble", version: "1" }, capabilities: { experimentalApi: true } });
       rpc.notify("initialized");
       try { await rpc.request("thread/delete", { threadId: sessionId }); }
