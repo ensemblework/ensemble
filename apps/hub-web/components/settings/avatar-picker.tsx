@@ -32,7 +32,6 @@ export function AvatarPicker() {
   const current = save.isPending ? save.variables : user?.avatar ?? null;
   const parts = parseAvatar(current);
   const selected = parts ?? DEFAULT_AVATAR;
-  const character = AVATAR_CHARACTERS.find(row => row.id === selected.character)!;
   const palette = AVATAR_PALETTES.find(row => row.id === selected.palette)!;
   const commit = (next: string | null) => {
     if (inFlight.current || next === current) return;
@@ -56,7 +55,7 @@ export function AvatarPicker() {
           {parts ? <PersonaAvatar id={avatarId(parts)} size={64} /> : personInitials(user.name, user.email)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium">{parts ? character.label : "Your initials"}</div>
+          <div className="text-[13px] font-medium">{parts ? "Your avatar" : "Your initials"}</div>
           {parts ? <div className="mt-0.5 text-2xs text-muted">{palette.label}</div> : null}
           {save.isPending ? <span role="status" className="text-2xs text-muted">Saving…</span> : null}
         </div>
@@ -68,9 +67,8 @@ export function AvatarPicker() {
         <div ref={characters} role="radiogroup" aria-labelledby="avatar-character-label" className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {AVATAR_CHARACTERS.map((row, index) => {
             const on = parts?.character === row.id;
-            return <button key={row.id} type="button" role="radio" aria-checked={on} aria-label={row.label} tabIndex={on || (!parts && index === 0) ? 0 : -1} aria-disabled={save.isPending} onClick={() => choose({ ...selected, character: row.id })} onKeyDown={event => keyboard(event, index, "character")} className={cx("flex min-w-0 flex-col items-center gap-1.5 rounded-lg border px-1 py-2 text-[11px] leading-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-disabled:cursor-wait", on ? "border-accent bg-accent/10" : "border-transparent hover:bg-hover")}>
+            return <button key={row.id} type="button" role="radio" aria-checked={on} aria-label={`Avatar ${row.id}`} tabIndex={on || (!parts && index === 0) ? 0 : -1} aria-disabled={save.isPending} onClick={() => choose({ ...selected, character: row.id })} onKeyDown={event => keyboard(event, index, "character")} className={cx("flex min-w-0 flex-col items-center gap-1.5 rounded-lg border px-1 py-2 text-[11px] leading-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-disabled:cursor-wait", on ? "border-accent bg-accent/10" : "border-transparent hover:bg-hover")}>
               <PersonaAvatar id={avatarId({ ...selected, character: row.id })} size={48} />
-              <span className="max-w-full text-center">{row.label}</span>
             </button>;
           })}
         </div>
