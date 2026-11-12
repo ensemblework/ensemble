@@ -238,7 +238,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                   <>
                     <label className="mt-3 flex items-start gap-2 text-[13.5px] leading-5">
                       <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
-                      <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes)</span>
+                      <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, new files, projects, people, meeting notes, skills, routines, reminders)</span>
                     </label>
                     <label className="mt-2 flex items-start gap-2 text-[13.5px] leading-5">
                       <input type="checkbox" className="mt-0.5" checked={canUseApps} onChange={(event) => setCanUseApps(event.target.checked)} />

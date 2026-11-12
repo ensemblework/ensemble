@@ -35,8 +35,8 @@ export function hostedLimits(env: NodeJS.ProcessEnv = process.env) {
     connectors: limit("ENSEMBLE_MAX_CONNECTORS", 25),
     jobsPerDay: limit("ENSEMBLE_MAX_JOBS_PER_DAY", 50),
     datasetBytes: limit("ENSEMBLE_MAX_DATASET_BYTES", 100 * 1024 * 1024),
-    documents: limit("ENSEMBLE_MAX_DOCUMENTS", 10),
-    documentBytes: limit("ENSEMBLE_MAX_DOCUMENT_BYTES", 50 * 1024 * 1024),
+    documents: limit("ENSEMBLE_MAX_DOCUMENTS", 20),
+    documentBytes: limit("ENSEMBLE_MAX_DOCUMENT_BYTES", 100 * 1024 * 1024),
     /** Every stored original on this server, removed-but-not-purged included. */
     filesTotalBytes: limit("ENSEMBLE_FILES_TOTAL_MAX_BYTES", 10 * 1024 * 1024 * 1024),
   };

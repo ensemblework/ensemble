@@ -406,7 +406,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
     }
     const { token, hash, prefix } = newApiToken();
-    const row = await prisma.apiToken.create({ data: { userId: request.userId, name: body.name, tokenHash: hash, prefix, scope: "full" } });
+    const row = await prisma.apiToken.create({ data: { userId: request.userId, accountId: accountIdOf(request), name: body.name, tokenHash: hash, prefix, scope: "full" } });
     await appendLedger({ userId: request.userId, actor: "me", action: "token.create", payload: { name: body.name, prefix } });
     return { id: row.id, token };
   });

@@ -229,7 +229,7 @@ test("save_attachment copies the original into the folder, never over a file unl
   assert.match((research.result as { error: string }).error, /No file .* is attached to this task/);
 });
 
-test("the Hub assistant and editors over MCP find a task's files; the assistant opens the file itself, and neither is given its extracted text", async () => {
+test("the Hub assistant and editors over MCP find a task's files by name and summary; the assistant opens the file itself, and search and ensemble_read give no extracted text", async () => {
   const { mira, arjun, readings, task } = await setup();
   const { fileTools } = await import("../assistant/tools/files.js");
   const list = fileTools.find((tool) => tool.name === "hub_list_files")!;
@@ -246,6 +246,7 @@ test("the Hub assistant and editors over MCP find a task's files; the assistant 
   assert.deepEqual((await view.run(as(arjun.id), view.input.parse({ id: readings.id }))).data, { found: false });
 
   const bridge = await import("../bridge/service.js");
+  await db.document.update({ where: { id: readings.id }, data: { summary: "Soil readings from the north field." } });
   const found = await bridge.searchHub(db, mira.id, "north field", 5);
   const hit = found.results.find((row) => row.kind === "document");
   assert.equal(hit?.id, readings.id);
@@ -255,12 +256,12 @@ test("the Hub assistant and editors over MCP find a task's files; the assistant 
   assert.equal((await bridge.searchHub(db, arjun.id, "north field", 5)).results.length, 0);
   const document = await bridge.readItem(db, mira.id, "document", readings.id, 0, 500);
   assert.ok(document.found);
-  const item = document.item as { filename: string; format: string; originalBytesOmitted: boolean; note: string };
+  const item = document.item as { filename: string; format: string; summary: string; note: string };
   assert.equal(item.filename, "readings.txt");
   assert.equal(item.format, "txt");
-  assert.equal(item.originalBytesOmitted, true);
+  assert.equal(item.summary, "Soil readings from the north field.");
   assert.doesNotMatch(JSON.stringify(item), /Reading 1:/);
-  assert.match(item.note, /does not send a file's extracted text/);
+  assert.match(item.note, /ensemble_get_file/);
   const taskRead = await bridge.readItem(db, mira.id, "task", task.id, 0, 4000);
   assert.ok(taskRead.found);
   assert.deepEqual((taskRead.item as { files: Array<{ id: string; kind: string }> }).files.map((row) => row.kind), ["document", "document", "document", "document"]);

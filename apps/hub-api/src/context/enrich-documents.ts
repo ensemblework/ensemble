@@ -5,13 +5,15 @@
  */
 import { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import { complete } from "../lib/runtime.js";
 import { HostedAccessError, isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
+import { summarizeDocument } from "./summary-model.js";
 import { enrichOne, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
 
 const STALE_MS = 120_000;
+/** Summaries this process is making now: a slow one (an agent on the person's computer) is not stale. */
+const making = new Set<string>();
 
 export async function enrichDocument(app: FastifyInstance, id: string): Promise<SummaryOutcome | null> {
   const document = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
@@ -30,7 +32,13 @@ export async function enrichDocument(app: FastifyInstance, id: string): Promise<
     if (skipped.count) sseHub.publish(document.userId, { event: "documents", data: { id } });
     return null;
   }
-  const outcome = await enrichOne(prismaStore(app), id, (prompt) => ask(app, id, prompt));
+  making.add(id);
+  let outcome: SummaryOutcome | null;
+  try {
+    outcome = await enrichOne(prismaStore(app), id, (row) => summarizeDocument(app, row));
+  } finally {
+    making.delete(id);
+  }
   if (outcome) {
     const row = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
     if (row) sseHub.publish(row.userId, { event: "documents", data: { id } });
@@ -46,6 +54,7 @@ export async function drainDocumentEnrichment(app: FastifyInstance): Promise<voi
     take: 8,
   });
   for (const row of stale) {
+    if (making.has(row.id)) continue;
     await app.prisma.document.updateMany({
       where: { id: row.id, enrichmentStatus: "running" },
       data: {
@@ -124,18 +133,4 @@ function prismaStore(app: FastifyInstance): SummaryStore {
       });
     },
   };
-}
-
-async function ask(app: FastifyInstance, id: string, prompt: string): Promise<string> {
-  const row = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
-  if (!row) throw new Error("That document was not found.");
-  const settings = await loadSettings(app.prisma, row.userId);
-  const answer = await complete({
-    userId: row.userId,
-    settings,
-    tier: settings.automations.fileSummaries.tier,
-    prompt,
-    purpose: "Document summary",
-  });
-  return answer.text;
 }

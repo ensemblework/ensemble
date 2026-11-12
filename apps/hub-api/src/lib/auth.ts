@@ -15,7 +15,7 @@ import { ensembleCookieName, normalizeCookieDomain } from "@ensemble/shared-type
 import { knownTokenScope, TRANSFER_KEY_MS } from "../bridge/auth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "./cookie.js";
 import { prisma } from "./prisma.js";
-import { openableSpace, SPACE_COOKIE } from "../spaces/store.js";
+import { openableSpace, SPACE_COOKIE, spaceLabel } from "../spaces/store.js";
 import { SHARE_KINDS, type Access, type ShareKind } from "../sharing/context.js";
 import { LINK_HEADER, resolveLink, VISITOR_HEADER } from "../sharing/links.js";
 import { anonymousVisitor, cleanVisitorId } from "../sharing/visitors.js";
@@ -124,14 +124,29 @@ export type TokenScope = "full" | "bridge" | "device" | "hooks" | "transfer";
 /**
  * `userId` is whose data the request reads and writes: the active Ensemble space.
  * `accountId` is who signed in. They differ only inside a space other than the account's own.
+ * For a `bridge` or `full` key, `tokenSpaceId` is the space it was made in (its default) and
+ * `tokenAccountId` the account it may act for in that account's other spaces, when known.
  */
-export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; tokenCanWrite?: boolean; tokenCanUseApps?: boolean; modules: string | null; access?: Access };
+export type Identity = {
+  userId: string;
+  accountId?: string;
+  via: AuthVia;
+  tokenScope?: TokenScope;
+  tokenId?: string;
+  tokenCanWrite?: boolean;
+  tokenCanUseApps?: boolean;
+  tokenSpaceId?: string;
+  tokenAccountId?: string;
+  modules: string | null;
+  access?: Access;
+};
 
 export const SHARE_HEADER = "x-ensemble-share";
 
 /**
  * Ensemble Node's delegated identity: the internal token plus these headers is a request a node makes
  * for its owner (the account) in one space, with the owner's current access there. Server-side only.
+ * A `bridge` or `full` key sends `x-ensemble-space` alone to act in another space its account owns.
  */
 export const NODE_ACCOUNT_HEADER = "x-ensemble-node-account";
 export const NODE_SPACE_HEADER = "x-ensemble-space";
@@ -153,7 +168,7 @@ export type OpenedSpace = { id: string; moduleSet: string | null; access: { kind
 /**
  * What `accountId` may do in `spaceId` now, read from the database each time: owner of its own account
  * row or of a space row, a member through `space_members`, or nothing (null). Browser requests (the
- * space cookie) and Ensemble Node's delegated requests resolve a space with this one function.
+ * space cookie), Ensemble Node's delegated requests and keys naming a space resolve it with this one function.
  */
 export async function openedSpace(accountId: string, spaceId: string): Promise<OpenedSpace | null> {
   if (spaceId === accountId) {
@@ -271,6 +286,39 @@ async function nodeIdentity(request: FastifyRequest, accountId: string): Promise
   return { userId: space.id, accountId, via: "node", modules: space.moduleSet, access: { ...space.access, node: node.id } };
 }
 
+type KeyRow = { userId: string; accountId: string | null; user: { ownerId: string | null; name: string; spaceName: string | null } };
+
+/**
+ * The account a key acts for: the one that made it, else, with no account recorded, the key's own row
+ * when that row is an account. Null keeps the key in its space; a space's owner is never taken as a
+ * key's account, since that would hand a member's key the owner's spaces.
+ */
+export function keyAccount(row: Pick<KeyRow, "userId" | "accountId"> & { user: Pick<KeyRow["user"], "ownerId"> }): string | null {
+  return row.accountId ?? (row.user.ownerId ? null : row.userId);
+}
+
+const spaceRefused = (message: string, statusCode: 403 | 404) => Object.assign(new Error(message), { statusCode });
+
+/**
+ * A `bridge` or `full` key acts in the space it was made in, or in another space its account owns,
+ * named by `x-ensemble-space` (docs/CONTEXT_BRIDGE.md §4). A space shared with the account is
+ * refused: the bridge's reads and actions act as a space's owner. Nothing falls back to another space.
+ */
+async function keyIdentity(request: FastifyRequest, base: Identity, row: KeyRow): Promise<Identity> {
+  const account = keyAccount(row);
+  const own: Identity = { ...base, tokenSpaceId: row.userId, ...(account ? { tokenAccountId: account } : {}) };
+  const wanted = headerValue(request, NODE_SPACE_HEADER)?.trim();
+  if (!wanted || wanted === row.userId) return own;
+  if (!account) throw spaceRefused(`This key works only in “${spaceLabel(row.user)}”: make a new key in Ensemble to reach your other spaces.`, 404);
+  const space = await openedSpace(account, wanted);
+  if (!space) throw spaceRefused("This key's account cannot open that space.", 404);
+  if (space.access.kind === "member") {
+    const shared = await prisma.user.findUnique({ where: { id: space.id }, select: { name: true, spaceName: true, ownerId: true } });
+    throw spaceRefused(`“${shared ? spaceLabel(shared) : "That space"}” is shared with you, and keys act only in your own spaces: work there in Ensemble.`, 403);
+  }
+  return { ...own, userId: space.id, accountId: account, modules: space.moduleSet, access: { kind: "owner" } };
+}
+
 export async function identify(request: FastifyRequest): Promise<Identity | null> {
   const internal = request.headers["x-ensemble-internal"];
   if (internal && internal === env.ENSEMBLE_INTERNAL_TOKEN) {
@@ -288,14 +336,15 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
   if (authorization?.startsWith("Bearer ens_")) {
     const row = await prisma.apiToken.findUnique({
       where: { tokenHash: sha256(authorization.slice(7)) },
-      include: { user: { select: { moduleSet: true } } },
+      include: { user: { select: { moduleSet: true, ownerId: true, name: true, spaceName: true } } },
     });
     if (!row || row.revokedAt) return null;
     const tokenScope = knownTokenScope(row.scope);
     if (!tokenScope) return null;
     if (tokenScope === "transfer" && Date.now() - row.createdAt.getTime() > TRANSFER_KEY_MS) return null;
     void prisma.apiToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
-    return { userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet };
+    const base: Identity = { userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet };
+    return tokenScope === "bridge" || tokenScope === "full" ? keyIdentity(request, base, row) : base;
   }
   const cookie = readCookie(request, SESSION_COOKIE);
   if (cookie) {

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { type CodeEngine } from "@ensemble/shared-types";
 import { copilotBinary, withCopilotServer } from "../../subscriptions/copilot.js";
 import { antigravityDir } from "../../subscriptions/antigravity.js";
-import { agentEnv } from "../../subscriptions/detect.js";
+import { codexEnv } from "../../subscriptions/detect.js";
 import { ACP_AGENTS } from "./acp.js";
 import { codexBinary } from "./codex.js";
 import { RpcConnection } from "./rpc.js";
@@ -15,7 +15,8 @@ import { RpcConnection } from "./rpc.js";
 const SessionId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
-const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:/i.test(message);
+/** The agent no longer has the session (deleted in its own app, or expired): already gone counts as deleted. Codex: "no rollout found for thread id <id>". */
+const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:|no rollout found for thread/i.test(message);
 
 /** Only an exact native history object, never a project, worktree, credentials or profile root. */
 async function removeHistory(root: string, parts: string[]): Promise<void> {
@@ -112,7 +113,7 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
   if (engine === "codex") {
     const program = await codexBinary();
     if (!program) throw new Error("Install or update Codex on this computer to delete its saved thread.");
-    await rpcDelete(program, ["app-server"], agentEnv(), async rpc => {
+    await rpcDelete(program, ["app-server"], codexEnv(), async rpc => {
       await rpc.request("initialize", { clientInfo: { name: "ensemble", version: "1" }, capabilities: { experimentalApi: true } });
       rpc.notify("initialized");
       try { await rpc.request("thread/delete", { threadId: sessionId }); }

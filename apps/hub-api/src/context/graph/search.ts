@@ -7,7 +7,6 @@
 import type { Prisma } from "@prisma/client";
 import { hasModule } from "@ensemble/shared-types";
 import { NOT_UPLOADED } from "../artifacts.js";
-import { EXTRACTED_TEXT_TO_MODELS } from "../../files/extracted-text-policy.js";
 import { visibleArtifacts } from "../../sharing/context.js";
 import { ON_BOARD } from "../../lib/node-tasks.js";
 import { itemNeighbors, iso, type GraphCtx } from "./neighbors.js";
@@ -146,7 +145,7 @@ export async function rankedSearch(ctx: GraphCtx, query: string, options: Search
     on("meeting") ? db.meetingNote.findMany({ where: { userId, deletedAt: null, OR: or(["title", "answer", "comment", "prompt"]) }, orderBy: { askedAt: "desc" }, take: per, select: { id: true, title: true, answer: true, comment: true, prompt: true, source: true, occurredAt: true, askedAt: true, projectId: true } }) : none,
     on("meeting") ? db.meetingSession.findMany({ where: { userId, deletedAt: null, meetingNoteId: null, OR: or(["title", "notes", "recap"]) }, orderBy: { startedAt: "desc" }, take: per, select: { id: true, title: true, notes: true, recap: true, startedAt: true, projectId: true } }) : none,
     on("page") ? db.taskPage.findMany({ where: { userId, deletedAt: null, taskId: null, OR: or(["title", "searchText"]) }, orderBy: { updatedAt: "desc" }, take: per, select: { id: true, title: true, searchText: true, updatedAt: true } }) : none,
-    on("file") ? db.document.findMany({ where: { userId, deletedAt: null, OR: EXTRACTED_TEXT_TO_MODELS ? (or(["filename", "summary"]) as never) : (or(["filename"]) as never) }, orderBy: { updatedAt: "desc" }, take: per, select: { id: true, filename: true, summary: true, updatedAt: true, projectIds: true } }) : none,
+    on("file") ? db.document.findMany({ where: { userId, deletedAt: null, OR: or(["filename", "summary"]) }, orderBy: { updatedAt: "desc" }, take: per, select: { id: true, filename: true, summary: true, updatedAt: true, projectIds: true } }) : none,
     on("artifact") ? db.artifact.findMany({ where: { userId, deletedAt: null, kind: { notIn: ["event"] }, AND: [visibleArtifacts(userId), NOT_UPLOADED], OR: or(["title", "text"]) }, orderBy: { ts: "desc" }, take: per, select: { id: true, kind: true, title: true, text: true, ts: true, authoredByMe: true, projectId: true, url: true } }) : none,
     on("skill") && hasModule(ctx.modules ?? null, "skills") ? db.skill.findMany({ where: { userId, deletedAt: null, enabled: true, OR: or(["name", "description", "body"]) }, take: per, select: { id: true, name: true, description: true, body: true, updatedAt: true } }) : none,
     on("diagram") && hasModule(ctx.modules ?? null, "diagrams") ? db.blockDiagram.findMany({ where: { userId, deletedAt: null, OR: or(["title", "source"]) }, take: per, select: { id: true, title: true, source: true, updatedAt: true } }) : none,
@@ -163,7 +162,7 @@ export async function rankedSearch(ctx: GraphCtx, query: string, options: Search
     ...notes.map((row) => ({ kind: "meeting" as const, id: row.id, title: row.title, texts: [{ text: row.answer, weight: 1.5 }, { text: row.comment ?? "", weight: 1 }, { text: row.prompt, weight: 1 }], status: null, when: row.occurredAt ?? row.askedAt, untrusted: row.source !== "live" && row.source !== "paste", projectId: row.projectId })),
     ...sessions.map((row) => ({ kind: "meeting" as const, id: row.id, title: row.title, texts: [{ text: row.notes, weight: 1.5 }, { text: row.recap, weight: 1 }], status: null, when: row.startedAt, path: hubPath("session", row.id), projectId: row.projectId })),
     ...pages.map((row) => ({ kind: "page" as const, id: row.id, title: row.title || "Untitled page", texts: [{ text: row.searchText ?? "", weight: 1.5 }], status: null, when: row.updatedAt })),
-    ...documents.map((row) => ({ kind: "file" as const, id: row.id, title: row.filename, texts: [{ text: EXTRACTED_TEXT_TO_MODELS ? (row.summary ?? "") : "", weight: 1 }], status: null, when: row.updatedAt, projectId: row.projectIds[0] ?? null })),
+    ...documents.map((row) => ({ kind: "file" as const, id: row.id, title: row.filename, texts: [{ text: row.summary ?? "", weight: 1 }], status: null, when: row.updatedAt, projectId: row.projectIds[0] ?? null })),
     ...artifacts.map((row) => ({ kind: "artifact" as const, id: row.id, title: row.title || row.kind, texts: [{ text: row.text, weight: 1 }], status: null, when: row.ts, untrusted: !row.authoredByMe, path: `/files?view=apps&item=${row.id}`, artifactKind: row.kind, authoredByMe: row.authoredByMe, projectId: row.projectId })),
     ...skills.map((row) => ({ kind: "skill" as const, id: row.id, title: row.name, texts: [{ text: row.description, weight: 1.5 }, { text: row.body, weight: 1 }], status: null, when: row.updatedAt })),
     ...diagrams.map((row) => ({ kind: "diagram" as const, id: row.id, title: row.title, texts: [{ text: row.source, weight: 1 }], status: null, when: row.updatedAt })),

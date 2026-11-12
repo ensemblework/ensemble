@@ -29,27 +29,39 @@ export const DATA_GAPS: readonly DataGap[] = [
   },
   {
     requested: "widget layouts",
-    status: "excluded",
+    status: "partial",
     detail:
-      "Widget layouts are chrome: which tiles sit on Today, Context, and the board strip, and how large they are. They are not context. The bridge does not read or write them.",
+      "Widget layouts are chrome: which tiles sit on Today, Context, and the board strip, and how large they are. A key reads them with hub_read_layout or hub_read_surface (ensemble_act); changing them is a settings change that stays with the person in Ensemble.",
   },
   {
-    requested: "private reminders",
-    status: "excluded",
+    requested: "reminders",
+    status: "partial",
     detail:
-      "Reminder rows exist in the Hub and show on Today. They are excluded from the bridge, from search, and from briefs. They are not context.",
+      "ensemble_today, briefs and search leave reminders out. A key reads them with hub_list_reminders and, with changes allowed, creates, changes, dismisses and deletes them (ensemble_act).",
   },
   {
     requested: "skill version history",
     status: "excluded",
     detail:
-      "SkillVersion keeps older bodies for the Hub UI. The bridge returns only the current skill body. Disabled skills are omitted from briefs.",
+      "SkillVersion keeps older bodies for the Hub UI. The bridge returns only the current skill body (hub_read_skill lists recent versions without their bodies). Disabled skills are omitted from briefs.",
+  },
+  {
+    requested: "files",
+    status: "partial",
+    detail:
+      "ensemble_get_file gives a file's details, summary and tags, Ensemble's text of it in parts (text), and the file itself up to 20 MB in one answer; the Ensemble CLI's MCP server saves a file of any size into the working folder (saveTo). ensemble_upload_file adds new files. A key never edits a file's original or deletes a file.",
+  },
+  {
+    requested: "other Ensemble spaces",
+    status: "partial",
+    detail:
+      "A key acts in the space it was made in and, when a call names one (space), in the other spaces its account owns (ensemble_spaces lists them). Spaces shared with the account are refused, and a key with no recorded account made inside a space stays in that space.",
   },
   {
     requested: "writes (create, update, delete, send, approve)",
     status: "partial",
     detail:
-      "A key made with changes allowed runs Ensemble's own actions on an allowlist (ensemble_actions lists them, ensemble_act runs one): tasks (any field, one delete to Trash), pages (create, append, rewrite, block edits, move, one delete to Trash), custom boards (create, change, put a task or page in a column), diagrams, plots and datasets, files (upload with ensemble_upload_file, a file to a page, a page to a file), projects, deliverables, people, repositories, meeting notes and comments. Each runs at once, is in the ledger, and Ensemble's Undo has the changes it supports. Settings, skills, reminders, routines, imports, layouts, bulk deletes, Needs-me answers and assigning work to agents stay with the Hub assistant and Ensemble Node.",
+      "A key made with changes allowed runs Ensemble's own actions on an allowlist (ensemble_actions lists them, ensemble_act runs one): tasks, pages and custom boards (deletes to Trash included, one or many), diagrams, plots and datasets, new files (upload with ensemble_upload_file, save from a link, a file to a page, a page to a file) and file tags, projects, deliverables, people, repositories, meeting notes, comments, skills, routines (create and change), reminders, desk lists and imports. Each runs at once, is in the ledger, and Ensemble's Undo has the changes it supports. Changing settings, model choice or layouts, stopping or deleting runs, starting the assistant, agents, workflows or watchers, deleting routines or files, editing a file's original and answering Needs me stay with the person in Ensemble.",
   },
   {
     requested: "connected apps (mail, calendars, Notion, GitHub, Slack…)",

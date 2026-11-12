@@ -32,10 +32,11 @@ import { antigravityAuthLink } from "./antigravity.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
-import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
+import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
+import { sessionPrompts } from "./session-touch.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 
 export type AgentTurnSpec = {
@@ -282,7 +283,7 @@ export async function answerCodexTurn(method: string, params: Record<string, unk
 }
 
 const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
-  const child = spawn(bin, ["app-server"], { cwd: folder, env: agentEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
+  const child = spawn(bin, ["app-server"], { cwd: folder, env: codexEnv(mcp.env), stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   child.stdin.on("error", () => undefined);
   const server = new RpcConnection((line) => {
     if (child.stdin.writable) child.stdin.write(line);
@@ -781,6 +782,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   const own = group ? sessionFolder(key!) : folder;
   if (group) await mkdir(own, { recursive: true });
   const bridge = openBridge(spec.tools, io.call);
+  let handedOff = false;
   const mcp: McpServer = {
     command: process.execPath,
     args: [hookScriptPath("ensemble-ask-mcp.mjs")],
@@ -798,7 +800,11 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
     // Claude Code and Codex take the instructions with every turn; the others only in a session's first message.
     const perTurn = spec.agent === "claude-code" || spec.agent === "codex";
     const position = spec.session?.position;
-    const found = key ? await findSession(key, spec.agent, spec.system, perTurn, position) : null;
+    const kept = key ? await findSession(key, spec.agent, spec.system, perTurn, position) : null;
+    // Someone sent the session prompts of their own in the agent's app since Ensemble's last turn: the chat goes
+    // on in a new session with Ensemble's own history, so none of that enters it (session-touch.ts).
+    const touched = kept && kept.prompts !== undefined && ((await sessionPrompts(spec.agent, kept.id, folder).catch(() => null)) ?? kept.prompts) > kept.prompts ? kept.id : null;
+    const found = touched ? null : kept;
     // A resumed session whose instructions changed hears only what changed; most of them changed: a new session.
     const update = found?.text !== null && found?.text !== undefined ? instructionsUpdate(found.text, spec.system) : "";
     const earlier = found && update !== null ? found.id : null;
@@ -836,15 +842,20 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
         ...(spec.session?.keepDays ? { keepDays: spec.session.keepDays } : {}),
         perTurn,
         usage: result.totals ?? null,
+        prompts: await sessionPrompts(spec.agent, result.session, folder).catch(() => null),
+        ...(touched ? { retire: touched } : {}),
       });
     }
-    // A turn that keeps no session leaves none in the agent either.
-    if (result.oneOff) dropOneOff(spec.agent, result.oneOff);
+    // A turn that keeps no session leaves none in the agent either, deleted in the folder it ran in, which goes after.
+    if (result.oneOff) {
+      dropOneOff(spec.agent, result.oneOff, key ? undefined : folder);
+      handedOff = !key;
+    }
     const { session: _session, oneOff: _oneOff, totals: _totals, ...answer } = result;
     return { ...answer, resumed };
   } finally {
     bridge.close();
-    // A chat's folder stays for its next turn; the files of this turn do not.
-    await rm(key ? join(own, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
+    // A chat's folder stays for its next turn; the files of this turn do not. A one-off's folder is dropOneOff's.
+    if (!handedOff) await rm(key ? join(own, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
   }
 }

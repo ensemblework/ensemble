@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { ActAs, PageDocument, PageMention, documentMentions, isSubscriptionProvider } from "@ensemble/shared-types";
-import { ASK_KEEP_DAYS, askAnswered, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
+import { ASK_KEEP_DAYS, askAnswered, askHistory, askInLine, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
 import { diagramSources } from "../pages/agent-context.js";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
@@ -234,145 +234,155 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/pages/:kind/:id/ensemble", async (request, reply) => {
     const { kind, id } = request.params as { kind: string; id: string };
-    const abort = new AbortController();
-    reply.raw.on("close", () => { if (!reply.raw.writableEnded) abort.abort(); });
-    if (reply.raw.destroyed) abort.abort();
-    const body = z
-      .object({
-        prompt: z.string().min(1).max(4000),
-        content: PageDocument.optional(),
-        mentions: z.array(PageMention).max(40).optional(),
-        parentId: z.string().uuid().optional(),
-        markId: z.string().optional(),
-        quote: z.string().optional(),
-        tier: z.enum(["easy", "medium", "high", "max"]).optional(),
-        actAs: ActAs.optional(),
-      })
-      .parse(request.body);
-    await assertCommentPage(app.prisma, request.userId, kind, id);
-    if (body.parentId) {
-      const parent = await app.prisma.pageDiscussion.findFirst({
-        where: { id: body.parentId, userId: request.userId, pageKind: kind, pageId: id, deletedAt: null },
-      });
-      if (!parent) return reply.code(404).send({ error: "Comment not found." });
-      if (parent.authorKind === "human" && parent.kind === "comment") {
-        // allowed: ensemble replies to a human comment
-      }
-    }
-    const since = new Date(Date.now() - 60_000);
-    const recent = await app.prisma.pageDiscussion.count({
-      where: { userId: request.userId, authorKind: "ensemble", createdAt: { gte: since } },
-    });
-    if (recent >= 20) return reply.code(429).send({ error: "Too many Ensemble replies in a minute. Wait and try again." });
-
-    const settings = await loadSettings(app.prisma, request.userId);
-    // Settings › Assistant › Ask Ensemble model (Medium unless changed), not the chat's default.
-    const tierName = body.tier ?? settings.assistant.askTier ?? "medium";
-    const tier = settings.models[tierName];
-    // On an AI plan the page has one short-lived session of the person's agent; asks there continue it (ask-sessions.ts).
-    const sessionKey = isSubscriptionProvider(tier.provider) ? askSessionKey(actorFor(request.userId) ?? request.userId, kind, id) : null;
-    const conversation = await app.prisma.assistantConversation.create({
-      data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Comment" },
-    });
-    const row = await withCommentPage(app.prisma, request.userId, kind, id, (tx) => tx.pageDiscussion.create({
-      data: {
-        userId: request.userId,
-        pageKind: kind,
-        pageId: id,
-        sourceKind: kind,
-        sourceId: id,
-        taskId: kind === "task" ? id : null,
-        projectId: kind === "project" ? id : null,
-        deliverableId: kind === "deliverable" ? id : null,
-        kind: "ensemble",
-        authorKind: "ensemble",
-        // Who asked, so the answer is attributed in a shared space.
-        authorAccountId: actorFor(request.userId),
-        authorNodeId: nodeActingIn(request.userId),
-        parentId: body.parentId,
-        markId: body.markId,
-        quote: body.quote ?? "",
-        anchor: { markId: body.markId, quote: body.quote ?? "" },
-        body: { text: "" },
-        status: "streaming",
-        model: tier.model,
-        tier: tierName,
-        conversationId: conversation.id,
-      },
-    }));
-
-    reply.hijack();
-    const raw = reply.raw;
-    raw.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      // hijack() skips @fastify/cors; the desktop webview calls this cross-origin.
-      ...streamCorsHeaders(request.headers.origin, hubCorsPolicy()),
-    });
-    const send = (event: string, data: unknown) => {
-      if (!raw.writableEnded) raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-    send("status", { text: "Thinking…", id: row.id, conversationId: conversation.id });
-    let text = "";
-    let lastFlush = 0;
-    if (sessionKey) await askStarted(app, request.userId, sessionKey, { kind, id }).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble session"));
+    // Asks on one page by one person are answered in the order they were made (ask-sessions.ts).
+    const place = askInLine(`${request.userId}\n${actorFor(request.userId) ?? request.userId}\n${kind}\n${id}`);
     try {
-      const result = await runAssistantTurn({
-        requestHeaders: assistantHeaders(request),
-        app,
-        userId: request.userId,
-        modules: request.modules,
-        conversationId: conversation.id,
-        message: body.prompt,
-        page: { path: kind === "meeting" ? `/meetings?session=${id}` : `/${kind}s/${id}`, taskId: kind === "task" ? id : undefined, projectId: kind === "project" ? id : undefined, label: kind === "meeting" ? "these meeting notes" : "this page" },
-        settings,
-        model: tier.model,
-        provider: tier.provider,
-        reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
-        actAs: body.actAs ?? settings.assistant.actAs,
-        preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
-        inlineArtifacts: true,
-        ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS } } : {}),
-        mentions: await resolveTypedMentions(app.prisma, request.userId, request.modules, body.prompt, [...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])]),
-        referenceContext: [
-          await commentPageText(app.prisma, request.userId, kind, id, body.content),
-          body.quote ? `Selected text:\n${body.quote}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n")
-          .slice(0, 28_000) || undefined,
-        signal: abort.signal,
-        emit(frame) {
-          if (frame.type === "delta") {
-            text += frame.text;
-            const now = Date.now();
-            if (now - lastFlush > 150) {
-              lastFlush = now;
-              void app.prisma.pageDiscussion.update({ where: { id: row.id }, data: { body: { text } } }).catch(() => undefined);
-            }
-          }
-          send(frame.type, frame);
+      const abort = new AbortController();
+      reply.raw.on("close", () => { if (!reply.raw.writableEnded) abort.abort(); });
+      if (reply.raw.destroyed) abort.abort();
+      const body = z
+        .object({
+          prompt: z.string().min(1).max(4000),
+          content: PageDocument.optional(),
+          mentions: z.array(PageMention).max(40).optional(),
+          parentId: z.string().uuid().optional(),
+          markId: z.string().optional(),
+          quote: z.string().optional(),
+          tier: z.enum(["easy", "medium", "high", "max"]).optional(),
+          actAs: ActAs.optional(),
+        })
+        .parse(request.body);
+      await assertCommentPage(app.prisma, request.userId, kind, id);
+      if (body.parentId) {
+        const parent = await app.prisma.pageDiscussion.findFirst({
+          where: { id: body.parentId, userId: request.userId, pageKind: kind, pageId: id, deletedAt: null },
+        });
+        if (!parent) return reply.code(404).send({ error: "Comment not found." });
+        if (parent.authorKind === "human" && parent.kind === "comment") {
+          // allowed: ensemble replies to a human comment
+        }
+      }
+      const since = new Date(Date.now() - 60_000);
+      const recent = await app.prisma.pageDiscussion.count({
+        where: { userId: request.userId, authorKind: "ensemble", createdAt: { gte: since } },
+      });
+      if (recent >= 20) return reply.code(429).send({ error: "Too many Ensemble replies in a minute. Wait and try again." });
+
+      const settings = await loadSettings(app.prisma, request.userId);
+      // Settings › Assistant › Ask Ensemble model (Medium unless changed), not the chat's default.
+      const tierName = body.tier ?? settings.assistant.askTier ?? "medium";
+      const tier = settings.models[tierName];
+      // On an AI plan the page has one short-lived session of the person's agent; asks there continue it (ask-sessions.ts).
+      const sessionKey = isSubscriptionProvider(tier.provider) ? askSessionKey(actorFor(request.userId) ?? request.userId, kind, id) : null;
+      const conversation = await app.prisma.assistantConversation.create({
+        data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Comment" },
+      });
+      const row = await withCommentPage(app.prisma, request.userId, kind, id, (tx) => tx.pageDiscussion.create({
+        data: {
+          userId: request.userId,
+          pageKind: kind,
+          pageId: id,
+          sourceKind: kind,
+          sourceId: id,
+          taskId: kind === "task" ? id : null,
+          projectId: kind === "project" ? id : null,
+          deliverableId: kind === "deliverable" ? id : null,
+          kind: "ensemble",
+          authorKind: "ensemble",
+          // Who asked, so the answer is attributed in a shared space.
+          authorAccountId: actorFor(request.userId),
+          authorNodeId: nodeActingIn(request.userId),
+          parentId: body.parentId,
+          markId: body.markId,
+          quote: body.quote ?? "",
+          anchor: { markId: body.markId, quote: body.quote ?? "" },
+          body: { text: "" },
+          status: "streaming",
+          model: tier.model,
+          tier: tierName,
+          conversationId: conversation.id,
         },
+      }));
+
+      reply.hijack();
+      const raw = reply.raw;
+      raw.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        // hijack() skips @fastify/cors; the desktop webview calls this cross-origin.
+        ...streamCorsHeaders(request.headers.origin, hubCorsPolicy()),
       });
-      text = result.content || text;
-      await app.prisma.pageDiscussion.update({
-        where: { id: row.id },
-        data: { body: { text }, status: "open", toolCalls: result.toolCalls as never, model: result.model },
-      });
-      send("done", { id: row.id, content: text, toolCalls: result.toolCalls, model: result.model, tier: tierName, conversationId: conversation.id });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Ensemble could not answer.";
-      await app.prisma.pageDiscussion.update({
-        where: { id: row.id },
-        data: { body: { text: message }, status: "open", error: message },
-      });
-      send("error", { message });
-      send("done", { id: row.id, content: message, toolCalls: [], model: tier.model, tier: tierName });
+      const send = (event: string, data: unknown) => {
+        if (!raw.writableEnded) raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      send("status", { text: "Thinking…", id: row.id, conversationId: conversation.id });
+      let text = "";
+      let lastFlush = 0;
+      if (place.waiting) send("status", { text: "Waiting for the answer before this one…", id: row.id, conversationId: conversation.id });
+      await Promise.race([place.ready, new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve(), { once: true }))]);
+      if (sessionKey) await askStarted(app, request.userId, sessionKey, { kind, id }).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble session"));
+      // The page's earlier asks in this session, for a new session when the person deleted the old one in their agent's app.
+      const earlier = sessionKey ? await askHistory(app, request.userId, sessionKey, { kind, id, actor: actorFor(request.userId) }).catch(() => "") : "";
+      try {
+        const result = await runAssistantTurn({
+          requestHeaders: assistantHeaders(request),
+          app,
+          userId: request.userId,
+          modules: request.modules,
+          conversationId: conversation.id,
+          message: body.prompt,
+          page: { path: kind === "meeting" ? `/meetings?session=${id}` : `/${kind}s/${id}`, taskId: kind === "task" ? id : undefined, projectId: kind === "project" ? id : undefined, label: kind === "meeting" ? "these meeting notes" : "this page" },
+          settings,
+          model: tier.model,
+          provider: tier.provider,
+          reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
+          actAs: body.actAs ?? settings.assistant.actAs,
+          preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
+          inlineArtifacts: true,
+          ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS, ...(earlier ? { history: earlier } : {}) } } : {}),
+          mentions: await resolveTypedMentions(app.prisma, request.userId, request.modules, body.prompt, [...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])]),
+          referenceContext: [
+            await commentPageText(app.prisma, request.userId, kind, id, body.content),
+            body.quote ? `Selected text:\n${body.quote}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+            .slice(0, 28_000) || undefined,
+          signal: abort.signal,
+          emit(frame) {
+            if (frame.type === "delta") {
+              text += frame.text;
+              const now = Date.now();
+              if (now - lastFlush > 150) {
+                lastFlush = now;
+                void app.prisma.pageDiscussion.update({ where: { id: row.id }, data: { body: { text } } }).catch(() => undefined);
+              }
+            }
+            send(frame.type, frame);
+          },
+        });
+        text = result.content || text;
+        await app.prisma.pageDiscussion.update({
+          where: { id: row.id },
+          data: { body: { text }, status: "open", toolCalls: result.toolCalls as never, model: result.model },
+        });
+        send("done", { id: row.id, content: text, toolCalls: result.toolCalls, model: result.model, tier: tierName, conversationId: conversation.id });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Ensemble could not answer.";
+        await app.prisma.pageDiscussion.update({
+          where: { id: row.id },
+          data: { body: { text: message }, status: "open", error: message },
+        });
+        send("error", { message });
+        send("done", { id: row.id, content: message, toolCalls: [], model: tier.model, tier: tierName });
+      }
+      // The 30 minutes count from this answer.
+      if (sessionKey) await askAnswered(app, request.userId, sessionKey).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble answer"));
+      sseHub.publish(request.userId, { event: "page", data: { pageId: id } });
+      raw.end();
+    } finally {
+      place.leave();
     }
-    // The 30 minutes count from this answer.
-    if (sessionKey) await askAnswered(app, request.userId, sessionKey).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble answer"));
-    sseHub.publish(request.userId, { event: "page", data: { pageId: id } });
-    raw.end();
   });
 }

@@ -50,6 +50,33 @@ export function agentEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   return env;
 }
 
+/**
+ * The variable the person's own Codex model provider reads its key from (`env_key` in `config.toml`), from
+ * the last check here. Codex keeps it even when it is one of the API-key variables other agents never get.
+ */
+let codexKeyName: string | null = null;
+export const codexProviderKey = (): string | null => codexKeyName;
+export function setCodexProviderKeyForTests(name: string | null): void {
+  codexKeyName = name;
+}
+
+/** The environment Codex runs with: `agentEnv`, keeping the variable its own model provider reads its key from. */
+export function codexEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env = agentEnv(extra);
+  const name = codexKeyName;
+  if (name && process.env[name] !== undefined && env[name] === undefined) env[name] = process.env[name];
+  return env;
+}
+
+type CodexConfig = { config?: { model_provider?: string | null; model_providers?: Record<string, { env_key?: string | null } | null> | null } | null } | null;
+
+/** The `env_key` of the model provider Codex is set up with (`config/read`); null for OpenAI's own sign-in. */
+export function codexProviderKeyOf(body: CodexConfig): string | null {
+  const name = body?.config?.model_provider;
+  const key = name ? body?.config?.model_providers?.[name]?.env_key : null;
+  return typeof key === "string" && /^[A-Za-z_][A-Za-z0-9_]{0,99}$/.test(key) ? key : null;
+}
+
 /** Where an agent's program is. `args` start it before its own arguments: an npm shim's script on Windows (ACP agents). */
 export type AgentBinary = { path: string; via: "app" | "cli"; args?: string[] };
 
@@ -396,11 +423,28 @@ export function codexLimits(body: { rateLimits?: CodexLimitSnapshot | null; rate
   return windows;
 }
 
+/**
+ * Codex's `account/read`: whether it can answer here, and what pays for it. Signed in with ChatGPT
+ * (the plan), with an API key, or set up with its own model provider in `config.toml` (no account,
+ * `requiresOpenaiAuth: false`) all run; only a Codex that needs an OpenAI sign-in and has none is
+ * signed out.
+ */
+export function codexSignIn(body: { account?: { type?: string; planType?: string } | null; requiresOpenaiAuth?: boolean } | null | undefined): { signedIn: boolean; plan: string | null; chatgpt: boolean } {
+  const type = body?.account?.type;
+  if (type === "chatgpt") {
+    const plan = body!.account!.planType && body!.account!.planType !== "unknown" ? body!.account!.planType.slice(0, 60) : null;
+    return { signedIn: true, plan, chatgpt: true };
+  }
+  if (type === "apiKey") return { signedIn: true, plan: "API key", chatgpt: false };
+  if (!body?.account && body?.requiresOpenaiAuth === false) return { signedIn: true, plan: "own model provider", chatgpt: false };
+  return { signedIn: false, plan: null, chatgpt: false };
+}
+
 /** Codex answers through its app-server: whether it is signed in (`account/read`) and its models (`model/list`). */
 async function probeCodex(): Promise<SubscriptionAgent | null> {
   const found = await codexAgentBinary();
   if (!found) return null;
-  const child = spawn(found.path, ["app-server"], { cwd: tmpdir(), env: agentEnv(), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const child = spawn(found.path, ["app-server"], { cwd: tmpdir(), env: codexEnv(), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   child.stdin.on("error", () => undefined);
   child.on("error", () => undefined);
   const server = new RpcConnection((line) => {
@@ -418,10 +462,15 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     const init = (await server.request("initialize", { clientInfo: { name: "ensemble", title: "Ensemble", version: "1" }, capabilities: { experimentalApi: true, requestAttestation: false } })) as { userAgent?: string };
     server.notify("initialized");
     base.version = firstVersion(String(init.userAgent ?? "").replace(/^[^/]*\//, ""));
-    const account = (await server.request("account/read", {})) as { account?: { type?: string; planType?: string } | null; requiresOpenaiAuth?: boolean };
-    base.signedIn = account.account?.type === "chatgpt";
-    if (!base.signedIn && account.requiresOpenaiAuth === false) base.problem = "Codex is configured for an API key or custom provider. Sign in with ChatGPT to use a subscription here.";
-    base.plan = account.account?.type === "chatgpt" && account.account.planType && account.account.planType !== "unknown" ? account.account.planType : null;
+    const account = (await server.request("account/read", {})) as Parameters<typeof codexSignIn>[0];
+    const signIn = codexSignIn(account);
+    base.signedIn = signIn.signedIn;
+    base.plan = signIn.plan;
+    // A model provider of the person's own reads its key from a variable this computer's Ensemble must have too.
+    codexKeyName = codexProviderKeyOf((await server.request("config/read", { includeLayers: false }).catch(() => null)) as CodexConfig);
+    if (codexKeyName && !process.env[codexKeyName]) {
+      base.problem = `Codex's model provider reads its key from ${codexKeyName}, which Ensemble on this computer does not have. Set it where apps can see it (on a Mac: launchctl setenv ${codexKeyName} <key>), run ensemble runner restart, then Check again.`.slice(0, 300);
+    }
     const rows: CodexModel[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < 5; page += 1) {
@@ -432,7 +481,7 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     }
     base.models = codexModels(rows);
     // How much of the plan's 5-hour and weekly windows is used; a Codex without the method lists none.
-    if (base.signedIn) {
+    if (signIn.chatgpt) {
       const limits = codexLimits((await server.request("account/rateLimits/read", {}).catch(() => null)) as Parameters<typeof codexLimits>[0]);
       if (limits.length) base.limits = limits;
     }

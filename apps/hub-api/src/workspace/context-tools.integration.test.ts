@@ -66,7 +66,7 @@ test("a paired computer's claim carries the task's context, and its run asks for
   assert.equal(changed.statusCode, 200, changed.body);
   assert.deepEqual((await db.task.findUniqueOrThrow({ where: { id: w.task.id } })).labels, ["from-run"]);
   const settings = await act({ name: "ensemble_act", args: { action: "hub_update_settings", input: {} } });
-  assert.match((settings.json() as { text: string }).text, /assistant and Ensemble Node/);
+  assert.match((settings.json() as { text: string }).text, /Agent runs cannot use hub_update_settings/);
   const apps = await act({ name: "ensemble_act", args: { action: "gmail_search", input: { query: "x" } } });
   assert.match((apps.json() as { text: string }).text, /connected apps/);
 });

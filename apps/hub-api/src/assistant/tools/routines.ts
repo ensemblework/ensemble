@@ -3,7 +3,7 @@
  * recurring work ("every weekday at 9, sum up my unread mail"), and pause, resume, change or delete one.
  */
 import { z } from "zod";
-import { createRoutine, deleteRoutine, findRoutine, listRoutines, routineWhen, updateRoutine, WEEKDAYS, cronFor, type Cadence } from "../../routines/service.js";
+import { createRoutine, deleteRoutine, dropRoutineChat, findRoutine, listRoutines, routineWhen, updateRoutine, WEEKDAYS, cronFor, type Cadence } from "../../routines/service.js";
 import { defineTool, inTransaction, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
 
 const Schedule = {
@@ -91,6 +91,7 @@ export const routineTools = [
     async run(ctx, input) {
       if (input.action === "delete") {
         const gone = await inTransaction(ctx, (tx) => deleteRoutine(tx, ctx.userId, input.routineId));
+        void dropRoutineChat(ctx.app, ctx.userId, gone, { conversationId: ctx.conversationId });
         return toolOk(`Deleted the routine “${gone.title}”.`, { routine: gone }, { href: "/routines" });
       }
       if (input.action !== "pause") routinesOn(ctx);

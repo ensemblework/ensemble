@@ -362,6 +362,32 @@ function pageImage(user: HttpUser, filename: string, bytes: Uint8Array, mediaTyp
 
 const imageNode = (fileId: string, more: Record<string, unknown> = {}) => ({ type: "image", attrs: { src: null, alt: "", fileId, ...more } });
 
+test("a picture is summarized from the file itself, with the summary for models; audio is not summarized", async (t) => {
+  const previous = process.env.ENSEMBLE_INPROCESS_RUNTIME;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME;
+    else process.env.ENSEMBLE_INPROCESS_RUNTIME = previous;
+  });
+  const owner = await person("Mira Chen");
+  await ok(owner.inject({ method: "PATCH", url: "/api/settings", payload: { automations: { fileSummaries: { enabled: true, tier: "easy" } }, models: { easy: { provider: "mock", model: "mock", effort: "default", context: "default" } } } }));
+  const send = (filename: string, bytes: Uint8Array, mediaType: string) => owner.inject({ method: "POST", url: "/api/documents", payload: { filename, mediaType, dataBase64: Buffer.from(bytes).toString("base64") } });
+  const picture = (await ok<{ file: FileRecord }>(send("whiteboard.png", testPng(40, 30), "image/png"), 201)).file;
+  const voice = (await ok<{ file: FileRecord }>(send("voice.mp3", new Uint8Array([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 9, 1, 2, 3]), "audio/mpeg"), 201)).file;
+  const status = (id: string) => db.document.findUniqueOrThrow({ where: { id }, select: { enrichmentStatus: true, summary: true, enrichmentError: true } });
+  assert.notEqual((await status(picture.id)).enrichmentStatus, "skipped", "a picture with no text is still summarized");
+  assert.equal((await status(voice.id)).enrichmentStatus, "skipped", "audio is not summarized");
+  const { enrichDocument } = await import("../context/enrich-documents.js");
+  await enrichDocument(harness.app, picture.id);
+  for (let tries = 0; tries < 100 && (await status(picture.id)).enrichmentStatus !== "done"; tries += 1) await new Promise((done) => setTimeout(done, 50));
+  const done = await status(picture.id);
+  assert.equal(done.enrichmentStatus, "done", JSON.stringify(done.enrichmentError));
+  assert.equal(done.summary, "Mock answer.");
+  const { listFiles } = await import("../files/attached.js");
+  const found = await listFiles(db, owner.id, { query: "mock answer" });
+  assert.deepEqual(found.map((file) => [file.id, file.summary]), [[picture.id, "Mock answer."]], "files are found by their summary, which models are given");
+});
+
 test("page images: exactly 2 MiB is kept with its size; one byte more, a damaged header, an SVG or a wrong name is refused", async () => {
   const owner = await person("Mira Chen");
   const count = async () => (await ok<{ usage: FileUsage }>(owner.inject({ method: "GET", url: "/api/documents" }))).usage.count;
@@ -452,7 +478,7 @@ test("page writes refuse new images over the limit or of non-images, and old pag
   await ok(save(2, { type: "image", attrs: { src: pasted, alt: "Old" } }, { type: "paragraph", content: [{ type: "text", text: "Edited" }] }));
 });
 
-test("hosted accounts keep ten files in 50 MB; removing one frees room; the server has a total", { timeout: 120_000 }, async (t) => {
+test("hosted accounts keep twenty files in 100 MB; removing one frees room; the server has a total", { timeout: 120_000 }, async (t) => {
   const before = { ...process.env };
   t.after(() => {
     for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
@@ -463,23 +489,23 @@ test("hosted accounts keep ten files in 50 MB; removing one frees room; the serv
   process.env.ENSEMBLE_SERVER_RUNNER = "off";
   const hosted = await person("Mira Chen");
   const ids: string[] = [];
-  for (let index = 1; index <= 10; index += 1) ids.push((await uploaded(hosted, `note ${index}.txt`, `Fieldnote note ${index}`)).id);
-  const eleventh = await upload(hosted, "note 11.txt", "one too many");
-  assert.equal(eleventh.statusCode, 429);
-  assert.equal(eleventh.json<{ error: string }>().error, "You can keep 10 files on the hosted plan. Remove one to add another.");
+  for (let index = 1; index <= 20; index += 1) ids.push((await uploaded(hosted, `note ${index}.txt`, `Fieldnote note ${index}`)).id);
+  const extra = await upload(hosted, "note 21.txt", "one too many");
+  assert.equal(extra.statusCode, 429);
+  assert.equal(extra.json<{ error: string }>().error, "You can keep 20 files on the hosted plan. Remove one to add another.");
   const usage = (await ok<{ usage: FileUsage }>(hosted.inject({ method: "GET", url: "/api/documents" }))).usage;
-  assert.deepEqual([usage.count, usage.maxCount, usage.maxBytes, usage.maxFileBytes], [10, 10, 50 * 1024 * 1024, 25 * 1024 * 1024]);
+  assert.deepEqual([usage.count, usage.maxCount, usage.maxBytes, usage.maxFileBytes], [20, 20, 100 * 1024 * 1024, 25 * 1024 * 1024]);
   await ok(hosted.inject({ method: "DELETE", url: `/api/documents/${ids[0]}` }), 204);
-  await uploaded(hosted, "note 11.txt", "room again");
+  await uploaded(hosted, "note 21.txt", "room again");
 
   process.env.ENSEMBLE_MAX_DOCUMENTS = "50";
-  process.env.ENSEMBLE_MAX_DOCUMENT_BYTES = "300";
+  process.env.ENSEMBLE_MAX_DOCUMENT_BYTES = "600";
   const used = (await ok<{ usage: FileUsage }>(hosted.inject({ method: "GET", url: "/api/documents" }))).usage.bytes;
-  const big = await upload(hosted, "big.txt", "x".repeat(300 - used + 12));
+  const big = await upload(hosted, "big.txt", "x".repeat(600 - used + 12));
   assert.equal(big.statusCode, 429);
-  assert.equal(big.json<{ error: string }>().error, "Files can use 300 bytes together on the hosted plan; this one needs 12 bytes more.");
+  assert.equal(big.json<{ error: string }>().error, "Files can use 600 bytes together on the hosted plan; this one needs 12 bytes more.");
   const target = ids[1]!;
-  const grow = await hosted.inject({ method: "PUT", url: `/api/documents/${target}/content`, payload: { dataBase64: Buffer.from("y".repeat(400)).toString("base64") } });
+  const grow = await hosted.inject({ method: "PUT", url: `/api/documents/${target}/content`, payload: { dataBase64: Buffer.from("y".repeat(700)).toString("base64") } });
   assert.equal(grow.statusCode, 429, "a replacement counts its size change");
   delete process.env.ENSEMBLE_MAX_DOCUMENT_BYTES;
 

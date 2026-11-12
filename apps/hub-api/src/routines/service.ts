@@ -199,6 +199,38 @@ export async function deleteRoutine(db: Db, userId: string, id: string): Promise
   return routineView(row);
 }
 
+/**
+ * A deleted routine's conversation goes with it, as a deleted chat does (assistant/delete-chat.ts): its
+ * messages here, a run still going, and the agent session behind it on the person's computer.
+ */
+export async function dropRoutineChat(app: FastifyInstance, userId: string, routine: Pick<RoutineView, "conversationId">, from?: { conversationId?: string }): Promise<void> {
+  if (!routine.conversationId) return;
+  // Loaded here: the assistant's tools include the routine tools, which load this file.
+  const { deleteAssistantChat } = await import("../assistant/delete-chat.js");
+  // Deleted by a turn in its own conversation: that turn finishes instead of being stopped.
+  const keepTurn = from?.conversationId === routine.conversationId;
+  await deleteAssistantChat(app, userId, routine.conversationId, { keepTurn }).catch((error: unknown) => app.log.warn({ err: error }, "Could not delete a routine's conversation"));
+}
+
+const DAY_MS = 24 * 3600_000;
+/** The most a paired computer keeps an unused chat session (remote/assistant.ts `keepDays`). */
+const SESSION_KEEP_MAX = 90;
+
+/**
+ * How long the routine's agent session is kept unused on the person's computer: past the gap to its
+ * next run twice over, so one skipped run still finds it, and at least the usual 30 days.
+ */
+export function routineKeepDays(cron: string, timezone: string, now = new Date()): number {
+  try {
+    const first = nextRoutineRun(cron, timezone, now);
+    const second = first ? nextRoutineRun(cron, timezone, first) : null;
+    if (!first || !second) return SESSION_KEEP_MAX;
+    return Math.min(SESSION_KEEP_MAX, Math.max(30, Math.ceil((2 * (second.getTime() - first.getTime())) / DAY_MS) + 1));
+  } catch {
+    return SESSION_KEEP_MAX;
+  }
+}
+
 const ROUTINE_PREAMBLE = [
   "This turn is one of the person's routines, run on its schedule while they are away.",
   "Do what the routine says with Ensemble's tools and their connected apps, then reply with a short result they can read in a minute: what you found or did, and anything that needs them.",
@@ -268,6 +300,8 @@ export async function runRoutine(app: FastifyInstance, routine: AssistantRoutine
       provider: tier.provider,
       reasoningEffort: tier.effort !== "default" ? tier.effort : tier.provider === INCLUDED_PROVIDER ? undefined : settings.assistant.reasoningEffort,
       preamble: ROUTINE_PREAMBLE,
+      // On the person's AI plan the routine keeps its one agent session from run to run (turn-sessions.ts).
+      subscription: { keepDays: routineKeepDays(routine.cron, routine.timezone) },
       emit: () => undefined,
     });
     held = result.toolCalls.filter((call) => call.state === "awaiting_approval").length;
@@ -292,10 +326,13 @@ export async function runRoutine(app: FastifyInstance, routine: AssistantRoutine
     summary = summaryOf(error instanceof Error ? error.message : String(error)) || "It did not finish.";
     app.log.warn({ err: error, routineId: routine.id }, "routine run failed");
   }
-  const saved = await prisma.assistantRoutine.update({
+  // Deleted while it ran: its conversation went with it, and nothing is reported.
+  const saved = await prisma.assistantRoutine.updateMany({
     where: { id: routine.id },
     data: { lastStatus: status, lastSummary: summary, conversationId, runCount: { increment: 1 } },
   });
+  if (!saved.count) return null;
+  const view = routineView(await prisma.assistantRoutine.findUniqueOrThrow({ where: { id: routine.id } }));
   const title = status === "failed" ? `Routine didn't finish: ${routine.title}` : held ? `Routine needs you: ${routine.title}` : `Routine done: ${routine.title}`;
   const body = held ? `${held} ${held === 1 ? "change waits" : "changes wait"} for Apply in its conversation. ${summary}` : summary;
   await prisma.notification
@@ -303,7 +340,7 @@ export async function runRoutine(app: FastifyInstance, routine: AssistantRoutine
     .catch((error: unknown) => app.log.warn({ err: error }, "routine notification failed"));
   sseHub.publish(userId, { event: "routine", data: { id: routine.id, status } });
   sseHub.publish(userId, { event: "notification", data: { kind: "routine" } });
-  return routineView(saved);
+  return view;
 }
 
 /** The scheduler's minute: this person's routines that are due run, one after another. */

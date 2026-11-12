@@ -169,6 +169,16 @@ export function immediateText(filename: string, bytes: Uint8Array): FileText | n
   return { status: "none", text: "", pageCount: null, warnings: note ? [note] : [] };
 }
 
+/**
+ * Kinds whose summary is made from the file itself even when Ensemble reads no text from it: a picture,
+ * a scanned PDF, slides that are mostly pictures (context/summary-model.ts). Audio, video and unknown
+ * formats are not summarized.
+ */
+export function summarizedWithoutText(filename: string): boolean {
+  const kind = fileFormat(filename).kind;
+  return kind === "image" || kind === "pdf" || kind === "document" || kind === "slides" || kind === "sheet";
+}
+
 /** The text of any stored file. Images, audio, video and unknown formats have none. */
 export async function readFileText(filename: string, bytes: Uint8Array): Promise<FileText> {
   const route = textRoute(fileFormat(filename));
@@ -235,10 +245,10 @@ export async function writeFileText(db: PrismaClient | Prisma.TransactionClient,
         warnings: result.warnings,
         parsedAt: new Date(),
         parseAttempts: { increment: 1 },
-        ...(summarize ? { enrichmentStatus: result.text.trim() ? "queued" : "skipped" } : {}),
+        ...(summarize ? { enrichmentStatus: result.text.trim() || summarizedWithoutText(row.filename) ? "queued" : "skipped" } : {}),
       },
     });
-    return summarize && Boolean(result.text.trim());
+    return summarize && (Boolean(result.text.trim()) || summarizedWithoutText(row.filename));
   };
   return "$transaction" in db && typeof db.$transaction === "function" ? (db as PrismaClient).$transaction(write) : write(db as Prisma.TransactionClient);
 }

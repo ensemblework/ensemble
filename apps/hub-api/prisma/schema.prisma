@@ -1922,6 +1922,8 @@ model CliAuthRequest {
   approvedScopes  String[]  @default([]) @map("approved_scopes")
   status          String    @default("pending")
   userId          String?   @map("user_id")
+  /// The account that approved, when `userId` is a space it owns: the minted key's `accountId`.
+  accountId       String?   @map("account_id")
   tokenId         String?   @map("token_id")
   pairingId       String?   @map("pairing_id")
   createdAt       DateTime  @default(now()) @map("created_at")
@@ -2091,6 +2093,8 @@ model ApiToken {
   canWrite   Boolean   @default(false) @map("can_write")
   /// A `bridge` key may use the connected apps (built-in app tools, app items, remote MCP) through the bridge.
   canUseApps Boolean   @default(false) @map("can_use_apps")
+  /// The account that made the key: a `bridge` or `full` key may act in that account's other spaces (`x-ensemble-space`, lib/auth.ts `keyAccount`).
+  accountId  String?   @map("account_id")
   lastUsedAt DateTime? @map("last_used_at")
   createdAt  DateTime  @default(now()) @map("created_at")
   revokedAt  DateTime? @map("revoked_at")

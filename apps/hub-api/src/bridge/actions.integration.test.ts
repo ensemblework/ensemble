@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test, { after } from "node:test";
 import { z } from "zod";
 import { createHttpHarness } from "../test/http.js";
@@ -22,10 +23,14 @@ async function keyFor(grants: { canWrite?: boolean; canUseApps?: boolean } = {})
 
 const act = (key: Key, name: string, input: Record<string, unknown> = {}) => key.inject({ method: "POST", url: `/api/bridge/act/${name}`, payload: { input } });
 
-test("every allowlisted action is a tool the assistant has; settings, skills and bulk deletes are not on the list", () => {
+/** What stays with the person in Ensemble: off the list, whatever a key's grants. */
+const KEPT = ["hub_update_settings", "hub_choose_model", "hub_edit_layout", "hub_stop_activity", "hub_assign_to_agent", "hub_run_workflow", "hub_create_watcher", "hub_cancel_watcher", "hub_edit_file"];
+
+test("every allowlisted action is a tool the assistant has; settings, layouts, runs, agents, workflows, watchers and file edits are not on the list", () => {
   for (const name of Object.keys(BRIDGE_ACTIONS)) assert.ok(getTool(name), name);
-  for (const name of ["hub_update_settings", "hub_manage_skill", "hub_delete_tasks", "hub_delete_pages", "hub_assign_to_agent", "hub_create_routine", "hub_create_reminder", "hub_delete_board", "hub_edit_layout", "hub_run_workflow"]) {
-    assert.equal(BRIDGE_ACTIONS[name], undefined, name);
+  for (const name of [...KEPT, "hub_view_file"]) assert.equal(BRIDGE_ACTIONS[name], undefined, name);
+  for (const name of ["hub_manage_skill", "hub_delete_tasks", "hub_delete_pages", "hub_delete_board", "hub_create_routine", "hub_update_routine", "hub_create_reminder", "hub_get_settings", "hub_read_layout", "hub_list_runs", "hub_list_agent_sessions", "hub_save_file"]) {
+    assert.ok(BRIDGE_ACTIONS[name], name);
   }
 });
 
@@ -89,17 +94,106 @@ test("a key with changes allowed edits tasks, pages, boards, diagrams and projec
   }
   assert.ok((await db.undoEntry.count({ where: { userId: user.id } })) >= 2, "task and page changes are in Undo");
 
-  // What stays with the assistant and Ensemble Node.
+  // Bulk deletes are a key's too; settings stay with the person in Ensemble.
+  const spare = await db.task.create({ data: { userId: user.id, title: "Old spike", status: "todo", createdBy: "me" } });
+  const bulk = await act(key, "hub_delete_tasks", { taskIds: [spare.id] });
+  assert.equal(bulk.statusCode, 200, bulk.body);
+  assert.ok((await db.task.findUniqueOrThrow({ where: { id: spare.id } })).deletedAt, "moved to Trash");
   const settings = await act(key, "hub_update_settings", { changes: [] });
   assert.equal(settings.statusCode, 404);
-  assert.match(settings.json<{ error: string }>().error, /assistant and Ensemble Node/);
-  assert.equal((await act(key, "hub_delete_tasks", { taskIds: [task.id] })).statusCode, 404);
-  const guarded = await act(key, "hub_manage_record", { action: "delete_dataset", id: task.id });
-  assert.equal(guarded.statusCode, 403);
-  assert.equal((await act(key, "hub_manage_record", { action: "restore", kind: "skill", id: task.id })).statusCode, 403, "skills come back only through the person");
+  assert.match(settings.json<{ error: string }>().error, /stays with the person in Ensemble/);
   const wrong = await act(key, "hub_create_page", { heading: "No title" });
   assert.equal(wrong.statusCode, 400);
   assert.ok(wrong.json<{ inputSchema?: unknown }>().inputSchema, "a wrong input returns the schema");
+});
+
+test("a key reads the rest of Ensemble and changes skills, routines, reminders and desk lists; what changes how Ensemble behaves stays with the person", async () => {
+  const { user, key } = await keyFor({ canWrite: true });
+  const listed = await key.inject({ method: "GET", url: "/api/bridge/actions" });
+  assert.equal(listed.statusCode, 200, listed.body);
+  const listing = listed.json<{ groups: string[]; notOffered: string; actions: Array<{ name: string; allowed: boolean; limit?: string }> }>();
+  for (const group of ["context", "skills", "routines", "reminders", "desk", "calendar", "runs", "agents", "code", "settings", "layouts", "imports", "relationships"]) assert.ok(listing.groups.includes(group), group);
+  const names = listing.actions.map((row) => row.name);
+  for (const name of KEPT) assert.ok(!names.includes(name), name);
+  assert.match(listing.actions.find((row) => row.name === "hub_update_routine")?.limit ?? "", /delete is refused/);
+  assert.match(listing.actions.find((row) => row.name === "hub_delete_entity")?.limit ?? "", /files stay/);
+  assert.match(listing.notOffered, /settings, model choice or layouts/);
+
+  const reads: Array<[string, Record<string, unknown>]> = [
+    ["hub_get_settings", {}],
+    ["hub_find_setting", { query: "theme" }],
+    ["hub_read_layout", { surface: "today" }],
+    ["hub_read_surface", { path: "/today" }],
+    ["hub_list_runs", {}],
+    ["hub_list_activity", {}],
+    ["hub_list_agent_options", {}],
+    ["hub_list_skills", {}],
+    ["hub_list_routines", {}],
+    ["hub_list_reminders", {}],
+    ["hub_list_watchers", {}],
+    ["hub_list_desk_items", {}],
+    ["hub_list_events", {}],
+    ["hub_search_work", { query: "latency" }],
+  ];
+  for (const [name, input] of reads) {
+    const read = await act(key, name, input);
+    assert.equal(read.statusCode, 200, `${name}: ${read.body}`);
+  }
+
+  const skill = await act(key, "hub_manage_skill", { action: "create", name: "PR notes", body: "Lead with the user-visible change." });
+  assert.equal(skill.statusCode, 200, skill.body);
+  assert.equal(await db.skill.count({ where: { userId: user.id, name: "PR notes", deletedAt: null } }), 1);
+
+  const routine = await act(key, "hub_create_routine", { title: "Monday plan", instruction: "List what is due this week.", every: "week", days: ["mon"], time: "09:00" });
+  assert.equal(routine.statusCode, 200, routine.body);
+  const routineId = (await db.assistantRoutine.findFirstOrThrow({ where: { userId: user.id, title: "Monday plan" } })).id;
+  const paused = await act(key, "hub_update_routine", { routineId, action: "pause" });
+  assert.equal(paused.statusCode, 200, paused.body);
+  assert.equal((await db.assistantRoutine.findUniqueOrThrow({ where: { id: routineId } })).status, "paused");
+  const dropRoutine = await act(key, "hub_update_routine", { routineId, action: "delete" });
+  assert.equal(dropRoutine.statusCode, 403);
+  assert.match(dropRoutine.json<{ error: string }>().error, /Routines are deleted by the person/);
+  assert.ok(await db.assistantRoutine.findUnique({ where: { id: routineId } }), "the routine stays");
+
+  const reminder = await act(key, "hub_create_reminder", { title: "Call Priya", dueDate: "2026-12-01" });
+  assert.equal(reminder.statusCode, 200, reminder.body);
+  const reminderId = (await db.reminder.findFirstOrThrow({ where: { userId: user.id, title: "Call Priya" } })).id;
+  assert.equal((await act(key, "hub_delete_reminder", { reminderId })).statusCode, 200);
+  const objective = await act(key, "hub_add_desk_item", { kind: "objective", title: "Ship the beta", progress: 10 });
+  assert.equal(objective.statusCode, 200, objective.body);
+
+  // Trash: a project, and back with any restore; a file never.
+  const project = await db.project.create({ data: { userId: user.id, name: "Spike", createdBy: "me" } });
+  assert.equal((await act(key, "hub_delete_entity", { kind: "project", id: project.id })).statusCode, 200);
+  const restored = await act(key, "hub_manage_record", { action: "restore", kind: "project", id: project.id });
+  assert.equal(restored.statusCode, 200, restored.body);
+  assert.equal((await db.project.findUniqueOrThrow({ where: { id: project.id } })).deletedAt, null);
+  const uploaded = await key.inject({ method: "POST", url: "/api/bridge/write/files", payload: { filename: "plan.md", dataBase64: Buffer.from("# Plan").toString("base64") } });
+  assert.equal(uploaded.statusCode, 201, uploaded.body);
+  const fileId = uploaded.json<{ file: { id: string } }>().file.id;
+  const fileKept = await act(key, "hub_delete_entity", { kind: "document", id: fileId });
+  assert.equal(fileKept.statusCode, 403);
+  assert.match(fileKept.json<{ error: string }>().error, /Files cannot be deleted from editors and agents/);
+  assert.equal((await db.document.findUniqueOrThrow({ where: { id: fileId } })).deletedAt, null);
+
+  for (const name of KEPT) {
+    const kept = await act(key, name, {});
+    assert.equal(kept.statusCode, 404, name);
+    assert.match(kept.json<{ error: string }>().error, /stays with the person in Ensemble/, name);
+  }
+  assert.match((await act(key, "hub_view_file", { id: fileId })).json<{ error: string }>().error, /ensemble_get_file/);
+});
+
+test("an agent run keeps the everyday list", async () => {
+  const user = await h.asUser();
+  const { runActionCaller } = await import("../workspace/context-tools.js");
+  const { listActions, runAction } = await import("./actions.js");
+  const run = runActionCaller(user.id, (await db.user.findUniqueOrThrow({ where: { id: user.id } })).moduleSet);
+  const names = listActions(run).map((row) => row.name);
+  assert.ok(names.includes("hub_update_task"));
+  for (const name of ["hub_manage_skill", "hub_create_routine", "hub_delete_tasks", "hub_get_settings", "hub_save_file"]) assert.ok(!names.includes(name), name);
+  await assert.rejects(runAction(h.app, run, "hub_create_routine", { title: "Daily", instruction: "Sum up." }), /Agent runs cannot use hub_create_routine/);
+  await assert.rejects(runAction(h.app, run, "hub_manage_record", { action: "delete_dataset", id: randomUUID() }), /ask the person to do it in Ensemble/);
 });
 
 test("route-backed actions work from a key: a dataset and a plot, a page to a task, a page to a file, tasks and meeting notes", async () => {

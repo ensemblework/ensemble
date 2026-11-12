@@ -91,7 +91,7 @@ export const importTools = [
     name: "hub_import_app_file",
     area: "context",
     description:
-      "Save a copy of a file from a connected app in Files: a Drive, OneDrive, Dropbox or Box file (kind file) or a Gmail or Outlook attachment (kind attachment). source, kind and id come from an apps_search hit (source google_workspace, microsoft_365, dropbox or box). Returns the file id and link. Hosted accounts keep at most 10 files and 50 MB.",
+      "Save a copy of a file from a connected app in Files: a Drive, OneDrive, Dropbox or Box file (kind file) or a Gmail or Outlook attachment (kind attachment). source, kind and id come from an apps_search hit (source google_workspace, microsoft_365, dropbox or box). Returns the file id and link. Hosted accounts keep at most 20 files and 100 MB.",
     input: z.object({
       source: z.enum(FILE_SOURCES),
       kind: z.enum(["file", "attachment"]),
