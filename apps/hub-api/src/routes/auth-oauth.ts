@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import { nodeWebOrigin } from "../lib/node-origin.js";
 import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup.js";
 import { appendLedger } from "../lib/ledger.js";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
+import { defaultAvatarId } from "@ensemble/shared-types";
 
 const FLOW_COOKIE = ensembleCookieName("login_flow", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const FLOW_SECONDS = 600;
@@ -146,7 +147,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
           if (!profile.verified && process.env.NODE_ENV === "production" && !emailConfigured()) {
             throw Object.assign(new Error("Email verification is not configured. Use Google or GitHub, or contact the operator."), { statusCode: 503 });
           }
-          account = await tx.user.create({ data: { email: profile.email, name: profile.name, emailVerifiedAt: profile.verified ? new Date() : null } });
+          account = await tx.user.create({ data: { email: profile.email, name: profile.name, avatar: defaultAvatarId(randomUUID()), emailVerifiedAt: profile.verified ? new Date() : null } });
           created = true;
         }
         await tx.authIdentity.create({ data: { userId: account.id, provider, subject: profile.subject, email: profile.email } });

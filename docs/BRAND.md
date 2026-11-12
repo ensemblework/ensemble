@@ -51,6 +51,10 @@ The landing hero arrives once (CSS, off under reduced motion); clicking it plays
 
 `packages/brand/cli.js` owns the four-cell braille infinity and the terminal policy; `apps/cli/src/tui/brand.tsx` redraws only its own Ink component at 8 fps for one working phrase, then keeps the still mark for 5.95 s before repeating. Idle shows `[e]` with no timer. Redirected output or `TERM=dumb` uses ASCII; `NO_COLOR` removes colour independently of motion; truecolor terminals get Satin Gold, others ANSI yellow; `ENSEMBLE_REDUCE_MOTION=1` stops the loop. The CLI bundle includes these assets.
 
+## Profile avatars
+
+People use the circular pixel collection from `packages/shared-types/src/avatars.ts`, rendered by `apps/hub-web/components/avatars/persona.tsx`. Every account can choose any of the twelve characters, six palettes and five scenery options. The avatar uses two related inks, one accent pixel and a pale neutral field, independent of the UI theme. Foreground and scenery preserve intentional silhouette gaps. A real circle clip applies to every size, including account menus, comments, presence and the Settings picker. Account initials remain optional. Profile avatars are static; the agent mark below retains its own identity. Selection, compatibility and stored-account migration: [Sharing](29_SHARING.md).
+
 ## Agent mark
 
 `packages/brand/agent.js` exports `agentSvgBody`, a small woven two-strand glyph with a central junction. `apps/hub-web/components/agent-icon.tsx` renders it at the surrounding icon size and colour. Agent ownership, assignment, run requests, editor agent blocks and notifications use it on the web and in the desktop export. Provider logos keep their own artwork.

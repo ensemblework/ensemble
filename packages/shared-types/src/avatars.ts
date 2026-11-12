@@ -1,103 +1,359 @@
-/**
- * Picture avatars: 30 per profession (10 women, 10 men, 10 gender-neutral), drawn in the Hub
- * from the id alone (`components/avatars/persona.tsx`). An id is `role.gender.n`, for example
- * `lawyer.f.3`, with an optional background colour after it: `lawyer.f.3.mint`. Without one the
- * profession's own colour is used. A person without an avatar shows their initials.
- */
-export const AVATAR_ROLES = ["engineer", "lawyer", "teacher", "student", "manager", "vibe"] as const;
-export type AvatarRole = (typeof AVATAR_ROLES)[number];
-export const AVATAR_GENDERS = ["f", "m", "n"] as const;
-export type AvatarGender = (typeof AVATAR_GENDERS)[number];
-export const AVATARS_PER_GROUP = 10;
+/** Circular dot avatars shared by every account, independent of profession and gender. */
+export const AVATAR_CHARACTERS = [
+  {
+    "id": 1,
+    "label": "Pausing",
+    "kind": "human",
+    "rows": [
+      "...xx...",
+      "...xo...",
+      "..xxxx..",
+      ".x.xx.x.",
+      "...oo...",
+      "..x..x..",
+      "..x..x..",
+      ".ax..xx."
+    ],
+    "voids": [
+      [
+        3,
+        5,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "id": 2,
+    "label": "At a desk",
+    "kind": "human",
+    "rows": [
+      "..xx....",
+      "..xo....",
+      "..x.....",
+      ".xxoxa..",
+      ".xo..oo.",
+      "..xx....",
+      "...xx...",
+      "....xx.."
+    ],
+    "voids": []
+  },
+  {
+    "id": 3,
+    "label": "Running",
+    "kind": "human",
+    "rows": [
+      ".....xx.",
+      ".....xo.",
+      "...xxx..",
+      "..xox.x.",
+      ".x.xx...",
+      "..x..x..",
+      ".x....x.",
+      "ax....xx"
+    ],
+    "voids": [
+      [
+        3,
+        5,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "id": 4,
+    "label": "Dancing",
+    "kind": "human",
+    "rows": [
+      "x...xx..",
+      ".x..xo..",
+      "..xxx...",
+      "...ox.xa",
+      "...xx...",
+      "..x.x...",
+      ".xx..x..",
+      "......x."
+    ],
+    "voids": [
+      [
+        3,
+        5,
+        1,
+        3
+      ]
+    ]
+  },
+  {
+    "id": 5,
+    "label": "Reaching",
+    "kind": "human",
+    "rows": [
+      "......xa",
+      "...xx.x.",
+      "...xox..",
+      "..xxx...",
+      ".x.ox...",
+      "...xx...",
+      "..x..x..",
+      ".xx..xx."
+    ],
+    "voids": [
+      [
+        3,
+        6,
+        2,
+        2
+      ]
+    ]
+  },
+  {
+    "id": 6,
+    "label": "Little robot",
+    "kind": "humanoid",
+    "rows": [
+      "...a....",
+      "..xxxx..",
+      "..x..x..",
+      "...xx...",
+      ".xxooxx.",
+      "...xx...",
+      "..x..x..",
+      "..xx.xx."
+    ],
+    "voids": [
+      [
+        3,
+        2,
+        2,
+        1
+      ],
+      [
+        4,
+        6,
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "id": 7,
+    "label": "Visitor",
+    "kind": "humanoid",
+    "rows": [
+      "..xxxx..",
+      ".xx..xx.",
+      "..xooa..",
+      "...xx...",
+      "..xox...",
+      ".x.xx.x.",
+      "...xx...",
+      "..x..x.."
+    ],
+    "voids": [
+      [
+        3,
+        1,
+        2,
+        1
+      ],
+      [
+        3,
+        7,
+        2,
+        1
+      ]
+    ]
+  },
+  {
+    "id": 8,
+    "label": "Small explorer",
+    "kind": "humanoid",
+    "rows": [
+      "...xx...",
+      "..xxxx..",
+      "..xooa..",
+      "...xx...",
+      ".xx..xx.",
+      "..xxxx..",
+      "..x..x..",
+      ".xx..xx."
+    ],
+    "voids": [
+      [
+        3,
+        4,
+        2,
+        1
+      ],
+      [
+        3,
+        6,
+        2,
+        2
+      ]
+    ]
+  },
+  {
+    "id": 9,
+    "label": "Elephant",
+    "kind": "animal",
+    "rows": [
+      "........",
+      "..xxx...",
+      ".xxooxx.",
+      ".xxooxxx",
+      ".x...x.x",
+      ".x...x.x",
+      ".xx..x.a",
+      ".....xx."
+    ],
+    "voids": [
+      [
+        2,
+        4,
+        3,
+        2
+      ],
+      [
+        3,
+        6,
+        2,
+        2
+      ],
+      [
+        6,
+        4,
+        1,
+        3
+      ]
+    ]
+  },
+  {
+    "id": 10,
+    "label": "Dog",
+    "kind": "animal",
+    "rows": [
+      "........",
+      ".....xx.",
+      "x...xooa",
+      ".xxxxxx.",
+      "..xxxxx.",
+      "..x..x..",
+      "..x..x..",
+      ".xx..xx."
+    ],
+    "voids": [
+      [
+        3,
+        5,
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "id": 11,
+    "label": "Cat",
+    "kind": "animal",
+    "rows": [
+      "..x..x..",
+      "..xxxx..",
+      "..xoox..",
+      "...xx...",
+      "..xxx...",
+      "..xoox.x",
+      "..xxxx.x",
+      "..xx.xa."
+    ],
+    "voids": [
+      [
+        4,
+        7,
+        1,
+        1
+      ],
+      [
+        6,
+        5,
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "id": 12,
+    "label": "Bird",
+    "kind": "animal",
+    "rows": [
+      "........",
+      "..x.....",
+      "..xx.xx.",
+      "...xxoxa",
+      "..xxoxx.",
+      ".xxxx...",
+      "xx.x....",
+      "...x...."
+    ],
+    "voids": []
+  }
+] as const;
+export type AvatarCharacter = (typeof AVATAR_CHARACTERS)[number]["id"];
 
-/** The background colours a person can put behind their avatar. */
-export const AVATAR_BACKGROUNDS = ["sky", "mint", "peach", "rose", "slate"] as const;
-export type AvatarBackground = (typeof AVATAR_BACKGROUNDS)[number];
+export const AVATAR_PALETTES = [
+  { id: "apricot", label: "Apricot and raspberry", paper: "#F5F1E8", ink: "#9F4F1F", related: "#BC7D3F", accent: "#BD3D78" },
+  { id: "terracotta", label: "Terracotta and coral", paper: "#F5F1E8", ink: "#954529", related: "#B46E4A", accent: "#D53F51" },
+  { id: "lilac", label: "Lilac and tangerine", paper: "#F5F1E8", ink: "#68428D", related: "#9577AE", accent: "#C57828" },
+  { id: "blue", label: "Blue and amber", paper: "#F5F1E8", ink: "#2E608F", related: "#5F8FB5", accent: "#B37B1C" },
+  { id: "moss", label: "Moss and berry", paper: "#F5F1E8", ink: "#50692F", related: "#7D9155", accent: "#B4436D" },
+  { id: "teal", label: "Teal and coral", paper: "#F5F1E8", ink: "#21645E", related: "#4F9284", accent: "#C7663C" },
+] as const;
+export type AvatarPalette = (typeof AVATAR_PALETTES)[number]["id"];
+export const AVATAR_SCENERIES = [
+  { id: "hills", label: "Hills" }, { id: "grove", label: "Grove" },
+  { id: "garden", label: "Garden" }, { id: "valley", label: "Valley" }, { id: "none", label: "Plain" },
+] as const;
+export type AvatarScenery = (typeof AVATAR_SCENERIES)[number]["id"];
+export type AvatarParts = { character: AvatarCharacter; palette: AvatarPalette; scenery: AvatarScenery };
+export const DEFAULT_AVATAR: AvatarParts = { character: 1, palette: "apricot", scenery: "hills" };
 
-export const AVATAR_BACKGROUND_LABEL: Record<AvatarBackground, string> = {
-  sky: "Blue",
-  mint: "Green",
-  peach: "Peach",
-  rose: "Rose",
-  slate: "Slate",
-};
+/** A stable initial selection from a new opaque account seed, never profile attributes. */
+export function defaultAvatarId(seed: string): string {
+  let hash = 2166136261;
+  for (const char of seed) hash = Math.imul(hash ^ char.codePointAt(0)!, 16777619) >>> 0;
+  return avatarId({ character: AVATAR_CHARACTERS[hash % AVATAR_CHARACTERS.length]!.id, palette: AVATAR_PALETTES[Math.floor(hash / 12) % AVATAR_PALETTES.length]!.id, scenery: "hills" });
+}
 
-/** The background an avatar gets when none was picked: the profession's own colour. */
-export const AVATAR_ROLE_BACKGROUND: Record<AvatarRole, AvatarBackground> = {
-  engineer: "sky",
-  lawyer: "slate",
-  teacher: "peach",
-  student: "sky",
-  manager: "mint",
-  vibe: "rose",
-};
+/** Stored ids are versioned by their family; no gender or profession is part of a new selection. */
+export function avatarId({ character, palette, scenery }: AvatarParts): string {
+  return `dots.${character}.${palette}.${scenery}`;
+}
 
-export const AVATAR_ROLE_LABEL: Record<AvatarRole, string> = {
-  engineer: "Engineer",
-  lawyer: "Lawyer",
-  teacher: "Teacher",
-  student: "Student",
-  manager: "Manager",
-  vibe: "Maker",
-};
+const LEGACY_COLORS: Record<string, AvatarPalette> = { sky: "blue", mint: "teal", peach: "apricot", rose: "lilac", slate: "blue" };
+const LEGACY_ROLES: Record<string, string> = { engineer: "sky", lawyer: "slate", teacher: "peach", student: "sky", manager: "mint", vibe: "rose" };
 
-export const AVATAR_GENDER_LABEL: Record<AvatarGender, string> = { f: "Women", m: "Men", n: "Neutral" };
-
-/** `background` is null when none was picked (the profession's own colour). */
-export type AvatarParts = { role: AvatarRole; gender: AvatarGender; n: number; background: AvatarBackground | null };
-
+/** Existing saved portraits resolve to stable dot characters without rewriting account data. */
 export function parseAvatar(id: string | null | undefined): AvatarParts | null {
   if (!id) return null;
   const parts = id.split(".");
-  if (parts.length < 3 || parts.length > 4) return null;
+  if (parts[0] === "dots") {
+    const [_, raw, palette, scenery] = parts;
+    if (parts.length !== 4 || !/^(?:[1-9]|1[0-2])$/.test(raw ?? "")) return null;
+    if (!AVATAR_PALETTES.some(row => row.id === palette) || !AVATAR_SCENERIES.some(row => row.id === scenery)) return null;
+    return { character: Number(raw) as AvatarCharacter, palette: palette as AvatarPalette, scenery: scenery as AvatarScenery };
+  }
   const [role, gender, raw, background] = parts;
-  const n = Number(raw);
-  if (!(AVATAR_ROLES as readonly string[]).includes(role ?? "")) return null;
-  if (!(AVATAR_GENDERS as readonly string[]).includes(gender ?? "")) return null;
-  if (!/^\d+$/.test(raw ?? "") || !Number.isInteger(n) || n < 1 || n > AVATARS_PER_GROUP) return null;
-  if (background !== undefined && !(AVATAR_BACKGROUNDS as readonly string[]).includes(background)) return null;
-  return { role: role as AvatarRole, gender: gender as AvatarGender, n, background: (background as AvatarBackground | undefined) ?? null };
+  if (parts.length < 3 || parts.length > 4 || !role || !Object.hasOwn(LEGACY_ROLES, role)) return null;
+  if (!["f", "m", "n"].includes(gender ?? "") || !/^\d+$/.test(raw ?? "")) return null;
+  const number = Number(raw);
+  if (!Number.isInteger(number) || number < 1 || number > 10) return null;
+  if (background !== undefined && !Object.hasOwn(LEGACY_COLORS, background)) return null;
+  return { character: number as AvatarCharacter, palette: LEGACY_COLORS[background ?? LEGACY_ROLES[role]!]!, scenery: "hills" };
 }
 
 export function isAvatarId(id: unknown): id is string {
   return typeof id === "string" && parseAvatar(id) !== null;
-}
-
-/** The face part of an id (`role.gender.n`), without its background. */
-export function avatarFace(id: string): string {
-  return id.split(".").slice(0, 3).join(".");
-}
-
-/** The background an avatar shows: the one picked, else the profession's own. */
-export function avatarBackground(parts: AvatarParts): AvatarBackground {
-  return parts.background ?? AVATAR_ROLE_BACKGROUND[parts.role];
-}
-
-/** An id with a background. The profession's own colour is written without one, so older ids keep reading the same. */
-export function withAvatarBackground(id: string, background: AvatarBackground): string {
-  const parts = parseAvatar(id);
-  if (!parts) return id;
-  const face = avatarFace(id);
-  return background === AVATAR_ROLE_BACKGROUND[parts.role] ? face : `${face}.${background}`;
-}
-
-export function avatarIds(role: AvatarRole, gender: AvatarGender, background?: AvatarBackground): string[] {
-  return Array.from({ length: AVATARS_PER_GROUP }, (_, index) => {
-    const id = `${role}.${gender}.${index + 1}`;
-    return background ? withAvatarBackground(id, background) : id;
-  });
-}
-
-/** The avatar set that fits a signup role or a free-text profession. */
-export function avatarRoleFor(role: string | null | undefined, profession?: string | null): AvatarRole {
-  if (role && (AVATAR_ROLES as readonly string[]).includes(role)) return role as AvatarRole;
-  const text = `${role ?? ""} ${profession ?? ""}`.toLowerCase();
-  if (/law|legal|advocate|attorney|counsel/.test(text)) return "lawyer";
-  if (/teach|professor|lecturer|tutor|educat/.test(text)) return "teacher";
-  if (/student|learn|school|college|phd/.test(text)) return "student";
-  if (/manag|lead|founder|director|product|ceo/.test(text)) return "manager";
-  if (/design|creat|maker|artist|writer|vibe/.test(text)) return "vibe";
-  return "engineer";
 }
 
 /** Each word's letters and digits: "Mary-Jane O'Neil" reads as MaryJane, ONeil. Code points, so an accent or emoji is never split. */
@@ -139,11 +395,4 @@ export function distinctInitials(people: ReadonlyArray<{ name: string; initials?
     if (words.length < 2 || !last || last.length < 2) return value;
     return `${words[0]![0]!.toUpperCase()}${last[0]!.toUpperCase()}${last[1]!.toLowerCase()}`;
   });
-}
-
-/** The gender group shown first, from the profile's gender answer. */
-export function avatarGenderFor(gender: string | null | undefined): AvatarGender {
-  if (gender === "Woman") return "f";
-  if (gender === "Man") return "m";
-  return "n";
 }

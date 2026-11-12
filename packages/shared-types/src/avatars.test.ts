@@ -1,22 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { avatarBackground, avatarFace, avatarIds, isAvatarId, parseAvatar, withAvatarBackground } from "./avatars.js";
+import { AVATAR_CHARACTERS, AVATAR_PALETTES, AVATAR_SCENERIES, avatarId, isAvatarId, parseAvatar } from "./avatars.js";
 
-test("avatar ids: ten faces a group, an optional background, nothing else", () => {
-  assert.deepEqual(parseAvatar("lawyer.f.3"), { role: "lawyer", gender: "f", n: 3, background: null });
-  assert.deepEqual(parseAvatar("lawyer.f.10.mint"), { role: "lawyer", gender: "f", n: 10, background: "mint" });
-  for (const bad of ["lawyer.f.11", "lawyer.f.0", "lawyer.f.3.purple", "lawyer.f.3.mint.x", "lawyer.f", "pilot.f.1", "lawyer.x.1", "lawyer.f.1e0"]) {
-    assert.equal(isAvatarId(bad), false, bad);
+test("every character, palette and scenery combination round-trips without a profile or gender", () => {
+  const ids = new Set<string>();
+  for (const character of AVATAR_CHARACTERS) for (const palette of AVATAR_PALETTES) for (const scenery of AVATAR_SCENERIES) {
+    const parts = { character: character.id, palette: palette.id, scenery: scenery.id };
+    const id = avatarId(parts);
+    assert.ok(isAvatarId(id));
+    assert.ok(id.length <= 40);
+    assert.deepEqual(parseAvatar(id), parts);
+    ids.add(id);
   }
-  assert.equal(avatarIds("teacher", "n").length, 10);
-  assert.deepEqual(avatarIds("teacher", "n", "sky").slice(0, 2), ["teacher.n.1.sky", "teacher.n.2.sky"]);
+  assert.equal(ids.size, 360);
+  for (const bad of ["dots.0.blue.none", "dots.13.blue.none", "dots.01.blue.none", "dots.1e0.blue.none", "dots.2.purple.hills", "dots.2.blue.forest", "dots.2.blue", "dots.2.blue.none.more", "__proto__.f.1", "engineer.f.2.__proto__", null, undefined, {}, 5]) assert.equal(isAvatarId(bad), false, String(bad));
 });
 
-test("a background is written only when it differs from the profession's own colour", () => {
-  assert.equal(withAvatarBackground("vibe.m.4", "slate"), "vibe.m.4.slate");
-  assert.equal(withAvatarBackground("vibe.m.4.slate", "rose"), "vibe.m.4", "rose is the Maker colour");
-  assert.equal(avatarBackground(parseAvatar("vibe.m.4")!), "rose");
-  assert.equal(avatarBackground(parseAvatar("engineer.m.4.peach")!), "peach");
-  assert.equal(avatarFace("engineer.m.4.peach"), "engineer.m.4");
-  assert.ok(avatarIds("vibe", "f", "rose").every((id) => id.split(".").length === 3));
+test("saved portrait ids resolve to the new collection, with no gender-specific choices", () => {
+  for (const role of ["engineer", "student", "teacher", "lawyer", "manager", "vibe"]) for (const gender of ["f", "m", "n"]) {
+    assert.deepEqual(parseAvatar(`${role}.${gender}.9.mint`), { character: 9, palette: "teal", scenery: "hills" });
+  }
+  assert.equal(parseAvatar("vibe.f.2")?.palette, "lilac");
+  assert.equal(parseAvatar("engineer.m.4.peach")?.palette, "apricot");
+  for (const bad of ["lawyer.f.11", "lawyer.f.0", "lawyer.f.3.purple", "lawyer.f.3.mint.x", "lawyer.f", "pilot.f.1", "lawyer.x.1", "lawyer.f.1e0"]) assert.equal(isAvatarId(bad), false, bad);
+});
+
+test("the approved collection keeps its category balance, one accent and open silhouette gaps", () => {
+  assert.deepEqual(AVATAR_CHARACTERS.reduce<Record<string, number>>((counts, row) => { counts[row.kind] = (counts[row.kind] ?? 0) + 1; return counts; }, {}), { human: 5, humanoid: 3, animal: 4 });
+  assert.deepEqual(AVATAR_CHARACTERS.filter(row => row.kind === "animal").map(row => row.label), ["Elephant", "Dog", "Cat", "Bird"]);
+  for (const character of AVATAR_CHARACTERS) {
+    assert.equal(character.rows.length, 8);
+    assert.ok(character.rows.every(row => row.length === 8 && /^[.xoa]+$/.test(row)));
+    assert.equal(character.rows.join("").split("a").length - 1, 1);
+    for (const [col, row, width, height] of character.voids) for (let y = row; y < row + height; y++) for (let x = col; x < col + width; x++) assert.equal(character.rows[y]![x], ".", `${character.label}: preserve its silhouette gap`);
+  }
 });
