@@ -43,9 +43,10 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
             <SquareArrowOutUpRight size={14} />
           </button>
         ) : null}
+        {/* Not on a phone, where the peek already fills the screen (globals.css .peek-fullscreen-toggle). */}
         <button
           type="button"
-          className="icon-btn"
+          className="icon-btn peek-fullscreen-toggle"
           title={fullscreen ? "Back to side peek" : "Full screen"}
           aria-label={fullscreen ? "Back to side peek" : "Full screen"}
           onClick={() => setFullscreen(!fullscreen)}

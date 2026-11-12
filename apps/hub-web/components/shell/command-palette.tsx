@@ -13,7 +13,7 @@ import { api } from "@/lib/api";
 import { switchSpace } from "@/lib/spaces";
 import { plural } from "@/lib/format";
 import { isApplePlatform } from "@/lib/platform";
-import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "../settings/navigation";
+import { findSettingsTarget, scrollSettingIntoView, SETTINGS_DESTINATION_BY_ID } from "../settings/navigation";
 import { navigationDestinations, navigationScore } from "./navigation-destinations";
 import { useModalFocus } from "@/lib/modal-focus";
 import { SearchQuery } from "@/components/motion/search-query";
@@ -77,7 +77,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     if (url.href === window.location.href) {
       const key = decodeURIComponent(url.hash.slice(1)), setting = SETTINGS_DESTINATION_BY_ID.get(key);
       const section = setting ? document.getElementById(setting.section) : null;
-      (setting && section ? findSettingsTarget(section, setting.target) ?? section : document.getElementById(key))?.scrollIntoView({ block: "start" });
+      const node = setting && section ? findSettingsTarget(section, setting.target) ?? section : document.getElementById(key);
+      const scroller = node?.closest<HTMLElement>("[data-settings-main]") ?? null;
+      // In Settings, its own scroller only (scrollSettingIntoView); elsewhere the browser's.
+      if (node && scroller) scrollSettingIntoView(scroller, node, "start");
+      else node?.scrollIntoView({ block: "start" });
     } else router.push(href);
   }, [router]);
 

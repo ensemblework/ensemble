@@ -302,15 +302,35 @@ test("API keys open as a page of their own from the Models card, and Escape clos
 });
 
 test("an old Accent deep link selects Appearance and scrolls to the control", async()=>{
-  const previous=HTMLElement.prototype.scrollIntoView;
-  const scrolled:HTMLElement[]=[];
-  HTMLElement.prototype.scrollIntoView=function(){scrolled.push(this);};
+  // Only Settings' own scroller moves (never scrollIntoView, which also pushes the frames around it).
+  const previousRect=HTMLElement.prototype.getBoundingClientRect;
+  const previousScrollTo=HTMLElement.prototype.scrollTo;
+  const previousIntoView=HTMLElement.prototype.scrollIntoView;
+  const rect=(top:number,height:number)=>({top,bottom:top+height,height,left:0,right:800,width:800,x:0,y:top,toJSON(){return this;}}) as DOMRect;
+  // The Accent control sits 1500 px down the page; the scroller shows 800 px of 4000.
+  HTMLElement.prototype.getBoundingClientRect=function(this:HTMLElement){return this.dataset.jumpLabel==="Accent"?rect(1500,40):this.hasAttribute("data-settings-main")?rect(0,800):rect(0,0);};
+  const scrolls:Array<{node:HTMLElement;top:number}>=[];
+  HTMLElement.prototype.scrollTo=function(this:HTMLElement,options?:ScrollToOptions|number){scrolls.push({node:this,top:typeof options==="object"?options.top??0:0});} as typeof HTMLElement.prototype.scrollTo;
+  const intoView:HTMLElement[]=[];
+  HTMLElement.prototype.scrollIntoView=function(this:HTMLElement){intoView.push(this);};
   const view=await mount("http://localhost/settings?tab=account#jump-appearance-accent");
   try {
-    await until(()=>scrolled.some(node=>node.dataset.jumpLabel==="Accent"),"Accent control scroll");
+    const main=()=>document.querySelector<HTMLElement>("[data-settings-main]")!;
+    await until(()=>Boolean(document.querySelector('[data-jump-label="Accent"]')&&main()),"Accent control");
+    Object.defineProperty(main(),"scrollHeight",{configurable:true,value:4000});
+    Object.defineProperty(main(),"clientHeight",{configurable:true,value:800});
+    await until(()=>scrolls.some(row=>row.node===main()&&row.top>0),"Accent control scroll");
     assert.match(view.selected(),/^Appearance/);
-    assert.equal(scrolled.at(-1)?.dataset.jumpLabel,"Accent");
-  } finally {await view.done();HTMLElement.prototype.scrollIntoView=previous;}
+    // A control row is centred: 1500 - (800 - 40) / 2.
+    assert.equal(scrolls.filter(row=>row.node===main()).at(-1)?.top,1120);
+    assert.equal(intoView.filter(node=>node.dataset.jumpLabel==="Accent").length,0,"the frames around Settings are never scrolled");
+    assert.ok(main().parentElement?.classList.contains("frame-clip"),"the frame around the scroller clips (overflow: clip), so nothing can scroll it");
+  } finally {
+    await view.done();
+    HTMLElement.prototype.getBoundingClientRect=previousRect;
+    HTMLElement.prototype.scrollTo=previousScrollTo;
+    HTMLElement.prototype.scrollIntoView=previousIntoView;
+  }
 });
 
 const INCLUDED_IDS = ["gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7"];

@@ -90,6 +90,22 @@ export function findSettingsTarget(root: Element, target: string): HTMLElement |
 }
 
 /**
+ * Brings `node` into view by scrolling Settings' own scroller only. `scrollIntoView` also scrolls the
+ * frames around it once the scroller is at its end (the last card cannot reach the top), and those
+ * frames cannot be scrolled back by hand: the bottom of Settings was cut off until a reload.
+ * `start` puts it `margin` px below the top; `center` in the middle. The browser stops at the end.
+ */
+export function scrollSettingIntoView(scroller: HTMLElement | null, node: HTMLElement, block: "start" | "center" = "start", behavior: ScrollBehavior = "auto", margin = 24): void {
+  if (!scroller || !scroller.contains(node)) return;
+  const box = node.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  const offset = block === "start" ? box.top - view.top - margin : box.top - view.top - (view.height - box.height) / 2;
+  const top = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, scroller.scrollTop + offset));
+  if (typeof scroller.scrollTo === "function") scroller.scrollTo({ top, behavior });
+  else scroller.scrollTop = top;
+}
+
+/**
  * A short glow on the row a jump landed on, so the eye finds it. The row is the setting's own
  * row when there is one, else the labelled control or card. Colour only, no movement.
  */
