@@ -30,7 +30,7 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
-import { codexProviderKey } from "../../subscriptions/detect.js";
+import { codexProviderKey, codexProviderKeyEnv } from "../../subscriptions/detect.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
 const KEY_VARIABLES = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
@@ -177,7 +177,8 @@ export async function runCodex(
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
   const credential = registerEngineRun(ctx);
   const ensembleMcp = mcpEnv(credential, options.chat === true);
-  const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...ensembleMcp };
+  // The provider key from the login shell when this runtime (the desktop app, a login service) did not inherit it.
+  const env: NodeJS.ProcessEnv = { ...process.env, ...codexProviderKeyEnv(), ...ctx.secretEnv, ...ensembleMcp };
   // A key variable the person's own model provider reads (`env_key` in config.toml) stays: it is their provider, not an API account billed instead of the plan.
   for (const key of KEY_VARIABLES) if (key !== codexProviderKey()) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;

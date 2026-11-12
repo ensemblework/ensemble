@@ -14,6 +14,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { claudeCodeModelsFrom, ENGINE_LABELS, isAcpEngine, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
+import { loginShellVariable } from "../desktop/user-path.js";
 import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable, hostLaunch } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
@@ -55,16 +56,42 @@ export function agentEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
  * the last check here. Codex keeps it even when it is one of the API-key variables other agents never get.
  */
 let codexKeyName: string | null = null;
+/**
+ * That variable from the person's login shell, when this runtime did not inherit it: a GUI app (the desktop
+ * app) or a login service starts without what the shell profile exports. Kept in memory for Codex only; a
+ * name not found there is looked up again after a minute.
+ */
+let codexKeyFromShell: { name: string; value: string | null; at: number } | null = null;
+const SHELL_MISS_MS = 60_000;
 export const codexProviderKey = (): string | null => codexKeyName;
-export function setCodexProviderKeyForTests(name: string | null): void {
+export function setCodexProviderKeyForTests(name: string | null, fromShell?: string): void {
   codexKeyName = name;
+  codexKeyFromShell = name && fromShell !== undefined ? { name, value: fromShell, at: Date.now() } : null;
+}
+
+/** The provider key's variable for a Codex process when this runtime's environment lacks it: from the login shell, else nothing. */
+export function codexProviderKeyEnv(): Record<string, string> {
+  const name = codexKeyName;
+  if (!name || process.env[name] !== undefined || codexKeyFromShell?.name !== name || !codexKeyFromShell.value) return {};
+  return { [name]: codexKeyFromShell.value };
+}
+
+/** Finds the provider key in the login shell when the environment lacks it; true when Codex will have it. */
+async function resolveCodexProviderKey(name: string): Promise<boolean> {
+  if (process.env[name]) return true;
+  const known = codexKeyFromShell?.name === name ? codexKeyFromShell : null;
+  if (!known || (!known.value && Date.now() - known.at > SHELL_MISS_MS)) codexKeyFromShell = { name, value: await loginShellVariable(name), at: Date.now() };
+  return Boolean(codexKeyFromShell?.value);
 }
 
 /** The environment Codex runs with: `agentEnv`, keeping the variable its own model provider reads its key from. */
 export function codexEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env = agentEnv(extra);
   const name = codexKeyName;
-  if (name && process.env[name] !== undefined && env[name] === undefined) env[name] = process.env[name];
+  if (name && env[name] === undefined) {
+    if (process.env[name] !== undefined) env[name] = process.env[name];
+    else Object.assign(env, codexProviderKeyEnv());
+  }
   return env;
 }
 
@@ -468,8 +495,8 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     base.plan = signIn.plan;
     // A model provider of the person's own reads its key from a variable this computer's Ensemble must have too.
     codexKeyName = codexProviderKeyOf((await server.request("config/read", { includeLayers: false }).catch(() => null)) as CodexConfig);
-    if (codexKeyName && !process.env[codexKeyName]) {
-      base.problem = `Codex's model provider reads its key from ${codexKeyName}, which Ensemble on this computer does not have. Set it where apps can see it (on a Mac: launchctl setenv ${codexKeyName} <key>), run ensemble runner restart, then Check again.`.slice(0, 300);
+    if (codexKeyName && !(await resolveCodexProviderKey(codexKeyName))) {
+      base.problem = `Codex's model provider reads its key from ${codexKeyName}, which Ensemble cannot find on this computer, in its environment or your login shell. Export it in your shell profile (or on a Mac: launchctl setenv ${codexKeyName} <key>), then Check again.`.slice(0, 300);
     }
     const rows: CodexModel[] = [];
     let cursor: string | null = null;
