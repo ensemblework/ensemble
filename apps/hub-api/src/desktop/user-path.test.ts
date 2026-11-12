@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { bareSystemPath, knownToolDirs, loginShellPath, mergePath, pathFromShellOutput, userToolPath } from "./user-path.js";
+import { bareSystemPath, knownToolDirs, loginShellPath, loginShellValue, loginShellVariable, mergePath, pathFromShellOutput, userToolPath } from "./user-path.js";
 
 test("the usual install folders: ~/.local/bin (Claude Code, Cursor), Homebrew, npm, nvm newest first", () => {
   const home = mkdtempSync(join(tmpdir(), "ensemble-home-"));
@@ -49,6 +49,18 @@ test("a login shell that prints its PATH is read; one that hangs gives up", { sk
   const started = Date.now();
   assert.equal(await loginShellPath(slow, 300), null);
   assert.ok(Date.now() - started < 3000);
+});
+
+test("a variable only the shell profile exports is read from the login shell; a missing one or a bad name is null", { skip: process.platform === "win32" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ensemble-shell-"));
+  const shell = join(dir, "profile-shell");
+  writeFileSync(shell, "#!/bin/sh\necho 'motd'\nexport ZEPHYR_PROVIDER_KEY=sk-from-profile\neval \"$2\"\n");
+  chmodSync(shell, 0o755);
+  assert.equal(await loginShellValue(shell, "ZEPHYR_PROVIDER_KEY"), "sk-from-profile");
+  assert.equal(await loginShellValue(shell, "ZEPHYR_NOT_SET"), null);
+  assert.equal(await loginShellValue(shell, "BAD NAME; rm -rf ~"), null, "never put in the command");
+  assert.equal(await loginShellVariable("ZEPHYR_PROVIDER_KEY", { SHELL: shell }, "linux"), "sk-from-profile");
+  assert.equal(await loginShellVariable("ZEPHYR_PROVIDER_KEY", { SHELL: shell, ENSEMBLE_RESOLVING_SHELL: "1" }, "linux"), null, "not from a login shell that is starting this runtime");
 });
 
 test("started with the bare system PATH (login service, GUI), the login shell's PATH comes first", { skip: process.platform === "win32" }, async () => {

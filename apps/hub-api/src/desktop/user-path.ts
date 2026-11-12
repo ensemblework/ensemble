@@ -61,6 +61,23 @@ export function pathFromShellOutput(output: string): string | null {
 
 /** The person's login shell's PATH (their rc files run, as in their terminal), or null after a few seconds. */
 export function loginShellPath(shell: string, timeoutMs = SHELL_TIMEOUT_MS): Promise<string | null> {
+  return loginShellValue(shell, "PATH", timeoutMs);
+}
+
+const VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/;
+
+/**
+ * One exported variable of the person's login shell, or null (not set, not a variable name, or no answer
+ * after a few seconds). For a variable the runtime did not inherit when a GUI app or a login service
+ * started it, as PATH: the key Codex's own model provider reads (subscriptions/detect.ts).
+ */
+export function loginShellVariable(name: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string | null> {
+  if (platform === "win32" || env.ENSEMBLE_RESOLVING_SHELL || env.ENSEMBLE_LOGIN_SHELL_PATH === "0") return Promise.resolve(null);
+  return loginShellValue(env.SHELL || (platform === "darwin" ? "/bin/zsh" : "/bin/sh"), name);
+}
+
+export function loginShellValue(shell: string, name: string, timeoutMs = SHELL_TIMEOUT_MS): Promise<string | null> {
+  if (!VARIABLE.test(name)) return Promise.resolve(null);
   return new Promise((done) => {
     let output = "";
     let settled = false;
@@ -72,8 +89,8 @@ export function loginShellPath(shell: string, timeoutMs = SHELL_TIMEOUT_MS): Pro
     };
     let child: ReturnType<typeof spawn>;
     try {
-      // printenv prints the exported PATH, joined with ":", in fish as in zsh and bash.
-      child = spawn(shell, ["-ilc", `echo ${MARK}; printenv PATH; echo ${MARK}`], {
+      // printenv prints the exported value (PATH joined with ":"), in fish as in zsh and bash.
+      child = spawn(shell, ["-ilc", `echo ${MARK}; printenv ${name}; echo ${MARK}`], {
         stdio: ["ignore", "pipe", "ignore"],
         detached: true,
         env: { ...process.env, ENSEMBLE_RESOLVING_SHELL: "1" },
