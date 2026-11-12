@@ -3126,7 +3126,7 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 :root[data-doodle="dots"] [data-theme-canvas] { background-image: url("/doodles/dots.svg"); }
 :root[data-doodle="circuits"] [data-theme-canvas] { background-image: url("/doodles/circuits.svg"); }
 :root[data-doodle="graph"] [data-theme-canvas] { background-image: url("/doodles/graph.svg"); }
-/* Writing stays on plain paper: a page, task, meeting note or other document view drops any doodle or theme artwork. */
+/* Writing stays on plain paper: a full-width page, task or trashed page drops any doodle or theme artwork. Views whose writing sits on a card (meeting notes, Skills) keep the doodle around it; the card is opaque. */
 [data-theme-canvas]:has([data-plain-canvas]) { background-image: none !important; }
 
 .main-sidebar-slot { position: relative; width: var(--sidebar-w, 192px); }
