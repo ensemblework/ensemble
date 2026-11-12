@@ -5,6 +5,7 @@
 import { Search, X } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { cx } from "../ui";
+import { scrollSettingIntoView } from "./navigation";
 import { searchSettings, type SettingsHit } from "./settings-search";
 import { SettingsTabs } from "./settings-tabs";
 import type { SettingsTab } from "./url-state";
@@ -227,9 +228,9 @@ export function SettingsOutline({ tab, scroller }: { tab: SettingsTab; scroller:
               onClick={() => {
                 setCurrent(index);
                 pinned.current = Date.now() + 900;
-                item.node.style.scrollMarginTop = "1.5rem";
                 const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || document.documentElement.dataset.reduceMotion === "true";
-                item.node.scrollIntoView?.({ block: "start", behavior: still ? "auto" : "smooth" });
+                // Settings' own scroller only: scrollIntoView would also push the frames around it (see scrollSettingIntoView).
+                scrollSettingIntoView(scroller.current, item.node, "start", still ? "auto" : "smooth");
               }}
               className={cx(
                 "-ml-px block w-full truncate border-l py-1 pl-3 pr-1 text-left text-[12px] leading-[18px] transition-colors",

@@ -4,7 +4,7 @@
 
 import { SHORTCUTS, eventMatchesChord, formatBinding } from "@ensemble/shared-types";
 import { Maximize2, Minimize2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useFullscreen, type Fullscreen } from "@/lib/fullscreen";
 import { isApplePlatform } from "@/lib/platform";
 
@@ -43,7 +43,9 @@ export function usePageFocus(shortcut = true): Fullscreen {
 }
 
 export function PageFocusButton({ onEnter }: { onEnter: (button: HTMLElement) => void }) {
-  const chord = BINDING ? formatBinding(BINDING, isApplePlatform()) : "";
+  // The shortcut is read after the first paint: the server cannot know the platform, and a different title breaks hydration.
+  const [chord, setChord] = useState("");
+  useEffect(() => setChord(BINDING ? formatBinding(BINDING, isApplePlatform()) : ""), []);
   return (
     <button
       type="button"

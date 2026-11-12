@@ -461,13 +461,14 @@ select:focus-visible {
   .icon-btn {
     @apply inline-flex h-7 w-7 items-center justify-center rounded-lg border border-transparent text-muted transition-colors hover:bg-hover hover:text-ink;
   }
-  /* Touch: small buttons keep their look but answer a finger anywhere in at least 40 × 40 px around them.
-     In this layer, so a button placed with .absolute or .fixed keeps that position. */
+  /* Touch: a control marked .tap-area (the ⓘ of InfoTip, Toggle) keeps its look but answers a finger anywhere in
+     at least 40 × 40 px around it. Opt-in only, never a whole class of buttons or tabs: the zone is an ::after,
+     and a control that draws with ::after itself (a selected tab's underline) would lose its drawing. */
   @media (pointer: coarse) {
-    :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"], .topbar :is(a[href], button)) { position: relative; }
-    :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"], .topbar :is(a[href], button))::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); transform: translate(-50%, -50%); }
+    .tap-area { position: relative; }
+    .tap-area::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); transform: translate(-50%, -50%); }
     /* Not inside a sideways-scrolling strip: the taller hit area would make the strip scroll up and down too. */
-    :is(.overflow-x-auto, .overflow-x-scroll, .context-tabs, .nc-tabs, .recap-tabs, .work-view-tabs, .board-insight-row, .tile-gallery-categories, .calendar-meetings-grid) :is(.icon-btn, .btn, .btn-primary, .btn-ghost, .tap-area, [role="tab"])::after { content: none; }
+    :is(.overflow-x-auto, .overflow-x-scroll, .context-tabs, .nc-tabs, .recap-tabs, .work-view-tabs, .board-insight-row, .tile-gallery-categories, .calendar-meetings-grid) .tap-area::after { content: none; }
     /* Rows in a menu are a finger tall. */
     [data-popover] .row-tile { min-height: 40px; }
   }
@@ -1694,6 +1695,9 @@ span.mention:not(.mention-off) {
 .diagram-edge-input::placeholder {
   color: var(--faint);
 }
+/* A frame around a scroller: hides what overflows like overflow: hidden, but nothing can scroll it (scrollIntoView,
+   a focused field), since a person could not scroll it back. Older Safari, without clip, gets hidden. */
+.frame-clip { overflow: hidden; overflow: clip; }
 /* Settings: "On this page" is a slim rail of its own on the right, sticky and scrolling apart from the page. Wide windows only. */
 .settings-shell { max-width: 1060px; }
 .settings-rail { display: none; }
@@ -2698,6 +2702,8 @@ html:is([data-sidebar="rail"], [data-pages-panel="left"], [data-sidebar-auto="tr
 .task-peek.is-full { width: 100%; }
 @media (max-width: 767px) {
   .task-peek { width: 100%; }
+  /* The peek already fills a phone: Full screen would change nothing. */
+  .task-peek .peek-fullscreen-toggle { display: none; }
   /* Full width, there is nothing to resize against. */
   .task-peek .page-resize { display: none; }
 }
@@ -2877,7 +2883,13 @@ a.assistant-sent-file:hover { border-color: color-mix(in srgb, var(--accent) 40%
 @media (prefers-reduced-motion: reduce) { .assistant-attachment-progress { transition: none; } }
 @media (max-width: 640px) {
   /* A phone: the panel takes the screen with even margins, top bar included, so nothing opens unseen beneath it. */
-  .assistant-window { inset: 8px; width: auto; height: auto; border-radius: 15px; }
+  .assistant-window { inset: 8px; width: auto; height: auto; border-radius: 15px; overscroll-behavior: contain; }
+  /* It always fills the screen there, so Expand and Shrink would do nothing. */
+  .assistant-expand { display: none; }
+  /* The page behind stays still while the panel covers it: a drag on the chat (or past its end) moves only the chat. */
+  html[data-assistant-open="true"], html[data-assistant-open="true"] body { overflow: hidden; overscroll-behavior: none; }
+  html[data-assistant-open="true"] #main-content { overflow: hidden; }
+  .assistant-window textarea { overscroll-behavior: contain; }
   .assistant-resize { display: none; }
   .assistant-conversation { padding: 20px 16px 10px; }
   .assistant-composer-area { padding: 10px 12px 12px; }

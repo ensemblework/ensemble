@@ -281,7 +281,7 @@ function ChatHistory({
       data-chat-history
     >
       <div className="border-b border-line px-3 py-2 text-[12px] font-medium text-muted">Recent chats</div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-1">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1">
         {loading ? (
           <div className="px-2 py-3 text-[12.5px] text-muted">Loading…</div>
         ) : chats.length === 0 ? (
@@ -354,6 +354,15 @@ export function AssistantDock() {
   const mod = useModKey();
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
+  // While the panel is open the page knows it (html[data-assistant-open]): on a phone, where the panel covers it, the page behind stays still.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (open) root.dataset.assistantOpen = "true";
+    else delete root.dataset.assistantOpen;
+    return () => {
+      delete root.dataset.assistantOpen;
+    };
+  }, [open]);
   // On a phone the panel covers the screen: going somewhere (a link in an answer, the navigation) closes it, so the page shows.
   const shownPath = useRef(pathname);
   useEffect(() => {
@@ -851,7 +860,8 @@ export function AssistantDock() {
         <button type="button" className="icon-btn" title="New chat" aria-label="New chat" onClick={() => { setHistory(false); setConversationId(null); }}>
           <Plus size={15} />
         </button>
-        <button type="button" className="icon-btn" title={expanded ? "Shrink" : "Expand"} onClick={() => setExpanded(!expanded)}>
+        {/* Not on a phone, where the panel always fills the screen (globals.css .assistant-expand). */}
+        <button type="button" className="icon-btn assistant-expand" title={expanded ? "Shrink" : "Expand"} aria-label={expanded ? "Shrink" : "Expand"} onClick={() => setExpanded(!expanded)}>
           {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
         <button type="button" className="icon-btn" title={`Close (${mod === "⌘" ? "⌘J" : "Ctrl+J"})`} aria-label="Close" onClick={() => setOpen(false)}>
@@ -876,7 +886,7 @@ export function AssistantDock() {
         />
       ) : null}
 
-      <div ref={scroller} className="assistant-conversation min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} className="assistant-conversation min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {all.length === 0 ? (
           <EmptyAssistant
             pathname={pathname}
