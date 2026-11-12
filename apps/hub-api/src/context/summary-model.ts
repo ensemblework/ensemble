@@ -5,14 +5,17 @@
  * file part (files/model-input.ts); the person's own AI plan gets it inside its agent's message
  * (subscriptions/turn-files.ts), as a one-off turn that leaves no session behind. Ensemble's text of the
  * file stands in only where the file cannot go: larger than one request carries, refused by the provider,
- * a kind the agent's message has no place for, or a reply that says the file could not be opened. A file
- * that can go neither way is not summarized, and the reason is kept on the file.
+ * a kind the agent's message has no place for, or a reply that says the file could not be opened. A PDF
+ * with no text layer (a scan) also goes as pictures of its first pages (files/extract.ts) to an agent
+ * other than Claude Code, which sees a PDF's pages itself, and to a model that cannot take it as a PDF
+ * but reads pictures. A file that can go no way is not summarized, and the reason is kept on the file.
  */
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
 import { turnFilesFor } from "../assistant/attachments.js";
 import { describeFile, fileOriginal, filesByIds, type AttachedFile } from "../files/attached.js";
+import { pdfPagePictures } from "../files/extract.js";
 import { attachmentForModel, MODEL_ATTACH_TOTAL_BYTES } from "../files/model-input.js";
 import { beginActivity, endActivity, isPaused } from "../lib/activity.js";
 import { recordMetric } from "../lib/metrics.js";
@@ -23,11 +26,23 @@ import { complete, RuntimeError } from "../lib/runtime.js";
 import { loadSettings } from "../lib/settings.js";
 import { truncateText } from "../lib/text.js";
 import { attachmentsRefused, documentsFor, modelReadsImages } from "../lib/vision.js";
+import type { TurnFile } from "../subscriptions/turn-files.js";
 import { runSubscriptionTurn } from "../subscriptions/turn.js";
 import { couldNotOpen, fileSummaryPrompt, PICTURES, planTakesFile, SUMMARY_SYSTEM, summaryPrompt, type SummaryRow } from "./summarize.js";
 
 const MB = 1024 * 1024;
 const TEXT_BACKUP = 16_000;
+/** A scan's pages drawn for an agent or model that cannot see them in the PDF. */
+const SCAN_PAGES = 3;
+
+/** Pictures of a scanned PDF's first pages; none when it cannot be drawn here. */
+async function scanPictures(app: FastifyInstance, userId: string, id: string): Promise<Uint8Array[]> {
+  const original = await fileOriginal(app.prisma, userId, id).catch(() => null);
+  return original ? pdfPagePictures(original.bytes, { maxPages: SCAN_PAGES }) : [];
+}
+
+const scanNote = (pages: Uint8Array[]) =>
+  pages.length ? `\n\nThis PDF has no text layer (it is a scan): ${pages.length === 1 ? "a picture of its first page is" : `pictures of its first ${pages.length} pages are`} attached. Read them.` : "";
 
 /** The file cannot go to this model or agent as itself; Ensemble's text of it may still. */
 class CannotGo extends Error {}
@@ -58,20 +73,32 @@ export async function summarizeDocument(app: FastifyInstance, row: SummaryRow): 
     return answer.text;
   };
   if (file.kind === "audio" || file.kind === "video" || file.kind === "other") return fromText(`Ensemble does not summarize ${kindWords(file)}.`);
+  const scan = file.format.toLowerCase() === "pdf" && !hasText;
 
   try {
     if (isSubscriptionProvider(tier.provider)) {
       const agent = tier.provider;
-      if (!planTakesFile(agent, file)) throw new CannotGo(`${SUBSCRIPTION_INFO[agent].label} cannot take ${kindWords(file)} in a summary, and Ensemble read no text from it.`);
-      const reply = await onPlan(app, { userId, settings, agent, model: tier.model, effort: tier.effort }, row, file);
+      const pages = scan && agent !== "claude-code" ? await scanPictures(app, userId, file.id) : [];
+      if (!pages.length && !planTakesFile(agent, file)) throw new CannotGo(`${SUBSCRIPTION_INFO[agent].label} cannot take ${kindWords(file)} in a summary, and Ensemble read no text from it.`);
+      const reply = await onPlan(app, { userId, settings, agent, model: tier.model, effort: tier.effort }, row, file, pages);
       if (couldNotOpen(reply)) throw new CannotGo(`${SUBSCRIPTION_INFO[agent].label} could not open the file: ${truncateText(reply.trim(), 160)}`);
       return reply;
     }
-    if (file.byteSize > MODEL_ATTACH_TOTAL_BYTES) throw new CannotGo(`The file is larger than one model request carries (${MODEL_ATTACH_TOTAL_BYTES / MB} MB), and Ensemble read no text from it.`);
-    if (tier.provider === INCLUDED_PROVIDER && !includedReads(tier.model, file)) throw new CannotGo(`${tier.model} cannot read ${kindWords(file)}, and Ensemble read no text from it.`);
-    const reply = await onRuntime(app, { userId, settings, provider: tier.provider, model: tier.model, effort: tier.effort }, row, file);
-    if (couldNotOpen(reply)) throw new CannotGo(`${tier.model} could not open the file: ${truncateText(reply.trim(), 160)}`);
-    return reply;
+    const runtime = { userId, settings, provider: tier.provider, model: tier.model, effort: tier.effort };
+    try {
+      if (file.byteSize > MODEL_ATTACH_TOTAL_BYTES) throw new CannotGo(`The file is larger than one model request carries (${MODEL_ATTACH_TOTAL_BYTES / MB} MB), and Ensemble read no text from it.`);
+      if (tier.provider === INCLUDED_PROVIDER && !includedReads(tier.model, file)) throw new CannotGo(`${tier.model} cannot read ${kindWords(file)}, and Ensemble read no text from it.`);
+      const reply = await onRuntime(app, runtime, row, file);
+      if (couldNotOpen(reply)) throw new CannotGo(`${tier.model} could not open the file: ${truncateText(reply.trim(), 160)}`);
+      return reply;
+    } catch (error) {
+      // A scan the model could not take as a PDF goes as pictures of its pages, where it reads pictures.
+      const pages = scan && (error instanceof CannotGo || attachmentsRefused(error)) && modelReadsImages(tier.provider, tier.model) ? await scanPictures(app, userId, file.id) : [];
+      if (!pages.length) throw error;
+      const reply = await onRuntime(app, runtime, row, file, pages);
+      if (couldNotOpen(reply)) throw new CannotGo(`${tier.model} could not open the file: ${truncateText(reply.trim(), 160)}`);
+      return reply;
+    }
   } catch (error) {
     if (error instanceof CannotGo) return fromText(error.message);
     // The provider refused the attachment (its type, size or pages): the text, when there is one.
@@ -83,9 +110,12 @@ export async function summarizeDocument(app: FastifyInstance, row: SummaryRow): 
 type Who = { userId: string; settings: Awaited<ReturnType<typeof loadSettings>>; model: string; effort: string };
 
 /** A one-off turn on the person's own plan, with the file inside the agent's message. */
-async function onPlan(app: FastifyInstance, who: Who & { agent: SubscriptionProvider }, row: SummaryRow, file: AttachedFile): Promise<string> {
+async function onPlan(app: FastifyInstance, who: Who & { agent: SubscriptionProvider }, row: SummaryRow, file: AttachedFile, pages: Uint8Array[] = []): Promise<string> {
   // Copilot's and the ACP agents' own handling of a PDF may drop a scan or the text layer: Ensemble's text goes too.
   const backup = who.agent !== "claude-code" && file.format.toLowerCase() === "pdf" && row.text.trim() ? `\n\nIf the attached file did not reach you, this is the text Ensemble read from it:\n${row.text.slice(0, TEXT_BACKUP)}` : "";
+  const stem = file.filename.replace(/\.[^.]+$/, "") || "page";
+  const pictures: TurnFile[] = pages.map((bytes, index) => ({ id: `${file.id}-page-${index + 1}`, name: `${stem} page ${index + 1}.png`, mediaType: "image/png", kind: "image", size: bytes.byteLength }));
+  const drawn = new Map(pictures.map((picture, index) => [picture.id, pages[index]!]));
   const done = await runSubscriptionTurn({
     userId: who.userId,
     settings: who.settings,
@@ -93,10 +123,11 @@ async function onPlan(app: FastifyInstance, who: Who & { agent: SubscriptionProv
     model: who.model,
     effort: who.effort,
     system: `${SUMMARY_SYSTEM}\n\nYou have no tools in this request: answer from the attached file.`,
-    prompt: `${fileSummaryPrompt(row, describeFile(file))}${backup}`,
+    prompt: `${fileSummaryPrompt(row, describeFile(file))}${scanNote(pages)}${backup}`,
     files: {
-      list: await turnFilesFor(app.prisma, [file], who.userId),
-      read: async (id) => (await fileOriginal(app.prisma, who.userId, id))?.bytes ?? null,
+      // An agent that cannot take the PDF (Codex) gets only its pages' pictures.
+      list: [...(planTakesFile(who.agent, file) ? await turnFilesFor(app.prisma, [file], who.userId) : []), ...pictures],
+      read: async (id) => drawn.get(id) ?? (await fileOriginal(app.prisma, who.userId, id))?.bytes ?? null,
       fallback: row.text.trim() ? `Ensemble's text of the file:\n${row.text.slice(0, TEXT_BACKUP)}` : "",
     },
     tools: [],
@@ -112,16 +143,17 @@ async function onPlan(app: FastifyInstance, who: Who & { agent: SubscriptionProv
 }
 
 /** A model with a key or an included model, with the file as an image or file part. */
-async function onRuntime(app: FastifyInstance, who: Who & { provider: string }, row: SummaryRow, file: AttachedFile): Promise<string> {
-  const got = await attachmentForModel(app.prisma, who.userId, file);
-  if ("problem" in got) throw new CannotGo(got.problem);
+async function onRuntime(app: FastifyInstance, who: Who & { provider: string }, row: SummaryRow, file: AttachedFile, pages: Uint8Array[] = []): Promise<string> {
+  const got = pages.length ? null : await attachmentForModel(app.prisma, who.userId, file);
+  if (got && "problem" in got) throw new CannotGo(got.problem);
+  const fileParts = got ? [got.attachment.part] : pages.map((bytes) => ({ type: "image_url" as const, image_url: { url: `data:image/png;base64,${Buffer.from(bytes).toString("base64")}` } }));
   const activityId = `model:${randomUUID()}`;
   await beginActivity(redis, who.userId, { id: activityId, kind: "model", label: "Document summary", model: who.model });
   try {
     const turn = await askRuntime({
       messages: [
         { role: "system", content: SUMMARY_SYSTEM },
-        { role: "user", content: [{ type: "text", text: fileSummaryPrompt(row, describeFile(file)) }, got.attachment.part] },
+        { role: "user", content: [{ type: "text", text: `${fileSummaryPrompt(row, describeFile(file))}${scanNote(pages)}` }, ...fileParts] },
       ],
       model: who.model,
       provider: who.provider,
