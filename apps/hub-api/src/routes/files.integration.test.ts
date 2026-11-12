@@ -396,7 +396,7 @@ test("page images: exactly 2 MiB is kept with its size; one byte more, a damaged
   assert.deepEqual(kept.image, { format: "png", width: 1200, height: 800 });
   assert.equal(kept.file.kind, "image");
   const row = await db.document.findUniqueOrThrow({ where: { id: kept.file.id }, select: { enrichmentStatus: true } });
-  assert.equal(row.enrichmentStatus, "skipped", "page images are not summarised");
+  assert.notEqual(row.enrichmentStatus, "skipped", "a picture pasted into a page is summarized like any file");
   const before = await count();
 
   const over = await pageImage(owner, "site.png", testPng(1200, 800, 2_097_153));

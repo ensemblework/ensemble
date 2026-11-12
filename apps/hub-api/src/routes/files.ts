@@ -148,7 +148,8 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       prisma,
       request.userId,
       { filename: checked?.filename ?? body.filename, mediaType: checked?.mediaType ?? body.mediaType, bytes },
-      { summarize: image ? false : body.summarize, tags: body.tags },
+      // A picture pasted into a page is a file like any other: it gets a summary, so models can tell which image is which.
+      { summarize: body.summarize, tags: body.tags },
     );
     return reply.code(201).send({
       file,
