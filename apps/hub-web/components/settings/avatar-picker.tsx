@@ -1,152 +1,99 @@
 "use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
-import { useState } from "react";
-import {
-  AVATAR_BACKGROUND_LABEL,
-  AVATAR_BACKGROUNDS,
-  AVATAR_GENDER_LABEL,
-  AVATAR_GENDERS,
-  AVATAR_ROLE_BACKGROUND,
-  AVATAR_ROLE_LABEL,
-  avatarBackground,
-  avatarFace,
-  avatarGenderFor,
-  avatarIds,
-  avatarRoleFor,
-  parseAvatar,
-  withAvatarBackground,
-  type AvatarBackground,
-  type AvatarGender,
-} from "@ensemble/shared-types";
-import { api } from "@/lib/api";
+import { useRef, type KeyboardEvent } from "react";
+import { AVATAR_CHARACTERS, AVATAR_PALETTES, AVATAR_SCENERIES, DEFAULT_AVATAR, avatarId, parseAvatar, type AvatarParts } from "@ensemble/shared-types";
+import { api, type Me } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
-import { AVATAR_BACKGROUND_COLORS, PersonaAvatar } from "@/components/avatars/persona";
-import { useToast } from "../toast";
-import { SectionCard, cx } from "../ui";
+import { radioKeyTarget } from "@/lib/radio-keys";
+import { PersonaAvatar } from "@/components/avatars/persona";
+import { LoadError } from "../load-error";
+import { SectionCard, SettingRow, SkeletonRows, cx } from "../ui";
 
-/** Settings → Account: pick a picture avatar from the set for the role chosen at sign-up and a background for it, or keep your initials. */
+/** Every account has the same characters, colors and scenery. Changes save with its profile. */
 export function AvatarPicker() {
   const client = useQueryClient();
-  const toast = useToast();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const user = me.data?.user;
-  const current = user?.avatar ?? null;
-  const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, staleTime: 60_000 });
-  const role = avatarRoleFor(spaces.data?.account.role, user?.profile?.profession);
+  const characters = useRef<HTMLDivElement>(null);
+  const colors = useRef<HTMLDivElement>(null);
+  const inFlight = useRef(false);
   const save = useMutation({
     mutationFn: (avatar: string | null) => api.updateMe({ avatar }),
-    onSuccess: () => {
+    onSettled: () => { inFlight.current = false; },
+    onSuccess: ({ user }) => {
+      client.setQueryData<Me>(["me"], previous => previous ? { ...previous, user: { ...previous.user, ...user } } : previous);
       void client.invalidateQueries({ queryKey: ["me"] });
       void client.invalidateQueries({ queryKey: ["shell"] });
     },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  // One group of faces at a time: the gender given at sign-up, else the group of the face in use.
-  const [viewing, setViewing] = useState<AvatarGender | null>(null);
-  const gender = viewing ?? (user?.profile?.gender ? avatarGenderFor(user.profile.gender) : parseAvatar(current)?.gender ?? "n");
-  const initials = personInitials(user?.name, user?.email);
+  const user = me.data?.user;
+  const current = save.isPending ? save.variables : user?.avatar ?? null;
   const parts = parseAvatar(current);
-  // A background picked before any face is kept here until a face is picked.
-  const [chosen, setChosen] = useState<AvatarBackground | null>(null);
-  const background = parts ? avatarBackground(parts) : chosen ?? AVATAR_ROLE_BACKGROUND[role];
-  const pickBackground = (next: AvatarBackground) => {
-    setChosen(next);
-    if (current && parts && next !== background) save.mutate(withAvatarBackground(current, next));
+  const selected = parts ?? DEFAULT_AVATAR;
+  const character = AVATAR_CHARACTERS.find(row => row.id === selected.character)!;
+  const palette = AVATAR_PALETTES.find(row => row.id === selected.palette)!;
+  const commit = (next: string | null) => {
+    if (inFlight.current || next === current) return;
+    inFlight.current = true;
+    save.mutate(next);
+  };
+  const choose = (next: AvatarParts) => commit(avatarId(next));
+  const keyboard = (event: KeyboardEvent<HTMLButtonElement>, index: number, group: "character" | "palette") => {
+    const count = group === "character" ? AVATAR_CHARACTERS.length : AVATAR_PALETTES.length;
+    const next = radioKeyTarget(event.key, index, count);
+    if (next === null || save.isPending) return;
+    event.preventDefault();
+    choose(group === "character" ? { ...selected, character: AVATAR_CHARACTERS[next]!.id } : { ...selected, palette: AVATAR_PALETTES[next]!.id });
+    (group === "character" ? characters : colors).current?.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
   };
 
-  return (
-    <SectionCard title="Avatar" description="How others see you in shared spaces and pages.">
+  return <SectionCard title="Avatar" description="Pick a character, color and scenery." info="The same collection is available to every profile. Changes save automatically and appear wherever your account is shown. You can also use your initials.">
+    {!user ? me.error ? <LoadError error={me.error} what="your avatar" retrying={me.isFetching} onRetry={() => void me.refetch()} /> : <SkeletonRows count={2} /> : <>
       <div className="flex flex-wrap items-center gap-4">
-        <span className="inline-flex size-16 items-center justify-center overflow-hidden rounded-full border border-line-strong bg-raised text-[20px] font-semibold">
-          {current ? <PersonaAvatar id={current} size={64} /> : initials}
+        <span className="inline-flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line-strong bg-raised text-[20px] font-semibold">
+          {parts ? <PersonaAvatar id={avatarId(parts)} size={64} /> : personInitials(user.name, user.email)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium">{parts ? `${AVATAR_ROLE_LABEL[parts.role]} avatar` : "Your initials"}</div>
-          <div className="mt-0.5 text-2xs text-muted">Pick a face and a background below. Your initials are the fallback.</div>
+          <div className="text-[13px] font-medium">{parts ? character.label : "Your initials"}</div>
+          {parts ? <div className="mt-0.5 text-2xs text-muted">{palette.label}</div> : null}
+          {save.isPending ? <span role="status" className="text-2xs text-muted">Saving…</span> : null}
         </div>
-        <button type="button" className="btn h-7 px-2.5 text-[12.5px]" disabled={!current || save.isPending} onClick={() => save.mutate(null)}>
-          Use initials
-        </button>
+        <button type="button" className="btn h-8 px-2.5 text-[12.5px]" disabled={!current || save.isPending} onClick={() => commit(null)}>Use initials</button>
       </div>
-      <div className="mt-4">
-        <div className="mb-1.5 text-2xs uppercase tracking-wide text-faint">Background</div>
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Avatar background">
-          {AVATAR_BACKGROUNDS.map((value) => {
-            const [ink, paper] = AVATAR_BACKGROUND_COLORS[value];
-            const selected = value === background;
-            return (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={AVATAR_BACKGROUND_LABEL[value]}
-                title={AVATAR_BACKGROUND_LABEL[value]}
-                disabled={save.isPending}
-                onClick={() => pickBackground(value)}
-                className={cx(
-                  "relative rounded-full p-0.5 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-                  selected ? "ring-2 ring-accent" : "ring-1 ring-line",
-                )}
-              >
-                <span className="block size-7 rounded-full" style={{ background: `linear-gradient(135deg, ${paper}, ${ink})` }} />
-                {selected ? (
-                  <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-accent text-white">
-                    <Check size={10} strokeWidth={3} />
-                  </span>
-                ) : null}
-              </button>
-            );
+      {save.error ? <p role="alert" className="mt-3 text-[13px] text-danger">{(save.error as Error).message}</p> : null}
+      <div className="mt-5">
+        <div id="avatar-character-label" className="mb-2 text-[12.5px] text-muted">Character</div>
+        <div ref={characters} role="radiogroup" aria-labelledby="avatar-character-label" className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {AVATAR_CHARACTERS.map((row, index) => {
+            const on = parts?.character === row.id;
+            return <button key={row.id} type="button" role="radio" aria-checked={on} aria-label={row.label} tabIndex={on || (!parts && index === 0) ? 0 : -1} aria-disabled={save.isPending} onClick={() => choose({ ...selected, character: row.id })} onKeyDown={event => keyboard(event, index, "character")} className={cx("flex min-w-0 flex-col items-center gap-1.5 rounded-lg border px-1 py-2 text-[11px] leading-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-disabled:cursor-wait", on ? "border-accent bg-accent/10" : "border-transparent hover:bg-hover")}>
+              <PersonaAvatar id={avatarId({ ...selected, character: row.id })} size={48} />
+              <span className="max-w-full text-center">{row.label}</span>
+            </button>;
           })}
         </div>
       </div>
-      <div className="mt-4">
-        <div className="mb-1.5 flex items-center gap-3" role="group" aria-label="Faces to show">
-          {AVATAR_GENDERS.map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={value === gender}
-              onClick={() => setViewing(value)}
-              className={cx(
-                "text-2xs uppercase tracking-wide transition-colors focus-visible:outline-none focus-visible:text-ink",
-                value === gender ? "text-ink" : "text-faint hover:text-muted",
-              )}
-            >
-              {AVATAR_GENDER_LABEL[value]}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={`${AVATAR_ROLE_LABEL[role]} avatars, ${AVATAR_GENDER_LABEL[gender]}`}>
-          {avatarIds(role, gender, background).map((id) => {
-            const selected = Boolean(current) && avatarFace(id) === avatarFace(current!);
-            return (
-              <button
-                key={id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={`${AVATAR_ROLE_LABEL[role]} avatar ${id.split(".")[2]}`}
-                disabled={save.isPending}
-                onClick={() => save.mutate(id)}
-                className={cx(
-                  "relative rounded-full p-0.5 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-                  selected ? "ring-2 ring-accent" : "ring-1 ring-line",
-                )}
-              >
-                <PersonaAvatar id={id} size={48} />
-                {selected ? (
-                  <span className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full bg-accent text-white">
-                    <Check size={10} strokeWidth={3} />
-                  </span>
-                ) : null}
-              </button>
-            );
+      <div className="mt-5">
+        <div id="avatar-color-label" className="mb-2 text-[12.5px] text-muted">Color</div>
+        <div ref={colors} role="radiogroup" aria-labelledby="avatar-color-label" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {AVATAR_PALETTES.map((row, index) => {
+            const on = selected.palette === row.id;
+            return <button key={row.id} type="button" role="radio" aria-checked={on} aria-label={row.label} tabIndex={on ? 0 : -1} aria-disabled={save.isPending} onClick={() => choose({ ...selected, palette: row.id })} onKeyDown={event => keyboard(event, index, "palette")} className={cx("flex min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left text-[11.5px] leading-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-disabled:cursor-wait", on ? "border-accent bg-accent/10" : "border-line hover:bg-hover")}>
+              <span className="flex shrink-0 items-center -space-x-0.5" aria-hidden><span className="size-3 rounded-full" style={{ background: row.ink }} /><span className="size-2.5 rounded-full" style={{ background: row.related }} /><span className="size-2 rounded-full" style={{ background: row.accent }} /></span>
+              <span>{row.label}</span>
+            </button>;
           })}
         </div>
       </div>
-    </SectionCard>
-  );
+      <div className="mt-3 border-t border-line">
+        <SettingRow title="Scenery" info="A quiet pixel landscape behind your character. Plain keeps just the character. The background stays clear of the character’s silhouette gaps.">
+          <select className="field w-32" aria-label="Avatar scenery" value={selected.scenery} disabled={save.isPending} onChange={event => choose({ ...selected, scenery: event.target.value as AvatarParts["scenery"] })}>
+            {AVATAR_SCENERIES.map(row => <option key={row.id} value={row.id}>{row.label}</option>)}
+          </select>
+        </SettingRow>
+      </div>
+    </>}
+  </SectionCard>;
 }

@@ -12,6 +12,7 @@ import { resourceOf } from "./presence-host";
 import { Popover } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { PersonaAvatar } from "@/components/avatars/persona";
+import { parseAvatar } from "@ensemble/shared-types";
 
 /**
  * A person: their picture avatar, an anonymous visitor's creature, or initials in their colour.
@@ -41,7 +42,7 @@ export function Avatar({
   const gap = stacked ? "0 0 0 1.5px var(--bg)" : undefined;
   const shadow = ring ? `0 0 0 2px var(--bg), 0 0 0 3.5px ${tint}` : gap;
   const faded = dim ? { opacity: 0.5, filter: "saturate(0.4)" } : undefined;
-  if (person.avatar) {
+  if (person.avatar && parseAvatar(person.avatar)) {
     return (
       <span title={title ?? person.name} aria-label={person.name} className="inline-flex shrink-0 rounded-full" style={{ width: size, height: size, boxShadow: shadow, ...faded }}>
         <PersonaAvatar id={person.avatar} size={size} />

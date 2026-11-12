@@ -82,7 +82,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "account.delete", tab: "data", section: "Danger zone", label: "Delete account", keywords: "close remove account erase", about: "Deletes your account and every space. It cannot be undone.", href: at("data", "jump-danger-delete-account") },
   ]),
   ...group("account", "Avatar", [
-    { id: "account.avatar", label: "Avatar", keywords: "profile picture photo initials face", about: "The picture or initials shown for you.", href: at("account", "jump-avatar-avatar") },
+    { id: "account.avatar", label: "Avatar", keywords: "profile picture initials dots pixel character color palette scenery landscape", about: "Your circular character avatar, color and scenery, or initials.", href: at("account", "jump-avatar-avatar") },
   ]),
   ...group("account", "Time zone and email", [
     { id: "account.email", label: "Email", keywords: "email address identity confirm", about: "Your address: recognises your own mail and confirms destructive actions.", href: at("account", "jump-you-email") },
