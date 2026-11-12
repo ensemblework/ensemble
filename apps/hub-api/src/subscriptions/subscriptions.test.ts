@@ -14,7 +14,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeLimits } from "./claude-control.js";
-import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { claudeAppCopy, claudeEfforts, codexFastTier, codexLimits, codexModels, codexSignIn, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
@@ -26,6 +26,16 @@ test("Claude Code's sign-in is read from its own status, as JSON or as words", (
   assert.deepEqual(parseClaudeStatus({ code: 1, stdout: "Not logged in. Run claude auth login to authenticate.\n", stderr: "" }), { signedIn: false, plan: null });
   assert.deepEqual(parseClaudeStatus({ code: 0, stdout: "Logged in as someone\n", stderr: "" }), { signedIn: true, plan: null });
   assert.deepEqual(parseClaudeStatus({ code: null, stdout: "", stderr: "" }), { signedIn: null, plan: null });
+});
+
+test("Codex runs when signed in with ChatGPT, with an API key, or on its own model provider", () => {
+  assert.deepEqual(codexSignIn({ account: { type: "chatgpt", planType: "plus" }, requiresOpenaiAuth: true }), { signedIn: true, plan: "plus", chatgpt: true });
+  assert.deepEqual(codexSignIn({ account: { type: "chatgpt", planType: "unknown" }, requiresOpenaiAuth: true }), { signedIn: true, plan: null, chatgpt: true });
+  assert.deepEqual(codexSignIn({ account: { type: "apiKey" }, requiresOpenaiAuth: true }), { signedIn: true, plan: "API key", chatgpt: false });
+  // A `model_provider` of its own in config.toml (a local proxy, Azure, Ollama): no account, no OpenAI sign-in needed.
+  assert.deepEqual(codexSignIn({ account: null, requiresOpenaiAuth: false }), { signedIn: true, plan: "own model provider", chatgpt: false });
+  assert.deepEqual(codexSignIn({ account: null, requiresOpenaiAuth: true }), { signedIn: false, plan: null, chatgpt: false });
+  assert.deepEqual(codexSignIn(null), { signedIn: false, plan: null, chatgpt: false });
 });
 
 test("thinking levels come from each tool's own help", () => {

@@ -27,6 +27,7 @@ import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
 import { runDueRoutines } from "../routines/service.js";
 import { sweepWhenDue } from "../workspace/session-cleanup.js";
 import { sweepAskSessions } from "../assistant/ask-sessions.js";
+import { retryAssistantSessionDeletes } from "../assistant/delete-chat.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -81,6 +82,8 @@ async function tick(app: FastifyInstance): Promise<void> {
     .catch((error: unknown) => app.log.error({ err: error }, "blob sweep failed"));
   // Inline asks' agent sessions, 30 minutes after their last answer (assistant/ask-sessions.ts).
   void sweepAskSessions(app).catch((error: unknown) => app.log.error({ err: error }, "ask session sweep failed"));
+  // Deleted chats' agent sessions that an online computer has not confirmed dropping yet (assistant/delete-chat.ts).
+  void retryAssistantSessionDeletes(app).catch((error: unknown) => app.log.error({ err: error }, "chat session delete retry failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {

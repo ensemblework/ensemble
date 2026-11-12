@@ -34,7 +34,12 @@ export const ROTATE_MESSAGES = 80;
  * not the chat's own. `keep`: days unused before it is dropped.
  */
 /** `usage`: the session's token totals as its agent last reported them (Copilot reports the whole session's, not a turn's). */
-type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage };
+/**
+ * `prompts`: how many prompts the agent's own transcript held after Ensemble's last turn (session-touch.ts).
+ * `retired`: earlier sessions of this chat that someone used outside Ensemble; they are no longer resumed,
+ * and are deleted with the chat. `id` is empty when only those remain.
+ */
+type Entry = { agent: SubscriptionProvider; id: string; instructions: string; at: number; next?: number; from?: number; text?: string; folder?: string; keep?: number; usage?: SessionUsage; prompts?: number; retired?: string[] };
 export type SessionUsage = { in: number; out: number };
 type Store = Record<string, Entry>;
 
@@ -70,7 +75,7 @@ async function write(store: Store): Promise<void> {
 }
 
 /** What a turn may resume: the session, and the instructions it last had (an agent that keeps the first message's). */
-export type Found = { id: string; text: string | null; usage?: SessionUsage };
+export type Found = { id: string; text: string | null; usage?: SessionUsage; prompts?: number };
 
 /**
  * The session to resume for this chat: the same agent, where the chat was when it last ran, and not
@@ -82,12 +87,12 @@ export type Found = { id: string; text: string | null; usage?: SessionUsage };
 export function findSession(key: string, agent: SubscriptionProvider, instructions: string, perTurn = false, position?: number): Promise<Found | null> {
   return serial(async () => {
     const entry = (await read())[key];
-    if (!entry || entry.agent !== agent || Date.now() - entry.at >= keepMs(entry)) return null;
+    if (!entry || !entry.id || entry.agent !== agent || Date.now() - entry.at >= keepMs(entry)) return null;
     // The chat moved on without this session (a turn on another model or computer): it would miss those messages.
     if (position !== undefined && entry.next !== undefined && entry.next !== position) return null;
     if (position !== undefined && position - (entry.from ?? 0) >= ROTATE_MESSAGES) return null;
     if (!perTurn && entry.instructions !== instructionsHash(instructions) && entry.text === undefined) return null;
-    return { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}) };
+    return { id: entry.id, text: perTurn ? null : (entry.text ?? null), ...(entry.usage ? { usage: entry.usage } : {}), ...(entry.prompts !== undefined ? { prompts: entry.prompts } : {}) };
   });
 }
 
@@ -119,7 +124,8 @@ export function instructionsUpdate(before: string, now: string): string | null {
     .join("\n\n");
 }
 
-export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null };
+/** `retire`: the session this one replaces was used outside Ensemble: kept, unresumed, until the chat is deleted. */
+export type SaveOptions = { next?: number; folder?: string; keepDays?: number; perTurn?: boolean; usage?: SessionUsage | null; prompts?: number | null; retire?: string };
 
 /**
  * Remembers the chat's session after a turn, and drops sessions unused for their keeping days, and the
@@ -139,8 +145,14 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
       }
     }
     const before = store[key];
-    // Another session took the chat's place: the old one would only clutter the agent's app.
-    if (before && before.id !== id) old.push([key, before]);
+    const sameAgent = before?.agent === agent;
+    const retiring = Boolean(before && sameAgent && opts.retire && before.id === opts.retire);
+    // Another session took the chat's place: the old one would only clutter the agent's app (one used outside
+    // Ensemble stays, unresumed, until the chat goes). Earlier retired sessions move to the new entry; on
+    // another agent they go with the old one.
+    if (before && !sameAgent) old.push([key, before]);
+    else if (before && before.id && before.id !== id && !retiring) old.push([key, { ...before, retired: undefined }]);
+    const retired = sameAgent ? [...(before?.retired ?? []), ...(retiring ? [before!.id] : [])].filter((one) => one && one !== id) : [];
     const continued = before && before.id === id;
     const from = continued ? before.from : opts.next === undefined ? undefined : Math.max(0, opts.next - 2);
     store[key] = {
@@ -155,6 +167,8 @@ export async function saveSession(key: string, agent: SubscriptionProvider, id: 
       ...(opts.folder ? { folder: opts.folder } : {}),
       ...(opts.keepDays ? { keep: opts.keepDays } : {}),
       ...(opts.usage ? { usage: opts.usage } : {}),
+      ...(typeof opts.prompts === "number" ? { prompts: opts.prompts } : {}),
+      ...(retired.length ? { retired } : {}),
     };
     await write(store);
     return old;
@@ -173,7 +187,7 @@ export function setNativeDropForTests(drop: Drop | null): void {
 async function dropNative(entries: Array<[string, Entry]>): Promise<void> {
   const { deleteNativeSession } = dropForTests ? { deleteNativeSession: dropForTests } : await import("../workspace/engines/delete-session.js");
   for (const [key, entry] of entries) {
-    await deleteNativeSession(entry.agent, entry.id, entry.folder ?? sessionFolder(key)).catch(() => undefined);
+    for (const id of [entry.id, ...(entry.retired ?? [])]) if (id) await deleteNativeSession(entry.agent, id, entry.folder ?? sessionFolder(key)).catch(() => undefined);
     // A group's folder (a node's project) is shared: only a chat's own folder goes with it.
     if (!entry.folder) await rm(sessionFolder(key), { recursive: true, force: true }).catch(() => undefined);
   }
@@ -209,12 +223,14 @@ export async function dropSession(key: string): Promise<boolean> {
   return Boolean(entry);
 }
 
-/** Forgets a chat's session (it could not be reopened). */
+/** Forgets a chat's session (it could not be reopened); its retired sessions stay listed for deletion with the chat. */
 export function forgetSession(key: string): Promise<void> {
   return serial(async () => {
     const store = await read();
-    if (!(key in store)) return;
-    delete store[key];
+    const entry = store[key];
+    if (!entry) return;
+    if (entry.retired?.length) store[key] = { ...entry, id: "" };
+    else delete store[key];
     await write(store);
   });
 }

@@ -13,7 +13,7 @@ The rule: every file the person attaches reaches the model or agent as the file 
 | **Paired computers** | The same task files | `remote/accept.ts` | Originals downloaded under the job lease, then as above ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)) |
 | **Plots and diagrams on a task page** | `plot`/`dataset` and diagram mentions on the page | `pages/agent-context.ts` (`pageAgentText`, used by the brief and `read_page`) | A diagram's full source (up to 30,000 characters); a plot's chart settings, its data's columns and row count, and the first 20 rows as CSV, labelled as a preview when the table is longer |
 
-In chat, `hub_list_files` finds files by name or text when the person asks for one in words ("the Q3 deck"); it tells the model to ask which file is meant when several match. `hub_view_file` opens a file by id: the model is given the file itself. Choosing a saved file never uploads it again.
+In chat, `hub_list_files` finds files by name, summary or text when the person asks for one in words ("the Q3 deck"), each with its summary; it tells the model to ask which file is meant when several match. `hub_view_file` opens a file by id: the model is given the file itself. Choosing a saved file never uploads it again.
 
 ## 2. Models with a key and included models
 
@@ -58,7 +58,9 @@ Files extracts text from PDFs with a text layer, Word, PowerPoint, spreadsheets,
 
 - the start of each attached file's text in chat, Ensemble Node and task briefs, and in the assistant's open-page context and a paired computer's task brief (`filesSection`);
 - Ensemble's text sent with a file to a person's own agent (`TurnFile.text`, `notGiven` in `subscriptions/turn-files.ts`), and to a computer too old to receive files (`runSubscriptionTurn` `fallback`);
-- the read tools: `hub_read_file` (`assistant/tools/files.ts`), `read_attachment` (`workspace/tools.ts`), uploaded files in `hub_search_context` and `hub_read_context` (`assistant/tools/context.ts`), and a file's text, summary and search excerpts in the Context Bridge's `ensemble_read` and `ensemble_search` (`bridge/service.ts`; a `document` read gives the file's details and link).
+- the read tools: `hub_read_file` (`assistant/tools/files.ts`), `read_attachment` (`workspace/tools.ts`), uploaded files in `hub_search_context` and `hub_read_context` (`assistant/tools/context.ts`), and a file's text and search excerpts in the Context Bridge's `ensemble_read` and `ensemble_search` (`bridge/service.ts`).
+
+A file's **summary** is not that text: a model made it from the file itself when the file was added ([32 §4](32_FILES.md#4-keeping-the-server-light)). Models are given it wherever files are listed for them (`hub_list_files`, the files section of a brief or message), to tell which file is which without opening it.
 
 ## 5. Safety
 

@@ -1,8 +1,8 @@
 /**
  * Inline "Ask Ensemble" on an AI plan (docs/30 §8). Each page, task, project, deliverable or meeting
  * notes keeps one short-lived session of the person's own agent for each person who asks there. Asking
- * again on that page continues it (the computer runs a session's turns one at a time, so an ask made
- * while another is answering waits for it), and 30 minutes after the last answer the session is deleted
+ * again on that page continues it: asks there are answered one after another in the order they were
+ * made (`askInLine`), so an ask made while another is answering waits for it, and 30 minutes after the last answer the session is deleted
  * from the computer that ran it: the agent's own history and its folder, the way a deleted chat's
  * session goes (`dropChatSessions`). The 30 minutes are fixed; only the tier is a setting
  * (`assistant.askTier`). A computer that cannot delete on request yet drops it on its own a day later
@@ -25,7 +25,8 @@ export const ASK_STUCK_MS = 2 * 3600_000;
 export const ASK_KEEP_DAYS = 1;
 const MAX_KEPT = 300;
 
-type AskRecord = { kind: string; id: string; started: number; answered?: number };
+/** `since`: when the page's current session took its first ask. */
+type AskRecord = { kind: string; id: string; started: number; answered?: number; since?: number };
 type Asks = Record<string, AskRecord>;
 
 /** The page's session for this person: stable, and not the page's id (the agent's app shows it as a folder name). */
@@ -68,7 +69,7 @@ function change<T>(app: FastifyInstance, userId: string, edit: (asks: Asks) => T
 /** An ask began in this session: it stays at least until this one is answered. */
 export function askStarted(app: FastifyInstance, userId: string, key: string, page: { kind: string; id: string }, now = Date.now()): Promise<void> {
   return change(app, userId, (asks) => {
-    asks[key] = { ...asks[key], kind: page.kind, id: page.id, started: now };
+    asks[key] = { ...asks[key], kind: page.kind, id: page.id, started: now, since: asks[key]?.since ?? now };
   });
 }
 
@@ -80,6 +81,44 @@ export function askAnswered(app: FastifyInstance, userId: string, key: string, n
   });
 }
 
+const HISTORY_ASKS = 8;
+const HISTORY_CHARS = 12_000;
+
+/**
+ * The earlier asks and answers of the page's current session, oldest first: what a new session of the
+ * agent is given when the page's one is gone (the person deleted it in the agent's app), so a follow-up
+ * on the page still knows what came before. Empty for the session's first ask.
+ */
+export async function askHistory(app: FastifyInstance, userId: string, key: string, page: { kind: string; id: string; actor: string | null }): Promise<string> {
+  const record = (await read(app, userId))[key];
+  if (!record?.since) return "";
+  const rows = await app.prisma.pageDiscussion.findMany({
+    where: { userId, pageKind: page.kind, pageId: page.id, authorKind: "ensemble", authorAccountId: page.actor, deletedAt: null, status: "open", error: null, conversationId: { not: null }, createdAt: { gte: new Date(record.since) } },
+    orderBy: { createdAt: "desc" },
+    take: HISTORY_ASKS,
+    select: { conversationId: true, body: true },
+  });
+  if (!rows.length) return "";
+  const asked = await app.prisma.assistantMessage.findMany({
+    where: { conversationId: { in: rows.map((row) => row.conversationId!) }, role: "user" },
+    orderBy: { createdAt: "asc" },
+    select: { conversationId: true, content: true },
+  });
+  const question = new Map<string, string>();
+  for (const message of asked) if (!question.has(message.conversationId)) question.set(message.conversationId, message.content);
+  const turns = rows
+    .reverse()
+    .map((row) => {
+      const answer = typeof (row.body as { text?: unknown } | null)?.text === "string" ? ((row.body as { text: string }).text).trim() : "";
+      const q = question.get(row.conversationId!)?.trim() ?? "";
+      return q && answer ? `Person: ${q}\n\nYou: ${answer}` : "";
+    })
+    .filter(Boolean);
+  let text = turns.join("\n\n");
+  if (text.length > HISTORY_CHARS) text = `…${text.slice(text.length - HISTORY_CHARS)}`;
+  return text ? `Earlier asks on this page, oldest first:\n\n${text}` : "";
+}
+
 /** Whether a session is done with: 30 minutes past its last answer and no ask since, or an ask that never came back. */
 export function askExpired(record: AskRecord, now = Date.now()): boolean {
   const waiting = record.answered === undefined || record.answered < record.started;
@@ -88,6 +127,34 @@ export function askExpired(record: AskRecord, now = Date.now()): boolean {
 }
 
 type Drop = (app: FastifyInstance, userId: string, key: string) => Promise<void>;
+
+/** Asks waiting on each page, per person: the newest place in line. */
+const lines = new Map<string, Promise<void>>();
+
+/**
+ * A place in line for an ask on one page by one person (`key`), taken as the request arrives. Asks there
+ * are answered one after another in the order they were made, never two at once and never one ahead of
+ * an earlier one: they share the page's agent session, and each may build on the answer before it.
+ * `ready` resolves when every earlier ask has left; `leave` must be called once this ask is answered
+ * (or gave up), whether or not its turn came.
+ */
+export function askInLine(key: string): { waiting: boolean; ready: Promise<void>; leave: () => void } {
+  const before = lines.get(key);
+  let done!: () => void;
+  const mine = new Promise<void>((resolve) => (done = resolve));
+  const through = (before ?? Promise.resolve()).then(() => mine);
+  lines.set(key, through);
+  return {
+    waiting: Boolean(before),
+    ready: before ?? Promise.resolve(),
+    leave: () => {
+      done();
+      void through.then(() => {
+        if (lines.get(key) === through) lines.delete(key);
+      });
+    },
+  };
+}
 
 let sweeping = false;
 

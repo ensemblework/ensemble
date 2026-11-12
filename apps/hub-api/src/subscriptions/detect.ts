@@ -396,6 +396,23 @@ export function codexLimits(body: { rateLimits?: CodexLimitSnapshot | null; rate
   return windows;
 }
 
+/**
+ * Codex's `account/read`: whether it can answer here, and what pays for it. Signed in with ChatGPT
+ * (the plan), with an API key, or set up with its own model provider in `config.toml` (no account,
+ * `requiresOpenaiAuth: false`) all run; only a Codex that needs an OpenAI sign-in and has none is
+ * signed out.
+ */
+export function codexSignIn(body: { account?: { type?: string; planType?: string } | null; requiresOpenaiAuth?: boolean } | null | undefined): { signedIn: boolean; plan: string | null; chatgpt: boolean } {
+  const type = body?.account?.type;
+  if (type === "chatgpt") {
+    const plan = body!.account!.planType && body!.account!.planType !== "unknown" ? body!.account!.planType.slice(0, 60) : null;
+    return { signedIn: true, plan, chatgpt: true };
+  }
+  if (type === "apiKey") return { signedIn: true, plan: "API key", chatgpt: false };
+  if (!body?.account && body?.requiresOpenaiAuth === false) return { signedIn: true, plan: "own model provider", chatgpt: false };
+  return { signedIn: false, plan: null, chatgpt: false };
+}
+
 /** Codex answers through its app-server: whether it is signed in (`account/read`) and its models (`model/list`). */
 async function probeCodex(): Promise<SubscriptionAgent | null> {
   const found = await codexAgentBinary();
@@ -418,10 +435,10 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     const init = (await server.request("initialize", { clientInfo: { name: "ensemble", title: "Ensemble", version: "1" }, capabilities: { experimentalApi: true, requestAttestation: false } })) as { userAgent?: string };
     server.notify("initialized");
     base.version = firstVersion(String(init.userAgent ?? "").replace(/^[^/]*\//, ""));
-    const account = (await server.request("account/read", {})) as { account?: { type?: string; planType?: string } | null; requiresOpenaiAuth?: boolean };
-    base.signedIn = account.account?.type === "chatgpt";
-    if (!base.signedIn && account.requiresOpenaiAuth === false) base.problem = "Codex is configured for an API key or custom provider. Sign in with ChatGPT to use a subscription here.";
-    base.plan = account.account?.type === "chatgpt" && account.account.planType && account.account.planType !== "unknown" ? account.account.planType : null;
+    const account = (await server.request("account/read", {})) as Parameters<typeof codexSignIn>[0];
+    const signIn = codexSignIn(account);
+    base.signedIn = signIn.signedIn;
+    base.plan = signIn.plan;
     const rows: CodexModel[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < 5; page += 1) {
@@ -432,7 +449,7 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     }
     base.models = codexModels(rows);
     // How much of the plan's 5-hour and weekly windows is used; a Codex without the method lists none.
-    if (base.signedIn) {
+    if (signIn.chatgpt) {
       const limits = codexLimits((await server.request("account/rateLimits/read", {}).catch(() => null)) as Parameters<typeof codexLimits>[0]);
       if (limits.length) base.limits = limits;
     }

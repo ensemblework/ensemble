@@ -3,8 +3,8 @@ import test from "node:test";
 import { assertWithinLimit, hostedLimits, sizeLabel } from "./hosted-limits.js";
 import { storedTableBytes } from "../plots/store.js";
 
-test("hosted limits default to 25 connectors, fifty jobs, 100 MiB of datasets and ten files in 50 MiB", () => {
-  assert.deepEqual(hostedLimits({}), { connectors: 25, jobsPerDay: 50, datasetBytes: 104857600, documents: 10, documentBytes: 52428800, filesTotalBytes: 10737418240 });
+test("hosted limits default to 25 connectors, fifty jobs, 100 MiB of datasets and twenty files in 100 MiB", () => {
+  assert.deepEqual(hostedLimits({}), { connectors: 25, jobsPerDay: 50, datasetBytes: 104857600, documents: 20, documentBytes: 104857600, filesTotalBytes: 10737418240 });
   assert.deepEqual(
     hostedLimits({ ENSEMBLE_MAX_CONNECTORS: "2", ENSEMBLE_MAX_JOBS_PER_DAY: "3", ENSEMBLE_MAX_DATASET_BYTES: "100", ENSEMBLE_MAX_DOCUMENTS: "4", ENSEMBLE_MAX_DOCUMENT_BYTES: "101", ENSEMBLE_FILES_TOTAL_MAX_BYTES: "1000" }),
     { connectors: 2, jobsPerDay: 3, datasetBytes: 100, documents: 4, documentBytes: 101, filesTotalBytes: 1000 },

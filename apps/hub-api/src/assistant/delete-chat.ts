@@ -97,15 +97,19 @@ export async function dropChatSessions(app: FastifyInstance, userId: string, key
 /**
  * Deletes one of the person's own chats. False when it is not theirs (or is an Ensemble Node room's
  * working chat). The agent sessions are dropped after the reply, so the chat disappears at once.
+ * `keepTurn`: the deletion comes from a tool in this chat's own turn (a routine deleted from its own
+ * conversation), which finishes instead of being stopped.
  */
-export async function deleteAssistantChat(app: FastifyInstance, userId: string, id: string): Promise<boolean> {
+export async function deleteAssistantChat(app: FastifyInstance, userId: string, id: string, options: { keepTurn?: boolean } = {}): Promise<boolean> {
   const chat = await app.prisma.assistantConversation.findFirst({
     where: { id, userId, accountId: actorFor(userId), OR: [{ startedOn: null }, { startedOn: { not: "node" } }] },
     select: { id: true },
   });
   if (!chat) return false;
-  abortAssistantTurn(id);
-  await requestCancel(app.redis, userId, `assistant:${id}`);
+  if (!options.keepTurn) {
+    abortAssistantTurn(id);
+    await requestCancel(app.redis, userId, `assistant:${id}`);
+  }
   await app.prisma.$transaction([
     app.prisma.assistantWorkflow.deleteMany({ where: { userId, conversationId: id } }),
     app.prisma.assistantConversation.delete({ where: { id } }),
@@ -116,6 +120,38 @@ export async function deleteAssistantChat(app: FastifyInstance, userId: string, 
 }
 
 const draining = new Set<string>();
+
+/**
+ * The scheduler's minute: chat sessions still waiting on a computer that is online now (it was busy
+ * finishing that chat's turn, or did not answer in time) are asked for again, and the waits of computers
+ * no longer paired are dropped.
+ */
+export async function retryAssistantSessionDeletes(app: FastifyInstance): Promise<void> {
+  const rows = await app.prisma.preference.findMany({ where: { key: PENDING, deletedAt: null }, select: { userId: true, value: true } });
+  for (const row of rows) {
+    const pending = row.value && typeof row.value === "object" && !Array.isArray(row.value) ? (row.value as Pending) : {};
+    const ids = Object.keys(pending);
+    if (!ids.length) continue;
+    const devices = await app.prisma.device.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true, lastSeenAt: true, capabilities: true, revokedAt: true } });
+    const paired = new Set(devices.filter((device) => !device.revokedAt).map((device) => device.id));
+    if (ids.some((id) => !paired.has(id))) {
+      await changePending(app, row.userId, (current) => {
+        for (const id of Object.keys(current)) if (!paired.has(id)) delete current[id];
+      });
+    }
+    for (const device of devices) {
+      if (device.revokedAt || !deviceOnline(device.lastSeenAt)) continue;
+      const last = retried.get(device.id) ?? 0;
+      if (Date.now() - last < RETRY_MS) continue;
+      retried.set(device.id, Date.now());
+      await drainAssistantSessionDeletes(app, device).catch(() => undefined);
+    }
+  }
+}
+
+/** A computer that is online but has not confirmed is asked again at most this often. */
+const RETRY_MS = 5 * 60_000;
+const retried = new Map<string, number>();
 
 /**
  * A computer opened its event stream: send it the chat sessions it missed while it was away. Each one

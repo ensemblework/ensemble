@@ -21,7 +21,7 @@ Read and answer
 Bring a file in
 - The file is in a connected app: apps_search with the words, app "google_workspace" (Drive, Gmail attachments), "microsoft_365" (OneDrive, Outlook), "dropbox" or "box", and kind "file" (or "attachment" for an email attachment; Gmail search words work, like `from:arjun filename:pdf`). Show the matches with names and dates and let them pick unless exactly one fits.
 - Then hub_import_app_file with source (the same app id), kind and id from the pick. It saves a copy in Files and returns its id and link. It waits for Apply.
-- Hosted accounts keep at most 10 files and 50 MB in total; if import is refused for room, say which limit and that removing a file in Files frees room.
+- Hosted accounts keep at most 20 files and 100 MB in total; if import is refused for room, say which limit and that removing a file in Files frees room.
 - A Google Doc, Sheet or Slides comes in as Word, Excel or PowerPoint.
 - A file on the web (a paper, a report, an image): hub_save_file with url, the direct link to the file (for a paper, its official PDF link). A web page is refused. It returns the file's link (ensemble://file/<id>): give only that link, never one you write yourself.
 

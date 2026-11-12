@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enrichOne, settleSummary, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
+import { couldNotOpen, enrichOne, planTakesFile, settleSummary, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
 
 function memoryStore(row: SummaryRow & { status: string }): SummaryStore & { status: string; outcome: SummaryOutcome | null; claims: number } {
   const box = { status: row.status, outcome: null as SummaryOutcome | null, claims: 0, text: row.text, filename: row.filename, id: row.id };
@@ -45,15 +45,45 @@ test("a model error is stored as failed instead of staying queued", async () => 
   assert.equal(await enrichOne(store, "doc", async () => "again"), null);
 });
 
-test("a file with no extracted text fails instead of staying queued", async () => {
-  const store = memoryStore({ id: "doc", filename: "slide.pptx", text: "  ", status: "queued" });
+test("the summarizer's reason is kept when a file cannot be summarized", async () => {
+  const store = memoryStore({ id: "doc", filename: "voice.m4a", text: "", status: "queued" });
   const outcome = await enrichOne(store, "doc", async () => {
-    throw new Error("should not be called");
+    throw new Error("Ensemble does not summarize audio.");
   });
-  assert.deepEqual(outcome, { status: "failed", message: "There is no extracted text to summarize." });
+  assert.deepEqual(outcome, { status: "failed", message: "Ensemble does not summarize audio." });
+});
+
+test("a picture with no text is summarized from the file itself", async () => {
+  const store = memoryStore({ id: "doc", filename: "screenshot.png", text: "", status: "queued" });
+  let given: SummaryRow | null = null;
+  const outcome = await enrichOne(store, "doc", async (row) => {
+    given = row;
+    return "A screenshot of the Settings page.";
+  });
+  assert.deepEqual(outcome, { status: "done", summary: "A screenshot of the Settings page." });
+  assert.equal((given as SummaryRow | null)?.filename, "screenshot.png");
 });
 
 test("an empty model reply is a failure", () => {
-  const outcome = settleSummary({ id: "doc", filename: "a.txt", text: "body" }, "  ", null);
-  assert.equal(outcome.status, "failed");
+  assert.equal(settleSummary("  ", null).status, "failed");
+});
+
+test("a reply that only says the file could not be opened is not a summary", () => {
+  assert.equal(couldNotOpen("I can't open the attached file, it was not included in the message."), true);
+  assert.equal(couldNotOpen("I'm unable to read this PDF."), true);
+  assert.equal(couldNotOpen("A quarterly report on Fieldnote's revenue, with charts for Q1 to Q3 and a forecast."), false);
+});
+
+test("an own-plan agent gets the file only in a form its message carries", () => {
+  const pdf = { filename: "scan.pdf", format: "pdf", byteSize: 2_000_000 };
+  const png = { filename: "shot.png", format: "png", byteSize: 200_000 };
+  const docx = { filename: "brief.docx", format: "docx", byteSize: 50_000 };
+  const md = { filename: "notes.md", format: "md", byteSize: 2_000 };
+  assert.equal(planTakesFile("claude-code", pdf), true);
+  assert.equal(planTakesFile("claude-code", { ...png, byteSize: 5_000_000 }), false);
+  assert.equal(planTakesFile("codex", pdf), false);
+  assert.equal(planTakesFile("codex", png), true);
+  assert.equal(planTakesFile("copilot-cli", docx), false);
+  assert.equal(planTakesFile("antigravity", pdf), true);
+  for (const agent of ["claude-code", "codex", "copilot-cli", "cursor-agent"] as const) assert.equal(planTakesFile(agent, md), true);
 });

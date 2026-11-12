@@ -15,7 +15,8 @@ import { RpcConnection } from "./rpc.js";
 const SessionId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
-const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:/i.test(message);
+/** The agent no longer has the session (deleted in its own app, or expired): already gone counts as deleted. Codex: "no rollout found for thread id <id>". */
+const absentSession = (message: string, id: string) => message.includes(id) && /(?:session|thread)(?:\s+["']?[\w-]+["']?)?\s+(?:not found|does not exist)|(?:session|thread) not found:|no rollout found for thread/i.test(message);
 
 /** Only an exact native history object, never a project, worktree, credentials or profile root. */
 async function removeHistory(root: string, parts: string[]): Promise<void> {
