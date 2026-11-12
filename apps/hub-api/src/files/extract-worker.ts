@@ -4,6 +4,9 @@ import { replaceOfficeText } from "./office-edit.js";
  * text out of PDF and Office files, and cell edits saved into an .xlsx. A file
  * that is too large or too complex can only take this thread down, not the API.
  */
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parentPort, workerData } from "node:worker_threads";
 import type { SheetPatch } from "@ensemble/shared-types";
 import ExcelJS from "exceljs";
@@ -15,11 +18,12 @@ import { xlsxPreview } from "./xlsx-text.js";
 export type WorkerJob =
   | { task: "text"; kind: "pdf" | "docx" | "pptx" | "xlsx"; bytes: Uint8Array; maxChars: number }
   | { task: "cells"; bytes: Uint8Array; patch: SheetPatch }
-  | { task: "office-edit"; kind: "docx" | "pptx"; bytes: Uint8Array; find: string; replacement: string };
+  | { task: "office-edit"; kind: "docx" | "pptx"; bytes: Uint8Array; find: string; replacement: string }
+  | { task: "pdf-pages"; bytes: Uint8Array; maxPages: number; maxSide: number };
 
 export type WorkerText = { text: string; pageCount: number | null; warnings: string[] };
 export type WorkerReply =
-  | { ok: true; text?: WorkerText; bytes?: Uint8Array }
+  | { ok: true; text?: WorkerText; bytes?: Uint8Array; pages?: Uint8Array[] }
   /** "exposed": a message meant for the person; the rest are summarized by the caller. */
   | { ok: false; reason: "exposed" | "timeout" | "memory" | "crash"; message: string };
 
@@ -61,6 +65,50 @@ async function pdfText(bytes: Uint8Array, maxChars: number): Promise<WorkerText>
     }
     if (!readable) return { text: "", pageCount: doc.numPages, warnings: ["This PDF has no text layer (scanned?), so agents cannot read it."] };
     return { text: parts.join("\n\n"), pageCount: doc.numPages, warnings };
+  } finally {
+    await task.destroy();
+  }
+}
+
+type PageCanvas = { canvas: { toBuffer(type: "image/png"): Buffer }; context: unknown };
+
+/**
+ * Pictures of a PDF's first pages, as PNG, the longer side at most `maxSide` pixels: what an agent that
+ * cannot see a scanned PDF's pages is given instead (context/summary-model.ts). pdfjs draws them with
+ * its own canvas for Node (@napi-rs/canvas); its wasm decoders read JBIG2 and JPEG 2000 scans.
+ */
+async function pdfPages(bytes: Uint8Array, maxPages: number, maxSide: number): Promise<Uint8Array[]> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const root = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/package.json"));
+  const task = pdfjs.getDocument({
+    data: bytes,
+    disableFontFace: true,
+    useSystemFonts: false,
+    stopAtErrors: false,
+    verbosity: 0,
+    wasmUrl: `${pathToFileURL(join(root, "wasm")).href}/`,
+    standardFontDataUrl: `${pathToFileURL(join(root, "standard_fonts")).href}/`,
+  });
+  try {
+    const doc = await task.promise.catch(() => {
+      throw new ExposedError("This PDF could not be opened.");
+    });
+    const factory = (doc as unknown as { canvasFactory: { create(width: number, height: number): PageCanvas; destroy(made: PageCanvas): void } }).canvasFactory;
+    const pages: Uint8Array[] = [];
+    for (let number = 1; number <= Math.min(doc.numPages, maxPages); number += 1) {
+      const page = await doc.getPage(number);
+      const natural = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(2, maxSide / Math.max(natural.width, natural.height, 1)) });
+      const made = factory.create(Math.max(1, Math.ceil(viewport.width)), Math.max(1, Math.ceil(viewport.height)));
+      try {
+        await page.render({ canvas: made.canvas as never, viewport }).promise;
+        pages.push(new Uint8Array(made.canvas.toBuffer("image/png")));
+      } finally {
+        factory.destroy(made);
+        page.cleanup();
+      }
+    }
+    return pages;
   } finally {
     await task.destroy();
   }
@@ -216,6 +264,7 @@ async function run(job: WorkerJob): Promise<WorkerReply> {
   try {
     if (job.task === "office-edit") { try { return { ok: true, bytes: replaceOfficeText(job.bytes, job.kind, job.find, job.replacement) }; } catch (error) { throw new ExposedError(error instanceof Error ? error.message : "The edit failed."); } }
     if (job.task === "cells") return { ok: true, bytes: await patchInThread(job.bytes, job.patch) };
+    if (job.task === "pdf-pages") return { ok: true, pages: await pdfPages(job.bytes, job.maxPages, job.maxSide) };
     return { ok: true, text: await extractInThread(job.kind, job.bytes, job.maxChars) };
   } catch (error) {
     return { ok: false, reason: error instanceof ExposedError ? "exposed" : "crash", message: error instanceof Error ? error.message : String(error) };
@@ -225,6 +274,7 @@ async function run(job: WorkerJob): Promise<WorkerReply> {
 if (parentPort && workerData) {
   const port = parentPort;
   void run(workerData as WorkerJob).then((reply) => {
-    port.postMessage(reply, reply.ok && reply.bytes ? [reply.bytes.buffer as ArrayBuffer] : []);
+    const moved = reply.ok ? [...(reply.bytes ? [reply.bytes] : []), ...(reply.pages ?? [])].map((part) => part.buffer as ArrayBuffer) : [];
+    port.postMessage(reply, moved);
   });
 }
