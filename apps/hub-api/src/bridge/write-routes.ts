@@ -9,8 +9,8 @@ import { sseHub } from "../lib/sse.js";
 import { canTransition } from "../lib/state-machine.js";
 import { writeAgentBlock } from "../pages/markdown.js";
 import { createTask, titlesMatch, updateTask } from "../services/tasks.js";
-import { defaultSpaceName } from "../spaces/store.js";
 import { bridgeAppsRejected, bridgeAuthRejected, bridgeWriteRejected } from "./auth.js";
+import { crossSpaceRefusal, defaultSpaceOf, spaceName } from "./spaces.js";
 import { hubUrl, isUuid } from "./text.js";
 import { maxFileBytes } from "../files/store.js";
 
@@ -139,9 +139,12 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/bridge/whoami", async (request) => {
-    const [space, keyName] = await Promise.all([
-      prisma.user.findUnique({ where: { id: request.userId }, select: { name: true, spaceName: true, ownerId: true } }),
+    const home = defaultSpaceOf(request);
+    const [current, homeName, keyName, crossRefused] = await Promise.all([
+      spaceName(prisma, request.userId),
+      home === request.userId ? Promise.resolve(undefined) : spaceName(prisma, home),
       request.tokenId ? keyNameOf(prisma, request) : Promise.resolve(undefined),
+      crossSpaceRefusal(prisma, request),
     ]);
     const canUseApps = bridgeAppsRejected(request) === null;
     // The connected apps by name, so an editor's tool descriptions can say what it may reach.
@@ -150,7 +153,13 @@ export async function bridgeWriteRoutes(app: FastifyInstance): Promise<void> {
       canWrite: bridgeWriteRejected(request) === null,
       canUseApps,
       apps,
-      spaceName: space ? space.spaceName || (space.ownerId ? "Untitled space" : defaultSpaceName(space.name)) : undefined,
+      spaceId: request.userId,
+      spaceName: current,
+      // The space the key was made in: calls that name no space act there.
+      defaultSpace: { id: home, name: home === request.userId ? current : homeName },
+      // Whether `space` (x-ensemble-space) reaches the account's other spaces with this key.
+      crossSpace: crossRefused === null,
+      ...(crossRefused ? { crossSpaceNote: crossRefused } : {}),
       keyName,
     };
   });

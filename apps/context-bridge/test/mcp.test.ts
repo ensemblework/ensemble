@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -14,7 +13,15 @@ import { createHubClient } from "../src/hub.js";
 import { startHttpServer } from "../src/http.js";
 import { assertReadOnlyNames } from "../src/read-only.js";
 import { ACTION_TOOL_NAMES, APP_TOOL_NAMES, buildServer, buildServerForKey, TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/server.js";
-import { IDS, startMockHub } from "./mock-hub.js";
+import { FILES, IDS, SPACES, startMockHub } from "./mock-hub.js";
+
+/** Folders for file tests live beside the tests, never in the system's temporary folder. */
+const WORK = fileURLToPath(new URL("./.work/", import.meta.url));
+async function workFolder(): Promise<string> {
+  await mkdir(WORK, { recursive: true });
+  return mkdtemp(join(WORK, "run-"));
+}
+after(() => rm(WORK, { recursive: true, force: true }));
 
 function textOf(result: unknown): string {
   if (!result || typeof result !== "object" || !("content" in result) || !Array.isArray(result.content)) return "";
@@ -120,7 +127,7 @@ describe("actions, files and apps through the bridge", () => {
 
   it("runs actions, uploads a local file by path, and offers apps only to a key with apps allowed", async () => {
     const writer = await startMockHub({ canWrite: true, canUseApps: true });
-    const dir = await mkdtemp(join(tmpdir(), "ensemble-upload-"));
+    const dir = await workFolder();
     try {
       await writeFile(join(dir, "deck.pdf"), Buffer.from("%PDF-1.4 tiny"));
       const client = await connect(await buildServerForKey({ hub: hubFor(writer.url) }));
@@ -162,6 +169,135 @@ describe("actions, files and apps through the bridge", () => {
   });
 });
 
+describe("files through the bridge", () => {
+  const connect = async (server: Awaited<ReturnType<typeof buildServerForKey>>) => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: "ensemble-bridge-test", version: "0.0.0" });
+    await client.connect(clientTransport);
+    return client;
+  };
+  type Block = { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; mimeType?: string; blob?: string } };
+
+  it("gives a picture as an image, a text file as text and any other file as an embedded resource, after its details", async () => {
+    const mock = await startMockHub();
+    try {
+      const client = await connect(buildServer({ hub: hubFor(mock.url), localFiles: false }));
+      const get = (await client.listTools()).tools.find((tool) => tool.name === "ensemble_get_file");
+      assert.ok(get && !("saveTo" in (get.inputSchema.properties ?? {})), "Ensemble on the web cannot save to a disk");
+      assert.equal(get.annotations?.readOnlyHint, true);
+
+      const picture = await client.callTool({ name: "ensemble_get_file", arguments: { id: `ensemble://file/${FILES.png.id}` } });
+      const pictureBlocks = picture.content as Block[];
+      assert.equal(pictureBlocks[0]?.type, "text");
+      assert.match(pictureBlocks[0]!.text!, /chart\.png/);
+      assert.doesNotMatch(pictureBlocks[0]!.text!, /base64/, "the details never repeat the bytes");
+      assert.equal(pictureBlocks[1]?.type, "image");
+      assert.equal(pictureBlocks[1]?.mimeType, "image/png");
+      assert.deepEqual(Buffer.from(pictureBlocks[1]!.data!, "base64"), FILES.png.bytes);
+
+      const note = await client.callTool({ name: "ensemble_get_file", arguments: { id: `http://localhost:3000/files/${FILES.text.id}`, text: true, offset: 2, limit: 500 } });
+      const noteBlocks = note.content as Block[];
+      assert.match(noteBlocks[0]!.text!, /"offset": 2/);
+      assert.deepEqual(noteBlocks[1], { type: "text", text: FILES.text.bytes.toString("utf8") });
+
+      const deck = await client.callTool({ name: "ensemble_get_file", arguments: { id: FILES.pdf.id } });
+      const deckBlocks = deck.content as Block[];
+      assert.equal(deckBlocks[1]?.type, "resource");
+      assert.equal(deckBlocks[1]?.resource?.uri, `ensemble://file/${FILES.pdf.id}`);
+      assert.equal(deckBlocks[1]?.resource?.mimeType, "application/pdf");
+      assert.deepEqual(Buffer.from(deckBlocks[1]!.resource!.blob!, "base64"), FILES.pdf.bytes);
+
+      const details = await client.callTool({ name: "ensemble_get_file", arguments: { id: FILES.pdf.id, content: false } });
+      assert.equal((details.content as Block[]).length, 1);
+      const wrong = await client.callTool({ name: "ensemble_get_file", arguments: { id: "deck.pdf" } });
+      assert.equal(wrong.isError, true);
+      const listed = await client.callTool({ name: "ensemble_files", arguments: { query: "deck", on: `ensemble://task/${IDS.task}` } });
+      assert.match(textOf(listed), /"q": "deck"/);
+      assert.match(textOf(listed), /Summary of deck\.pdf/);
+    } finally {
+      await mock.close();
+    }
+  });
+
+  it("saves a file only inside the working folder: never through .., a link, or over a file unless asked", async () => {
+    const mock = await startMockHub();
+    const root = await workFolder();
+    const project = join(root, "project");
+    const outside = join(root, "outside");
+    try {
+      await mkdir(project);
+      await mkdir(outside);
+      await writeFile(join(outside, "target.pdf"), "keep");
+      await symlink(outside, join(project, "link"));
+      await symlink(join(outside, "target.pdf"), join(project, "linked.pdf"));
+      const client = await connect(buildServer({ hub: hubFor(mock.url), cwd: project }));
+      const save = (args: Record<string, unknown>) => client.callTool({ name: "ensemble_get_file", arguments: { id: FILES.pdf.id, ...args } });
+
+      const saved = await save({ saveTo: "docs/deck.pdf" });
+      assert.notEqual(saved.isError, true, textOf(saved));
+      assert.equal((saved.content as Block[]).length, 1, "a saved file is not sent inline as well");
+      assert.match(textOf(saved), /"path": "docs\/deck\.pdf"/);
+      assert.deepEqual(await readFile(join(project, "docs", "deck.pdf")), FILES.pdf.bytes);
+      assert.ok(mock.hits.includes(`GET /api/bridge/files/${FILES.pdf.id}/original`), "the original comes from the raw route");
+
+      const again = await save({ saveTo: "docs/deck.pdf" });
+      assert.equal(again.isError, true);
+      assert.match(textOf(again), /already exists: pass overwrite: true/);
+      assert.notEqual((await save({ saveTo: "docs/deck.pdf", overwrite: true })).isError, true);
+      assert.notEqual((await save({ saveTo: join(project, "deck-copy.pdf") })).isError, true, "an absolute path inside the folder is fine");
+
+      for (const saveTo of ["../outside/deck.pdf", join(outside, "deck.pdf"), "docs/../../outside/deck.pdf", "link/deck.pdf", "linked.pdf", "docs", ""]) {
+        const refused = await save({ saveTo, overwrite: true });
+        assert.equal(refused.isError, true, `${saveTo}: ${textOf(refused)}`);
+      }
+      assert.equal(await readFile(join(outside, "target.pdf"), "utf8"), "keep");
+      assert.deepEqual(await readdir(outside), ["target.pdf"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await mock.close();
+    }
+  });
+});
+
+describe("spaces through the bridge", () => {
+  it("gives every tool but ensemble_spaces a space, sends the named space with each call, and refuses a shared one before calling", async () => {
+    const mock = await startMockHub({ canWrite: true });
+    try {
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await (await buildServerForKey({ hub: hubFor(mock.url) })).connect(serverTransport);
+      const client = new Client({ name: "ensemble-bridge-test", version: "0.0.0" });
+      await client.connect(clientTransport);
+      for (const tool of (await client.listTools()).tools) {
+        assert.equal("space" in (tool.inputSchema.properties ?? {}), tool.name !== "ensemble_spaces", tool.name);
+      }
+      assert.match(textOf(await client.callTool({ name: "ensemble_spaces", arguments: {} })), /Fieldnote/);
+
+      const spaceOf = (hit: string) => mock.spaces.filter((row) => row.hit === hit).at(-1)?.space;
+      const byName = await client.callTool({ name: "ensemble_tasks", arguments: { space: "  fieldnote " } });
+      assert.notEqual(byName.isError, true, textOf(byName));
+      assert.equal(spaceOf("GET /api/bridge/tasks"), SPACES.side);
+      await client.callTool({ name: "ensemble_tasks", arguments: {} });
+      assert.equal(spaceOf("GET /api/bridge/tasks"), undefined, "without space a call stays in the key's own space");
+      const acted = await client.callTool({ name: "ensemble_act", arguments: { action: "hub_create_page", input: { title: "Plan" }, space: SPACES.side } });
+      assert.notEqual(acted.isError, true, textOf(acted));
+      assert.equal(spaceOf("POST /api/bridge/act/hub_create_page"), SPACES.side);
+      assert.deepEqual(mock.writes.at(-1)?.body, { input: { title: "Plan" } }, "space is not passed on as the action's input");
+
+      const shared = await client.callTool({ name: "ensemble_today", arguments: { space: "Ben's team" } });
+      assert.equal(shared.isError, true);
+      assert.match(textOf(shared), /Shared with you/);
+      const unknown = await client.callTool({ name: "ensemble_today", arguments: { space: "Nowhere" } });
+      assert.equal(unknown.isError, true);
+      assert.match(textOf(unknown), /no space “Nowhere”.*Fieldnote/);
+      assert.ok(!mock.spaces.some((row) => row.space === SPACES.shared), "a space shared with the person is never sent");
+      await client.close();
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 describe("MCP client against a mocked hub-api", () => {
   it("lists every tool and calls each one", async () => {
     const mock = await startMockHub();
@@ -181,6 +317,11 @@ describe("MCP client against a mocked hub-api", () => {
     );
     for (const tool of listed.tools) {
       if (tool.name === "ensemble_act") continue;
+      // On the editor's computer ensemble_get_file can save into the working folder.
+      if (tool.name === "ensemble_get_file") {
+        assert.equal(tool.annotations?.readOnlyHint, false);
+        continue;
+      }
       assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
       assert.equal(tool.annotations?.destructiveHint, false, tool.name);
     }
@@ -204,6 +345,9 @@ describe("MCP client against a mocked hub-api", () => {
       ensemble_decisions: {},
       ensemble_today: {},
       ensemble_gaps: {},
+      ensemble_files: { query: "notes" },
+      ensemble_get_file: { id: FILES.text.id },
+      ensemble_spaces: {},
     };
 
     for (const name of TOOL_NAMES) {

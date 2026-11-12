@@ -15,6 +15,7 @@ import { assertOwned } from "../services/records.js";
 import { configureFileText, fileTextRunning, patchWorkbook, queueFileText } from "../files/extract.js";
 import { pageFromFile, pageTitle, serverPageFormat } from "../files/page.js";
 import { ORIGINAL_SELECT, originalBytes } from "../files/originals.js";
+import { sendOriginal } from "../files/serve.js";
 import { assertNewPageImages, assertPageImage } from "../files/page-image.js";
 import { assertNewFile, FILE_SELECT, FileError, fileRecord, fileStyle, fileTooLarge, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
 
@@ -100,22 +101,6 @@ function checkName(name: string): void {
   if (problem) throw Object.assign(new Error(problem), { statusCode: 400 });
 }
 
-/** `attachment` with an ASCII name for old clients and the real one (RFC 5987) for the rest. */
-function contentDisposition(filename: string): string {
-  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
-}
-
-function etagMatches(header: string | string[] | undefined, etag: string): boolean {
-  const value = Array.isArray(header) ? header.join(",") : header;
-  if (!value) return false;
-  return value.split(",").some((part) => {
-    const tag = part.trim().replace(/^W\//, "");
-    return tag === "*" || tag === etag;
-  });
-}
-
 const notFound = (reply: FastifyReply) => reply.code(404).send({ error: "File not found." });
 
 export async function fileRoutes(app: FastifyInstance): Promise<void> {
@@ -182,31 +167,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/documents/:id/original", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const head = await prisma.document.findFirst({ where: owned(id, request.userId), select: { filename: true, sha256: true } });
-    if (!head) return notFound(reply);
-    const etag = `"${head.sha256}"`;
-    reply
-      .header("ETag", etag)
-      .header("Cache-Control", "private, no-cache")
-      .header("X-Content-Type-Options", "nosniff")
-      // Opened directly, an SVG or HTML file stays inert: no scripts, no requests.
-      .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-      .header("Accept-Ranges", "bytes");
-    if (etagMatches(request.headers["if-none-match"], etag)) return reply.code(304).send();
-    const row = await prisma.document.findFirst({ where: owned(id, request.userId), select: ORIGINAL_SELECT });
-    if (!row) return notFound(reply);
-    const bytes = await originalBytes(row);
-    const format = fileFormat(head.filename);
-    reply.header("Content-Type", format.kind === "other" ? "application/octet-stream" : format.mime).header("Content-Disposition", contentDisposition(head.filename));
-    const range = /^bytes=(\d*)-(\d*)$/.exec(String(request.headers.range ?? "").trim());
-    if (range && (range[1] || range[2])) {
-      const size = bytes.byteLength;
-      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
-      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-      if (start > end || start >= size) return reply.code(416).header("Content-Range", `bytes */${size}`).send();
-      return reply.code(206).header("Content-Range", `bytes ${start}-${end}/${size}`).send(bytes.subarray(start, end + 1));
-    }
-    return reply.send(bytes);
+    return sendOriginal(prisma, request, reply, request.userId, id, "File not found.");
   });
 
   app.get("/api/documents/:id/text", async (request, reply) => {

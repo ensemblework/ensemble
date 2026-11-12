@@ -54,11 +54,13 @@ A file is saved only, not put inside the message, where putting it there would f
 
 ## 4. Ensemble's extracted text is not sent to models
 
-Files extracts text from PDFs with a text layer, Word, PowerPoint, spreadsheets, CSV, Markdown and code ([32 §7](32_FILES.md)) for search, previews and page conversion in the Hub. That text is not given to models or agents: `EXTRACTED_TEXT_TO_MODELS` in `files/extracted-text-policy.ts` is off. Behind that switch, kept for a later decision:
+Files extracts text from PDFs with a text layer, Word, PowerPoint, spreadsheets, CSV, Markdown and code ([32 §7](32_FILES.md)) for search, previews and page conversion in the Hub. Ensemble does not give that text to the models and agents it runs: `EXTRACTED_TEXT_TO_MODELS` in `files/extracted-text-policy.ts` is off. Behind that switch, kept for a later decision:
 
 - the start of each attached file's text in chat, Ensemble Node and task briefs, and in the assistant's open-page context and a paired computer's task brief (`filesSection`);
 - Ensemble's text sent with a file to a person's own agent (`TurnFile.text`, `notGiven` in `subscriptions/turn-files.ts`), and to a computer too old to receive files (`runSubscriptionTurn` `fallback`);
-- the read tools: `hub_read_file` (`assistant/tools/files.ts`), `read_attachment` (`workspace/tools.ts`), uploaded files in `hub_search_context` and `hub_read_context` (`assistant/tools/context.ts`), and a file's text, summary and search excerpts in the Context Bridge's `ensemble_read` and `ensemble_search` (`bridge/service.ts`; a `document` read gives the file's details and link).
+- the read tools: `hub_read_file` (`assistant/tools/files.ts`), `read_attachment` (`workspace/tools.ts`), and uploaded files in `hub_search_context` and `hub_read_context` (`assistant/tools/context.ts`).
+
+A file's name and summary are searchable everywhere (`context/graph/search.ts`). The Context Bridge is the person's own key reading their Files: `ensemble_read` gives a file's details and summary, and `ensemble_get_file` gives Ensemble's text of it when asked and the file itself (`bridge/files.ts`, [CONTEXT_BRIDGE §5](CONTEXT_BRIDGE.md#5-tools-and-resources)).
 
 ## 5. Safety
 
@@ -97,7 +99,7 @@ Not built: audio and video understanding; version pinning (a file replaced betwe
 | `runtime/content-parts.test.ts`, `agent-runtime/tests/test_content_parts.py` | Image and file parts reach chat, Anthropic and Responses payloads; any file to Anthropic as a document; Copilot's vision header; reservations for pictures and files |
 | `lib/vision.test.ts` | Which pictures and files are verified per model; refusal detection; narrowing to verified, then none, with text files' contents |
 | `files/model-input.test.ts` | Every file attached as itself; what one request carries; what is kept in a long conversation |
-| `files/attached.integration.test.ts` | Files sections without extracted text; `view_attachment` gives the file; `read_attachment`, `hub_read_file` and MCP file text are off |
+| `files/attached.integration.test.ts` | Files sections without extracted text; `view_attachment` gives the file; `read_attachment` and `hub_read_file` are off; MCP search and `ensemble_read` give a file's summary, not its text |
 | `assistant/attachments.test.ts`, `assistant/spaces.integration.test.ts`, `node/node.integration.test.ts` | Chat and Node attachments go as files; uploaded files stay out of `hub_search_context` |
 | `included/device.test.ts` | A Responses model's history goes from a computer once |
 | `subscriptions/subscriptions.integration.test.ts` | A chat message's file reaches the person's agent through the turn's file route, only that turn's files, only while it runs; an older computer is told to update |

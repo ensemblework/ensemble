@@ -664,7 +664,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * An agent run's Ensemble action (workspace/context-tools.ts runRunAction), under the job's lease:
-   * the editors' allowlist (bridge/actions.ts) without the connected apps, in the job's space. Only in
+   * the everyday part of the editors' allowlist (bridge/actions.ts) without the connected apps, in the job's space. Only in
    * the computer owner's own space: in a space shared with them a run reads, and the node or the person acts.
    */
   app.post("/api/devices/self/jobs/:id/act", { bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {

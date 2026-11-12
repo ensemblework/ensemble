@@ -1,5 +1,5 @@
 /**
- * The Context Bridge MCP server (docs/CONTEXT_BRIDGE.md): reads, plus task updates for a key that allows them.
+ * The Context Bridge MCP server (docs/CONTEXT_BRIDGE.md): reads, plus changes for a key that allows them.
  * Talks to hub-api over HTTP. Never opens a database connection.
  * Stdio is the default. `--http` serves Streamable HTTP on loopback.
  * Logs go to stderr. Stdout is JSON-RPC.
