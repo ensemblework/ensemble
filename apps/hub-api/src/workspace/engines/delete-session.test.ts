@@ -76,3 +76,30 @@ lines.on("line", (line) => {
     await rm(bin, { recursive: true, force: true });
   }
 });
+
+test("a session the person already deleted in OpenCode counts as deleted; any other failure does not", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-opencode-bin-"));
+  const saved = process.env.PATH;
+  // `opencode session delete <id>` for a session it no longer has: the error names the session and exits 1.
+  await writeFile(
+    join(bin, "opencode"),
+    `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "delete" ]; then
+  case "$3" in
+    ses_gone*) echo "Session not found: $3" >&2; exit 1 ;;
+    *) echo "Could not reach the OpenCode server" >&2; exit 1 ;;
+  esac
+fi
+exit 2
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeSession("opencode", "ses_gone4f2a9c1b7e", bin);
+    await assert.rejects(deleteNativeSession("opencode", "ses_live4f2a9c1b7e", bin), /could not delete its session: Could not reach/);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});
