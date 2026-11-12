@@ -196,11 +196,14 @@ async function dropNative(entries: Array<[string, Entry]>): Promise<void> {
 /**
  * A one-off turn's own session (a quick call: triage, a summary, a title), deleted from the agent once the turn
  * is over, so the person's Copilot, Cursor or ACP agent does not fill up with them. Never fails the turn.
+ * `folder`: where the turn ran, deleted after the session: Gemini CLI, OpenCode and Grok find a session by the
+ * folder it began in, so the deletion runs there.
  */
-export function dropOneOff(agent: SubscriptionProvider, id: string): void {
+export function dropOneOff(agent: SubscriptionProvider, id: string, folder?: string): void {
   void (async () => {
     const { deleteNativeSession } = dropForTests ? { deleteNativeSession: dropForTests } : await import("../workspace/engines/delete-session.js");
-    await deleteNativeSession(agent, id, tmpdir()).catch(() => undefined);
+    await deleteNativeSession(agent, id, folder ?? tmpdir()).catch(() => undefined);
+    if (folder) await rm(folder, { recursive: true, force: true }).catch(() => undefined);
   })().catch(() => undefined);
 }
 

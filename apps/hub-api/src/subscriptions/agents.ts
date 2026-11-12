@@ -782,6 +782,7 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   const own = group ? sessionFolder(key!) : folder;
   if (group) await mkdir(own, { recursive: true });
   const bridge = openBridge(spec.tools, io.call);
+  let handedOff = false;
   const mcp: McpServer = {
     command: process.execPath,
     args: [hookScriptPath("ensemble-ask-mcp.mjs")],
@@ -845,13 +846,16 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
         ...(touched ? { retire: touched } : {}),
       });
     }
-    // A turn that keeps no session leaves none in the agent either.
-    if (result.oneOff) dropOneOff(spec.agent, result.oneOff);
+    // A turn that keeps no session leaves none in the agent either, deleted in the folder it ran in, which goes after.
+    if (result.oneOff) {
+      dropOneOff(spec.agent, result.oneOff, key ? undefined : folder);
+      handedOff = !key;
+    }
     const { session: _session, oneOff: _oneOff, totals: _totals, ...answer } = result;
     return { ...answer, resumed };
   } finally {
     bridge.close();
-    // A chat's folder stays for its next turn; the files of this turn do not.
-    await rm(key ? join(own, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
+    // A chat's folder stays for its next turn; the files of this turn do not. A one-off's folder is dropOneOff's.
+    if (!handedOff) await rm(key ? join(own, "files") : folder, { recursive: true, force: true }).catch(() => undefined);
   }
 }
