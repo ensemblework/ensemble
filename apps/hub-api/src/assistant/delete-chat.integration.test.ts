@@ -9,7 +9,7 @@ import { createHttpHarness } from "../test/http.js";
 
 const h = await createHttpHarness();
 const { sseHub } = await import("../lib/sse.js");
-const { drainAssistantSessionDeletes } = await import("./delete-chat.js");
+const { drainAssistantSessionDeletes, retryAssistantSessionDeletes } = await import("./delete-chat.js");
 after(() => h.close());
 
 const CAPS = { assistantTurns: 3, assistantSessionDelete: 1 };
@@ -76,6 +76,61 @@ test("a computer that does not confirm keeps the request for its next connection
     assert.equal((await ben.inject({ method: "DELETE", url: `/api/assistant/conversations/${id}` })).statusCode, 204);
     await until(async () => Boolean((await pending(ben.id))[laptop.id]), "the unconfirmed request to be kept");
     assert.deepEqual((await pending(ben.id))[laptop.id]!.map((row) => row.key), [id]);
+  } finally {
+    stop();
+  }
+});
+
+test("an online computer that did not confirm is asked again on the scheduler's minute; an unpaired one's requests are dropped", async () => {
+  const ana = await h.asUser();
+  const key = await h.asToken(ana, "device");
+  const goneKey = await h.asToken(ana, "device");
+  const laptop = await h.prisma.device.create({ data: { userId: ana.id, name: "Laptop", platform: "darwin", tokenId: key.id, lastSeenAt: new Date(), capabilities: CAPS as never } });
+  const old = await h.prisma.device.create({ data: { userId: ana.id, name: "Old", platform: "linux", tokenId: goneKey.id, lastSeenAt: new Date(), revokedAt: new Date(), capabilities: CAPS as never } });
+  await h.prisma.preference.create({
+    data: { userId: ana.id, key: "assistant.session-deletes", source: "system", value: { [laptop.id]: [{ key: "chat-one-12345678", at: Date.now() }], [old.id]: [{ key: "chat-two-12345678", at: Date.now() }] } as never },
+  });
+  const asked: unknown[] = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (frame.event !== "assistant.session.delete" || userId !== `device:${laptop.id}`) return;
+    const data = frame.data as { id: string; key: unknown };
+    asked.push(data.key);
+    void key.inject({ method: "POST", url: `/api/devices/self/code-requests/${data.id}`, payload: { status: 200, body: { deleted: true, found: true } } });
+  });
+  // Only this person's waits: earlier tests leave computers that no longer answer.
+  await h.prisma.preference.deleteMany({ where: { key: "assistant.session-deletes", userId: { not: ana.id } } });
+  try {
+    await retryAssistantSessionDeletes(h.app);
+    assert.deepEqual(asked, ["chat-one-12345678"]);
+    assert.deepEqual(await pending(ana.id), {}, "confirmed, and the unpaired computer's request is gone");
+  } finally {
+    stop();
+  }
+});
+
+test("deleting a routine deletes its conversation and the agent session behind it", async () => {
+  const kai = await h.asUser();
+  const key = await h.asToken(kai, "device");
+  const laptop = await h.prisma.device.create({ data: { userId: kai.id, name: "Laptop", platform: "darwin", tokenId: key.id, lastSeenAt: new Date(), capabilities: CAPS as never } });
+  const created = await kai.inject({ method: "POST", url: "/api/routines", payload: { title: "Morning digest", instruction: "Sum up my unread mail.", cadence: { every: "day", time: "08:00" } } });
+  assert.equal(created.statusCode, 201, created.body);
+  const routine = (created.json() as { routine: { id: string } }).routine;
+  const chat = await h.prisma.assistantConversation.create({ data: { userId: kai.id, accountId: null, title: "Routine: Morning digest" } });
+  await h.prisma.assistantMessage.create({ data: { userId: kai.id, conversationId: chat.id, role: "user", content: "Morning digest: sum up my unread mail." } });
+  await h.prisma.assistantRoutine.update({ where: { id: routine.id }, data: { conversationId: chat.id } });
+  const asked: unknown[] = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (frame.event !== "assistant.session.delete" || userId !== `device:${laptop.id}`) return;
+    const data = frame.data as { id: string; key: unknown };
+    asked.push(data.key);
+    void key.inject({ method: "POST", url: `/api/devices/self/code-requests/${data.id}`, payload: { status: 200, body: { deleted: true, found: true } } });
+  });
+  try {
+    assert.equal((await kai.inject({ method: "DELETE", url: `/api/routines/${routine.id}` })).statusCode, 204);
+    assert.equal(await h.prisma.assistantRoutine.count({ where: { id: routine.id } }), 0);
+    await until(async () => (await h.prisma.assistantConversation.count({ where: { id: chat.id } })) === 0, "the routine's conversation to go");
+    await until(async () => asked.length === 1, "the computer to be asked");
+    assert.deepEqual(asked, [chat.id]);
   } finally {
     stop();
   }

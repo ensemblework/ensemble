@@ -172,7 +172,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (bridgeMethodRejected(request.method, path)) {
       return reply.code(405).send({ error: "The Context Bridge is read-only." });
     }
-    const who = await identify(request);
+    // A key naming a space it cannot act in is refused (lib/auth.ts), after the rate limit like any caller.
+    const { who, refused } = await identify(request).then(
+      (identity) => ({ who: identity, refused: null as { statusCode: number; message: string } | null }),
+      (error: unknown) => {
+        const statusCode = (error as { statusCode?: unknown }).statusCode;
+        if (typeof statusCode !== "number" || statusCode >= 500) throw error;
+        return { who: null, refused: { statusCode, message: error instanceof Error ? error.message : String(error) } };
+      },
+    );
     if (who) {
       request.userId = who.userId;
       request.tokenId = who.tokenId;
@@ -182,6 +190,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       reply.header("Retry-After", String(limited.retryAfterSeconds));
       return reply.code(429).send({ error: limited.error });
     }
+    if (refused) return reply.code(refused.statusCode).send({ error: refused.message });
     if (who) {
       request.userId = who.userId;
       request.accountId = who.accountId ?? who.userId;
@@ -191,6 +200,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenId = who.tokenId;
       request.tokenCanWrite = who.tokenCanWrite;
       request.tokenCanUseApps = who.tokenCanUseApps;
+      request.tokenSpaceId = who.tokenSpaceId;
+      request.tokenAccountId = who.tokenAccountId;
       request.modules = who.modules;
       const denied =
         readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path) ?? transferTokenRejected(who.tokenScope, request.method, path);

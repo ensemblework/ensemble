@@ -5,8 +5,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { ActAs, MODULE_DENIED, hasModule, type AssistantToolCall } from "@ensemble/shared-types";
+import { ActAs, MODULE_DENIED, hasModule, isSubscriptionProvider, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn } from "../assistant/agent.js";
+import { ASK_KEEP_DAYS, askAnswered, askInLine, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
 import { loadSettings } from "../lib/settings.js";
 import { citeAnswer } from "../ensemble/citations.js";
 import { SURFACE_IDS, loadSurfaceContext } from "../ensemble/surfaces.js";
@@ -96,6 +97,11 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
     const tierName = settings.assistant.defaultTier;
     const tier = settings.models[tierName];
     const context = await loadSurfaceContext(app.prisma, request.userId, body);
+    // An ask on a surface is an inline ask like one on a page (assistant/ask-sessions.ts): on an AI plan it
+    // runs in that surface's one short session for this person, answered in the order asked.
+    const actor = actorFor(request.userId) ?? request.userId;
+    const page = { kind: `surface:${body.surface}`, id: context.anchorKey };
+    const sessionKey = isSubscriptionProvider(tier.provider) ? askSessionKey(actor, `surface-${body.surface}`, context.anchorKey) : null;
     const conversation = await app.prisma.assistantConversation.create({
       data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Ensemble" },
     });
@@ -128,12 +134,17 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
     const abort = new AbortController();
     request.raw.on("close", () => abort.abort());
     let text = "";
+    const place = askInLine(`${request.userId}\n${actor}\n${page.kind}\n${page.id}`);
     try {
+      if (place.waiting) send("status", { text: "Waiting for the answer before this one…", conversationId: conversation.id, replyId: row.id });
+      await Promise.race([place.ready, new Promise<void>((resolve) => abort.signal.addEventListener("abort", () => resolve(), { once: true }))]);
+      if (sessionKey) await askStarted(app, request.userId, sessionKey, page).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble session"));
       const result = await runAssistantTurn({
         app,
         userId: request.userId,
         modules: request.modules,
         conversationId: conversation.id,
+        ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS } } : {}),
         message: body.prompt,
         page: { path: `/${body.surface}`, label: body.surface },
         settings,
@@ -208,7 +219,11 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
       });
       send("error", { message });
       send("done", { id: row.id, content: "", toolCalls: [], citations: [], model: tier.model, tier: tierName, conversationId: conversation.id });
+    } finally {
+      place.leave();
     }
+    // The 30 minutes count from this answer.
+    if (sessionKey) await askAnswered(app, request.userId, sessionKey).catch((error: unknown) => app.log.warn({ err: error }, "Could not note an Ask Ensemble answer"));
     raw.end();
   });
 }

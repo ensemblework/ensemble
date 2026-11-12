@@ -7,7 +7,7 @@ import { env } from "../config.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { appendLedger } from "../lib/ledger.js";
 import { requireBrowserSession } from "../bridge/auth.js";
-import { newApiToken } from "../lib/auth.js";
+import { accountIdOf, newApiToken } from "../lib/auth.js";
 import { ENSEMBLE_SOURCE } from "../workspace/guard.js";
 
 const RECENT_MS = 3 * 60 * 1000;
@@ -70,7 +70,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
     const canUseApps = body.canUseApps;
     const { token, hash, prefix } = newApiToken();
     const row = await prisma.apiToken.create({
-      data: { userId: request.userId, name, tokenHash: hash, prefix, scope: "bridge", canWrite: body.canWrite, canUseApps },
+      data: { userId: request.userId, accountId: accountIdOf(request), name, tokenHash: hash, prefix, scope: "bridge", canWrite: body.canWrite, canUseApps },
     });
     await appendLedger({
       userId: request.userId,

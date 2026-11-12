@@ -24,6 +24,8 @@ export interface AttachedFile {
   textCharacters: number;
   pageCount: number | null;
   textStatus: FileTextStatus;
+  /** The short summary a model made from the file when it was added (context/summary-model.ts), if any. */
+  summary?: string | null;
 }
 
 export interface FileText extends AttachedFile {
@@ -39,14 +41,14 @@ export interface FileText extends AttachedFile {
 const MAX_FILES = 100;
 const NO_TEXT: ReadonlySet<FileKind> = new Set(["image", "audio", "video"]);
 
-const FILE_FIELDS = { id: true, filename: true, byteSize: true, textCharacters: true, pageCount: true, parseStatus: true } satisfies Prisma.DocumentSelect;
+const FILE_FIELDS = { id: true, filename: true, byteSize: true, textCharacters: true, pageCount: true, parseStatus: true, summary: true } satisfies Prisma.DocumentSelect;
 
 type FileRow = Prisma.DocumentGetPayload<{ select: typeof FILE_FIELDS }>;
 
 function attached(row: FileRow): AttachedFile {
   const format = fileFormat(row.filename);
   const textStatus: FileTextStatus = NO_TEXT.has(format.kind) || row.parseStatus === "none" ? "none" : row.parseStatus === "ready" ? "ready" : row.parseStatus === "failed" ? "failed" : "queued";
-  return { id: row.id, filename: row.filename, format: format.ext, kind: format.kind, byteSize: row.byteSize, textCharacters: row.textCharacters, pageCount: row.pageCount, textStatus };
+  return { id: row.id, filename: row.filename, format: format.ext, kind: format.kind, byteSize: row.byteSize, textCharacters: row.textCharacters, pageCount: row.pageCount, textStatus, summary: row.summary ?? null };
 }
 
 /** File ids placed in a page document, in page order: @ mentions of a file, and blocks that embed one (`attrs.fileId`). */
@@ -95,14 +97,14 @@ export async function filesOnPage(db: Db, userId: string, pageId: string): Promi
   return filesByIds(db, userId, [...mentionedFileIds(page.content), ...(page.sourceFileId ? [page.sourceFileId] : [])]);
 }
 
-/** The person's files, newest first, matched by name or text. */
+/** The person's files, newest first, matched by name, summary or text. */
 export async function listFiles(db: Db, userId: string, input: { query?: string; limit?: number } = {}): Promise<AttachedFile[]> {
   const query = input.query?.trim();
   const rows = await db.document.findMany({
     where: {
       userId,
       deletedAt: null,
-      ...(query ? { OR: [{ filename: { contains: query, mode: "insensitive" } }, { artifact: { text: { contains: query, mode: "insensitive" } } }] } : {}),
+      ...(query ? { OR: [{ filename: { contains: query, mode: "insensitive" } }, { summary: { contains: query, mode: "insensitive" } }, { artifact: { text: { contains: query, mode: "insensitive" } } }] } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: Math.min(Math.max(Math.floor(input.limit ?? 20), 1), MAX_FILES),
@@ -187,8 +189,8 @@ export async function copyOriginals(db: Db, userId: string, files: AttachedFile[
 }
 
 /**
- * The prompt section listing attached files: name, kind, size and id, and `more` for each (how it
- * reaches the model, or the copied original's path). The start of each file's text is added only
+ * The prompt section listing attached files: name, kind, size, id and summary, and `more` for each (how
+ * it reaches the model, or the copied original's path). The start of each file's text is added only
  * when EXTRACTED_TEXT_TO_MODELS is on (files/extracted-text-policy.ts).
  */
 export async function filesSection(
@@ -202,7 +204,8 @@ export async function filesSection(
   let left = options.total ?? 10_000;
   const parts: string[] = [];
   for (const file of files) {
-    const head = `### ${file.filename} (${describeFile(file)}, id ${file.id})`;
+    // The summary a model made from the file when it was added: enough to tell which file is which.
+    const head = [`### ${file.filename} (${describeFile(file)}, id ${file.id})`, file.summary?.trim() ? `Summary: ${file.summary.trim().slice(0, 500)}` : ""].filter(Boolean).join("\n");
     let body = "";
     // A file given whole (the file itself, to a model that reads it) needs no excerpt.
     if (options.whole?.(file)) {

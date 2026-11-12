@@ -30,6 +30,7 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
+import { codexProviderKey } from "../../subscriptions/detect.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
 const KEY_VARIABLES = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
@@ -177,7 +178,8 @@ export async function runCodex(
   const credential = registerEngineRun(ctx);
   const ensembleMcp = mcpEnv(credential, options.chat === true);
   const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...ensembleMcp };
-  for (const key of KEY_VARIABLES) delete env[key];
+  // A key variable the person's own model provider reads (`env_key` in config.toml) stays: it is their provider, not an API account billed instead of the plan.
+  for (const key of KEY_VARIABLES) if (key !== codexProviderKey()) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child: ChildProcessWithoutNullStreams = spawn(codex, ["app-server"], { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });

@@ -99,7 +99,7 @@ function taskCard(task: {
   };
 }
 
-/** Files on a task or page, as citations; ensemble_read kind "document" gives a file's details and link. */
+/** Files on a task or page, as citations; ensemble_read kind "document" gives a file's details and summary, ensemble_get_file its text and the file itself. */
 function fileCitations(files: AttachedFile[]) {
   return files.map((file) => ({
     id: file.id,
@@ -539,7 +539,7 @@ export async function todayBriefing(db: Db, userId: string) {
     })),
     meetings: collapseEventRows(meetings).slice(0, 20).map(eventCard),
     needsMe: { pendingApprovals: approvals, pendingEditorDecisions: decisions, url: hubUrl("/needs-me") },
-    omitted: ["Private reminders are stored in the Hub and shown on Today. They are not included here."],
+    omitted: ["Reminders and Today's tiles are not in this view: read them with ensemble_act (hub_list_reminders, hub_read_layout, hub_read_surface)."],
     notes: REFERENCE_NOTE,
     gaps: DATA_GAPS,
   };
@@ -778,16 +778,15 @@ export async function readItem(
     case "document": {
       const document = await db.document.findFirst({
         where: { id, userId, deletedAt: null },
-        select: { id: true, filename: true, mediaType: true, byteSize: true, pageCount: true, textCharacters: true, parseStatus: true, summary: true, artifact: { select: { text: true } } },
+        select: { id: true, filename: true, mediaType: true, byteSize: true, pageCount: true, textCharacters: true, summary: true },
       });
       if (!document) return { found: false };
-      const text = EXTRACTED_TEXT_TO_MODELS ? document.artifact?.text || document.summary || "" : "";
       const format = fileFormat(document.filename);
-      const silent = ["image", "audio", "video"].includes(format.kind);
       return {
         found: true,
         item: {
           id: document.id,
+          ref: refOf("file", document.id),
           kind,
           filename: document.filename,
           format: format.ext,
@@ -797,21 +796,10 @@ export async function readItem(
           byteSize: document.byteSize,
           pages: document.pageCount,
           textCharacters: document.textCharacters,
-          summary: EXTRACTED_TEXT_TO_MODELS ? document.summary : null,
+          summary: document.summary,
           url: hubUrl(`/files/${document.id}`),
-          body: body(text),
-          ...(text
-            ? {}
-            : {
-                note: !EXTRACTED_TEXT_TO_MODELS
-                  ? "Ensemble does not send a file's extracted text; open the file itself (url)."
-                  : silent
-                    ? `This ${format.label} has no text to read.`
-                    : document.parseStatus === "queued" || document.parseStatus === "running"
-                      ? "Ensemble is still reading this file's text. Try again in a minute."
-                      : "No text was found in this file.",
-              }),
-          originalBytesOmitted: true,
+          body: body(""),
+          note: "Ensemble's text of this file and the file itself come from ensemble_get_file.",
           ...trustForIngested("document"),
         },
       };
@@ -1524,7 +1512,7 @@ export async function buildBrief(
     notes: nothing
       ? `Nothing relevant was found. ${REFERENCE_NOTE}`
       : REFERENCE_NOTE,
-    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest, or ensemble_context with a ref (contextRef for the task) for a record and everything linked to it; files attached to the task are listed with links to open them in Ensemble.",
+    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest, or ensemble_context with a ref (contextRef for the task) for a record and everything linked to it; files attached to the task are listed, and ensemble_get_file gives one with its text.",
     gaps: DATA_GAPS,
   };
 }

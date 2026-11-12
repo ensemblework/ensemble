@@ -75,7 +75,7 @@ import { ModelTimeoutError } from "../lib/model-timeout.js";
 import { proposedProjectName } from "./tools/tasks.js";
 import { historyRefs, mentionRefs, mergeRefs, MAX_REPLY_REFS, readablePreview, refsFromResult, stateRefs } from "./refs.js";
 import { formatEntityText, linkedRefs, refLink, refsInText, type AssistantRef } from "@ensemble/shared-types";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import type { Redis } from "ioredis";
 
 export const MAX_STEPS = 8;
@@ -189,7 +189,7 @@ export interface AssistantTurnArgs {
    * `sessionKey`: the agent session to run in instead of the chat's own, resumed whatever the chat's
    * length (an inline ask's page session, assistant/ask-sessions.ts).
    */
-  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string };
+  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string; history?: string };
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -427,12 +427,11 @@ async function drive(
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
         prompt: conversation.prompt,
-        history: conversation.history,
+        // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
+        history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
         // One chat is one session of the person's agent: a new chat starts a new one. An inline ask runs in its page's session.
         sessionKey: args.subscription?.sessionKey ?? args.conversationId,
-        ...(args.subscription?.sessionKey
-          ? {}
-          : { position: await app.prisma.assistantMessage.count({ where: { conversationId: args.conversationId, ...(args.messageId ? { id: { not: args.messageId } } : {}) } }) }),
+        ...(args.subscription?.sessionKey ? {} : { position: await sessionPosition(app.prisma, args.conversationId, args.messageId) }),
         ...(attached?.files.length
           ? {
               files: {
@@ -472,6 +471,8 @@ async function drive(
           // The person's own plan pays; nothing is billed through Ensemble.
           estimatedUsd: null,
           computer: done.computer,
+          // Which agent session the turn ran in, and whether it went on in it (false: a new one with the chat so far).
+          session: { key: args.subscription?.sessionKey ?? args.conversationId, resumed: typeof done.resumed === "boolean" ? done.resumed : null },
           title: truncateText(args.message, 80),
         },
       }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
@@ -1139,6 +1140,36 @@ async function priorTurns(
 }
 
 const LEFT_OUT = "(An earlier answer is left out here: it used a space that cannot be reached any more.)";
+
+/**
+ * Where the chat is for its agent session (subscriptions/turn-sessions.ts `position`): the messages
+ * before this one that the session took part in. A message that got no answer (the turn failed before
+ * replying, or its computer was offline) and a failed exchange (the message and its error) never
+ * reached the session, so they do not move the chat past it: a routine whose run failed while its
+ * computer was asleep goes on in the same session at its next run.
+ */
+export async function sessionPosition(prisma: Pick<PrismaClient, "assistantMessage">, conversationId: string, excluded?: string): Promise<number> {
+  const rows = await prisma.assistantMessage.findMany({
+    where: { conversationId, ...(excluded ? { id: { not: excluded } } : {}) },
+    orderBy: { createdAt: "asc" },
+    select: { role: true },
+  });
+  let position = 0;
+  for (let index = 0; index < rows.length; index += 1) {
+    const role = rows[index]!.role;
+    if (role === "error") continue;
+    if (role === "user") {
+      const next = rows[index + 1]?.role;
+      if (next === undefined || next === "user") continue;
+      if (next === "error") {
+        index += 1;
+        continue;
+      }
+    }
+    position += 1;
+  }
+  return position;
+}
 
 /** Whether a saved reply's calls acted in a space outside `reachable` (each receipt records its space). */
 function usedOtherSpace(toolCalls: unknown, reachable: ReadonlySet<string>): boolean {

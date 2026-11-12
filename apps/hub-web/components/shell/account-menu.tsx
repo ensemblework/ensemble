@@ -87,6 +87,7 @@ export function AccountMenu() {
     <Popover
       align="right"
       width={320}
+      className="inline-flex items-center"
       trigger={(open, toggle) => (
         <button
           type="button"

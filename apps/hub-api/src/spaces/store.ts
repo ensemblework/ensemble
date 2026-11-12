@@ -91,6 +91,11 @@ export function defaultSpaceName(name: string): string {
   return first && !first.includes("@") ? `${first}'s space` : "My space";
 }
 
+/** A space's name as the switcher shows it: its own, else the account's default or "Untitled space". */
+export function spaceLabel(row: { name: string; spaceName: string | null; ownerId: string | null }): string {
+  return row.spaceName || (row.ownerId ? "Untitled space" : defaultSpaceName(row.name));
+}
+
 export async function listSpaces(db: Db, accountId: string): Promise<{ account: { sync: boolean; role: string | null }; spaces: SpaceSummary[] }> {
   const account = await db.user.findUniqueOrThrow({
     where: { id: accountId },

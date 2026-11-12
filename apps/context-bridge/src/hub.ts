@@ -11,12 +11,29 @@ export class HubError extends Error {
 
 export type HubQuery = Record<string, string | number | undefined>;
 
-export interface HubClient {
-  get(path: string, query?: HubQuery): Promise<unknown>;
-  /** Writes are only under /api/bridge/write/ and /api/bridge/act/ (docs/CONTEXT_BRIDGE.md §5). */
-  post?(path: string, body: unknown): Promise<unknown>;
-  patch?(path: string, body: unknown): Promise<unknown>;
+export interface HubCallOptions {
+  /** The space the call acts in, by id: sent as `x-ensemble-space` (docs/CONTEXT_BRIDGE.md §4). */
+  space?: string;
+  /** A large answer (a file): wait for it as long as for an action. */
+  large?: boolean;
 }
+
+/** A file's bytes as hub-api served them. */
+export interface HubDownload {
+  bytes: Uint8Array;
+  mediaType: string | null;
+}
+
+export interface HubClient {
+  get(path: string, query?: HubQuery, options?: HubCallOptions): Promise<unknown>;
+  /** Writes are only under /api/bridge/write/ and /api/bridge/act/ (docs/CONTEXT_BRIDGE.md §5). */
+  post?(path: string, body: unknown, options?: HubCallOptions): Promise<unknown>;
+  patch?(path: string, body: unknown, options?: HubCallOptions): Promise<unknown>;
+  /** A GET that answers with a file rather than JSON (a file's original). */
+  download?(path: string, options?: HubCallOptions): Promise<HubDownload>;
+}
+
+export const SPACE_HEADER = "x-ensemble-space";
 
 function headersFor(auth: BridgeAuth): Record<string, string> {
   if (auth.kind === "missing") return {};
@@ -26,7 +43,7 @@ function headersFor(auth: BridgeAuth): Record<string, string> {
 
 export function createHubClient(initial: BridgeConfig = loadBridgeConfig()): HubClient {
   let config = initial;
-  async function send(method: "GET" | "POST" | "PATCH", path: string, query?: HubQuery, body?: unknown): Promise<unknown> {
+  async function send(method: "GET" | "POST" | "PATCH", path: string, query?: HubQuery, body?: unknown, options?: HubCallOptions & { raw?: boolean }): Promise<Response> {
     if (config.discovered) {
       const current = rediscover();
       if (current) config = { ...config, hubUrl: current.hubUrl, auth: { kind: "bearer", token: current.token } };
@@ -42,13 +59,14 @@ export function createHubClient(initial: BridgeConfig = loadBridgeConfig()): Hub
       response = await fetch(url, {
         method,
         headers: {
-          accept: "application/json",
+          accept: options?.raw ? "*/*" : "application/json",
           ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(options?.space ? { [SPACE_HEADER]: options.space } : {}),
           ...headersFor(config.auth),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         // An action (a meeting read by a model, a connected app, a file) can take a while; a read cannot.
-        signal: AbortSignal.timeout(method === "GET" ? 15_000 : 180_000),
+        signal: AbortSignal.timeout(method === "GET" && !options?.raw && !options?.large ? 15_000 : 180_000),
       });
     } catch {
       // Connection refused, DNS, or timeout. An empty brief would look like "no context".
@@ -73,11 +91,16 @@ export function createHubClient(initial: BridgeConfig = loadBridgeConfig()): Hub
       if (response.status === 401 || response.status === 403) throw new HubError(message, "auth");
       throw new HubError(`Ensemble hub-api returned ${response.status}: ${message}`, "http");
     }
-    return response.json() as Promise<unknown>;
+    return response;
   }
+  const json = async (response: Promise<Response>) => (await response).json() as Promise<unknown>;
   return {
-    get: (path, query) => send("GET", path, query),
-    post: (path, body) => send("POST", path, undefined, body),
-    patch: (path, body) => send("PATCH", path, undefined, body),
+    get: (path, query, options) => json(send("GET", path, query, undefined, options)),
+    post: (path, body, options) => json(send("POST", path, undefined, body, options)),
+    patch: (path, body, options) => json(send("PATCH", path, undefined, body, options)),
+    download: async (path, options) => {
+      const response = await send("GET", path, undefined, undefined, { ...options, raw: true });
+      return { bytes: new Uint8Array(await response.arrayBuffer()), mediaType: response.headers.get("content-type") };
+    },
   };
 }

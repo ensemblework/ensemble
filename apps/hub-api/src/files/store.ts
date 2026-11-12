@@ -10,7 +10,7 @@ import { isHosted } from "../lib/hosted-access.js";
 import { assertFileRoom, createCappedDocument, hostedLimits, quotaScope, sizeLabel, withHostedUserLock } from "../lib/hosted-limits.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
-import { immediateText, PARSER_VERSION, queueFileText, summarizeFile, writeFileText } from "./extract.js";
+import { immediateText, PARSER_VERSION, queueFileText, summarizedWithoutText, summarizeFile, writeFileText } from "./extract.js";
 import { discardOriginal, storeOriginal } from "./originals.js";
 
 const MIB = 1024 * 1024;
@@ -180,7 +180,7 @@ export async function saveFile(db: PrismaClient, userId: string, file: NewFile, 
   const known = immediateText(filename, original);
   const id = randomUUID();
   const summarize = options.summarize ?? true;
-  const enrichmentStatus = !summarize ? "skipped" : known ? (known.text.trim() ? "queued" : "skipped") : "waiting";
+  const enrichmentStatus = !summarize ? "skipped" : known ? (known.text.trim() || summarizedWithoutText(filename) ? "queued" : "skipped") : "waiting";
   const tags = {
     projectIds: options.tags?.projectIds ?? [],
     personIds: options.tags?.personIds ?? [],

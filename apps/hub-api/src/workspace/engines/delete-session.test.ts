@@ -51,3 +51,55 @@ test("native Claude, Cursor and pinned Antigravity deletion removes only exact r
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("a Codex thread the person already deleted counts as deleted", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-codex-bin-"));
+  const saved = process.env.PATH;
+  // Codex's app-server answers thread/delete for a thread it no longer has with "no rollout found for thread id <id>".
+  await writeFile(
+    join(bin, "codex"),
+    `#!/usr/bin/env node
+const lines = require("node:readline").createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: "codex/0.163.0" } }) + "\\n");
+  if (message.method === "thread/delete") process.stdout.write(JSON.stringify({ id: message.id, error: { code: -32600, message: "no rollout found for thread id " + message.params.threadId } }) + "\\n");
+});
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeSession("codex", "0199a0b2-1111-7222-8333-444455556666", bin);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});
+
+test("a session the person already deleted in OpenCode counts as deleted; any other failure does not", { skip: process.platform === "win32" }, async () => {
+  const bin = await mkdtemp(join(tmpdir(), "ensemble-opencode-bin-"));
+  const saved = process.env.PATH;
+  // `opencode session delete <id>` for a session it no longer has: the error names the session and exits 1.
+  await writeFile(
+    join(bin, "opencode"),
+    `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "delete" ]; then
+  case "$3" in
+    ses_gone*) echo "Session not found: $3" >&2; exit 1 ;;
+    *) echo "Could not reach the OpenCode server" >&2; exit 1 ;;
+  esac
+fi
+exit 2
+`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = `${bin}:${saved ?? ""}`;
+  try {
+    await deleteNativeSession("opencode", "ses_gone4f2a9c1b7e", bin);
+    await assert.rejects(deleteNativeSession("opencode", "ses_live4f2a9c1b7e", bin), /could not delete its session: Could not reach/);
+  } finally {
+    process.env.PATH = saved;
+    await rm(bin, { recursive: true, force: true });
+  }
+});

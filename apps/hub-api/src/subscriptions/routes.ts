@@ -54,6 +54,8 @@ const Done = z.object({
       tokensIn: z.number().nullable(),
       tokensOut: z.number().nullable(),
       costUsd: z.number().nullable(),
+      /** The turn went on in the chat's earlier agent session (false: a new one, with the chat so far). */
+      resumed: z.boolean().optional(),
     })
     .optional(),
   error: z.object({ problem: z.string().max(40).optional(), message: z.string().max(2000).optional() }).optional(),

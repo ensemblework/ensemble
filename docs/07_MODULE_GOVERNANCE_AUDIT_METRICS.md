@@ -29,7 +29,7 @@ Pinning, reopening, active jobs, a learning pass waiting for its model or a conf
 
 ### 1.2 Private reminders and platform notifications
 
-`dispatchDueReminders` turns due reminders into in-app notifications. In-app notifications are unread items, not a log: the bell lists only unread ones ([02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-notifications-and-private-reminders)) and retention removes old rows. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission. Quiet hours defer ordinary popups; Needs me can notify urgently. Nothing alarms while Ensemble is closed. Private reminders are excluded from shared context and the editor bridge.
+`dispatchDueReminders` turns due reminders into in-app notifications. In-app notifications are unread items, not a log: the bell lists only unread ones ([02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-notifications-and-private-reminders)) and retention removes old rows. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission. Quiet hours defer ordinary popups; Needs me can notify urgently. Nothing alarms while Ensemble is closed. Private reminders are excluded from shared context, and from the editor bridge's briefs and search; an editor's key reads and changes them only through the reminder actions ([CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
 
 ### 1.3 The operator's interaction log and dashboards
 

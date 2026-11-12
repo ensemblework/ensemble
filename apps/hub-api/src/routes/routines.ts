@@ -1,12 +1,13 @@
 /**
  * Routines (docs/02 §3.10): the Routines page's list, and adding, changing, pausing, running and
- * deleting a routine. Only the space's owner keeps routines: they run with the owner's models and apps.
+ * deleting a routine (with its conversation and agent session). Only the space's owner keeps routines:
+ * they run with the owner's models and apps.
  */
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { loadSettings } from "../lib/settings.js";
 import { isGuestIn } from "../sharing/context.js";
-import { createRoutine, deleteRoutine, findRoutine, listRoutines, RoutineError, routineView, runRoutine, updateRoutine, WEEKDAYS } from "../routines/service.js";
+import { createRoutine, deleteRoutine, dropRoutineChat, findRoutine, listRoutines, RoutineError, routineView, runRoutine, updateRoutine, WEEKDAYS } from "../routines/service.js";
 
 export const CadenceInput = z.object({
   every: z.enum(["hour", "day", "weekday", "week", "month"]).optional(),
@@ -62,7 +63,9 @@ export async function routineRoutes(app: FastifyInstance): Promise<void> {
     if (!owner(request, reply)) return reply;
     const { id } = request.params as { id: string };
     try {
-      await deleteRoutine(prisma, request.userId, id);
+      const gone = await deleteRoutine(prisma, request.userId, id);
+      // Its conversation and the agent session behind it go too (after the reply: the routine is gone at once).
+      void dropRoutineChat(app, request.userId, gone);
       return reply.code(204).send();
     } catch (error) {
       return failed(reply, error);

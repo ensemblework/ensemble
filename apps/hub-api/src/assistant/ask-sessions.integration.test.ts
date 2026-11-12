@@ -7,7 +7,7 @@ import test, { after } from "node:test";
 import { createHttpHarness } from "../test/http.js";
 
 const h = await createHttpHarness();
-const { ASK_IDLE_MS, ASK_STUCK_MS, askAnswered, askExpired, askSessionKey, askStarted, sweepAskSessions } = await import("./ask-sessions.js");
+const { ASK_IDLE_MS, ASK_STUCK_MS, askAnswered, askExpired, askHistory, askInLine, askSessionKey, askStarted, sweepAskSessions } = await import("./ask-sessions.js");
 const { SESSION_KEY } = await import("../subscriptions/turn-sessions.js");
 const { turnSession } = await import("../subscriptions/turn.js");
 after(() => h.close());
@@ -30,6 +30,39 @@ test("an ask's turn runs in the page session and resumes it however many asks ca
   const turn = turnSession({ local: false, turns: 3 } as never, { prompt: "Summarize this", history: "", sessionKey: key, keepDays: 1 });
   assert.deepEqual(turn.session, { key, history: "", keepDays: 1 });
   assert.equal("position" in (turn.session ?? {}), false, "no position: the computer resumes the session whatever the chat's length");
+});
+
+test("asks on one page are answered one after another, in the order they were made", async () => {
+  const order: string[] = [];
+  const run = async (name: string, ms: number) => {
+    const place = askInLine("line-page");
+    try {
+      await place.ready;
+      order.push(`start ${name}`);
+      await new Promise((done) => setTimeout(done, ms));
+      order.push(`end ${name}`);
+    } finally {
+      place.leave();
+    }
+  };
+  // The first takes longest; the later ones still wait for it, and for each other, in order.
+  await Promise.all([run("A", 60), run("B", 5), run("C", 1)]);
+  assert.deepEqual(order, ["start A", "end A", "start B", "end B", "start C", "end C"]);
+  // One that gives up while waiting leaves its place without holding up the next.
+  const first = askInLine("line-page-2");
+  const quitter = askInLine("line-page-2");
+  const third = askInLine("line-page-2");
+  assert.equal(first.waiting, false);
+  assert.equal(quitter.waiting, true);
+  quitter.leave();
+  let thirdReady = false;
+  void third.ready.then(() => (thirdReady = true));
+  await new Promise((done) => setTimeout(done, 10));
+  assert.equal(thirdReady, false, "still behind the first");
+  first.leave();
+  await third.ready;
+  third.leave();
+  assert.equal(askInLine("line-page-3").waiting, false, "another page has its own line");
 });
 
 test("a session is done 30 minutes after its last answer, or two hours after an ask that never came back", () => {
@@ -99,4 +132,47 @@ test("an inline ask on an AI plan uses the Ask Ensemble tier and notes the page'
   assert.equal(record.length, 1);
   assert.match(record[0]![0], /^ask-page-/);
   assert.ok(record[0]![1].answered! >= record[0]![1].started, "answered (here: failed), so the 30 minutes run");
+});
+
+test("a chat's place for its agent session counts only the messages the session took part in", async () => {
+  const { sessionPosition } = await import("./agent.js");
+  const lea = await h.asUser();
+  const chat = await h.prisma.assistantConversation.create({ data: { userId: lea.id, title: "Routine: Weekly plan" } });
+  let at = Date.now() - 60_000;
+  const say = (role: string, content = role) => h.prisma.assistantMessage.create({ data: { userId: lea.id, conversationId: chat.id, role, content, createdAt: new Date((at += 1000)) } });
+  await say("user");
+  await say("assistant");
+  assert.equal(await sessionPosition(h.prisma, chat.id), 2);
+  // A run whose computer was asleep: its message got no answer, then one that failed with an error.
+  await say("user");
+  await say("user");
+  await say("error");
+  assert.equal(await sessionPosition(h.prisma, chat.id), 2, "neither reached the session");
+  await say("user");
+  await say("assistant");
+  const now = await say("user", "this turn");
+  assert.equal(await sessionPosition(h.prisma, chat.id, now.id), 4);
+});
+
+test("a new session for a page is given that page's earlier asks of the same session, oldest first", async () => {
+  const noa = await h.asUser();
+  const page = { kind: "task", id: "5c3e7a1d-9b2f-4e6a-8c4d-1f2e3a4b5c6d" };
+  const key = askSessionKey(noa.id, page.kind, page.id);
+  const ask = async (question: string, answer: string, at: number, status = "open") => {
+    const conversation = await h.prisma.assistantConversation.create({ data: { userId: noa.id, title: question } });
+    await h.prisma.assistantMessage.create({ data: { userId: noa.id, conversationId: conversation.id, role: "user", content: question } });
+    await h.prisma.pageDiscussion.create({
+      data: { userId: noa.id, pageKind: page.kind, pageId: page.id, sourceKind: page.kind, sourceId: page.id, kind: "ensemble", authorKind: "ensemble", body: { text: answer }, status, conversationId: conversation.id, createdAt: new Date(at) },
+    });
+  };
+  const start = Date.now() - 10 * 60_000;
+  await ask("An ask from an earlier session", "Old answer", start - 3 * ASK_IDLE_MS);
+  assert.equal(await askHistory(h.app, noa.id, key, { ...page, actor: null }), "", "no session on the page yet");
+  await askStarted(h.app, noa.id, key, page, start);
+  await ask("Remember ZEBRA-7", "OK", start + 1000);
+  await ask("What does the page plan?", "A launch on Friday.", start + 2000);
+  await ask("Still answering", "", start + 3000, "streaming");
+  await askStarted(h.app, noa.id, key, page, start + 4000);
+  const history = await askHistory(h.app, noa.id, key, { ...page, actor: null });
+  assert.equal(history, "Earlier asks on this page, oldest first:\n\nPerson: Remember ZEBRA-7\n\nYou: OK\n\nPerson: What does the page plan?\n\nYou: A launch on Friday.");
 });

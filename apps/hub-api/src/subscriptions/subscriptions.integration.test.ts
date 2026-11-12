@@ -122,7 +122,7 @@ test("a chat turn on the person's Claude plan runs on their computer; the tools 
     const saved = await harness.prisma.assistantMessage.findFirstOrThrow({ where: { role: "assistant", conversation: { userId: person.id } }, orderBy: { createdAt: "desc" } });
     assert.equal(saved.model, "claude-haiku-5-5");
     assert.match(saved.content, /Proposed the task Buy oat milk\./);
-    assert.match(saved.content, /press Apply/);
+    assert.match(saved.content, /press Apply/i);
     const calls = saved.toolCalls as Array<{ name: string; state: string }>;
     assert.deepEqual(
       calls.map((call) => [call.name, call.state]),

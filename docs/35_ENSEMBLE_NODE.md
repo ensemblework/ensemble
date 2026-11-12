@@ -592,6 +592,8 @@ The computer advertises `capabilities.sessionDelete: 1` and handles `session.del
 | Gemini CLI | `gemini --delete-session <id>` in its recorded workspace |
 | Antigravity | The pinned ACP server's exact conversation `.db`/sidecar/WAL files and per-session brain directory under its isolated home; never credentials or shared configuration |
 
+A session the agent says it no longer has (deleted in its own app, or expired: "not found" naming that session, or Codex's "no rollout found") counts as deleted, for every agent above.
+
 `node_session_delete {session}` is available only in the owner's private thread, for the node's own or unmanaged sessions. It always raises an owner-only confirmation card, even when ordinary computer work runs without asking. The node must use it only when its owner requests deletion. Declining keeps the session untouched. The Sessions page uses an in-app confirmation with the same stop/history/file-preservation wording.
 
 The Node Sessions page is an inventory rather than a work log: identity, recency, recorded usage, two file cards and disclosure. Originals open in the existing split editor even outside a chat. Work descriptions and assignment controls stay off this page; conversation run cards retain their controls. Portrait shapes include Orb, Square, Spark, Hex, Leaf, Compass, Pebble and Bloom; all accepted creation/edit paths share these shapes.

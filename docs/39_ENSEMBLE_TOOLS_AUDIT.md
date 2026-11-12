@@ -9,40 +9,41 @@ What each of Ensemble's agents can do in Ensemble itself, area by area: the Hub 
 | Hub assistant | The registry's Hub tools (`assistant/registry.ts`), routed by playbooks ([11 §3](11_HOW_THE_ASSISTANT_WORKS.md#playbook-routing)) | The space the chat is in, with the person's access there |
 | Ensemble Node | The same Hub tools, each with an optional `space` (`node/spaces.ts`), plus the node tools (`node/tools.ts`, `node/device-tools.ts`) | Every space its owner can open, with their current role in each; only the room's shared space where other people read ([35 §5.4](35_ENSEMBLE_NODE.md#54-every-space-its-owner-can-open)) |
 | An agent run | Its brief (the task's title, description, page, files and the context around it) and the run's `ensemble` MCP server (`scripts/ensemble-ask-mcp.mjs`) | The run's folder on the computer. The MCP server answers on the computer's loopback (`/api/engine/*`); `ensemble_context`, `ensemble_search`, `ensemble_actions` and `ensemble_act` are answered by Ensemble on the web for a task claimed from there, under the job's lease. Actions only in its owner's own space |
-| An editor or agent with an MCP key | The Context Bridge (`ensemble mcp` from the CLI, or the hosted `/mcp`), with a key's grants: changes, connected apps ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)) | The key's own space. The same allowlist of the assistant's tools as a run (`bridge/actions.ts`), plus the connected apps |
+| An editor or agent with an MCP key | The Context Bridge (`ensemble mcp` from the CLI, or the hosted `/mcp`), with a key's grants: changes, connected apps ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)) | The key's own space and, when a call names one, every other space its account owns. The assistant's tools on an allowlist (`bridge/actions.ts`): a run's everyday part and the rest marked `keyOnly`, plus the connected apps |
 
 Each one is already signed in as its owner. None of them opens Ensemble's web app in a browser (§4).
 
 ## 2. The matrix
 
-A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)).
+A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)); "MCP" marks what an MCP key has and a run does not.
 
 | Area | Hub assistant | Ensemble Node | Agent runs and MCP editors |
 | --- | --- | --- | --- |
-| Tasks on the Ensemble board | List, read, create, update, delete, restore; what is due (`hub_list_tasks`, `hub_create_tasks`, `hub_update_task`, `hub_delete_tasks`, `hub_list_due`) | Same | Their brief; allowlist: list, read, create, update any field, delete one to Trash. MCP also `ensemble_create_task`, `ensemble_update_task` |
-| Context around a record (the graph) | `hub_item_context`, `hub_search_work` | Same | `ensemble_context`, `ensemble_search` |
-| Custom boards (`/board?board=<id>`) | List; read by link, id or title; make, change (title, description, tiles, columns), delete; put, place, move and take off tasks and notes (`hub_list_boards`, `hub_read_board`, `hub_create_board`, `hub_update_board`, `hub_delete_board`, `hub_move_to_board`, `hub_remove_from_board`); `hub_read_surface` reads the open one | Same | Allowlist: all but deleting a board |
-| Board overview and layouts | `hub_read_layout`; `hub_edit_layout` (the space owner's only) | Same | — |
-| Projects and deliverables | List, create, update, complete, delete | Same | Allowlist: all but deleting |
-| Pages and notes | List, read, create, append or rewrite, block edits, move, delete, export to a file, file to page | Same | Allowlist: the same, one page at a time; a page into a task (`hub_manage_record`) |
+| Tasks on the Ensemble board | List, read, create, update, delete, restore; what is due (`hub_list_tasks`, `hub_create_tasks`, `hub_update_task`, `hub_delete_tasks`, `hub_list_due`) | Same | Their brief; allowlist: list, read, create, update any field, delete one to Trash. MCP also deletes many (`hub_delete_tasks`), `ensemble_create_task`, `ensemble_update_task` |
+| Context around a record (the graph) | `hub_item_context`, `hub_search_work` | Same | `ensemble_context`, `ensemble_search`; MCP also `hub_item_context`, `hub_search_work` |
+| Custom boards (`/board?board=<id>`) | List; read by link, id or title; make, change (title, description, tiles, columns), delete; put, place, move and take off tasks and notes (`hub_list_boards`, `hub_read_board`, `hub_create_board`, `hub_update_board`, `hub_delete_board`, `hub_move_to_board`, `hub_remove_from_board`); `hub_read_surface` reads the open one | Same | Allowlist: all but deleting a board; MCP deletes one too (its cards stay) |
+| Board overview and layouts | `hub_read_layout`; `hub_edit_layout` (the space owner's only) | Same | MCP reads them (`hub_read_layout`, `hub_read_surface`) |
+| Projects and deliverables | List, create, update, complete, delete | Same | Allowlist: all but deleting; MCP deletes too |
+| Pages and notes | List, read, create, append or rewrite, block edits, move, delete, export to a file, file to page | Same | Allowlist: the same, one page at a time (MCP: many with `hub_delete_pages`); a page into a task (`hub_manage_record`) |
 | Page history, templates, copies | — | — | — |
 | Comments | Read, add, edit, resolve, delete internal comments (`hub_read_record_details`, `hub_manage_record`) | Same | Allowlist: same |
-| Meeting notes | List, read, write, change, delete; suggest tasks; import from a meeting app (waits for Apply) | Same | Allowlist: list, read, write, change, suggest tasks |
-| People | List, add, change, delete; import an app's people | Same | Allowlist: list, add, change (role, team, relationship) |
+| Meeting notes | List, read, write, change, delete; suggest tasks; import from a meeting app (waits for Apply) | Same | Allowlist: list, read, write, change, suggest tasks; MCP also deletes, and with apps allowed imports |
+| People | List, add, change, delete; import an app's people | Same | Allowlist: list, add, change (role, team, relationship); MCP also deletes, and with apps allowed brings in an app's people |
 | Repositories | List, link, unlink, describe; read a file or an overview | Same | Allowlist: list, link, unlink, describe; MCP reads a file or overview; a run works in its own checkout |
-| Reminders and watchers | Reminders: list, add, change, dismiss, delete. Watchers: add, list, stop (`hub_list_watchers`, `hub_cancel_watcher`). The space owner's own | Same, in its owner's own spaces | — |
-| Today, recap, profile lists | `hub_list_due`, `hub_weekly_recap`, desk lists, `hub_read_surface` | Same, plus `node_overview` across every space | MCP: `ensemble_today`; allowlist `hub_list_due` |
-| Files | List, open, save from a web link, copy from an app, edit an original, tags, Trash | Same, plus `node_share_file` and `hub_save_file` from the computer or its evidence | MCP: `ensemble_upload_file` from the editor's computer, attached to a task or page; allowlist: list, file to page, page to a new file, tags. A run: `attach_evidence` for its own result |
+| Reminders and watchers | Reminders: list, add, change, dismiss, delete. Watchers: add, list, stop (`hub_list_watchers`, `hub_cancel_watcher`). The space owner's own | Same, in its owner's own spaces | MCP: reminders list, add, change, dismiss, delete; watchers listed only |
+| Routines | List, add, change, pause, resume, delete (`hub_list_routines`, `hub_create_routine`, `hub_update_routine`) | Same | MCP: list, add, change, pause, resume; never delete |
+| Today, recap, profile lists | `hub_list_due`, `hub_weekly_recap`, desk lists, `hub_read_surface` | Same, plus `node_overview` across every space | MCP: `ensemble_today`, `hub_weekly_recap`, `hub_read_surface`, desk lists (list, add, change, remove); allowlist `hub_list_due` |
+| Files | List, open, save from a web link, copy from an app, edit an original, tags, Trash | Same, plus `node_share_file` and `hub_save_file` from the computer or its evidence | MCP: `ensemble_files`, `ensemble_get_file` (the file itself, its text when asked, `saveTo` through the CLI), `ensemble_upload_file` from the editor's computer, attached to a task or page, `hub_save_file` from a web link; never an original's edit or a file's deletion. Allowlist: list, file to page, page to a new file, tags. A run: `attach_evidence` for its own result |
 | Diagrams | List, read, check, make, edit, explain, copy, delete, restore a version | Same | Allowlist: same |
-| Plots and datasets | List, read, make, change; import a dataset; rename, delete | Same | Allowlist: all but deleting a dataset |
-| Personal skills | List, read; make or change (waits for Apply) | Same | MCP reads current skills |
-| Connected apps | What is connected; search, read, attach, post updates; built-in app tools; MCP tools; whole-board imports | Same, from its owner's account space; none in a space shared with them | MCP with apps allowed: `ensemble_apps`, `ensemble_app_call` (the same app tools; changes also need changes allowed). A run: — (an engine that loads the person's own MCP setup has theirs) |
-| Calendars | Saved events; Google and Outlook events and availability | Same | MCP: `ensemble_meetings`; with apps allowed, the calendar app tools |
-| Settings and models | Allowlisted settings and model choice (wait for Apply) | Same | — |
-| Spaces and sharing | One space per chat; reads spaces and sharing | Every space its owner can open, with their role there | The key's or the job's space only |
-| Agent runs | Assign to an agent (waits for Apply), sessions, runs, what is running, stop | Its own sessions (`node_session_*`), runs, stop; plans and helpers | A run: `report_result`, `attach_evidence`, `ask_person`, `secret_http` |
-| Needs me | Reads what waits (`hub_list_approvals`) | Same, and its own cards in the chat | MCP: `ensemble_decisions` (read); a run: `ask_person` |
-| Code folders and agent changes | Reads them | Same, plus its own hands on the computer | Its own folder |
+| Plots and datasets | List, read, make, change; import a dataset; rename, delete | Same | Allowlist: all but deleting a dataset; MCP deletes one too |
+| Personal skills | List, read; make or change (waits for Apply) | Same | MCP reads current skills and, with changes allowed, makes, changes, restores a version and deletes (at once) |
+| Connected apps | What is connected; search, read, attach, post updates; built-in app tools; MCP tools; whole-board imports | Same, from its owner's account space; none in a space shared with them | MCP reads what is connected; with apps allowed `ensemble_apps`, `ensemble_app_call` (the same app tools; changes also need changes allowed), whole-board imports, app relationships and Fetch now. A run: — (an engine that loads the person's own MCP setup has theirs) |
+| Calendars | Saved events; Google and Outlook events and availability | Same | MCP: `ensemble_meetings`, `hub_list_events`; with apps allowed, the calendar app tools |
+| Settings and models | Allowlisted settings and model choice (wait for Apply) | Same | MCP reads them (`hub_get_settings`, `hub_find_setting`, `hub_list_model_choices`); never changes them |
+| Spaces and sharing | One space per chat; reads spaces and sharing | Every space its owner can open, with their role there | A run: its job's space. MCP: the key's own space and, named with `space`, the other spaces its account owns (`ensemble_spaces`); never a space shared with it |
+| Agent runs | Assign to an agent (waits for Apply), sessions, runs, what is running, stop | Its own sessions (`node_session_*`), runs, stop; plans and helpers | MCP reads runs, activity and agent sessions; never assigns, starts or stops. A run: `report_result`, `attach_evidence`, `ask_person`, `secret_http` |
+| Needs me | Reads what waits (`hub_list_approvals`) | Same, and its own cards in the chat | MCP: `ensemble_decisions`, `hub_list_approvals` (read); a run: `ask_person` |
+| Code folders and agent changes | Reads them | Same, plus its own hands on the computer | MCP reads them; a run: its own folder |
 | Trash and Completed | Read them; restore a trashed record | Same | Allowlist: restore a trashed record |
 | The web | `hub_web_search`, `hub_read_web_page` (public pages and PDFs, no sign-in or scripts) | Same, plus the browser and capture tools, `web_task`, `browser_shop` | A run: the computer's browser and capture tools |
 | Ensemble Node itself | — | Rooms, crews, nodes, routines, memories (`node_*`) | — |
@@ -61,7 +62,8 @@ Not offered, and why:
 
 | Not offered | Why |
 | --- | --- |
-| Settings, skills, reminders, routines, imports, layouts, bulk deletes and assigning work from an agent run or an MCP key | The allowlist keeps everyday record changes; what changes how Ensemble itself behaves, or many records at once, stays with the assistant (with Apply) and Ensemble Node |
+| Changing settings, model choice or layouts, stopping or deleting runs, starting the assistant, agents, workflows or watchers, deleting routines or files, or editing a file's original, from an MCP key | These change how Ensemble behaves or start work: they stay with the person in Ensemble, through the assistant (with Apply) and Ensemble Node |
+| Skills, reminders, routines, imports, desk lists, bulk deletes and the wider reads from an agent run | A run works alone on its task: it keeps the everyday record changes, and the person or the node does the rest |
 | An agent run changing Ensemble in a space shared with its owner | A run acts only in its owner's own space; in a shared space it reads, and the node or the person acts |
 | Chat's board tools reaching a hosted account | `ensemble_list_tasks`, `ensemble_create_task` and `ensemble_search` work on the computer's own Ensemble |
 | Undo for custom-board changes | `PageBoard` is not an undo model, and a card's move changes page rows whose Trash undo depends on them. Deleting a board always waits for Apply instead |
