@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { findSettingsTarget, flashSetting, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
+import { findSettingsTarget, flashSetting, scrollSettingIntoView, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
 import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
 import { SettingsNav, SettingsOutline } from "@/components/settings/settings-nav";
@@ -122,9 +122,8 @@ export default function SettingsPage() {
       }
       window.clearInterval(timer);
       scrolled.current = key;
-      node.style.scrollMarginTop = "6rem";
       const block = node.matches("section, [id]") && !node.closest("div[data-setting-label]") ? "start" : "center";
-      node.scrollIntoView?.({ block });
+      scrollSettingIntoView(mainRef.current, node, block);
       if (destination && node.id !== destination.section) flashSetting(node);
       // Cards above it can still be filling in. If they push it out of view before the person scrolls, bring it back.
       const root = mainRef.current;
@@ -136,7 +135,7 @@ export default function SettingsPage() {
             const box = node.getBoundingClientRect();
             const view = root.getBoundingClientRect();
             if (box.top >= view.top && box.bottom <= view.bottom) return;
-            node.scrollIntoView?.({ block });
+            scrollSettingIntoView(root, node, block);
             landed = root.scrollTop;
           }, delay),
         );
@@ -218,8 +217,9 @@ export default function SettingsPage() {
 
   const props = draft ? { settings: draft, patch } : null;
   return (
-    <div className="absolute inset-0 overflow-hidden">
-      <div ref={mainRef} className="h-full overflow-y-auto" data-settings-main>
+    // clip, not hidden: nothing (a jump, a focused field) can scroll this frame, which a person could not scroll back.
+    <div className="frame-clip absolute inset-0">
+      <div ref={mainRef} className="relative h-full overflow-y-auto" data-settings-main>
         <div className="settings-shell mx-auto w-full px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           <PageHeader
             title="Settings"

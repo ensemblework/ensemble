@@ -150,7 +150,7 @@ function Frame({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-bg">
+    <div className="frame-clip flex h-dvh bg-bg">
       <a
         href="#main-content"
         onClick={(event) => {

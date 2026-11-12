@@ -7,6 +7,7 @@ import { confirmAction } from "@/components/ask-dialog";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { desktopShell } from "@/lib/desktop-param";
+import { scrollSettingIntoView } from "./navigation";
 
 /** Pairing and the remote-task switches. They exist only in the desktop app. */
 export function RemoteMacSection() {
@@ -29,7 +30,8 @@ function RemoteMacSettings() {
     if (mac?.apiBase) setUrl((current) => current || mac.apiBase || "");
   }, [mac?.apiBase]);
   useEffect(() => {
-    if (window.location.hash === "#this-mac") document.getElementById("this-mac")?.scrollIntoView({ block: "start" });
+    const card = window.location.hash === "#this-mac" ? document.getElementById("this-mac") : null;
+    if (card) scrollSettingIntoView(card.closest<HTMLElement>("[data-settings-main]"), card, "start");
   }, []);
   const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
   const refresh = () => void client.invalidateQueries({ queryKey: ["remote"] });
