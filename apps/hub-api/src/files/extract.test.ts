@@ -10,7 +10,7 @@ import { strToU8, unzipSync, zipSync } from "fflate";
 import { markdownToDocx } from "../lib/office/docx.js";
 import { slidesToPptx } from "../lib/office/pptx.js";
 import { contentHasFile } from "../sharing/gate.js";
-import { decodeText, finishText, MAX_TEXT_CHARS, patchWorkbook, readFileText } from "./extract.js";
+import { decodeText, finishText, MAX_TEXT_CHARS, patchWorkbook, pdfPagePictures, readFileText } from "./extract.js";
 import { partsCellEditsWouldLose, shiftFormula } from "./extract-worker.js";
 import { pageFromFile, pageTitle, serverPageFormat } from "./page.js";
 import { makePdf } from "./testing.js";
@@ -75,6 +75,21 @@ test("PDF text is read page by page in a worker; scanned and damaged PDFs say so
   const broken = await readFileText("broken.pdf", strToU8("not a pdf"));
   assert.equal(broken.status, "failed");
   assert.match(broken.warnings[0]!, /agents cannot read it/);
+});
+
+test("a scanned PDF's first pages are drawn as pictures for agents that cannot see them; a damaged one gives none", { timeout: 60_000 }, async () => {
+  const size = (png: Uint8Array) => {
+    assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "a PNG");
+    const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+    return [view.getUint32(16), view.getUint32(20)];
+  };
+  const scan = makePdf(["", "", "", ""]);
+  const pages = await pdfPagePictures(scan);
+  assert.equal(pages.length, 3, "the first three pages");
+  // A US Letter page (612 x 792 points), the longer side at most 1,600 pixels and at most twice its size.
+  assert.deepEqual(size(pages[0]!), [1224, 1584]);
+  assert.deepEqual(size((await pdfPagePictures(scan, { maxPages: 1, maxSide: 400 }))[0]!), [310, 400]);
+  assert.deepEqual(await pdfPagePictures(strToU8("not a pdf")), []);
 });
 
 test("Word, PowerPoint and Excel files are read with slide and sheet markers", { timeout: 60_000 }, async () => {

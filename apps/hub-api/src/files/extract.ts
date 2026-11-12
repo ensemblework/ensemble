@@ -129,6 +129,16 @@ function runWorker(job: WorkerJob, memoryMb: number): Promise<WorkerReply> {
   );
 }
 
+/**
+ * Pictures (PNG) of a PDF's first pages, drawn in a worker thread: for an agent or model that cannot see
+ * the pages of a PDF with no text layer (a scan). Empty when the PDF cannot be drawn here (damaged, too
+ * large, out of time, or no canvas in this build): the caller goes on without them.
+ */
+export async function pdfPagePictures(bytes: Uint8Array, options: { maxPages?: number; maxSide?: number } = {}): Promise<Uint8Array[]> {
+  const reply = await runWorker({ task: "pdf-pages", bytes: new Uint8Array(bytes), maxPages: options.maxPages ?? 3, maxSide: options.maxSide ?? 1600 }, WORKER_MEMORY_MB).catch(() => null);
+  return reply?.ok ? (reply.pages ?? []) : [];
+}
+
 /** Reads text from a PDF or Office file in a worker thread. */
 export async function binaryText(kind: Binary, bytes: Uint8Array): Promise<FileText> {
   const reply = await runWorker({ task: "text", kind, bytes: new Uint8Array(bytes), maxChars: MAX_TEXT_CHARS }, WORKER_MEMORY_MB);
