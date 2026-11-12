@@ -54,6 +54,6 @@ Runs queues stack vertically below 1024 CSS pixels; recent history stays below t
 
 ## 5. Related interfaces
 
-The Hub assistant has its own typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). The Context Bridge reads for every key and makes everyday changes for a key that allows them ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)). Engine MCP/chat tools use a run-scoped credential ([30](30_ENGINES.md)). Assigning a task does not send mail, Teams or Slack messages, run arbitrary routines or replay crashed commands.
+The Hub assistant has its own typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). The Context Bridge reads for every key and makes changes for a key that allows them ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)). Engine MCP/chat tools use a run-scoped credential ([30](30_ENGINES.md)). Assigning a task does not send mail, Teams or Slack messages, run arbitrary routines or replay crashed commands.
 
 Queue, assignment, tool, decision, engine and device tests sit beside their modules; OS escape tests use the platform backend. Real models, browsers and installed engines need their own environment.

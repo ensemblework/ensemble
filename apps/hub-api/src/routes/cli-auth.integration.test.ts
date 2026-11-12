@@ -116,6 +116,7 @@ test("start, browser request, approve, token, bridge access, MCP gate, pairing, 
   assert.match(body.pairingCode, /^[A-Z0-9]{8}$/);
   const exchanged = await harness.prisma.cliAuthRequest.findFirstOrThrow({ where: { tokenId: body.tokenId } });
   assert.equal(exchanged.requestIp, null);
+  assert.equal((await harness.prisma.apiToken.findUniqueOrThrow({ where: { id: body.tokenId } })).accountId, user.id, "the key knows the account that approved it");
   assert.ok(Date.parse(body.pairingExpiresAt) > Date.now());
 
   const today = await harness.app.inject({ method: "GET", url: "/api/bridge/today", headers: { authorization: `Bearer ${body.token}` } });

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
-import { newApiToken, sha256, startSession } from "../lib/auth.js";
+import { accountIdOf, newApiToken, sha256, startSession } from "../lib/auth.js";
 import { authWebOrigin } from "../lib/auth-email.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -184,7 +184,7 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
     // Secrets are minted at the one-time exchange, so nothing usable is stored here.
     const won = await app.prisma.cliAuthRequest.updateMany({
       where: { id: row.id, status: "pending", consumedAt: null, expiresAt: { gt: now } },
-      data: { status: "approved", userId: request.userId, approvedScopes: [...scopes, ...(body.canWrite ? [WRITE_GRANT] : []), ...(body.canUseApps ? [APPS_GRANT] : [])], decidedAt: now },
+      data: { status: "approved", userId: request.userId, accountId: accountIdOf(request), approvedScopes: [...scopes, ...(body.canWrite ? [WRITE_GRANT] : []), ...(body.canUseApps ? [APPS_GRANT] : [])], decidedAt: now },
     });
     if (won.count !== 1) return reply.code(404).send({ error: "Login request not found." });
     await appendLedger({
@@ -236,6 +236,7 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
         ? await tx.apiToken.create({
             data: {
               userId,
+              accountId: row.accountId,
               name: `Ensemble CLI on ${row.clientName}`.slice(0, 80),
               tokenHash: minted.hash,
               prefix: minted.prefix,

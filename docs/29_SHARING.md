@@ -50,7 +50,7 @@ A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scope
 | `link` | `x-ensemble-link` and `x-ensemble-visitor` (§9) | One public item |
 | `gone` | a share header that is not yours or no longer exists; a node's request for a space its owner cannot open | 404 `SHARE_GONE` on every request |
 
-`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
+`identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openedSpace()` there (with `openableSpace()` in `spaces/store.ts`) checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers. A `bridge` or `full` key may name another space its own account owns (`x-ensemble-space`); a space shared with that account answers 403, because the bridge's routes are owner-only here and its reads and actions act as the space's owner ([CONTEXT_BRIDGE §4](CONTEXT_BRIDGE.md#4-token)).
 
 **An Ensemble Node acting for its owner** ([35 §5.2](35_ENSEMBLE_NODE.md#52-every-space-its-owner-can-open)) has a delegated identity of its own, not a copy of a browser's: `via: "node"`, `accountId` the owner, `userId` the space, and `access` the owner's current access there (`owner`, or `member` with its role) with `node` set to the node's id. It is the internal token with `x-ensemble-node-account`, `x-ensemble-space` and `x-ensemble-node` (`nodeRequestHeaders`), sent only by the server itself. `identify()` checks on every request that the node is the account's and, with `openedSpace()`, that the account can still open the space. It installs the scope a member's own request gets, so the route policy, `guestMayUse` and the private-apps rule apply unchanged, and it is never a browser session: `requireBrowserSession`, the terminal, passkeys, spaces, sharing and device pairing refuse it. Tool calls that do not go through a route run in the same scope (`node/spaces.ts`). A node turn whose answer a room with other people reads ([35 §12.3](35_ENSEMBLE_NODE.md#123-room-bound-turns)) runs as a guest of its owner's own account (`access: member`, `node` set), so the owner's connected apps, reminders, imports and syncs stay out of it, as they do in a space shared with someone; its Hub tools reach only the room's bound space, through that space's own scope.
 
@@ -252,6 +252,6 @@ Selections are `dots.character.palette.scenery`, stored on `users.avatar` and sa
 
 ## 11. Not supported
 
-- The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not know about sharing; tokens and service calls always act as the space they belong to.
+- The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not work in a space shared with you: tokens and service calls act as the owner of a space their account owns, and a key naming a shared space is refused.
 - Answering a run's question from a phone works only in your own spaces.
 - Live editing of meeting notes, and live pages across more than one API process.

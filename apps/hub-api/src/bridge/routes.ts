@@ -9,6 +9,9 @@ import { RepoReadError } from "../repo/read.js";
 import { GraphError } from "../context/graph/neighbors.js";
 import { GRAPH_KINDS, parseItemRef } from "../context/graph/refs.js";
 import { SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
+import { sendOriginal } from "../files/serve.js";
+import { bridgeFile, listBridgeFiles } from "./files.js";
+import { bridgeSpaces } from "./spaces.js";
 import {
   buildBrief,
   itemContext,
@@ -34,6 +37,9 @@ const Status = z.enum(["proposed", "todo", "in_progress", "waiting_approval", "b
 
 const listLimit = z.coerce.number().int().min(1).max(50).default(20);
 const briefLimit = z.coerce.number().int().min(1).max(20).default(8);
+const flag = z.enum(["1", "true", "0", "false"]).optional().transform((value) => value === "1" || value === "true");
+
+const FILE_GONE = "That file is not in this Ensemble space, or it is in Trash.";
 
 /**
  * Read surface for the Context Bridge. Every route here is GET; the process-wide guard
@@ -62,10 +68,48 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
       "today",
       "context (one record and everything linked to it)",
       "artifacts and meeting notes via search, brief, read, and context",
+      "files: details, summary, Ensemble's text and the file itself (ensemble_files, ensemble_get_file)",
+      "spaces the key's account can open (ensemble_spaces)",
+      "everything else the assistant reads, through the read actions (ensemble_actions)",
     ],
   }));
 
   app.get("/api/bridge/today", async (request) => todayBriefing(prisma, request.userId));
+
+  /** The spaces the key's account can open, and which of them the key may act in (bridge/spaces.ts). */
+  app.get("/api/bridge/spaces", async (request) => bridgeSpaces(prisma, request));
+
+  app.get("/api/bridge/files", async (request, reply) => {
+    const query = z
+      .object({ q: z.string().max(200).optional(), on: z.string().max(400).optional(), limit: listLimit, offset: z.coerce.number().int().min(0).max(5000).default(0) })
+      .parse(request.query);
+    const on = query.on ? parseItemRef(query.on) : null;
+    if (query.on && (!on || !["task", "page", "project", "person", "repo"].includes(on.kind))) {
+      return reply.code(400).send({ error: "on names a task, page, project, person or repository: ensemble://<kind>/<id> or a Hub link." });
+    }
+    return listBridgeFiles(prisma, request.userId, { q: query.q, on, limit: query.limit, offset: query.offset });
+  });
+
+  app.get("/api/bridge/files/:id", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const query = z
+      .object({
+        text: flag,
+        offset: z.coerce.number().int().min(0).default(0),
+        limit: z.coerce.number().int().min(200).max(20_000).default(6000),
+        original: flag,
+      })
+      .parse(request.query);
+    const answer = await bridgeFile(prisma, request.userId, id, { text: query.text ? { offset: query.offset, limit: query.limit } : undefined, original: query.original });
+    if (!answer) return reply.code(404).send({ error: FILE_GONE });
+    return answer;
+  });
+
+  /** The original itself, any size, as Files serves it: for `saveTo` in the CLI's MCP server. */
+  app.get("/api/bridge/files/:id/original", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    return sendOriginal(prisma, request, reply, request.userId, id, FILE_GONE);
+  });
 
   /** Ensemble Node at a glance, read-only: the CLI's Node tab (docs/35 §11). */
   app.get("/api/bridge/node", async (request) => nodeOverview(prisma, request.userId));

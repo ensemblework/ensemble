@@ -1,6 +1,6 @@
 # Context Bridge
 
-The Context Bridge is Ensemble's MCP server for editors and agents. An agent uses it to read Ensemble: a brief for its task (where the task came from, who asked, the people and their roles, related work), any record and what it links to (the context graph, [03 §5](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs)), ranked search, tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files, diagrams and plots. A key made with changes allowed also runs Ensemble's everyday writes (tasks, pages, boards, diagrams, plots, files, projects, people, deliverables, meeting notes, comments; §5.1), and a key made with apps allowed uses the apps the person connected to Ensemble (§5.2).
+The Context Bridge is Ensemble's MCP server for editors and agents. An agent uses it to read Ensemble: a brief for its task (where the task came from, who asked, the people and their roles, related work), any record and what it links to (the context graph, [03 §5](03_MODULE_CONTEXT_ENGINE.md#5-shared-retrieval-and-briefs)), ranked search, tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files and their contents, diagrams and plots, and through the read actions everything else the assistant reads. A key made with changes allowed also runs Ensemble's writes (tasks, pages, boards, diagrams, plots, new files, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists, imports; §5.1), and a key made with apps allowed uses the apps the person connected to Ensemble (§5.2). A key works in its own space and in every other space its account owns (§4).
 
 The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model or app keys. The editor runs its own model; Ensemble supplies the records, runs the actions with the assistant's own tools, and calls the apps with the person's connections.
 
@@ -8,11 +8,11 @@ The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes ove
 
 | Way | For | How |
 |---|---|---|
-| **Ensemble CLI** | Hosted-site users on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's key: read-only unless task updates were allowed at `ensemble login` (§4, [26](26_CLI.md)) |
-| **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
+| **Ensemble CLI** | Hosted-site users on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's key and the grants approved at `ensemble login` (§4, [26](26_CLI.md)) |
+| **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps), and optionally `x-ensemble-space: <space id>` for the whole connection (§4). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
 | **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (§3) |
 
-All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tools are the same. The write tools are registered when the key may make changes and the app tools when it may use apps: the hosted endpoint reads that from the request's key, the CLI and the source build ask `GET /api/bridge/whoami` once at start (`buildServerForKey`). The hosted endpoint cannot see the editor's folder or disk, so `ensemble_brief` needs `task`, or `repo` and `branch`, there, and `ensemble_upload_file` takes the file's bytes (`dataBase64`) rather than a path; the CLI and the source build read the repository and branch from the working directory (`git rev-parse` and `origin`) and read a file from its `path`. Everything else (actions, connected apps) runs on Ensemble's side, so both ways have it.
+All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tools are the same. The write tools are registered when the key may make changes and the app tools when it may use apps: the hosted endpoint reads that from the request's key, the CLI and the source build ask `GET /api/bridge/whoami` once at start (`buildServerForKey`). The hosted endpoint cannot see the editor's folder or disk, so `ensemble_brief` needs `task`, or `repo` and `branch`, there, `ensemble_upload_file` takes the file's bytes (`dataBase64`) rather than a path, and `ensemble_get_file` cannot save a file (`saveTo`); the CLI and the source build read the repository and branch from the working directory (`git rev-parse` and `origin`), read a file from its `path` and save one into the working folder. Everything else (actions, connected apps) runs on Ensemble's side, so both ways have it.
 
 ## 2. Architecture
 
@@ -20,22 +20,27 @@ All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported a
 Editor / MCP client
     → stdio bridge | loopback HTTP bridge | hosted /mcp
     → apps/context-bridge/src/server.ts (buildServer)
-    → hub-api /api/bridge routes, scoped to the key's account and space
+    → hub-api /api/bridge routes, scoped to the key's space or another its account owns
     → bridge/service.ts over saved workspace records
 ```
 
 | Path | Responsibility |
 | --- | --- |
 | `apps/context-bridge/src/server.ts` | MCP tools and resources, their annotations; the write tools only for a key that may make changes, the app tools only for one that may use apps |
-| `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors |
+| `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors; the space a call names (`x-ensemble-space`) and file downloads |
+| `apps/context-bridge/src/spaces.ts` | The `space` argument every tool takes: an id or exact name, resolved from `GET /api/bridge/spaces` |
+| `apps/context-bridge/src/files.ts` | A file as MCP content (image, text, embedded resource) and where `saveTo` may write |
 | `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
 | `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
 | `apps/hub-api/src/bridge/routes.ts` | Read routes |
 | `apps/hub-api/src/bridge/write-routes.ts` | `whoami`, the task writes and file uploads (§5.1) |
 | `apps/hub-api/src/bridge/actions.ts`, `action-routes.ts` | The actions allowlist, listing and running actions and app tools (§5.1, §5.2) |
 | `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination; context and search over `context/graph/` |
+| `apps/hub-api/src/bridge/files.ts` | Files: details, summary and tags, Ensemble's text in parts, the original (§5) |
+| `apps/hub-api/src/bridge/spaces.ts` | The spaces a key's account can open and which of them the key may act in (§4) |
 | `apps/hub-api/src/bridge/resolve.ts` | Repository, branch and task resolution |
 | `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts, and which may write |
+| `apps/hub-api/src/lib/auth.ts` (`keyIdentity`) | The space a key acts in: its own, or another its account owns named by `x-ensemble-space` (§4) |
 | `apps/hub-api/src/bridge/gaps.ts` | Exclusion and missing-data text for `ensemble_gaps` (§7) |
 | `apps/hub-api/src/routes/mcp.ts` | Hosted Streamable HTTP |
 
@@ -58,7 +63,7 @@ The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `
 
 The Hub's **Connect your apps** page (`/connect`) creates a key, fills in this computer's paths and offers one-click install for VS Code and Cursor.
 
-1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge`, call `/mcp`, run the read actions and revoke itself at `/api/cli/logout`. Two grants, both ticked by default (`POST /api/connect/token`):
+1. **Connect your apps → Create a key.** The value starts with `ens_` and is shown once. It can read `/api/bridge` (files included, §5), call `/mcp`, run the read actions and revoke itself at `/api/cli/logout`. Two grants, both ticked by default (`POST /api/connect/token`):
    - **Let editors and agents make changes** (`canWrite`, `api_tokens.can_write`): the task writes, file uploads and every write action on the allowlist (§5.1).
    - **Let editors and agents use your connected apps** (`canUseApps`, `api_tokens.can_use_apps`): the apps' tools through Ensemble (§5.2); changing something in an app also needs the first grant.
 
@@ -73,6 +78,16 @@ export ENSEMBLE_BRIDGE_TOKEN=ens_...
 
 hub-api's `ENSEMBLE_INTERNAL_TOKEN` is the agent-runtime service credential and defaults to `dev-internal-token`, which hub-api warns about at startup. The bridge uses it only with `ENSEMBLE_BRIDGE_USE_INTERNAL_TOKEN=true`, and refuses the default value unless `ENSEMBLE_BRIDGE_ALLOW_DEFAULT_INTERNAL_TOKEN=true` is also set (local demos only, never on a shared network). Set a private one (`openssl rand -hex 32`) if anything besides this machine can reach port 4000. `ENSEMBLE_DEV_AUTH_BYPASS` is refused on `/api/bridge/*`.
 
+**Spaces.** A `bridge` or `full` key acts in the space it was made in (its default). A request that names another space with `x-ensemble-space: <space id>` acts there when the key's account owns it (`keyIdentity` in `apps/hub-api/src/lib/auth.ts`, checked with `openedSpace()` on every request): the account's own space and the spaces it created ([28](28_ENSEMBLE_SPACES.md)). The account is `api_tokens.account_id`, set when Connect your apps, Settings or `ensemble login` makes the key (migration `20261126100000_api_token_account`; `ensemble login` keeps the approving account on `cli_auth_requests.account_id` until the exchange). A key with no `account_id` acts for its own row's account when it was made in an account's own space, and stays in its space when it was made inside another. Refusals are one sentence and nothing falls back to another space:
+
+| Request names | Answer |
+|---|---|
+| A space the account cannot open | 404 "This key's account cannot open that space." |
+| A space shared with the account (a member's) | 403 "“‹space›” is shared with you, and keys act only in your own spaces: work there in Ensemble." The bridge's reads and actions act as a space's owner, and its routes are owner-only in the sharing policy ([29](29_SHARING.md)) |
+| Another space, with a key that has no `account_id` and was made inside a space | 404 "This key works only in “‹space›”: make a new key in Ensemble to reach your other spaces." |
+
+The MCP tools take the space as `space` (§5), `GET /api/bridge/spaces` lists the spaces, and `GET /api/bridge/whoami` says whether the key may name one. Device, hook and transfer keys and signed-in pages ignore the header; Ensemble Node's delegated requests use it with their own checks ([29 §2](29_SHARING.md#2-how-access-works)).
+
 Creating and revoking keys is a signed-in account action; a bridge key cannot mint another key.
 
 ## 5. Tools and resources
@@ -81,8 +96,8 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 |---|---|---|
 | `ensemble_brief` | — | The task: `task` (an `ensemble://task/<id>` handle, a Hub link, its id or its exact open title), else repository + branch. `workContext` is the task's context packet (`context/graph/packet.ts`, at most 7,000 characters: where it came from with the words asked, project, people with roles and relationship, dependencies, related open work, done before, each with a handle) and `contextRef` its handle; plus project, people, deliverables, files attached to the task, current skills (`howIWork`) and cited excerpts (`context`) |
 | `ensemble_context` | — | One record and what it links to (`GET /api/bridge/context`): `item` is a handle, a Hub link, or an id with `kind` (task, project, person, repo, deliverable, meeting, file, page, event). Returns the record and its relations, 6 each, every card with a `ref` to call again; `rel` lists one relation in full, paged with `offset` and `limit` (≤50); `format=packet` returns the Markdown packet (8,000 characters) |
-| `ensemble_search` | — | Ranked word search (`context/graph/search.ts`) across tasks, projects, people, repositories, deliverables, meeting notes with transcripts, standalone pages, files (by name, kind `document`), saved app items, skills, diagrams and plots; `kinds` filters, `near` (a handle) ranks what links to it first. Up to `limit` × 3 hits (at most 40), each with `ref`, `score` and `why` |
-| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task (with its meeting, dependencies, labels and deliverable), project, repo, skill, deliverable, person, artifact, document, meeting_note or meeting (the whole transcript, its people and the tasks made from it; a notes session's id reads its notes), approval, decision, diagram, plot, page |
+| `ensemble_search` | — | Ranked word search (`context/graph/search.ts`) across tasks, projects, people, repositories, deliverables, meeting notes with transcripts, standalone pages, files (by name and summary, kind `document`), saved app items, skills, diagrams and plots; `kinds` filters, `near` (a handle) ranks what links to it first. Up to `limit` × 3 hits (at most 40), each with `ref`, `score` and `why` |
+| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task (with its meeting, dependencies, labels and deliverable), project, repo, skill, deliverable, person, artifact, document (details and summary; its text and the file itself come from `ensemble_get_file`), meeting_note or meeting (the whole transcript, its people and the tasks made from it; a notes session's id reads its notes), approval, decision, diagram, plot, page |
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
 | `ensemble_repos` | `ensemble://repos`, `ensemble://repos/{id}` | Repositories |
@@ -95,6 +110,11 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 | `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts (read only) |
 | `ensemble_today` | `ensemble://today` | In the person's time zone: focus, proposed todos, tasks ready for review (`waiting_approval`), what others owe (open tasks labelled `waiting-on`), deliverables, meetings, Needs-me counts |
 | `ensemble_gaps` | `ensemble://gaps` | What the bridge cannot see or refuses to expose |
+| `ensemble_files` | None | The person's files, newest first (`GET /api/bridge/files`): name, format, media type, size, pages, summary, source app and handle. `query` matches the name, summary or text; `on` (a task, page, project, person or repository handle) lists the files on that record, as its page shows them; `limit` (≤50) and `offset` |
+| `ensemble_get_file` | None | One file (`GET /api/bridge/files/:id`, `bridge/files.ts`): its details (id, name, format, media type, size, pages, tags by name, created, link in Ensemble) and summary as JSON; `text: true` adds Ensemble's text of it in parts (`offset`, `limit` ≤20,000 characters); and the file itself unless `content: false`: a PNG, JPEG, GIF or WebP picture up to 5 MB as an `image` block, a text or code file as text (up to 200,000 characters), anything else (PDF, Office…) as an embedded `resource` with `blob` and media type. One answer carries a file up to 20 MB; a larger one is named with what to do. Through the CLI or a source build, `saveTo` writes the original into the working folder instead, any size (`GET /api/bridge/files/:id/original`): a path inside the folder, relative or absolute, never with `..`, never through or onto a symbolic link, and onto an existing file only with `overwrite: true` (`apps/context-bridge/src/files.ts`) |
+| `ensemble_spaces` | None | The spaces the key's account can open (`GET /api/bridge/spaces`): id, name, `access` (`own` or `member`) and `role`, the key's `default`, the request's `current`, and `usable` (false, with `refusal`, for a space shared with the account) |
+
+Every tool but `ensemble_spaces` takes an optional `space`: a space's id or exact name (compared as the space switcher compares names). `apps/context-bridge/src/spaces.ts` resolves it from `GET /api/bridge/spaces` (kept 30 seconds) and sends it as `x-ensemble-space` with each request of that call; hub-api checks it again (§4). A space shared with the account is refused before any call. Resources read the key's default space.
 
 ### 5.1 Changes in Ensemble
 
@@ -102,81 +122,99 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 
 | Tool | Route | What it does |
 |---|---|---|
-| `ensemble_actions` | `GET /api/bridge/actions` (`groups`, `names`, `schema`) | The actions this key may run, by group (`tasks`, `pages`, `boards`, `diagrams`, `plots`, `files`, `projects`, `people`, `meetings`, `comments`, `guides`), each with `write` and `allowed` (and `refusal` when not). With `names`, their full descriptions and `inputSchema` |
+| `ensemble_actions` | `GET /api/bridge/actions` (`groups`, `names`, `schema`) | The actions this key may run, by group (below), each with `write` and `allowed` (and `refusal` when not), and `limit` when a guard refuses some inputs; `notOffered` says what stays with the person. With `names`, their full descriptions and `inputSchema` |
 | `ensemble_act` | `POST /api/bridge/act/:name` `{input}` | Runs one action: the assistant's own Hub tool of that name (`bridge/actions.ts` `BRIDGE_ACTIONS`), with its validation, access checks, Undo entry and live refresh, at once (no Apply). A wrong input is a 400 with the action's `inputSchema`. Writes need changes allowed, are ledgered as `bridge.<tool>` with the key's name and answer `undoable` |
 | `ensemble_create_task` | `POST /api/bridge/write/tasks` | `{title, page?, projectId? \| projectName?, due? (YYYY-MM-DD), people? (names or ids), status? (proposed, default, or todo), from? (a handle)}`. Adds a task through `createTask` with actor `agent`: `page` becomes its page, `from` adds a `Related:` link to that record, names become person ids where one person has that name |
 | `ensemble_update_task` | `PATCH /api/bridge/write/tasks/:id` | `{status? (in_progress, waiting_approval, done, blocked, todo), note?, matchTitle?}`. A status follows the task state machine (a refused move lists the allowed ones); `note` is added to the task's page as an agent block titled "Update from <key name>"; a `matchTitle` that differs is a 409 |
 | `ensemble_upload_file` | `POST /api/bridge/write/files` | `{filename, dataBase64, mediaType?, attachTo?, summarize?}`; through the CLI or a source build, `path` (a file on the editor's computer) instead. Saved through `POST /api/documents` (the same checks, caps and text extraction as an upload in Files); `attachTo` (a task, page, project, person or repository handle) tags the file, and for a task or page adds `[@file](ensemble://file/<id>)` to the end of its page. Ledgered as `bridge.file.upload` |
 
-The allowlist (each name is the assistant's tool, [34](34_ASSISTANT_ACTIONS.md)):
+The allowlist (each name is the assistant's tool, [34](34_ASSISTANT_ACTIONS.md)). Reads run for every key; changes need changes allowed, and those marked *apps* also need apps allowed:
 
 | Group | Reads | Changes |
 |---|---|---|
 | guides | `hub_how_to` (the assistant's playbooks: boards, diagrams, plots…) | — |
-| tasks | `hub_list_tasks`, `hub_get_task`, `hub_read_task_page`, `hub_list_due` | `hub_create_tasks`, `hub_update_task` (title, status, owner, priority, due, labels, people, project, repository, deliverable, page), `hub_delete_task` (one, to Trash) |
-| pages | `hub_list_pages`, `hub_read_page`, `hub_read_page_blocks` | `hub_create_page`, `hub_update_page`, `hub_edit_page`, `hub_move_page`, `hub_delete_page` (one, to Trash). People and records are linked in a page as `[@Name](ensemble://person/<id>)` |
-| boards | `hub_list_boards`, `hub_read_board` | `hub_create_board`, `hub_update_board`, `hub_move_to_board` (a task or page into a column), `hub_remove_from_board`. Task status columns on the Ensemble board move with `hub_update_task` |
+| tasks | `hub_list_tasks`, `hub_get_task`, `hub_read_task_page`, `hub_list_due` | `hub_create_tasks`, `hub_update_task` (title, status, owner, priority, due, labels, people, project, repository, deliverable, page), `hub_delete_task`, `hub_delete_tasks` (many, to Trash) |
+| pages | `hub_list_pages`, `hub_read_page`, `hub_read_page_blocks` | `hub_create_page`, `hub_update_page`, `hub_edit_page`, `hub_move_page`, `hub_delete_page`, `hub_delete_pages`. People and records are linked in a page as `[@Name](ensemble://person/<id>)` |
+| boards | `hub_list_boards`, `hub_read_board` | `hub_create_board`, `hub_update_board`, `hub_move_to_board` (a task or page into a column), `hub_remove_from_board`, `hub_delete_board` (keeps its cards). Task status columns on the Ensemble board move with `hub_update_task` |
 | diagrams | `hub_list_diagrams`, `hub_get_diagram`, `hub_validate_diagram`, `hub_explain_diagram`, `hub_diagram_context` | `hub_create_diagram`, `hub_update_diagram`, `hub_edit_diagram` |
 | plots | `hub_list_plots`, `hub_get_plot`, `hub_list_datasets`, `hub_get_dataset` | `hub_import_dataset`, `hub_create_plot`, `hub_update_plot` |
-| files | `hub_list_files` (a file's bytes and Ensemble's extracted text are never sent, §5) | `hub_file_to_page`, `hub_export_page_file` (a new file only), and with apps allowed `hub_save_app_item_as_page`, `hub_import_app_file` |
-| projects | `hub_list_projects`, `hub_list_deliverables` | `hub_create_project`, `hub_update_project` (name, summary, notes, status, people, repositories), `hub_create_deliverable`, `hub_update_deliverable`, `hub_complete_deliverable` |
-| people | `hub_list_people`, `hub_list_repos` | `hub_create_person`, `hub_update_person` (role, team, relationship to the person), `hub_link_repo`, `hub_unlink_repo`, `hub_update_repo` |
-| meetings | `hub_list_meeting_notes`, `hub_read_meeting_note` | `hub_create_meeting_note`, `hub_update_meeting_note`, `hub_suggest_meeting_tasks` |
-| comments | `hub_read_record_details` | `hub_manage_record`: comments, restore from Trash, a page into a task (`convert_page`), file tags, copying or deleting a plot or diagram, a diagram's earlier version (not deleting a dataset) |
+| files | `hub_list_files`, `hub_file_edit_info` (the files themselves: `ensemble_get_file`, §5) | New files only: `hub_file_to_page`, `hub_export_page_file` (refuses `replaceFileId`), `hub_save_file` (from a web link), and *apps* `hub_save_app_item_as_page`, `hub_import_app_file` |
+| projects | `hub_list_projects`, `hub_list_deliverables` | `hub_create_project`, `hub_update_project` (name, summary, notes, status, people, repositories), `hub_create_deliverable`, `hub_update_deliverable`, `hub_complete_deliverable`, `hub_delete_deliverable` |
+| people | `hub_list_people`, `hub_list_repos` | `hub_create_person`, `hub_update_person` (role, team, relationship to the person), `hub_delete_person`, `hub_link_repo`, `hub_unlink_repo`, `hub_update_repo` |
+| meetings | `hub_list_meeting_notes`, `hub_read_meeting_note` | `hub_create_meeting_note`, `hub_update_meeting_note`, `hub_delete_meeting_note`, `hub_suggest_meeting_tasks`, *apps* `hub_import_meeting_notes` |
+| comments | `hub_read_record_details` | `hub_manage_record`: comments, restore any record from Trash, a page into a task (`convert_page`), file tags, copying or deleting a plot or diagram, renaming or deleting a dataset, a diagram's earlier version |
+| context | `hub_item_context`, `hub_search_work`, `hub_search_context`, `hub_read_context`, `hub_read_surface` (Today, Board, Context and the other screens), `hub_list_approvals` (Needs me) | `hub_delete_entity` (a project, repository or skill to Trash; refuses `document`), `hub_restore_entity` |
+| skills | `hub_list_skills`, `hub_read_skill` | `hub_manage_skill` (create, update, restore a version, delete) |
+| routines | `hub_list_routines` | `hub_create_routine`, `hub_update_routine` (edit, pause, resume; refuses `delete`) |
+| reminders | `hub_list_reminders`, `hub_list_watchers` | `hub_create_reminder`, `hub_update_reminder`, `hub_dismiss_reminder`, `hub_delete_reminder` |
+| desk | `hub_list_desk_items` | `hub_add_desk_item`, `hub_update_desk_item`, `hub_remove_desk_item` |
+| calendar | `hub_list_events`, `hub_weekly_recap` | None |
+| runs | `hub_list_activity`, `hub_list_runs`, `hub_get_run` | None |
+| agents | `hub_list_agent_sessions`, `hub_list_agent_options` | None |
+| code | `hub_repo_overview`, `hub_repo_read_file`, `hub_list_code_folders`, `hub_list_agent_changes` | None |
+| settings | `hub_find_setting`, `hub_get_settings`, `hub_list_model_choices` | None |
+| layouts | `hub_read_layout` | None |
+| imports | `hub_read_import`, *apps* `hub_preview_board_import` | *apps* `hub_start_board_import`, `hub_manage_import` (cancel, undo) |
+| relationships | `hub_list_connections`, `hub_list_app_relationships` | *apps* `hub_manage_app_relationship`, *apps* `hub_fetch_now` |
 
-An action runs in the key's own space as the person (route-backed tools call the API with the internal credential and `x-ensemble-user`), with the space's modules. A name the assistant has but the list does not (settings, skills, reminders, routines, imports, layouts, desk items, workflows, bulk deletes, deleting a board, person or deliverable, assigning to an agent, stopping runs) answers 404 naming the assistant and Ensemble Node.
+An action runs in the request's space (the key's own, or one it named, §4) as the person (route-backed tools call the API with the internal credential and `x-ensemble-user`), with the space's modules. What changes how Ensemble behaves or starts work stays with the person in Ensemble: a name the assistant has but the list does not answers 404 saying so (`hub_update_settings`, `hub_choose_model`, `hub_edit_layout`, `hub_stop_activity`, `hub_assign_to_agent`, `hub_run_workflow`, `hub_create_watcher`, `hub_cancel_watcher`, `hub_edit_file`; `hub_view_file` points to `ensemble_get_file`, and `hub_web_search` and `hub_read_web_page` are the assistant's own). Guards refuse deleting a file (`hub_delete_entity` kind `document`: "Files cannot be deleted from editors and agents; delete it in Ensemble."), deleting a routine and replacing a file's original (403). No action stops or deletes a run or starts the assistant.
 
-`GET /api/bridge/whoami` answers `{canWrite, canUseApps, apps (connected app names), spaceName, keyName}`. Writes are refused (403) for a key without changes allowed, device and hook keys, and every other route; a signed-in page and a full key may use them. Each write refreshes open pages (`task`, `page`, `documents` or `assistant.acted` events). `POST /api/bridge/act/*` and `/api/bridge/write/*` share the hosted MCP rate limit (`mcp`, 240 a minute).
+A coding agent Ensemble started keeps the everyday part of the list (`runActionCaller` in `workspace/context-tools.ts`): the entries not marked `keyOnly` in `BRIDGE_ACTIONS`, without deleting a dataset or restoring a skill or reminder; anything else answers "Agent runs cannot use ‹name›…" ([30 §9](30_ENGINES.md)).
+
+`GET /api/bridge/whoami` answers `{canWrite, canUseApps, apps (connected app names), spaceId, spaceName (the request's space), defaultSpace {id, name} (the key's own), crossSpace, crossSpaceNote?, keyName}`. Writes are refused (403) for a key without changes allowed, device and hook keys, and every other route; a signed-in page and a full key may use them. Each write refreshes open pages (`task`, `page`, `documents` or `assistant.acted` events). `POST /api/bridge/act/*` and `/api/bridge/write/*` share the hosted MCP rate limit (`mcp`, 240 a minute per space).
 
 ### 5.2 Connected apps
 
 | Tool | Route | What it does |
 |---|---|---|
-| `ensemble_apps` | `GET /api/bridge/apps` (`app`, `names`, `schema`) | The apps connected in the key's space (`assistant/connections.ts`), what Ensemble can do in each, apps that are connected but broken, and their tools (with `inputSchema` for one `app` or named tools). A key without apps allowed gets `{allowed: false, refusal}` |
+| `ensemble_apps` | `GET /api/bridge/apps` (`app`, `names`, `schema`) | The apps connected in the request's space (`assistant/connections.ts`), what Ensemble can do in each, apps that are connected but broken, and their tools (with `inputSchema` for one `app` or named tools). A key without apps allowed gets `{allowed: false, refusal}` |
 | `ensemble_app_call` | `POST /api/bridge/act/:tool` `{input}` | Calls one app tool with the person's own connection: the built-in Google Workspace, Microsoft 365, Zoom, DocuSign and Jira tools, `apps_search`/`apps_read`/`apps_post_update` across the apps Ensemble can search (Notion, GitHub, Linear, Slack, Figma, Vercel, Zotero, Hugging Face…, [31](31_CONNECTORS_IN_USE.md)), and each connected MCP server's own tools (`mcp_<server>_<tool>`) |
 
 Both tools exist only for a key with apps allowed. App tools are offered and checked as for the assistant (`assistant/apps.ts`): the suite connected, the product switched on, the scopes granted; app writes are left out when Settings → Assistant turns connected-app writes off. A change in an app also needs changes allowed, runs at once through `runOutsideWrite` (ledgered as `apps.<tool>`), and cannot be undone from Ensemble. Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys.
 
 ### 5.3 What each way in can do
 
-| | MCP (editors, agents, a run's server) | Hub assistant | Ensemble Node |
+| | MCP key (editors, agents) | Hub assistant | Ensemble Node |
 |---|---|---|---|
-| Read Ensemble, context graph | Yes | Yes | Yes, in every space its owner can open |
-| Everyday changes (§5.1) | With changes allowed; at once, Undo | Yes; Apply or at once, by write policy | Yes |
+| Read Ensemble, context graph, files and their contents | Yes, in every space the key's account owns | Yes | Yes, in every space its owner can open |
+| Read settings, layouts, runs, agent sessions, Needs me | Yes | Yes | Yes |
+| Changes to records (§5.1): tasks, pages, boards, diagrams, plots, projects, people, deliverables, meeting notes, comments, skills, routines, reminders, desk lists, imports, bulk deletes | With changes allowed; at once, Undo | Yes; Apply or at once, by write policy | Yes |
+| New files | With changes allowed | Yes | Yes |
 | Connected apps | With apps allowed | Yes | Yes |
-| Settings, model choice, skills, reminders, routines, watchers, imports, layouts | — | Yes (settings and skills wait for Apply) | Yes |
-| Bulk deletes; deleting boards, people, deliverables | — | Yes | Yes |
-| Assigning work to agents, runs, Needs me | Reads Needs me | Yes | Yes, plus its own sessions, computers and crews |
+| Settings, model choice, layouts | Read only | Yes (wait for Apply) | Yes |
+| Deleting a routine or a file; editing a file's original | No | Yes | Yes |
+| Assigning work to agents, workflows, watchers, stopping runs | No | Yes | Yes, plus its own sessions, computers and crews |
 
-A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, without the apps and only in its owner's own space ([30 §9](30_ENGINES.md)).
+A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, with the everyday part of the list (§5.1), without the apps and only in its owner's own space ([30 §9](30_ENGINES.md)).
 
-A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the key's account and space ([28](28_ENSEMBLE_SPACES.md)), and module and sharing checks still apply.
+A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the request's space: the key's own, or another its account owns (§4, [28](28_ENSEMBLE_SPACES.md)); module checks still apply.
 
-- **Files.** A `document` is a file's name, format, size, page count and link in Ensemble; its extracted text and summary are not sent, and search excerpts for a file show its name ([32](32_FILES.md), `files/extracted-text-policy.ts`). A task or page also lists its files. Original bytes are never sent.
+- **Files.** `ensemble_read` of a `document` gives a file's name, format, size, page count, summary and link in Ensemble, and search matches a file's name and summary. `ensemble_get_file` gives Ensemble's text of it when asked and the file itself (§5); the extracted text stays out of search, briefs and `ensemble_read` ([32](32_FILES.md), `files/extracted-text-policy.ts`). A task or page also lists its files. A key adds files (`ensemble_upload_file`, `hub_save_file`, page exports) and never edits an original or deletes a file.
 - **Pages.** `apps/hub-api/src/pages/agent-context.ts` adds the source of diagrams embedded in task and standalone pages, with space ownership checks. For the bridge, page bodies are bounded at 15,000 characters and diagram source at 20,000, then paginated. Converted source documents appear in the page's file citations (`files/attached.ts`).
-- **Skills.** Only the current body is returned. Older `SkillVersion` bodies are not exposed, and disabled or deleted skills are left out of briefs ([04](04_MODULE_SKILL_FORGE.md)).
+- **Skills.** Only the current body is returned. Older `SkillVersion` bodies are not exposed (`hub_read_skill` lists recent versions without them), and disabled or deleted skills are left out of briefs ([04](04_MODULE_SKILL_FORGE.md)).
 - **Trust labels.** Mail, chat, GitHub text, calendar invites, approval previews and editor tool inputs are labelled `trust: "untrusted"`; skills are `trusted`. The brief repeats that retrieved text is reference material, not instructions.
 - **Resolution.** A branch that matches no task, or several, is reported as such; the bridge never picks a similarly named task.
 
 ## 6. Limits
 
 - Search is ranked word matching plus graph links, not semantic: `Artifact.searchVector` and `ArtifactChunk.embedding` exist in the schema but nothing fills or queries them; enabling an embedding provider does not change this.
-- Excluded: private reminders, widget layouts, older skill bodies, approvals, and every change not on §5.1's list.
-- Files return supported extracted text only, not original bytes, OCR, audio or video.
+- Not given: older skill bodies; reminders and layouts only through the read actions. Not changed: anything off §5.1's list, and Needs-me answers.
+- Files: one answer carries an original up to 20 MB (`FILE_ANSWER_MAX_BYTES` in `bridge/files.ts`); a larger one comes through `saveTo` in the CLI or a source build, or `GET /api/bridge/files/:id/original`. Ensemble's text of a file is its extracted text: no OCR, audio or video.
+- Spaces: a key reaches the spaces its account owns. Spaces shared with the account are refused, and a key with no `account_id` made inside a space stays in that space (§4).
 - Connected-app copies can be stale until refreshed; bridge reads do not call vendor search.
 - The bridge returns stored text without a new redaction pass; ingest and file paths have their own redaction.
 - There is no OAuth authorization-server flow for external MCP clients. Use stdio or a static `Authorization` header.
 
-The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine runs asks questions for its run and runs the same actions under the job's lease. It is not the Context Bridge and does not widen an editor's `ens_` key ([30](30_ENGINES.md)).
+The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine runs asks questions for its run and runs the everyday actions under the job's lease. It is not the Context Bridge and does not widen an editor's `ens_` key ([30](30_ENGINES.md)).
 
 ## 7. What `ensemble_gaps` says
 
-`apps/hub-api/src/bridge/gaps.ts` lists what the bridge does not have or will not give, so a model does not invent it: no embedding search (retrieval is ranked words plus graph links), no redaction pass on bridge reads (ingest and file paths redact), mail, chats and transcripts only when the person saved or imported them, no layouts, private reminders or older skill bodies, which changes a key may make (§5.1) and how the connected apps are reached (§5.2). It is not the connector inventory ([31](31_CONNECTORS_IN_USE.md)).
+`apps/hub-api/src/bridge/gaps.ts` lists what the bridge does not have or will not give, so a model does not invent it: no embedding search (retrieval is ranked words plus graph links), no redaction pass on bridge reads (ingest and file paths redact), mail, chats and transcripts only when the person saved or imported them, layouts and reminders only through the read actions, no older skill bodies, files (the 20 MB answer and `saveTo`), other spaces (§4), which changes a key may make (§5.1) and how the connected apps are reached (§5.2). It is not the connector inventory ([31](31_CONNECTORS_IN_USE.md)).
 
 ## 8. Transports
 
 - **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` from the CLI.
-- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. A `Bearer ens_` key (bridge or full scope) is required; cookies, device keys and missing keys are refused; `GET` and `DELETE` return 405.
+- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. A `Bearer ens_` key (bridge or full scope) is required; cookies, device keys and missing keys are refused; `GET` and `DELETE` return 405. An `x-ensemble-space` header on the request goes with every call it makes, unless a tool names its own `space` (§4).
 - **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint; without it, `ensemble_upload_file` does not read a `path` (any process on the computer can reach a loopback port). The Hub token stays in the bridge process.
 
 hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.yml` publishes Postgres (`5432`) and Redis (`6379`) on `127.0.0.1` only, so use `127.0.0.1`, not `localhost`, in `DATABASE_URL` and `REDIS_URL`.
@@ -217,13 +255,14 @@ The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ens
 | Branch matches no open task | Repo and project context, no guessed task |
 | Branch matches several tasks | The candidates; none is chosen |
 | Nothing relevant | Says so |
+| A space the key cannot act in | One sentence saying why (§4); nothing falls back to another space |
 | Long body | Excerpt plus `ensemble_read` |
 
 ## 11. Tests
 
 ```bash
-pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, write gating; context, brief by task, ranked search, task writes, actions, uploads and apps on PGlite
-pnpm --filter @ensemble/context-bridge test    # in-memory MCP client, stdio, Streamable HTTP, mocked hub-api
+pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, write gating; context, brief by task, ranked search, task writes, actions, uploads, files, spaces and apps on PGlite
+pnpm --filter @ensemble/context-bridge test    # in-memory MCP client, stdio, Streamable HTTP, mocked hub-api, file content, saveTo rules, space
 pnpm bridge:verify                             # both, plus typecheck, build and dist smoke
 pnpm bridge:e2e                                # live Postgres, hub-api, both transports, security
 ```

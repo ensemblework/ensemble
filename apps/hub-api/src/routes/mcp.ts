@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildServer } from "@ensemble/context-bridge/server";
-import { HubError, type HubClient } from "@ensemble/context-bridge/hub";
+import { HubError, type HubCallOptions, type HubClient } from "@ensemble/context-bridge/hub";
 import { maxFileBytes } from "../files/store.js";
+import { NODE_SPACE_HEADER } from "../lib/auth.js";
 
 function bearerRejected(request: FastifyRequest): boolean {
   const authorization = request.headers.authorization;
@@ -26,12 +27,18 @@ function bridgePath(path: string, query?: Record<string, string | number | undef
   return search ? `${clean}?${search}` : clean;
 }
 
-function hubFor(app: FastifyInstance, authorization: string): HubClient {
-  const send = async (method: "GET" | "POST" | "PATCH", path: string, query?: Record<string, string | number | undefined>, body?: unknown) => {
+/**
+ * The bridge's routes through this process, with the caller's own key. A space the MCP request named
+ * (`x-ensemble-space`, already checked for this key in lib/auth.ts) goes with every call; a tool's own
+ * `space` argument replaces it for that call, and each call is checked again.
+ */
+function hubFor(app: FastifyInstance, authorization: string, requestSpace: string | undefined): HubClient {
+  const send = async (method: "GET" | "POST" | "PATCH", path: string, query?: Record<string, string | number | undefined>, body?: unknown, options?: HubCallOptions) => {
+      const space = options?.space ?? requestSpace;
       const response = await app.inject({
         method,
         url: bridgePath(path, query),
-        headers: { authorization, accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        headers: { authorization, accept: "application/json", ...(space ? { [NODE_SPACE_HEADER]: space } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
         ...(body === undefined ? {} : { payload: JSON.stringify(body) }),
       });
       if (response.statusCode >= 400) {
@@ -48,9 +55,9 @@ function hubFor(app: FastifyInstance, authorization: string): HubClient {
       return response.json() as unknown;
   };
   return {
-    get: (path, query) => send("GET", path, query),
-    post: (path, body) => send("POST", path, undefined, body),
-    patch: (path, body) => send("PATCH", path, undefined, body),
+    get: (path, query, options) => send("GET", path, query, undefined, options),
+    post: (path, body, options) => send("POST", path, undefined, body, options),
+    patch: (path, body, options) => send("PATCH", path, undefined, body, options),
   };
 }
 
@@ -62,8 +69,10 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
   app.post("/mcp", { bodyLimit: Math.ceil((maxFileBytes() * 4) / 3) + 256 * 1024 }, async (request, reply) => {
     const authorization = request.headers.authorization;
     if (bearerRejected(request) || !authorization) return bearerRequired(reply);
+    const named = request.headers[NODE_SPACE_HEADER];
+    const space = (Array.isArray(named) ? named[0] : named)?.trim() || undefined;
     const server = buildServer({
-      hub: hubFor(app, authorization),
+      hub: hubFor(app, authorization, space),
       detect: async () => ({}),
       // Changes: a full key, or a bridge key made with them allowed (bridge/auth.ts). Apps likewise.
       canWrite: request.tokenScope === "full" || (request.tokenScope === "bridge" && request.tokenCanWrite === true),

@@ -112,9 +112,10 @@ export async function answerContextTool(ctx: GraphCtx, taskId: string, name: Con
 }
 
 /**
- * Ensemble actions for an agent run (bridge/actions.ts): the same allowlist an editor's key has, as a
- * key made with changes allowed and without the connected apps. Offered to coding agents through the
- * run's MCP server; Ensemble's own agent has the assistant's tools instead.
+ * Ensemble actions for an agent run (bridge/actions.ts): the everyday part of an editor's allowlist
+ * (entries marked for keys only are left out), as a key made with changes allowed and without the
+ * connected apps. Offered to coding agents through the run's MCP server; Ensemble's own agent has the
+ * assistant's tools instead.
  */
 export const RUN_ACTION_TOOLS = ["ensemble_actions", "ensemble_act"] as const;
 export type RunActionToolName = (typeof RUN_ACTION_TOOLS)[number];
@@ -122,7 +123,7 @@ export const isRunActionTool = (name: string): name is RunActionToolName => (RUN
 
 /** What a run may do in its job's space: change Ensemble's records on the allowlist, never use the apps. */
 export const runActionCaller = (userId: string, modules: string | null | undefined) =>
-  ({ userId, modules: modules ?? null, authVia: "token" as const, tokenScope: "bridge" as const, tokenCanWrite: true, tokenCanUseApps: false, tokenId: undefined });
+  ({ userId, modules: modules ?? null, authVia: "token" as const, tokenScope: "bridge" as const, tokenCanWrite: true, tokenCanUseApps: false, tokenId: undefined, run: true });
 
 /** The answer to ensemble_actions or ensemble_act for a run, as text for the agent. */
 export async function answerRunAction(app: FastifyInstance, userId: string, modules: string | null | undefined, name: RunActionToolName, args: Record<string, unknown>): Promise<string> {

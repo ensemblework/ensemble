@@ -47,7 +47,7 @@ export function BridgeKey({
       <p className="text-[13.5px] leading-5 text-muted">
         {compact
           ? "Create the key here if you have not already. It is filled into the later steps."
-          : "One key for every app on this page. It starts with ens_ and reads your tasks, projects, people and meetings. With changes allowed it can also edit tasks, pages, boards, diagrams, plots, files, projects, people, deliverables and meeting notes (never settings, skills or bulk deletes; Undo has each change). With apps allowed it can use the apps you connected to Ensemble. Editor hooks in Settings use a different key that is allowed to ask you questions."}
+          : "One key for every app on this page. It starts with ens_ and reads everything in Ensemble, files included, in every space you own. With changes allowed it can also change tasks, pages, boards, diagrams, plots, projects, people, deliverables, meeting notes, skills, routines and reminders, and add files (never settings, runs or agents, and never deleting or editing a file; Undo has each change). With apps allowed it can use the apps you connected to Ensemble. Editor hooks in Settings use a different key that is allowed to ask you questions."}
       </p>
       <div className="mt-3">
         {fresh ? (
@@ -56,7 +56,7 @@ export function BridgeKey({
           <div className="flex flex-col gap-2">
             <label className="flex items-start gap-2 text-[13px] leading-5">
               <input type="checkbox" className="mt-0.5" checked={canWrite} onChange={(event) => setCanWrite(event.target.checked)} />
-              <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, files, projects, people, meeting notes)</span>
+              <span>Let editors and agents make changes (tasks, pages, boards, diagrams, plots, new files, projects, people, meeting notes, skills, routines, reminders)</span>
             </label>
             <label className="flex items-start gap-2 text-[13px] leading-5">
               <input type="checkbox" className="mt-0.5" checked={canUseApps} onChange={(event) => setCanUseApps(event.target.checked)} />
