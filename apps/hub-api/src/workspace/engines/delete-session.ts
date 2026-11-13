@@ -11,6 +11,7 @@ import { codexEnv } from "../../subscriptions/detect.js";
 import { ACP_AGENTS } from "./acp.js";
 import { codexBinary } from "./codex.js";
 import { RpcConnection } from "./rpc.js";
+import { removeClaudeDesktopSessions } from "./app-sessions.js";
 
 const SessionId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -102,6 +103,8 @@ export async function deleteNativeSession(engine: CodeEngine, sessionId: string,
       await removeHistory(root, [folder, engine === "claude-code" ? `${sessionId}.jsonl` : sessionId]);
       if (engine === "claude-code") await removeHistory(root, [folder, sessionId]);
     }
+    // Its entry in the Claude app's Code tab goes with it (app-sessions.ts).
+    if (engine === "claude-code") await removeClaudeDesktopSessions(sessionId);
     return;
   }
   if (engine === "copilot-cli") {

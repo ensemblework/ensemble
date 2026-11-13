@@ -67,6 +67,21 @@ function change<T>(app: FastifyInstance, userId: string, edit: (asks: Asks) => T
 }
 
 /** An ask began in this session: it stays at least until this one is answered. */
+/** What an ask session is called in the agent's own app: the page it belongs to. */
+export async function askSessionTitle(prisma: FastifyInstance["prisma"], userId: string, page: { kind: string; id: string }): Promise<string> {
+  const named = async (): Promise<string | null> => {
+    if (page.kind.startsWith("surface:")) return page.kind.slice("surface:".length).replace(/[-_]/g, " ").replace(/^./, (first) => first.toUpperCase());
+    if (page.kind === "task") return (await prisma.task.findFirst({ where: { id: page.id, userId }, select: { title: true } }))?.title ?? null;
+    if (page.kind === "project") return (await prisma.project.findFirst({ where: { id: page.id, userId }, select: { name: true } }))?.name ?? null;
+    if (page.kind === "deliverable") return (await prisma.deliverable.findFirst({ where: { id: page.id, userId }, select: { title: true } }))?.title ?? null;
+    if (page.kind === "page") return (await prisma.taskPage.findFirst({ where: { id: page.id, userId }, select: { title: true } }))?.title || null;
+    if (page.kind === "meeting") return (await prisma.meetingSession.findFirst({ where: { id: page.id, userId }, select: { title: true } }))?.title ?? null;
+    return null;
+  };
+  const title = await named().catch(() => null);
+  return title ? `Ask Ensemble: ${title}` : "Ask Ensemble";
+}
+
 export function askStarted(app: FastifyInstance, userId: string, key: string, page: { kind: string; id: string }, now = Date.now()): Promise<void> {
   return change(app, userId, (asks) => {
     asks[key] = { ...asks[key], kind: page.kind, id: page.id, started: now, since: asks[key]?.since ?? now };

@@ -43,6 +43,7 @@ import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
 import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
+import { addClaudeDesktopSession, codexProject, helpHas, nameCodexThread, sessionTitle } from "../workspace/engines/app-sessions.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 
 export type AgentTurnSpec = {
@@ -62,8 +63,9 @@ export type AgentTurnSpec = {
    * The chat this turn belongs to (`assistantTurns` 3): `key` names its session on this computer,
    * `history` is the chat so far, sent only when the turn starts a new session, and `position` how
    * many messages the chat had before this one (a session resumes only where it left the chat).
+   * `title` names a new session in the agent's own app (app-sessions.ts); older computers ignore it.
    */
-  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number } | null;
+  session?: { key: string; history: string; position?: number; group?: SessionGroup; keepDays?: number; title?: string } | null;
   /**
    * The agent's own web search and page reading (Claude Code's WebSearch and WebFetch, Codex's live
    * web_search, Copilot's web_search and web_fetch): on the person's plan, so a node reads the web
@@ -174,7 +176,7 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string; name?: string | null }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
@@ -202,6 +204,8 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     "--setting-sources",
     "user",
     ...(input.session ? (input.session.resume ? ["--resume", input.session.id] : ["--session-id", input.session.id]) : ["--no-session-persistence"]),
+    // A new session's name in Claude's own lists, in place of its first message (Ensemble's instructions).
+    ...(input.session && !input.session.resume && input.name ? ["--name", input.name] : []),
     "--max-turns",
     String(input.maxTurns),
     ...(launch.model ? ["--model", launch.model] : []),
@@ -214,7 +218,9 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const mcpFile = join(own ?? folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude") }), {
+  const title = sessionTitle(spec.session?.title);
+  const name = session && !session.resume && title && (await helpHas(bin, ["--help"], "--name", agentEnv({}))) ? title : null;
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude"), name }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
@@ -277,6 +283,8 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
     if (session && /unknown option.{0,20}(--session-id|--resume)/i.test(said)) throw new SessionUnsupported(said.trim());
     if (failure) throw agentProblem(spec.agent, failure);
     if (code !== 0 || !finished) throw agentProblem(spec.agent, stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
+    // A new chat session is listed in the Claude app's Code tab too (app-sessions.ts).
+    if (session && !session.resume) await addClaudeDesktopSession({ cliSessionId: session.id, cwd: folder, title, model: result.model });
     return { ...result, session: session?.id ?? null };
   } finally {
     tools.close();
@@ -390,6 +398,14 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
       },
     };
     const { serviceName: _serviceName, ephemeral: _ephemeral, ...resumeSettings } = settings;
+    // An Ensemble Node's chats share its project folder: in the Codex app they are that project's (app-sessions.ts).
+    const group = !session?.resume && session && spec.session?.group ? spec.session.group : null;
+    const projectId = group ? await codexProject(server, { id: group.id, name: group.name, folder }) : null;
+    const start = (params: typeof settings & { projectId?: string }) =>
+      server.request("thread/start", spec.ownTools ? params : { ...params, environments: [] }).catch((error: Error) => {
+        if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", params);
+        throw error;
+      });
     // No environment: Codex's own shell and file tools are not there at all. A resumed thread does not
     // keep that, so every turn asks for it again (turn/start below).
     const thread = (
@@ -397,13 +413,16 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         ? await server.request("thread/resume", { threadId: session.id, ...resumeSettings }).catch((error: Error) => {
             throw new SessionGone(error.message);
           })
-        : await server.request("thread/start", spec.ownTools ? settings : { ...settings, environments: [] }).catch((error: Error) => {
-            if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", settings);
+        : await start(projectId ? { ...settings, projectId } : settings).catch((error: Error) => {
+            // A project removed in the Codex app since: the thread starts outside any project.
+            if (projectId && /project/i.test(error.message)) return start(settings);
             throw error;
           })
     ) as { thread?: { id?: string }; model?: string };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw agentProblem("codex", "it did not start a conversation");
+    // Named after the chat in the Codex app, not after its first message (Ensemble's instructions).
+    if (session && !session.resume) await nameCodexThread(server, threadId, sessionTitle(spec.session?.title));
     result.model = thread.model ?? model;
     const effort = chosen(spec.effort);
     const turnParams = { threadId, input: codexInput(spec.prompt, files), sandboxPolicy: spec.ownTools ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false }, ...(effort ? { effort } : {}) };
@@ -613,7 +632,7 @@ export function copilotPrompt(head: string, sections: string[], platform?: NodeJ
 }
 
 /** The arguments for Copilot CLI (exported for tests). */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null; pluginDir?: string | null }): string[] {
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null; pluginDir?: string | null; name?: string | null }): string[] {
   const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -644,6 +663,8 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     `@${input.mcpFile}`,
     // The chat's session: started with this id on the first turn, resumed by it after.
     ...(input.sessionId ? ["--session-id", input.sessionId] : []),
+    // A new session's name in Copilot's lists (VS Code's sessions too), in place of Ensemble's instructions.
+    ...(input.name ? ["--name", input.name] : []),
     ...(input.attachments ?? []).flatMap((path) => ["--attachment", path]),
     ...(chosen(input.model) ? ["--model", input.model!] : []),
     ...(chosen(input.effort) ? ["--reasoning-effort", input.effort!] : []),
@@ -667,7 +688,9 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   const oneOff = !session && stdin ? randomUUID() : null;
   // Its own tools need a Copilot that loads a plugin for one run; an older one has only Ensemble's.
   const pluginDir = spec.ownTools && (await copilotTakesPlugins(bin)) ? await writeCopilotFloorPlugin(join(own ?? folder, "copilot-floor"), chatHookCommand("copilot-cli")) : null;
-  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir }), {
+  const title = sessionTitle(spec.session?.title);
+  const name = session && !session.resume && title && (await helpHas(bin, ["help"], "--name", copilotEnv({}))) ? title : null;
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir, name }), {
     cwd: folder,
     // A hook of the person's own Ensemble connection (`ensemble hooks connect`) stays out of the turn.
     env: copilotEnv({ ...mcp.env, ENSEMBLE_RUN: "assistant-turn" }),

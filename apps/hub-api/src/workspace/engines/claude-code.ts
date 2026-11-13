@@ -36,6 +36,7 @@ import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneErro
 import { windowTier } from "./observed.js";
 import { skillRootsHere } from "./skills.js";
 import { EngineTrace } from "./trace.js";
+import { addClaudeDesktopSession, helpHas, sessionTitle } from "./app-sessions.js";
 
 export type EngineResult = {
   text: string;
@@ -223,6 +224,9 @@ export async function runClaudeCode(
   const launch = claudeLaunch({ model: options.model, effort: options.effort, context: options.context ?? null, fast: options.fast === true });
   const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, filesystem, fast: launch.fast === true });
   for (const note of launch.notes) await ctx.event("engine_note", { note });
+  // A new session is named after the task in Claude's own lists (app-sessions.ts), not after its prompt.
+  const title = options.resume || options.chat ? null : sessionTitle(ctx.taskTitle);
+  const name = title && (await helpHas(claude, ["--help"], "--name")) ? title : null;
   const args = [
     "-p",
     options.prompt,
@@ -246,6 +250,7 @@ export async function runClaudeCode(
     ...(launch.effort ? ["--effort", launch.effort] : []),
     // The next message in a chat: the same Claude Code session, so it remembers the conversation.
     ...(options.resume ? ["--resume", options.resume] : []),
+    ...(name ? ["--name", name] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
   const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...mcpEnv(credential, options.chat === true), MCP_TOOL_TIMEOUT: String(86_400_000) };
@@ -260,6 +265,7 @@ export async function runClaudeCode(
   let lastInput = 0;
   let failure: string | null = null;
   let started = false;
+  let sessionId: string | null = null;
   let stderr = "";
   const stop = () => {
     if (!child.pid) return;
@@ -291,6 +297,7 @@ export async function runClaudeCode(
       if (message.type === "system" && message.subtype === "init") {
         started = true;
         result.model = typeof message.model === "string" ? message.model : null;
+        sessionId = typeof message.session_id === "string" ? message.session_id : null;
         // What Claude Code says it runs (node/settings.ts observed): its model; the window comes with the result.
         await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null, observed: { ...(result.model ? { model: result.model } : {}) } });
         await ctx.progress(`Claude Code started${result.model ? ` (${result.model})` : ""}`);
@@ -358,6 +365,8 @@ export async function runClaudeCode(
           : `Claude Code exited with ${code}. ${stderr.trim().split("\n").slice(0, 8).join(" | ").slice(0, 700)}`,
       );
     }
+    // A task's new session is listed in the Claude app's Code tab, in its project folder (app-sessions.ts).
+    if (sessionId && title) await addClaudeDesktopSession({ cliSessionId: sessionId, cwd: ctx.root, title, model: result.model });
     return result;
   } finally {
     ctx.signal.removeEventListener("abort", stop);

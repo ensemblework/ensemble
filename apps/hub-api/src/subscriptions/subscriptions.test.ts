@@ -235,10 +235,12 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.equal(after("--allowedTools"), "mcp__ensemble");
   assert.equal(after("--setting-sources"), "user", "the person's own settings, where Claude Code keeps how it signs in; never a folder's");
   assert.ok(args.includes("--no-session-persistence"), "a one-off turn saves no session");
-  const first = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: false } });
+  const first = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: false }, name: "Plan the launch" });
   assert.equal(first[first.indexOf("--session-id") + 1], "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", "a chat's first turn starts its session with that id");
+  assert.equal(first[first.indexOf("--name") + 1], "Plan the launch", "named after the chat in Claude's lists, not after Ensemble's instructions");
   assert.ok(!first.includes("--no-session-persistence") && !first.includes("--resume"));
-  const next = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: true } });
+  const next = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, session: { id: "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", resume: true }, name: "Plan the launch" });
+  assert.ok(!next.includes("--name"), "a resumed session keeps its name");
   assert.equal(next[next.indexOf("--resume") + 1], "4b0f8c1e-9d2a-4c55-8f31-0a6c2e9d7b11", "its next turn resumes it");
   assert.ok(next.includes("--system-prompt-file"), "the instructions go with every turn: Claude Code does not keep them in the session");
   assert.ok(args.includes("--include-partial-messages"));

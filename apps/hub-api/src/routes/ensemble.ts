@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { ActAs, MODULE_DENIED, hasModule, isSubscriptionProvider, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn } from "../assistant/agent.js";
-import { ASK_KEEP_DAYS, askAnswered, askInLine, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
+import { ASK_KEEP_DAYS, askAnswered, askInLine, askSessionKey, askSessionTitle, askStarted } from "../assistant/ask-sessions.js";
 import { loadSettings } from "../lib/settings.js";
 import { citeAnswer } from "../ensemble/citations.js";
 import { SURFACE_IDS, loadSurfaceContext } from "../ensemble/surfaces.js";
@@ -144,7 +144,7 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
         userId: request.userId,
         modules: request.modules,
         conversationId: conversation.id,
-        ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS } } : {}),
+        ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS, title: await askSessionTitle(app.prisma, request.userId, page) } } : {}),
         message: body.prompt,
         page: { path: `/${body.surface}`, label: body.surface },
         settings,

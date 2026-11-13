@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/agent-runtime",
-  "version": "0.7.16",
+  "version": "0.7.17",
   "private": true,
   "scripts": {
     "dev": "bash ../../scripts/agent-dev.sh"

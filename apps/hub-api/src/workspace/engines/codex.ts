@@ -30,6 +30,8 @@ import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
+import { codexProject, nameCodexThread, sessionTitle } from "./app-sessions.js";
+import { agentProjectOf } from "../agent-projects.js";
 import { codexProviderKey, codexProviderKeyEnv } from "../../subscriptions/detect.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
@@ -352,16 +354,25 @@ export async function runCodex(
         },
       },
     };
+    // A task of an Ensemble project works in that project in the Codex app (app-sessions.ts).
+    const project = !options.resume && !options.chat ? agentProjectOf(ctx.job.context) : null;
+    const projectId = project ? await codexProject(server, { id: project.id, name: project.name, folder: project.folder ?? ctx.root }) : null;
     // The next message in a chat continues the same Codex thread, with this run's settings.
     const thread = (
       options.resume
         ? await server.request("thread/resume", { threadId: options.resume, ...settings }).catch((error: Error) => {
             throw new SessionGoneError(`Codex could not reopen the chat's thread: ${error.message}`);
           })
-        : await server.request("thread/start", { ...settings, serviceName: "ensemble" })
+        : await server.request("thread/start", { ...settings, serviceName: "ensemble", ...(projectId ? { projectId } : {}) }).catch((error: Error) => {
+            // A project removed in the Codex app since: the thread starts outside any project.
+            if (projectId && /project/i.test(error.message)) return server.request("thread/start", { ...settings, serviceName: "ensemble" });
+            throw error;
+          })
     ) as { thread?: { id?: string }; model?: string; reasoningEffort?: string | null };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw new Error("Codex did not start a thread.");
+    // Named after the task in the Codex app, not after its prompt.
+    if (!options.resume && !options.chat) await nameCodexThread(server, threadId, sessionTitle(ctx.taskTitle));
     result.model = thread.model ?? null;
     // What Codex says the thread runs: its model, and its thinking level unless the turn sets one (which Codex does not echo).
     const observedEffort = !options.effort && typeof thread.reasoningEffort === "string" && thread.reasoningEffort ? thread.reasoningEffort : null;
