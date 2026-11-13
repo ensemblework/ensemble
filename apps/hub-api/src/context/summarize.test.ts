@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { couldNotOpen, enrichOne, planTakesFile, settleSummary, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
+import { capSummary, couldNotOpen, enrichOne, planTakesFile, settleSummary, SUMMARY_WORDS, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
 
 function memoryStore(row: SummaryRow & { status: string }): SummaryStore & { status: string; outcome: SummaryOutcome | null; claims: number } {
   const box = { status: row.status, outcome: null as SummaryOutcome | null, claims: 0, text: row.text, filename: row.filename, id: row.id };
@@ -62,6 +62,25 @@ test("a picture with no text is summarized from the file itself", async () => {
   });
   assert.deepEqual(outcome, { status: "done", summary: "A screenshot of the Settings page." });
   assert.equal((given as SummaryRow | null)?.filename, "screenshot.png");
+});
+
+test("a summary is at most 250 words, ended at a whole sentence when one fits", () => {
+  const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+  const short = "A quarterly report on Fieldnote's revenue, with charts for Q1 to Q3.";
+  assert.equal(capSummary(short), short);
+  // 30 sentences of 10 words: cut back to the 25th sentence's end.
+  const long = Array.from({ length: 30 }, (_, index) => `Sentence ${index + 1} names Mira Chen, Fieldnote and the Q3 "plan."`).join(" ");
+  const capped = settleSummary(long, null);
+  assert.equal(capped.status, "done");
+  const kept = (capped as { summary: string }).summary;
+  assert.equal(SUMMARY_WORDS, 250);
+  assert.ok(words(kept) <= SUMMARY_WORDS, `${words(kept)} words`);
+  assert.match(kept, /Sentence 25 names Mira Chen, Fieldnote and the Q3 "plan\."$/, "the closing quote stays with its sentence");
+  // No sentence ends in the kept part: whole words, marked as cut.
+  const run = Array.from({ length: 400 }, (_, index) => `word${index}`).join(" ");
+  const cut = capSummary(run);
+  assert.equal(words(cut), SUMMARY_WORDS);
+  assert.match(cut, /word249…$/);
 });
 
 test("an empty model reply is a failure", () => {
