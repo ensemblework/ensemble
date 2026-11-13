@@ -221,15 +221,18 @@ export function parseSubscriptionAgents(value: unknown): SubscriptionAgent[] {
 
 /**
  * The computer-side protocol for assistant turns (capabilities `assistantTurns`): 1 runs turns, 2
- * also takes the files attached to the person's message, 3 keeps one agent session per chat.
+ * also takes the files attached to the person's message, 3 keeps one agent session per chat, 4 lets
+ * the agent keep its own tools in a chat (`ownTools`), judged only by the hard floor.
  */
-export const ASSISTANT_TURNS_API = 3;
+export const ASSISTANT_TURNS_API = 4;
 /** The oldest `assistantTurns` that runs assistant turns at all. */
 export const ASSISTANT_TURNS_MIN = 1;
 /** The first `assistantTurns` that takes the message's files; older computers get Ensemble's text of them in the message. */
 export const ASSISTANT_TURN_FILES = 2;
 /** The first `assistantTurns` that keeps a chat's agent session; older computers get the chat so far in every message. */
 export const ASSISTANT_TURN_SESSIONS = 3;
+/** The first `assistantTurns` that runs a chat with the agent's own tools; older computers keep only Ensemble's. */
+export const ASSISTANT_TURN_OWN_TOOLS = 4;
 /**
  * The computer-side protocol for deleting a chat's agent session when the person deletes the chat
  * (capabilities `assistantSessionDelete`, frame `assistant.session.delete`).

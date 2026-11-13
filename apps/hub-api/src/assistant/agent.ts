@@ -37,6 +37,7 @@ import {
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { recordMetric } from "../lib/metrics.js";
+import { bindAiContext, logAi, withAiContext } from "../lib/ai-activity.js";
 import { callCost } from "../lib/pricing.js";
 import {
   beginActivity,
@@ -224,6 +225,19 @@ export function abortAssistantTurn(conversationId: string): void {
 }
 
 export async function runAssistantTurn(args: AssistantTurnArgs): Promise<AssistantTurnResult> {
+  // Each model and tool call of the turn goes in the person's AI activity with these (lib/ai-activity.ts).
+  const page = args.page;
+  return withAiContext(
+    {
+      userId: args.userId,
+      purpose: args.purpose ?? "Hub chat",
+      refs: { conversation: args.conversationId, message: args.messageId, session: args.subscription?.sessionKey, page: page?.path, task: page?.taskId, project: page?.projectId, meeting: page?.meetingId },
+    },
+    () => assistantTurn(args),
+  );
+}
+
+async function assistantTurn(args: AssistantTurnArgs): Promise<AssistantTurnResult> {
   const { app, userId } = args;
   const activityId = `assistant:${args.conversationId}`;
   const stop = new AbortController();
@@ -388,13 +402,15 @@ async function drive(
       }),
       USE_TOOL,
     ];
-    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true };
+    // A chat, Ask Ensemble or a routine keeps the agent's own tools too; a node's turn reaches the computer through Ensemble's tools, where its owner approves.
+    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true, ownTools: args.subscription?.node !== true };
     // A node does long work on a computer (two steps per browser action); the relay takes at most 64 turns.
     const maxCalls = Math.min(60, args.subscription?.maxCalls ?? MAX_COMPUTER_CALLS);
     const conversation = agentConversation(messages, agent, how);
     const pendingProjectNames: string[] = [];
     let used = 0;
-    const call = async (name: string, input: unknown): Promise<ToolAnswer> => {
+    // A call relayed from the computer arrives as its own request: it keeps this turn's AI activity context.
+    const call = bindAiContext(async (name: string, input: unknown): Promise<ToolAnswer> => {
       if (stop.signal.aborted) return { text: JSON.stringify({ error: "The person stopped this turn." }), isError: true };
       const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
       const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
@@ -417,7 +433,7 @@ async function drive(
       const loaded = Boolean(playbook && !active.has(playbook.name));
       if (playbook && loaded) active.set(playbook.name, playbook);
       return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
-    };
+    });
     try {
       const done = await runSubscriptionTurn({
         userId,
@@ -426,6 +442,8 @@ async function drive(
         model: args.model,
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
+        // A computer whose Ensemble is too old for the agent's own tools is told it has only Ensemble's.
+        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(messages, agent, { ...how, ownTools: false }).system } : {}),
         prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
@@ -444,6 +462,7 @@ async function drive(
         tools: toolSpecs(),
         maxTurns: Math.min(64, maxCalls + 4),
         ownWeb: how.ownWeb,
+        ownTools: how.ownTools,
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         call,
@@ -804,7 +823,31 @@ export function holdsAssistantWrite(
   return !(inlineArtifacts && (toolName === "hub_create_diagram" || toolName === "hub_create_plot"));
 }
 
+/** One of Ensemble's tools, run for the model: kept in the person's AI activity with its input and what the model was told. */
 async function runOne(
+  base: ToolContext,
+  args: AssistantTurnArgs,
+  requested: { id: string; name: string; arguments: string },
+  offered: ReadonlyMap<string, AnyHubTool>,
+  known: ReadonlyMap<string, AssistantRef> = new Map(),
+): Promise<CallOutcome> {
+  const started = Date.now();
+  const outcome = await runTool(base, args, requested, offered, known);
+  logAi({
+    kind: "tool.call",
+    userId: base.userId,
+    app: "ensemble",
+    name: requested.name,
+    ok: outcome.call.state !== "failed",
+    durationMs: Date.now() - started,
+    input: outcome.call.input ?? requested.arguments,
+    output: outcome.forModel,
+    meta: { state: outcome.call.state, area: outcome.call.area, ...(outcome.call.isWrite ? { write: true } : {}), ...(outcome.pictures?.length ? { pictures: outcome.pictures.length } : {}) },
+  });
+  return outcome;
+}
+
+async function runTool(
   base: ToolContext,
   args: AssistantTurnArgs,
   requested: { id: string; name: string; arguments: string },

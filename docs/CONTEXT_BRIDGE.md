@@ -167,7 +167,7 @@ A coding agent Ensemble started keeps the everyday part of the list (`runActionC
 
 | Tool | Route | What it does |
 |---|---|---|
-| `ensemble_apps` | `GET /api/bridge/apps` (`app`, `names`, `schema`) | The apps connected in the request's space (`assistant/connections.ts`), what Ensemble can do in each, apps that are connected but broken, and their tools (with `inputSchema` for one `app` or named tools). A key without apps allowed gets `{allowed: false, refusal}` |
+| `ensemble_apps` | `GET /api/bridge/apps` (`app`, `names`, `schema`) | The apps connected in the request's space (`assistant/connections.ts`), what Ensemble can do in each, apps that are connected but broken, and their tools, each with its first sentence (all of an MCP server's switched-on tools, not one assistant turn's share: `appCatalog`); `app` narrows it to one app, and named tools come with their full description and `inputSchema`. A key without apps allowed gets `{allowed: false, refusal}` |
 | `ensemble_app_call` | `POST /api/bridge/act/:tool` `{input}` | Calls one app tool with the person's own connection: the built-in Google Workspace, Microsoft 365, Zoom, DocuSign and Jira tools, `apps_search`/`apps_read`/`apps_post_update` across the apps Ensemble can search (Notion, GitHub, Linear, Slack, Figma, Vercel, Zotero, Hugging Face…, [31](31_CONNECTORS_IN_USE.md)), and each connected MCP server's own tools (`mcp_<server>_<tool>`) |
 
 Both tools exist only for a key with apps allowed. App tools are offered and checked as for the assistant (`assistant/apps.ts`): the suite connected, the product switched on, the scopes granted; app writes are left out when Settings → Assistant turns connected-app writes off. A change in an app also needs changes allowed, runs at once through `runOutsideWrite` (ledgered as `apps.<tool>`), and cannot be undone from Ensemble. Calls run on Ensemble's server, so the hosted URL and the CLI reach the same apps and the editor needs no app keys.
@@ -185,7 +185,7 @@ Both tools exist only for a key with apps allowed. App tools are offered and che
 | Deleting a routine or a file; editing a file's original | No | Yes | Yes |
 | Assigning work to agents, workflows, watchers, stopping runs | No | Yes | Yes, plus its own sessions, computers and crews |
 
-A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, with the everyday part of the list (§5.1), without the apps and only in its owner's own space ([30 §9](30_ENGINES.md)).
+A coding agent that Ensemble starts on a paired computer has `ensemble_actions` and `ensemble_act` in its run's own MCP server, under the job's lease, with the everyday part of the list (§5.1), and `ensemble_apps` and `ensemble_app_call` with the connected apps as above (§5.2; the person's own agent in Chat has the apps too), only in its owner's own space ([30 §9](30_ENGINES.md)). So every way an agent reaches Ensemble (a key in an editor, a run Ensemble starts, the assistant, a node) reaches the person's connected apps through it.
 
 A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the request's space: the key's own, or another its account owns (§4, [28](28_ENSEMBLE_SPACES.md)); module checks still apply.
 

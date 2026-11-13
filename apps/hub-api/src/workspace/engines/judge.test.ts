@@ -7,7 +7,7 @@ import type { WorkspaceJob } from "@prisma/client";
 
 // tools.ts pulls in the API config. A unit run has no .env; the value is never connected to.
 process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop";
-const { judgeEngineCall, shellSegments } = await import("./judge.js");
+const { hookCall, judgeEngineCall, judgeFloor, shellSegments } = await import("./judge.js");
 const { readsOnly } = await import("../tools.js");
 const { claudeFilesystem, claudeSettings } = await import("./claude-code.js");
 type Ctx = Parameters<typeof judgeEngineCall>[0];
@@ -518,5 +518,34 @@ test("a sandbox without a deny list never gets a writable root that holds a clos
     assert.deepEqual((await openRoots([join(base, "linked")], closed)).sort(), [join(base, "code", "more"), join(base, "code", "other")].sort());
   } finally {
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("an assistant turn's own tools run unasked; only the hard floor refuses", async () => {
+  const chat = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
+  try {
+    const shell = (command: string) => judgeFloor(chat, hookCall("Bash", { command }));
+    // What the person may ask for: files in the chat's folder or anywhere of theirs, commands, the web.
+    assert.equal((await shell("printf '# Notes' > notes.md && ls -la")).decision, "allow");
+    assert.equal((await shell("mkdir -p ~/Desktop/ensemble-notes && cp notes.md ~/Desktop/ensemble-notes/")).decision, "allow");
+    assert.equal((await judgeFloor(chat, hookCall("Write", { file_path: "~/Documents/plan.md" }))).decision, "allow");
+    assert.equal((await judgeFloor(chat, hookCall("Read", { file_path: join(chat, "files", "q3.pdf") }))).decision, "allow");
+    assert.equal((await judgeFloor(chat, hookCall("WebFetch", { url: "https://example.com" }))).decision, "allow");
+    assert.equal((await judgeFloor(chat, hookCall("mcp__ensemble__hub_list_tasks", {}))).decision, "allow");
+    // GitHub Copilot's names for the same tools.
+    assert.equal((await judgeFloor(chat, hookCall("bash", { command: "echo hi" }))).decision, "allow");
+    assert.equal((await judgeFloor(chat, hookCall("create", { path: "~/Desktop/x.md" }))).decision, "allow");
+    // The hard floor: keys and sign-ins, privilege and persistence programs, dangerous commands.
+    const key = await shell("cat ~/.ssh/id_rsa");
+    assert.equal(key.decision, "deny");
+    assert.match(key.message ?? "", /keys, sign-ins/);
+    assert.equal((await shell("cd ~/.ssh && cat id_rsa")).decision, "deny", "a plain argument in a folder it moved to");
+    assert.equal((await judgeFloor(chat, hookCall("view", { path: "~/.aws/credentials" }))).decision, "deny");
+    assert.match((await shell("sudo softwareupdate -i -a")).message ?? "", /privilege, persistence or system settings/);
+    assert.equal((await shell("launchctl load ~/Library/LaunchAgents/x.plist")).decision, "deny");
+    assert.equal((await shell("rm -rf / --no-preserve-root")).decision, "deny");
+    assert.equal((await judgeFloor(chat, hookCall("Write", { file_path: "~/.zshrc" }))).decision, "deny", "start-up files are not changed");
+  } finally {
+    rmSync(chat, { recursive: true, force: true });
   }
 });

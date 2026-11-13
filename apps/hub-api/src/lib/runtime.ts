@@ -22,6 +22,7 @@ import { requireHostAccess, requireVerifiedUser } from "./hosted-access.js";
 import { keysFor } from "../sharing/context.js";
 import { effortToSend } from "./model-meta.js";
 import { jsonFrom, runSubscriptionTurn } from "../subscriptions/turn.js";
+import { logAi, withAiContext } from "./ai-activity.js";
 
 export { RuntimeError };
 
@@ -110,7 +111,7 @@ export async function complete(args: {
     throw new RuntimeError("The agent is paused. Resume it from the top bar to allow model calls.", 409);
   }
   const parent = currentActivity(args.userId);
-  if (parent) return completeRequest(args, args.signal ? AbortSignal.any([parent.signal, args.signal]) : parent.signal);
+  if (parent) return withAiContext({ userId: args.userId, purpose: args.purpose ?? "Other" }, () => completeRequest(args, args.signal ? AbortSignal.any([parent.signal, args.signal]) : parent.signal));
   const tier = args.settings.models[args.tier ?? "easy"];
   const activityId = `model:${randomUUID()}`;
   const stop = new AbortController();
@@ -127,7 +128,7 @@ export async function complete(args: {
   }, 750);
   monitor.unref();
   try {
-    return await withActivity(args.userId, activityId, signal, () => completeRequest(args, signal));
+    return await withActivity(args.userId, activityId, signal, () => withAiContext({ userId: args.userId, purpose: args.purpose ?? "Other" }, () => completeRequest(args, signal)));
   } finally {
     clearInterval(monitor);
     await endActivity(redis, args.userId, activityId);
@@ -138,6 +139,9 @@ async function completeRequest(args: Parameters<typeof complete>[0], signal: Abo
   signal.throwIfAborted();
   const tier = args.settings.models[args.tier ?? "easy"];
   if (isSubscriptionProvider(tier.provider)) return completeOnSubscription({ ...args, signal, provider: tier.provider, model: tier.model, effort: tier.effort });
+  // What an automation sent and got back, in the person's AI activity (lib/ai-activity.ts).
+  const started = Date.now();
+  const logged = { kind: "model.call" as const, userId: args.userId, app: tier.provider, input: { ...(args.system ? { system: args.system } : {}), prompt: args.prompt } };
   const result = await runtime<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null; credits?: number | null }>("/api/complete", {
     method: "POST",
     signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
@@ -153,8 +157,12 @@ async function completeRequest(args: Parameters<typeof complete>[0], signal: Abo
       reasoningEffort: await effortToSend(args.userId, tier.provider, tier.model, tier.effort),
       purpose: args.purpose ?? "Other",
     },
+  }).catch((error: unknown) => {
+    logAi({ ...logged, model: tier.model, ok: false, durationMs: Date.now() - started, error });
+    throw error;
   });
   const model = result.model || tier.model;
+  logAi({ ...logged, model, ok: true, durationMs: Date.now() - started, output: result.json === undefined ? result.text : { text: result.text, json: result.json }, meta: { tokensIn: result.tokensIn, tokensOut: result.tokensOut, credits: result.credits ?? null } });
   await recordMetric(prisma, {
     userId: args.userId,
     kind: "model.call",

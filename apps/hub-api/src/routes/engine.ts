@@ -13,8 +13,9 @@ import { CREDENTIAL_TOOLS, runCredentialTool } from "../credentials/run-tools.js
 import { SecretUseError } from "../credentials/secret-http.js";
 import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
+import { hookCall, judgeFloor } from "../workspace/engines/judge.js";
 import { isChatTurn } from "../workspace/trust.js";
-import { CONTEXT_TOOLS, isContextTool, isRunActionTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
+import { CONTEXT_TOOLS, isContextTool, isRunActionTool, isRunAppTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
 import { GraphError } from "../context/graph/neighbors.js";
 
 export async function engineRoutes(app: FastifyInstance): Promise<void> {
@@ -51,6 +52,22 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     const found = turnBridge(request);
     if (!found.ok) return reply.code(found.status).send({ error: found.error });
     return { tools: found.bridge.tools };
+  });
+  // The agent's own tool calls in such a turn (its hook: scripts/ensemble-hook.mjs --chat): the hard floor, nothing else.
+  app.post("/api/engine/assistant/ask", async (request, reply) => {
+    const found = turnBridge(request);
+    if (!found.ok) return reply.code(found.status).send({ decision: "deny", message: found.error });
+    if (!found.bridge.folder) return { decision: "deny", message: "This turn's agent has only Ensemble's tools." };
+    const body = z.object({ tool_name: z.string().max(200).default(""), tool_input: z.record(z.string(), z.unknown()).default({}) }).passthrough().parse(request.body);
+    try {
+      const verdict = await judgeFloor(found.bridge.folder, hookCall(body.tool_name, body.tool_input));
+      // Calls that ran are logged with their output by the turn's driver; a refusal is logged here.
+      if (verdict.decision !== "allow") found.bridge.log({ kind: "agent.tool", name: body.tool_name, input: body.tool_input, ok: false, output: verdict.message ?? "Refused.", meta: { refused: true } });
+      return verdict;
+    } catch (error) {
+      request.log.error({ err: error }, "assistant turn tool call could not be judged");
+      return { decision: "deny", message: "Ensemble could not check this call, so it was not run." };
+    }
   });
   app.post("/api/engine/assistant/tool", async (request, reply) => {
     const found = turnBridge(request);
@@ -100,8 +117,9 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       }
     }
     // Ensemble actions around the task (bridge/actions.ts): task runs only; Chat has the board's own tools.
+    // The person's connected apps (ensemble_apps, ensemble_app_call): task runs and Chat alike.
     if (isRunActionTool(body.name)) {
-      if (chat) return reply.code(403).send({ error: "Ensemble actions are for task runs, not Chat." });
+      if (chat && !isRunAppTool(body.name)) return reply.code(403).send({ error: "Ensemble actions are for task runs, not Chat." });
       try {
         const space = await app.prisma.user.findUnique({ where: { id: run.ctx.userId }, select: { moduleSet: true } });
         return { text: await runRunAction({ app, userId: run.ctx.userId, jobContext: run.ctx.job.context, modules: space?.moduleSet ?? null }, body.name, body.input) };

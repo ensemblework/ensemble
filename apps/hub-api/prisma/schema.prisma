@@ -1460,6 +1460,40 @@ model MetricEvent {
   @@map("metric_events")
 }
 
+/// What the person's AI work sent and got back (lib/ai-activity.ts, docs/07 §1.4): each model call with its
+/// prompt and answer, each tool call with its input and output, errors with their stack, and the
+/// warnings and errors the server and their computers logged for them. Deleted after 30 days
+/// (jobs/retention.ts). Personal like metrics: work in a space shared with you is on your account.
+model AiActivity {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  ts         DateTime @default(now())
+  /// model.call, tool.call, agent.tool, error, server.log, runner.log
+  kind       String
+  /// What it was for: "Hub chat", "Ask Ensemble", "File summary"…
+  purpose    String?
+  /// Who answered or ran it: a provider ("openai", "ensemble"), an AI plan's agent ("claude", "codex"), "server", "computer".
+  app        String?
+  model      String?
+  /// The tool's name, or a log line's level.
+  name       String?
+  ok         Boolean?
+  durationMs Int?     @map("duration_ms")
+  input      Json?
+  output     Json?
+  error      String?
+  stack      String?
+  /// What it belongs to: conversation, turn, session, job, run, task, page, file, device.
+  refs       Json     @default("{}")
+  /// Tokens, credits, the computer, how often a log line repeated…
+  meta       Json     @default("{}")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, ts])
+  @@index([userId, kind, ts])
+  @@map("ai_activity")
+}
+
 /// One included-model call against an account's monthly Ensemble credits (src/included/budget.ts).
 /// A row is written as `reserved` before the call and settled with the real usage after it.
 model IncludedUsage {
@@ -1859,6 +1893,7 @@ model User {
   templateApplications  TemplateApplication[]
   includedUsage         IncludedUsage[]
   sessionChoices        SessionChoice[]
+  aiActivity            AiActivity[]
 
   @@index([ownerId])
   @@map("users")

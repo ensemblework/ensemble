@@ -808,7 +808,7 @@ function registerAppTools(tool: RegisterTool, hub: HubClient, apps: readonly str
     "ensemble_apps",
     {
       title: "List the person's connected apps",
-      description: `The apps the person connected to Ensemble (Google or Microsoft 365, Notion, GitHub, Linear, Slack, Figma, Vercel, Zotero, Hugging Face and others, through their own sign-in) and the tools Ensemble can use in each.${named} With app (or tools), each tool's full description and inputSchema for ensemble_app_call.`,
+      description: `The apps the person connected to Ensemble (Google or Microsoft 365, Notion, GitHub, Linear, Slack, Figma, Vercel, Zotero, Hugging Face and others, through their own sign-in) and the tools Ensemble can use in each, each with its first sentence.${named} app lists one app's tools; tools gives those tools' full description and inputSchema for ensemble_app_call.`,
       inputSchema: {
         app: z.string().optional().describe("One app, by the id or name listed."),
         tools: z.array(z.string()).optional().describe("Tool names to describe in full, with their inputSchema."),
@@ -817,7 +817,7 @@ function registerAppTools(tool: RegisterTool, hub: HubClient, apps: readonly str
     },
     async (args) => {
       try {
-        return ok(await hub.get("/api/bridge/apps", query({ app: args.app, names: args.tools?.join(","), schema: args.app || args.tools?.length ? "1" : undefined })));
+        return ok(await hub.get("/api/bridge/apps", query({ app: args.app, names: args.tools?.join(","), schema: args.tools?.length ? "1" : undefined })));
       } catch (error) {
         return fail(error);
       }

@@ -57,7 +57,7 @@ test("a paired computer's claim carries the task's context, and its run asks for
   assert.equal((await ask(spec.leaseToken, { name: "drop_tables", args: {} })).statusCode, 400);
   assert.equal((await user.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/context`, headers: { "x-ensemble-job-lease": spec.leaseToken }, payload: { name: "ensemble_context" } })).statusCode, 403);
 
-  // The run changes Ensemble around its task through the editors' allowlist, under the same lease; never the apps.
+  // The run changes Ensemble around its task through the editors' allowlist, under the same lease, and uses the person's connected apps.
   const act = (body: unknown) => token.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/act`, headers: { "x-ensemble-job-lease": spec.leaseToken }, payload: body as Record<string, unknown> });
   const listed = await act({ name: "ensemble_actions", args: { groups: "tasks" } });
   assert.equal(listed.statusCode, 200, listed.body);
@@ -67,8 +67,23 @@ test("a paired computer's claim carries the task's context, and its run asks for
   assert.deepEqual((await db.task.findUniqueOrThrow({ where: { id: w.task.id } })).labels, ["from-run"]);
   const settings = await act({ name: "ensemble_act", args: { action: "hub_update_settings", input: {} } });
   assert.match((settings.json() as { text: string }).text, /Agent runs cannot use hub_update_settings/);
-  const apps = await act({ name: "ensemble_act", args: { action: "gmail_search", input: { query: "x" } } });
-  assert.match((apps.json() as { text: string }).text, /connected apps/);
+  const apps = await act({ name: "ensemble_apps", args: {} });
+  assert.equal(apps.statusCode, 200, apps.body);
+  const listedApps = JSON.parse((apps.json() as { text: string }).text) as { apps?: unknown[]; error?: string };
+  assert.equal(listedApps.error, undefined, "a run has the person's connected apps");
+  assert.deepEqual(listedApps.apps, [], "none connected here");
+  const unconnected = await act({ name: "ensemble_app_call", args: { tool: "gmail_search", input: { query: "x" } } });
+  assert.match((unconnected.json() as { text: string }).text, /"error"/, "an app that is not connected is said, not called");
+  assert.match((await act({ name: "ensemble_app_call", args: { tool: "hub_update_task", input: {} } })).json().text, /ensemble_act/);
+
+  // In a space shared with the computer's owner, the space owner's apps are not the run's.
+  const owner = await h.asUser();
+  const shared = await taskFromMeeting(owner.id);
+  await db.spaceMember.create({ data: { spaceId: owner.id, accountId: user.id, addedBy: owner.id } });
+  const theirs = await db.workspaceJob.create({ data: { userId: owner.id, runnerAccountId: user.id, taskId: shared.task.id, deviceId: device.id, executionMode: "auto", model: "fixture", status: "running", leaseOwner: device.id, leaseUntil: new Date(Date.now() + 60_000), leaseToken: "shared-lease" } });
+  const inShared = await token.inject({ method: "POST", url: `/api/devices/self/jobs/${theirs.id}/act`, headers: { "x-ensemble-job-lease": "shared-lease" }, payload: { name: "ensemble_apps", args: {} } });
+  assert.equal(inShared.statusCode, 403, inShared.body);
+  assert.match(inShared.body, /space owner's connected apps/);
 });
 
 test("ready-for-review notices follow the automation switch", async () => {
