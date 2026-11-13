@@ -78,6 +78,8 @@ export const ROUTES = {
   assistantTool: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/tool`,
   assistantStream: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/stream`,
   assistantDone: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/done`,
+  /** This computer's part of its owner's AI activity log (lib/ai-activity.ts, `ActivityPost`): its agents' tool calls, runs, errors and log lines. */
+  activity: "/api/devices/self/activity",
 } as const;
 
 const ms = (name: string, fallback: number) => {
@@ -285,6 +287,34 @@ export const SessionChoicePost = z.object({
   elapsedMs: z.number().int().min(0).max(600_000).nullable(),
 });
 export type SessionChoicePost = z.infer<typeof SessionChoicePost>;
+
+/**
+ * A batch of this computer's AI activity entries (lib/ai-activity.ts): the web stores them on the account
+ * the computer is paired with, cut and cleaned again there. Job ids are the web's where the computer knows them.
+ */
+export const ActivityPost = z.object({
+  entries: z
+    .array(
+      z.object({
+        ts: z.string().datetime(),
+        kind: z.enum(["model.call", "tool.call", "agent.tool", "error", "runner.log"]),
+        purpose: text(200).optional(),
+        app: text(200).optional(),
+        model: text(200).optional(),
+        name: text(200).optional(),
+        ok: z.boolean().optional(),
+        durationMs: z.number().int().min(0).max(2_147_483_647).optional(),
+        input: z.unknown().optional(),
+        output: z.unknown().optional(),
+        error: text(20_000).optional(),
+        stack: text(20_000).optional(),
+        refs: z.record(z.string(), text(200)).default({}),
+        meta: z.unknown().optional(),
+      }),
+    )
+    .max(200),
+});
+export type ActivityPost = z.infer<typeof ActivityPost>;
 
 /** A claim's (or a job context's) `mission`, when it is a valid one. */
 export function parseMission(value: unknown): MissionSpec | null {

@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { EVIDENCE_HEADERS, ROUTES, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type SessionChoicePost, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { EVIDENCE_HEADERS, ROUTES, type ActivityPost, type CodeAnswer, type EvidenceMeta, type FileAnswer, type ChannelMessage, type LiveEndedPost, type LiveFramePost, type LoginStatePost, type NodeCliLoginPost, type NodeDeviceCodePost, type ObservedSettings, type RunLoginPost, type Outcome, type ResultLink, type RunTotals, type SessionChoicePost, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 import { cliApiBase } from "@ensemble/shared-types";
 import { hideSecretsDeep } from "../lib/redact.js";
 import type { FileChangeReport } from "./node-files.js";
@@ -116,6 +116,8 @@ export interface HostedClient {
   /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
   assistantStream(turnId: string, body: { seq: number; text: string }): Promise<{ stop: boolean }>;
   assistantDone(turnId: string, body: unknown): Promise<void>;
+  /** Entries of the owner's AI activity log made here. False: a server without the route (they stay on this computer). */
+  activity?(body: ActivityPost): Promise<boolean>;
 }
 
 async function send(base: string, token: string, method: string, path: string, json?: unknown, signal?: AbortSignal): Promise<{ status: number; body: unknown }> {
@@ -525,6 +527,12 @@ export function hostedClient(base: string, token: string): HostedClient {
     async assistantDone(turnId, body) {
       const res = await call("POST", ROUTES.assistantDone(turnId), body);
       if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+    },
+    async activity(body) {
+      const res = await call("POST", ROUTES.activity, body, AbortSignal.timeout(20_000));
+      if (res.status === 404) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The activity was refused."));
+      return true;
     },
   };
 }

@@ -6,8 +6,9 @@
  */
 import { hostname } from "node:os";
 import type { Device } from "@prisma/client";
-import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
+import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
@@ -117,6 +118,10 @@ export type SubscriptionTurnInput = {
   keepDays?: number;
   /** The agent's own web search and page reading, on the person's plan. */
   ownWeb?: boolean;
+  /** All the agent's own tools (its shell, files and web), judged only by Ensemble's hard floor: a chat, Ask Ensemble or a routine. */
+  ownTools?: boolean;
+  /** The instructions for a computer too old to keep the agent's own tools (they say it has only Ensemble's). */
+  systemWithoutOwnTools?: string;
   tools: ToolSpec[];
   maxTurns?: number;
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
@@ -167,27 +172,48 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const label = SUBSCRIPTION_INFO[input.agent].label;
   const computer = await pickComputer(input.prisma ?? defaultPrisma, input.userId, input.agent, input.settings.models.computer ?? null);
   const turn = turnSession(computer, input);
+  const ownTools = input.ownTools === true && (computer.local || computer.turns >= ASSISTANT_TURN_OWN_TOOLS);
   const spec: AgentTurnSpec = {
     agent: input.agent,
     model: input.model && input.model !== "default" ? input.model : null,
     effort: effortFor(computer.local ? null : computer.agent, input.model, input.effort),
-    system: input.system,
+    system: input.ownTools && !ownTools && input.systemWithoutOwnTools ? input.systemWithoutOwnTools : input.system,
     ...turnFiles(computer, turn.prompt, input.files),
     ...(turn.session ? { session: turn.session } : {}),
     tools: input.tools,
     maxTurns: input.maxTurns ?? 16,
     ...(input.ownWeb && OWN_WEB_AGENTS.has(input.agent) ? { ownWeb: true } : {}),
+    ...(ownTools ? { ownTools: true } : {}),
     ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
   const onDelta = input.onDelta ?? (() => undefined);
   input.onStatus?.(`Asking ${label} on ${computer.name}…`);
+  // What the turn sent the agent and what it answered, in the person's AI activity (lib/ai-activity.ts).
+  // The agent's tool calls are logged where they run: Ensemble's by the caller, its own on the computer.
+  const started = Date.now();
+  const logged = {
+    kind: "model.call" as const,
+    userId: input.userId,
+    app: input.agent,
+    input: { system: spec.system, prompt: spec.prompt, ...(spec.files?.length ? { files: spec.files.map((file) => ({ name: file.name, type: file.mediaType, size: file.size })) } : {}), tools: spec.tools.length, ...(spec.ownTools ? { ownTools: true } : {}) },
+    refs: { ...(computer.local ? {} : { device: computer.id }), ...(spec.session ? { session: spec.session.key } : {}) },
+  };
   try {
     const result = computer.local
       ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...(spec.files ? { readFile: input.files!.read } : {}) })
       : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...(spec.files ? { read: input.files!.read } : {}) });
+    logAi({
+      ...logged,
+      model: result.model ?? spec.model,
+      ok: true,
+      durationMs: Date.now() - started,
+      output: result.text,
+      meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}) },
+    });
     return { ...result, computer: computer.name };
   } catch (error) {
+    logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
     if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);
     throw error;
   }
@@ -217,15 +243,31 @@ export function agentConversation(messages: ReadonlyArray<Record<string, unknown
   };
 }
 
-/** How the turn runs on the person's agent: with its own web tools (`ownWeb`), and whether it is an Ensemble Node's turn. */
-export type RunHow = { ownWeb?: boolean; node?: boolean };
+/**
+ * How the turn runs on the person's agent: with its own web tools (`ownWeb`), with all its own tools
+ * (`ownTools`: a chat, Ask Ensemble or a routine), and whether it is an Ensemble Node's turn.
+ */
+export type RunHow = { ownWeb?: boolean; ownTools?: boolean; node?: boolean };
 
-/** What differs on the person's own agent: Ensemble's tools (and its own web tools, when on), never its own shell or files. */
+/**
+ * What differs on the person's own agent: Ensemble's tools, and its own (all of them in a chat, Ask
+ * Ensemble or a routine, judged only by Ensemble's hard floor; else just its web tools, when on).
+ */
 export function howYouRun(agent: SubscriptionProvider, how: RunHow = {}): string {
   const label = SUBSCRIPTION_INFO[agent].label;
   // Said only where the turn really turns them on.
-  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent) };
+  how = { ...how, ownWeb: how.ownWeb === true && OWN_WEB_AGENTS.has(agent), ownTools: how.ownTools === true && how.node !== true };
   const tools = `Ensemble's tools (the "ensemble" MCP server, so hub_list_tasks may appear as mcp__ensemble__hub_list_tasks)`;
+  if (how.ownTools) {
+    return [
+      `You run on their own ${label} subscription, on their computer, with ${tools} and all your own tools: your shell, files and web search, which their plan pays for.`,
+      "Most requests here need only Ensemble's tools (their pages, tasks, files, people, mail and calendar are there) and, for facts, docs and articles, your own web search before Ensemble's hub_web_search. When a request does need a command or a file on their computer, use your own tools as you judge best.",
+      "Your working folder is this conversation's own scratch folder, removed when the conversation is deleted: put anything they should keep in Ensemble (hub_save_file, or a page) or where they say.",
+      "A change to code in one of their repositories usually goes better as a task for a coding agent (hub_assign_to_agent), where they can review it; do it here yourself if they ask you to.",
+      "Ensemble refuses only keys and sign-ins, its own data and code, the system's files and privilege programs; if a call is refused, say so in a few words and carry on.",
+      "A tool you need but cannot see: call hub_use_tool with its name and input.",
+    ].join(" ");
+  }
   const lines = [
     how.ownWeb
       ? `You run on their own ${label} subscription, on their computer, with ${tools} and your own web search and page reading, which their plan pays for: use those for facts, docs and articles before Ensemble's hub_web_search. You have no shell or files of your own.`

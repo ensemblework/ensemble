@@ -41,13 +41,14 @@ import { answerEvidenceRequest } from "../evidence/requests.js";
 import { setLiveSink } from "./live.js";
 import { setRunLoginSink } from "../logins/run.js";
 import { setLoginStateSink } from "../logins/requests.js";
+import { setAiActivitySink, type AiActivityRow } from "../lib/ai-activity.js";
 import { answerLoginResolve } from "../logins/answer.js";
 import { answerTakeoverControl, answerTakeoverEnd, answerTakeoverStart, endAllTakeovers, takeoverExtend, takeoverInput } from "../takeover/session.js";
 import { parseReport } from "../node/report.js";
 import { ASSISTANT_SESSION_DELETE_API, ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
-import { BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
+import { type ActivityPost, BROWSER_API, CLI_LOGINS_API, CODE_API, deviceOwnedEvents, LIVE_API, LOGINS_API, TAKEOVER_API, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, missionOf, NODE_FILES_API, NODE_TOOLS_API, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type ObservedSettings, type RunTotals, type UploadedStep } from "./contract.js";
 import { anyObserved, observedFromEvents, sameObserved } from "../workspace/engines/observed.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -291,6 +292,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
   });
   // A sign-in seen done here by itself (or gone, or expired) is told to the web, which updates its card (logins 2).
   setLoginStateSink(async (loginId, state) => client.loginState?.(loginId, state));
+  // The owner's AI activity made here (lib/ai-activity.ts) goes to the web, with the web's ids for this computer's runs.
+  setAiActivitySink(async (rows) => (client.activity ? client.activity({ entries: rows.map(activityForWeb) }) : false));
   await reconcile(app, client);
   let claiming = false;
   // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
@@ -408,8 +411,26 @@ async function session(app: FastifyInstance, base: string, token: string, parent
       setLiveSink(null);
       setRunLoginSink(null);
       setLoginStateSink(null);
+      setAiActivitySink(null);
     }
   }
+}
+
+/** One entry as the web takes it: no account (the web knows it), and this computer's job ids as the web's. */
+function activityForWeb(row: AiActivityRow): ActivityPost["entries"][number] {
+  const refs: Record<string, string> = { ...(row.refs as Record<string, string>) };
+  if (refs.job) {
+    const hosted = Object.values(held()).find((job) => job.localJobId === refs.job);
+    if (hosted) refs.job = hosted.hostedId;
+    else {
+      refs.localJob = refs.job;
+      delete refs.job;
+    }
+    delete refs.run;
+    delete refs.task;
+  }
+  const { userId: _userId, ts, kind, ...rest } = row;
+  return { ...rest, ts: ts.toISOString(), kind: kind === "server.log" ? "runner.log" : kind, refs } as ActivityPost["entries"][number];
 }
 
 async function beat(app: FastifyInstance, client: HostedClient, signal: AbortSignal): Promise<void> {

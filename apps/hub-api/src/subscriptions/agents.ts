@@ -1,11 +1,13 @@
 /**
  * One assistant turn run by the person's own agent on this computer, signed in with their own
  * subscription (docs/30 §8). The agent is told it is the Ensemble assistant (the system prompt
- * Ensemble built for the turn) and gets Ensemble's tools and nothing else: no shell, no files, no
- * web of its own. Its tool calls go through the bridge (bridge.ts) to wherever the turn's data
- * is; writes there wait for Apply exactly as with a model key. Files attached to the person's
- * message are downloaded into the turn's folder and given to the agent in its own input form
- * (turn-files.ts).
+ * Ensemble built for the turn) and gets Ensemble's tools. A chat, Ask Ensemble or a routine
+ * (`spec.ownTools`) keeps the agent's own tools too (its shell, files and web), each call judged
+ * only by Ensemble's hard floor (own-tools.ts); any other turn (a node's, a one-off completion)
+ * gets Ensemble's tools alone, as below. Ensemble's tool calls go through the bridge (bridge.ts) to
+ * wherever the turn's data is; writes there wait for Apply exactly as with a model key. Files
+ * attached to the person's message are downloaded into the turn's folder and given to the agent in
+ * its own input form (turn-files.ts).
  *
  * A chat is one session of the agent (`spec.session`, turn-sessions.ts): the first turn starts it
  * with the instructions and the chat so far, later turns resume it with just the new message. A
@@ -19,6 +21,9 @@
  * `session/load` (Antigravity: `session/resume`) when the agent offers it.
  * Copilot CLI: `copilot -p`, shell, file writes and URL fetches denied, no built-in MCP servers;
  * `--session-id` starts and resumes the chat's session.
+ * With `ownTools`: Claude Code with its own tools and a hook on each; Codex without its sandbox and
+ * with its environment, every approval judged; Copilot with all tools, paths and URLs and the hook
+ * as a per-turn plugin; Cursor without its sandbox; every permission request judged.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -36,6 +41,7 @@ import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
+import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 
@@ -64,6 +70,12 @@ export type AgentTurnSpec = {
    * without Ensemble's search. Never a shell, files or writes. Older computers ignore it.
    */
   ownWeb?: boolean;
+  /**
+   * The agent keeps all its own tools (its shell, files and web), each call judged only by Ensemble's
+   * hard floor in the turn's folder (own-tools.ts): a chat, Ask Ensemble or a routine. Older computers
+   * ignore it and the agent has only Ensemble's tools.
+   */
+  ownTools?: boolean;
 };
 
 /**
@@ -162,7 +174,7 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null; files?: boolean; session?: TurnSession; web?: boolean; ownTools?: boolean; hookCommand?: string }): string[] {
   // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
   const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
@@ -175,15 +187,14 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     "--include-partial-messages",
     "--system-prompt-file",
     input.systemFile,
-    // None of Claude Code's own tools but its web search and page reading when asked: no shell or files.
-    // Ensemble's tools come from its MCP server.
-    "--tools",
-    input.web ? "WebSearch,WebFetch" : "",
+    // All of Claude Code's own tools, each judged by Ensemble's hard floor through a hook (own-tools.ts);
+    // otherwise none of them but its web search and page reading when asked. Ensemble's tools come from its MCP server.
+    ...(input.ownTools && input.hookCommand ? ["--settings", JSON.stringify(claudeChatSettings(input.hookCommand))] : ["--tools", input.web ? "WebSearch,WebFetch" : ""]),
     "--strict-mcp-config",
     "--mcp-config",
     input.mcpFile,
     "--allowedTools",
-    input.web ? "mcp__ensemble,WebSearch,WebFetch" : "mcp__ensemble",
+    !input.ownTools && input.web ? "mcp__ensemble,WebSearch,WebFetch" : "mcp__ensemble",
     "--permission-mode",
     "default",
     // The person's own settings, where their Claude Code keeps how it signs in; never a folder's.
@@ -203,7 +214,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const mcpFile = join(own ?? folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null, files: files.length > 0, session, web: spec.ownWeb === true, ownTools: spec.ownTools === true, hookCommand: chatHookCommand("claude") }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS), ENSEMBLE_RUN: "assistant-turn" }),
@@ -222,6 +233,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const result: AgentTurnResult = { text: "", model: null, tokensIn: null, tokensOut: null, costUsd: null };
   let failure: string | null = null;
   let finished = false;
+  const tools = new OwnToolLog("claude-code");
   try {
     for await (const line of createInterface({ input: child.stdout! })) {
       if (!line.trim()) continue;
@@ -233,6 +245,16 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
       }
       if (message.type === "system" && message.subtype === "init") {
         result.model = typeof message.model === "string" ? message.model : null;
+      } else if (message.type === "assistant" || message.type === "user") {
+        // Its own tool calls as they start (assistant) and what each returned (user), for the AI activity log.
+        const content = ((message.message ?? {}) as { content?: unknown }).content;
+        for (const part of Array.isArray(content) ? (content as Array<Record<string, unknown>>) : []) {
+          if (part.type === "tool_use") tools.start(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {});
+          else if (part.type === "tool_result") {
+            const output = Array.isArray(part.content) ? (part.content as Array<Record<string, unknown>>).map((piece) => (typeof piece.text === "string" ? piece.text : piece.type === "image" ? "[image]" : "")).join("\n") : part.content;
+            tools.end(String(part.tool_use_id ?? ""), output, part.is_error !== true);
+          }
+        }
       } else if (message.type === "stream_event") {
         const event = (message.event ?? {}) as { type?: string; delta?: { type?: string; text?: string } };
         if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) io.onDelta(event.delta.text);
@@ -257,6 +279,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
     if (code !== 0 || !finished) throw agentProblem(spec.agent, stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
     return { ...result, session: session?.id ?? null };
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stop();
   }
@@ -295,8 +318,24 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
   let turnId: string | null = null;
   let finished: (status: { status: string; error?: string }) => void = () => {};
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
-  server.onRequest = (method, params) => answerCodexTurn(method, params);
+  // With its own tools, the paths each file change touches, for its approval (own-tools.ts).
+  const changes = new Map<string, string[]>();
+  const tools = new OwnToolLog("codex");
+  server.onRequest = (method, params) => (spec.ownTools ? answerCodexOwnTools(folder, method, params, changes) : answerCodexTurn(method, params));
   server.onNotification = (method, params) => {
+    if (method === "item/started" || method === "item/completed") {
+      const item = (params.item ?? {}) as { type?: string; id?: string; changes?: Array<{ path: string }>; command?: string; server?: string; tool?: string; arguments?: unknown; query?: string; aggregatedOutput?: string | null; exitCode?: number | null; status?: string; result?: unknown; error?: unknown };
+      if (item.type === "fileChange" && item.id) changes.set(item.id, (item.changes ?? []).map((change) => change.path));
+      // Its own calls for the AI activity log; Ensemble's MCP tools are logged where they run.
+      const own = item.type === "commandExecution" || item.type === "fileChange" || item.type === "webSearch" || (item.type === "mcpToolCall" && item.server !== "ensemble");
+      if (own && item.id && method === "item/started") {
+        const input = item.type === "commandExecution" ? { command: item.command } : item.type === "fileChange" ? { files: (item.changes ?? []).map((change) => change.path) } : item.type === "webSearch" ? { query: item.query } : { server: item.server, tool: item.tool, arguments: item.arguments };
+        tools.start(item.id, item.type === "mcpToolCall" ? `${item.server}/${item.tool}` : item.type!, input);
+      } else if (own && item.id) {
+        const failed = item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0);
+        tools.end(item.id, item.aggregatedOutput ?? item.result ?? item.error ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed);
+      }
+    }
     if (method === "item/agentMessage/delta" && typeof params.delta === "string") io.onDelta(params.delta);
     else if (method === "item/completed") {
       const item = (params.item ?? {}) as { type?: string; text?: string; phase?: string | null };
@@ -334,9 +373,10 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     const model = chosen(spec.model);
     const settings = {
       cwd: folder,
+      // Codex asks before every command it does not consider safe; with its own tools each is judged (own-tools.ts).
       approvalPolicy: "untrusted",
       approvalsReviewer: "user",
-      sandbox: "read-only",
+      sandbox: spec.ownTools ? "danger-full-access" : "read-only",
       baseInstructions: spec.system,
       // A chat's thread is kept for its next turn; a one-off turn's is not.
       ephemeral: !session,
@@ -346,7 +386,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         projects: { [folder]: { trust_level: "untrusted" } },
         mcp_servers: { ensemble: { command: mcp.command, args: mcp.args, env: mcp.env, tool_timeout_sec: TOOL_TIMEOUT_MS / 1000 } },
         // Codex's own web search runs at OpenAI, not in the sandbox: the person's plan reads the web.
-        ...(spec.ownWeb ? { web_search: "live" } : {}),
+        ...(spec.ownWeb || spec.ownTools ? { web_search: "live" } : {}),
       },
     };
     const { serviceName: _serviceName, ephemeral: _ephemeral, ...resumeSettings } = settings;
@@ -357,7 +397,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
         ? await server.request("thread/resume", { threadId: session.id, ...resumeSettings }).catch((error: Error) => {
             throw new SessionGone(error.message);
           })
-        : await server.request("thread/start", { ...settings, environments: [] }).catch((error: Error) => {
+        : await server.request("thread/start", spec.ownTools ? settings : { ...settings, environments: [] }).catch((error: Error) => {
             if (/environments|unknown field/i.test(error.message)) return server.request("thread/start", settings);
             throw error;
           })
@@ -366,8 +406,8 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     if (!threadId) throw agentProblem("codex", "it did not start a conversation");
     result.model = thread.model ?? model;
     const effort = chosen(spec.effort);
-    const turnParams = { threadId, input: codexInput(spec.prompt, files), sandboxPolicy: { type: "readOnly", networkAccess: false }, ...(effort ? { effort } : {}) };
-    const turn = (await server.request("turn/start", { ...turnParams, environments: [] }).catch((error: Error) => {
+    const turnParams = { threadId, input: codexInput(spec.prompt, files), sandboxPolicy: spec.ownTools ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false }, ...(effort ? { effort } : {}) };
+    const turn = (await server.request("turn/start", spec.ownTools ? turnParams : { ...turnParams, environments: [] }).catch((error: Error) => {
       if (!/environments|unknown field/i.test(error.message)) throw error;
       // A Codex that cannot drop its environment per turn may only run a thread started without one.
       if (session?.resume) throw new SessionUnsupported(error.message);
@@ -383,6 +423,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("codex", error instanceof Error ? error.message : String(error));
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stopChild(child);
   }
@@ -430,7 +471,7 @@ export function answerCursorTurn(method: string, params: Record<string, unknown>
 
 const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session }) => {
   const model = chosen(spec.model);
-  const child = spawn(bin, ["--sandbox", "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
+  const child = spawn(bin, ["--sandbox", spec.ownTools ? "disabled" : "enabled", "--workspace", folder, ...(model ? ["--model", model] : []), "acp"], {
     cwd: folder,
     env: agentEnv(mcp.env),
     stdio: ["pipe", "pipe", "pipe"],
@@ -449,14 +490,15 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   let sessionId: string | null = null;
   // A reopened session replays its history first: that is not this turn's reply.
   let replaying = false;
-  rpc.onRequest = async (method, params) => answerCursorTurn(method, params);
+  const tools = new OwnToolLog("cursor-agent");
+  rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update" || replaying) return;
     const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
     if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
       reply += update.content.text;
       io.onDelta(update.content.text);
-    }
+    } else logAcpTool(tools, update as Record<string, unknown>);
   };
   createInterface({ input: child.stdout }).on("line", (line) => void rpc.receive(line));
   child.stderr.on("data", (chunk: Buffer) => {
@@ -487,6 +529,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("cursor-agent", error instanceof Error ? error.message : String(error));
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stopChild(child);
   }
@@ -516,6 +559,27 @@ export function copilotAtLeast(versionText: string | null, from: readonly number
 
 /** Whether a Copilot CLI of this version reads its prompt from stdin (exported for tests). */
 export const copilotReadsStdin = (versionText: string | null): boolean => copilotAtLeast(versionText, COPILOT_STDIN_FROM);
+
+const pluginSupport = new Map<string, Promise<boolean>>();
+/** Whether this Copilot CLI loads a plugin for one run (`--plugin-dir` in its help), asked once per program. */
+function copilotTakesPlugins(bin: string): Promise<boolean> {
+  let known = pluginSupport.get(bin);
+  if (!known) {
+    known = new Promise<boolean>((done) => {
+      const probe = spawn(bin, ["help"], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true, env: copilotEnv({}) });
+      let out = "";
+      const timer = setTimeout(() => probe.kill(), 15_000);
+      probe.stdout.on("data", (chunk: Buffer) => void (out += chunk.toString("utf8")));
+      probe.once("error", () => done(false));
+      probe.once("close", () => {
+        clearTimeout(timer);
+        done(out.includes("--plugin-dir"));
+      });
+    });
+    pluginSupport.set(bin, known);
+  }
+  return known;
+}
 
 const copilotVersions = new Map<string, Promise<string | null>>();
 /** `copilot --version`, asked once per Copilot program for this process's life. */
@@ -549,7 +613,7 @@ export function copilotPrompt(head: string, sections: string[], platform?: NodeJ
 }
 
 /** The arguments for Copilot CLI (exported for tests). */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null }): string[] {
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform; attachments?: string[]; sessionId?: string | null; web?: boolean; stdin?: boolean; usageFile?: string | null; pluginDir?: string | null }): string[] {
   const limit = copilotLimit(input.platform);
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -559,15 +623,20 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     "on",
     "--output-format",
     "json",
-    // Prompt mode needs tools allowed up front; the denials win over it.
+    // Prompt mode needs tools allowed up front. With its own tools (`pluginDir`: Ensemble's hard floor as a
+    // per-turn plugin's hook, own-tools.ts) every tool, path and URL; else the denials win over it.
     "--allow-all-tools",
-    "--deny-tool",
-    "shell",
-    "--deny-tool",
-    "write",
-    // Copilot's web_fetch asks for url(); its web_search does not. Without own web both stay closed.
-    ...(input.web ? [] : ["--deny-tool", "url", "--excluded-tools", "web_search"]),
-    "--disable-builtin-mcps",
+    ...(input.pluginDir
+      ? ["--allow-all-paths", "--allow-all-urls", "--plugin-dir", input.pluginDir]
+      : [
+          "--deny-tool",
+          "shell",
+          "--deny-tool",
+          "write",
+          // Copilot's web_fetch asks for url(); its web_search does not. Without own web both stay closed.
+          ...(input.web ? [] : ["--deny-tool", "url", "--excluded-tools", "web_search"]),
+          "--disable-builtin-mcps",
+        ]),
     // Nobody can answer Copilot's own question prompt here; Ensemble's tools carry the conversation.
     "--no-ask-user",
     "--no-auto-update",
@@ -596,9 +665,12 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   const prompt = copilotPrompt(opening(spec, session), sections, process.platform, stdin);
   // Copilot saves every run as a session: a one-off turn names its own, to delete it afterwards (from 1.0.78, which takes --session-id).
   const oneOff = !session && stdin ? randomUUID() : null;
-  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile }), {
+  // Its own tools need a Copilot that loads a plugin for one run; an older one has only Ensemble's.
+  const pluginDir = spec.ownTools && (await copilotTakesPlugins(bin)) ? await writeCopilotFloorPlugin(join(own ?? folder, "copilot-floor"), chatHookCommand("copilot-cli")) : null;
+  const child = spawn(bin, copilotArgs({ prompt, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null, attachments, sessionId: session?.id ?? oneOff, web: spec.ownWeb === true, stdin, usageFile, pluginDir }), {
     cwd: folder,
-    env: copilotEnv(mcp.env),
+    // A hook of the person's own Ensemble connection (`ensemble hooks connect`) stays out of the turn.
+    env: copilotEnv({ ...mcp.env, ENSEMBLE_RUN: "assistant-turn" }),
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -608,7 +680,8 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   child.stdin.end(stdin ? prompt : undefined, "utf8");
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
-  const output = copilotOutput(chosen(spec.model), io.onDelta);
+  const tools = new OwnToolLog("copilot-cli");
+  const output = copilotOutput(chosen(spec.model), io.onDelta, tools);
   let stderr = "";
   createInterface({ input: child.stdout }).on("line", line => output.line(line));
   child.stderr.on("data", (chunk: Buffer) => {
@@ -627,6 +700,7 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
     const turn = read?.applied && totals && base && totals.in >= base.in && totals.out >= base.out ? { tokensIn: totals.in - base.in, tokensOut: totals.out - base.out } : {};
     return { ...done, ...turn, session: session?.id ?? null, oneOff, totals };
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stop();
     if (usageFile) await rm(usageFile, { force: true }).catch(() => undefined);
@@ -658,14 +732,15 @@ const runAcpTurn =
     let stderr = "";
     let sessionId: string | null = null;
     let replaying = false;
-    rpc.onRequest = async (method, params) => answerAcpTurn(method, params);
+    const tools = new OwnToolLog(id);
+    rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
       if (method !== "session/update" || replaying) return;
       const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
       if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
         reply += update.content.text;
         io.onDelta(update.content.text);
-      }
+      } else logAcpTool(tools, update as Record<string, unknown>);
     };
     createInterface({ input: child.stdout }).on("line", (line) => (antigravityAuthLink(line) ? rpc.close("not signed in") : void rpc.receive(line)));
     child.stderr.on("data", (chunk: Buffer) => {
@@ -707,6 +782,7 @@ const runAcpTurn =
       if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
       throw agentProblem(id, error instanceof Error ? error.message : String(error));
     } finally {
+      tools.close();
       io.signal.removeEventListener("abort", stop);
       stopChild(child);
     }
@@ -781,7 +857,8 @@ async function runTurn(spec: AgentTurnSpec, io: AgentTurnIO, key: string | null)
   // The turn's own files and settings stay out of a shared folder: one folder per chat beside it.
   const own = group ? sessionFolder(key!) : folder;
   if (group) await mkdir(own, { recursive: true });
-  const bridge = openBridge(spec.tools, io.call);
+  // With its own tools, each of the agent's calls is judged by the hard floor from the turn's folder.
+  const bridge = openBridge(spec.tools, io.call, spec.ownTools ? { folder } : {});
   let handedOff = false;
   const mcp: McpServer = {
     command: process.execPath,

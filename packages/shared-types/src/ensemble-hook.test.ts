@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerText, heartbeat, questionInput, toolsFor } from "../../../scripts/ensemble-ask-mcp.mjs";
-import { ACTIVITY_EVENTS, answeredInput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
+import { ACTIVITY_EVENTS, answeredInput, chatOutput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
 
 const hookCommand = (source: string) => `node ensemble-hook.mjs --source ${source}`;
 
@@ -27,6 +27,13 @@ test("Copilot CLI reads the decision at the top level and its tool arguments as 
   const payload = normalizePayload({ toolName: "bash", toolArgs: '{"command":"rm -rf build"}', cwd: "/repo" });
   assert.equal(payload.tool_name, "bash");
   assert.deepEqual(payload.tool_input, { command: "rm -rf build" });
+});
+
+test("an assistant turn's hook answers in each tool's own terms: allowed, or refused with Ensemble's reason", () => {
+  assert.deepEqual(chatOutput("claude", { decision: "allow" }), { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "Allowed in Ensemble." } });
+  assert.deepEqual(chatOutput("claude", { decision: "deny", message: "~/.ssh holds keys" }).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(chatOutput("copilot-cli", { decision: "deny", message: "~/.ssh holds keys" }), { permissionDecision: "deny", permissionDecisionReason: "~/.ssh holds keys" });
+  assert.equal(chatOutput("copilot-cli", null).permissionDecision, "deny", "no verdict refuses: the hook fails closed");
 });
 
 test("each AskUserQuestion question becomes a card with its options, descriptions and a typed answer", () => {
@@ -134,9 +141,9 @@ test("ask_person marks the recommended option and returns the person's answer as
   assert.match(answerText(input, { decision: "deny", message: "skipped" }), /^No answer: skipped/);
 });
 
-test("the run's ensemble MCP server offers the person's board only in Chat, the run's report and evidence in a task run, and secrets by reference in both", () => {
-  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person", "report_result", "attach_evidence", "secret_http"]);
-  assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "secret_http"]);
+test("the run's ensemble MCP server offers the person's board only in Chat, the run's report, evidence and Ensemble actions in a task run, and their connected apps and secrets by reference in both", () => {
+  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person", "report_result", "attach_evidence", "ensemble_context", "ensemble_search", "ensemble_actions", "ensemble_act", "ensemble_apps", "ensemble_app_call", "secret_http"]);
+  assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "ensemble_context", "ensemble_apps", "ensemble_app_call", "secret_http"]);
 });
 
 test("a waiting question sends progress only when the agent gave a progress token", async () => {

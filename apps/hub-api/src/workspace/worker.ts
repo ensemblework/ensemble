@@ -6,6 +6,7 @@
  * continues an unfinished one, wait their turn; unrelated jobs pass them.
  * Needs me holds its slot; after an hour one extra task may start.
  */
+import { withAiContext } from "../lib/ai-activity.js";
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { activityIds, isPaused, requestCancel, setPaused, withActivity } from "../lib/activity.js";
@@ -88,9 +89,11 @@ function start(app: FastifyInstance, job: WorkspaceJob): void {
       }
     }
   };
-  const done = withActivity(job.userId, `job:${job.id}`, controller.signal, () => executeJob(app, job.id, { signal: controller.signal, waitForPerson }))
+  // Its model and tool calls go in the person's AI activity under this job (lib/ai-activity.ts).
+  const run = () => withAiContext({ userId: job.userId, refs: { job: job.id, task: job.taskId } }, () => executeJob(app, job.id, { signal: controller.signal, waitForPerson }));
+  const done = withActivity(job.userId, `job:${job.id}`, controller.signal, run)
     .catch(async (error: unknown) => {
-      app.log.error({ err: error, jobId: job.id }, "agent job crashed");
+      app.log.error({ err: error, jobId: job.id, userId: job.userId }, "agent job crashed");
       await app.prisma.workspaceJob
         .update({ where: { id: job.id }, data: { status: "failed", finishedAt: new Date(), error: error instanceof Error ? error.message : String(error) } })
         .catch(() => undefined);

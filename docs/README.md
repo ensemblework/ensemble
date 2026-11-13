@@ -13,7 +13,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [04 · Personal skills](04_MODULE_SKILL_FORGE.md) | Versioned instructions, routing, morning brief, completed-work learning |
 | [05 · Orchestration](05_MODULE_TASK_ORCHESTRATOR.md) | Scheduler, durable jobs, queue slots, decisions, stop and retry |
 | [06 · Workspace](06_MODULE_WORKSPACE_AND_SURFACES.md) | Assignment, execution, publishing, run evidence |
-| [07 · Governance](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | Access, approvals, audit, retention, erasure, metrics, interaction log and dashboards |
+| [07 · Governance](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | Access, approvals, audit, retention, erasure, metrics, interaction log, AI activity log and dashboards |
 | [11 · Assistant](11_HOW_THE_ASSISTANT_WORKS.md) | How a turn works, context, playbooks, Apply and Undo, extending it |
 | [34 · Assistant actions](34_ASSISTANT_ACTIONS.md) | Exact action and tool map, tiles and layouts, limits |
 | [39 · Ensemble tools](39_ENSEMBLE_TOOLS_AUDIT.md) | What the assistant, a node and a node's agent run can do in each area of Ensemble, what is not offered and why, never Ensemble in a browser |

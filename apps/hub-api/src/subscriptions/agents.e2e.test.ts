@@ -185,6 +185,94 @@ after(() => {
   if (copilotRoot) rmSync(copilotRoot, { recursive: true, force: true });
 });
 
+// A stand-in Claude Code that, as the real one does, runs the PreToolUse hook from its --settings before each of its own tools.
+const HOOKED_CLAUDE = String.raw`#!/usr/bin/env node
+const { execSync } = require("node:child_process");
+const { readFileSync, writeFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+const after = (flag) => args[args.indexOf(flag) + 1];
+let prompt = "";
+process.stdin.on("data", (chunk) => (prompt += chunk));
+process.stdin.on("end", () => {
+  const hook = JSON.parse(after("--settings")).hooks.PreToolUse[0].hooks[0].command;
+  const decide = (tool_name, tool_input) => JSON.parse(execSync(hook, { input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name, tool_input }), env: process.env }).toString()).hookSpecificOutput;
+  writeFileSync(process.env.STANDIN_LOG, JSON.stringify({
+    args,
+    note: decide("Write", { file_path: "notes.md", content: "# Notes" }),
+    desktop: decide("Bash", { command: "cp notes.md ~/Desktop/ensemble-notes.md" }),
+    key: decide("Bash", { command: "cat ~/.ssh/id_rsa" }),
+    sudo: decide("Bash", { command: "sudo launchctl list" }),
+  }));
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "s1", model: "claude-haiku-test" }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "cp notes.md ~/Desktop/ensemble-notes.md" } }, { type: "tool_use", id: "t2", name: "mcp__ensemble__hub_list_tasks", input: {} }] } }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "copied" }] }, { type: "tool_result", tool_use_id: "t2", content: "[]" }] } }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "Done.", total_cost_usd: 0, usage: { input_tokens: 10, output_tokens: 2 } }) + "\n");
+});
+`;
+
+test("in a chat Claude Code keeps its own tools: its hook asks the turn's runtime, and only the hard floor refuses", { timeout: 120_000 }, async (t) => {
+  const { forgetExecutablesForTests } = await import("../workspace/policy.js");
+  forgetExecutablesForTests();
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ensemble-own-tools-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "claude"), HOOKED_CLAUDE);
+  chmodSync(join(bin, "claude"), 0o755);
+  const log = join(root, "standin.json");
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP, STANDIN_LOG: process.env.STANDIN_LOG, ENSEMBLE_AI_ACTIVITY: process.env.ENSEMBLE_AI_ACTIVITY };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  process.env.STANDIN_LOG = log;
+  process.env.ENSEMBLE_AI_ACTIVITY = "on";
+  const activity = await import("../lib/ai-activity.js");
+  const logged: Array<{ kind: string; name?: string; ok?: boolean; input?: unknown; output?: unknown; refs: unknown }> = [];
+  activity.saveAiActivityForTests(async (rows) => void logged.push(...rows));
+  const app = Fastify();
+  await app.register(engineRoutes);
+  try {
+    try {
+      await app.listen({ host: "127.0.0.1", port: 0 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return t.skip("this sandbox does not allow a loopback port");
+      throw error;
+    }
+    setLocalPort((app.server.address() as { port: number }).port);
+    const result = await activity.withAiContext({ userId: "chat-owner", refs: { conversation: "c-own" } }, () =>
+      runAgentTurn(
+        { agent: "claude-code", model: null, effort: null, system: "You are the Ensemble assistant.", prompt: "Make notes.md and copy it to my Desktop", tools: [], maxTurns: 8, ownTools: true },
+        { call: async () => ({ text: "{}" }), onDelta: () => undefined, signal: new AbortController().signal },
+      ),
+    );
+    assert.equal(result.text, "Done.");
+    // Its own calls are in the AI activity log with what they returned; refusals with why; Ensemble's tools are logged where they run.
+    await activity.flushAiActivity();
+    assert.deepEqual(
+      logged.map((row) => [row.kind, row.name, row.ok, row.refs]),
+      [
+        ["agent.tool", "Bash", false, { conversation: "c-own" }],
+        ["agent.tool", "Bash", false, { conversation: "c-own" }],
+        ["agent.tool", "Bash", true, { conversation: "c-own" }],
+      ],
+    );
+    assert.deepEqual([logged[2]!.input, logged[2]!.output], [{ command: "cp notes.md ~/Desktop/ensemble-notes.md" }, "copied"]);
+    const seen = JSON.parse(readFileSync(log, "utf8")) as { args: string[]; note: { permissionDecision: string }; desktop: { permissionDecision: string }; key: { permissionDecision: string; permissionDecisionReason: string }; sudo: { permissionDecision: string; permissionDecisionReason: string } };
+    assert.equal(seen.args.includes("--tools"), false, "no built-in tool is taken away");
+    assert.equal(seen.note.permissionDecision, "allow");
+    assert.equal(seen.desktop.permissionDecision, "allow", "a file of theirs outside the chat's folder");
+    assert.equal(seen.key.permissionDecision, "deny");
+    assert.match(seen.key.permissionDecisionReason, /keys, sign-ins/);
+    assert.equal(seen.sudo.permissionDecision, "deny");
+  } finally {
+    activity.saveAiActivityForTests(null);
+    await app.close();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Copilot streams its own JSON events and reports only the token usage for the Ensemble turn", async () => {
   const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP };
   process.env.PATH = `${copilotStandIn()}:${process.env.PATH ?? ""}`;

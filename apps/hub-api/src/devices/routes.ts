@@ -6,7 +6,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  */
 import { workContext } from "../context/graph/packet.js";
 import { GraphError } from "../context/graph/neighbors.js";
-import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
+import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, isRunAppTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
 import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 import { randomBytes } from "node:crypto";
@@ -51,7 +51,8 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { storeDeviceActivity } from "../lib/ai-activity.js";
+import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -401,6 +402,15 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return { shared: true, keys };
   });
 
+  // The computer's part of its owner's AI activity log (lib/ai-activity.ts): kept on the account it is paired with.
+  app.post("/api/devices/self/activity", { bodyLimit: 8 * 1024 * 1024 }, async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const body = ActivityPost.parse(request.body ?? {});
+    const stored = await storeDeviceActivity(prisma, device, body.entries);
+    return { ok: true, stored };
+  });
+
   app.post("/api/devices/self/heartbeat", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
@@ -677,6 +687,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ name: z.string().refine(isRunActionTool, "Unknown tool."), args: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     if (held.job.userId !== device.userId && body.name === "ensemble_act") {
       return reply.code(403).send({ error: "In a space shared with you, an agent run reads Ensemble but does not change it. Report your result with report_result." });
+    }
+    // The apps connected in someone else's space are theirs: a run there does not use them.
+    if (held.job.userId !== device.userId && isRunAppTool(body.name)) {
+      return reply.code(403).send({ error: "In a space shared with you, an agent run does not use the space owner's connected apps." });
     }
     const space = await prisma.user.findUnique({ where: { id: held.job.userId }, select: { moduleSet: true } });
     return { text: await answerRunAction(app, held.job.userId, space?.moduleSet ?? null, body.name as RunActionToolName, body.args) };

@@ -210,7 +210,7 @@ export function appsPrompt(connections: Connections, settings: Settings): string
 }
 
 // Remote MCP servers the person connected (src/connectors/mcp) add their tools to every turn and to Apply.
-registerAppToolSource((ctx) => mcpToolsForUser(ctx.prisma, ctx.userId));
+registerAppToolSource((ctx) => mcpToolsForUser(ctx.prisma, ctx.userId, { cap: !ctx.appCatalog }));
 registerToolResolver((ctx, name) => (isMcpToolName(name) ? resolveMcpTool(ctx.prisma, ctx.userId, name) : Promise.resolve(undefined)));
 // Apps Ensemble can search itself (src/connectors/items): search, read, and posting an update on a linked issue.
 registerAppToolSource((ctx) => appItemToolsForUser(ctx));

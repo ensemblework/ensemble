@@ -9,6 +9,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
 import { unpinReviewSnapshots } from "../lib/code-commit.js";
 import { purgeDeletedStandalonePages } from "../pages/store.js";
+import { AI_ACTIVITY_RETENTION_DAYS, deleteOldAiActivity } from "../lib/ai-activity.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -18,6 +19,7 @@ export interface RetentionCounts {
   purged: number;
   historyPurged: number;
   logChunksPurged: number;
+  aiActivityPurged?: number;
   jobFilesPurged?: number;
   reviewsExpired?: number;
 }
@@ -168,6 +170,8 @@ export async function runRetention(
   }
   const logCutoff = new Date(now.getTime() - LOG_CHUNK_RETENTION_DAYS * 86_400_000);
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);
+  // The AI activity log (lib/ai-activity.ts, docs/07 §1.4) keeps 30 days.
+  counts.aiActivityPurged = await deleteOldAiActivity(app.prisma, userId, new Date(now.getTime() - AI_ACTIVITY_RETENTION_DAYS * 86_400_000));
   // The text of files device runs changed (docs/25 §4.6) is kept as long as their logs.
   counts.jobFilesPurged = (await app.prisma.jobFile.deleteMany({ where: { createdAt: { lt: logCutoff }, job: { userId } } })).count;
   // Code reviews past their 14 days: their snapshots are unpinned and they move to "expired" (docs/16 §2).

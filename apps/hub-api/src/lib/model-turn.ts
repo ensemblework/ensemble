@@ -22,6 +22,7 @@ import { keysFor } from "../sharing/context.js";
 import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
 import { callLimitMs, isTimeoutError, ModelTimeoutError } from "./model-timeout.js";
 import { longFetch } from "./long-fetch.js";
+import { logAi, newMessages } from "./ai-activity.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -293,7 +294,7 @@ export function errorFromStreamFrame(
   return new RuntimeError(friendlyModelError(failure, data.model ?? model, data.provider ?? provider), httpStatus, false, failure.kind);
 }
 
-export async function askRuntime(args: {
+type AskArgs = {
   messages: ModelMessage[];
   model: string;
   provider?: string;
@@ -307,7 +308,35 @@ export async function askRuntime(args: {
   timeoutMs?: number;
   /** Recorded with an included call's credits: "Hub chat", "Agent research"… */
   purpose?: string;
-}): Promise<RuntimeTurn> {
+};
+
+/** One model call, kept in the person's AI activity (lib/ai-activity.ts) with what it was sent and answered. */
+export async function askRuntime(args: AskArgs): Promise<RuntimeTurn> {
+  return loggedCall(args, () => askRuntimeOnce(args));
+}
+
+async function loggedCall(args: AskArgs, call: () => Promise<RuntimeTurn>): Promise<RuntimeTurn> {
+  const started = Date.now();
+  const input = newMessages(args.messages);
+  const base = { kind: "model.call" as const, userId: args.userId, purpose: args.purpose, app: args.provider ?? null, input, meta: { activity: args.activityId, ...(args.reasoningEffort ? { effort: args.reasoningEffort } : {}) } };
+  try {
+    const turn = await call();
+    logAi({
+      ...base,
+      model: turn.model || args.model,
+      ok: true,
+      durationMs: Date.now() - started,
+      output: { text: turn.text, ...(turn.toolCalls.length ? { toolCalls: turn.toolCalls } : {}), ...(turn.reasoning ? { reasoning: turn.reasoning } : {}) },
+      meta: { ...base.meta, tokensIn: turn.tokensIn, tokensOut: turn.tokensOut, credits: turn.credits, finishReason: turn.finishReason ?? null, ...(turn.cutOff ? { cutOff: true } : {}) },
+    });
+    return turn;
+  } catch (error) {
+    logAi({ ...base, model: args.model, ok: false, durationMs: Date.now() - started, error });
+    throw error;
+  }
+}
+
+async function askRuntimeOnce(args: AskArgs): Promise<RuntimeTurn> {
   const limit = callLimitMs(args.timeoutMs);
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
@@ -384,13 +413,17 @@ export function setAskRuntimeStreamForTests(
 
 export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & StreamTurnHandlers & { fallbackModel?: string }): Promise<RuntimeTurn> {
   if (streamForTests) return streamForTests(args);
+  return loggedCall(args, () => streamOnce(args));
+}
+
+async function streamOnce(args: Parameters<typeof askRuntime>[0] & StreamTurnHandlers & { fallbackModel?: string }): Promise<RuntimeTurn> {
   const limit = callLimitMs(args.timeoutMs);
   const started = Date.now();
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
   const timedOut = (error?: unknown) => !args.signal?.aborted && (timeout.aborted || isTimeoutError(error));
   // Without a stream the same call is made whole, in the time that is left.
-  const whole = () => askRuntime({ ...args, timeoutMs: Math.max(1_000, limit - (Date.now() - started)) });
+  const whole = () => askRuntimeOnce({ ...args, timeoutMs: Math.max(1_000, limit - (Date.now() - started)) });
   const body = chatBody({ ...args, timeoutMs: limit, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort), stream: true });
   let response: Response;
   try {

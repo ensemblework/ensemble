@@ -20,6 +20,7 @@ import { attachmentForModel, MODEL_ATTACH_TOTAL_BYTES } from "../files/model-inp
 import { beginActivity, endActivity, isPaused } from "../lib/activity.js";
 import { recordMetric } from "../lib/metrics.js";
 import { askRuntime } from "../lib/model-turn.js";
+import { withAiContext } from "../lib/ai-activity.js";
 import { callCost } from "../lib/pricing.js";
 import { redis } from "../lib/redis.js";
 import { complete, RuntimeError } from "../lib/runtime.js";
@@ -56,6 +57,10 @@ const kindWords = (file: AttachedFile) => (file.kind === "image" ? "this kind of
 
 /** The summary's text, from the file itself where the tier's model or agent takes it. */
 export async function summarizeDocument(app: FastifyInstance, row: SummaryRow): Promise<string> {
+  return withAiContext({ purpose: "Document summary", refs: { file: row.id } }, () => summarize(app, row));
+}
+
+async function summarize(app: FastifyInstance, row: SummaryRow): Promise<string> {
   const document = await app.prisma.document.findUnique({ where: { id: row.id }, select: { userId: true } });
   if (!document) throw new Error("That file is no longer in Files.");
   const userId = document.userId;

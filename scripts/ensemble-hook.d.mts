@@ -14,3 +14,4 @@ export function lastAssistantText(text: string): string | null;
 export function questionOutput(event: string, updatedInput: Record<string, unknown>): Record<string, any>;
 export function withHooks(target: string, file: Record<string, any>, remove: boolean, hookCommand: (source: string) => string, wait?: number): Record<string, any>;
 export function engineOutput(verdict: { decision?: string; message?: string; updatedInput?: Record<string, unknown> } | null): Record<string, any>;
+export function chatOutput(source: string, verdict: { decision?: string; message?: string } | null): Record<string, any>;
