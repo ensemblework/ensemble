@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
+import { guardedSave, saveBase } from "../lib/save-conflict.js";
 
 const KEEP_VERSIONS = 3;
 
@@ -104,20 +105,21 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM skills WHERE id = ${id} AND user_id = ${request.userId} FOR UPDATE`;
       const current = await tx.skill.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
-      if (body.expectedVersion !== undefined && body.expectedVersion !== current.version) throw Object.assign(new Error("The skill changed. Read it again before editing."), { statusCode: 409 });
-      bodyChanged = body.body !== undefined && body.body !== current.body;
+      const changed = guardedSave(current, body, saveBase(request));
+      if (!saveBase(request) && body.expectedVersion !== undefined && body.expectedVersion !== current.version) throw Object.assign(new Error("The skill changed. Read it again before editing."), { statusCode: 409 });
+      bodyChanged = changed.body !== undefined && changed.body !== current.body;
       const next = await tx.skill.update({
         where: { id },
         data: {
-          name: body.name,
-          description: body.description,
-          enabled: body.enabled,
-          ...(bodyChanged ? { body: body.body, version: current.version + 1 } : {}),
+          name: changed.name,
+          description: changed.description,
+          enabled: changed.enabled,
+          ...(bodyChanged ? { body: changed.body, version: current.version + 1 } : {}),
         },
       });
       if (bodyChanged) {
         await tx.skillVersion.create({
-          data: { skillId: id, version: next.version, body: body.body!, note: body.note ?? "edited by you" },
+          data: { skillId: id, version: next.version, body: changed.body!, note: body.note ?? "edited by you" },
         });
         const stale = await tx.skillVersion.findMany({
           where: { skillId: id },

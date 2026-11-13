@@ -150,10 +150,10 @@ export function PlotStudio({ plotId }: { plotId: string }) {
     if (!config || !plot.data || isWorkspace(plot.data.plot.config)) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      void api.updatePlot(plotId, { title, config, code }).then(() => client.invalidateQueries({ queryKey: ["plots"] }));
+      void api.updatePlot(plotId, { title, config, code }).then(() => client.invalidateQueries({ queryKey: ["plots"] })).catch((error: Error) => toast(error.message, { tone: "error" }));
     }, 700);
     return () => window.clearTimeout(saveTimer.current);
-  }, [config, title, code, plotId, client, plot.data]);
+  }, [config, title, code, plotId, client, plot.data, toast]);
 
   const frame = useMemo(() => (dataset ? { columns: dataset.columns, rows: dataset.rows } : null), [dataset]);
 

@@ -185,7 +185,7 @@ test("editing a comment focuses the text, can't save it empty, and Esc puts it b
     await act(async () => button("Edit")!.click());
     await type(document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit comment']")!, "Broad beans");
     await act(async () => { button("Save")!.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
-    assert.deepEqual(requests.filter((request) => request.method === "PATCH").map((request) => request.body), [{ body: { text: "Broad beans" } }]);
+    assert.deepEqual(requests.filter((request) => request.method === "PATCH").map((request) => request.body), [{ body: { text: "Broad beans" }, _base: comment("c1", "Which beans?") }]);
   } finally {
     await done();
   }

@@ -7,7 +7,8 @@ import { MotionContextProvider } from "@/components/motion/slot";
 import { ToastProvider } from "@/components/toast";
 import { JoinInvitation } from "@/components/sharing/join-invitation";
 import { AskHost } from "@/components/ask-dialog";
-import { ApiError, api, isUnreachable } from "@/lib/api";
+import { SaveConflictHost } from "@/components/save-conflict-host";
+import { ApiError, api, isUnreachable, SAVE_CHOSEN_EVENT } from "@/lib/api";
 import { isRequestCancelled } from "@/lib/fetch-cancel";
 import { FetchGuards } from "@/lib/use-fetch-guards";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, applyAppearance, resolveMotionTheme, usePersistentState } from "@/lib/prefs";
@@ -65,6 +66,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
     next.setQueryDefaults(["shell"], { staleTime: 30_000 });
     return next;
   });
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const path = (event as CustomEvent<{ path: string }>).detail.path;
+      const group = path.split("/")[2];
+      const key = group === "meetings" ? "meeting-session" : group;
+      if (!key) return;
+      void client.invalidateQueries({ queryKey: [key] });
+      const details: Record<string, string[]> = { tasks: ["task"], projects: ["project"], plots: ["plot", "plot-workspace"], comments: ["page-comments"] };
+      for (const detail of details[group] ?? []) void client.invalidateQueries({ queryKey: [detail] });
+    };
+    window.addEventListener(SAVE_CHOSEN_EVENT, refresh);
+    return () => window.removeEventListener(SAVE_CHOSEN_EVENT, refresh);
+  }, [client]);
   return (
     <QueryClientProvider client={client}>
       <FetchGuards />
@@ -72,6 +86,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <JoinInvitation />
         <Appearance>{children}</Appearance>
         <AskHost />
+        <SaveConflictHost />
       </ToastProvider>
     </QueryClientProvider>
   );

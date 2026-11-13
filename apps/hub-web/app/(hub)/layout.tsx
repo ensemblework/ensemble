@@ -42,6 +42,7 @@ import { clearBrowserTabSession } from "@/lib/tab-session";
 import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
 import { InteractionTracker, useTrackOpen } from "@/lib/telemetry";
+import { ActivePlaceGate } from "@/components/active-place-gate";
 import { peekPanel, warmPeek } from "@/lib/warm";
 
 const OnboardingTour = dynamic(() => import("@/components/onboarding/guided-tour").then((module) => module.OnboardingTour), { ssr: false });
@@ -84,7 +85,7 @@ function Frame({ children }: { children: React.ReactNode }) {
   const pagesPanel = pagesOpen ? <PagesPanel side={panelSide} onClose={() => setPagesOpen(false)} onSide={() => {
     const next = { ...appearance, pagesPanelSide: panelSide === "left" ? "right" as const : "left" as const };
     publishAppearance(next);
-    void api.saveSettings({ appearance: next }).catch(() => undefined);
+    void api.saveSettings({ appearance: { pagesPanelSide: next.pagesPanelSide } }).catch(() => undefined);
   }} /> : null;
   const [Peek, setPeek] = useState<typeof peekPanel>(() => peekPanel);
   const [palette, setPalette] = useState(false);
@@ -330,6 +331,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 export default function HubLayout({ children }: { children: React.ReactNode }) {
   return (
     <Suspense fallback={null}>
+      <ActivePlaceGate>
       <AuthGate>
         <LiveProvider>
           <InteractionTracker />
@@ -341,6 +343,7 @@ export default function HubLayout({ children }: { children: React.ReactNode }) {
           </PeekProvider>
         </LiveProvider>
       </AuthGate>
+      </ActivePlaceGate>
     </Suspense>
   );
 }
