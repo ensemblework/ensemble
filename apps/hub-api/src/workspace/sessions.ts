@@ -29,7 +29,7 @@ export type AgentSession = {
   /** The paired computer it runs on (its current pairing's id on this server), or null for this computer. */
   deviceId: string | null;
   computer: string | null;
-  /** A folder the computer shares, the folder's name, or "its own checkout". */
+  /** A folder the computer shares, the folder's name, a project's folder (`projects/<name>`), or "its own checkout". */
   folder: string;
   /** The first task's title. */
   title: string;
@@ -127,10 +127,16 @@ function statusOf(status: string): AgentSessionStatus {
   return ["claimed", "running", "stopping"].includes(status) ? "working" : "idle";
 }
 
-function folderOf(row: Row): string {
+/** A project's folder in the Ensemble workspace (agent-projects.ts), as a run's computer reported it. */
+const PROJECT_ROOT = /(?:^|[\\/])projects[\\/]([^\\/]+)[\\/]?$/;
+
+/** `root`: the folder the run's computer said it worked in (its `prepared` event), for a run in Ensemble's own workspace. */
+function folderOf(row: Row, root?: string): string {
   if (row.folderLabel) return row.folderLabel;
   const path = row.externalRoot ?? "";
-  return path ? (path.split(/[\\/]/).filter(Boolean).pop() ?? path) : "its own checkout";
+  if (path) return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  const project = root?.match(PROJECT_ROOT)?.[1];
+  return project ? `projects/${project}` : "its own checkout";
 }
 
 const contextOf = (context: unknown) => (typeof context === "object" && context !== null ? (context as { chat?: unknown; contextTier?: unknown; fast?: unknown }) : {});
@@ -180,16 +186,26 @@ function rootOf(byId: Map<string, Row>, id: string): string {
   return root?.id ?? id;
 }
 
-async function resumableJobs(prisma: PrismaClient, ids: string[]): Promise<Set<string>> {
-  if (!ids.length) return new Set();
-  const events = await prisma.workspaceEvent.findMany({ where: { jobId: { in: ids }, kind: "engine" }, select: { jobId: true, data: true } });
-  return new Set(events.filter((event) => typeof (event.data as { session?: unknown } | null)?.session === "string").map((event) => event.jobId));
+/** What the runs' computers reported: the runs in an agent conversation that can be resumed, and the folder each worked in. */
+type RunFacts = { resumable: Set<string>; roots: Map<string, string> };
+
+async function runFacts(prisma: PrismaClient, ids: string[]): Promise<RunFacts> {
+  if (!ids.length) return { resumable: new Set(), roots: new Map() };
+  const events = await prisma.workspaceEvent.findMany({ where: { jobId: { in: ids }, kind: { in: ["engine", "prepared"] } }, select: { jobId: true, kind: true, data: true } });
+  const resumable = new Set<string>();
+  const roots = new Map<string, string>();
+  for (const event of events) {
+    const data = (event.data ?? {}) as { session?: unknown; root?: unknown };
+    if (event.kind === "engine" && typeof data.session === "string") resumable.add(event.jobId);
+    if (event.kind === "prepared" && typeof data.root === "string") roots.set(event.jobId, data.root);
+  }
+  return { resumable, roots };
 }
 
 /** The run reached its computer (or is on its way): a later run can continue its folder and conversation. */
 const ran = (row: Row) => Boolean(row.startedAt || row.claimedAt) || (WAITING as string[]).includes(row.status);
 
-function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSession {
+function build(rootId: string, runs: Row[], facts: RunFacts): AgentSession {
   const ordered = [...runs].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const first = ordered[0]!;
   const last = [...ordered].reverse().find(ran) ?? ordered[ordered.length - 1]!;
@@ -211,7 +227,7 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
     deviceId: last.deviceId,
     computer: last.device?.name ?? null,
     // A continued run carries no folder label of its own: the session's folder is its nearest run's.
-    folder: folderOf([...ordered].reverse().find((row) => row.folderLabel || row.externalRoot) ?? last),
+    folder: ((row) => folderOf(row, facts.roots.get(row.id)))([...ordered].reverse().find((row) => row.folderLabel || row.externalRoot || facts.roots.has(row.id)) ?? last),
     title: first.task.title,
     latestTask: { id: last.taskId, title: last.task.title },
     summary,
@@ -220,7 +236,7 @@ function build(rootId: string, runs: Row[], resumable: Set<string>): AgentSessio
     lastJobId: tail.id,
     runs: ordered.length,
     tasks: new Set(ordered.map((row) => row.taskId)).size,
-    resumable: ordered.some((row) => resumable.has(row.id)),
+    resumable: ordered.some((row) => facts.resumable.has(row.id)),
     chat: ordered.every((row) => isChat(row.context)),
     startedAt: first.createdAt.toISOString(),
     lastActiveAt: (last.finishedAt ?? last.createdAt).toISOString(),
@@ -259,10 +275,10 @@ export async function listSessionGroups(
     const root = rootOf(byId, row.id);
     groups.set(root, [...(groups.get(root) ?? []), row]);
   }
-  const resumable = await resumableJobs(prisma, [...byId.keys()]);
+  const facts = await runFacts(prisma, [...byId.keys()]);
   const needle = filter.query?.trim().toLowerCase();
   const built = [...groups.entries()].map(([root, runs]) => ({ root, runs }));
-  const sessions = await onCurrentPairing(prisma, built.map(({ root, runs }) => build(root, runs, resumable)));
+  const sessions = await onCurrentPairing(prisma, built.map(({ root, runs }) => build(root, runs, facts)));
   return built
     .map(({ runs }, index) => ({ session: sessions[index]!, runs }))
     .filter(({ session }) => session.deletion?.state !== "deleted")
@@ -307,7 +323,7 @@ async function chainFrom(prisma: Pick<PrismaClient, "workspaceJob">, scope: Sess
 async function sessionFrom(prisma: PrismaClient, scope: SessionScope, root: string): Promise<AgentSession | null> {
   const runs = await chainFrom(prisma, scope, root);
   if (!runs.length) return null;
-  const [session] = await onCurrentPairing(prisma, [build(root, runs, await resumableJobs(prisma, runs.map((row) => row.id)))]);
+  const [session] = await onCurrentPairing(prisma, [build(root, runs, await runFacts(prisma, runs.map((row) => row.id)))]);
   return session ?? null;
 }
 
@@ -370,7 +386,7 @@ export async function sessionOfJob(prisma: PrismaClient, job: { id: string; user
     seen.add(parent.id);
     current = parent;
   }
-  const resumable = (await resumableJobs(prisma, [job.id])).has(job.id);
+  const resumable = (await runFacts(prisma, [job.id])).resumable.has(job.id);
   return { id: current?.id ?? job.id, resumable };
 }
 
