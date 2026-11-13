@@ -2,6 +2,8 @@
 
 Guides to how Ensemble works today, with the code paths that implement it. Start with the [overview](00_PROJECT_OVERVIEW.md) (what works and its limits), then the guide for your area. Setup is in the root [README](../README.md); [AGENTS](../AGENTS.md) says which doc to update with which code.
 
+The public site is built from these same sources for [docs.ensemblework.com](https://docs.ensemblework.com). [40 · Public documentation](40_PUBLIC_DOCUMENTATION.md) describes its build, hosting and Context Bridge lookup.
+
 ## Product and architecture
 
 | Guide | Contents |
@@ -46,6 +48,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [26 · CLI](26_CLI.md) | Install, terminal UI, commands, runner, MCP, releases |
 | [Quick capture](20_QUICK_CAPTURE.md) | Tray app with a global shortcut |
 | [Context Bridge](CONTEXT_BRIDGE.md) | MCP server for editors: reads, and changes with a key that allows them |
+| [40 · Public documentation](40_PUBLIC_DOCUMENTATION.md) | Static docs site, stable URLs, public search and authenticated `ensemble_docs` lookup |
 | [Brand](BRAND.md) | Shared artwork, palettes, motion, generated assets |
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
 | [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
