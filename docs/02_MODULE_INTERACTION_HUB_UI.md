@@ -89,7 +89,7 @@ It is one queue, without overview counters or filter tabs. Empty sections are om
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
-Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. Up next, Working now and Needs you retain job actions, queue order and waiting reasons. Assign task, Pause all/Resume, sharing and run-limit settings stay available. Completed and stopped work appears in run history, not separate lanes. Queue errors and history errors retry independently.
+Runs combines the live workboard (`components/runs/run-queue.tsx`) with recent run history below it. A code run's sheet shows the checkout's folder name, with its path in the tooltip where the person may see it; fresh own-checkout folders use the task-named slug in [06 §2](06_MODULE_WORKSPACE_AND_SURFACES.md#2-context-and-preparation). Up next, Working now and Needs you retain job actions, queue order and waiting reasons. Assign task, Pause all/Resume, sharing and run-limit settings stay available. Completed and stopped work appears in run history, not separate lanes. Queue errors and history errors retry independently.
 
 Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
 

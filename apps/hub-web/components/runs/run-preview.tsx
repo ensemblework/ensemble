@@ -44,6 +44,7 @@ import { friendlyDateTime, plural } from "@/lib/format";
 import { useFullscreen } from "@/lib/fullscreen";
 import { useResizablePeek } from "../shell/peek";
 import { useModalFocus } from "@/lib/modal-focus";
+import { looksLikeId } from "@/lib/code-repos";
 import { duration, modelsSeen, readableTraceValue, sameModel, toolStats, traceEntries, usd, type TraceCall, type TraceEntry, type TraceKind } from "@/lib/run-trace";
 
 export { RUN_OUTCOME } from "@/lib/run-status";
@@ -187,6 +188,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
   const tokensOut = job?.tokensOut ?? entries.reduce((sum, entry) => sum + (entry.tokensOut ?? 0), 0);
   const calls = job?.toolCalls ?? entries.reduce((sum, entry) => sum + entry.calls.length, 0);
   const credits = run.steps.reduce<number | null>((sum, step) => (sum === null || step.credits == null ? sum : sum + step.credits), 0);
+  const folder = job?.folder?.split(/[\\/]+/).filter(Boolean).at(-1) ?? null;
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <Fact label="Harness" hint="What ran the model and its tools">
@@ -217,6 +219,14 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
             {job.networkAccess ? "Internet" : "Offline"}
             <span className="text-faint">·</span>
             {DELIVERY[job.delivery] ?? job.delivery}
+          </span>
+        </Fact>
+      ) : null}
+      {job?.kind === "code" ? (
+        <Fact label="Checkout" hint={job.folder ?? undefined}>
+          <span className="inline-flex items-center gap-1.5">
+            <FolderGit2 size={12} className="shrink-0 text-muted" />
+            {folder ? looksLikeId(folder) ? "Its own checkout" : folder : "Not prepared"}
           </span>
         </Fact>
       ) : null}
