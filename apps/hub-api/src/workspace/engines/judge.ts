@@ -239,6 +239,70 @@ async function questions(ctx: JobContext, input: Record<string, unknown>, withdr
   return { decision: "allow", updatedInput: { ...input, answers } };
 }
 
+/**
+ * A tool call in an assistant turn on the person's own agent (a chat, Ask Ensemble or a routine:
+ * subscriptions/agents.ts), judged by the hard floor alone. The agent's own shell, files and web run as
+ * they would in the person's own agent, without asking. Refused whatever the request: the dangerous
+ * commands, the privilege, persistence and system-settings programs, and, outside the turn's own folder,
+ * what no run may reach (keys and sign-ins, Ensemble's own data and code, start-up items, the system's
+ * files, other accounts: `outsideRefusal`).
+ */
+export async function judgeFloor(root: string, call: EngineCall): Promise<EngineAnswer> {
+  const input = call.input ?? {};
+  const guarded = async (path: string, write: boolean): Promise<EngineAnswer | null> => {
+    const real = await realOutside(resolve(root, expandHome(path)));
+    if (within(root, real) || harmlessPath(real)) return null;
+    const floor = outsideRefusal(real, write);
+    return floor ? { decision: "deny", message: `${real}: ${floor}` } : null;
+  };
+  if (SHELLS.has(call.tool)) {
+    const command = str(input.command);
+    if (!command) return ALLOW;
+    const hit = dangerousCommand(command);
+    if (hit) return { decision: "deny", message: dangerousMessage(hit) };
+    // Run where the agent says (Codex names its working folder), else in the turn's folder.
+    const parsed = parseShell(command, str(input.cwd) ? resolve(root, expandHome(str(input.cwd)!)) : root);
+    for (const segment of parsed) {
+      const program = segment.argv[0];
+      if (program && isNeverProgram(program)) return { decision: "deny", message: `${program.split(/[\\/]/).pop()} is not run by agents in Ensemble (privilege, persistence or system settings).` };
+    }
+    for (const segment of parsed) {
+      const writes = segment.argv.length > 0 && !readsOnly(segment.argv);
+      // Every path a program names (its plain arguments too, in whatever folder it runs) and every redirect.
+      const named = segment.argv.length ? [...outsideArgs(root, segment.argv, segment.cwd), ...plainArgs(segment.argv).map((arg) => resolve(segment.cwd, expandHome(arg)))] : [];
+      for (const path of named) {
+        const refused = await guarded(path, writes);
+        if (refused) return refused;
+      }
+      for (const redirect of segment.redirects) {
+        const refused = await guarded(resolve(segment.cwd, expandHome(redirect.path)), redirect.write);
+        if (refused) return refused;
+      }
+    }
+    return ALLOW;
+  }
+  if (READS.has(call.tool) || WRITES.has(call.tool)) {
+    for (const path of pathsOf(input)) {
+      const refused = await guarded(path, WRITES.has(call.tool));
+      if (refused) return refused;
+    }
+  }
+  return ALLOW;
+}
+
+/**
+ * A tool call as an agent's hook names it (Claude Code's own names, GitHub Copilot CLI's), in the
+ * judge's terms: shells as Bash, file reads as Read, file changes as Write; anything else as it is.
+ */
+export function hookCall(name: string, input: Record<string, unknown>): EngineCall {
+  const path = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path) ?? str(input.filePath);
+  if (/^(bash|shell|powershell|run_in_terminal)$/i.test(name)) return { tool: "Bash", input: { command: str(input.command) ?? "" } };
+  if (READS.has(name) || WRITES.has(name) || SHELLS.has(name)) return { tool: name, input };
+  if (/^(view|read|read_file|glob|grep|rg|ls|list_dir|search)$/i.test(name)) return { tool: "Read", input: path ? { file_path: path } : {} };
+  if (/^(create|edit|write|str_replace|str_replace_editor|apply_patch|delete|move)$/i.test(name)) return { tool: "Write", input: path ? { file_path: path } : {} };
+  return { tool: name, input };
+}
+
 export async function judgeEngineCall(ctx: JobContext, call: EngineCall): Promise<EngineAnswer> {
   const { tool, input } = call;
   if (tool === "AskUserQuestion") return questions(ctx, input, call.signal);

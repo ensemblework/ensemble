@@ -17,6 +17,7 @@ import { claudeLimits } from "./claude-control.js";
 import { claudeAppCopy, claudeEfforts, codexEnv, codexFastTier, codexProviderKeyEnv, codexLimits, codexModels, codexProviderKeyOf, codexSignIn, setCodexProviderKeyForTests, parseGrokModels, parseOpenCodeAuth, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer, turnFiles, turnSession } from "./turn.js";
+import { answerAcpOwnTools, answerCodexOwnTools, claudeChatSettings } from "./own-tools.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile } from "./turn-files.js";
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
@@ -185,6 +186,42 @@ test("the Claude app's copy of Claude Code is the newest version folder that has
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("in a chat, Ask Ensemble or a routine the agent keeps all its own tools, and only the hard floor refuses", async () => {
+  // Claude Code: its own tools, each through Ensemble's hook; Ensemble's tools from its MCP server.
+  const claude = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: null, effort: null, ownTools: true, hookCommand: "node hook.mjs --source claude --chat" });
+  assert.equal(claude.includes("--tools"), false, "no tool is taken away");
+  assert.deepEqual(JSON.parse(claude[claude.indexOf("--settings") + 1]), claudeChatSettings("node hook.mjs --source claude --chat"));
+  assert.equal(claudeChatSettings("h").hooks && (claudeChatSettings("h").hooks as { PreToolUse: Array<{ matcher: string }> }).PreToolUse[0]!.matcher, "*", "the hook sees every tool");
+  // GitHub Copilot: every tool, path and URL, with the hook as a per-turn plugin.
+  const copilot = copilotArgs({ prompt: "Make notes.md", mcpFile: "/t/mcp.json", model: null, effort: null, pluginDir: "/t/copilot-floor" });
+  assert.ok(["--allow-all-tools", "--allow-all-paths", "--allow-all-urls"].every((flag) => copilot.includes(flag)));
+  assert.equal(copilot[copilot.indexOf("--plugin-dir") + 1], "/t/copilot-floor");
+  assert.equal(copilot.includes("--deny-tool") || copilot.includes("--disable-builtin-mcps"), false);
+  // Codex: commands and file changes go ahead unless the floor refuses them.
+  const folder = mkdtempSync(join(tmpdir(), "ensemble-chat-"));
+  try {
+    const changes = new Map([["item-1", [join(folder, "notes.md")]], ["item-2", [join(process.env.HOME ?? "/", ".ssh", "config")]]]);
+    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: ["bash", "-lc", "printf hi > notes.md"], cwd: folder }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "cat ~/.ssh/id_rsa", cwd: folder }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-1" }, changes), { decision: "accept" });
+    assert.deepEqual(await answerCodexOwnTools(folder, "item/fileChange/requestApproval", { itemId: "item-2" }, changes), { decision: "decline" });
+    assert.deepEqual(await answerCodexOwnTools(folder, "item/commandExecution/requestApproval", { command: "curl https://example.com", networkApprovalContext: { host: "example.com" } }, changes), { decision: "accept" });
+    // Cursor's agent and the ACP agents: allowed once, or refused once by the floor.
+    const options = [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }];
+    const ran = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "execute", title: "Run `ls -la`", rawInput: { command: "ls -la" } } });
+    assert.deepEqual(ran, { outcome: { outcome: "selected", optionId: "allow-once" } });
+    const key = await answerAcpOwnTools(folder, "session/request_permission", { options, toolCall: { kind: "read", title: "Read id_rsa", rawInput: { path: join(process.env.HOME ?? "/", ".ssh", "id_rsa") } } });
+    assert.deepEqual(key, { outcome: { outcome: "selected", optionId: "reject-once" } });
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+  // The agent is told what it has, as a suggestion, not a rule; a node's turn keeps reaching the computer through Ensemble.
+  const told = howYouRun("claude-code", { ownTools: true, ownWeb: true });
+  assert.match(told, /all your own tools: your shell, files and web search/);
+  assert.match(told, /hub_assign_to_agent/);
+  assert.doesNotMatch(howYouRun("claude-code", { ownTools: true, node: true }), /all your own tools/);
 });
 
 test("Claude Code runs with Ensemble's prompt and tools only, and none of the person's settings", () => {

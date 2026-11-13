@@ -26,6 +26,10 @@ export function isWithin(root: string, candidate: string, allowEqual = false): b
 }
 
 const executables = new Map<string, string>();
+/** For tests that put a stand-in program on PATH after another one was found. */
+export function forgetExecutablesForTests(): void {
+  executables.clear();
+}
 
 export async function hostExecutable(name: string): Promise<string> {
   const cached = executables.get(name);

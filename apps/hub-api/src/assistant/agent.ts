@@ -388,7 +388,8 @@ async function drive(
       }),
       USE_TOOL,
     ];
-    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true };
+    // A chat, Ask Ensemble or a routine keeps the agent's own tools too; a node's turn reaches the computer through Ensemble's tools, where its owner approves.
+    const how = { ownWeb: args.subscription?.ownWeb !== false, node: args.subscription?.node === true, ownTools: args.subscription?.node !== true };
     // A node does long work on a computer (two steps per browser action); the relay takes at most 64 turns.
     const maxCalls = Math.min(60, args.subscription?.maxCalls ?? MAX_COMPUTER_CALLS);
     const conversation = agentConversation(messages, agent, how);
@@ -426,6 +427,8 @@ async function drive(
         model: args.model,
         effort: args.reasoningEffort ?? null,
         system: conversation.system,
+        // A computer whose Ensemble is too old for the agent's own tools is told it has only Ensemble's.
+        ...(how.ownTools ? { systemWithoutOwnTools: agentConversation(messages, agent, { ...how, ownTools: false }).system } : {}),
         prompt: conversation.prompt,
         // What a new session is given when the old one is gone: an inline ask's page brings its earlier asks.
         history: [args.subscription?.history ?? "", conversation.history].filter(Boolean).join("\n\n"),
@@ -444,6 +447,7 @@ async function drive(
         tools: toolSpecs(),
         maxTurns: Math.min(64, maxCalls + 4),
         ownWeb: how.ownWeb,
+        ownTools: how.ownTools,
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
         call,

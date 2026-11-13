@@ -4,7 +4,8 @@
  * ENSEMBLE_ASSISTANT_TURN); that server lists and calls the turn's tools through this runtime's
  * loopback API (`/api/engine/assistant/*`, routes/engine.ts) with the turn's own secret. The
  * tools themselves run where the turn's data is: in this process on the desktop, on Ensemble on
- * the web for a turn relayed from there.
+ * the web for a turn relayed from there. A turn whose agent keeps its own tools also gets each of
+ * them judged here by the hard floor (`/api/engine/assistant/ask`, judge.ts `judgeFloor`), in its folder.
  */
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
@@ -16,14 +17,16 @@ type Bridge = {
   secret: string;
   tools: ToolSpec[];
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
+  /** The turn's folder, when its agent keeps its own tools: the hard floor is judged from there. */
+  folder?: string;
 };
 
 const bridges = new Map<string, Bridge>();
 
-export function openBridge(tools: ToolSpec[], call: Bridge["call"]): { credential: string; close: () => void } {
+export function openBridge(tools: ToolSpec[], call: Bridge["call"], options: { folder?: string } = {}): { credential: string; close: () => void } {
   const id = randomUUID();
   const secret = randomBytes(24).toString("hex");
-  const bridge: Bridge = { secret, tools, call };
+  const bridge: Bridge = { secret, tools, call, ...(options.folder ? { folder: options.folder } : {}) };
   bridges.set(id, bridge);
   return {
     credential: `${id}.${secret}`,

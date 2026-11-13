@@ -9,6 +9,7 @@
  *   node ensemble-hook.mjs install --target cursor|claude|codex|copilot-cli|vscode --token ens_… [--url http://127.0.0.1:4000] [--project DIR]
  *   node ensemble-hook.mjs uninstall --target … [--project DIR]
  *   node ensemble-hook.mjs --source claude --engine     (a run Ensemble started: ENSEMBLE_ENGINE_URL, ENSEMBLE_RUN)
+ *   node ensemble-hook.mjs --source claude|copilot-cli --chat     (an assistant turn: ENSEMBLE_ENGINE_URL, ENSEMBLE_ASSISTANT_TURN)
  *
  * Claude Code's multiple-choice questions (AskUserQuestion) arrive as one
  * Needs me card per question, with the same options, their descriptions, and
@@ -237,12 +238,36 @@ async function engineAsk(payload) {
   const base = process.env.ENSEMBLE_ENGINE_URL;
   const run = process.env.ENSEMBLE_RUN;
   if (!base || !run) return { decision: "deny", message: "This hook runs only inside an Ensemble run." };
-  const url = new URL("/api/engine/ask", base);
+  return localAsk(new URL("/api/engine/ask", base), { "x-ensemble-run": run }, payload);
+}
+
+/**
+ * An assistant turn on the person's own agent (a chat, Ask Ensemble, a routine): the agent's own tools
+ * run unless Ensemble's hard floor refuses them (keys, Ensemble's own data, privilege programs,
+ * dangerous commands). Asked of the runtime running the turn, with the turn's own secret; it fails
+ * closed like a run's hook.
+ */
+async function chatAsk(payload) {
+  const base = process.env.ENSEMBLE_ENGINE_URL;
+  const turn = process.env.ENSEMBLE_ASSISTANT_TURN;
+  if (!base || !turn) return { decision: "deny", message: "This hook runs only inside an Ensemble assistant turn." };
+  return localAsk(new URL("/api/engine/assistant/ask", base), { "x-ensemble-turn": turn }, payload);
+}
+
+/** The hook's reply in the tool's own terms: Claude Code's PreToolUse output, or GitHub Copilot CLI's top-level decision. */
+export function chatOutput(source, verdict) {
+  const allow = verdict?.decision === "allow";
+  const reason = allow ? "Allowed in Ensemble." : verdict?.message || "Refused by Ensemble.";
+  if (source === "copilot-cli") return { permissionDecision: allow ? "allow" : "deny", permissionDecisionReason: reason };
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: allow ? "allow" : "deny", permissionDecisionReason: reason } };
+}
+
+function localAsk(url, headers, payload) {
   const body = JSON.stringify({ tool_name: payload.tool_name ?? "", tool_input: payload.tool_input ?? {}, session_id: payload.session_id ?? null });
   return new Promise((done) => {
     const req = httpRequest(
       url,
-      { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-ensemble-run": run } },
+      { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), ...headers } },
       (res) => {
         let text = "";
         res.setEncoding("utf8");
@@ -486,6 +511,11 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const raw = await readStdin();
     const payload = normalizePayload(raw.trim() ? JSON.parse(raw) : {});
     process.stdout.write(JSON.stringify(engineOutput(await engineAsk(payload))));
+    process.exit(0);
+  } else if (opts.chat) {
+    const raw = await readStdin();
+    const payload = normalizePayload(raw.trim() ? JSON.parse(raw) : {});
+    process.stdout.write(JSON.stringify(chatOutput(opts.source ?? "claude", await chatAsk(payload))));
     process.exit(0);
   } else {
     await ask(opts.source ?? "other", opts.event);

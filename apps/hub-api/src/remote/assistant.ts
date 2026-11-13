@@ -45,6 +45,8 @@ const Spec = z.object({
     .nullish(),
   /** The agent's own web search and page reading (0.7.6). Older servers omit it. */
   ownWeb: z.boolean().optional(),
+  /** All the agent's own tools, judged by the hard floor (0.7.15, own-tools.ts). Older servers omit it. */
+  ownTools: z.boolean().optional(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 

@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerText, heartbeat, questionInput, toolsFor } from "../../../scripts/ensemble-ask-mcp.mjs";
-import { ACTIVITY_EVENTS, answeredInput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
+import { ACTIVITY_EVENTS, answeredInput, chatOutput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
 
 const hookCommand = (source: string) => `node ensemble-hook.mjs --source ${source}`;
 
@@ -27,6 +27,13 @@ test("Copilot CLI reads the decision at the top level and its tool arguments as 
   const payload = normalizePayload({ toolName: "bash", toolArgs: '{"command":"rm -rf build"}', cwd: "/repo" });
   assert.equal(payload.tool_name, "bash");
   assert.deepEqual(payload.tool_input, { command: "rm -rf build" });
+});
+
+test("an assistant turn's hook answers in each tool's own terms: allowed, or refused with Ensemble's reason", () => {
+  assert.deepEqual(chatOutput("claude", { decision: "allow" }), { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "Allowed in Ensemble." } });
+  assert.deepEqual(chatOutput("claude", { decision: "deny", message: "~/.ssh holds keys" }).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(chatOutput("copilot-cli", { decision: "deny", message: "~/.ssh holds keys" }), { permissionDecision: "deny", permissionDecisionReason: "~/.ssh holds keys" });
+  assert.equal(chatOutput("copilot-cli", null).permissionDecision, "deny", "no verdict refuses: the hook fails closed");
 });
 
 test("each AskUserQuestion question becomes a card with its options, descriptions and a typed answer", () => {

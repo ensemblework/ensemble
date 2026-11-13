@@ -105,6 +105,7 @@ export function bypassesGlobalAuth(path: string): boolean {
     path === "/api/engine/tools" ||
     path === "/api/engine/assistant/tools" ||
     path === "/api/engine/assistant/tool" ||
+    path === "/api/engine/assistant/ask" ||
     // git's credential helper in a run: the run's own token (credentials/git-credential.ts).
     path === "/api/engine/git-credential" ||
     // The page a connected app's browser sign-in lands on, on a computer's own runtime (desktop/account.ts).
