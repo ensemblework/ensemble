@@ -1,7 +1,6 @@
 "use client";
 
 import { canonicalTimeZone } from "@/lib/time-zones";
-import { MorningBriefPrompt } from "../morning-brief";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
@@ -61,5 +60,5 @@ export function Notifier() {
     return () => window.clearInterval(timer);
   }, [reminders.data]);
 
-  return <MorningBriefPrompt />;
+  return null;
 }

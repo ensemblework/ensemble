@@ -53,7 +53,7 @@ apps/hub-web/
 ├── app/                      login, signup, forgot, reset, verify, link, p/[token] (public links), shared/[id]
 ├── app/(hub)/                One folder per page: today, board, needs-me, runs, tasks, pages, projects,
 │                             context, meetings, files, skills, workspace, code, plots, diagrams, metrics,
-│                             recap, morning-brief, marketplace, connect, settings, spaces, shared,
+│                             recap, routines, marketplace, connect, settings, spaces, shared,
 │                             shared-by-me, completed, trash, welcome, start, …
 ├── components/<surface>/      One folder per surface (board, editor = TipTap, files = viewers per format,
 │                             connectors/brands = logos, …); ui.tsx is the kit

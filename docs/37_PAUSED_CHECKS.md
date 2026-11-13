@@ -12,7 +12,7 @@ While development moves fast, every push and pull request into `testing` **and**
 | `cli-v<version>` tag | `cli-release.yml` | Builds on five targets, each packaged CLI smoke-run (seconds), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
 | `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on four targets; no tests | ~22 min (the Intel Mac build) |
 
-The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*): `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api` (with its tests), `hub-web` and the CLI, the CLI channel-isolation tests, focused board, page, comment and session-cookie web tests, the in-memory page-board, cookie-namespace and production-guard API tests, the testing deploy guard, the release-script tests and the route inventory.
+The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*): `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api` (with its tests), `hub-web` and the CLI, the CLI channel-isolation tests, focused board, page, comment, morning-brief and session-cookie web tests, the in-memory morning-brief migration/scheduler and signup regressions, page-board, cookie-namespace and production-guard API tests, the testing deploy guard, the release-script tests and the route inventory.
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
 

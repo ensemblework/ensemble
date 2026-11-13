@@ -1,4 +1,3 @@
-import { dataErasureVersion } from "../lib/workspace-data.js";
 import { seriesKeyOf } from "./series.js";
 import { previousMeeting, prepOf } from "./prep.js";
 import { kickMeetingAi, queueMeetingAi } from "../connectors/meetings/ai.js";
@@ -14,7 +13,7 @@ import { collapseEventRows, EVENT_ROW_SELECT } from "../calendar/read.js";
 import { PageDocument, moduleDenied, restoreMentionLinks } from "@ensemble/shared-types";
 import { separateLists } from "../imports/markdown.js";
 import { markdownToNodes, pageMarkdown } from "../pages/markdown.js";
-import { isReadKind, readItem, searchHub, todayBriefing } from "../bridge/service.js";
+import { isReadKind, readItem, searchHub } from "../bridge/service.js";
 import { hubUrl } from "../bridge/text.js";
 import { isIsoDate, zonedDateTimeToUtc, zonedParts } from "../lib/clock.js";
 import { loadSettings } from "../lib/settings.js";
@@ -22,8 +21,6 @@ import { lastUndoId } from "../lib/undo.js";
 import { softDelete } from "../services/records.js";
 import { createTask, updateTask } from "../services/tasks.js";
 import { composeAskAnswer, pathFromHubUrl, searchTerms, type AskSource } from "./ask.js";
-import { renderMorningBrief } from "./morning-skill.js";
-import { formatMorningBrief } from "./brief.js";
 import { parseCapture, type ParsedCapture } from "./capture.js";
 import { addCalendarDays, calendarLabel, weekBounds } from "./dates.js";
 import {
@@ -50,6 +47,7 @@ import {
   type RecapStats,
 } from "./recap.js";
 import { currentScope, isGuestIn } from "../sharing/context.js";
+import { MORNING_BRIEF_KEY } from "../routines/service.js";
 
 type Db = PrismaClient;
 /** Meeting-session writes also run inside the assistant's Apply transaction. */
@@ -69,59 +67,6 @@ function claim(db: Db, userId: string, connector: string, slot: string): Promise
 
 function dayStart(date: string, timezone: string): Date {
   return zonedDateTimeToUtc(date, "00:00", timezone);
-}
-
-export async function deliverMorningBrief(db: Db, userId: string, render = renderMorningBrief) {
-  const settings = await loadSettings(db, userId);
-  const clock = zonedParts(settings.timezone);
-  const start = dayStart(clock.date, settings.timezone);
-  const existing = await db.notification.findFirst({
-    where: { userId, kind: "morning_brief", createdAt: { gte: start } },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!settings.morningBrief.enabled) {
-    return { delivered: false, reason: "off" as const, notification: existing, brief: null };
-  }
-  if (existing) return { delivered: false, reason: "already" as const, notification: existing, brief: null };
-  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { createdAt: true } });
-  if (zonedParts(settings.timezone, user.createdAt).date >= clock.date) return { delivered: false, reason: "early" as const, notification: null, brief: null };
-  if (clock.time < settings.morningBrief.time) {
-    return { delivered: false, reason: "early" as const, notification: null, brief: null };
-  }
-  if (!(await claim(db, userId, "schedule:brief", `brief@${clock.date}`))) {
-    const raced = await db.notification.findFirst({
-      where: { userId, kind: "morning_brief", createdAt: { gte: start } },
-      orderBy: { createdAt: "desc" },
-    });
-    return { delivered: false, reason: "already" as const, notification: raced, brief: null };
-  }
-  const erasureVersion = await dataErasureVersion(db, userId);
-  const briefing = await todayBriefing(db, userId);
-  const context = { ...briefing, timezone: settings.timezone };
-  let brief;
-  try { brief = await render(db, userId, context); }
-  catch {
-    if (await dataErasureVersion(db, userId) !== erasureVersion) return { delivered: false, reason: "erased" as const, notification: null, brief: null };
-    brief = formatMorningBrief(context);
-    brief.body += "\n\nYour personal brief could not be generated. Check your model connection in Settings → Models. This is the current overview of your day.";
-  }
-  if (await dataErasureVersion(db, userId) !== erasureVersion) return { delivered: false, reason: "erased" as const, notification: null, brief: null };
-  const notification = await db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
-    if (await dataErasureVersion(tx, userId) !== erasureVersion) return null;
-    return tx.notification.create({
-    data: {
-      userId,
-      kind: "morning_brief",
-      title: brief.title,
-      body: brief.body,
-      channel: "hub",
-      url: "/morning-brief",
-    },
-    });
-  });
-  if (!notification) return { delivered: false, reason: "erased" as const, notification: null, brief: null };
-  return { delivered: true, reason: "sent" as const, notification, brief };
 }
 
 export async function listNotifications(db: Db, userId: string) {
@@ -269,7 +214,9 @@ export async function ensureStaleNotice(db: Db, userId: string) {
   const settings = await loadSettings(db, userId);
   if (!settings.staleNudge.enabled) return { created: false };
   const clock = zonedParts(settings.timezone);
-  const gate = settings.morningBrief.enabled ? settings.morningBrief.time : "09:00";
+  const brief = await db.assistantRoutine.findUnique({ where: { userId_builtInKey: { userId, builtInKey: MORNING_BRIEF_KEY } }, select: { status: true, cron: true } });
+  const daily = brief?.status === "active" ? /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(brief.cron) : null;
+  const gate = daily ? `${daily[2]!.padStart(2, "0")}:${daily[1]!.padStart(2, "0")}` : "09:00";
   if (clock.time < gate) return { created: false };
   const { nudges } = await listNudges(db, userId);
   if (!nudges.length) return { created: false };
