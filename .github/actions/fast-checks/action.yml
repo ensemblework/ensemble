@@ -2,7 +2,7 @@ name: Fast checks
 description: >-
   The checks every push and pull request into testing and main runs before anything deploys:
   versions in step, shared/API/web/CLI types, CLI channel isolation, focused web and API
-  regressions, deployment guards, release scripts and the route inventory. About two minutes.
+  regressions, public docs and read-only lookup, deployment guards, release scripts and the route inventory. About two minutes.
   The slower suites are paused in full-checks.yml (docs/37_PAUSED_CHECKS.md).
 
 runs:
@@ -33,6 +33,13 @@ runs:
         pnpm --filter ensemblework exec node --import tsx --test src/testing-channel.test.ts src/paths.test.ts src/auth-flow.test.ts src/editors.test.ts src/launcher-update-services.test.ts
         pnpm --filter @ensemble/hub-api exec tsx --test src/remote/client-channel.test.ts
         node --test scripts/testing-cli.test.mjs
+    - name: Published docs and read-only lookup
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/docs build
+        pnpm --filter @ensemble/docs test
+        pnpm --filter @ensemble/context-bridge exec node --import tsx --test --test-name-pattern="documentation through the bridge" test/mcp.test.ts
+        pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/bridge/docs.test.ts src/routes/mcp.integration.test.ts
     - name: Focused web and API regressions
       shell: bash
       run: |

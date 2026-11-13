@@ -2,6 +2,7 @@ packages:
   - apps/hub-api
   - apps/hub-web
   - apps/landing
+  - apps/docs
   - apps/agent-runtime
   - apps/context-bridge
   - apps/cli

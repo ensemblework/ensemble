@@ -27,6 +27,7 @@
     "@electric-sql/pglite-pgvector": "0.0.9",
     "@ensemble/block-diagrams": "workspace:*",
     "@ensemble/context-bridge": "workspace:*",
+    "@ensemble/docs": "workspace:*",
     "@ensemble/ide-theme": "workspace:*",
     "@ensemble/shared-types": "workspace:*",
     "@fastify/compress": "^9.2.0",
