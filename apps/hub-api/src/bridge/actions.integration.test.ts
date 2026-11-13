@@ -248,7 +248,7 @@ test("a file from the editor goes into Files and onto the task's page", async ()
 });
 
 test("connected apps need their own grant; reads run, changes also need the write grant", async () => {
-  const echo = defineTool({ name: "demo_echo", area: "apps", description: "Echo.", input: z.object({ text: z.string() }), isWrite: false, risk: "low", run: async (_ctx, input) => toolOk("Echoed.", { text: input.text }) });
+  const echo = defineTool({ name: "demo_echo", area: "apps", description: "Echo. Repeats the text it is given, for checking a connection.", input: z.object({ text: z.string() }), isWrite: false, risk: "low", run: async (_ctx, input) => toolOk("Echoed.", { text: input.text }) });
   const post = defineTool({ name: "demo_post", area: "apps", description: "Post.", input: z.object({ text: z.string() }), isWrite: true, risk: "medium", run: async (_ctx, input) => toolOk("Posted.", { id: input.text }) });
   const offSource = registerAppToolSource(async () => [echo, post]);
   const offResolver = registerToolResolver(async (_ctx, name) => [echo, post].find((tool) => tool.name === name));
@@ -262,7 +262,11 @@ test("connected apps need their own grant; reads run, changes also need the writ
     const { key: readsApps } = await keyFor({ canUseApps: true });
     const apps = await readsApps.inject({ method: "GET", url: "/api/bridge/apps" });
     assert.equal(apps.statusCode, 200, apps.body);
-    assert.ok(apps.json<{ tools: Array<{ name: string }> }>().tools.some((tool) => tool.name === "demo_echo"));
+    // The list names each tool with its first sentence; a named tool comes whole, with its inputSchema.
+    const listedEcho = apps.json<{ tools: Array<{ name: string; description: string; inputSchema?: unknown }> }>().tools.find((tool) => tool.name === "demo_echo");
+    assert.deepEqual([listedEcho?.description, listedEcho?.inputSchema], ["Echo.", undefined]);
+    const named = (await readsApps.inject({ method: "GET", url: "/api/bridge/apps?names=demo_echo" })).json<{ tools: Array<{ name: string; description: string; inputSchema?: { properties?: Record<string, unknown> } }> }>().tools;
+    assert.deepEqual([named.length, named[0]?.description, Object.keys(named[0]?.inputSchema?.properties ?? {})], [1, "Echo. Repeats the text it is given, for checking a connection.", ["text"]]);
     const echoed = await act(readsApps, "demo_echo", { text: "hi" });
     assert.equal(echoed.statusCode, 200, echoed.body);
     assert.deepEqual(echoed.json<{ data: unknown }>().data, { text: "hi" });

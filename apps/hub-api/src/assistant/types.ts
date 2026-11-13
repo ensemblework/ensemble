@@ -47,6 +47,11 @@ export interface ToolContext {
   turn?: { webSearches: number };
   /** The turn runs on the person's own AI plan (an agent on their computer): its tools spend none of Ensemble's included credits. */
   ownPlan?: boolean;
+  /**
+   * The whole catalog of the person's app tools (an editor or agent run asking what it can call through
+   * Ensemble, which reads a tool's schema only when it wants it), not one turn's: no per-turn tool caps.
+   */
+  appCatalog?: boolean;
 }
 
 /**

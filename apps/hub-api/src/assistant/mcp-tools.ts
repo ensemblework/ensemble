@@ -185,9 +185,9 @@ async function connectedRows(prisma: Pick<PrismaClient, "mcpConnection">, userId
   });
 }
 
-/** The tools to offer the model this turn, within the caps. */
-export async function mcpToolsForUser(prisma: Pick<PrismaClient, "mcpConnection">, userId: string): Promise<McpHubTool[]> {
-  return buildMcpTools(await connectedRows(prisma, userId));
+/** The tools to offer the model this turn, within the caps; `cap: false` for the whole catalog (the bridge's listing). */
+export async function mcpToolsForUser(prisma: Pick<PrismaClient, "mcpConnection">, userId: string, options: { cap?: boolean } = {}): Promise<McpHubTool[]> {
+  return buildMcpTools(await connectedRows(prisma, userId), options);
 }
 
 /** Finds one MCP tool by name for dispatch or Apply. Ignores the caps; still only connected servers and enabled tools. */

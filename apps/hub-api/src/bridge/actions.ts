@@ -302,6 +302,8 @@ export async function bridgeContext(app: FastifyInstance, caller: Pick<Caller, "
     settings: await loadSettings(app.prisma, caller.userId),
     modules: caller.modules,
     requestHeaders: { "x-ensemble-internal": env.ENSEMBLE_INTERNAL_TOKEN, "x-ensemble-user": caller.userId },
+    // An editor or run lists the person's whole app catalog and reads a schema when it wants one.
+    appCatalog: true,
   };
 }
 
@@ -358,7 +360,12 @@ export function listActions(caller: Caller, options: { groups?: readonly string[
   return rows;
 }
 
-/** The connected apps and their tools for this caller (apps allowed), with schemas when asked. */
+/**
+ * The connected apps and their tools for this caller (apps allowed). The list names each tool with its
+ * first sentence, for all apps or one (`app`); named tools come with their full description and
+ * inputSchema, so an agent reads a schema only for the tool it will call (one app's whole list with
+ * schemas runs past 100 KB).
+ */
 export async function listApps(app: FastifyInstance, caller: Caller, options: { app?: string; names?: readonly string[]; schema?: boolean } = {}) {
   const refused = bridgeAppsRejected(caller);
   if (refused) throw new BridgeActionError(refused, 403);
@@ -374,12 +381,17 @@ export async function listApps(app: FastifyInstance, caller: Caller, options: { 
   return {
     apps: apps.map((row) => ({ id: row.id, name: row.name, via: row.via, account: row.account, uses: row.uses, publicOnly: row.publicOnly })),
     broken: connections.broken,
-    tools: shown.map((tool) => ({
-      ...info(caller, tool, "apps", null, Boolean(options.schema) || names.size > 0 || Boolean(wanted)),
-      app: apps.find((row) => belongs(tool, row))?.name ?? tool.app?.label ?? null,
-    })),
+    tools: shown.map((tool) => {
+      const row = info(caller, tool, "apps", null, names.size > 0);
+      return { ...row, ...(names.size ? {} : { description: firstSentence(row.description) }), app: apps.find((entry) => belongs(tool, entry))?.name ?? tool.app?.label ?? null };
+    }),
   };
 }
+
+const firstSentence = (text: string): string => {
+  const end = /[.!?](\s|$)/.exec(text);
+  return (end ? text.slice(0, end.index + 1) : text).slice(0, 300);
+};
 
 async function keyName(app: FastifyInstance, caller: Caller): Promise<string> {
   if (!caller.tokenId) return caller.authVia === "session" ? "the Hub" : "an agent";

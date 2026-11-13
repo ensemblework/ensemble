@@ -161,12 +161,12 @@ const ACT_TOOL = {
 const APPS_TOOL = {
   name: "ensemble_apps",
   description:
-    "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack, Linear, Hugging Face…) and their tools, which you call with ensemble_app_call: no app keys needed. With app (its id or name) or names: each tool's full description and inputSchema.",
+    "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack, Linear, Hugging Face…) and their tools, each with its first sentence, which you call with ensemble_app_call: no app keys needed. app (its id or name) lists one app's; tools gives those tools' full description and inputSchema.",
   inputSchema: {
     type: "object",
     properties: {
       app: { type: "string", description: "An app's id or name, e.g. notion." },
-      names: { type: "string", description: "Comma list of tool names to describe in full." },
+      tools: { type: "array", items: { type: "string" }, description: "Tool names to describe in full, with their inputSchema." },
     },
   },
 };
