@@ -15,7 +15,7 @@ import { gitCredentialAnswer } from "../credentials/git-credential.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { hookCall, judgeFloor } from "../workspace/engines/judge.js";
 import { isChatTurn } from "../workspace/trust.js";
-import { CONTEXT_TOOLS, isContextTool, isRunActionTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
+import { CONTEXT_TOOLS, isContextTool, isRunActionTool, isRunAppTool, RUN_ACTION_TOOLS, runContextTool, runRunAction } from "../workspace/context-tools.js";
 import { GraphError } from "../context/graph/neighbors.js";
 
 export async function engineRoutes(app: FastifyInstance): Promise<void> {
@@ -117,8 +117,9 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       }
     }
     // Ensemble actions around the task (bridge/actions.ts): task runs only; Chat has the board's own tools.
+    // The person's connected apps (ensemble_apps, ensemble_app_call): task runs and Chat alike.
     if (isRunActionTool(body.name)) {
-      if (chat) return reply.code(403).send({ error: "Ensemble actions are for task runs, not Chat." });
+      if (chat && !isRunAppTool(body.name)) return reply.code(403).send({ error: "Ensemble actions are for task runs, not Chat." });
       try {
         const space = await app.prisma.user.findUnique({ where: { id: run.ctx.userId }, select: { moduleSet: true } });
         return { text: await runRunAction({ app, userId: run.ctx.userId, jobContext: run.ctx.job.context, modules: space?.moduleSet ?? null }, body.name, body.input) };

@@ -6,7 +6,7 @@ import { claimQueuedJob } from "../workspace/queue-policy.js";
  */
 import { workContext } from "../context/graph/packet.js";
 import { GraphError } from "../context/graph/neighbors.js";
-import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
+import { answerContextTool, answerRunAction, isContextTool, isRunActionTool, isRunAppTool, type ContextToolName, type RunActionToolName } from "../workspace/context-tools.js";
 import { backgroundJob, backgroundWaitMs } from "../node/routines.js";
 import { cardUrl, postRunDecisionCard } from "../node/run-decisions.js";
 import { randomBytes } from "node:crypto";
@@ -687,6 +687,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ name: z.string().refine(isRunActionTool, "Unknown tool."), args: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
     if (held.job.userId !== device.userId && body.name === "ensemble_act") {
       return reply.code(403).send({ error: "In a space shared with you, an agent run reads Ensemble but does not change it. Report your result with report_result." });
+    }
+    // The apps connected in someone else's space are theirs: a run there does not use them.
+    if (held.job.userId !== device.userId && isRunAppTool(body.name)) {
+      return reply.code(403).send({ error: "In a space shared with you, an agent run does not use the space owner's connected apps." });
     }
     const space = await prisma.user.findUnique({ where: { id: held.job.userId }, select: { moduleSet: true } });
     return { text: await answerRunAction(app, held.job.userId, space?.moduleSet ?? null, body.name as RunActionToolName, body.args) };

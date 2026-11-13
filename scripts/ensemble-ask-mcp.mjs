@@ -26,6 +26,10 @@
  * Its `initialize` answer carries `instructions` (`instructionsFor`): Ensemble is reached through
  * these tools and the brief, never by signing in to Ensemble's web app in a browser.
  *
+ * In both it offers the person's connected apps (Notion, GitHub, Gmail, Slack…): ensemble_apps lists
+ * them and their tools, ensemble_app_call uses one with the person's own connection, answered by
+ * Ensemble (hub-api src/workspace/context-tools.ts, bridge/actions.ts), so the agent needs no app keys.
+ *
  * In both it offers secret_http: a web request made by this computer's Ensemble with one of the
  * person's saved secrets put in where {{NAME}} appears, only to the destinations they allowed for it,
  * the answer coming back with the value hidden (hub-api src/credentials/secret-http.ts, docs/35 §8.7).
@@ -123,8 +127,8 @@ const CONTEXT_SEARCH_TOOL = {
 
 /**
  * Ensemble actions around the task (hub-api bridge/actions.ts): the same allowlist an editor's key has,
- * without the connected apps, in the job's own space. Answered by this computer's Ensemble, or by
- * Ensemble on the web for a task claimed from there.
+ * in the job's own space. Answered by this computer's Ensemble, or by Ensemble on the web for a task
+ * claimed from there.
  */
 const ACTIONS_TOOL = {
   name: "ensemble_actions",
@@ -150,6 +154,34 @@ const ACT_TOOL = {
       input: { type: "object", description: "The action's arguments, matching its inputSchema." },
     },
     required: ["action"],
+  },
+};
+
+/** The person's connected apps through Ensemble (hub-api context-tools.ts `RUN_ACTION_TOOL_SPECS`). */
+const APPS_TOOL = {
+  name: "ensemble_apps",
+  description:
+    "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack, Linear, Hugging Face…) and their tools, which you call with ensemble_app_call: no app keys needed. With app (its id or name) or names: each tool's full description and inputSchema.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      app: { type: "string", description: "An app's id or name, e.g. notion." },
+      names: { type: "string", description: "Comma list of tool names to describe in full." },
+    },
+  },
+};
+
+const APP_CALL_TOOL = {
+  name: "ensemble_app_call",
+  description:
+    "Use one of the person's connected apps through Ensemble, with their own connection: search, read, create or edit in Notion, GitHub, Gmail, Slack and the others ensemble_apps lists. tool is a name from ensemble_apps; input matches its inputSchema. A change in an app runs at once and Ensemble cannot undo it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      tool: { type: "string", description: "A tool name from ensemble_apps." },
+      input: { type: "object", description: "The tool's arguments, matching its inputSchema." },
+    },
+    required: ["tool"],
   },
 };
 
@@ -264,12 +296,15 @@ const SECRET_HTTP_TOOL = {
 export function instructionsFor(env = process.env) {
   const never = "You already act in Ensemble through this server: never open Ensemble's web app (app.ensemblework.com, test.ensemblework.com or a board, task or page link) in a browser to sign in or to read the person's work, and never ask the person to sign in to it.";
   if (env.ENSEMBLE_ASSISTANT_TURN) return `This server's tools are the person's Ensemble: their tasks, boards, pages, files and settings, in the space this chat works in. ${never}`;
-  if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search; ensemble_context opens any ensemble:// record and what it links to. ${never}`;
-  return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. When the task asks you to change Ensemble itself (pages, boards, diagrams, plots, the task's fields), use ensemble_actions and ensemble_act. ${never}`;
+  const apps = "The apps the person connected to Ensemble (Notion, GitHub, Gmail, Slack and others) are reached through ensemble_apps and ensemble_app_call with their own connections: use those rather than asking for app keys or signing in to the app.";
+  if (env.ENSEMBLE_CHAT === "1") return `The person's Ensemble board is reached through ensemble_list_tasks, ensemble_create_task and ensemble_search; ensemble_context opens any ensemble:// record and what it links to. ${apps} ${never}`;
+  return `Ensemble gave you the work in your brief, with what it knows around the task (its meeting, project, people, related and earlier work). For more, call ensemble_context (your task, or any ensemble:// handle from the brief) and ensemble_search before asking the person; ask the person with ask_person, report with report_result and attach_evidence. When the task asks you to change Ensemble itself (pages, boards, diagrams, plots, the task's fields), use ensemble_actions and ensemble_act. ${apps} ${never}`;
 }
 
 export function toolsFor(env = process.env) {
-  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, SECRET_HTTP_TOOL] : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, ACT_TOOL, SECRET_HTTP_TOOL];
+  return env.ENSEMBLE_CHAT === "1"
+    ? [TOOL, ...CHAT_TOOLS, CONTEXT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL]
+    : [TOOL, REPORT_TOOL, EVIDENCE_TOOL, CONTEXT_TOOL, CONTEXT_SEARCH_TOOL, ACTIONS_TOOL, ACT_TOOL, APPS_TOOL, APP_CALL_TOOL, SECRET_HTTP_TOOL];
 }
 
 /** The browser and capture tools this computer offers a task run, as Ensemble listed them (none in Chat). */

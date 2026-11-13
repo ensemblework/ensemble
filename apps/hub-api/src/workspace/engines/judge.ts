@@ -34,7 +34,8 @@ export type EngineAnswer = { decision: "allow" | "deny"; message?: string; updat
  * reference, where the owner's allowed destinations and the run's scope decide (credentials/secret-http.ts).
  * The run's browser and capture tools follow its mode, like any MCP tool.
  */
-export const ENSEMBLE_OWN_TOOLS = ["ask_person", "report_result", "attach_evidence", "ensemble_list_tasks", "ensemble_search", "ensemble_create_task", "ensemble_context", "secret_http"] as const;
+/** The run's own Ensemble tools that pass without a prompt; ensemble_act and ensemble_app_call change things and are asked about like a command. */
+export const ENSEMBLE_OWN_TOOLS = ["ask_person", "report_result", "attach_evidence", "ensemble_list_tasks", "ensemble_search", "ensemble_create_task", "ensemble_context", "ensemble_actions", "ensemble_apps", "secret_http"] as const;
 
 const ALLOW: EngineAnswer = { decision: "allow" };
 const READS = new Set(["Read", "Glob", "Grep", "LS", "NotebookRead"]);

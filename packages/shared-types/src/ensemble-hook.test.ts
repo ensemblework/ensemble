@@ -141,9 +141,9 @@ test("ask_person marks the recommended option and returns the person's answer as
   assert.match(answerText(input, { decision: "deny", message: "skipped" }), /^No answer: skipped/);
 });
 
-test("the run's ensemble MCP server offers the person's board only in Chat, the run's report and evidence in a task run, and secrets by reference in both", () => {
-  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person", "report_result", "attach_evidence", "secret_http"]);
-  assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "secret_http"]);
+test("the run's ensemble MCP server offers the person's board only in Chat, the run's report, evidence and Ensemble actions in a task run, and their connected apps and secrets by reference in both", () => {
+  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person", "report_result", "attach_evidence", "ensemble_context", "ensemble_search", "ensemble_actions", "ensemble_act", "ensemble_apps", "ensemble_app_call", "secret_http"]);
+  assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search", "ensemble_context", "ensemble_apps", "ensemble_app_call", "secret_http"]);
 });
 
 test("a waiting question sends progress only when the agent gave a progress token", async () => {
