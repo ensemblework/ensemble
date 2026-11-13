@@ -91,7 +91,7 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
     timer = setInterval(() => void flushOnce(), FLUSH_MS);
     try {
       // The agent's own tool calls go in the person's AI activity under this turn (lib/ai-activity.ts).
-      const result = await withAiContext({ refs: { turn: id } }, () => run(spec, {
+      const result = await withAiContext({ refs: { turn: id, session: spec.session?.key } }, () => run(spec, {
         async call(name, input): Promise<ToolAnswer> {
           const raw = await client.assistantTool(id, { name, input });
           const answer = Answer.safeParse(raw);

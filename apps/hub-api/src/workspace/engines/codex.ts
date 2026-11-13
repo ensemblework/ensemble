@@ -225,6 +225,8 @@ export async function runCodex(
           summary?: string[];
           tool?: string;
           arguments?: unknown;
+          result?: unknown;
+          error?: unknown;
         };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
         if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim() && (item.phase === "final_answer" || item.phase === null || item.phase === undefined)) result.text = item.text.trim();
@@ -248,7 +250,8 @@ export async function runCodex(
         }
         if (method === "item/completed" && isTool) {
           const failed = item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0);
-          traced.push(trace.toolEnd(item.id ?? "", item.aggregatedOutput ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed));
+          // An MCP tool's answer is its result (or error), a command's its output.
+          traced.push(trace.toolEnd(item.id ?? "", item.aggregatedOutput ?? item.result ?? item.error ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed));
         }
         if (method === "item/completed" && item.type === "reasoning") traced.push(trace.thinking([item.text ?? "", ...(item.summary ?? [])].filter(Boolean).join("\n")));
         if (method === "item/completed" && item.type === "agentMessage" && item.phase && item.phase !== "final_answer" && item.text?.trim()) traced.push(trace.message(item.text));
