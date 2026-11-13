@@ -12,6 +12,7 @@ import { SEARCH_KINDS, type SearchKind } from "../context/graph/search.js";
 import { sendOriginal } from "../files/serve.js";
 import { bridgeFile, listBridgeFiles } from "./files.js";
 import { bridgeSpaces } from "./spaces.js";
+import { publishedDocs } from "./docs.js";
 import {
   buildBrief,
   itemContext,
@@ -48,6 +49,7 @@ const FILE_GONE = "That file is not in this Ensemble space, or it is in Trash.";
  */
 export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+  const docs = publishedDocs();
 
   app.addHook("preHandler", async (request, reply) => {
     const message = bridgeAuthRejected(request.authVia, env.ENSEMBLE_INTERNAL_TOKEN);
@@ -75,6 +77,11 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
   }));
 
   app.get("/api/bridge/today", async (request) => todayBriefing(prisma, request.userId));
+
+  app.get("/api/bridge/docs", async (request) => {
+    const query = z.object({ q: z.string().trim().min(1).max(200).regex(/[\p{L}\p{N}_]/u), limit: z.coerce.number().int().min(1).max(20).default(8) }).parse(request.query);
+    return docs(query.q, query.limit);
+  });
 
   /** The spaces the key's account can open, and which of them the key may act in (bridge/spaces.ts). */
   app.get("/api/bridge/spaces", async (request) => bridgeSpaces(prisma, request));

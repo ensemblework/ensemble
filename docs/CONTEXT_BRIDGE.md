@@ -33,6 +33,7 @@ Editor / MCP client
 | `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
 | `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
 | `apps/hub-api/src/bridge/routes.ts` | Read routes |
+| `apps/hub-api/src/bridge/docs.ts`, `apps/docs/src/search.js` | Public documentation index and shared word search, without private workspace records ([40](40_PUBLIC_DOCUMENTATION.md)) |
 | `apps/hub-api/src/bridge/write-routes.ts` | `whoami`, the task writes and file uploads (§5.1) |
 | `apps/hub-api/src/bridge/actions.ts`, `action-routes.ts` | The actions allowlist, listing and running actions and app tools (§5.1, §5.2) |
 | `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination; context and search over `context/graph/` |
@@ -97,6 +98,7 @@ Creating and revoking keys is a signed-in account action; a bridge key cannot mi
 | `ensemble_brief` | — | The task: `task` (an `ensemble://task/<id>` handle, a Hub link, its id or its exact open title), else repository + branch. `workContext` is the task's context packet (`context/graph/packet.ts`, at most 7,000 characters: where it came from with the words asked, project, people with roles and relationship, dependencies, related open work, done before, each with a handle) and `contextRef` its handle; plus project, people, deliverables, files attached to the task, current skills (`howIWork`) and cited excerpts (`context`) |
 | `ensemble_context` | — | One record and what it links to (`GET /api/bridge/context`): `item` is a handle, a Hub link, or an id with `kind` (task, project, person, repo, deliverable, meeting, file, page, event). Returns the record and its relations, 6 each, every card with a `ref` to call again; `rel` lists one relation in full, paged with `offset` and `limit` (≤50); `format=packet` returns the Markdown packet (8,000 characters) |
 | `ensemble_search` | — | Ranked word search (`context/graph/search.ts`) across tasks, projects, people, repositories, deliverables, meeting notes with transcripts, standalone pages, files (by name and summary, kind `document`), saved app items, skills, diagrams and plots; `kinds` filters, `near` (a handle) ranks what links to it first. Up to `limit` × 3 hits (at most 40), each with `ref`, `score` and `why` |
+| `ensemble_docs` | None | Published product documentation, not workspace records (`GET /api/bridge/docs`): `query` (1 to 200 characters of search words), `limit` (1 to 20, default 8). Returns `found`, matching `title`, `heading`, public `url` and a short `excerpt` from the same pages as `https://docs.ensemblework.com`; a miss explicitly says so and returns the docs home. Title: `Search Ensemble documentation`; annotations: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false`. Neither changes nor app grants are needed. Public site and index: [40](40_PUBLIC_DOCUMENTATION.md) |
 | `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task (with its meeting, dependencies, labels and deliverable), project, repo, skill, deliverable, person, artifact, document (details and summary; its text and the file itself come from `ensemble_get_file`), meeting_note or meeting (the whole transcript, its people and the tasks made from it; a notes session's id reads its notes), approval, decision, diagram, plot, page |
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
@@ -255,6 +257,7 @@ The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ens
 | Branch matches no open task | Repo and project context, no guessed task |
 | Branch matches several tasks | The candidates; none is chosen |
 | Nothing relevant | Says so |
+| Published docs cannot be loaded or validated | `ensemble_docs` reports a tool error with the docs home, not an empty match or guessed answer |
 | A space the key cannot act in | One sentence saying why (§4); nothing falls back to another space |
 | Long body | Excerpt plus `ensemble_read` |
 

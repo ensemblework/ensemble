@@ -60,6 +60,7 @@ pnpm desktop:dmg                           # unsigned macOS disk image (docs/des
 cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml -- --check   # quick capture (docs/20_QUICK_CAPTURE.md)
 pnpm bridge:build && pnpm bridge:verify    # Context Bridge, the MCP server for editors (docs/CONTEXT_BRIDGE.md)
 pnpm cli:build                             # apps/cli/dist/ensemble.mjs (docs/26_CLI.md)
+pnpm --filter @ensemble/docs build        # public documentation to apps/docs/out (docs/40_PUBLIC_DOCUMENTATION.md)
 ```
 
 ## Ensemble CLI
@@ -79,6 +80,7 @@ Editors that take a URL can use `https://api.ensemblework.com/mcp` with an `ens_
 ```
 apps/hub-web            Next.js 15 Hub (Today, Board, pages, Files, Code, Plots, Diagrams…)
 apps/landing            static site for ensemblework.com (port 3100)
+apps/docs               static documentation for docs.ensemblework.com, generated from docs/
 apps/hub-api            Fastify + Prisma API: data, assistant, scheduler, workspace queue, SSE
 apps/agent-runtime      Python FastAPI: model adapters and plot export (port 5055)
 apps/skill-forge        Python package (stub)
@@ -100,6 +102,8 @@ More: [docs/17_REPOSITORY_STRUCTURE.md](docs/17_REPOSITORY_STRUCTURE.md).
 Iteration uses `testing`, `test.ensemblework.com` and the separate `ensemble-test` CLI, with a separate API, accounts, database, sessions and file storage. `test-web.yml` runs focused checks and publishes the testing web app; `test-cli.yml` then publishes matching test-only CLI packages without changing production CLI/native release channels. PRs targeting `testing` skip production CI. Installation, isolation and promotion guidance: [docs/36](docs/36_WEB_TESTING.md).
 
 Other pull requests, including promotion from `testing` to `main`, run `.github/workflows/ci.yml`: the same fast checks as testing (about two minutes). The slower suites are paused and run by hand (`full-checks.yml`, [docs/37](docs/37_PAUSED_CHECKS.md)); `desktop.yml` builds only on release tags. After CI passes on `main`, `deploy.yml` moves the `production` branch; the API server (`infra/deploy/home`) pulls it, then the Hub and landing page are published on Vercel. Details: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys).
+
+The fast checks also build the public documentation and test its read-only MCP lookup. `apps/docs/out` is a separate Cloudflare static site for `docs.ensemblework.com`, not a Hub route. Hostname setup and the published search index are described in [docs/40](docs/40_PUBLIC_DOCUMENTATION.md); CI does not publish this site or change DNS.
 
 `release.json` is the version for web, API, desktop, quick capture and CLI: change it, run `pnpm version:sync`, commit the derived files together (`pnpm version:check` runs before typecheck and builds). A `cli-v<version>` tag runs `cli-release.yml` ([docs/26 §7](docs/26_CLI.md#7-releases)); a `desktop-v<version>` tag publishes the desktop installers ([docs/DESKTOP.md](docs/DESKTOP.md)). Brand assets come from `packages/brand` through `pnpm brand:build` / `pnpm brand:check` ([docs/BRAND.md](docs/BRAND.md)).
 

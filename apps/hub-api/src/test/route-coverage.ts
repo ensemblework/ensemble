@@ -31,6 +31,7 @@ export const cliAuthRouteCoverage: Readonly<Record<string, readonly RouteCheck[]
 
 export const mcpRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /mcp": ["happy-path", "isolation"],
+  "GET /api/bridge/docs": ["happy-path", "invalid-input"],
   "GET /mcp": ["invalid-input"],
   "DELETE /mcp": ["invalid-input"],
 };

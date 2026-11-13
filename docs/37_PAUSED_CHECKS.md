@@ -16,6 +16,8 @@ The **fast checks** are one composite action, `.github/actions/fast-checks`, use
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
 
+The fast checks also export the public documentation and test its page links, literal extracts, explicit misses and read-only hosted MCP authentication ([40](40_PUBLIC_DOCUMENTATION.md)). That check does not publish a docs site or change DNS.
+
 ## Paused
 
 Actions → **full-checks** → *Run workflow* runs all of these on any branch.

@@ -1,9 +1,25 @@
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test, { after, mock } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createHttpHarness, type HttpHarness } from "../test/http.js";
 import { mcpRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
+
+const originalFetch = globalThis.fetch;
+mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+  if (String(input) === "https://docs.ensemblework.com/search-index.json") {
+    assert.equal(new Headers(init?.headers).has("authorization"), false);
+    return Response.json({
+      version: 1,
+      pages: [{
+        title: "Context Bridge",
+        path: "/context_bridge/",
+        sections: [{ heading: "Three ways to reach it", url: "https://docs.ensemblework.com/context_bridge/#1-three-ways-to-reach-it", text: "Editors use the Ensemble CLI, the hosted URL, or a source build." }],
+      }],
+    });
+  }
+  return originalFetch(input, init);
+});
 
 const originalEnv = { ...process.env };
 process.env.NODE_ENV = "test";
@@ -32,6 +48,7 @@ after(async () => {
     }
   } finally {
     await harness.close();
+    mock.restoreAll();
     process.env = originalEnv;
   }
 });
@@ -84,6 +101,36 @@ test("full tokens are accepted by hosted MCP", async () => {
   try {
     const listed = await client.listTools();
     assert.ok(listed.tools.some((tool) => tool.name === "ensemble_today"));
+  } finally {
+    await client.close();
+  }
+});
+
+test("hosted documentation lookup accepts a read-only key without widening its grants", async () => {
+  const client = await connect(bridge.token);
+  try {
+    const listed = (await client.listTools()).tools;
+    assert.equal(listed.find(({ name }) => name === "ensemble_docs")?.annotations?.readOnlyHint, true);
+    assert.equal(listed.some(({ name }) => name === "ensemble_create_task"), false);
+    const known = await client.callTool({ name: "ensemble_docs", arguments: { query: "Three ways", limit: 1 } });
+    assert.notEqual(known.isError, true, textOf(known));
+    assert.match(textOf(known), /"found": true/);
+    assert.match(textOf(known), /context_bridge\/#1-three-ways-to-reach-it/);
+    track("GET /api/bridge/docs", "happy-path");
+    const unknown = await client.callTool({ name: "ensemble_docs", arguments: { query: "zzzzquasar" } });
+    assert.match(textOf(unknown), /"found": false/);
+    assert.match(textOf(unknown), /No published documentation/);
+    const invalid = await harness.app.inject({ method: "GET", url: "/api/bridge/docs?q=...", headers: { authorization: `Bearer ${bridge.token}` } });
+    assert.equal(invalid.statusCode, 400);
+    track("GET /api/bridge/docs", "invalid-input");
+    for (const [method, headers, status] of [
+      ["GET", {}, 401],
+      ["GET", { authorization: `Bearer ${device.token}` }, 403],
+      ["POST", { authorization: `Bearer ${bridge.token}` }, 405],
+    ] as const) {
+      const response = await harness.app.inject({ method, url: "/api/bridge/docs?q=Three", headers });
+      assert.equal(response.statusCode, status);
+    }
   } finally {
     await client.close();
   }

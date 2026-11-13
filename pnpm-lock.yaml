@@ -248,6 +248,12 @@ importers:
         specifier: ^2
         version: 2.12.0
 
+  apps/docs:
+    dependencies:
+      markdown-it:
+        specifier: 14.3.2
+        version: 14.3.2
+
   apps/hub-api:
     dependencies:
       '@anthropic-ai/sandbox-runtime':
@@ -268,6 +274,9 @@ importers:
       '@ensemble/context-bridge':
         specifier: workspace:*
         version: link:../context-bridge
+      '@ensemble/docs':
+        specifier: workspace:*
+        version: link:../docs
       '@ensemble/ide-theme':
         specifier: workspace:*
         version: link:../../packages/ide-theme
