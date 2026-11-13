@@ -1589,6 +1589,7 @@ model AuthToken {
 model AssistantRoutine {
   id                 String    @id @default(uuid())
   userId             String    @map("user_id")
+  builtInKey         String?   @map("built_in_key")
   title              String
   /// What the assistant does each time, in the person's words.
   instruction        String
@@ -1610,6 +1611,7 @@ model AssistantRoutine {
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
   @@index([userId])
+  @@unique([userId, builtInKey])
   @@index([status, nextRunAt])
   @@map("assistant_routines")
 }

@@ -13,6 +13,7 @@ import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup
 import { appendLedger } from "../lib/ledger.js";
 import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
 import { defaultAvatarId } from "@ensemble/shared-types";
+import { createMorningRoutine } from "../routines/service.js";
 
 const FLOW_COOKIE = ensembleCookieName("login_flow", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const FLOW_SECONDS = 600;
@@ -148,6 +149,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
             throw Object.assign(new Error("Email verification is not configured. Use Google or GitHub, or contact the operator."), { statusCode: 503 });
           }
           account = await tx.user.create({ data: { email: profile.email, name: profile.name, avatar: defaultAvatarId(randomUUID()), emailVerifiedAt: profile.verified ? new Date() : null } });
+          await createMorningRoutine(tx, account.id);
           created = true;
         }
         await tx.authIdentity.create({ data: { userId: account.id, provider, subject: profile.subject, email: profile.email } });

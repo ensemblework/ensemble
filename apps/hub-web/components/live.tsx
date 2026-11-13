@@ -51,7 +51,7 @@ const INVALIDATES: Record<string, string[][]> = {
   "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
-  routine: [["routines"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],
+  routine: [["routines"], ["morning-brief"], ["notifications"], ["assistant-messages"], ["assistant-chats"]],
   "undo.changed": [["shell"], ["tasks"], ["assistant-messages"], ["ensemble-replies"]],
   // You did something that can be undone: the top bar's Undo label names it.
   "undo.recorded": [["shell"]],

@@ -845,22 +845,6 @@ export function DeleteDataSection({ settings: _settings, children }: { settings:
   );
 }
 
-export function MorningBriefSection({ settings, patch }: Props) {
-  const on = settings.morningBrief.enabled;
-  return (
-    <SectionCard title="Morning brief" description="A note in Ensemble each morning: shows in the bell and on Today." info="It reuses today's focus, proposals, meetings and deliverables. It never sends email.">
-      <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Deliver the morning brief" description={on ? `Every day at ${settings.morningBrief.time}.` : "Off: no brief."}>
-          <Toggle label="Morning brief" checked={on} onChange={(enabled) => patch({ morningBrief: { enabled } })} />
-        </SettingRow>
-        <SettingRow title="Time">
-          <TimeInput label="Morning brief time" value={settings.morningBrief.time} step={15} className="w-32" onChange={(time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time) && patch({ morningBrief: { time } })} />
-        </SettingRow>
-      </div>
-    </SectionCard>
-  );
-}
-
 /** Routines (docs/02 §3.10): off, none run and the Routines page leaves the sidebar. */
 export function RoutinesSection({ settings, patch }: Props) {
   const on = settings.routines?.enabled !== false;

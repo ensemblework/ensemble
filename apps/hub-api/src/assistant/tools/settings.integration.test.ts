@@ -89,11 +89,11 @@ test("hub_get_settings reads this space's values only", async () => {
 });
 
 test("hub_update_settings previews before → after, saves through the settings path, and Undo puts it back", async () => {
-  const input = { changes: [{ key: "quietHours.from", value: "21:00" }, { key: "timezone", value: "Europe/London" }, { key: "morningBrief.enabled", value: false }] };
+  const input = { changes: [{ key: "quietHours.from", value: "21:00" }, { key: "timezone", value: "Europe/London" }, { key: "quietHours.enabled", value: false }] };
   const text = await preview("hub_update_settings", ctx(mira.id), input);
   assert.match(text, /Quiet hours start: 19:00 → 21:00/);
   assert.match(text, /Time zone: Asia\/Kolkata → Europe\/London/);
-  assert.match(text, /Morning brief: true → false/);
+  assert.match(text, /Quiet hours: true → false/);
   assert.match(text, /Undo in the app bar/);
   assert.doesNotMatch(text, /other spaces/);
   // Nothing is saved by a preview.
@@ -104,7 +104,7 @@ test("hub_update_settings previews before → after, saves through the settings 
   const saved = await loadSettings(db, mira.id);
   assert.equal(saved.quietHours.from, "21:00");
   assert.equal(saved.timezone, "Europe/London");
-  assert.equal(saved.morningBrief.enabled, false);
+  assert.equal(saved.quietHours.enabled, false);
   assert.equal(saved.quietHours.until, "08:00", "the rest of the section is kept");
   const other = await loadSettings(db, sideId);
   assert.equal(other.quietHours.from, "22:30");
@@ -116,7 +116,7 @@ test("hub_update_settings previews before → after, saves through the settings 
   const back = await loadSettings(db, mira.id);
   assert.equal(back.quietHours.from, "19:00");
   assert.equal(back.timezone, "Asia/Kolkata");
-  assert.equal(back.morningBrief.enabled, true);
+  assert.equal(back.quietHours.enabled, true);
 });
 
 test("unsafe, unknown and malformed changes are refused with the link instead", async () => {

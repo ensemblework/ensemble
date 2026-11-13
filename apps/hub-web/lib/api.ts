@@ -1684,9 +1684,7 @@ export const api = bindClient({
   // skills
   skills: () => get<{ skills: SkillRecord[] }>("/api/skills"),
   skill: (id: string) => get<{ skill: SkillRecord }>(`/api/skills/${id}`),
-  morningBriefSkill: () => get<{ skill: { id: string; body: string }; notification: HubNotification | null; customize: boolean }>("/api/brief/skill"),
-  saveMorningBriefSkill: (instructions: string) => patch("/api/brief/skill", { instructions }),
-  morningBriefPrompt: (action: "show" | "dismiss") => post<{ show: boolean }>("/api/brief/prompt", { action }),
+  morningBrief: () => get<{ routine: Routine | null; enabled: boolean; brief: string | null }>("/api/brief/today"),
   testSkill: (id: string, prompt?: string) => post<{ title: string; body: string }>(`/api/skills/${id}/test`, { prompt }),
   createSkill: (name: string) => post<{ skill: SkillRecord }>("/api/skills", { name }),
   patchSkill: (id: string, data: Record<string, unknown>) => patch<{ skill: SkillRecord }>(`/api/skills/${id}`, data),
@@ -2411,6 +2409,7 @@ export type RoutineCadence = { every?: "hour" | "day" | "weekday" | "week" | "mo
 /** Work the assistant does on a schedule (docs/02 §3.10). */
 export type Routine = {
   id: string;
+  builtInKey: string | null;
   title: string;
   instruction: string;
   cron: string;

@@ -75,7 +75,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 | `runner` | editors; the handler limits it to the runner | assign, stop, retry, answering a run's question, `POST /api/runs/:id/feedback` |
 | `prefs` | the handler decides per key | §3 |
 | `self`, `live`, `open` | always | auth, spaces, sharing, links, events, presence, catalogues, health |
-| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/skill`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
+| `owner` (default) | 403 "Only ‹owner› can do this in their space." | connectors, imports, Today, reminders, terminal, tokens, layout edits, code changes, approvals, data deletion, `/api/brief/today`, `/api/routines*`, `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `/template` |
 
 Notes: `POST /api/pages/delete-many` (shared) checks every id, keeps descendants in the same space and records one Undo entry. `POST /api/skills/:id/test` (shared) runs with the acting person's credentials. Run feedback starts a follow-up only for the run's runner and repeats the assignment checks.
 

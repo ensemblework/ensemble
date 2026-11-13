@@ -31,6 +31,7 @@ export const cliAuthRouteCoverage: Readonly<Record<string, readonly RouteCheck[]
 
 export const mcpRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "POST /mcp": ["happy-path", "isolation"],
+  "GET /api/bridge/docs": ["happy-path", "invalid-input"],
   "GET /mcp": ["invalid-input"],
   "DELETE /mcp": ["invalid-input"],
 };
@@ -364,8 +365,10 @@ export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly Rout
 
 export const testingReportRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "PATCH /api/devices/:id": ["happy-path", "isolation", "invalid-input"],
-  "GET /api/brief/skill": ["happy-path", "isolation"],
-  "PATCH /api/brief/skill": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/brief/today": ["happy-path", "isolation"],
+  "GET /api/routines": ["happy-path", "isolation"],
+  "PATCH /api/routines/:id": ["happy-path", "isolation", "invalid-input"],
+  "DELETE /api/routines/:id": ["happy-path", "isolation", "unknown-id"],
   "POST /api/skills/:id/test": ["unknown-id", "invalid-input", "hosted-verification"],
 };
 
@@ -389,7 +392,6 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "DELETE /api/boards/:id": ["happy-path", "isolation"],
   "POST /api/boards/:id/pages": ["happy-path", "isolation", "invalid-input", "relation-isolation"],
   "PUT /api/pages/:kind/:id/board": ["happy-path", "isolation", "relation-isolation"],
-  "POST /api/brief/prompt": ["happy-path", "isolation", "invalid-input"] as readonly RouteCheck[],
   ...pageVersionRouteCoverage,
   ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,

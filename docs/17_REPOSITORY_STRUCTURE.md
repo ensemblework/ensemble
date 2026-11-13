@@ -9,6 +9,7 @@ ensemble/
 ├── apps/                  Runnable applications (§2)
 │   ├── hub-web/           Next.js 15 App Router: the Hub UI
 │   ├── landing/           Static landing page for ensemblework.com (Next.js export, no API calls)
+│   ├── docs/              Static public documentation from docs/ for docs.ensemblework.com (docs/40)
 │   ├── hub-api/           Fastify + Prisma API, scheduler, workspace queue, assistant
 │   ├── agent-runtime/     Python model adapters and plot service (port 5055)
 │   ├── context-bridge/    MCP server for editors and agents (stdio + loopback HTTP); hub-api also serves it at /mcp
@@ -52,7 +53,7 @@ apps/hub-web/
 ├── app/                      login, signup, forgot, reset, verify, link, p/[token] (public links), shared/[id]
 ├── app/(hub)/                One folder per page: today, board, needs-me, runs, tasks, pages, projects,
 │                             context, meetings, files, skills, workspace, code, plots, diagrams, metrics,
-│                             recap, morning-brief, marketplace, connect, settings, spaces, shared,
+│                             recap, routines, marketplace, connect, settings, spaces, shared,
 │                             shared-by-me, completed, trash, welcome, start, …
 ├── components/<surface>/      One folder per surface (board, editor = TipTap, files = viewers per format,
 │                             connectors/brands = logos, …); ui.tsx is the kit
@@ -109,6 +110,8 @@ apps/landing/                 app/ (home, four topic pages, /download, /privacy,
                               IndexNow key), scripts/indexnow.mjs, vercel.json (script headers, ensemblework.app redirects)
                               Privacy/terms own the hosted Google-data and Limited Use disclosures linked by the Google connector.
 apps/context-bridge/          src/ (MCP server; exports ./server, ./hub, ./config), clients/ (editor configs), test/, scripts/
+apps/docs/                    scripts/build.mjs (tracked docs → out/), src/ (Markdown renderer, browser UI,
+                              shared search.js and its types), test/; exports @ensemble/docs/search for the API lookup
 apps/cli/                     src/ (commands, tui/, login, sidecar, editors, services), scripts/build.mjs
                               (esbuild → dist/ensemble.mjs), bin/ensemble (POSIX launcher), launcher/ (Go, Windows)
 apps/desktop/                 src-tauri/ (Rust shell: sidecar, site, assets, diagnostics), ui/ (offline page)
@@ -154,5 +157,6 @@ apps/quick-capture/           src-tauri/ + ui/
 | Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
 | Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
+| Public docs site and search | `apps/docs/`, `apps/hub-api/src/bridge/docs.ts`, `apps/context-bridge/src/server.ts` ([40](40_PUBLIC_DOCUMENTATION.md)) |
 
 `node_modules/`, `.next/`, `out/`, `dist/`, `.venv/`, `__pycache__/`, `*.egg-info/`, `.turbo/`, `target/`, test caches, `docs/screenshots/` and `.ensemble/` are outputs or local state. They are git-ignored; do not put source code there.

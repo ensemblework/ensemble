@@ -79,7 +79,7 @@ test("a few words find the right setting", () => {
   assert.equal(findSettings("dark mode")[0]?.id, "appearance.theme");
   assert.equal(findSettings("time zone")[0]?.id, "account.timezone");
   assert.equal(findSettings("turn off plots")[0]?.id, "features.plots");
-  assert.equal(findSettings("morning brief time")[0]?.id, "brief.time");
+  assert.ok(!SETTINGS_MAP.some((entry) => entry.key?.startsWith("morningBrief.")));
   assert.deepEqual(findSettings("the"), []);
   assert.ok(findSettings("connected apps", { guest: true }).every((entry) => !entry.ownerOnly));
 });

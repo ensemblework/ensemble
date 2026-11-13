@@ -17,7 +17,7 @@ import { loadSettings } from "../lib/settings.js";
 import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 import { retentionDue } from "../lib/clock.js";
 import { evaluateWatchers } from "../ensemble/watchers.js";
-import { deliverMorningBrief, ensureStaleNotice } from "../cowork/service.js";
+import { ensureStaleNotice } from "../cowork/service.js";
 import { sweepExpiredDeviceLeases } from "../devices/lease.js";
 import { sweepStoredBlobs } from "./blob-sweep.js";
 import { purgeInteractionEvents } from "../analytics/telemetry.js";
@@ -96,7 +96,6 @@ async function tick(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(app.prisma, userId);
     const now = localClock(settings.timezone);
     void dispatchDueReminders(app, userId).catch((error: unknown) => app.log.error({ err: error }, "reminder dispatch failed"));
-    void deliverMorningBrief(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "morning brief failed"));
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
     void refreshCalendarsIfDue(app, userId).catch((error: unknown) => app.log.error({ err: error }, "calendar refresh failed"));

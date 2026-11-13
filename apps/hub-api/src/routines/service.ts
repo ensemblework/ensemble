@@ -11,6 +11,9 @@ import type { AssistantRoutine, Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
 import { loadSettings } from "../lib/settings.js";
+import { zonedDateTimeToUtc, zonedParts } from "../lib/clock.js";
+import { addCalendarDays } from "../cowork/dates.js";
+import { morningInstructions } from "../cowork/morning-skill.js";
 import { sseHub } from "../lib/sse.js";
 import { CronError, describeCron, nextRun, parseCron, validTimeZone } from "../node/cron.js";
 
@@ -18,6 +21,8 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 /** How many routines one person may keep. */
 export const ROUTINE_LIMIT = 50;
+export const MORNING_BRIEF_KEY = "morning-brief";
+const MORNING_BRIEF_MARKER = "ui.morning-brief-routine";
 /** A run still marked running after this long was cut short (a restart): the routine may run again. */
 const STUCK_MS = 30 * 60_000;
 export const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
@@ -95,6 +100,7 @@ export function routineWhen(cron: string, timezone: string): string {
 
 export type RoutineView = {
   id: string;
+  builtInKey: string | null;
   title: string;
   instruction: string;
   cron: string;
@@ -113,6 +119,7 @@ export type RoutineView = {
 export function routineView(row: AssistantRoutine): RoutineView {
   return {
     id: row.id,
+    builtInKey: row.builtInKey,
     title: row.title,
     instruction: row.instruction,
     cron: row.cron,
@@ -134,6 +141,31 @@ async function zoneOf(db: Db, userId: string): Promise<string> {
   return validTimeZone(settings.timezone) ? settings.timezone : "UTC";
 }
 
+/** Called in the signup transaction, never by the scheduler or routine reads. */
+export async function createMorningRoutine(db: Prisma.TransactionClient, userId: string): Promise<void> {
+  await db.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+  if (await db.preference.findUnique({ where: { userId_key: { userId, key: MORNING_BRIEF_MARKER } } })) return;
+  const user = await db.user.findUniqueOrThrow({ where: { id: userId }, select: { profession: true } });
+  const timezone = await zoneOf(db, userId);
+  const tomorrow = addCalendarDays(zonedParts(timezone).date, 1);
+  const cron = cronFor({ every: "day", time: "08:00" });
+  await db.assistantRoutine.upsert({
+    where: { userId_builtInKey: { userId, builtInKey: MORNING_BRIEF_KEY } },
+    update: {},
+    create: { userId, builtInKey: MORNING_BRIEF_KEY, title: "Morning brief", instruction: morningInstructions(user.profession), cron, timezone, nextRunAt: nextRoutineRun(cron, timezone, zonedDateTimeToUtc(tomorrow, "00:00", timezone)) },
+  });
+  await db.preference.create({ data: { userId, key: MORNING_BRIEF_MARKER, value: true, source: "system" } });
+}
+
+export async function morningBriefView(db: Db, userId: string) {
+  const settings = await loadSettings(db, userId);
+  const routine = await db.assistantRoutine.findUnique({ where: { userId_builtInKey: { userId, builtInKey: MORNING_BRIEF_KEY } } });
+  const message = routine?.conversationId
+    ? await db.assistantMessage.findFirst({ where: { userId, conversationId: routine.conversationId, role: "assistant" }, orderBy: { createdAt: "desc" }, select: { content: true } })
+    : null;
+  return { routine: routine ? routineView(routine) : null, enabled: settings.routines.enabled, brief: message?.content ?? (routine?.lastStatus === "ok" ? routine.lastSummary : null) };
+}
+
 export async function listRoutines(db: Db, userId: string): Promise<RoutineView[]> {
   const rows = await db.assistantRoutine.findMany({ where: { userId }, orderBy: [{ status: "asc" }, { createdAt: "asc" }] });
   return rows.map(routineView);
@@ -149,7 +181,7 @@ const clean = (text: string, max: number) => text.replace(/\r\n?/g, "\n").trim()
 
 export async function createRoutine(db: Db, userId: string, input: { title: string; instruction: string; cadence: Cadence; paused?: boolean }): Promise<RoutineView> {
   const title = clean(input.title, 120);
-  const instruction = clean(input.instruction, 4000);
+  const instruction = clean(input.instruction, 100_000);
   if (!title) throw new RoutineError("Give the routine a name.");
   if (!instruction) throw new RoutineError("Say what the assistant should do each time.");
   if ((await db.assistantRoutine.count({ where: { userId } })) >= ROUTINE_LIMIT) throw new RoutineError(`You can keep up to ${ROUTINE_LIMIT} routines. Delete one first.`, 409);
@@ -175,7 +207,7 @@ export async function updateRoutine(
     data.title = title;
   }
   if (patch.instruction !== undefined) {
-    const instruction = clean(patch.instruction, 4000);
+    const instruction = clean(patch.instruction, 100_000);
     if (!instruction) throw new RoutineError("Say what the assistant should do each time.");
     data.instruction = instruction;
   }
@@ -258,11 +290,19 @@ export async function runRoutine(app: FastifyInstance, routine: AssistantRoutine
   const now = new Date();
   const free: Prisma.AssistantRoutineWhereInput = { OR: [{ lastStatus: null }, { lastStatus: { not: "running" } }, { lastRunAt: { lt: new Date(now.getTime() - STUCK_MS) } }] };
   const scheduled = how === "scheduled";
+  const dailyBrief = scheduled && routine.builtInKey === MORNING_BRIEF_KEY;
+  const dayStart = dailyBrief ? zonedDateTimeToUtc(zonedParts(routine.timezone, now).date, "00:00", routine.timezone) : null;
   const claimed = await prisma.assistantRoutine.updateMany({
-    where: { id: routine.id, ...(scheduled ? { status: "active", nextRunAt: routine.nextRunAt } : {}), ...free },
+    where: { id: routine.id, ...(scheduled ? { status: "active", nextRunAt: routine.nextRunAt } : {}), AND: [free, ...(dayStart ? [{ OR: [{ lastRunAt: null }, { lastRunAt: { lt: dayStart } }] }] : [])] },
     data: { lastStatus: "running", lastRunAt: now, ...(scheduled ? { nextRunAt: nextRoutineRun(routine.cron, routine.timezone, now) } : {}) },
   });
-  if (claimed.count !== 1) return null;
+  if (claimed.count !== 1) {
+    if (dayStart) await prisma.assistantRoutine.updateMany({
+      where: { id: routine.id, status: "active", nextRunAt: routine.nextRunAt, lastRunAt: { gte: dayStart } },
+      data: { nextRunAt: nextRoutineRun(routine.cron, routine.timezone, now) },
+    });
+    return null;
+  }
   const userId = routine.userId;
   sseHub.publish(userId, { event: "routine", data: { id: routine.id, status: "running" } });
   let status: "ok" | "failed" = "ok";

@@ -389,7 +389,7 @@ export function granted(ctx: Pick<JobContext, "root" | "grants" | "readGrants">,
 
 /**
  * The folder a "work here?" question names for a path: its project folder in the workspace
- * (`runs/<id>`, `files/<id>` or a top-level folder), else the repository it is in, else its own
+ * (`runs/<name>`, `files/<id>` or a top-level folder), else the repository it is in, else its own
  * folder. A folder too broad to hand over (the home folder, a disk, Desktop) or one that holds keys,
  * Ensemble's data, its git helper or its code narrows to the path.
  */
