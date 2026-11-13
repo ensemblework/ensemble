@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { basename } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { MODULE_DENIED, moduleForPath, hasModule } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
@@ -31,6 +32,9 @@ const JOB_FACTS = {
   accessMode: true,
   unattended: true,
   folderLabel: true,
+  repoPath: true,
+  externalRoot: true,
+  events: { where: { kind: "prepared" }, orderBy: { sequence: "desc" }, take: 1, select: { data: true } },
   repoUrl: true,
   branch: true,
   turns: true,
@@ -65,6 +69,9 @@ type JobFactsRow = {
   accessMode: string;
   unattended: boolean;
   folderLabel: string | null;
+  repoPath: string;
+  externalRoot: string | null;
+  events: Array<{ data: unknown }>;
   repoUrl: string | null;
   branch: string;
   turns: number;
@@ -93,6 +100,10 @@ function jobFacts(job: JobFactsRow) {
   const evidence = (job.evidence && typeof job.evidence === "object" && !Array.isArray(job.evidence) ? job.evidence : {}) as Record<string, unknown>;
   const engine = job.kind === "code" && job.provider && ENGINES[job.provider] ? job.provider : "ensemble";
   const mine = (job.runnerAccountId ?? null) === actorFor(job.userId);
+  const prepared = job.events[0]?.data;
+  const reportedRoot = typeof prepared === "object" && prepared !== null && "root" in prepared && typeof prepared.root === "string" ? prepared.root : null;
+  const root = job.externalRoot || job.repoPath || reportedRoot;
+  const folder = root && mine ? (job.deviceId || !isHosted() ? root : basename(root.replace(/\\/g, "/"))) : null;
   return {
     sourceRunId: typeof (job.context as Record<string, unknown> | null)?.feedbackOnRun === "string" ? (job.context as Record<string, unknown>).feedbackOnRun as string : null,
     id: job.id,
@@ -112,7 +123,7 @@ function jobFacts(job: JobFactsRow) {
     delivery: job.delivery,
     accessMode: job.accessMode,
     unattended: job.unattended,
-    folder: job.folderLabel,
+    folder: job.folderLabel ?? folder,
     repoUrl: job.repoUrl,
     branch: job.branch || null,
     turns: job.turns,

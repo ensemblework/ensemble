@@ -27,7 +27,7 @@ async function until<T>(what: string, probe: () => Promise<T | undefined | null 
   throw new Error(`Timed out waiting for ${what}${last ? `: ${String(last)}` : ""}`);
 }
 
-type Job = { id: string; status: string; reviewId?: string | null; error?: string | null; branch: string };
+type Job = { id: string; status: string; reviewId?: string | null; error?: string | null; folder: string; branch: string };
 
 async function newTask(side: Sidecar, title: string): Promise<string> {
   const created = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title } });
@@ -154,10 +154,10 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     const scripted = await assign(side, { taskId: scriptTask, repoUrl: source, delivery: "local", askBeforePublish: false });
     assert.equal(scripted.status, 201, JSON.stringify(scripted.body));
     const scriptId = scripted.body.jobId!;
-    await waitStatus(side, scriptId, ["succeeded"]);
+    const scriptDone = await waitStatus(side, scriptId, ["succeeded"]);
     const scriptEvents = await side.api<{ events: Array<{ kind: string; data: { commits?: number } }> }>(`/api/agent/jobs/${scriptId}`);
     assert.ok(scriptEvents.body.events.some((event) => event.kind === "commit_undone" && event.data.commits === 1), JSON.stringify(scriptEvents.body.events));
-    const checkout = join(root, "workspace", "runs", scriptId);
+    const checkout = scriptDone.folder;
     assert.equal(git(checkout, "rev-parse", "HEAD"), git(source, "rev-parse", "main"), "the script's commit was undone");
     assert.match(git(checkout, "status", "--porcelain"), /made\.txt/, "the script's change is still in the folder, uncommitted");
 

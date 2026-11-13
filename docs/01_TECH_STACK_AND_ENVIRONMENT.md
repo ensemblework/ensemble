@@ -128,7 +128,7 @@ Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL
 
 **Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml` (`.github/actions/fast-checks`). Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds. `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
 
-The fast checks also cover confirmed session deletion: hosted stop/acknowledgement/retry and account isolation, local native-history propagation, exact-file preservation and continuation gating. Native fixture tests use disposable history, not real agent accounts or model calls.
+The fast checks also cover readable checkout naming (`workspace/checkout-folder.test.ts`): selected-model requests, safe title fallback, concurrent reservations, name collisions, continuation, task labels and folder grants. They cover confirmed session deletion: hosted stop/acknowledgement/retry and account isolation, local native-history propagation, exact-file preservation and continuation gating. Native fixture tests use disposable history, not real agent accounts or model calls.
 
 ### Home server (`infra/deploy/home`) — serves `api.ensemblework.com`
 
