@@ -113,8 +113,10 @@ export function appToolAvailable(tool: AnyHubTool, grants: readonly AppGrant[], 
 const reserved = (tool: AnyHubTool) => tool.name.startsWith(APP_ITEM_TOOL_PREFIX);
 
 /** Drops app writes when they are switched off, and caps the count; the apps_* item tools always keep their place. Non-app tools pass through. */
-export function gateAppTools(tools: readonly AnyHubTool[], settings: Settings): AnyHubTool[] {
+export function gateAppTools(tools: readonly AnyHubTool[], settings: Settings, options: { cap?: boolean } = {}): AnyHubTool[] {
   const allowed = tools.filter((tool) => tool.area !== "apps" || !tool.isWrite || settings.assistant.connectedAppWrites);
+  // The whole catalog (`appCatalog`) keeps every tool; only one turn's offer has a size.
+  if (options.cap === false) return allowed;
   let room = MAX_APP_TOOLS - allowed.filter((tool) => tool.area === "apps" && reserved(tool)).length;
   return allowed.filter((tool) => {
     if (tool.area !== "apps" || reserved(tool)) return true;
@@ -141,7 +143,7 @@ export async function appToolsFor(ctx: ToolContext, grants?: readonly AppGrant[]
     .flat()
     .filter((tool) => tool.area === "apps" && !getTool(tool.name) && !BUILTIN.has(tool.name))
     .sort((a, b) => Number(isMcpToolName(a.name)) - Number(isMcpToolName(b.name)));
-  return gateAppTools([...own, ...extra], ctx.settings);
+  return gateAppTools([...own, ...extra], ctx.settings, { cap: !ctx.appCatalog });
 }
 
 /** Every tool one turn may call: the Hub catalog for these settings plus this person's app tools. */

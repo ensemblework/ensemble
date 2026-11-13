@@ -491,7 +491,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   // A reopened session replays its history first: that is not this turn's reply.
   let replaying = false;
   const tools = new OwnToolLog("cursor-agent");
-  rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerCursorTurn(method, params));
+  rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, "cursor-agent") : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update" || replaying) return;
     const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
@@ -733,7 +733,7 @@ const runAcpTurn =
     let sessionId: string | null = null;
     let replaying = false;
     const tools = new OwnToolLog(id);
-    rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerAcpTurn(method, params));
+    rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params, id) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
       if (method !== "session/update" || replaying) return;
       const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string } };
