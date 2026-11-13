@@ -190,7 +190,7 @@ export interface AssistantTurnArgs {
    * `sessionKey`: the agent session to run in instead of the chat's own, resumed whatever the chat's
    * length (an inline ask's page session, assistant/ask-sessions.ts).
    */
-  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string; history?: string };
+  subscription?: { node?: boolean; group?: { id: string; name: string }; keepDays?: number; maxCalls?: number; ownWeb?: boolean; sessionKey?: string; history?: string; title?: string };
 }
 
 /** What a `verify` hook sees when the model gives its final text. */
@@ -465,6 +465,8 @@ async function drive(
         ownTools: how.ownTools,
         ...(args.subscription?.group ? { group: args.subscription.group } : {}),
         ...(args.subscription?.keepDays ? { keepDays: args.subscription.keepDays } : {}),
+        // What a new session is called in the agent's own app: the chat's title (an ask: its page's).
+        title: args.subscription?.title ?? ((await app.prisma.assistantConversation.findUnique({ where: { id: args.conversationId }, select: { title: true } }).catch(() => null))?.title || truncateText(args.message, 80)),
         call,
         signal: stop.signal,
         onDelta(piece) {

@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { ActAs, PageDocument, PageMention, documentMentions, isSubscriptionProvider } from "@ensemble/shared-types";
-import { ASK_KEEP_DAYS, askAnswered, askHistory, askInLine, askSessionKey, askStarted } from "../assistant/ask-sessions.js";
+import { ASK_KEEP_DAYS, askAnswered, askHistory, askInLine, askSessionKey, askSessionTitle, askStarted } from "../assistant/ask-sessions.js";
 import { diagramSources } from "../pages/agent-context.js";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
@@ -340,7 +340,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
           actAs: body.actAs ?? settings.assistant.actAs,
           preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
           inlineArtifacts: true,
-          ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS, ...(earlier ? { history: earlier } : {}) } } : {}),
+          ...(sessionKey ? { subscription: { sessionKey, keepDays: ASK_KEEP_DAYS, title: await askSessionTitle(app.prisma, request.userId, { kind, id }), ...(earlier ? { history: earlier } : {}) } } : {}),
           mentions: await resolveTypedMentions(app.prisma, request.userId, request.modules, body.prompt, [...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])]),
           referenceContext: [
             await commentPageText(app.prisma, request.userId, kind, id, body.content),
