@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 import type { Device } from "@prisma/client";
 import { ASSISTANT_TURN_FILES, ASSISTANT_TURN_OWN_TOOLS, ASSISTANT_TURN_SESSIONS, ASSISTANT_TURNS_MIN, parseSubscriptionAgents, SUBSCRIPTION_INFO, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
+import { logAi } from "../lib/ai-activity.js";
 import { prisma as defaultPrisma } from "../lib/prisma.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { currentScope, keysFor } from "../sharing/context.js";
@@ -188,12 +189,31 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
   const signal = input.signal ?? new AbortController().signal;
   const onDelta = input.onDelta ?? (() => undefined);
   input.onStatus?.(`Asking ${label} on ${computer.name}…`);
+  // What the turn sent the agent and what it answered, in the person's AI activity (lib/ai-activity.ts).
+  // The agent's tool calls are logged where they run: Ensemble's by the caller, its own on the computer.
+  const started = Date.now();
+  const logged = {
+    kind: "model.call" as const,
+    userId: input.userId,
+    app: input.agent,
+    input: { system: spec.system, prompt: spec.prompt, ...(spec.files?.length ? { files: spec.files.map((file) => ({ name: file.name, type: file.mediaType, size: file.size })) } : {}), tools: spec.tools.length, ...(spec.ownTools ? { ownTools: true } : {}) },
+    refs: { ...(computer.local ? {} : { device: computer.id }), ...(spec.session ? { session: spec.session.key } : {}) },
+  };
   try {
     const result = computer.local
       ? await runAgentTurn(spec, { call: input.call, onDelta, signal, ...(spec.files ? { readFile: input.files!.read } : {}) })
       : await runOnComputer({ device: { id: computer.id, name: computer.name }, spec, call: input.call, onDelta, signal, ...(spec.files ? { read: input.files!.read } : {}) });
+    logAi({
+      ...logged,
+      model: result.model ?? spec.model,
+      ok: true,
+      durationMs: Date.now() - started,
+      output: result.text,
+      meta: { computer: computer.name, tokensIn: result.tokensIn, tokensOut: result.tokensOut, ...(typeof result.resumed === "boolean" ? { resumed: result.resumed } : {}) },
+    });
     return { ...result, computer: computer.name };
   } catch (error) {
+    logAi({ ...logged, model: spec.model, ok: false, durationMs: Date.now() - started, error, meta: { computer: computer.name } });
     if (error instanceof AgentTurnError) throw new RuntimeError(error.message, error.problem === "limit" ? 429 : error.problem === "failed" ? 502 : 409);
     throw error;
   }

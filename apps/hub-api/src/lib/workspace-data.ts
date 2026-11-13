@@ -34,6 +34,8 @@ const CONTEXT_MODELS = new Set([
   "Person",
   "Repo",
   "ProjectLink",
+  // What the person's AI work sent and got back holds their context too (lib/ai-activity.ts).
+  "AiActivity",
 ]);
 
 /** Keep the account, sign-ins, configuration and deletion audit; erase the selected workspace data. */

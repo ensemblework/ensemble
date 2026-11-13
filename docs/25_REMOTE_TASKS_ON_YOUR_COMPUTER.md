@@ -68,6 +68,7 @@ The event stream only wakes the computer; persisted job and lease state is autho
 | GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
 | GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
 | GET / POST | `/api/devices/self/assistant-turns/:id` and `/files/:fileId`, `/tool`, `/stream`, `/done` | Assistant turns on a subscription and the files on their message (§4.9) |
+| POST | `/api/devices/self/activity` | This computer's part of its owner's AI activity log (`ActivityPost`, at most 200 entries: its agents' tool calls, agent tasks' prompts and answers, errors and warning or error log lines), stored on the account it is paired with; a run named by its web id is kept only when it is that account's ([07 §1.4](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#14-the-ai-activity-log)) |
 | GET | `/api/devices/self/events` | Wake-up stream |
 
 `scope=device` is not an account token; device routes have their own allowlist and authentication. Pairing does not allow minting other tokens.

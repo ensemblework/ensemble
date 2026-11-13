@@ -1,4 +1,5 @@
 import { startMetricsServer } from "./analytics/prometheus.js";
+import { flushAiActivity } from "./lib/ai-activity.js";
 import { env } from "./config.js";
 import { buildApp } from "./app.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
@@ -59,6 +60,7 @@ export async function startHub(): Promise<HubServer> {
   const close = async (exit: boolean) => {
     if (exiting) return;
     exiting = true;
+    await flushAiActivity().catch(() => undefined);
     stopPageSearchBackfill();
     stopNode();
     stopScheduler();
@@ -70,6 +72,7 @@ export async function startHub(): Promise<HubServer> {
     await releaseSandbox().catch(() => undefined);
     await stopDeviceRevokeBus();
     await app.close();
+    await flushAiActivity().catch(() => undefined);
     await prisma.$disconnect();
     try {
       await redis.quit();

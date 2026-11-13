@@ -20,6 +20,7 @@ import { agentProjectOf, folderProject, projectFolder, syncProjectFiles, type Ag
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
 import { recordMetric } from "../lib/metrics.js";
+import { AI_ACTIVITY_LIMITS, logAi } from "../lib/ai-activity.js";
 import { assistantEcho, askRuntime, toolResult, type ModelMessage } from "../lib/model-turn.js";
 import { callCost } from "../lib/pricing.js";
 import { loadSettings } from "../lib/settings.js";
@@ -1036,6 +1037,19 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       if (undone) await ctx.event("commit_undone", { note: undone });
       finalText = ran.text.trim() || `${engineName} finished.`;
       engineTotals = { model: ran.model ?? null, costUsd: ran.costUsd };
+      // What the coding agent was asked and answered, in the person's AI activity; its tool calls are there from its trace.
+      logAi({
+        kind: "model.call",
+        userId,
+        purpose: `Agent coding (${engineName})`,
+        app: job.provider,
+        model: ran.model || job.model,
+        ok: true,
+        input: { prompt: enginePromptText },
+        output: finalText,
+        refs: { job: job.id, run: run.id, ...(job.taskId ? { task: job.taskId } : {}) },
+        meta: { tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, turns: ran.turns, tools: ran.toolCalls, costUsd: ran.costUsd },
+      });
       if (ran.trace) await ran.trace.finish(finalText, { model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut });
       else {
         await prisma.runStep.create({
@@ -1177,6 +1191,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           engine: "ensemble",
         });
         await ctx.event("tool", { name: call.name, ok: result.ok, summary: result.summary, ms });
+        logAi({ kind: "tool.call", userId, app: "ensemble", name: call.name, ok: result.ok, durationMs: ms, input: args, output: outputPreview(argsPreview, result.result, AI_ACTIVITY_LIMITS.string), refs: { run: run.id } });
         messages.push(toolResult(call.id, call.name, clip(result.result)));
         if (result.pictures?.length) opened.push(...result.pictures);
         if (ctx.finished) break;
@@ -1243,6 +1258,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
             : parsed.kind === "unavailable"
               ? "The model was unavailable. The work already done in the folder is kept. Run the task again to continue."
               : raw.slice(0, 500);
+      // Why the run failed, with its stack, in the person's AI activity (lib/ai-activity.ts).
+      logAi({ kind: "error", userId, purpose: `Agent ${job.kind}`, app: job.provider, model: job.model, error: failure, output: error, refs: { job: job.id, ...(job.taskId ? { task: job.taskId } : {}) }, meta: { failure: parsed.kind } });
     }
   }
 

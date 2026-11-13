@@ -1,5 +1,7 @@
+import type { OwnToolLog } from "./own-tools.js";
+
 /** Consume only events emitted by the Copilot process Ensemble started for this turn. */
-export function copilotOutput(model: string | null, onDelta: (text: string) => void) {
+export function copilotOutput(model: string | null, onDelta: (text: string) => void, tools?: OwnToolLog) {
   const result = { text: "", model, tokensIn: null as number | null, tokensOut: null as number | null, costUsd: null };
   let streamed = "";
   const valid = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -10,7 +12,12 @@ export function copilotOutput(model: string | null, onDelta: (text: string) => v
       try { event = JSON.parse(line); } catch { return; }
       const data = event?.data;
       if (!data) return;
-      if (event.type === "assistant.usage") {
+      if (event.type === "tool.execution_start" && typeof data.toolCallId === "string") {
+        tools?.start(data.toolCallId, String(data.toolName ?? "tool"), data.arguments ?? {});
+      } else if (event.type === "tool.execution_complete" && typeof data.toolCallId === "string") {
+        const result = (data.result ?? {}) as { content?: unknown };
+        tools?.end(data.toolCallId, result.content ?? data.error ?? "", data.success !== false);
+      } else if (event.type === "assistant.usage") {
         if (typeof data.model === "string" && data.model) result.model = data.model;
         if (valid(data.inputTokens)) result.tokensIn = (result.tokensIn ?? 0) + data.inputTokens;
         if (valid(data.outputTokens)) result.tokensOut = (result.tokensOut ?? 0) + data.outputTokens;

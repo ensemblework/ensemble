@@ -8,6 +8,7 @@
  * them judged here by the hard floor (`/api/engine/assistant/ask`, judge.ts `judgeFloor`), in its folder.
  */
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { bindAiContext, logAi } from "../lib/ai-activity.js";
 
 export type ToolSpec = { name: string; description: string; inputSchema: Record<string, unknown> };
 /** What a tool call tells the agent; `tools` is the turn's new list when the call changed it (hub_how_to). */
@@ -19,6 +20,8 @@ type Bridge = {
   call: (name: string, input: unknown) => Promise<ToolAnswer>;
   /** The turn's folder, when its agent keeps its own tools: the hard floor is judged from there. */
   folder?: string;
+  /** The person's AI activity log, as the turn that opened the bridge (its chat, session and purpose). */
+  log: typeof logAi;
 };
 
 const bridges = new Map<string, Bridge>();
@@ -26,7 +29,7 @@ const bridges = new Map<string, Bridge>();
 export function openBridge(tools: ToolSpec[], call: Bridge["call"], options: { folder?: string } = {}): { credential: string; close: () => void } {
   const id = randomUUID();
   const secret = randomBytes(24).toString("hex");
-  const bridge: Bridge = { secret, tools, call, ...(options.folder ? { folder: options.folder } : {}) };
+  const bridge: Bridge = { secret, tools, call, log: bindAiContext(logAi), ...(options.folder ? { folder: options.folder } : {}) };
   bridges.set(id, bridge);
   return {
     credential: `${id}.${secret}`,

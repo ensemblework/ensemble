@@ -51,7 +51,8 @@ import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { storeDeviceActivity } from "../lib/ai-activity.js";
+import { ActivityPost, FileAnswer, MAX_UPLOADED_STEPS, missionOf, ObservedSettings, PAGE_HEADING, PROTOCOL, RunTotals, SessionChoicePost, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { observedUpdate } from "../workspace/engines/observed.js";
 import { claimedLinks } from "../workspace/sessions.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -399,6 +400,15 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       await appendLedger({ userId: device.userId, actor: "system", action: "model.keys.device", payload: { deviceId: device.id, name: device.name, providers: keys.map((key) => key.provider) } });
     }
     return { shared: true, keys };
+  });
+
+  // The computer's part of its owner's AI activity log (lib/ai-activity.ts): kept on the account it is paired with.
+  app.post("/api/devices/self/activity", { bodyLimit: 8 * 1024 * 1024 }, async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const body = ActivityPost.parse(request.body ?? {});
+    const stored = await storeDeviceActivity(prisma, device, body.entries);
+    return { ok: true, stored };
   });
 
   app.post("/api/devices/self/heartbeat", async (request, reply) => {

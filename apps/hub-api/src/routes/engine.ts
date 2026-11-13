@@ -60,7 +60,10 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
     if (!found.bridge.folder) return { decision: "deny", message: "This turn's agent has only Ensemble's tools." };
     const body = z.object({ tool_name: z.string().max(200).default(""), tool_input: z.record(z.string(), z.unknown()).default({}) }).passthrough().parse(request.body);
     try {
-      return await judgeFloor(found.bridge.folder, hookCall(body.tool_name, body.tool_input));
+      const verdict = await judgeFloor(found.bridge.folder, hookCall(body.tool_name, body.tool_input));
+      // Calls that ran are logged with their output by the turn's driver; a refusal is logged here.
+      if (verdict.decision !== "allow") found.bridge.log({ kind: "agent.tool", name: body.tool_name, input: body.tool_input, ok: false, output: verdict.message ?? "Refused.", meta: { refused: true } });
+      return verdict;
     } catch (error) {
       request.log.error({ err: error }, "assistant turn tool call could not be judged");
       return { decision: "deny", message: "Ensemble could not check this call, so it was not run." };

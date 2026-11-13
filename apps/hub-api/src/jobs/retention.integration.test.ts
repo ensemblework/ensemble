@@ -52,7 +52,7 @@ test("history retention drops old ledger rows and status transitions", async (t)
   }
 });
 
-test("retention deletes log chunks older than 30 days in batches", async (t) => {
+test("retention deletes log chunks and AI activity older than 30 days, log chunks in batches", async (t) => {
   if (!(await databaseReady())) {
     t.skip("Postgres is not reachable");
     return;
@@ -79,13 +79,23 @@ test("retention deletes log chunks older than 30 days in batches", async (t) => 
         { jobId: otherJob.id, seqFrom: 0, seqTo: 1, text: "other-old", bytes: 9, createdAt: old },
       ],
     });
+    await prisma.aiActivity.createMany({
+      data: [
+        { userId: user.id, kind: "model.call", purpose: "old", ts: old },
+        { userId: user.id, kind: "tool.call", purpose: "kept", ts: kept },
+        { userId: other.id, kind: "model.call", purpose: "other-old", ts: old },
+      ],
+    });
     const counts = await runRetention(app, user.id, { deletedDays: 30, completedDays: 60, logChunkBatchSize: 2 });
     assert.equal(counts.logChunksPurged, 3);
+    assert.equal(counts.aiActivityPurged, 1);
+    assert.deepEqual((await prisma.aiActivity.findMany({ where: { userId: { in: [user.id, other.id] } }, orderBy: { purpose: "asc" } })).map((row) => row.purpose), ["kept", "other-old"]);
     const left = await prisma.workspaceLogChunk.findMany({ where: { jobId: job.id }, orderBy: { seqFrom: "asc" } });
     assert.deepEqual(left.map((row) => row.text), ["kept"]);
     assert.equal(await prisma.workspaceLogChunk.count({ where: { jobId: otherJob.id } }), 1);
   } finally {
     await prisma.workspaceLogChunk.deleteMany({ where: { jobId: { in: [job.id, otherJob.id] } } });
+    await prisma.aiActivity.deleteMany({ where: { userId: { in: [user.id, other.id] } } });
     await prisma.auditLedger.deleteMany({ where: { userId: { in: [user.id, other.id] } } });
     await prisma.workspaceJob.deleteMany({ where: { userId: { in: [user.id, other.id] } } });
     await prisma.task.deleteMany({ where: { userId: { in: [user.id, other.id] } } });

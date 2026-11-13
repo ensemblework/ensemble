@@ -5,6 +5,7 @@
  * person's message downloaded from the web, its tool calls go back to the web where the account's
  * data is, and its reply text is sent in small batches as it is written.
  */
+import { withAiContext } from "../lib/ai-activity.js";
 import { z } from "zod";
 import { SUBSCRIPTION_PROVIDERS } from "@ensemble/shared-types";
 import { AgentTurnError, runAgentTurn, type AgentTurnSpec } from "../subscriptions/agents.js";
@@ -89,7 +90,8 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
     const flushOnce = () => (flushing ??= flush().catch(() => undefined).finally(() => (flushing = null)));
     timer = setInterval(() => void flushOnce(), FLUSH_MS);
     try {
-      const result = await run(spec, {
+      // The agent's own tool calls go in the person's AI activity under this turn (lib/ai-activity.ts).
+      const result = await withAiContext({ refs: { turn: id } }, () => run(spec, {
         async call(name, input): Promise<ToolAnswer> {
           const raw = await client.assistantTool(id, { name, input });
           const answer = Answer.safeParse(raw);
@@ -103,7 +105,7 @@ export async function answerAssistantTurn(client: HostedClient, data: unknown, r
           const file = spec.files?.find((row) => row.id === fileId);
           return file ? client.assistantFile(id, fileId, { maxBytes: file.size + FILE_SLACK, signal: controller.signal }) : null;
         },
-      });
+      }));
       clearInterval(timer);
       await flushing;
       await flush().catch(() => undefined);

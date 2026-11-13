@@ -17,6 +17,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { acpCalls, pickOption } from "../workspace/engines/acp.js";
 import { judgeFloor, type EngineAnswer, type EngineCall } from "../workspace/engines/judge.js";
+import { logAi } from "../lib/ai-activity.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 
 const words = (value: unknown): string => (typeof value === "string" ? value : Array.isArray(value) ? value.join(" ") : "");
@@ -102,4 +103,49 @@ export async function answerAcpOwnTools(folder: string, method: string, params: 
   }
   if (method === "cursor/ask_question") return { outcome: { outcome: "skipped", reason: "Ask the person in your reply instead." } };
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
+}
+
+/**
+ * The agent's own tool calls in a turn (its shell, files, web), kept in the person's AI activity with
+ * their input and output (lib/ai-activity.ts). Ensemble's own tools are logged where they run instead.
+ */
+export class OwnToolLog {
+  private readonly open = new Map<string, { name: string; input: unknown; at: number }>();
+  constructor(private readonly app: string) {}
+
+  start(id: string, name: string, input: unknown): void {
+    if (!id || ensembleTool(name) || this.open.size >= 200) return;
+    this.open.set(id, { name, input, at: Date.now() });
+  }
+
+  end(id: string, output: unknown, ok: boolean): void {
+    const call = this.open.get(id);
+    if (!call) return;
+    this.open.delete(id);
+    logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, output, ok, durationMs: Date.now() - call.at });
+  }
+
+  /** At the end of the turn: calls whose result never came back, as they stand. */
+  close(): void {
+    for (const call of this.open.values()) logAi({ kind: "agent.tool", app: this.app, name: call.name, input: call.input, durationMs: Date.now() - call.at, meta: { unanswered: true } });
+    this.open.clear();
+  }
+}
+
+/** An ACP agent's tool call starting or ending (its session/update), for the turn's OwnToolLog. */
+export function logAcpTool(log: OwnToolLog, update: Record<string, unknown>): void {
+  const id = typeof update.toolCallId === "string" ? update.toolCallId : "";
+  if (update.sessionUpdate === "tool_call") {
+    if (acpCalls(update as Parameters<typeof acpCalls>[0]).some((call) => ensembleTool(call.tool))) return;
+    log.start(id, String(update.title ?? update.kind ?? "tool"), update.rawInput ?? {});
+  } else if (update.sessionUpdate === "tool_call_update" && (update.status === "completed" || update.status === "failed")) {
+    const parts = Array.isArray(update.content) ? (update.content as Array<{ content?: { text?: unknown } }>) : [];
+    const text = parts.map((part) => (typeof part.content?.text === "string" ? part.content.text : "")).filter(Boolean).join("\n");
+    log.end(id, update.rawOutput ?? text, update.status === "completed");
+  }
+}
+
+/** Ensemble's MCP tools as each agent names them: mcp__ensemble__hub_x (Claude), ensemble-hub_x (Copilot). */
+function ensembleTool(name: string): boolean {
+  return /^(?:mcp__ensemble__|ensemble[-_./:])/.test(name);
 }

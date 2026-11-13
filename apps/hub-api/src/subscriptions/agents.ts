@@ -41,7 +41,7 @@ import { agentBinary, agentEnv, codexEnv, refreshAgent } from "./detect.js";
 import { copilotEnv, copilotHasSession } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 import { acpPrompt, acpPromptCaps, claudeUserMessage, codexInput, copilotFiles, filesNote, saveTurnFiles, type SavedTurnFile, type TurnFile } from "./turn-files.js";
-import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, writeCopilotFloorPlugin } from "./own-tools.js";
+import { answerAcpOwnTools, answerCodexOwnTools, chatHookCommand, claudeChatSettings, logAcpTool, OwnToolLog, writeCopilotFloorPlugin } from "./own-tools.js";
 import { sessionPrompts } from "./session-touch.js";
 import { dropOneOff, findSession, forgetSession, instructionsUpdate, saveSession, SESSION_KEY, sessionFolder, type SessionUsage } from "./turn-sessions.js";
 
@@ -233,6 +233,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
   const result: AgentTurnResult = { text: "", model: null, tokensIn: null, tokensOut: null, costUsd: null };
   let failure: string | null = null;
   let finished = false;
+  const tools = new OwnToolLog("claude-code");
   try {
     for await (const line of createInterface({ input: child.stdout! })) {
       if (!line.trim()) continue;
@@ -244,6 +245,16 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
       }
       if (message.type === "system" && message.subtype === "init") {
         result.model = typeof message.model === "string" ? message.model : null;
+      } else if (message.type === "assistant" || message.type === "user") {
+        // Its own tool calls as they start (assistant) and what each returned (user), for the AI activity log.
+        const content = ((message.message ?? {}) as { content?: unknown }).content;
+        for (const part of Array.isArray(content) ? (content as Array<Record<string, unknown>>) : []) {
+          if (part.type === "tool_use") tools.start(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {});
+          else if (part.type === "tool_result") {
+            const output = Array.isArray(part.content) ? (part.content as Array<Record<string, unknown>>).map((piece) => (typeof piece.text === "string" ? piece.text : piece.type === "image" ? "[image]" : "")).join("\n") : part.content;
+            tools.end(String(part.tool_use_id ?? ""), output, part.is_error !== true);
+          }
+        }
       } else if (message.type === "stream_event") {
         const event = (message.event ?? {}) as { type?: string; delta?: { type?: string; text?: string } };
         if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) io.onDelta(event.delta.text);
@@ -268,6 +279,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, own, mcp, files, sessi
     if (code !== 0 || !finished) throw agentProblem(spec.agent, stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
     return { ...result, session: session?.id ?? null };
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stop();
   }
@@ -308,11 +320,21 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
   const turnDone = new Promise<{ status: string; error?: string }>((resolve) => (finished = resolve));
   // With its own tools, the paths each file change touches, for its approval (own-tools.ts).
   const changes = new Map<string, string[]>();
+  const tools = new OwnToolLog("codex");
   server.onRequest = (method, params) => (spec.ownTools ? answerCodexOwnTools(folder, method, params, changes) : answerCodexTurn(method, params));
   server.onNotification = (method, params) => {
     if (method === "item/started" || method === "item/completed") {
-      const item = (params.item ?? {}) as { type?: string; id?: string; changes?: Array<{ path: string }> };
+      const item = (params.item ?? {}) as { type?: string; id?: string; changes?: Array<{ path: string }>; command?: string; server?: string; tool?: string; arguments?: unknown; query?: string; aggregatedOutput?: string | null; exitCode?: number | null; status?: string; result?: unknown; error?: unknown };
       if (item.type === "fileChange" && item.id) changes.set(item.id, (item.changes ?? []).map((change) => change.path));
+      // Its own calls for the AI activity log; Ensemble's MCP tools are logged where they run.
+      const own = item.type === "commandExecution" || item.type === "fileChange" || item.type === "webSearch" || (item.type === "mcpToolCall" && item.server !== "ensemble");
+      if (own && item.id && method === "item/started") {
+        const input = item.type === "commandExecution" ? { command: item.command } : item.type === "fileChange" ? { files: (item.changes ?? []).map((change) => change.path) } : item.type === "webSearch" ? { query: item.query } : { server: item.server, tool: item.tool, arguments: item.arguments };
+        tools.start(item.id, item.type === "mcpToolCall" ? `${item.server}/${item.tool}` : item.type!, input);
+      } else if (own && item.id) {
+        const failed = item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0);
+        tools.end(item.id, item.aggregatedOutput ?? item.result ?? item.error ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed);
+      }
     }
     if (method === "item/agentMessage/delta" && typeof params.delta === "string") io.onDelta(params.delta);
     else if (method === "item/completed") {
@@ -401,6 +423,7 @@ const runCodex: Driver = async ({ spec, io, bin, folder, mcp, files, session }) 
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("codex", error instanceof Error ? error.message : String(error));
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stopChild(child);
   }
@@ -467,6 +490,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
   let sessionId: string | null = null;
   // A reopened session replays its history first: that is not this turn's reply.
   let replaying = false;
+  const tools = new OwnToolLog("cursor-agent");
   rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerCursorTurn(method, params));
   rpc.onNotification = (method, params) => {
     if (method !== "session/update" || replaying) return;
@@ -474,7 +498,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
     if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
       reply += update.content.text;
       io.onDelta(update.content.text);
-    }
+    } else logAcpTool(tools, update as Record<string, unknown>);
   };
   createInterface({ input: child.stdout }).on("line", (line) => void rpc.receive(line));
   child.stderr.on("data", (chunk: Buffer) => {
@@ -505,6 +529,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp, files, session })
     if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
     throw agentProblem("cursor-agent", error instanceof Error ? error.message : String(error));
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stopChild(child);
   }
@@ -655,7 +680,8 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
   child.stdin.end(stdin ? prompt : undefined, "utf8");
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
-  const output = copilotOutput(chosen(spec.model), io.onDelta);
+  const tools = new OwnToolLog("copilot-cli");
+  const output = copilotOutput(chosen(spec.model), io.onDelta, tools);
   let stderr = "";
   createInterface({ input: child.stdout }).on("line", line => output.line(line));
   child.stderr.on("data", (chunk: Buffer) => {
@@ -674,6 +700,7 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, own, mcp, files, sess
     const turn = read?.applied && totals && base && totals.in >= base.in && totals.out >= base.out ? { tokensIn: totals.in - base.in, tokensOut: totals.out - base.out } : {};
     return { ...done, ...turn, session: session?.id ?? null, oneOff, totals };
   } finally {
+    tools.close();
     io.signal.removeEventListener("abort", stop);
     stop();
     if (usageFile) await rm(usageFile, { force: true }).catch(() => undefined);
@@ -705,6 +732,7 @@ const runAcpTurn =
     let stderr = "";
     let sessionId: string | null = null;
     let replaying = false;
+    const tools = new OwnToolLog(id);
     rpc.onRequest = async (method, params) => (spec.ownTools ? answerAcpOwnTools(folder, method, params) : answerAcpTurn(method, params));
     rpc.onNotification = (method, params) => {
       if (method !== "session/update" || replaying) return;
@@ -712,7 +740,7 @@ const runAcpTurn =
       if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
         reply += update.content.text;
         io.onDelta(update.content.text);
-      }
+      } else logAcpTool(tools, update as Record<string, unknown>);
     };
     createInterface({ input: child.stdout }).on("line", (line) => (antigravityAuthLink(line) ? rpc.close("not signed in") : void rpc.receive(line)));
     child.stderr.on("data", (chunk: Buffer) => {
@@ -754,6 +782,7 @@ const runAcpTurn =
       if (error instanceof AgentTurnError || error instanceof SessionGone || error instanceof SessionUnsupported) throw error;
       throw agentProblem(id, error instanceof Error ? error.message : String(error));
     } finally {
+      tools.close();
       io.signal.removeEventListener("abort", stop);
       stopChild(child);
     }

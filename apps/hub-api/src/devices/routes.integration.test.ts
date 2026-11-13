@@ -1182,6 +1182,54 @@ test("a device cannot post server-only event kinds", async (t) => {
   }
 });
 
+test("a computer's AI activity is kept on the account it is paired with, naming only that account's runs", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const stamp = `${Date.now()}-${randomBytes(3).toString("hex")}`;
+  const user = await prisma.user.create({ data: { email: `activity-${stamp}@ensemble.test`, name: "Activity" } });
+  const other = await prisma.user.create({ data: { email: `activity-other-${stamp}@ensemble.test`, name: "Other" } });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  const session = await sessionFor(user.id);
+  try {
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({ method: "POST", url: "/api/devices/register", payload: { code: (paired.json() as { code: string }).code, name: "MacBook", platform: "macos", capabilities: {} } });
+    const token = (registered.json() as { token: string }).token;
+    const deviceId = (registered.json() as { device: { id: string } }).device.id;
+    const task = await prisma.task.create({ data: { userId: user.id, title: "Logged", createdBy: "me" } });
+    const job = await prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, executionMode: "native", model: "test" } });
+    const otherTask = await prisma.task.create({ data: { userId: other.id, title: "Not theirs", createdBy: "me" } });
+    const otherJob = await prisma.workspaceJob.create({ data: { userId: other.id, taskId: otherTask.id, executionMode: "native", model: "test" } });
+    const posted = await app.inject({
+      method: "POST",
+      url: "/api/devices/self/activity",
+      headers: bearer(token),
+      payload: {
+        entries: [
+          { ts: new Date().toISOString(), kind: "agent.tool", app: "codex", name: "commandExecution", ok: true, input: { command: "npm test" }, output: "ok", refs: { job: job.id } },
+          { ts: new Date().toISOString(), kind: "runner.log", name: "error", output: "engine exited", refs: { job: otherJob.id } },
+        ],
+      },
+    });
+    assert.equal(posted.statusCode, 200);
+    const rows = await prisma.aiActivity.findMany({ where: { userId: { in: [user.id, other.id] } }, orderBy: { kind: "asc" } });
+    assert.deepEqual(rows.map((row) => [row.userId, row.kind, row.refs]), [
+      [user.id, "agent.tool", { job: job.id, task: task.id, device: deviceId }],
+      [user.id, "runner.log", { device: deviceId }],
+    ]);
+    assert.equal((await app.inject({ method: "POST", url: "/api/devices/self/activity", headers: bearer(token), payload: { entries: [{ ts: "now", kind: "server.log", refs: {} }] } })).statusCode, 400);
+  } finally {
+    await app.close();
+    await prisma.aiActivity.deleteMany({ where: { userId: { in: [user.id, other.id] } } });
+    await prisma.workspaceJob.deleteMany({ where: { userId: { in: [user.id, other.id] } } });
+    await prisma.device.deleteMany({ where: { userId: user.id } });
+    await cleanup(other.id);
+    await cleanup(user.id);
+  }
+});
+
 test("a computer's steps and totals become the run's trace, redacted, with the model that answered", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const user = await prisma.user.create({

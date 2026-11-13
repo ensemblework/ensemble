@@ -1,4 +1,5 @@
 import Fastify, { type FastifyReply, type FastifyRequest, type FastifyServerOptions, type RouteOptions } from "fastify";
+import { captureLogLine } from "./lib/ai-activity.js";
 import compress from "@fastify/compress";
 import cors from "@fastify/cors";
 import { ZodError } from "zod";
@@ -132,6 +133,13 @@ export async function buildApp(options: BuildAppOptions = {}) {
       redact: {
         paths: ["req.headers.authorization", "req.headers.cookie", "req.headers['x-ensemble-internal']", "req.headers.x-ensemble-internal"],
         censor: "[redacted]",
+      },
+      // Warnings and errors also go in the AI activity log of the account they were logged for (lib/ai-activity.ts).
+      hooks: {
+        logMethod(args, method, level) {
+          if (level >= 40) captureLogLine(level, args, this.bindings());
+          return method.apply(this, args);
+        },
       },
       serializers: {
         req(request) {
