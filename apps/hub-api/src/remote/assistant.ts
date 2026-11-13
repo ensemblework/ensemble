@@ -42,6 +42,8 @@ const Spec = z.object({
       /** An Ensemble Node's project folder for its chats (0.7.6). Older servers omit it. */
       group: z.object({ id: z.string().uuid(), name: z.string().trim().min(1).max(200) }).optional(),
       keepDays: z.number().int().min(1).max(90).optional(),
+      /** A new session's name in the agent's own app (0.7.17). Older servers omit it. */
+      title: z.string().max(200).optional(),
     })
     .nullish(),
   /** The agent's own web search and page reading (0.7.6). Older servers omit it. */

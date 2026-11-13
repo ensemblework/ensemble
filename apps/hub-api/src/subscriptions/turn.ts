@@ -116,6 +116,8 @@ export type SubscriptionTurnInput = {
   /** An Ensemble Node's project, whose folder its chats share (agents.ts `SessionGroup`), and how long its sessions are kept unused. */
   group?: { id: string; name: string };
   keepDays?: number;
+  /** A new session's name in the agent's own app (the chat's title). */
+  title?: string;
   /** The agent's own web search and page reading, on the person's plan. */
   ownWeb?: boolean;
   /** All the agent's own tools (its shell, files and web), judged only by Ensemble's hard floor: a chat, Ask Ensemble or a routine. */
@@ -151,7 +153,7 @@ export function turnFiles(computer: TurnComputer, prompt: string, files: Subscri
 }
 
 /** The message and the chat so far: a session on the computer when it keeps one, else the chat folded in front of the message. */
-export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position" | "group" | "keepDays">): Pick<AgentTurnSpec, "prompt" | "session"> {
+export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurnInput, "prompt" | "history" | "sessionKey" | "position" | "group" | "keepDays" | "title">): Pick<AgentTurnSpec, "prompt" | "session"> {
   const history = input.history?.trim() ?? "";
   if (input.sessionKey && (computer.local || computer.turns >= ASSISTANT_TURN_SESSIONS)) {
     return {
@@ -162,6 +164,7 @@ export function turnSession(computer: TurnComputer, input: Pick<SubscriptionTurn
         ...(input.position === undefined ? {} : { position: input.position }),
         ...(input.group ? { group: input.group } : {}),
         ...(input.keepDays ? { keepDays: input.keepDays } : {}),
+        ...(input.title?.trim() ? { title: input.title.trim().slice(0, 200) } : {}),
       },
     };
   }
