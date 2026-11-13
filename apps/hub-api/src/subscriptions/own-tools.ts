@@ -22,10 +22,14 @@ import { hookScriptPath } from "../workspace/engines/registry.js";
 
 const words = (value: unknown): string => (typeof value === "string" ? value : Array.isArray(value) ? value.join(" ") : "");
 
-async function verdictFor(folder: string, calls: EngineCall[]): Promise<EngineAnswer> {
+/** The floor's verdict on an agent's own calls; a refusal also goes in the person's AI activity log, with why. */
+async function verdictFor(folder: string, calls: EngineCall[], app: string): Promise<EngineAnswer> {
   for (const call of calls) {
     const verdict = await judgeFloor(folder, call);
-    if (verdict.decision !== "allow") return verdict;
+    if (verdict.decision !== "allow") {
+      logAi({ kind: "agent.tool", app, name: call.tool, input: call.input, ok: false, output: verdict.message ?? "Refused.", meta: { refused: true } });
+      return verdict;
+    }
   }
   return { decision: "allow" };
 }
@@ -56,12 +60,12 @@ export async function answerCodexOwnTools(folder: string, method: string, params
       if (params.kind === "writeStdin") return { decision: "accept" };
       // The internet is the person's own agent's, as in their Codex.
       if ((params.networkApprovalContext as { host?: string } | null | undefined)?.host) return { decision: "accept" };
-      const verdict = await verdictFor(folder, [{ tool: "Bash", input: { command: words(params.command), ...cwd } }]);
+      const verdict = await verdictFor(folder, [{ tool: "Bash", input: { command: words(params.command), ...cwd } }], "codex");
       return { decision: verdict.decision === "allow" ? "accept" : "decline" };
     }
     case "item/fileChange/requestApproval": {
       const paths = [...(files.get(String(params.itemId)) ?? []), ...(typeof params.grantRoot === "string" ? [params.grantRoot] : [])];
-      const verdict = paths.length ? await verdictFor(folder, paths.map((path) => ({ tool: "Write", input: { file_path: path } }))) : { decision: "deny" as const };
+      const verdict = paths.length ? await verdictFor(folder, paths.map((path) => ({ tool: "Write", input: { file_path: path } })), "codex") : { decision: "deny" as const };
       return { decision: verdict.decision === "allow" ? "accept" : "decline" };
     }
     case "item/permissions/requestApproval": {
@@ -76,11 +80,11 @@ export async function answerCodexOwnTools(folder: string, method: string, params
       return { permissions: granted, scope: "turn" };
     }
     case "execCommandApproval": {
-      const verdict = await verdictFor(folder, [{ tool: "Bash", input: { command: words(params.command), ...cwd } }]);
+      const verdict = await verdictFor(folder, [{ tool: "Bash", input: { command: words(params.command), ...cwd } }], "codex");
       return { decision: verdict.decision === "allow" ? "approved" : { denied: { rejection: verdict.message ?? "Refused by Ensemble." } } };
     }
     case "applyPatchApproval": {
-      const verdict = await verdictFor(folder, Object.keys((params.fileChanges ?? {}) as Record<string, unknown>).map((path) => ({ tool: "Write", input: { file_path: path } })));
+      const verdict = await verdictFor(folder, Object.keys((params.fileChanges ?? {}) as Record<string, unknown>).map((path) => ({ tool: "Write", input: { file_path: path } })), "codex");
       return { decision: verdict.decision === "allow" ? "approved" : { denied: { rejection: verdict.message ?? "Refused by Ensemble." } } };
     }
     // Nobody is there to pick an option: the agent asks the person in its reply.
@@ -94,10 +98,10 @@ export async function answerCodexOwnTools(folder: string, method: string, params
 }
 
 /** A permission request from Cursor's agent or an ACP agent in such a turn: allowed once unless the hard floor refuses it. */
-export async function answerAcpOwnTools(folder: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+export async function answerAcpOwnTools(folder: string, method: string, params: Record<string, unknown>, app = "acp"): Promise<unknown> {
   if (method === "session/request_permission") {
     const options = (Array.isArray(params.options) ? params.options : []) as Array<{ optionId: string; kind?: string }>;
-    const verdict = await verdictFor(folder, acpCalls((params.toolCall ?? {}) as Parameters<typeof acpCalls>[0]));
+    const verdict = await verdictFor(folder, acpCalls((params.toolCall ?? {}) as Parameters<typeof acpCalls>[0]), app);
     const optionId = pickOption(options as Parameters<typeof pickOption>[0], verdict.decision === "allow");
     return optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } };
   }

@@ -187,6 +187,11 @@ test("apps_search and apps_read keep their place when MCP tools fill the app-too
   assert.ok(names.indexOf("apps_search") < names.findIndex((name) => name.startsWith("mcp_")), "item tools come before MCP tools");
   const connections = await loadConnections(context(mira), offered);
   assert.match(connections.connected.find((row) => row.id === "linear")!.uses.join(" "), /of its 40 own tools are offered this turn: mcp_linear_\*/);
+  // The catalog an editor or agent run lists (appCatalog) has every server's every tool.
+  const catalog = await appToolsFor({ ...context(mira), appCatalog: true });
+  assert.equal(catalog.filter((tool) => tool.name.startsWith("mcp_")).length, 120);
+  const listed = await loadConnections(context(mira), catalog);
+  assert.match(listed.connected.find((row) => row.id === "stripe")!.uses.join(" "), /^40 own tools: mcp_stripe_\*/);
 });
 
 test("a guest in a shared space sees none of the owner's connections", async () => {
