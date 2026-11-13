@@ -130,7 +130,7 @@ Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL
 
 **Public documentation** uses `apps/docs` to export tracked `docs/` to `apps/docs/out` for the separate Cloudflare hostname `docs.ensemblework.com`. The shared fast checks build the site and run docs rendering/search, bridge-tool and hosted-auth regressions. They do not publish the docs or change DNS. Build output, hostname attachment and the public index read by `ensemble_docs`: [40](40_PUBLIC_DOCUMENTATION.md).
 
-The fast checks also cover confirmed session deletion: hosted stop/acknowledgement/retry and account isolation, local native-history propagation, exact-file preservation and continuation gating. Native fixture tests use disposable history, not real agent accounts or model calls.
+The fast checks also cover readable checkout naming (`workspace/checkout-folder.test.ts`): selected-model requests, safe title fallback, concurrent reservations, name collisions, continuation, task labels and folder grants. They cover confirmed session deletion: hosted stop/acknowledgement/retry and account isolation, local native-history propagation, exact-file preservation and continuation gating. Native fixture tests use disposable history, not real agent accounts or model calls.
 
 ### Home server (`infra/deploy/home`) — serves `api.ensemblework.com`
 

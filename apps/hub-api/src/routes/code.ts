@@ -124,7 +124,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * How the Code tab names each checkout (`repos` stays a list of paths for older clients). A run's
-   * checkout (`<workspace>/runs/<job>`) is named by its origin and the task that made it, never its folder.
+   * checkout (`<workspace>/runs/<name>`) is labelled by its origin and the task that made it.
    */
   async function repoDetails(userId: string, repos: string[]) {
     const workspace = expandHome(env.ENSEMBLE_WORKSPACE_ROOT);
@@ -145,7 +145,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
         const runId = runOf(repo);
         const job = jobs.find((row) => row.repoPath === repo) ?? (runId ? jobs.find((row) => row.id === runId) : undefined);
         const kind = runId ? ("run" as const) : within(workspace, repo) ? ("workspace" as const) : ("folder" as const);
-        // A repository cloned inside a run's folder keeps its own folder name; the run's folder is an id.
+        // A repository cloned inside a run's folder keeps its own folder name.
         const nested = runId !== null && relative(runs, repo).split(sep).length > 1;
         const name = kind === "run" && !nested ? info.remote ?? "Run checkout" : basename(repo);
         const used = job ? (job.finishedAt ?? job.createdAt).toISOString() : null;
