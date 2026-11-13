@@ -1873,6 +1873,7 @@ model User {
   /// A picture avatar, `role.gender.n` (packages/shared-types/src/avatars.ts). Null: initials.
   avatar                String?
   sessions              Session[]
+  activePlaces          ActivePlace[]
   interactionEvents     InteractionEvent[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
@@ -2108,9 +2109,30 @@ model Session {
   /// Null is fail-closed: no optional modules.
   modules   String?
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  places    ActivePlace[]
 
   @@index([userId])
   @@map("sessions")
+}
+
+/// Short account-wide leases, independent of the active space or sharing presence.
+model ActivePlace {
+  userId    String   @map("user_id")
+  windowId  String   @map("window_id")
+  sessionId String   @map("session_id")
+  surface   String
+  label     String
+  lastSeen  DateTime @map("last_seen")
+  seq       Int
+  released  Boolean  @default(false)
+  revoked   Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, windowId])
+  @@index([userId, lastSeen])
+  @@index([sessionId])
+  @@map("active_places")
 }
 
 /// Personal tokens. Shown once, stored hashed.

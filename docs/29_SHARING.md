@@ -180,7 +180,7 @@ Only growth past a limit is refused, so an oversized page can still be shortened
 
 **Tests.** `components/editor/collab.test.ts` runs three real block editors against the hub-api authority with random network delays (concurrent typing and Undo, offline, restarts, crashes, outside writes, expired sessions, drafts, duplicated tabs, refusals, limits, Trash, carets) and requires identical editors and stored page with every word once. Also `components/pages/use-collab.test.tsx`, `page-diff.test.ts`, `packages/shared-types/src/page-merge.test.ts`, and hub-api `src/pages/collab.test.ts` and `collab.integration.test.ts`.
 
-Meeting notes are not live: they save whole documents without a revision, so the last save wins (`components/meetings/notes-fields.tsx`).
+Meeting notes are not live: whole-document saves carry the copy edited as `_base`. Disjoint fields merge; overlapping saves keep both values and ask which to save (`components/meetings/notes-fields.tsx`, [02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Account place leases are independent of shared-space presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
 
 ## 6. Routes
 

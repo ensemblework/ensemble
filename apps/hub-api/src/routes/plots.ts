@@ -10,6 +10,7 @@ import { fetchHostedPlotRun, PLOT_QUEUE_LIMIT_MS, PLOT_RUN_LIMIT_MS } from "../r
 import { useInProcessRuntime } from "../runtime/mode.js";
 import { matplotlibSource } from "@ensemble/shared-types";
 import { configOf, deleteDataset, ingestDataset, loadOwnedTable, ownedPlot, reparseSheet, updateDatasetColumns } from "../plots/service.js";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 
 // A file is checked against MAX_UPLOAD_BYTES once decoded (plots/service.ts). The body is larger:
 // base64, JSON escaping, or a table the browser already read.
@@ -87,9 +88,18 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       ...(body.title !== undefined ? { title: body.title.trim() || "Plots" } : {}),
     };
     const row = existing
-      ? await db.plot.update({ where: { id: existing.id }, data })
+      ? await db.$transaction(async (tx) => {
+          await lockSave(tx, "plots", request.userId, existing.id);
+          const current = await tx.plot.findFirstOrThrow({ where: { id: existing.id, userId: request.userId, deletedAt: null } });
+          const changed = guardedSave({ ...current, config: workspaceSchema.parse(current.config) }, body, saveBase(request));
+          return tx.plot.update({ where: { id: current.id }, data: {
+            ...(changed.config !== undefined ? { config: changed.config as Prisma.InputJsonValue } : {}),
+            ...(changed.code !== undefined ? { code: changed.code } : {}),
+            ...(changed.title !== undefined ? { title: changed.title.trim() || "Plots" } : {}),
+          } });
+        })
       : await db.plot.create({ data: { userId: request.userId, title: data.title ?? "Plots", ...data } });
-    return reply.send({ workspace: { id: row.id, title: row.title, config: body.config, code: row.code, updatedAt: row.updatedAt.toISOString() } });
+    return reply.send({ workspace: { id: row.id, title: row.title, config: workspaceSchema.parse(row.config), code: row.code, updatedAt: row.updatedAt.toISOString() } });
   });
 
   app.get("/api/plots", async (request) => {
@@ -236,16 +246,20 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
     }
     const parsed = body.config === undefined ? undefined : (isWorkspace(body.config) ? workspaceSchema.parse(body.config) : plotConfigSchema.parse(body.config));
     if (parsed && isWorkspace(parsed)) await checkWorkspaceDatasets(request.userId, parsed);
-    const config = parsed as Prisma.InputJsonValue | undefined;
-    const row = await db.plot.update({
+    const row = await db.$transaction(async (tx) => {
+      await lockSave(tx, "plots", request.userId, id);
+      const latest = await tx.plot.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const change = guardedSave(latest, { ...body, ...(parsed ? { config: parsed } : {}) }, saveBase(request));
+      return tx.plot.update({
       where: { id: current.id },
       data: {
-        ...(body.title !== undefined ? { title: body.title.trim() || "Untitled plot" } : {}),
-        ...(body.datasetId !== undefined ? { datasetId: body.datasetId } : {}),
-        ...(config !== undefined ? { config } : {}),
-        ...(body.code !== undefined ? { code: body.code } : {}),
+        ...(change.title !== undefined ? { title: change.title.trim() || "Untitled plot" } : {}),
+        ...(change.datasetId !== undefined ? { datasetId: change.datasetId } : {}),
+        ...(change.config !== undefined ? { config: change.config as Prisma.InputJsonValue } : {}),
+        ...(change.code !== undefined ? { code: change.code } : {}),
       },
       include: { dataset: { select: { id: true, name: true } } },
+      });
     });
     return { plot: presentPlot(row) };
   });

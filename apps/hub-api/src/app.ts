@@ -77,6 +77,9 @@ import { appItemRoutes } from "./routes/app-items.js";
 import { fileRoutes } from "./routes/files.js";
 import { fileImportRoutes } from "./routes/file-imports.js";
 import { peopleIdentityRoutes } from "./routes/people-identity.js";
+import { activePlaceRoutes } from "./routes/active-places.js";
+import { checkPlace, checkPlaceAccount } from "./lib/active-places.js";
+import { SaveConflictError } from "./lib/save-conflict.js";
 import { projectLinkRoutes } from "./routes/project-links.js";
 import { meetingNoteRoutes } from "./routes/meeting-notes.js";
 import { routineRoutes } from "./routes/routines.js";
@@ -212,6 +215,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenSpaceId = who.tokenSpaceId;
       request.tokenAccountId = who.tokenAccountId;
       request.modules = who.modules;
+      const accountChanged = checkPlaceAccount(request);
+      if (accountChanged) return reply.code(409).send(accountChanged);
+      if (!path.startsWith("/api/auth/")) {
+        const blocked = await checkPlace(app.prisma, request);
+        if (blocked) return reply.code(409).send(blocked);
+      }
       const denied =
         readOnlyTokenRejected(who.tokenScope, request.method, path, who.tokenCanWrite) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path) ?? transferTokenRejected(who.tokenScope, request.method, path);
       if (denied) return reply.code(403).send({ error: denied });
@@ -246,6 +255,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.setErrorHandler((error, request, reply) => {
+    if (error instanceof SaveConflictError) return reply.code(409).send(error.toJSON());
     if (error instanceof ZodError) {
       return reply.code(400).send({
         error: error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; "),
@@ -272,6 +282,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   for (const routes of [
     authRoutes,
+    activePlaceRoutes,
     authOAuthRoutes,
     connectorRoutes,
     decisionRoutes,

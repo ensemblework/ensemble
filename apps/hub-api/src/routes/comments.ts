@@ -21,6 +21,7 @@ import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { truncateText } from "../lib/text.js";
 import { assertOwned } from "../services/records.js";
 import { actorFor, nodeActingIn } from "../sharing/context.js";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 
 const Body = z.object({
   type: z.literal("doc").optional(),
@@ -207,13 +208,18 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     if (request.access?.kind === "share" && existing.pageId !== request.access.resourceId) return reply.code(404).send({ error: "Comment not found." });
     const refusal = body.body ? commentRefusal(request, existing, "edit") : null;
     if (refusal) return reply.code(403).send({ error: refusal });
-    const row = await app.prisma.pageDiscussion.update({
+    const row = await app.prisma.$transaction(async (tx) => {
+      await lockSave(tx, "page_discussions", request.userId, id);
+      const current = await tx.pageDiscussion.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const changed = guardedSave(current, body, saveBase(request));
+      return tx.pageDiscussion.update({
       where: { id },
       data: {
-        body: body.body as never,
-        status: body.status,
-        resolved: body.status === "resolved" ? true : body.status === "open" ? false : undefined,
+        body: changed.body as never,
+        status: changed.status,
+        resolved: changed.status === "resolved" ? true : changed.status === "open" ? false : undefined,
       },
+      });
     });
     return { comment: row };
   });

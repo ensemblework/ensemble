@@ -377,6 +377,8 @@ Manual notes use the page editor, with saved `content` plus Markdown `notes`, an
 
 Projects keep name, summary/notes, status, people/repository relationships and linked work. Their page assembles related tasks, deliverables, files and source items. Relationships are edited manually or through assistant tools. Adding an attendee never invents a person.
 
+Hub saves for people, projects, repositories, task fields, deliverables and manual meeting notes carry `_base`. Row locks protect the comparison and write; disjoint fields merge and overlapping saves ask which version to save ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)). Whole project and meeting documents use this save path, not the page/task live authority.
+
 ## 9. Storage & performance
 
 Prisma manages ordinary tables in PostgreSQL's `public` schema; desktop uses the compatible embedded store. Logical areas such as context/audit are not separate database schemas. Retrieval is bounded. Live records do not expire from inactivity; Completed, Trash and history retention have their own settings ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)).

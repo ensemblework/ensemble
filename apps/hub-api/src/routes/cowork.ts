@@ -4,6 +4,7 @@ import { accountIdOf } from "../lib/auth.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PageDocument } from "@ensemble/shared-types";
+import { guardedSave, lockSave, saveBase } from "../lib/save-conflict.js";
 import {
   actOnNudge,
   askEnsemble,
@@ -29,6 +30,7 @@ import {
   trashMeetingSession,
   weeklyRecap,
   setMeetingProject,
+  meetingContent,
 } from "../cowork/service.js";
 
 const textBody = z.object({ text: z.string().min(1).max(2000) });
@@ -116,13 +118,17 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const body = z
       .object({ notes: z.string().max(100_000).optional(), content: PageDocument.optional(), title: z.string().trim().min(1).max(200).optional(), projectId: z.string().uuid().nullable().optional() })
-      .strict()
       .refine((value) => value.notes !== undefined || value.content !== undefined || value.title !== undefined || value.projectId !== undefined, "Supply notes, content, a title or a project.")
       .parse(request.body);
-    const { projectId, ...notes } = body;
-    if (projectId !== undefined && notes.notes === undefined && notes.content === undefined && notes.title === undefined) return setMeetingProject(db, request.userId, id, projectId);
-    if (projectId !== undefined) await setMeetingProject(db, request.userId, id, projectId);
-    return saveMeetingNotes(db, request.userId, id, notes);
+    return db.$transaction(async (tx) => {
+      await lockSave(tx, "meeting_sessions", request.userId, id);
+      const current = await tx.meetingSession.findFirstOrThrow({ where: { id, userId: request.userId, deletedAt: null } });
+      const comparable = { ...current, content: meetingContent(current) };
+      const { projectId, ...notes } = guardedSave(comparable, body, saveBase(request));
+      if (projectId !== undefined && !Object.keys(notes).length) return setMeetingProject(tx, request.userId, id, projectId);
+      if (projectId !== undefined) await setMeetingProject(tx, request.userId, id, projectId);
+      return saveMeetingNotes(tx, request.userId, id, notes);
+    });
   });
 
   app.post("/api/meetings/sessions/:id/end", async (request) => {

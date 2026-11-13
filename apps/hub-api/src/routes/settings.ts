@@ -7,10 +7,12 @@ import { connectionState, listConnectors } from "../connectors/base.js";
 import { mirrorSettings } from "../spaces/store.js";
 import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
 import { registerEditorTheme } from "../node/editor-theme.js";
-import { accountIdOf } from "../lib/auth.js";
+import { accountIdOf, settingsUserOf } from "../lib/auth.js";
 import { requireWebPerson } from "../devices/web-unlock.js";
 import { isHosted } from "../lib/hosted-access.js";
 import { isVisitor } from "../sharing/context.js";
+import { saveBase } from "../lib/save-conflict.js";
+import { sseHub } from "../lib/sse.js";
 
 /** Settings › Account › You. Refused with a reason instead of saved, so a typo never becomes the stored value. */
 export function checkIdentityPatch(body: Record<string, unknown>): Record<string, unknown> {
@@ -44,16 +46,18 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         configured: (await connectionState(request.userId, connector)).configured,
       })),
     );
-    return { settings, connectors };
+    return { settings, connectors, scope: settingsUserOf(request) };
   });
 
   app.patch("/api/settings", async (request) => {
     // Code folders added through a plain settings save get the same checks as POST /api/code/folders.
-    const body = checkIdentityPatch(z.record(z.unknown()).parse(request.body));
+    const { _base, ...submitted } = z.record(z.unknown()).parse(request.body);
+    const body = checkIdentityPatch(submitted);
     const current = await loadSettings(app.prisma, request.userId);
     const patch = await checkCodeRootsPatch(current, body, request.userId);
-    const settings = await saveSettings(app.prisma, request.userId, patch);
+    const settings = await saveSettings(app.prisma, request.userId, patch, saveBase(request));
     await mirrorSettings(app.prisma, request.userId);
+    sseHub.publish(accountIdOf(request), { event: "settings.changed", to: accountIdOf(request), data: {} });
     return { settings };
   });
 

@@ -10,6 +10,9 @@ import type { ApplyFailure } from "./assistant-apply";
 import type { CollabBatch, CollabJoin, CollabSend } from "@/components/editor/collab";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 import type { BoardPage, CreatePageBoard, DirectoryPage, PageBoardRecord, PatchPageBoard } from "@ensemble/shared-types";
+import { placeHeaders, PLACE_BLOCKED_EVENT } from "./active-place";
+import { chooseSave } from "./save-conflict";
+import { mergeSaveObject, saveObject, type SaveConflict, type SaveObject } from "@ensemble/shared-types/save-merge";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
 export const HUB_API = resolveHubApi({
@@ -22,6 +25,39 @@ export const HUB_API = resolveHubApi({
  * fetching) still talks to hub-api directly.
  */
 export const API = typeof window === "undefined" ? HUB_API : "";
+let knownSettings: Settings | null = null;
+const knownRecords = new Map<string, SaveObject>();
+const recordCollection = /^\/api\/(tasks|people|projects|repos|meetings\/sessions|deliverables|skills|plots|routines|comments)(?:\/([a-zA-Z0-9-]+))?$/;
+
+function rememberRecords(path: string, answer: unknown): void {
+  if (typeof window === "undefined") return;
+  if (path.startsWith("/api/plots/workspace") && saveObject(answer) && saveObject(answer.workspace) && typeof answer.workspace.id === "string") {
+    knownRecords.set(`/api/plots/${answer.workspace.id}`, answer.workspace);
+  }
+  if (/^\/api\/pages\/[^/]+\/[^/]+\/comments$/.test(path) && saveObject(answer) && Array.isArray(answer.comments)) {
+    for (const row of answer.comments) {
+      if (saveObject(row) && typeof row.id === "string") knownRecords.set(`/api/comments/${row.id}`, row);
+    }
+  }
+  if (path === "/api/preferences" && saveObject(answer) && Array.isArray(answer.preferences)) {
+    for (const row of answer.preferences) {
+      if (saveObject(row) && typeof row.key === "string") knownRecords.set(`/api/preferences/${encodeURIComponent(row.key)}`, { value: row.value });
+    }
+  }
+  const match = recordCollection.exec(path.split("?")[0]!);
+  if (!match || !saveObject(answer)) return;
+  const root = `/api/${match[1]}`;
+  const remember = (record: unknown) => {
+    if (saveObject(record) && typeof record.id === "string") knownRecords.set(`${root}/${record.id}`, record);
+  };
+  remember(answer);
+  for (const key of ["task", "person", "project", "repo", "session", "deliverable", "skill", "plot", "routine", "comment"]) remember(answer[key]);
+  for (const key of ["tasks", "people", "projects", "repos", "sessions", "deliverables", "skills", "plots", "routines", "comments"]) {
+    const records = answer[key];
+    if (Array.isArray(records)) records.forEach(remember);
+  }
+  if (knownRecords.size > 500) knownRecords.delete(knownRecords.keys().next().value!);
+}
 
 /** Shown instead of the API's bare refusal for a feature the space's template leaves out. */
 export const MODULE_OFF_MESSAGE = "That feature is off in this space. Turn it on in Settings → Account → Features.";
@@ -148,6 +184,7 @@ function visitorId(): string {
 export const SHARE_GONE_EVENT = "ensemble:share-gone";
 /** Dispatched on `window` just before a refused session sends the tab to sign in, so open pages can keep unsent typing. */
 export const SIGNED_OUT_EVENT = "ensemble:signed-out";
+export const SAVE_CHOSEN_EVENT = "ensemble:save-chosen";
 export function setOpenShare(id: string | null): void {
   openShare = id;
 }
@@ -158,6 +195,7 @@ export function currentShare(): string | null {
 /** The share or public-link headers for requests made outside `request`, such as raw byte downloads. */
 export function itemViewHeaders(): Record<string, string> {
   return {
+    ...placeHeaders(),
     ...(openShare ? { [SHARE_HEADER]: openShare } : {}),
     ...(openLink ? { [LINK_HEADER]: openLink, [VISITOR_HEADER]: visitorId() } : {}),
   };
@@ -178,8 +216,8 @@ export function withShare<T>(share: string | null, fn: () => T): T {
   }
 }
 
-export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean; direct?: boolean }): Promise<T> {
-  const { json, signal: explicit, surviveNavigation, direct, ...rest } = init ?? {};
+export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean; direct?: boolean; base?: SaveObject }): Promise<T> {
+  const { json, base, signal: explicit, surviveNavigation, direct, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
   const tracked = trackRequest(external, path, surviveNavigation);
   let response: Response;
@@ -187,8 +225,9 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
     response = await fetch(`${direct ? HUB_API : API}${path}`, {
       ...rest,
       signal: tracked.signal,
-      body: json === undefined ? rest.body : JSON.stringify(json),
+      body: json === undefined ? rest.body : JSON.stringify(base && saveObject(json) ? { ...json, _base: base } : json),
       headers: {
+        ...placeHeaders(),
         ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
         ...(openShare ? { [SHARE_HEADER]: openShare } : {}),
         ...(openLink ? { [LINK_HEADER]: openLink, [VISITOR_HEADER]: visitorId() } : {}),
@@ -215,19 +254,43 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   }
   if (!response.ok) {
     const text = await response.text();
+    const data = errorBody(text);
+    const code = errorCode(text);
+    if (response.status === 409 && code === "SAVE_CONFLICT" && base && saveObject(data) && Array.isArray(data.conflicts)) {
+      const choice = await chooseSave(data as SaveConflict);
+      if (choice) {
+        const fields = saveObject(json) ? Object.keys(json) : Object.keys(choice.patch);
+        const payload = Object.fromEntries(fields.map((key) => {
+          const saved = choice.base[key];
+          const changed = choice.patch[key];
+          return [key, Object.hasOwn(choice.patch, key)
+            ? saveObject(saved) && saveObject(changed) ? mergeSaveObject(saved, changed) : changed
+            : Object.hasOwn(choice.base, key) ? saved : saveObject(json) ? json[key] : undefined];
+        }));
+        const result = await request<T>(path, { ...init, json: payload, base: choice.base });
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SAVE_CHOSEN_EVENT, { detail: { path } }));
+        return result;
+      }
+      throw new ApiError("Your changes are still unsaved. Retry when you are ready to choose.", 409, code, data);
+    }
+    if (typeof window !== "undefined" && code?.startsWith("PLACE_") && !path.startsWith("/api/auth/places")) {
+      window.dispatchEvent(new CustomEvent(PLACE_BLOCKED_EVENT, { detail: data }));
+    }
     const message = serverErrorMessage(text);
-    if (message) throw new ApiError(message, response.status, errorCode(text), errorBody(text));
+    if (message) throw new ApiError(message, response.status, code, data);
     if (unreachable(response.status, text)) throw new ApiError(OFFLINE, response.status);
-    throw new ApiError(text.trim() || response.statusText, response.status);
+    throw new ApiError(text.trim() || response.statusText, response.status, code, data);
   }
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  const result: unknown = await response.json();
+  rememberRecords(path, result);
+  return result as T;
 }
 
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
-export const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
-export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
+export const patch = <T>(path: string, json: unknown, base?: SaveObject) => request<T>(path, { method: "PATCH", json, base: base ?? knownRecords.get(path) });
+export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json, base: knownRecords.get(path) });
 export const del = <T>(path: string, json?: unknown) => request<T>(path, json === undefined ? { method: "DELETE" } : { method: "DELETE", json });
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
@@ -1591,7 +1654,7 @@ export const api = bindClient({
   projects: () => get<{ projects: ProjectRecord[] }>("/api/projects"),
   project: (id: string) => get<{ project: ProjectDetail }>(`/api/projects/${id}`),
   createProject: (data: { name?: string; summary?: string } = {}) => post<{ project: { id: string; name: string } }>("/api/projects", data),
-  patchProject: (id: string, data: Record<string, unknown>) => patch(`/api/projects/${id}`, data),
+  patchProject: (id: string, data: Record<string, unknown>, base?: SaveObject) => patch<{ ok: boolean; project: { content: PageDocument | null; notes: string } }>(`/api/projects/${id}`, data, base),
   deleteProject: (id: string) => del(`/api/projects/${id}`),
   repos: () => get<{ repos: RepoRecord[] }>("/api/repos"),
   addRepo: (fullName: string) => post("/api/repos", { fullName }),
@@ -1794,8 +1857,17 @@ export const api = bindClient({
   verifyLedger: () => post<{ ok: boolean; checked: number; brokenAt?: string }>("/api/ledger/verify"),
 
   // settings & system
-  settings: () => get<{ settings: Settings }>("/api/settings"),
-  saveSettings: (data: unknown) => patch<{ settings: Settings }>("/api/settings", data),
+  settings: async () => {
+    const result = await get<{ settings: Settings; scope?: string }>("/api/settings");
+    if (typeof window !== "undefined") knownSettings = result.settings;
+    return result;
+  },
+  saveSettings: async (data: unknown, base?: SaveObject) => {
+    const before = base ?? knownSettings ?? (await get<{ settings: Settings }>("/api/settings")).settings;
+    const result = await request<{ settings: Settings }>("/api/settings", { method: "PATCH", json: data, base: before, surviveNavigation: true });
+    if (typeof window !== "undefined") knownSettings = result.settings;
+    return result;
+  },
   connections: () => get<{ connections: Connection[]; attention: number; lastFetch: string | null }>("/api/connections"),
   syncConnection: (id: string) => post<{ ok: boolean; message: string; proposed?: number }>(`/api/connections/${id}/sync`),
   fetchNow: () => post<{ results: Array<{ id: string; ok: boolean; message: string }>; message?: string }>("/api/fetch"),
@@ -1942,10 +2014,10 @@ export const api = bindClient({
   startMeeting: (artifactId: string | null, title?: string, projectId?: string) =>
     post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title, ...(projectId ? { projectId } : {}) }),
   /** Links meeting notes to a project; null unlinks them. */
-  setMeetingProject: (id: string, projectId: string | null) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { projectId } }),
-  updateMeeting: (id: string, data: { notes?: string; content?: PageDocument; title?: string }) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, surviveNavigation: true }),
+  setMeetingProject: (id: string, projectId: string | null) => patch<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { projectId }),
+  updateMeeting: (id: string, data: { notes?: string; content?: PageDocument; title?: string }, base?: SaveObject) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, base: base ?? knownRecords.get(`/api/meetings/sessions/${id}`), surviveNavigation: true }),
   deleteMeeting: (id: string) => del<{ deleted: boolean }>(`/api/meetings/sessions/${id}`),
-  saveMeetingNotes: (id: string, notes: string) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { notes }, surviveNavigation: true }),
+  saveMeetingNotes: (id: string, notes: string) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { notes }, base: knownRecords.get(`/api/meetings/sessions/${id}`), surviveNavigation: true }),
   endMeeting: (id: string) => post<{ session: MeetingSessionRecord; askAttach: boolean }>(`/api/meetings/sessions/${id}/end`),
   attachMeeting: (id: string) => post<{ session: MeetingSessionRecord; message: string; calendarWrite: boolean }>(`/api/meetings/sessions/${id}/attach`),
   declineMeeting: (id: string) => post<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}/decline`),
@@ -2042,7 +2114,7 @@ export const api = bindClient({
   plotWorkspace: (id?: string) =>
     get<{ workspace: { id: string; title: string; config: unknown; code: string; updatedAt: string } }>(`/api/plots/workspace${qs({ id })}`),
   savePlotWorkspace: (body: { id?: string; config: unknown; code?: string; title?: string }) =>
-    put<{ workspace: { id: string; config: unknown; code: string } }>("/api/plots/workspace", body),
+    request<{ workspace: { id: string; config: unknown; code: string } }>("/api/plots/workspace", { method: "PUT", json: body, base: body.id ? knownRecords.get(`/api/plots/${body.id}`) : undefined }),
   deletePlotDataset: (id: string) => del<void>(`/api/plots/datasets/${id}`),
   diagramFreshness: (id: string) => get<{ stale: boolean; reasons: string[] }>(`/api/diagrams/${id}/freshness`),
   layout: (surface: "today" | "context" | "board") =>

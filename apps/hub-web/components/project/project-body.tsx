@@ -15,6 +15,7 @@ import { useToast } from "../toast";
 
 // A body that failed to save survives in-app navigation until it saves.
 const drafts = new Map<string, PageDocument>();
+const bases = new Map<string, { content: PageDocument | null }>();
 const writes = new Map<string, Promise<unknown>>();
 
 function saveInOrder<T>(id: string, save: () => Promise<T>): Promise<T> {
@@ -46,6 +47,7 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
   const known = useRef(JSON.stringify(project.content ?? null));
   const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
   const latest = useRef(initial);
+  const base = useRef(bases.get(id) ?? { content: project.content ?? null });
   const pending = useRef(drafts.has(id));
   const saving = useRef<Promise<boolean> | null>(null);
   const mounted = useRef(true);
@@ -61,10 +63,17 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
     if (mounted.current) setStatus("saving");
     const work = (async () => {
       try {
-        await saveInOrder(id, () => api.patchProject(id, { content: submitted }));
-        known.current = JSON.stringify(submitted);
+        const result = await saveInOrder(id, () => api.patchProject(id, { content: submitted }, base.current));
+        const saved = result.project.content ?? submitted;
+        base.current = { content: saved };
+        bases.set(id, base.current);
+        known.current = JSON.stringify(saved);
+        if (!pending.current) {
+          latest.current = saved;
+          setRemote({ doc: saved, stamp: Date.now() });
+        }
         if (drafts.get(id) === submitted) drafts.delete(id);
-        client.setQueryData<ProjectDetail>(["project", id], (cached) => cached ? { ...cached, content: submitted } : cached);
+        client.setQueryData<ProjectDetail>(["project", id], (cached) => cached ? { ...cached, content: saved, notes: result.project.notes } : cached);
         if (mounted.current) setStatus(pending.current ? "unsaved" : "saved");
         return true;
       } catch (error) {
@@ -104,6 +113,7 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
   useEffect(() => {
     const incoming = JSON.stringify(project.content ?? null);
     if (incoming === known.current || pending.current || saving.current || !project.content) return;
+    base.current = { content: project.content };
     known.current = incoming;
     latest.current = project.content;
     setRemote({ doc: project.content, stamp: Date.now() });
@@ -126,6 +136,7 @@ export function ProjectBody({ project, editable }: { project: ProjectDetail; edi
           onChange={(content) => {
             latest.current = content;
             drafts.set(id, content);
+            bases.set(id, base.current);
             pending.current = true;
             setStatus("unsaved");
             if (timer.current) clearTimeout(timer.current);

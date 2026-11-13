@@ -33,6 +33,8 @@ Background work starts with the hosted server (`index.ts`, not on a computer's o
 
 Node uses Ensemble accounts and sessions; there is no separate sign-up.
 
+The shared account lease API accepts `surface: "node"` and `x-ensemble-place` for the three-place chooser ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)). The separate Node website does not register its windows in this repository; calls without that header do not count toward the cap.
+
 - The website calls `api.ensemblework.com` with `credentials: "include"`. In production the session cookie is set for `ensemblework.com` (`ENSEMBLE_COOKIE_DOMAIN`), so a sign-in on the Hub, on Node or through the CLI's browser approval is the same session. CORS allows exactly `ENSEMBLE_NODE_WEB_ORIGIN` (`lib/node-origin.ts`) in addition to `HUB_WEB_ORIGIN`. It is never added on a computer's own runtime.
 - Email sign-in and sign-up use the existing `/api/auth/login`, `/api/auth/signup`, `/api/auth/verify-email` and `/api/auth/resend-verification` routes. Sign-up needs the same Turnstile answer as on the Hub, checked with Cloudflare (`lib/turnstile.ts`: success, action `signup`, and a hostname that is `HUB_WEB_ORIGIN`'s or `ENSEMBLE_NODE_WEB_ORIGIN`'s host). The widget's hostnames must cover the Node host; a parent domain covers its subdomains.
 - When a sign-up or a resend comes from Node (its `Origin` is exactly `ENSEMBLE_NODE_WEB_ORIGIN`), or a provider sign-in that started on Node creates an unverified account, the verification email links to Node's `/welcome`, which takes the code. The code works on the Hub's `/verify` too.

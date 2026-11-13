@@ -50,6 +50,10 @@ export const includedRouteCoverage: Readonly<Record<string, readonly RouteCheck[
 };
 
 export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/auth/places": ["happy-path", "isolation"],
+  "POST /api/auth/places": ["happy-path"],
+  "POST /api/auth/places/continue": ["happy-path", "isolation"],
+  "POST /api/auth/places/release": ["happy-path"],
   "GET /api/tasks": ["happy-path", "isolation"],
   "POST /api/tasks": ["happy-path", "invalid-input", "relation-isolation"],
   "GET /api/tasks/:id": ["happy-path", "isolation", "unknown-id"],

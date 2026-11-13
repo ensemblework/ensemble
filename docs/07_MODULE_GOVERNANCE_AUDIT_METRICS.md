@@ -10,6 +10,8 @@ A space scopes content by `userId`; the actor is `accountId`. Sharing adds route
 
 Account export and deletion use `lib/account-data.ts`. Deletion includes owned spaces and checks for active work, including a run on the person's computer in a shared space. Account-lifetime foreign keys stop late writes from recreating erased rows. Third-party copies and infrastructure backups have their own lifetimes.
 
+Account-wide `ActivePlace` leases enforce the hosted Hub's simultaneous-place rule independently of sharing presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)). They are excluded from account exports and cascade away with their session/account. Guarded record saves compare `_base` under a row lock and preserve conflicting values for the person's choice ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+
 ### 1.1 Completed and deleted data retention
 
 `jobs/retention.ts` and `jobs/skill-mining.ts` apply these windows:

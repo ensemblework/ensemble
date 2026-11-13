@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { desktopPlaceholder } from "@/lib/desktop-export";
+import { ActivePlaceGate } from "@/components/active-place-gate";
 
 // A public link shares one item with whoever has the address. It is not meant to
 // turn up in search results, even when the address is posted somewhere public.
@@ -11,5 +12,5 @@ export function generateStaticParams() {
 }
 
 export default function PublicLinkLayout({ children }: { children: ReactNode }) {
-  return children;
+  return <ActivePlaceGate allowAnonymous>{children}</ActivePlaceGate>;
 }

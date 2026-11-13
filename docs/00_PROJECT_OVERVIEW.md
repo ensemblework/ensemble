@@ -46,7 +46,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 
 | Area | What works | Boundary |
 | --- | --- | --- |
-| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion | Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
+| Accounts | Signup, password and social login, email verification, recovery, profile, export, deletion; three active registered places per account with a fourth-window chooser | The hosted Hub shell registers windows; the separate Node website does not register them here. CLI/editor keys are uncapped. Hosted model, app and agent features need a verified email ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)) |
 | Google data | Public access/use/storage/sharing/deletion and Limited Use disclosure; notice in Google connector details | Separate Workspace grants; selected providers/settings must honor Limited Use ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Spaces | Separate owned spaces, switching, settings copy/sync, export, deletion | Each space is its own content scope ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing | Space and item roles, shares, public links, live presence, page co-editing | Settings, credentials and reminders stay private ([29](29_SHARING.md)) |
@@ -74,7 +74,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Completed and Trash | Review, reopen, restore, pin; retirement and purge | Separate retention windows | [07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention) |
 | Metrics | Model calls, credits and recorded events, filtered by provider and date | Calls without token reports stay visible; external plan balances are not read | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Search and navigation | Compact search, Jump to, shortcuts, phone navigation | Bounded, access-scoped results | [02](02_MODULE_INTERACTION_HUB_UI.md) |
-| Connect and Settings | App grants, MCP connections, models, run profiles, automations (each with a switch and model tier), appearance, devices, data controls; Settings search that jumps to a row and highlights it, grouped tabs and an On this page list | | [02](02_MODULE_INTERACTION_HUB_UI.md), [31](31_CONNECTORS_IN_USE.md) |
+| Connect and Settings | App grants, MCP connections, models, run profiles, automations (each with a switch and model tier), appearance, devices, data controls; Settings search that jumps to a row and highlights it, grouped tabs and an On this page list | Guarded saves merge disjoint fields; overlapping saves keep both values and ask which to save | [02](02_MODULE_INTERACTION_HUB_UI.md), [31](31_CONNECTORS_IN_USE.md) |
 
 ## 5. Assistant
 
@@ -123,7 +123,7 @@ A catalog entry is a connection option, not a promise of native search, an impor
 
 | Records | Role |
 | --- | --- |
-| `User`, `Session`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, login identities, recovery and verification |
+| `User`, `Session`, `ActivePlace`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, account-wide window leases (three active, 60-second expiry), login identities, recovery and verification |
 | Extra `User` rows with `ownerId` | Spaces. Request `userId` is the open space; `accountId` is the signed-in person |
 | `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, contacts, ownership transfer, public links |
 | `Task`, `TaskPage`, `PageBoard`, `PageRevision`, `PageTemplate` | Work and its documents, page-board/column membership, board-specific overview tiles, nesting, revisions, private templates |

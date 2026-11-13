@@ -16,6 +16,8 @@ The **fast checks** are one composite action, `.github/actions/fast-checks`, use
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
 
+The fast action also runs active-place admission/release/replacement, account isolation and key exemption, field-level save merges/conflicts and the Hub chooser/dialog. API fixtures run serially against in-memory PGlite.
+
 ## Paused
 
 Actions → **full-checks** → *Run workflow* runs all of these on any branch.
