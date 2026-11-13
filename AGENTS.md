@@ -24,6 +24,7 @@ Where a change usually needs a doc update:
 | A new app, package, or top-level folder | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), [`docs/README.md`](docs/README.md) if it has a doc |
 | Hub pages and components (`apps/hub-web/app`, `components`) | [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), `docs/00` |
 | Landing page (`apps/landing`) | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), `docs/00` |
+| Public documentation (`apps/docs`, the `ensemble_docs` bridge tool) | [`docs/40`](docs/40_PUBLIC_DOCUMENTATION.md), `docs/CONTEXT_BRIDGE.md`, `docs/26` §5; `README.md` (Layout), `docs/17`, `docs/README.md` |
 | CI and deploy workflows (`.github/workflows`, `.github/actions`, `infra/deploy/autodeploy.sh`, `infra/deploy/home`) | [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
 | Web testing branch, testing deploys (`infra/deploy/testing`, `.github/workflows/test-web.yml`) | [`docs/36`](docs/36_WEB_TESTING.md), [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
 | API routes (`apps/hub-api/src/routes`) | The API tables in [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), plus the module doc for that area |
@@ -68,6 +69,7 @@ New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Plan
 |---|---|
 | `apps/hub-web` | Next.js 15 Hub UI |
 | `apps/landing` | Static landing page for ensemblework.com |
+| `apps/docs` | Static public documentation for docs.ensemblework.com |
 | `apps/hub-api` | Fastify + Prisma API, scheduler, workspace queue, assistant |
 | `apps/agent-runtime` | Python FastAPI service that holds model keys and calls providers (port 5055) |
 | `apps/context-bridge` | MCP server for editors and agents (hub-api also serves it at `/mcp`) |
@@ -107,6 +109,8 @@ pnpm --filter @ensemble/hub-api test:public        # in-memory API auth/isolatio
 pnpm --filter @ensemble/hub-api route:inventory:check
 pnpm --filter @ensemble/hub-web test
 pnpm --filter @ensemble/landing build             # landing page (static export to apps/landing/out)
+pnpm --filter @ensemble/docs build                # public docs (static export to apps/docs/out)
+pnpm --filter @ensemble/docs test                 # docs links, headings, extracts and explicit misses
 pnpm --filter @ensemble/shared-types test
 pnpm --filter @ensemble/block-diagrams test
 pnpm --filter @ensemble/ide-theme test

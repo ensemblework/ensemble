@@ -31,6 +31,7 @@ Both environments offer **GPT-5 mini and GPT-4.1 mini** from the Visual Studio A
 - A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
 - After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
 - PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
+- Fast checks also build the public docs and verify their read-only MCP lookup. The separate Cloudflare docs hostname is not published by the test Hub workflow ([40](40_PUBLIC_DOCUMENTATION.md)).
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
 
 ## Install the testing CLI

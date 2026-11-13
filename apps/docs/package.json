@@ -1,0 +1,20 @@
+{
+  "name": "@ensemble/docs",
+  "version": "0.7.17",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "prebuild": "node ../../scripts/release-version.mjs"
+  },
+  "exports": {
+    "./search": {
+      "types": "./src/search.d.ts",
+      "default": "./src/search.js"
+    }
+  },
+  "dependencies": {
+    "markdown-it": "14.3.2"
+  }
+}
