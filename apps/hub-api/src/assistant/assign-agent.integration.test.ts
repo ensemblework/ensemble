@@ -119,6 +119,10 @@ test("agent sessions: one agent's chain of continued runs is one session; the as
   assert.deepEqual([claude.lastJobId, claude.title, claude.latestTask.title, claude.tasks, claude.resumable, claude.computer], [next.id, "Clone a repo", "Rate-limit the login", 2, true, "Chinmay's MacBook Pro"]);
   assert.equal(claude.summary, "Added rate limiting to the login route.");
   assert.equal(sessions[0]!.summary, "Running the tests");
+  // A run in its project's folder (agent-projects.ts) shows that folder, as its computer reported it; one in Ensemble's own checkout says so.
+  assert.equal(claude.folder, "its own checkout");
+  await h.prisma.workspaceEvent.create({ data: { jobId: codex.id, kind: "prepared", data: { root: "~/ensemble-workspace/projects/atlas-search", git: true } } });
+  assert.equal((await listSessions(h.prisma, scope))[0]!.folder, "projects/atlas-search");
   assert.equal(summaryLine("Fixed the login form. Added two tests. Left the CSS alone."), "Fixed the login form. Added two tests.");
   assert.deepEqual((await listSessions(h.prisma, scope, { query: "rate limiting" })).map((row) => row.id), [first.id]);
   assert.equal((await resolveSession(h.prisma, scope, next.id))?.id, first.id, "any run in it finds its session");

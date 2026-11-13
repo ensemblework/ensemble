@@ -9,7 +9,9 @@ import type { SubscriptionProvider } from "@ensemble/shared-types";
 import { isTextFile } from "../files/model-input.js";
 
 const TEXT_CAP = 16_000;
-const SUMMARY_CAP = 4_000;
+/** The longest summary kept, in words; the prompt asks for at most four sentences, so most are far shorter. */
+export const SUMMARY_WORDS = 250;
+const SUMMARY_CAP = 2_500;
 const MB = 1024 * 1024;
 /** Pictures every model and agent takes as a picture. */
 export const PICTURES: ReadonlySet<string> = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
@@ -67,9 +69,23 @@ export function planTakesFile(agent: SubscriptionProvider, file: { filename: str
   return picture || ext === "pdf";
 }
 
+/** At most `words` words (and SUMMARY_CAP characters), ended at the last whole sentence that fits when there is one. */
+export function capSummary(text: string, words = SUMMARY_WORDS): string {
+  const clean = text.trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length <= words && clean.length <= SUMMARY_CAP) return clean;
+  const joined = parts.slice(0, words).join(" ");
+  // Cut by characters too: the last word may be partial then, and is dropped.
+  const cut = joined.length > SUMMARY_CAP ? joined.slice(0, SUMMARY_CAP).replace(/\s+\S*$/, "") : joined;
+  // The last sentence end in the second half, with a closing quote or bracket after it.
+  const last = [...cut.matchAll(/[.!?]["”’)\]]?(?=\s|$)/g)].pop();
+  if (last?.index !== undefined && last.index >= cut.length / 2) return cut.slice(0, last.index + last[0].length);
+  return `${cut}…`;
+}
+
 export function settleSummary(modelText: string | null, error: unknown): SummaryOutcome {
   if (error) return { status: "failed", message: failureMessage(error) };
-  const summary = (modelText ?? "").trim().slice(0, SUMMARY_CAP);
+  const summary = capSummary(modelText ?? "");
   if (!summary) return { status: "failed", message: "The model returned an empty summary." };
   return { status: "done", summary };
 }
