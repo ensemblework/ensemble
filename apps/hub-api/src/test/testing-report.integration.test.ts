@@ -9,7 +9,7 @@ const { claimQueuedJob, NEEDS_ME_GRACE_MS } = await import(
   "../workspace/queue-policy.js"
 );
 const { runRetention } = await import("../jobs/retention.js");
-const { renderMorningBrief } = await import("../cowork/morning-skill.js");
+const { createMorningRoutine } = await import("../routines/service.js");
 after(async () => {
   await h?.close();
 });
@@ -332,58 +332,32 @@ test("Delete my data erases standalone pages, diagrams, skills and histories, is
   );
 });
 
-test("morning brief waits until the next local day and stores a customizable profession skill", async () => {
+test("morning brief starts the next local day and its profession instruction is edited as a routine", async () => {
   const a = await owner();
   await a.inject({
     method: "PATCH",
     url: "/api/settings",
     payload: {
       timezone: "Pacific/Kiritimati",
-      morningBrief: { time: "00:00", enabled: true },
     },
   });
   await h.prisma.user.update({
     where: { id: a.id },
     data: { createdAt: new Date() },
   });
-  const early = await a.inject({ method: "POST", url: "/api/brief/deliver" });
-  assert.equal(early.json().reason, "early");
-  const view = await a.inject({ method: "GET", url: "/api/brief/skill" });
-  assert.match(view.json().skill.body, /classes, lesson preparation/);
+  await h.prisma.$transaction((tx) => createMorningRoutine(tx, a.id));
+  const view = await a.inject({ method: "GET", url: "/api/brief/today" });
+  const routine = view.json().routine;
+  assert.match(routine.instruction, /classes, lesson preparation/);
+  const { zonedParts } = await import("../lib/clock.js");
+  assert.ok(zonedParts("Pacific/Kiritimati", new Date(routine.nextRunAt)).date > zonedParts("Pacific/Kiritimati").date);
   const saved = await a.inject({
     method: "PATCH",
-    url: "/api/brief/skill",
-    payload: { instructions: "Three priorities, then my classes." },
+    url: `/api/routines/${routine.id}`,
+    payload: { instruction: "Three priorities, then my classes." },
   });
   assert.equal(saved.statusCode, 200);
-  let system = "";
-  await renderMorningBrief(
-    h.prisma,
-    a.id,
-    {
-      date: "2026-10-16",
-      focus: [],
-      proposed: [],
-      deliverables: [],
-      meetings: [],
-      needsMe: { pendingApprovals: 0, pendingEditorDecisions: 0 },
-    },
-    async (args) => {
-      system = args.system!;
-      return {
-        text: "Your classes",
-        model: "fixture",
-        tokensIn: 0,
-        tokensOut: 0,
-      };
-    },
-  );
-  assert.match(system, /Three priorities/);
-  assert.equal(
-    (await a.inject({ method: "GET", url: "/api/brief/skill" })).json()
-      .customize,
-    false,
-  );
+  assert.equal(saved.json().routine.instruction, "Three priorities, then my classes.");
 });
 
 test("retention warns a day ahead, uses High, writes skills before Trash, preserves pins and retries failed mining", async () => {
@@ -500,30 +474,30 @@ test("retention warns a day ahead, uses High, writes skills before Trash, preser
   );
 });
 
-test("brief preferences are isolated and skill previews validate ownership and verification before calling models", async () => {
+test("skill preferences are isolated and previews validate ownership and verification before calling models", async () => {
   const a = await owner(),
     b = await owner();
-  const mine = await a.inject({ method: "GET", url: "/api/brief/skill" });
-  const theirs = await b.inject({ method: "GET", url: "/api/brief/skill" });
+  const mine = await a.inject({ method: "POST", url: "/api/skills", payload: { name: "Class notes", body: "Start with classes." } });
+  const theirs = await b.inject({ method: "POST", url: "/api/skills", payload: { name: "Class notes", body: "Start with classes." } });
   assert.notEqual(mine.json().skill.id, theirs.json().skill.id);
   assert.equal(
     (
       await a.inject({
         method: "PATCH",
-        url: "/api/brief/skill",
-        payload: { instructions: "Only my lessons." },
+        url: `/api/skills/${mine.json().skill.id}`,
+        payload: { body: "Only my lessons." },
       })
     ).statusCode,
     200,
   );
-  const unchanged = await b.inject({ method: "GET", url: "/api/brief/skill" });
+  const unchanged = await b.inject({ method: "GET", url: `/api/skills/${theirs.json().skill.id}` });
   assert.doesNotMatch(unchanged.json().skill.body, /Only my lessons/);
   assert.equal(
     (
       await a.inject({
         method: "PATCH",
-        url: "/api/brief/skill",
-        payload: { instructions: " " },
+        url: `/api/skills/${mine.json().skill.id}`,
+        payload: { name: "" },
       })
     ).statusCode,
     400,
@@ -626,21 +600,13 @@ test("one unanswered question starts only one extra task and waits for the queue
   );
 });
 
-test("a morning brief in flight cannot recreate erased context in a notification", async () => {
+test("Everything erasure removes the morning routine without recreating it on a read", async () => {
   const a = await owner();
-  await a.inject({
-    method: "PATCH",
-    url: "/api/settings",
-    payload: { morningBrief: { enabled: true, time: "00:00" } },
-  });
-  const { deliverMorningBrief } = await import("../cowork/service.js");
+  await h.prisma.$transaction((tx) => createMorningRoutine(tx, a.id));
   const { deleteWorkspaceData } = await import("../lib/workspace-data.js");
-  const result = await deliverMorningBrief(h.prisma, a.id, async () => {
-    await deleteWorkspaceData(h.prisma, a.id, "everything");
-    return { title: "Private", body: "Erased context" };
-  });
-  assert.equal(result.delivered, false);
-  assert.equal(result.reason, "erased");
+  await deleteWorkspaceData(h.prisma, a.id, "everything");
+  const result = await a.inject({ method: "GET", url: "/api/brief/today" });
+  assert.equal(result.json().routine, null);
   assert.equal(
     await h.prisma.notification.count({ where: { userId: a.id } }),
     0,

@@ -17,8 +17,8 @@ export const CadenceInput = z.object({
   cron: z.string().max(120).optional(),
 });
 
-const Create = z.object({ title: z.string().max(200), instruction: z.string().max(8000), cadence: CadenceInput, paused: z.boolean().optional() });
-const Patch = z.object({ title: z.string().max(200).optional(), instruction: z.string().max(8000).optional(), cadence: CadenceInput.optional(), status: z.enum(["active", "paused"]).optional() });
+const Create = z.object({ title: z.string().max(200), instruction: z.string().max(100_000), cadence: CadenceInput, paused: z.boolean().optional() });
+const Patch = z.object({ title: z.string().max(200).optional(), instruction: z.string().max(100_000).optional(), cadence: CadenceInput.optional(), status: z.enum(["active", "paused"]).optional() });
 
 export async function routineRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;

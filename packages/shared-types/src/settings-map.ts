@@ -235,10 +235,6 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "quiet.from", label: "Quiet hours start", keywords: "quiet hours start from evening", about: "When quiet hours begin (HH:MM).", href: at("notifications", "jump-quiet-quiet-hours-start"), key: "quietHours.from", rule: { type: "time" } },
     { id: "quiet.until", label: "Quiet hours end", keywords: "quiet hours end until morning", about: "When quiet hours end (HH:MM).", href: at("notifications", "jump-quiet-quiet-hours-end"), key: "quietHours.until", rule: { type: "time" } },
   ]),
-  ...group("notifications", "Morning brief", [
-    { id: "brief.enabled", label: "Morning brief", keywords: "morning brief daily summary digest", about: "A note inside Ensemble each morning; it never sends email.", href: at("notifications", "jump-brief-deliver-the-morning-brief"), key: "morningBrief.enabled", rule: bool },
-    { id: "brief.time", label: "Morning brief time", keywords: "morning brief time when", about: "When the brief arrives (HH:MM).", href: at("notifications", "jump-brief-morning-brief-time"), key: "morningBrief.time", rule: { type: "time" } },
-  ]),
   ...group("notifications", "Nudges", [
     { id: "automations.review-notices", label: "Tell me when agent work waits for review", keywords: "automation review notification agent finished done", about: "A notification when an agent finishes a task and its work waits for you.", href: at("notifications", "jump-nudges-tell-me-when-agent-work-waits-for-review"), key: "automations.reviewNotices", rule: bool },
     { id: "nudges.enabled", label: "Quiet nudges", keywords: "nudges stale idle untouched reminders still relevant", about: "Items left alone ask whether they still matter.", href: at("notifications", "jump-nudges-ask-when-work-goes-quiet"), key: "staleNudge.enabled", rule: bool },

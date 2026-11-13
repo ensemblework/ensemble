@@ -1,6 +1,5 @@
 import { keysFor } from "../sharing/context.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
-import { ensureMorningSkill, renderMorningBrief, MORNING_SKILL_SLUG } from "../cowork/morning-skill.js";
 import { loadSettings } from "../lib/settings.js";
 import { complete } from "../lib/runtime.js";
 /**
@@ -34,7 +33,6 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
 
   app.get("/api/skills", async (request) => {
-    await ensureMorningSkill(prisma, request.userId);
     const skills = await prisma.skill.findMany({
       where: { userId: request.userId, deletedAt: null },
       orderBy: [{ enabled: "desc" }, { name: "asc" }],
@@ -114,7 +112,7 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
           name: body.name,
           description: body.description,
           enabled: body.enabled,
-          ...(bodyChanged ? { body: body.body, version: current.version + 1, ...(skill.slug === MORNING_SKILL_SLUG ? { scope: { purpose: "morning-brief", customized: true } } : {}) } : {}),
+          ...(bodyChanged ? { body: body.body, version: current.version + 1 } : {}),
         },
       });
       if (bodyChanged) {
@@ -154,7 +152,6 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
     const { prompt } = z.object({ prompt: z.string().trim().max(20_000).default("Show an example using this skill.") }).parse(request.body ?? {});
     const skill = await prisma.skill.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!skill) return reply.code(404).send({ error: "Skill not found." });
-    if (skill.slug === MORNING_SKILL_SLUG) return renderMorningBrief(prisma, request.userId);
     const settings = await loadSettings(prisma, request.userId);
     const result = await complete({ userId: request.userId, settings, tier: "easy", purpose: "Test skill", system: `Follow this skill to produce a sample. You have no tools and must not claim to have taken actions.\n\n${skill.body}`, prompt });
     return { title: skill.name, body: result.text };

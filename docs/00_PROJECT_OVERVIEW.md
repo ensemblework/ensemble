@@ -40,7 +40,7 @@ Person adds work / explicitly imports content
     → saved result, run evidence and history
 ```
 
-The scheduler runs fixed product jobs only (reminders, morning briefs, retention, device leases); there are no user-defined recurring workflows ([05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work)).
+The scheduler runs product jobs (reminders, retention, device leases) and the person's assistant routines. Morning brief is one editable built-in routine ([05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work)).
 
 ## 3. Accounts, spaces and profiles
 
@@ -69,7 +69,8 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Images in pages | `/image`, drop and paste (screenshots, HTML with `data:` images) with upload progress; resize handles with a keyboard slider, alignment, width presets, alt text, remove; kept as Files and shown on shared pages and public links; read by agents and kept through Markdown rewrites | 2 MB (2,097,152 bytes) per image, PNG, JPEG, GIF or WebP; no SVG; nothing is compressed; left out of Download | [32 §6](32_FILES.md#images-in-pages) |
 | Diagrams | Source language, layout, visual editing, Mermaid import, SVG export | Editing needs a 1024 × 640 CSS-pixel window; smaller windows get a read-only preview | [21](21_BLOCK_DIAGRAMS_DSL.md) |
 | Plots | Datasets, figure specs, code, exports; browser runtime on the web, server/native worker elsewhere | Uploads up to 20 MB | [20](20_PLOTS_DESIGN.md) |
-| Skills and morning brief | Versioned personal instructions, brief personalization, completed-work learning | Learning writes validated versions after a notice; no review-first flow | [04](04_MODULE_SKILL_FORGE.md) |
+| Skills | Versioned personal instructions and completed-work learning | Learning writes validated versions after a notice; no review-first flow | [04](04_MODULE_SKILL_FORGE.md) |
+| Routines and morning brief | Scheduled assistant turns with editable instructions and cadence, pause, delete, one conversation and bell results; Today reads the latest morning brief | At most 50 routines including the built-in brief; all use the account's default assistant model | [02 §3.10a](02_MODULE_INTERACTION_HUB_UI.md#310a-routines) |
 | Runs, Code, Needs me | Runs combines Up next, Working now and Needs you above run history and evidence. Code review with quick open and a command palette, source control, passkey-unlocked terminal; stacked phone queues, wrapping answers, full-width run sheets and switchable Code panels | §9 | [06](06_MODULE_WORKSPACE_AND_SURFACES.md), [16](16_CODE_TAB.md), [02 §4](02_MODULE_INTERACTION_HUB_UI.md#4-interaction-patterns) |
 | Completed and Trash | Review, reopen, restore, pin; retirement and purge | Separate retention windows | [07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention) |
 | Metrics | Model calls, credits and recorded events, filtered by provider and date | Calls without token reports stay visible; external plan balances are not read | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
@@ -132,6 +133,7 @@ A catalog entry is a connection option, not a promise of native search, an impor
 | `Skill`, `SkillVersion`, `SkillFeedback` | Current personal instruction (authoritative), versions, feedback |
 | `WorkspaceJob`, `Run`, `RunStep`, `Approval`, `AgentDecision` | Assignment, attempts, evidence, exact continuations |
 | `AssistantConversation`, `AssistantMessage`, `AssistantWorkflow` | Chat, tool proposals and receipts, dependent-write checkpoints |
+| `AssistantRoutine` | Scheduled assistant work, instruction, cadence, latest status and conversation; nullable `builtInKey` is unique per owner |
 | `ModelCredential`, `ConnectorApp`, `McpConnection`, `ApiToken`, `Device`, `DevicePairing` | Encrypted keys and grants, API tokens, paired computers |
 | `Document`, `MeetingNote`, `PlotDataset`, `Plot`, `BlockDiagram`, `WidgetLayout`, desk records | Feature content; storage and limits are in the owning guide |
 | `AuditLedger`, `MetricEvent`, `InteractionEvent`, `IncludedUsage`, `IncludedCreditBalance`, `IncludedPeriod` | Action history, observations, interaction log, included-model usage and allowance |

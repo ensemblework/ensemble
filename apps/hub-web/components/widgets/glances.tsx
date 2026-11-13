@@ -4,7 +4,7 @@ import { Skeleton } from "@/components/ui";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { CalendarDays, FileText, GitBranch, History, Users, type LucideIcon } from "lucide-react";
+import { CalendarDays, FileText, GitBranch, History, Sunrise, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
 import { filesHref } from "@/lib/files/links";
@@ -51,13 +51,20 @@ function limitFor(size: Size, small: number, medium: number): number {
 }
 
 export function MorningBrief({ size }: { size: Size }) {
-  const notes = useQuery({ queryKey: ["notifications"], queryFn: api.notifications, staleTime: 60_000 });
-  const brief = notes.data?.notifications.find((row) => row.kind === "morning_brief");
-  const text = brief?.body || "No brief yet today.";
+  const brief = useQuery({ queryKey: ["morning-brief"], queryFn: api.morningBrief, staleTime: 30_000 });
+  if (brief.isPending) return <Skeleton className="h-16 w-full" />;
+  if (brief.error) return <div role="alert" className="text-[13px] text-danger">{brief.error.message} <button type="button" className="text-accent underline" onClick={() => void brief.refetch()}>Retry</button></div>;
+  const routine = brief.data.routine;
+  const href = routine ? `/routines?routine=${routine.id}` : "/routines";
+  if (!brief.data.enabled || !routine || routine.status === "paused" || !brief.data.brief) {
+    const line = !brief.data.enabled ? "Routines are off." : !routine ? "Morning brief was deleted." : routine.status === "paused" ? "Morning brief is paused." : routine.lastStatus === "failed" ? "Your last brief did not finish." : "Your first brief has not run yet.";
+    return <GlanceEmpty icon={Sunrise} line={line} href={href} action={routine ? "Open routine" : "Open routines"} />;
+  }
   return (
-    <p className={size === "s" ? "line-clamp-2 text-[13px] leading-5 text-muted" : "text-[13px] leading-5 text-muted"}>
-      {text}
-    </p>
+    <div>
+      <p className={size === "s" ? "line-clamp-2 text-[13px] leading-5 text-muted" : "text-[13px] leading-5 text-muted"}>{brief.data.brief}</p>
+      <Link href={href} className="mt-2 inline-block text-[12.5px] text-accent hover:underline">Open routine</Link>
+    </div>
   );
 }
 
