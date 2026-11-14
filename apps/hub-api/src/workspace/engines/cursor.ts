@@ -11,6 +11,7 @@
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { withoutHostSession } from "../../subscriptions/host-session.js";
 import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
@@ -124,7 +125,7 @@ export async function runCursor(
   if (!agent) throw new Error("Cursor's agent is not on this computer (the `cursor-agent` command). Install it (curl https://cursor.com/install -fsS | bash), run `agent login`, and Run again.");
   const credential = registerEngineRun(ctx);
   const ensembleMcp = mcpEnv(credential, options.chat === true);
-  const env: NodeJS.ProcessEnv = { ...process.env, ...ctx.secretEnv, ...ensembleMcp };
+  const env: NodeJS.ProcessEnv = { ...withoutHostSession(process.env), ...ctx.secretEnv, ...ensembleMcp };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;

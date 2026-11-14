@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { before, after } from "node:test";
+import { SKILL_LEARNING_MIN_ITEMS } from "@ensemble/shared-types";
 import { createHttpHarness, type HttpHarness } from "./http.js";
 
 import type { complete } from "../lib/runtime.js";
@@ -363,15 +364,23 @@ test("morning brief starts the next local day and its profession instruction is 
 test("retention warns a day ahead, uses High, writes skills before Trash, preserves pins and retries failed mining", async () => {
   const a = await owner();
   const now = new Date();
-  const task = await h.prisma.task.create({
-    data: {
-      userId: a.id,
-      title: "Completed",
-      status: "done",
-      completedAt: new Date(now.getTime() - 65 * 86_400_000),
-      createdBy: "me",
-    },
-  });
+  const completedAt = new Date(now.getTime() - 65 * 86_400_000);
+  // Learning starts only once a full batch is past its window.
+  const ids: string[] = [];
+  for (let index = 1; index <= SKILL_LEARNING_MIN_ITEMS; index += 1) {
+    const task = await h.prisma.task.create({
+      data: {
+        userId: a.id,
+        title: `Completed ${index}`,
+        status: "done",
+        completedAt,
+        createdBy: "me",
+      },
+    });
+    ids.push(task.id);
+  }
+  const kept = () =>
+    h.prisma.task.count({ where: { id: { in: ids }, deletedAt: null } });
   await h.prisma.skill.create({
     data: {
       userId: a.id,
@@ -388,7 +397,7 @@ test("retention warns a day ahead, uses High, writes skills before Trash, preser
       title: "Pinned",
       status: "done",
       pinned: true,
-      completedAt: task.completedAt,
+      completedAt,
       createdBy: "me",
     },
   });
@@ -416,11 +425,7 @@ test("retention warns a day ahead, uses High, writes skills before Trash, preser
       throw new Error("Offline");
     },
   });
-  assert.equal(
-    (await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } }))
-      .deletedAt,
-    null,
-  );
+  assert.equal(await kept(), SKILL_LEARNING_MIN_ITEMS);
   let tier = "";
   const result = await runRetention(h.app, a.id, {
     ...options,
@@ -458,7 +463,8 @@ test("retention warns a day ahead, uses High, writes skills before Trash, preser
   assert.match(updated.body, /original rule/);
   assert.match(updated.body, /short conclusion/);
   assert.equal(updated.versions.length, 2);
-  assert.equal(result.completedSoftDeleted, 1);
+  assert.equal(result.completedSoftDeleted, SKILL_LEARNING_MIN_ITEMS);
+  assert.equal(await kept(), 0);
   assert.equal(
     (
       await h.prisma.skill.findFirstOrThrow({

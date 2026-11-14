@@ -52,6 +52,8 @@ seen.push("sandbox:" + settings.sandbox.enabled, "effort:" + (args.includes("--e
 const prompt = args[args.indexOf("-p") + 1];
 seen.push("resume:" + (args.includes("--resume") ? args[args.indexOf("--resume") + 1] : "none"), "insession:" + prompt.startsWith("(Ensemble: a new task, continuing in this session."));
 seen.push("brief:" + (/^# Engine run\\n/.test(prompt) ? "title-first" : "other") + ":" + (prompt.includes("Weekly digest") ? "unpicked-skill" : "no-unpicked-skill") + ":" + (/You are working for|Internet: on/.test(prompt) ? "noise" : "lean"));
+const host = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_HOST_AUTH_ENV_VAR", "CLAUDE_CODE_MESSAGING_TOKEN", "ANTHROPIC_BASE_URL"].filter((name) => process.env[name] !== undefined);
+seen.push("host:" + (host.join(",") || "none"), "own:" + (process.env.CLAUDE_CODE_ATTRIBUTION_HEADER ?? "none"));
 say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
 `;
 
@@ -62,7 +64,16 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
   writeFileSync(join(bin, "claude"), FAKE_CLAUDE);
   chmodSync(join(bin, "claude"), 0o755);
   const runtime = await startStubRuntime();
-  const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}` });
+  // Started the way Claude in the Claude app's Code tab starts a runtime: with that session's own variables.
+  const hostSession = {
+    CLAUDECODE: "1",
+    CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p",
+    CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1",
+    CLAUDE_CODE_HOST_AUTH_ENV_VAR: "ANTHROPIC_AUTH_TOKEN",
+    CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret",
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+  };
+  const side = await bootSidecar(root, runtime.url, { PATH: `${bin}:${process.env.PATH ?? ""}`, ...hostSession, CLAUDE_CODE_ATTRIBUTION_HEADER: "0" });
   try {
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Engine run" } });
     assert.equal(task.status, 201, JSON.stringify(task.body));
@@ -92,6 +103,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.equal(readFileSync(join(job.folder!, "hello.txt"), "utf8"), "hi");
     assert.match(summary, /resume:none insession:false/, "a new task starts a new session");
     assert.match(summary, /brief:title-first:no-unpicked-skill:lean/, "the brief opens with the task, carries only picked skills, and no noise");
+    assert.match(summary, /host:none own:0/, "Claude Code signs in with the person's own settings, not the app session's");
 
     // Continuing it: the same folder, and Claude Code resumes its own session with the new task.
     const next = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Follow-up" } });

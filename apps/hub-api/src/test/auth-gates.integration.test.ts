@@ -5,6 +5,7 @@ import type { InjectOptions } from "fastify";
 import { createHttpHarness } from "./http.js";
 import { collectRoutes, sampleRoutePath, sortedRoutes, type InventoryRoute } from "../lib/route-inventory.js";
 import { corsPolicy } from "../lib/cors-origin.js";
+import { isMcpPublicPath } from "../mcp-oauth/paths.js";
 
 const routes: InventoryRoute[] = [];
 const harness = await createHttpHarness({ onRoute: collectRoutes("hosted", routes) });
@@ -37,7 +38,18 @@ for (const route of sortedRoutes(routes)) {
     });
   }
 
-  if (route.auth !== "cors-preflight") {
+  if (route.auth !== "cors-preflight" && isMcpPublicPath(sampleRoutePath(route.path))) {
+    // MCP discovery and the OAuth endpoints never take an Ensemble cookie or key as an identity (app.ts, docs/CONTEXT_BRIDGE.md),
+    // so a scoped key there unlocks nothing and is not refused: an MCP app's access token is a bridge key it may still send while it rediscovers.
+    for (const [scope, key] of [["device", device], ["bridge", bridge]] as const) {
+      test(`${route.mode}: ${scope} scope changes nothing on ${route.method} ${route.path}`, async () => {
+        const request = requestFor(route);
+        const without = await appFor(route).inject(request);
+        const scoped = await appFor(route).inject({ ...request, headers: { ...request.headers, authorization: `Bearer ${key.token}` } });
+        assert.deepEqual([scoped.statusCode, scoped.body], [without.statusCode, without.body]);
+      });
+    }
+  } else if (route.auth !== "cors-preflight") {
     const path = sampleRoutePath(route.path);
     const deviceAllowed = path === "/api/devices/self" || path.startsWith("/api/devices/self/");
     const bridgeAllowed =

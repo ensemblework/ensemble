@@ -748,8 +748,9 @@ test("a command's sign-in: its code goes to the owner's card at once and the ans
   try {
     const opener = process.platform === "darwin" ? "open" : "xdg-open";
     const opened = await run(`node -e "const { execFileSync } = require('node:child_process'); execFileSync(process.env.BROWSER, ['https://login.example.test/authorize?redirect_uri=http://localhost:8400/']); execFileSync('${opener}', ['https://github.com/login/device']); console.log('opened')"`);
-    assert.equal(opened.answers[0]!.status, 200, JSON.stringify(opened.answers[0]));
-    assert.match(String(opened.answers[0]!.body.output), /opened/);
+    // Still running when the page was handed over, it goes on in the background as a sign-in does (202); either way it runs to its end.
+    assert.ok([200, 202].includes(opened.answers[0]!.status), JSON.stringify(opened.answers[0]));
+    assert.match(`${String(opened.answers[0]!.body.output)}${opened.output()}`, /opened/);
     assert.deepEqual(pages, ["https://login.example.test/authorize?redirect_uri=http://localhost:8400/", "https://github.com/login/device"]);
   } finally {
     setCliPageOpenerForTests(null);

@@ -36,7 +36,7 @@ import { parseShell } from "../workspace/shell-parse.js";
 import { dangerousCommand, dangerousMessage } from "./dangerous.js";
 import { nodeToolDenies, type ToolFolder } from "./folders.js";
 import { stopWithCommands } from "./run.js";
-import { keyBytes, namedKey, terminalEnv } from "./terminal.js";
+import { keyBytes, namedKey, scriptArgv, terminalEnv } from "./terminal.js";
 import { fileWatchFailure, trackFileChanges } from "./file-changes.js";
 
 export type LiveRequest = Extract<NodeToolRequest, { tool: "live" }>;
@@ -139,9 +139,11 @@ export function promptEnv(slug: string, bash: boolean): Record<string, string> {
 /**
  * Run once by bash before its first prompt (it reads no rc file): no history expansion (`!!`,
  * `^old^new` would run an earlier line unjudged), no editor for `fc` or edit-and-execute (it would
- * run what was edited unjudged), and the prompt and its marks fixed for this shell.
+ * run what was edited unjudged), and the prompt and its marks fixed for this shell. `PROMPT_COMMAND` is
+ * unset, not left empty: macOS's bash 3.2 with one set answers Ctrl+C at a continued line's `> ` with
+ * `> ` again, so the prompt and its marks would not come back after a refused line.
  */
-export const BASH_SETUP = "set +H; EDITOR=false; VISUAL=false; FCEDIT=false; PROMPT_COMMAND=; readonly PS0 PS1 PS2 PROMPT_COMMAND EDITOR VISUAL FCEDIT";
+export const BASH_SETUP = "set +H; EDITOR=false; VISUAL=false; FCEDIT=false; unset PROMPT_COMMAND; readonly PS0 PS1 PS2 PROMPT_COMMAND EDITOR VISUAL FCEDIT";
 
 /** The prompt as the environment carries it to the shell: a shell started by `script -c` drops PS1, so it is set again just before the shell starts. */
 function promptCarried(prompt: Record<string, string>): { env: Record<string, string>; line: string } {
@@ -159,7 +161,7 @@ export function sessionArgv(platform: string, input: { shell: string; bash: bool
   const resize = `F=${quote(input.fifo)}; if mkfifo -m 600 "$F" 2>/dev/null; then (trap '' TTOU INT; while [ -p "$F" ]; do read c r < "$F" || continue; [ "$c" = 0 ] && break; stty cols "$c" rows "$r" < /dev/tty; done) >/dev/null 2>&1 & fi`;
   const shell = input.bash ? `${quote(input.shell)} --noprofile --norc -i` : `${quote(input.shell)} -i`;
   const line = `stty cols ${input.columns} rows ${input.rows} 2>/dev/null; ${resize}; ${input.prompt ? `${input.prompt}; ` : ""}exec ${shell}`;
-  return platform === "darwin" ? ["script", "-q", "/dev/null", "/bin/sh", "-c", line] : ["script", "-qfec", line, "/dev/null"];
+  return scriptArgv(platform, line);
 }
 
 /** The shell's prompt is showing and the cursor is on its line (or a line it wrapped onto): what is typed there is a command. */

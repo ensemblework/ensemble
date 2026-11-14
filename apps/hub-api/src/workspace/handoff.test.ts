@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -36,6 +36,26 @@ test("links open with the system's own handler", { skip: process.platform === "l
   if (process.platform === "darwin") assert.equal(command, "/usr/bin/open");
   if (process.platform === "win32") assert.equal(command, "rundll32.exe");
   assert.equal(args.at(-1), "claude://code/new?q=x");
+});
+
+test("a terminal or app a hand-off opens gets no Claude app session's variables, and the person's own settings", async () => {
+  const { launch } = await import("./handoff.js");
+  const dir = mkdtempSync(join(tmpdir(), "handoff-env-"));
+  const seen = join(dir, "env.json");
+  const write = `const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(`${seen}.part`)}, JSON.stringify(process.env)); fs.renameSync(${JSON.stringify(`${seen}.part`)}, ${JSON.stringify(seen)});`;
+  const saved = { ...process.env };
+  try {
+    // A runtime that Claude started from a Code tab session in the Claude app.
+    Object.assign(process.env, { CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1", CLAUDE_CODE_MESSAGING_TOKEN: "messaging-secret", CLAUDE_CODE_ATTRIBUTION_HEADER: "0" });
+    await launch(process.execPath, ["-e", write]);
+  } finally {
+    process.env = saved;
+  }
+  for (let i = 0; i < 100 && !existsSync(seen); i += 1) await new Promise((done) => setTimeout(done, 100));
+  const env = JSON.parse(readFileSync(seen, "utf8")) as Record<string, string>;
+  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_MESSAGING_TOKEN"]) assert.equal(env[name], undefined, name);
+  assert.equal(env.CLAUDE_CODE_ATTRIBUTION_HEADER, "0");
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("the Codex the ChatGPT app ships is found where the app keeps it", () => {

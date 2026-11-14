@@ -76,6 +76,30 @@ test("recovery and verification pages work without a browser session", async () 
   }
 });
 
+test("MCP consent is a standalone public page and never loses its request to login or onboarding", async () => {
+  const original = globalThis.fetch;
+  let authReads = 0;
+  globalThis.fetch = async () => {
+    authReads++;
+    return Response.json({ onboardingComplete: false });
+  };
+  try {
+    const url = `http://localhost:3000/oauth?request=ens_oauth_request_${"a".repeat(43)}`;
+    for (const cookie of ["", "ensemble_session=present"]) {
+      const response = await middleware(new NextRequest(url, { headers: { accept: "text/html", ...(cookie ? { cookie } : {}) } }));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("location"), null);
+      assert.equal(response.headers.get("x-middleware-rewrite"), null);
+      assert.equal(response.headers.get("x-middleware-next"), "1");
+    }
+    assert.equal(authReads, 0);
+    const unknown = await middleware(new NextRequest("http://localhost:3000/oauth/not-a-page"));
+    assert.equal(unknown.status, 404);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("a signed-in data request for an unknown URL stays in the app", async () => {
   const response = await middleware(
     new NextRequest("http://localhost:3000/no-such-page", {

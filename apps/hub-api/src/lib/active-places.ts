@@ -6,6 +6,7 @@ import { lockUserTransaction } from "./user-lock.js";
 
 export const PLACE_HEADER = "x-ensemble-place";
 export const PLACE_ACCOUNT_HEADER = "x-ensemble-place-account";
+export const PLACE_SURFACE_HEADER = "x-ensemble-place-surface";
 export const PLACE_LEASE_MS = 60_000;
 export const PLACE_LIMIT = 3;
 export const PlaceInput = z.object({
@@ -15,6 +16,16 @@ export const PlaceInput = z.object({
   accountId: z.string().min(1).max(256).optional(),
 });
 type Db = PrismaClient | Prisma.TransactionClient;
+type PlaceSurface = z.infer<typeof PlaceInput>["surface"];
+
+const poolOf = (surface: string) => surface === "node" ? "node" : "ensemble";
+const poolSurfaces = (surface: PlaceSurface) => surface === "node" ? ["node"] : ["hub", "desktop"];
+const requestSurface = (request: FastifyRequest): PlaceSurface => request.headers[PLACE_SURFACE_HEADER] === undefined
+  ? request.url.split("?")[0] === "/api/node/events" ? "node" : "hub"
+  : PlaceInput.shape.surface.parse(request.headers[PLACE_SURFACE_HEADER]);
+const streamPlace = (request: FastifyRequest) => request.url.split("?")[0] === "/api/node/events"
+  ? z.object({ place: z.string().optional(), placeAccount: z.string().optional() }).parse(request.query)
+  : null;
 
 async function lockPlaceSession(tx: Prisma.TransactionClient, userId: string, sessionId: string) {
   // Session deletion cascades to places, so lock the session before a place row.
@@ -33,9 +44,9 @@ export function placeLabel(agent: string): string {
   return `${browser} on ${computer}`;
 }
 
-export async function activePlaces(db: Db, userId: string, now = new Date()) {
+export async function activePlaces(db: Db, userId: string, surface: PlaceSurface = "hub", now = new Date()) {
   return db.activePlace.findMany({
-    where: { userId, released: false, revoked: false, lastSeen: { gt: new Date(now.getTime() - PLACE_LEASE_MS) }, session: { expiresAt: { gt: now } } },
+    where: { userId, surface: { in: poolSurfaces(surface) }, released: false, revoked: false, lastSeen: { gt: new Date(now.getTime() - PLACE_LEASE_MS) }, session: { expiresAt: { gt: now } } },
     orderBy: [{ lastSeen: "asc" }, { windowId: "asc" }],
     select: { windowId: true, surface: true, label: true, lastSeen: true },
   });
@@ -51,7 +62,8 @@ export async function heartbeatPlace(db: PrismaClient, request: FastifyRequest, 
     const now = new Date();
     const key = { userId, windowId: input.id };
     const existing = await tx.activePlace.findUnique({ where: { userId_windowId: key } });
-    const places = await activePlaces(tx, userId, now);
+    const places = await activePlaces(tx, userId, input.surface, now);
+    if (existing && poolOf(existing.surface) !== poolOf(input.surface)) return { allowed: false, code: "PLACE_SURFACE_CHANGED", places };
     const held = places.some((place) => place.windowId === input.id);
     if (existing && input.seq <= existing.seq) {
       return { allowed: held, code: existing.revoked ? "PLACE_REPLACED" : "PLACE_EXPIRED", places };
@@ -59,17 +71,19 @@ export async function heartbeatPlace(db: PrismaClient, request: FastifyRequest, 
     if (replace !== undefined) {
       const target = replace === "oldest" ? places.find((place) => place.windowId !== input.id)?.windowId : replace;
       if (target && target !== input.id) {
-        await tx.activePlace.updateMany({ where: { userId, windowId: target, revoked: false }, data: { revoked: true } });
+        const candidate = await tx.activePlace.findUnique({ where: { userId_windowId: { userId, windowId: target } } });
+        if (candidate && poolOf(candidate.surface) !== poolOf(input.surface)) return { allowed: false, code: "PLACE_WRONG_SURFACE", places };
+        await tx.activePlace.updateMany({ where: { userId, windowId: target, surface: { in: poolSurfaces(input.surface) }, revoked: false }, data: { revoked: true } });
       }
     } else if (existing?.revoked) {
       return { allowed: false, code: "PLACE_REPLACED", places };
     }
-    const others = (await activePlaces(tx, userId, now)).filter((place) => place.windowId !== input.id);
+    const others = (await activePlaces(tx, userId, input.surface, now)).filter((place) => place.windowId !== input.id);
     if (others.length >= PLACE_LIMIT) return { allowed: false, code: "PLACE_LIMIT", places: others };
     const label = placeLabel(String(request.headers["user-agent"] ?? ""));
     const data = { sessionId, surface: input.surface, label, lastSeen: now, seq: input.seq, released: false, revoked: false };
     await tx.activePlace.upsert({ where: { userId_windowId: key }, create: { ...key, ...data }, update: data });
-    return { allowed: true, places: await activePlaces(tx, userId, now) };
+    return { allowed: true, places: await activePlaces(tx, userId, input.surface, now) };
   });
 }
 
@@ -83,6 +97,7 @@ export async function releasePlace(db: PrismaClient, request: FastifyRequest, in
     await lockPlaceSession(tx, userId, sessionId);
     const key = { userId, windowId: input.id };
     const current = await tx.activePlace.findUnique({ where: { userId_windowId: key } });
+    if (current && poolOf(current.surface) !== poolOf(input.surface)) throw Object.assign(new Error("Choose a place in this app."), { statusCode: 409, code: "PLACE_WRONG_SURFACE" });
     if (current && current.seq >= input.seq) return;
     await tx.activePlace.upsert({
       where: { userId_windowId: key },
@@ -93,18 +108,20 @@ export async function releasePlace(db: PrismaClient, request: FastifyRequest, in
 }
 
 export async function checkPlace(db: PrismaClient, request: FastifyRequest) {
-  const id = request.headers[PLACE_HEADER];
+  const id = request.headers[PLACE_HEADER] ?? streamPlace(request)?.place;
   if (request.authVia !== "session" || id === undefined) return null;
   const userId = accountIdOf(request);
+  const surface = requestSurface(request);
   const place = typeof id === "string" && z.string().uuid().safeParse(id).success
     ? await db.activePlace.findUnique({ where: { userId_windowId: { userId, windowId: id } } })
     : null;
+  if (place && poolOf(place.surface) !== poolOf(surface)) return { error: "Choose a place in this app.", code: "PLACE_WRONG_SURFACE", places: await activePlaces(db, userId, surface) };
   if (place && !place.revoked && !place.released && place.lastSeen.getTime() > Date.now() - PLACE_LEASE_MS) return null;
-  return { error: "Choose an open place to continue here.", code: place?.revoked ? "PLACE_REPLACED" : "PLACE_EXPIRED", places: await activePlaces(db, userId) };
+  return { error: "Choose an open place to continue here.", code: place?.revoked ? "PLACE_REPLACED" : "PLACE_EXPIRED", places: await activePlaces(db, userId, surface) };
 }
 
 export function checkPlaceAccount(request: FastifyRequest) {
-  const expected = request.headers[PLACE_ACCOUNT_HEADER];
+  const expected = request.headers[PLACE_ACCOUNT_HEADER] ?? streamPlace(request)?.placeAccount;
   if (request.authVia === "session" && expected !== undefined && expected !== accountIdOf(request)) {
     return { error: "Your account changed. Open Ensemble again.", code: "PLACE_ACCOUNT_CHANGED", places: [] };
   }

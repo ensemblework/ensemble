@@ -16,6 +16,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentHandoff, PrismaClient } from "@prisma/client";
 import type { Normalized, Source } from "../lib/decisions.js";
+import { withoutHostSession } from "../subscriptions/host-session.js";
 import { within } from "./guard.js";
 import { hostExecutable } from "./policy.js";
 
@@ -145,7 +146,7 @@ async function openTerminal(terminal: NonNullable<HandoffOpen["terminal"]>, run:
 }
 
 /** Opens a link with the system's own handler (the runtime runs on the person's computer). */
-export async function openLink(link: HandoffOpen, run: (command: string, args: string[]) => Promise<void> = start): Promise<void> {
+export async function openLink(link: HandoffOpen, run: (command: string, args: string[]) => Promise<void> = launch): Promise<void> {
   if (link.terminal) return openTerminal(link.terminal, run);
   for (const [name, ...args] of link.commands) await run(await launcher(name!), args);
   if (!link.url) return;
@@ -154,9 +155,13 @@ export async function openLink(link: HandoffOpen, run: (command: string, args: s
   else await run(await hostExecutable("xdg-open"), [link.url]);
 }
 
-function start(command: string, args: string[]): Promise<void> {
+/**
+ * Starts a terminal, an editor or a link's app for the person. A Claude host session's own variables
+ * stay out (`host-session.ts`): a terminal or editor passes them on to the agent started in it.
+ */
+export function launch(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+    const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true, env: withoutHostSession(process.env) });
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();

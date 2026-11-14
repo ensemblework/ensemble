@@ -189,6 +189,8 @@ test("a node hears once in its DM, a crew's lead in the crew's room; taking the 
   const { ids, crew } = await crewOf(akash, ["manager", "tester"], "Software team");
   const project = await h.prisma.project.create({ data: { userId: akash.id, name: "Website" } });
   const task = await newTask(akash, { title: "Fix the flaky login test", description: "It fails one run in five on CI.", due: "2026-11-03T00:00:00.000Z", projectId: project.id, labels: ["testing", "ci"], status: "todo" });
+  // Each node told acts on it (a reminder, leaving the task as it is for Undo): taking the task away later must tell it to stop. A turn that changed nothing is dropped silently instead.
+  script = (turn) => (/Your owner gave (you|your crew “Software team”) an Ensemble task/.test(turn.transcript) ? { calls: [{ name: "hub_create_reminder", arguments: { title: "Check the next CI run", dueDate: "2026-11-03" } }], then: "On it." } : { text: "(no reply)" });
 
   await patch(akash, task.id, { owner: "node", assigneeNodeId: assistant.id });
   await settleTurns();
@@ -248,6 +250,21 @@ test("a node hears once in its DM, a crew's lead in the crew's room; taking the 
   assert.equal((await akash.inject({ method: "DELETE", url: `/api/node/nodes/${assistant.id}` })).statusCode, 204);
   const left = await h.prisma.task.findUniqueOrThrow({ where: { id: task.id } });
   assert.deepEqual([left.owner, left.assigneeNodeId], ["unassigned", null]);
+});
+
+test("a node whose turn about a task changed nothing is not told when the task is taken away", async () => {
+  const akash = await person("Akash");
+  const { node } = await createNode(akash, "assistant");
+  const task = await newTask(akash, { title: "Tidy the README" });
+  await patch(akash, task.id, { owner: "node", assigneeNodeId: node.id });
+  await settleTurns();
+  assert.equal((await taskTurns(task.id)).length, 1, "it was told, and only replied");
+  await patch(akash, task.id, { owner: "me" });
+  await settleTurns();
+  assert.equal((await taskTurns(task.id)).length, 1, "nothing started, so nothing to stop");
+  const ledger = await h.prisma.auditLedger.findFirstOrThrow({ where: { userId: akash.id, action: "node.task_unassigned", taskId: task.id } });
+  const payload = ledger.payload as { told?: boolean; withdrawn?: boolean };
+  assert.deepEqual([payload.told, payload.withdrawn], [false, true]);
 });
 
 async function laptopFor(user: HttpUser) {
