@@ -66,6 +66,13 @@ interface Candidate {
   projectId?: string | null;
 }
 
+/** A task page's text without the title line it starts with (pages/markdown.ts `pageSearchText`): the task's title is scored as its title. */
+function pageBody(page: { title: string; searchText: string | null; deletedAt: Date | null } | null, taskTitle: string): string {
+  const text = page && !page.deletedAt ? (page.searchText ?? "") : "";
+  const title = (page?.title || taskTitle).trim();
+  return title && (text === title || text.startsWith(`${title}\n`)) ? text.slice(title.length + 1) : text;
+}
+
 function snippetOf(text: string, terms: string[], max = 220): string {
   const flat = text.replace(/\s+/g, " ").trim();
   const lower = flat.toLowerCase();
@@ -137,7 +144,8 @@ export async function rankedSearch(ctx: GraphCtx, query: string, options: Search
   const none = Promise.resolve([] as never[]);
 
   const [tasks, projects, people, repos, deliverables, notes, sessions, pages, documents, artifacts, skills, diagrams, plots, nearHood] = await Promise.all([
-    on("task") ? db.task.findMany({ where: { userId, deletedAt: null, ...ON_BOARD, OR: or(["title", "description", "notes", "excerpt"]) }, orderBy: { updatedAt: "desc" }, take: per, select: { id: true, title: true, description: true, notes: true, excerpt: true, status: true, updatedAt: true, projectId: true, labels: true } }) : none,
+    // A task's page (its body) is searched with the task: a hit opens the task.
+    on("task") ? db.task.findMany({ where: { userId, deletedAt: null, ...ON_BOARD, OR: [...or(["title", "description", "notes", "excerpt"]), { page: { is: { deletedAt: null, OR: or(["searchText"]) } } }] }, orderBy: { updatedAt: "desc" }, take: per, select: { id: true, title: true, description: true, notes: true, excerpt: true, status: true, updatedAt: true, projectId: true, labels: true, page: { select: { title: true, searchText: true, deletedAt: true } } } }) : none,
     on("project") ? db.project.findMany({ where: { userId, deletedAt: null, OR: or(["name", "summary", "notes"]) }, take: per, select: { id: true, name: true, summary: true, notes: true, status: true, updatedAt: true, aliases: true } }) : none,
     on("person") ? db.person.findMany({ where: { userId, deletedAt: null, OR: or(["name", "email", "role", "team", "relationship"]) }, take: per, select: { id: true, name: true, email: true, role: true, team: true, relationship: true, updatedAt: true } }) : none,
     on("repo") ? db.repo.findMany({ where: { userId, deletedAt: null, OR: or(["fullName", "description"]) }, take: per, select: { id: true, fullName: true, description: true, updatedAt: true } }) : none,
@@ -154,7 +162,7 @@ export async function rankedSearch(ctx: GraphCtx, query: string, options: Search
   ]);
 
   const candidates: Candidate[] = [
-    ...tasks.map((row) => ({ kind: "task" as const, id: row.id, title: row.title, texts: [{ text: row.description, weight: 1.5 }, { text: row.notes, weight: 1 }, { text: row.excerpt ?? "", weight: 1 }, { text: row.labels.join(" "), weight: 1 }], status: row.status, when: row.updatedAt, open: !["done", "dropped"].includes(row.status), projectId: row.projectId })),
+    ...tasks.map((row) => ({ kind: "task" as const, id: row.id, title: row.title, texts: [{ text: row.description, weight: 1.5 }, { text: row.notes, weight: 1 }, { text: pageBody(row.page, row.title), weight: 1 }, { text: row.excerpt ?? "", weight: 1 }, { text: row.labels.join(" "), weight: 1 }], status: row.status, when: row.updatedAt, open: !["done", "dropped"].includes(row.status), projectId: row.projectId })),
     ...projects.map((row) => ({ kind: "project" as const, id: row.id, title: row.name, texts: [{ text: `${row.aliases.join(" ")} ${row.summary}`, weight: 1.5 }, { text: row.notes, weight: 1 }], status: row.status, when: row.updatedAt, open: row.status === "active", projectId: row.id })),
     ...people.map((row) => ({ kind: "person" as const, id: row.id, title: row.name, texts: [{ text: [row.email, row.role, row.team, row.relationship].filter(Boolean).join(" "), weight: 1.5 }], status: null, when: row.updatedAt })),
     ...repos.map((row) => ({ kind: "repo" as const, id: row.id, title: row.fullName, texts: [{ text: row.description ?? "", weight: 1 }], status: null, when: row.updatedAt })),
