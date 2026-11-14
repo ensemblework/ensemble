@@ -38,6 +38,7 @@ Where a change usually needs a doc update:
 | Assistant tools for connected apps (`apps/hub-api/src/assistant/tools/google*`, `microsoft*`, `mcp-tools.ts`, `apps.ts`, `apply.ts`, `src/lib/office`) | [`docs/11`](docs/11_HOW_THE_ASSISTANT_WORKS.md) |
 | Scheduler, planner, workers (`src/jobs`, `apps/agent-runtime/ensemble_agent/orchestrator`, `workers`) | [`docs/05`](docs/05_MODULE_TASK_ORCHESTRATOR.md) |
 | Workspace jobs, sandbox, Code tab, terminal (`src/workspace`, `src/repo`, `routes/code*`, `routes/terminal*`) | [`docs/06`](docs/06_MODULE_WORKSPACE_AND_SURFACES.md), [`docs/16`](docs/16_CODE_TAB.md), [`docs/24`](docs/24_DESKTOP_SANDBOXING.md) |
+| Agent sessions: continuing, choosing, project folders, the agents' own apps, chat sessions, deletion and clean-up (`src/workspace/sessions.ts`, `session-choice/`, `session-cleanup.ts`, `delete-session.ts`, `agent-projects.ts`, `engines/app-sessions.ts`, `src/subscriptions/turn-sessions.ts`, `src/assistant/ask-sessions.ts`, `delete-chat.ts`) | [`docs/41`](docs/41_AGENT_SESSIONS.md) |
 | Policy, ledger, metrics, retention | [`docs/07`](docs/07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Skills, Skill Forge (`apps/skill-forge`, `routes/skills.ts`) | [`docs/04`](docs/04_MODULE_SKILL_FORGE.md) |
 | Context Bridge (`apps/context-bridge`, `apps/hub-api/src/bridge`) | [`docs/CONTEXT_BRIDGE.md`](docs/CONTEXT_BRIDGE.md) |

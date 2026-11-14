@@ -12,15 +12,15 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`. The format 
 |---|---|---|---|---|---|
 | PDF | pdf | Pages rendered with pdf.js (legacy build, so Safari and the macOS desktop app work); Full screen | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
 | Word | docx | Reading view or page view | Assistant exact text replacements; page conversion for broader writing | In the browser; export back to Word into the original file (its styles, fonts, page setup, headers and footers) | Paragraphs, tables, headers, footers, notes |
-| Slides | pptx | Ensemble's own slide renderer; Present | Assistant exact text replacements | — | Slide text and speaker notes |
-| Spreadsheets | xlsx, xlsm | Grid with sheet tabs | Cells, rows; saved into the original file | — | Each sheet as CSV (2,000 rows per sheet) |
+| Slides | pptx | Ensemble's own slide renderer; Present | Assistant exact text replacements | None | Slide text and speaker notes |
+| Spreadsheets | xlsx, xlsm | Grid with sheet tabs | Cells, rows; saved into the original file | None | Each sheet as CSV (2,000 rows per sheet) |
 | | csv, tsv | Grid | Cells, rows; saved as CSV/TSV | Server: a table (first 200 rows) | The text |
-| | xls, ods, numbers | Grid | After "Make an editable .xlsx copy" | — | No (agents are told to use .xlsx) |
-| Images | png, jpg, gif, webp, avif, svg, bmp, ico | Image (SVG only as an image) | — | — | No text |
+| | xls, ods, numbers | Grid | After "Make an editable .xlsx copy" | None | No (agents are told to use .xlsx) |
+| Images | png, jpg, gif, webp, avif, svg, bmp, ico | Image (SVG only as an image) | None | None | No text |
 | Text | txt, md, log | Text | Assistant exact text replacements | Server: Markdown keeps its structure; text as paragraphs | The text |
 | Code | json, yaml, toml, xml, html, css, js/ts, py, java, go, rust, sql, shell and more | Code with line numbers | Assistant exact text replacements | Server: one code block in its language | The text |
-| Audio, video | mp3, wav, m4a, ogg, flac, mp4, mov, webm | The browser's own player | — | — | No text |
-| Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else except programs and raw binaries (refused, §3) | Details, how to make it previewable, Download | — | — | No (a warning says which format to save as) |
+| Audio, video | mp3, wav, m4a, ogg, flac, mp4, mov, webm | The browser's own player | None | None | No text |
+| Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else except programs and raw binaries (refused, §3) | Details, how to make it previewable, Download | None | None | No (a warning says which format to save as) |
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
@@ -120,7 +120,7 @@ PNG, JPEG, GIF (animated too) and WebP images show inside a page as images, not 
 **Adding one** (`components/editor/file-attach.ts`):
 
 - `/image` opens the system file picker (several at once); `/file` still attaches any image as a card, which is how to keep one over 2 MB on a page.
-- Drop or paste image files, such as a screenshot. Other files, SVG included, become cards as before.
+- Drop or paste image files, such as a screenshot. Other files, SVG included, become cards.
 - HTML pasted or dropped with `data:` images (`<img src="data:…">`): the rest goes in as usual and each image is uploaded where it was, under the same rules, so image bytes never go into the page. One that is refused is left out with a message.
 - Each image gets a placeholder where it will land: a dimmed preview, a progress bar and a percentage (`filesApi.upload` with `onProgress`). The finished image replaces it as one undoable step; placeholders are not saved and are not in undo history. An image placed at the start or end of a line goes above or below it; in the middle of a line it splits the line.
 - A refusal says why in a toast. For a size or format refusal the toast offers **Attach as file**, which uploads the same file as a card at the same spot.
@@ -157,7 +157,7 @@ The editor runs the same checks before sending and renames a file whose extensio
 ```
 
 - `width` is a percentage of the page column (10–100); null shows the image at its own size, at most the column. `align` is `left`, `center` (default) or `right`. `naturalWidth` and `naturalHeight` come from the upload and keep the image's shape while it loads. All of it saves with the page, so it survives reloads and co-editing.
-- `src` holds a web address instead, for images from Notion imports and pasted HTML; those render as before. Old `{ src, alt }` nodes still read.
+- `src` holds a web address instead, for images from Notion imports and pasted HTML; those render from that address. Old `{ src, alt }` nodes still read.
 - The node view reads `GET /api/documents/:id/original` with the share or public-link headers (`itemViewHeaders()`), because an `<img src>` cannot send them, and shows it from an object URL that is revoked when the image leaves the page. The bytes are kept for the session by file id and asked for again with `If-None-Match`, so an unchanged file answers 304 while access is checked every time. A file over 2 MB or not a PNG, JPEG, GIF or WebP is not shown.
 - Who can see it follows file cards: a shared page or public link reads a file only while the page's current content places it (`contentHasFile` in `sharing/gate.ts` reads `attrs.fileId`); any other file answers 403. Space members read it as shared content.
 - Agents: `attrs.fileId` makes it one of the task's attached files (`mentionedFileIds`, `filesOnTask` in `files/attached.ts`), so briefs, `view_attachment`, engine copies and paired-computer downloads include it. Page Markdown writes it as `![alt](ensemble://file/<id>){width=60% align=left natural=1200x800}`, leaving out defaults, and reads that back as the same node (`imageMarkdown` and `markdownToNodes` in `page-markdown.ts`), so an agent rewriting a page keeps its images. Web images stay `![alt](https://…)`. `pageText` shows `[image: <alt> (file id <id>)]`.
@@ -194,7 +194,7 @@ File text is always passed on as information, not instructions. Which files each
 **What counts as attached.** `files/attached.ts` collects the files on the task's page, its project's page and files tagged with the task, plus the original a page was converted from (`sourceFileId`), even after that page becomes a task. Originals stay attached through nested page content and bulk Trash/Undo.
 
 - **Ensemble's agent:** the attached files follow its brief as the files themselves; `view_attachment` opens one again; `save_attachment` (research and code runs) copies the original into the work folder (`attachments/<name>`) ([38](38_AGENT_READABLE_FILES.md)).
-- **The coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity):** the originals are copied for the job and their paths listed in the prompt: to `<workspace>/files/<jobId>/` when the run may read outside its folder, otherwise to `<folder>/.ensemble/attachments/<jobId>/` (git-ignored). Copies are removed when the job ends. GitHub Copilot also gets them with its first message: images inline (up to 3 MB, for models that take images), other files as links ([30 §3](30_ENGINES.md)).
+- **The coding agents (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity, Mistral Vibe, Qwen Code, Kimi Code):** the originals are copied for the job and their paths listed in the prompt: to `<workspace>/files/<jobId>/` when the run may read outside its folder, otherwise to `<folder>/.ensemble/attachments/<jobId>/` (git-ignored). Copies are removed when the job ends. GitHub Copilot also gets them with its first message: images inline (up to 3 MB, for models that take images), other files as links ([30 §3](30_ENGINES.md)).
 - **Paired computers:** the claim's task description gets a "Files attached" section naming the files. Before queueing the local job, the computer downloads originals through `GET /api/devices/self/jobs/:id/attachments/:fileId` with the owning device token and the active `x-ensemble-job-lease` header. The route checks that the file is still attached to this task; it is not a general Files download. It also supplies the full source of diagrams embedded in the page, saved as `.ensemble-diagram.txt` files. The runner remaps page references to the copies' local ids before starting. Transfers are capped at 100 MB per run (`remote/accept.ts`). Receiving originals needs CLI 0.3.11+ or desktop 0.3.8+ on the computer.
 - **The assistant:**
   - `hub_list_files` lists files with their summaries and `hub_view_file` opens one: the model is given the file itself. `hub_import_app_file` brings a file or attachment in from a connected app like `POST /api/documents/import`, after Apply (its preview says when the app is not ready or the hosted plan's 20 files are used). `hub_create_page` and `hub_update_page` attach a file with a `[@name](ensemble://file/<id>)` link and show an image with `![alt](ensemble://file/<id>)` on its own line ([§6](#images-in-pages)). `hub_import_dataset` with `fileId` makes a Plots dataset from a CSV, TSV or `.xlsx` sheet ([11](11_HOW_THE_ASSISTANT_WORKS.md)).

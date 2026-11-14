@@ -32,6 +32,7 @@ The public site is built from these same sources for [docs.ensemblework.com](htt
 | [28 · Spaces](28_ENSEMBLE_SPACES.md) | Separate workspaces, scope, settings, export |
 | [29 · Sharing](29_SHARING.md) | Roles, public links, presence, live co-editing |
 | [30 · Engines and subscriptions](30_ENGINES.md) | External agent engines, handoffs, assistant subscriptions |
+| [41 · Agent sessions](41_AGENT_SESSIONS.md) | Continuing and choosing sessions, one folder per project, sessions in the agents' own apps, chat sessions, deletion and clean-up |
 | [31 · Connected apps](31_CONNECTORS_IN_USE.md) | Connector catalog, connection methods, item actions, MCP |
 | [32 · Files](32_FILES.md) | Originals and blob storage, previews, edits, extraction, caps |
 | [33 · Included AI](33_INCLUDED_AI.md) | Operator-provided models, monthly credits, reservations |

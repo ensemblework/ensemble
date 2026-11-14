@@ -24,9 +24,9 @@ OAuth connection metadata belongs to the authorizing account, including when its
 
 | Setting / data | Default and behaviour |
 | --- | --- |
-| `completedRetentionDays` | 60 days (1–365). Once at least 10 unpinned completed items are past it, they get 24 hours' notice and a skill-learning pass ([04](04_MODULE_SKILL_FORGE.md)), then move to Trash; with learning off they move without one. The agent sessions of tasks past it are deleted from the person's agents ([30, Cleaning up sessions](30_ENGINES.md)) |
+| `completedRetentionDays` | 60 days (1–365). Once at least 10 unpinned completed items are past it, they get 24 hours' notice and a skill-learning pass ([04](04_MODULE_SKILL_FORGE.md)), then move to Trash; with learning off they move without one. The agent sessions of tasks past it are deleted from the person's agents ([41 §6](41_AGENT_SESSIONS.md#6-deleting-and-cleaning-up)) |
 | `retentionDays` | 30 days (1–365). Trash is purged permanently after this |
-| `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, and how runs chose their agent sessions (`session_choices`, [30](30_ENGINES.md), Choosing a session) |
+| `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, and how runs chose their agent sessions (`session_choices`, [41 §4](41_AGENT_SESSIONS.md#4-choosing-a-session)) |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | The AI activity log (`ai_activity`, §1.4) | Fixed 30 days (`AI_ACTIVITY_RETENTION_DAYS`) |
 | MCP OAuth credentials | Consent/code requests: 10 minutes. Access keys: one hour. Refresh tokens: 30 days, rotation by default; confidential persistent linking extends expiry on refresh ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). Daily `purgeMcpOAuth` removes expired consent, refresh/access rows 30 days past expiry and grants 30 days after revocation; account deletion removes them immediately |
@@ -78,7 +78,7 @@ Writing never slows or fails the work: entries queue in memory and go to the dat
 | Connected MCP writes | Server/tool enablement, schema validation and confirmation; read-only annotations affect classification but grant nothing |
 | Assigned research/code jobs | Saved run profile, tools, folder trust, Ask / Review only / Unattended mode, sandbox, network and Git permissions, budgets |
 | Publishing | The exact saved approval and payload, with continuation checks |
-| Human terminal | Passkey unlock and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal--for-you-only)) |
+| Human terminal | Passkey unlock and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal-for-you-only)) |
 | Context Bridge | Read/write/app grants, owned-space scope, static bearer or OAuth access keys, bounded retrieval; named catalog and legacy profiles use the same API checks |
 
 `assistant/apply.ts` validates approved proposals; an edited proposal is revalidated. Tools routed through `assistant/request.ts` reuse API authentication, quotas and resource checks. A guest never gains the owner's connections through a workflow.

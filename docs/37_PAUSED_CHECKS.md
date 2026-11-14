@@ -6,21 +6,27 @@ While development moves fast, every push and pull request into `testing` **and**
 
 | Event | Workflow | What it does | Time |
 | --- | --- | --- | --- |
-| Push or PR to `testing` | `test-web.yml` | Fast checks; on a push, then the testing API, test web app and testing CLI ([36](36_WEB_TESTING.md)) | ~2 min to checks, ~5 min to a live test site |
-| PR into `main` (a feature branch or `testing`) | `ci.yml` | Fast checks | ~2 min |
+| Push or PR to `testing` | `test-web.yml` | Fast checks; on a push, then the testing API, test web app and testing CLI ([36](36_WEB_TESTING.md)) | ~3 min to checks, ~6 min to a live test site |
+| PR into `main` (a feature branch or `testing`) | `ci.yml` | Fast checks | ~3 min |
 | Push to `main` | `ci.yml`, then `deploy.yml` | Fast checks; then `production`, the API, the Hub and the landing page ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)) | ~6 min to production |
 | `cli-v<version>` tag | `cli-release.yml` | Builds on five targets, each packaged CLI smoke-run (seconds), `.deb`/`.rpm`, release, Homebrew and Scoop | ~10 min |
 | `desktop-v<version>` tag, a push to `desktop`, or by hand | `desktop.yml` | Builds and publishes the installers on four targets; no tests | ~22 min (the Intel Mac build) |
+| Push to `main` | Cloudflare Workers Builds (Worker `ensemble-docs`, outside GitHub Actions) | Builds `apps/docs` and publishes `docs.ensemblework.com` ([40](40_PUBLIC_DOCUMENTATION.md#2-build-and-hosting)) | A few minutes |
 
-The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*): `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api` (with its tests), `hub-web` and the CLI, the CLI channel-isolation tests, focused board, page, comment, morning-brief and session-cookie web tests, the in-memory morning-brief migration/scheduler and signup regressions, page-board, cookie-namespace and production-guard API tests, agent sessions filed in the Claude app's Code tab and the ChatGPT app's sidebar, a deleted project's Codex projects leaving that sidebar and Codex, the testing deploy guard, the release-script tests and the route inventory.
+The **fast checks** are one composite action, `.github/actions/fast-checks`, used by `ci.yml` (job *Typecheck and unit tests*) and `test-web.yml` (job *Web testing checks*). Its fixtures are in memory (PGlite) or local: no paid model, vendor directory or real agent account is used.
+
+| Step | Covers |
+| --- | --- |
+| Versions and types | `pnpm version:check`, `pnpm db:generate`, typechecks of `shared-types`, `hub-api`, `hub-web` and the CLI |
+| CLI channel boundaries | The testing CLI's isolation (channel, paths, sign-in, editor MCP setup, launcher and updates) and the API's client channel |
+| Published docs and read-only lookup | Builds `apps/docs` and tests its links, extracts and explicit misses, and `ensemble_docs` through the bridge and hosted MCP ([40](40_PUBLIC_DOCUMENTATION.md)) |
+| Focused web and API regressions | Run previews, board drag and insights, Pages, comments, the connector store, the morning brief and its prompt, sign-in and session cookies, page boards, cookie namespaces, production guards, Node's file workspace and file changes, run checkout folder names, confirmed session deletion, filing sessions in the agents' apps, a deleted project's Codex projects, sessions used outside Ensemble, ask sessions, deleting chats and projects, summaries, and Node's plans, routing, schedules and dispatch |
+| Active places and conditional saves | Three-place admission, release and replacement, key exemption, field-level save merges and conflicts, the Hub's chooser and conflict dialog |
+| MCP OAuth, named tools and consent | The bridge's typecheck and catalog, OAuth discovery, consent, PKCE, client and resource binding, refresh and revocation, named and legacy tools, the consent and sign-in forms and their routes ([Context Bridge](CONTEXT_BRIDGE.md)) |
+| Included model defaults and credit-safe search | Included model defaults, pricing, the credit budget, the included runtime, web search and Node's model choice ([33](33_INCLUDED_AI.md)) |
+| Deployment guards, release scripts and route inventory | The testing deploy guard, the desktop release, version and target scripts, `route:inventory:check` |
 
 *Typecheck and unit tests* is the only required status check: on `main` (branch protection) and on the `production` branch (ruleset *production: only commits that passed CI*).
-
-The fast action also runs active-place admission/release/replacement, account isolation and key exemption, field-level save merges/conflicts and the Hub chooser/dialog. API fixtures run serially against in-memory PGlite.
-
-The fast checks also export the public documentation and test its page links, literal extracts, explicit misses and read-only hosted MCP authentication ([40](40_PUBLIC_DOCUMENTATION.md)). That check does not publish a docs site or change DNS.
-
-Hosted MCP OAuth and named catalog checks run in the same fast action: browser/session/origin/CSRF consent, PKCE and client/resource binding, single-use codes, refresh narrowing and replay, family revocation, a real MCP SDK handshake, legacy tool compatibility, the web consent form, provider returns and Grok Build's native MCP setup command. These use local/in-memory fixtures and no paid model calls ([Context Bridge](CONTEXT_BRIDGE.md)).
 
 ## Paused
 
