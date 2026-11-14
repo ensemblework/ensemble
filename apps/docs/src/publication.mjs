@@ -85,7 +85,7 @@ export function publicDocuments(documents) {
       entries.push(entry);
       owner.children.push(entry);
       hierarchy.push({ level: heading.level, entry });
-      const number = heading.title.match(/^([\d]+(?:\.[\d]+)*)[. ·]/)?.[1];
+      const number = heading.title.match(/^(\d+(?:\.\d+)*[a-z]?)(?=[. ·\s])/i)?.[1];
       if (number) numbered.set(`${document.file}:${number}`, entry);
       parent.aliases.push({ id: slug(plain(heading.title)), file: entry.file, title: entry.title });
       targets.set(`/docs/${document.file}#${slug(plain(heading.title))}`, pagePath(file));
@@ -103,13 +103,10 @@ export function publicDocuments(documents) {
       try { target = new URL(href, `https://source.invalid/docs/${entry.sourceFile}`); } catch { return label; }
       const key = decodeURIComponent(target.pathname);
       const destination = targets.get(`${key}${target.hash}`) ?? targets.get(key);
-      const readableLabel = /^\d+(?:\s*§[\d.]+)?$/.test(label.trim()) ? entryByPath.get(destination)?.title ?? label : label;
+      const readableLabel = /^\d+(?:\s*§[\d.a-z]+(?:[–-]§?[\d.a-z]+)?)?$/i.test(label.trim()) ? entryByPath.get(destination)?.title ?? label : label;
       return destination ? `[${readableLabel}](${destination})` : (SOURCE_PATH.test(label) ? '' : label);
     });
-    entry.markdown = entry.markdown.replace(/§([\d]+(?:\.[\d]+)*)/g, (_match, number) => {
-      const related = numbered.get(`${entry.sourceFile}:${number}`);
-      return related ? `[${related.title}](${pagePath(related.file)})` : '';
-    }).replace(/\(\s*\)/g, '');
+    entry.references = Object.fromEntries([...numbered].filter(([key]) => key.startsWith(`${entry.sourceFile}:`)).map(([key, target]) => [key.slice(entry.sourceFile.length + 1), { title: target.title, path: pagePath(target.file) }]));
   }
   return entries;
 }

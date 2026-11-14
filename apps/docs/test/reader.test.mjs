@@ -52,3 +52,15 @@ test("the site ships shared Hub tokens, hashed icons, local fonts and no client 
   assert.match(bundle, /credentials:"omit"/);
   assert.doesNotMatch(bundle, /api-key|AZURE_FOUNDRY_API_KEY|gpt-5-mini|reasoning.effort/);
 });
+
+test("section references keep cross-guide links and code intact, including lettered sections", () => {
+  const topics = publicDocuments([
+    { file: "FIRST.md", markdown: "# First\n\n## 3.10 Files\n\nFiles.\n\n## 3.10a Routines\n\nRoutines.\n\n## Use it\n\nRead §3.10a, [05 §4–§6](SECOND.md#4-queue) and `§3.10a`.\n" },
+    { file: "SECOND.md", markdown: "# Second\n\n## 4. Queue\n\nQueue work.\n" },
+  ]);
+  const page = renderDocs(topics).find((page) => page.path === "/first/use-it/");
+  assert.match(page.html, /href="\/first\/routines\/">Routines<\/a>/);
+  assert.match(page.html, /href="\/second\/queue\/">Queue<\/a>/);
+  assert.match(page.html, /<code>§3\.10a<\/code>/);
+  assert.doesNotMatch(page.html, /Filesa|\[05|\]\(/);
+});

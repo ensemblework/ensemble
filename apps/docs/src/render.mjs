@@ -18,7 +18,7 @@ function inlineText(token) {
 export function renderDocs(documents, sourceRef = "testing") {
   const paths = new Map(documents.map(({ file }) => [`/docs/${file}`, pagePath(file)]));
   const sitePaths = new Set(paths.values());
-  return documents.map(({ file, markdown }) => {
+  return documents.map(({ file, markdown, references }) => {
     const md = new MarkdownIt({ html: false });
     md.renderer.rules.table_open = () => '<div class="table-scroll" tabindex="0" role="region" aria-label="Reference table"><table>\n';
     md.renderer.rules.table_close = () => '</table></div>\n';
@@ -30,6 +30,33 @@ export function renderDocs(documents, sourceRef = "testing") {
     }).join("\n");
     const original = md.parse(readable, {});
     const tokens = original;
+    if (references) for (const token of tokens) {
+      if (!token.children) continue;
+      let linkDepth = 0;
+      const children = [];
+      for (const child of token.children) {
+        if (child.type === "link_open") linkDepth++;
+        if (child.type === "link_close") linkDepth--;
+        if (child.type !== "text" || linkDepth) { children.push(child); continue; }
+        const make = (type, tag, nesting, content = "") => {
+          const item = new child.constructor(type, tag, nesting);
+          item.content = content;
+          return item;
+        };
+        let start = 0;
+        for (const match of child.content.matchAll(/§(\d+(?:\.\d+)*[a-z]?)(?![\w.])/gi)) {
+          const target = references[match[1]];
+          if (!target) continue;
+          children.push(make("text", "", 0, child.content.slice(start, match.index)));
+          const open = make("link_open", "a", 1);
+          open.attrSet("href", target.path);
+          children.push(open, make("text", "", 0, target.title), make("link_close", "a", -1));
+          start = match.index + match[0].length;
+        }
+        children.push(make("text", "", 0, child.content.slice(start)));
+      }
+      token.children = children;
+    }
     const counts = new Map();
     const sections = [];
     const toc = [];
