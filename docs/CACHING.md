@@ -15,6 +15,8 @@ Domain records are authoritative in the database; every cache below is bounded a
 | Context suppressions | `connectors/ingest.ts`: per space and kind, 64 entries, 60 s | Rebuilt from `ContextSuppression` rows |
 | Import previews | `imports/previews.ts`: in memory, one per person, 30 min after last use | Never written to the database or logged |
 | OAuth state, SSE tickets, passkey challenges | MCP OAuth state 10 min (`connectors/mcp/provider.ts`); one-use SSE tickets (`routes/misc.ts`); terminal passkey challenges 120 s (unlock) or 300 s (register) (`routes/terminal.ts`, `devices/web-unlock.ts`) | Single-use authorization state, not content |
+| Hosted MCP OAuth client metadata | `mcp_oauth_clients.metadata_expires_at` (`mcp-oauth/service.ts`): public CIMD document, default 5 min, HTTP `max-age` capped at 1 hour; `no-store`/`no-cache` has no reuse | Exact client URL, DNS-pinned public fetch, no user credentials; grants and revocation are checked per request |
+| Hosted MCP consent | Session-bound request and code, 10 min; web query cached only for that request until reload or completion | CSRF and current session on approval; no workspace content or token authority is cached |
 | Remote file, code and subscription relays | Redis keys with expiry (`devices/file-relay.ts`, `devices/code-routes.ts`) | Timeouts and ownership/token checks; not a file backup |
 | Included models on a paired computer | `included/device.ts` holds the account's catalog and credits from the server for 60 s | The server stays authoritative for every reservation and call |
 | Version and update check | `lib/release-info.ts`: 5 min, 30 s after a failure | Signed packages and manifests are still validated |

@@ -23,9 +23,9 @@ Hostname attachment is an operator action outside the repository. The build supp
 
 ## 3. Lookup through the Context Bridge
 
-`ensemble_docs` is a read tool on the existing Context Bridge, not a second MCP. Its `title` is **Search Ensemble documentation** and its annotations include `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Use `{query: "Three ways to reach it", limit: 1}` to look up the bridge setup heading.
+`ensemble_docs` is a read tool on the existing Context Bridge, not a second MCP. Its `title` is **Search Ensemble documentation** and its annotations include `readOnlyHint: true`, `destructiveHint: false` and `idempotentHint: true`. Legacy metadata has `openWorldHint: false`; the hosted named catalog marks the public-site lookup open-world. Use `{query: "Three ways to reach it", limit: 1}` to look up the bridge setup heading.
 
-The tool calls authenticated `GET /api/bridge/docs?q=...&limit=...` (`apps/hub-api/src/bridge/routes.ts`). Hosted MCP still requires `Authorization: Bearer ens_…`; the tool needs neither changes nor connected-app grants and does not widen a key. The route keeps the bridge's owner-only sharing class and credential checks. It reads no private workspace records.
+The tool calls authenticated `GET /api/bridge/docs?q=...&limit=...` (`apps/hub-api/src/bridge/routes.ts`). Hosted MCP requires a static key or OAuth access token in `Authorization: Bearer ens_…`; the tool needs neither changes nor connected-app grants and does not widen a key. The route keeps the bridge's owner-only sharing class and credential checks. It reads no private workspace records.
 
 `apps/hub-api/src/bridge/docs.ts` fetches only `https://docs.ensemblework.com/search-index.json`, without forwarding the caller's key. It validates the index and its URL origin, uses the site's shared search code, and caches a successful index for 60 seconds per API process. Queries take 1 to 200 characters of search words and `limit` is 1 to 20, default 8.
 

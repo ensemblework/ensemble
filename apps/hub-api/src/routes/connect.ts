@@ -31,7 +31,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/connect/bridge", async (request) => {
     const bridgeScript = join(ENSEMBLE_SOURCE, "apps/context-bridge/dist/index.js");
     const tokens = await prisma.apiToken.findMany({
-      where: { userId: request.userId, revokedAt: null, scope: "bridge" },
+      where: { userId: request.userId, revokedAt: null, scope: "bridge", oauthGrantId: null },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, prefix: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });

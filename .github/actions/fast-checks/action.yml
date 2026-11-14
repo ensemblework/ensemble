@@ -58,6 +58,14 @@ runs:
         pnpm --filter @ensemble/shared-types exec tsx --test src/save-merge.test.ts
         pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/active-place-gate.test.tsx components/save-conflict-host.test.tsx
         pnpm --filter @ensemble/hub-api exec tsx --test --test-concurrency=1 src/routes/active-places.integration.test.ts src/routes/save-conflicts.integration.test.ts
+    - name: MCP OAuth, named tools and consent
+      shell: bash
+      run: |
+        pnpm --filter @ensemble/context-bridge typecheck
+        pnpm --filter @ensemble/context-bridge exec node --import tsx --test --test-concurrency=1 test/catalog.test.ts test/mcp.test.ts
+        pnpm --filter @ensemble/hub-api test:mcp-oauth
+        pnpm --filter @ensemble/hub-web exec node --import tsx --test --test-concurrency=1 components/mcp-consent.test.tsx components/auth-form.test.tsx
+        pnpm --filter @ensemble/shared-types exec tsx --test src/mcp-oauth.test.ts
     - name: Included model defaults and credit-safe search
       shell: bash
       env:

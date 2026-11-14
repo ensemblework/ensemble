@@ -318,6 +318,8 @@ export interface ActionInfo {
   /** Inputs the bridge refuses even when it is allowed (a guard), said up front. */
   limit?: string;
   inputSchema?: Record<string, unknown>;
+  openWorld?: boolean;
+  requiresApps?: boolean;
 }
 
 function refusalFor(caller: Caller, tool: AnyHubTool, allowed: Allowed | null): string | null {
@@ -336,6 +338,8 @@ function info(caller: Caller, tool: AnyHubTool, group: ActionGroup | "apps", all
     group,
     description: actionDescription(tool),
     write: tool.isWrite,
+    openWorld: group === "apps" || allowed?.apps === true || tool.name === "hub_save_file" || tool.name === "hub_import_dataset",
+    requiresApps: group === "apps" || allowed?.apps === true,
     allowed: !refusal,
     ...(refusal ? { refusal } : {}),
     ...(limit ? { limit } : {}),
@@ -382,8 +386,9 @@ export async function listApps(app: FastifyInstance, caller: Caller, options: { 
     apps: apps.map((row) => ({ id: row.id, name: row.name, via: row.via, account: row.account, uses: row.uses, publicOnly: row.publicOnly })),
     broken: connections.broken,
     tools: shown.map((tool) => {
-      const row = info(caller, tool, "apps", null, names.size > 0);
-      return { ...row, ...(names.size ? {} : { description: firstSentence(row.description) }), app: apps.find((entry) => belongs(tool, entry))?.name ?? tool.app?.label ?? null };
+      const full = names.size > 0 || options.schema === true;
+      const row = info(caller, tool, "apps", null, full);
+      return { ...row, ...(full ? {} : { description: firstSentence(row.description) }), app: apps.find((entry) => belongs(tool, entry))?.name ?? tool.app?.label ?? null };
     }),
   };
 }

@@ -17,6 +17,8 @@ Each one is already signed in as its owner. None of them opens Ensemble's web ap
 
 A dash means nothing in that column reaches the area. "Same" means the assistant's tools, in every space the node's owner can open. "Allowlist" means the assistant's tool of that name run through `ensemble_act` (agent runs and MCP keys made with changes allowed; [CONTEXT_BRIDGE §5.1](CONTEXT_BRIDGE.md#51-changes-in-ensemble)); "MCP" marks what an MCP key has and a run does not.
 
+OAuth clients use the same Context Bridge grants and allowlist through named `ensemble_action_*` and `ensemble_app_*` tools instead of the legacy catch-alls. The core reads, task writes, file uploads and resources remain; enum operations are fixed per tool and inputs use the original action/app schemas. This is a tool profile, not extra authority. Static keys can opt into the catalog with `x-ensemble-tools: catalog` ([Context Bridge §5.4](CONTEXT_BRIDGE.md#54-named-catalog-profile)).
+
 | Area | Hub assistant | Ensemble Node | Agent runs and MCP editors |
 | --- | --- | --- | --- |
 | Tasks on the Ensemble board | List, read, create, update, delete, restore; what is due (`hub_list_tasks`, `hub_create_tasks`, `hub_update_task`, `hub_delete_tasks`, `hub_list_due`) | Same | Their brief; allowlist: list, read, create, update any field, delete one to Trash. MCP also deletes many (`hub_delete_tasks`), `ensemble_create_task`, `ensemble_update_task` |

@@ -71,6 +71,9 @@ import { cliAuthRoutes } from "./routes/cli-auth.js";
 import { transferRoutes } from "./transfer/routes.js";
 import { desktopAccountRoutes } from "./desktop/account.js";
 import { mcpRoutes } from "./routes/mcp.js";
+import { mcpOAuthRoutes } from "./routes/mcp-oauth.js";
+import { isMcpPublicPath } from "./mcp-oauth/paths.js";
+import { mcpBearerChallenge } from "./mcp-oauth/protocol.js";
 import { mcpConnectionRoutes } from "./routes/mcp-connections.js";
 import { importRoutes } from "./routes/imports.js";
 import { appItemRoutes } from "./routes/app-items.js";
@@ -103,6 +106,7 @@ export function bypassesGlobalAuth(path: string): boolean {
     PUBLIC_PATHS.has(path) ||
     /^\/api\/desktop\/update\/(darwin|windows|linux)\/(aarch64|x86_64)\/\d+\.\d+\.\d+$/.test(path) ||
     isPublicAuthPath(path) ||
+    isMcpPublicPath(path) ||
     /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) ||
     path === "/api/engine/ask" ||
     path === "/api/engine/tool" ||
@@ -125,6 +129,7 @@ export type BuildAppOptions = {
   onResponse?: (request: FastifyRequest, reply: FastifyReply) => void;
   corsPolicy?: CorsPolicy;
   authOAuth?: Parameters<typeof authOAuthRoutes>[1];
+  mcpOAuth?: Parameters<typeof mcpOAuthRoutes>[1];
 };
 
 /** Registers the production HTTP stack without starting any process-lifetime services. */
@@ -181,6 +186,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
       if (error instanceof BadPathError) return reply.code(400).send({ error: "Malformed path." });
       throw error;
     }
+    // MCP discovery and publishing proofs never inherit a browser or key's space; OAuth endpoints authenticate clients themselves.
+    if (isMcpPublicPath(path)) {
+      const limited = consumeRateLimit(rateLimiter, request, path, rateLimitConfig());
+      if (limited) {
+        reply.header("Retry-After", String(limited.retryAfterSeconds));
+        return reply.code(429).send({ error: limited.error });
+      }
+      return;
+    }
     if (bridgeMethodRejected(request.method, path)) {
       return reply.code(405).send({ error: "The Context Bridge is read-only." });
     }
@@ -214,6 +228,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenCanUseApps = who.tokenCanUseApps;
       request.tokenSpaceId = who.tokenSpaceId;
       request.tokenAccountId = who.tokenAccountId;
+      request.tokenOAuthGrantId = who.tokenOAuthGrantId;
+      request.tokenOAuthScopes = who.tokenOAuthScopes;
       request.modules = who.modules;
       const accountChanged = checkPlaceAccount(request);
       if (accountChanged) return reply.code(409).send(accountChanged);
@@ -229,8 +245,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       return;
     }
     if (bypassesGlobalAuth(path)) return;
-    if (path === "/mcp" && request.method === "POST") {
-      reply.header("WWW-Authenticate", 'Bearer realm="Ensemble"');
+    if (path === "/mcp") {
+      reply.header("WWW-Authenticate", mcpBearerChallenge());
       return reply.code(401).send({ error: "Bearer token required." });
     }
     return reply.code(401).send({ error: "Sign in to Ensemble first." });
@@ -332,6 +348,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     cliAuthRoutes,
     transferRoutes,
     mcpRoutes,
+    mcpOAuthRoutes,
     mcpConnectionRoutes,
     importRoutes,
     appItemRoutes,
@@ -344,6 +361,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     telemetryRoutes,
   ]) {
     if (routes === authOAuthRoutes) await app.register(authOAuthRoutes, options.authOAuth ?? {});
+    else if (routes === mcpOAuthRoutes) {
+      if (!desktop) await app.register(mcpOAuthRoutes, options.mcpOAuth ?? {});
+    }
     else await app.register(routes);
   }
 

@@ -139,7 +139,7 @@ test("hosted documentation lookup accepts a read-only key without widening its g
 test("hosted MCP rejects missing bearer, cookie-only, and device tokens", async () => {
   const noToken = await fetch(mcpUrl, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal(noToken.status, 401);
-  assert.equal(noToken.headers.get("www-authenticate"), 'Bearer realm="Ensemble"');
+  assert.match(noToken.headers.get("www-authenticate") ?? "", /^Bearer realm="Ensemble", resource_metadata=".+\/\.well-known\/oauth-protected-resource\/mcp"$/);
 
   const cookieOnly = await fetch(mcpUrl, {
     method: "POST",
@@ -147,7 +147,7 @@ test("hosted MCP rejects missing bearer, cookie-only, and device tokens", async 
     body: "{}",
   });
   assert.equal(cookieOnly.status, 401);
-  assert.equal(cookieOnly.headers.get("www-authenticate"), 'Bearer realm="Ensemble"');
+  assert.equal(cookieOnly.headers.get("www-authenticate"), noToken.headers.get("www-authenticate"));
 
   const deviceToken = await fetch(mcpUrl, {
     method: "POST",

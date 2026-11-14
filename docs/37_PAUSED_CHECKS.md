@@ -20,6 +20,8 @@ The fast action also runs active-place admission/release/replacement, account is
 
 The fast checks also export the public documentation and test its page links, literal extracts, explicit misses and read-only hosted MCP authentication ([40](40_PUBLIC_DOCUMENTATION.md)). That check does not publish a docs site or change DNS.
 
+Hosted MCP OAuth and named catalog checks run in the same fast action: browser/session/origin/CSRF consent, PKCE and client/resource binding, single-use codes, refresh narrowing and replay, family revocation, a real MCP SDK handshake, legacy tool compatibility, the web consent form, provider returns and Grok Build's native MCP setup command. These use local/in-memory fixtures and no paid model calls ([Context Bridge](CONTEXT_BRIDGE.md)).
+
 ## Paused
 
 Actions → **full-checks** → *Run workflow* runs all of these on any branch.

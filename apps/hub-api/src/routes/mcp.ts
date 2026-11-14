@@ -1,9 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildServer } from "@ensemble/context-bridge/server";
+import { buildCatalogServer } from "@ensemble/context-bridge/catalog";
 import { HubError, type HubCallOptions, type HubClient } from "@ensemble/context-bridge/hub";
 import { maxFileBytes } from "../files/store.js";
 import { NODE_SPACE_HEADER } from "../lib/auth.js";
+import { mcpBearerChallenge } from "../mcp-oauth/protocol.js";
+import { z } from "zod";
 
 function bearerRejected(request: FastifyRequest): boolean {
   const authorization = request.headers.authorization;
@@ -11,7 +14,7 @@ function bearerRejected(request: FastifyRequest): boolean {
 }
 
 function bearerRequired(reply: { header: (name: string, value: string) => unknown; code: (status: number) => { send: (body: unknown) => unknown } }) {
-  reply.header("WWW-Authenticate", 'Bearer realm="Ensemble"');
+  reply.header("WWW-Authenticate", mcpBearerChallenge());
   return reply.code(401).send({ error: "Bearer token required." });
 }
 
@@ -71,7 +74,8 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
     if (bearerRejected(request) || !authorization) return bearerRequired(reply);
     const named = request.headers[NODE_SPACE_HEADER];
     const space = (Array.isArray(named) ? named[0] : named)?.trim() || undefined;
-    const server = buildServer({
+    const tools = z.enum(["catalog", "legacy"]).optional().parse(request.headers["x-ensemble-tools"]);
+    const deps = {
       hub: hubFor(app, authorization, space),
       detect: async () => ({}),
       // Changes: a full key, or a bridge key made with them allowed (bridge/auth.ts). Apps likewise.
@@ -79,7 +83,10 @@ export async function mcpRoutes(app: FastifyInstance): Promise<void> {
       canUseApps: request.tokenScope === "full" || (request.tokenScope === "bridge" && request.tokenCanUseApps === true),
       // Ensemble on the web cannot read the editor's disk: uploads come as base64.
       localFiles: false,
-    });
+    };
+    const server = tools === "catalog" || (tools !== "legacy" && request.tokenOAuthGrantId)
+      ? await buildCatalogServer(deps)
+      : buildServer(deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

@@ -28,6 +28,7 @@ export const EDITORS = [
   "qwen",
   "kimi",
   "vibe",
+  "grok",
 ] as const;
 
 export type EditorName = (typeof EDITORS)[number];
@@ -95,6 +96,8 @@ export function editorConfigPath(editor: EditorName, input: PlatformInput = {}):
       return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config"), "Claude", "claude_desktop_config.json");
     case "codex":
       return path.join(home, ".codex", "config.toml");
+    case "grok":
+      return path.join(home, ".grok", "config.toml");
     case "gemini":
       return path.join(home, ".gemini", "settings.json");
     case "copilot":
@@ -130,6 +133,10 @@ export function detectEditors(input: PlatformInput = {}): EditorDetection[] {
   return EDITORS.map((editor) => {
     if (editor === "claude-code") return { editor, found: Boolean(isExecutableOnPath("claude", env, platform)) };
     if (editor === "vibe") return { editor, found: Boolean(isExecutableOnPath("vibe", env, platform)) };
+    if (editor === "grok") {
+      const path = editorConfigPath(editor, input)!;
+      return { editor, found: Boolean(isExecutableOnPath("grok", env, platform)) || existsSync(dirname(path)), path };
+    }
     if (editor === "jetbrains") return { editor, found: true, printOnly: true };
     if (editor === "continue") {
       const path = editorConfigPath(editor, input);
@@ -365,6 +372,7 @@ function snippetFor(editor: EditorName, mode: SetupMode): string {
   }
   if (editor === "vibe") return `vibe ${vibeAddArgs(mode, mode.token ?? TOKEN_ENV).map((arg) => (/\s/.test(arg) ? JSON.stringify(arg) : arg)).join(" ")}`;
   if (editor === "codex") return upsertCodexToml("", mode).trimEnd();
+  if (editor === "grok") return `grok ${grokAddArgs(mode, mode.token ?? TOKEN_ENV).map(arg => /\s/.test(arg) ? JSON.stringify(arg) : arg).join(" ")}`;
   const path = jsonPathFor(editor);
   if (!path) return "";
   const value = serverValue(editor, mode);
@@ -376,6 +384,22 @@ function vibeAddArgs(mode: SetupMode, token: string): string[] {
   if (mode.hosted) return ["mcp", "add", MCP_NAME, "--url", hostedUrl(mode), "--transport", "streamable-http", "--header", `Authorization=Bearer ${token}`];
   const local = localCommand(mode);
   return ["mcp", "add", MCP_NAME, "--transport", "stdio", "--command", local.command, ...local.args.map((arg) => `--arg=${arg}`)];
+}
+
+function grokAddArgs(mode: SetupMode, token: string): string[] {
+  if (mode.hosted) return ["mcp", "add", "--transport", "http", MCP_NAME, hostedUrl(mode), "--header", `Authorization: Bearer ${token}`];
+  const local = localCommand(mode);
+  return ["mcp", "add", MCP_NAME, "--", local.command, ...local.args];
+}
+
+async function configureGrok(mode: SetupMode, input: PlatformInput & { printOnly?: boolean }): Promise<EditorWriteResult> {
+  const command = isExecutableOnPath("grok", envOf(input), platformOf(input));
+  const snippet = snippetFor("grok", mode);
+  if (input.printOnly || !command) return { editor: "grok", changed: false, message: command ? snippet : `Grok Build not found on PATH. Run:\n${snippet}` };
+  if (mode.hosted && !mode.token) throw new Error("Run `ensemble login` first before configuring Grok Build hosted MCP.");
+  await run(command, ["mcp", "remove", MCP_NAME], true);
+  await run(command, grokAddArgs(mode, mode.token ?? TOKEN_ENV), false);
+  return { editor: "grok", changed: true, message: "Configured Grok Build's MCP server." };
 }
 
 async function configureVibe(mode: SetupMode, printOnly: boolean): Promise<EditorWriteResult> {
@@ -409,7 +433,7 @@ async function run(command: string, args: string[], allowFailure: boolean): Prom
     child.once("error", (error) => (allowFailure ? resolve() : reject(error)));
     child.once("exit", (code) => {
       if (code === 0 || allowFailure) resolve();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code ?? "without a code"}`));
+      else reject(new Error(`${command} ${args.slice(0, 2).join(" ")} exited ${code ?? "without a code"}`));
     });
   });
 }
@@ -417,6 +441,7 @@ async function run(command: string, args: string[], allowFailure: boolean): Prom
 export async function setupEditor(editor: EditorName, mode: SetupMode, input: PlatformInput & { printOnly?: boolean } = {}): Promise<EditorWriteResult> {
   if (editor === "claude-code") return configureClaudeCode(mode, input.printOnly === true);
   if (editor === "vibe") return configureVibe(mode, input.printOnly === true);
+  if (editor === "grok") return configureGrok(mode, input);
   if (editor === "jetbrains" || editor === "continue") return { editor, changed: false, message: snippetFor(editor, mode), path: editorConfigPath(editor, input) ?? undefined };
   if (mode.hosted && editor === "claude-desktop") {
     return {
@@ -456,6 +481,12 @@ export async function removeEditor(editor: EditorName, input: PlatformInput = {}
     await run(command, ["mcp", "remove", MCP_NAME], true);
     return { editor, changed: true, message: "Removed Mistral Vibe's Ensemble MCP server." };
   }
+  if (editor === "grok") {
+    const command = isExecutableOnPath("grok", envOf(input), platformOf(input));
+    if (!command) return { editor, changed: false, message: "Grok Build not found on PATH." };
+    await run(command, ["mcp", "remove", MCP_NAME], false);
+    return { editor, changed: true, message: "Removed Grok Build's Ensemble MCP server." };
+  }
   if (editor === "jetbrains" || editor === "continue") return { editor, changed: false, message: `${editor} is print-only; remove the Ensemble MCP entry manually.` };
   const path = editorConfigPath(editor, input);
   if (!path || !(await fileExists(path))) return { editor, changed: false, message: `${editor} is not configured.` };
@@ -492,7 +523,7 @@ export async function configuredEditors(input: PlatformInput = {}): Promise<Edit
       if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
       throw error;
     }
-    if (editor === "codex") {
+    if (editor === "codex" || editor === "grok") {
       if (text.includes(`[mcp_servers.${MCP_NAME}]`)) configured.push(editor);
       continue;
     }

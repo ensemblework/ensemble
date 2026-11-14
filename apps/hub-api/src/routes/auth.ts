@@ -21,6 +21,7 @@ import { avatarId, defaultAvatarId, isAvatarId, parseAvatar, passwordProblem } f
 import { randomUUID } from "node:crypto";
 import { forgetPerson } from "../sharing/presence.js";
 import { createMorningRoutine } from "../routines/service.js";
+import { revokeMcpOAuthGrant } from "../mcp-oauth/service.js";
 
 const Credentials = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -397,7 +398,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/tokens", async (request) => {
     const tokens = await prisma.apiToken.findMany({
-      where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] } },
+      where: { userId: request.userId, revokedAt: null, scope: { notIn: ["device", "transfer"] }, oauthGrantId: null },
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, prefix: true, scope: true, canWrite: true, canUseApps: true, lastUsedAt: true, createdAt: true },
     });
@@ -423,6 +424,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.delete("/api/tokens/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const token = await prisma.apiToken.findFirst({ where: { id, userId: request.userId, revokedAt: null } });
+    if (token?.oauthGrantId) {
+      await prisma.$transaction(tx => revokeMcpOAuthGrant(tx, token.oauthGrantId!, new Date()));
+      return reply.code(204).send();
+    }
     if (token?.scope === "device") {
       const device = await prisma.device.findFirst({ where: { tokenId: token.id, userId: request.userId, revokedAt: null } });
       if (device) {

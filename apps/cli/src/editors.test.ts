@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse } from "jsonc-parser";
-import { EDITORS, editorConfigPath, removeCodexToml, setupEditor, upsertCodexToml, type EditorName } from "./editors.js";
+import { EDITORS, editorConfigPath, removeCodexToml, removeEditor, setupEditor, upsertCodexToml, type EditorName } from "./editors.js";
 import type { LauncherCommand } from "./launcher.js";
 
 const launcher: LauncherCommand = { command: "/usr/local/bin/ensemble", argsPrefix: [], source: "argv" };
@@ -37,7 +37,7 @@ test("JSONC editor writer preserves comments, other servers, and one backup", as
 test("local JSON writers create the expected Ensemble entry", async () => {
   const writable = EDITORS.filter(
     (editor): editor is EditorName =>
-      !["claude-code", "vibe", "codex", "jetbrains", "continue", "visual-studio"].includes(editor),
+      !["claude-code", "vibe", "codex", "grok", "jetbrains", "continue", "visual-studio"].includes(editor),
   );
   for (const editor of writable) {
     const home = await tempHome();
@@ -80,6 +80,26 @@ test("writer creates backup only when an original file exists", async () => {
   const path = editorConfigPath("gemini", { platform: "linux", home, env: {} })!;
   await setupEditor("gemini", { hosted: false, apiBase: "https://api.example.test", token: "ens_test", launcher }, { platform: "linux", home, env: {} });
   await assert.rejects(() => stat(`${path}.ensemble-backup`));
+});
+
+test("Grok Build uses its own MCP CLI for local, bearer, and removal configurations", async t => {
+  const home = await tempHome();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const executable = join(home, "grok");
+  const output = join(home, "calls.jsonl");
+  await writeFile(executable, `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(output)}, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
+  await chmod(executable, 0o755);
+  const where = { platform: "linux" as const, home, env: { PATH: home } };
+  await setupEditor("grok", { hosted: false, apiBase: "https://api.example.test", token: null, launcher }, where);
+  await setupEditor("grok", { hosted: true, apiBase: "https://api.example.test", token: "ens_test", launcher }, where);
+  await removeEditor("grok", where);
+  const calls = (await readFile(output, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(calls[1], ["mcp", "add", "ensemble", "--", "/usr/local/bin/ensemble", "mcp"]);
+  assert.deepEqual(calls[3], ["mcp", "add", "--transport", "http", "ensemble", "https://api.example.test/mcp", "--header", "Authorization: Bearer ens_test"]);
+  assert.deepEqual(calls[4], ["mcp", "remove", "ensemble"]);
+  const missing = await setupEditor("grok", { hosted: false, apiBase: "https://api.example.test", token: null, launcher }, { ...where, env: { PATH: "" } });
+  assert.equal(missing.changed, false);
+  assert.match(missing.message, /grok mcp add/);
 });
 
 test("Codex TOML edits keep array tables, commented headers and spaced headers intact", async () => {

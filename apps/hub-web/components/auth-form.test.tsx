@@ -75,6 +75,31 @@ test("signup with verification mail goes to the code page before onboarding", ()
   assert.equal(authRedirectTarget("signup", { verificationSent: false }, null), "/start");
   assert.equal(authRedirectTarget("login", {}, "/context"), "/context");
   assert.equal(authRedirectTarget("login", {}, "https://evil.example"), "/today");
+  const next = `/oauth?request=ens_oauth_request_${"x".repeat(43)}`;
+  assert.equal(authRedirectTarget("signup", { verificationSent: true }, next), `/verify?next=${encodeURIComponent(next)}`);
+  assert.equal(authRedirectTarget("signup", { verificationSent: false }, next), next);
+});
+
+test("provider sign-in carries the validated MCP consent request", async () => {
+  const request = `ens_oauth_request_${"x".repeat(43)}`;
+  setTestUrl(`http://localhost/login?next=${encodeURIComponent(`/oauth?request=${request}`)}`);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const status = { hasAccounts: true, signup: "open", bypass: false, providers: ["google"], emailConfigured: true, turnstileSiteKey: null };
+  client.setQueryData(["auth-status"], status);
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json(status);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><AuthForm mode="login" /></QueryClientProvider>));
+    const provider = host.querySelector<HTMLAnchorElement>(`a[href^="${HUB_API}/api/auth/oauth/google/start"]`);
+    assert.ok(provider);
+    assert.equal(new URL(provider.href).searchParams.get("mcp_request"), request);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove(); client.clear(); globalThis.fetch = original; setTestUrl("http://localhost/");
+  }
 });
 
 function typeInto(input: HTMLInputElement, value: string) {

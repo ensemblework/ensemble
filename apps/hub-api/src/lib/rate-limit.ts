@@ -173,6 +173,10 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "POST" && (path === "/api/auth/forgot" || path === "/api/auth/resend-verification")) return "email";
   if (method === "POST" && path === "/api/cli/auth/start") return "cliStart";
   if (method === "POST" && path === "/api/cli/auth/token") return "cliToken";
+  if (method === "GET" && path === "/oauth/authorize") return "login";
+  if (method === "POST" && path === "/oauth/register") return "token";
+  if (method === "POST" && (path === "/oauth/token" || path === "/oauth/revoke")) return "mcp";
+  if ((method === "GET" || method === "POST") && path === "/api/mcp-oauth/consent") return "cliApprove";
   if ((method === "GET" && path === "/api/cli/auth/request") || (method === "POST" && path === "/api/cli/auth/approve")) return "cliApprove";
   if (method === "POST" && path === "/mcp") return "mcp";
   // Editors calling the bridge directly (the CLI's MCP server): the same allowance as hosted MCP.

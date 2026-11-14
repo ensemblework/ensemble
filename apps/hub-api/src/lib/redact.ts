@@ -1,4 +1,4 @@
-const QUERY = /([?&](?:ticket|token|access_token|refresh_token|id_token|code|api_key|apikey|client_secret|password|secret|key)=)[^&#\s]*/gi;
+const QUERY = /([?&](?:ticket|token|access_token|refresh_token|id_token|code|code_verifier|request|mcp_request|state|api_key|apikey|client_secret|password|secret|key)=)[^&#\s]*/gi;
 
 /** Drop secret query values before a request URL is written to a log. */
 export function redactRequestUrl(url: string): string {

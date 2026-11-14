@@ -1,5 +1,6 @@
 import type { InjectOptions, RouteOptions } from "fastify";
 import { isPublicAuthPath } from "./auth-public.js";
+import { isMcpPublicPath } from "../mcp-oauth/paths.js";
 import { routeCoverage } from "../test/route-coverage.js";
 
 export type RouteAuth =
@@ -30,7 +31,7 @@ export function routeAuth(method: string, path: string): RouteAuth {
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";
   // A coding agent's hook in an engine run, or an assistant turn's tools: the run's (turn's) own secret, on loopback, on the desktop only.
   if (path === "/api/engine/ask" || path === "/api/engine/tool" || path === "/api/engine/tools" || path === "/api/engine/assistant/tools" || path === "/api/engine/assistant/tool" || path === "/api/engine/assistant/ask" || path === "/api/engine/git-credential") return "engine-run-secret";
-  if (path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/api/desktop/connected" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path))) return "public";
+  if (path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/api/desktop/connected" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path)) || isMcpPublicPath(path)) return "public";
   if (path.startsWith("/api/internal/")) return "internal-token";
   if (path === "/api/node/hooks/routines/:id") return "routine-hook-token";
   return "identity";

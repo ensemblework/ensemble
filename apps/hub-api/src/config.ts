@@ -15,6 +15,7 @@ const Env = z.object({
   HUB_API_HOST: z.string().default("127.0.0.1"),
   HUB_API_PORT: z.coerce.number().default(4000),
   HUB_WEB_ORIGIN: z.string().default("http://localhost:3000"),
+  OPENAI_APPS_CHALLENGE: z.string().min(1).max(8192).regex(/^[^\x00-\x1f\x7f]+$/, "Use the exact one-line OpenAI domain challenge.").optional(),
   ENSEMBLE_DEV_AUTH_BYPASS: z
     .string()
     .optional()
