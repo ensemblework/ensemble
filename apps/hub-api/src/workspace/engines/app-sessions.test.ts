@@ -67,6 +67,9 @@ test("the Code tab's list is the one in the profile the Claude app runs on now, 
     writeFileSync(join(list, "archived-sessions.idx"), "");
     profile(join(support, "Claude Extensions"), JUNE);
     mkdirSync(join(support, "claude-code"));
+    // Folders made in a profile above moved its time to now (on coarse clocks, both to the same moment): set them again.
+    touch(signedIn, JUNE);
+    touch(gateway, NOVEMBER);
 
     const where = { home, platform: "darwin" as const, env: {} };
     assert.deepEqual((await claudeDesktopProfiles(where)).sort(), [join(support, "Claude"), join(support, "Claude Extensions"), join(support, "Claude-3p")].sort());
