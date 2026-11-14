@@ -10,6 +10,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { clientAddress } from "../lib/rate-limit.js";
 import { createDevicePairing } from "../devices/pairing.js";
 import { redis } from "../lib/redis.js";
+import { revokeMcpOAuthGrant } from "../mcp-oauth/service.js";
 
 const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
 const USER_CODE = new RegExp(`^[${USER_CODE_ALPHABET}]{8}$`);
@@ -295,7 +296,11 @@ export async function cliAuthRoutes(app: FastifyInstance): Promise<void> {
       reply.header("WWW-Authenticate", 'Bearer realm="Ensemble"');
       return reply.code(401).send({ error: "Bearer token required." });
     }
-    await app.prisma.apiToken.updateMany({ where: { id: request.tokenId, userId: request.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    if (request.tokenOAuthGrantId) {
+      await app.prisma.$transaction(tx => revokeMcpOAuthGrant(tx, request.tokenOAuthGrantId!, new Date()));
+    } else {
+      await app.prisma.apiToken.updateMany({ where: { id: request.tokenId, userId: request.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+    }
     return reply.code(204).send();
   });
 }

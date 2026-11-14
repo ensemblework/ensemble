@@ -15,6 +15,7 @@ import { AppMark } from "./logos";
 import { ExtensionCards } from "./extensions";
 import { ConnectHelp } from "./help";
 import { hostedMcpUrl } from "@/lib/connect/configs";
+import { OAuthConnections } from "./oauth-connections";
 
 export function ConnectPage() {
   const bridge = useQuery({
@@ -59,6 +60,7 @@ export function ConnectPage() {
       {bridge.isError ? (
         <p className="mb-4 rounded-lg border border-warn/40 bg-panel px-3 py-2 text-[13px] text-muted">{(bridge.error as Error).message}</p>
       ) : null}
+      {me.data ? <OAuthConnections url={hostedMcpUrl({ publicApiUrl: bridge.data?.publicApiUrl, origin: typeof window === "undefined" ? undefined : window.location.origin })} /> : null}
 
       <section className="connect-rise tile rounded-xl bg-panel p-4 md:p-5" aria-labelledby="bridge-key-title">
         <div className="flex flex-wrap items-start justify-between gap-3">

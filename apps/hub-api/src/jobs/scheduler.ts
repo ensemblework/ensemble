@@ -29,6 +29,7 @@ import { sweepWhenDue } from "../workspace/session-cleanup.js";
 import { sweepAskSessions } from "../assistant/ask-sessions.js";
 import { retryAssistantSessionDeletes } from "../assistant/delete-chat.js";
 import { sendProjectDeletes } from "../workspace/project-delete.js";
+import { purgeMcpOAuth } from "../mcp-oauth/service.js";
 
 const RETENTION_TIME = "03:30";
 let lastInteractionPurge = 0;
@@ -75,6 +76,7 @@ async function tick(app: FastifyInstance): Promise<void> {
   if (Date.now() - lastInteractionPurge > 86_400_000) {
     lastInteractionPurge = Date.now();
     void purgeInteractionEvents(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "interaction log purge failed"));
+    void purgeMcpOAuth(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "MCP OAuth expiry purge failed"));
   }
   void sweepStoredBlobs(app.prisma)
     .then((swept) => {

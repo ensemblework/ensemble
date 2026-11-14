@@ -52,6 +52,8 @@ Hosted Google data access, productivity use, selected-provider AI processing, st
 
 Checks for the area you change are listed in [AGENTS.md](AGENTS.md#commands); the API baseline is `pnpm --filter @ensemble/hub-api test:public` (in-memory PGlite, mocked providers, no model quota).
 
+Hosted MCP OAuth and client compatibility checks: `pnpm --filter @ensemble/hub-api test:mcp-oauth`. The shared fast CI also checks named catalog/legacy MCP behavior, consent UI, provider returns and Grok editor setup without real model calls.
+
 ## Other apps
 
 ```bash
@@ -73,7 +75,9 @@ curl -fsSL https://ensemblework.com/install.sh | sh    # macOS, Linux
 irm https://ensemblework.com/install.ps1 | iex         # Windows PowerShell
 ```
 
-Editors that take a URL can use `https://api.ensemblework.com/mcp` with an `ens_` key from Connect your apps. Details: [docs/26_CLI.md](docs/26_CLI.md).
+Editors and AI apps use the same `https://api.ensemblework.com/mcp`: static `ens_` keys remain supported, and hosted OAuth provides browser consent, PKCE, DCR/CIMD and rotating credentials. OAuth uses named tools; legacy editor keys keep their existing profile. `ensemble mcp setup grok` configures Grok Build through its own MCP command. Details: [Context Bridge](docs/CONTEXT_BRIDGE.md), [CLI](docs/26_CLI.md). Open-source plugin packages and automation/client assets: [ensemblework/ensemble-integrations](https://github.com/ensemblework/ensemble-integrations).
+
+Optional `OPENAI_APPS_CHALLENGE` configures the API's plaintext OpenAI plugin domain-verification endpoint; unset returns 404. The vendor-generated value belongs in deployment configuration, not source.
 
 ## Layout
 

@@ -36,6 +36,21 @@ export const mcpRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> =
   "DELETE /mcp": ["invalid-input"],
 };
 
+export const mcpOAuthRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /.well-known/oauth-protected-resource": ["happy-path"],
+  "GET /.well-known/oauth-protected-resource/mcp": ["happy-path"],
+  "GET /.well-known/oauth-authorization-server": ["happy-path"],
+  "GET /.well-known/openai-apps-challenge": ["happy-path"],
+  "GET /oauth/authorize": ["happy-path", "invalid-input"],
+  "POST /oauth/register": ["happy-path", "invalid-input"],
+  "POST /oauth/token": ["happy-path", "invalid-input"],
+  "POST /oauth/revoke": ["happy-path", "isolation"],
+  "GET /api/mcp-oauth/consent": ["happy-path", "isolation"],
+  "POST /api/mcp-oauth/consent": ["happy-path", "invalid-input"],
+  "GET /api/mcp-oauth/connections": ["happy-path", "isolation"],
+  "DELETE /api/mcp-oauth/connections/:id": ["happy-path", "isolation"],
+};
+
 export const roundNextRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/version": ["happy-path", "invalid-input"],
   "GET /api/desktop/update/:target/:arch/:current": ["happy-path"],
@@ -400,6 +415,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   ...authRouteCoverage,
   ...cliAuthRouteCoverage,
   ...mcpRouteCoverage,
+  ...mcpOAuthRouteCoverage,
   ...connectorRouteCoverage,
   ...mcpConnectionRouteCoverage,
   ...importRouteCoverage,

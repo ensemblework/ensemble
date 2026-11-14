@@ -388,6 +388,32 @@ test("OAuth state is browser-bound and single-use; passwordless sessions work in
   assert.equal(await harness.prisma.authIdentity.count({ where: { userId: me.json().user.id } }), 1);
 });
 
+test("provider sign-in returns to the browser-bound MCP consent request and rejects a tampered return", async () => {
+  const mcp = `ens_oauth_request_${"x".repeat(43)}`;
+  profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+  const begin = () => harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/start?mcp_request=${mcp}` });
+  const started = await begin();
+  assert.equal(started.statusCode, 302);
+  const state = new URL(String(started.headers.location)).searchParams.get("state")!;
+  const response = await harness.app.inject({
+    method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state)}`,
+    headers: { cookie: `${cookie(started, "ensemble_login_flow")}; ${cookie(started, "ensemble_login_return")}` },
+  });
+  assert.equal(new URL(String(response.headers.location)).pathname, "/oauth");
+  assert.equal(new URL(String(response.headers.location)).searchParams.get("request"), mcp);
+  const user = await harness.prisma.user.findUniqueOrThrow({ where: { email: profile.email! } });
+  createdIds.push(user.id);
+  const another = await begin();
+  const otherState = new URL(String(another.headers.location)).searchParams.get("state")!;
+  const tampered = cookie(another, "ensemble_login_return").replace(mcp, `ens_oauth_request_${"z".repeat(43)}`);
+  const rejected = await harness.app.inject({
+    method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(otherState)}`,
+    headers: { cookie: `${cookie(another, "ensemble_login_flow")}; ${tampered}` },
+  });
+  assert.equal(new URL(String(rejected.headers.location)).pathname, "/login");
+  assert.match(new URL(String(rejected.headers.location)).searchParams.get("error") ?? "", /return expired or changed/);
+});
+
 test("new OAuth users with unverified provider email receive a code and land on verify", async () => {
   profile = { subject: randomUUID(), email: address(), name: "Mira", verified: false };
   const flow = await oauth("github");

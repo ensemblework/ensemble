@@ -3,7 +3,7 @@ import { privateIdentifier } from "./secrets.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 const scopedModels = Prisma.dmmf.datamodel.models.filter((model) => model.fields.some((field) => field.name === "userId" && field.kind === "scalar"));
-const PRIVATE_TABLES = new Set(["sessions", "active_places", "api_tokens", "oauth_tokens", "model_credentials", "email_tokens", "auth_flows", "terminal_passkeys", "device_pairings"]);
+const PRIVATE_TABLES = new Set(["sessions", "active_places", "api_tokens", "oauth_tokens", "model_credentials", "email_tokens", "auth_flows", "terminal_passkeys", "device_pairings", "mcp_oauth_clients", "mcp_oauth_requests", "mcp_oauth_refresh_tokens", "mcp_oauth_grants"]);
 const PRIVATE_COLUMNS = ["credit_key", "password_hash", "secret", "access_token", "refresh_token", "token_hash", "code_verifier", "nonce"];
 const SECRET_FIELDS = new Set(["secret", "password", "passwordhash", "clientsecret", "token", "accesstoken", "refreshtoken", "apikey", "apitoken", "tokenhash", "codeverifier", "nonce", "credentials", "pat"]);
 
@@ -57,6 +57,7 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
       const parent = scopedModels.find((item) => item.name === relation.type)!;
       const foreign = model.fields.find((field) => field.name === relation.relationFromFields![0])!;
       const table = model.dbName ?? model.name;
+      if (PRIVATE_TABLES.has(table)) continue;
       const scope = parent.fields.find((field) => field.name === "userId")!;
       const rows = await tx.$queryRawUnsafe<Array<{ row: Prisma.JsonValue }>>(
         `SELECT to_jsonb(t) - $2::text[] AS row FROM ${identifier(table)} t JOIN ${identifier(parent.dbName ?? parent.name)} p ON t.${identifier(foreign.dbName ?? foreign.name)} = p.id WHERE p.${identifier(scope.dbName ?? scope.name)} = $1`,
@@ -68,6 +69,13 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
     tables.contacts = (await tx.contact.findMany({ where: { ownerId: userId } })) as unknown as Prisma.JsonValue[];
     tables.space_members = (await tx.spaceMember.findMany({ where: { OR: [{ spaceId: userId }, { accountId: userId }] } })) as unknown as Prisma.JsonValue[];
     tables.shares = (await tx.share.findMany({ where: { OR: [{ spaceId: userId }, { recipientId: userId }] } })) as unknown as Prisma.JsonValue[];
+    tables.mcp_oauth_connections = (await tx.mcpOAuthGrant.findMany({
+      where: { accountId: userId }, include: { client: { select: { name: true } } },
+    })).map(grant => ({
+      name: grant.client.name, spaceId: grant.userId, scopes: grant.scopes,
+      createdAt: grant.createdAt.toISOString(), lastUsedAt: grant.lastUsedAt?.toISOString() ?? null,
+      revokedAt: grant.revokedAt?.toISOString() ?? null,
+    }));
     tables.node_room_invites = (await tx.nodeRoomInvite.findMany({ where: { OR: [{ inviterId: userId }, { inviteeId: userId }] } })) as unknown as Prisma.JsonValue[];
     // A request's brief is the target owner's own words for their lead (docs/35 §12.6): in their export only.
     tables.node_peer_requests = (await tx.nodePeerRequest.findMany({ where: { OR: [{ fromAccountId: userId }, { toAccountId: userId }] } })).map((row) =>

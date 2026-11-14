@@ -23,7 +23,7 @@ Task / deliverable / assistant / CLI assignment
 
 | Job | Behaviour |
 | --- | --- |
-| Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; interaction-log purge once a day ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
+| Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; daily interaction-log and MCP OAuth expiry purges (`purgeMcpOAuth`, [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)) |
 | Device leases | `devices/lease.ts` settles expired remote claims as interrupted |
 | Deletions on computers | Asks the person's online computers again for what they have not confirmed: a deleted chat's agent session (`assistant/delete-chat.ts`), and the Codex projects of a project 10 minutes in Trash (`workspace/project-delete.ts`, [30](30_ENGINES.md), In the agents' own apps) |
 | Blob sweep | At most hourly, only when the server's blob store is on (`jobs/blob-sweep.ts`): removes file originals and plot tables nothing uses once an hour old, and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)) |

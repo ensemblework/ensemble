@@ -98,7 +98,7 @@ describe("task updates through the bridge", () => {
         const tool = tools.find((row) => row.name === name);
         assert.ok(tool, name);
         assert.equal(tool.annotations?.readOnlyHint, false, name);
-        assert.equal(tool.annotations?.destructiveHint, false, name);
+        assert.equal(tool.annotations?.destructiveHint, true, name);
       }
       const updated = await client.callTool({ name: "ensemble_update_task", arguments: { task: `ensemble://task/${IDS.task}`, status: "in_progress", note: "Started on the retry helper." } });
       assert.notEqual(updated.isError, true, textOf(updated));
