@@ -83,6 +83,7 @@ test("every assistant tool stays inside the open space", async () => {
   await run(there, "hub_create_person", { name: `${MARK} Bee`, email: "zephyrine@example.test" });
   await run(there, "hub_create_deliverable", { title: `${MARK} deliverable`, projectId, due: "2026-11-01" });
   await run(there, "hub_create_reminder", { title: `${MARK} reminder`, dueDate: "2026-11-02" });
+  const routine = (await run(there, "hub_create_routine", { title: `${MARK} routine`, instruction: `${MARK} digest of the day.`, every: "day", time: "09:00" })).data as { routine: { id: string } };
   const page = (await run(there, "hub_create_page", { title: `${MARK} page`, markdown: `# ${MARK}\n\nSecret ${MARK} plan.` })).data as { id: string };
   const meeting = (await run(there, "hub_create_meeting_note", { title: `${MARK} sync`, date: "2026-10-12", time: "10:00", notes: `${MARK} decided the launch.` })).data as { id: string };
   const dataset = (await run(there, "hub_import_dataset", { name: `${MARK} data`, text: `region,revenue\n${MARK},10\nNorth,20\n` })).data as { dataset?: { id: string }; id?: string };
@@ -127,9 +128,10 @@ test("every assistant tool stays inside the open space", async () => {
     board: made.board.id,
     column: made.board.columns[0]!.id,
     watcher: watcher.id,
+    routine: routine.routine.id,
   };
   // The other space's records: their ids and the words stored in them (a tool echoing the search word is not a leak).
-  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|page|sync|data|mail|space|contract|decided|wants|flow|step|chart|server|board|lane|watch)|${MARK}-vercel|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
+  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|routine|digest|page|sync|data|mail|space|contract|decided|wants|flow|step|chart|server|board|lane|watch)|${MARK}-vercel|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
   const secret = new RegExp([stored, ...Object.values(ids)].join("|"), "i");
 
   const checked: string[] = [];
@@ -180,6 +182,7 @@ test("every assistant tool stays inside the open space", async () => {
       hub_move_to_board: [{ board: ids.board, column: ids.column, taskId: ids.task }, { board: ids.board, column: ids.column, pageId: ids.page }],
       hub_remove_from_board: [{ taskId: ids.task }, { pageId: ids.page }],
       hub_cancel_watcher: [{ watcherId: ids.watcher }],
+      hub_update_routine: [{ routineId: ids.routine, title: "Across" }, { routineId: ids.routine, action: "pause" }, { routineId: ids.routine, action: "delete" }],
     };
     const variants = [inputFor(tool, ids, false), inputFor(tool, ids, true), ...(extra[tool.name] ?? [])].filter((input): input is Record<string, unknown> => input !== null);
     const tried = new Set<string>();
@@ -206,9 +209,11 @@ test("every assistant tool stays inside the open space", async () => {
   }
 
   // The control: the same reads do find the other space's records when run inside it.
-  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_view_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections", "hub_list_boards", "hub_read_board", "hub_list_watchers"]) {
+  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_view_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections", "hub_list_boards", "hub_read_board", "hub_list_watchers", "hub_list_routines"]) {
     assert.ok(seenThere.includes(name), `${name} finds the records inside their own space (saw: ${seenThere.join(", ")})`);
   }
+  const kept = await db.assistantRoutine.findUniqueOrThrow({ where: { id: ids.routine } });
+  assert.deepEqual([kept.title, kept.status], [`${MARK} routine`, "active"], "the other space's routine was not changed, paused or deleted");
   const unchecked = [...TOOLS.values()].filter((tool) => !SKIP.has(tool.name) && !checked.includes(tool.name)).map((tool) => `${tool.name}${tool.isWrite ? "(w)" : ""}`);
   // Left out: tools that only create something new from words (no ids), reads with nothing of their kind seeded,
   // and hub_save_file, which takes a web link or the person's own evidence, never another space's records.

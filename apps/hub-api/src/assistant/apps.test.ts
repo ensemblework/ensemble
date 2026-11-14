@@ -276,7 +276,7 @@ test("a turn with writePolicy immediate still holds a calendar invite for Apply 
   assert.ok(record.frames.some((frame) => frame.type === "pending" && frame.call.name === "calendar_create_event"));
   assert.equal(result.mutated, false);
   assert.deepEqual(record.fetches, [], "no request reached Google");
-  assert.match(result.content, /press Apply/);
+  assert.match(result.content, /press Apply/i);
 
   const first = record.asked[0]!;
   assert.ok(first.tools.includes("calendar_create_event") && first.tools.includes("hub_create_tasks"));
