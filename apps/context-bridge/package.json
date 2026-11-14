@@ -26,6 +26,7 @@
   },
   "exports": {
     "./server": "./src/server.ts",
+    "./catalog": "./src/catalog.ts",
     "./hub": "./src/hub.ts",
     "./config": "./src/config.ts",
     "./package.json": "./package.json"

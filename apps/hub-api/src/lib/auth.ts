@@ -21,6 +21,7 @@ import { LINK_HEADER, resolveLink, VISITOR_HEADER } from "../sharing/links.js";
 import { anonymousVisitor, cleanVisitorId } from "../sharing/visitors.js";
 import { colorFor } from "../sharing/presence.js";
 import { displayName } from "../sharing/store.js";
+import { oauthResource } from "../mcp-oauth/protocol.js";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
 
@@ -137,6 +138,8 @@ export type Identity = {
   tokenCanUseApps?: boolean;
   tokenSpaceId?: string;
   tokenAccountId?: string;
+  tokenOAuthGrantId?: string;
+  tokenOAuthScopes?: string[];
   modules: string | null;
   access?: Access;
 };
@@ -336,14 +339,32 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
   if (authorization?.startsWith("Bearer ens_")) {
     const row = await prisma.apiToken.findUnique({
       where: { tokenHash: sha256(authorization.slice(7)) },
-      include: { user: { select: { moduleSet: true, ownerId: true, name: true, spaceName: true } } },
+      include: {
+        user: { select: { moduleSet: true, ownerId: true, name: true, spaceName: true } },
+        oauthGrant: { select: { revokedAt: true, resource: true, accountId: true, userId: true, scopes: true } },
+      },
     });
-    if (!row || row.revokedAt) return null;
+    if (!row || row.revokedAt || (row.expiresAt && row.expiresAt <= new Date())) return null;
+    if (row.oauthGrantId) {
+      const grant = row.oauthGrant;
+      if (!grant || grant.revokedAt || grant.resource !== oauthResource() || row.scope !== "bridge" ||
+        grant.accountId !== row.accountId || grant.userId !== row.userId ||
+        (row.userId === row.accountId ? row.user.ownerId !== null : row.user.ownerId !== row.accountId) ||
+        !row.oauthScopes.includes("ensemble:read") || row.oauthScopes.some(scope => !grant.scopes.includes(scope)) ||
+        row.canWrite !== row.oauthScopes.includes("ensemble:write") || row.canUseApps !== row.oauthScopes.includes("ensemble:apps")) return null;
+    }
     const tokenScope = knownTokenScope(row.scope);
     if (!tokenScope) return null;
     if (tokenScope === "transfer" && Date.now() - row.createdAt.getTime() > TRANSFER_KEY_MS) return null;
-    void prisma.apiToken.update({ where: { id: row.id }, data: { lastUsedAt: new Date() } }).catch(() => undefined);
-    const base: Identity = { userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet };
+    const usedAt = new Date();
+    void prisma.apiToken.update({
+      where: { id: row.id },
+      data: { lastUsedAt: usedAt, ...(row.oauthGrantId ? { oauthGrant: { update: { lastUsedAt: usedAt } } } : {}) },
+    }).catch((error: unknown) => request.log?.warn({ err: error }, "could not record MCP key use"));
+    const base: Identity = {
+      userId: row.userId, via: "token", tokenScope, tokenId: row.id, tokenCanWrite: row.canWrite, tokenCanUseApps: row.canUseApps, modules: row.user.moduleSet,
+      ...(row.oauthGrantId ? { accountId: row.accountId ?? row.userId, tokenOAuthGrantId: row.oauthGrantId, tokenOAuthScopes: row.oauthScopes } : {}),
+    };
     return tokenScope === "bridge" || tokenScope === "full" ? keyIdentity(request, base, row) : base;
   }
   const cookie = readCookie(request, SESSION_COOKIE);

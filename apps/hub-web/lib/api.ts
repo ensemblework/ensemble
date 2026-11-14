@@ -1,4 +1,5 @@
 import type { SecretAnswer, SecretTarget } from "./node-secret";
+import type { McpOAuthConnections, McpOAuthConsent, McpOAuthDecision } from "@ensemble/shared-types";
 import type { LoginAnswer, LoginTarget } from "./node-login";
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
 import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
@@ -1584,6 +1585,10 @@ export const api = bindClient({
   createToken: (name: string) => post<{ id: string; token: string }>("/api/tokens", { name }),
   revokeToken: (id: string) => del<void>(`/api/tokens/${id}`),
   connectBridge: () => get<ConnectBridge>("/api/connect/bridge"),
+  mcpOAuthConsent: (id: string) => get<McpOAuthConsent>(`/api/mcp-oauth/consent${qs({ request: id })}`),
+  decideMcpOAuth: (body: McpOAuthDecision) => post<{ redirect: string }>("/api/mcp-oauth/consent", body),
+  mcpOAuthConnections: () => get<McpOAuthConnections>("/api/mcp-oauth/connections"),
+  disconnectMcpOAuth: (id: string, csrf: string) => del<{ ok: true }>(`/api/mcp-oauth/connections/${id}`, { csrf }),
   /** The desktop app's own MCP command for editors on this computer (local runtime only). */
   desktopMcp: () => get<{ command: string; args: string[] }>("/api/desktop/mcp"),
   createBridgeToken: (name?: string, canWrite = true, canUseApps = true) =>

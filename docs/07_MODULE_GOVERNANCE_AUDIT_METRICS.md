@@ -1,6 +1,6 @@
 # 07 · Access, approvals, audit, retention and metrics
 
-The Hub assistant, assigned agents, external engines and the read-only Context Bridge have different permissions; no single policy table governs all four.
+The Hub assistant, assigned agents, external engines and the grant-scoped Context Bridge have different permissions; no single policy table governs all four.
 
 ## 1. Identity & access
 
@@ -11,6 +11,12 @@ A space scopes content by `userId`; the actor is `accountId`. Sharing adds route
 Account export and deletion use `lib/account-data.ts`. Deletion includes owned spaces and checks for active work, including a run on the person's computer in a shared space. Account-lifetime foreign keys stop late writes from recreating erased rows. Third-party copies and infrastructure backups have their own lifetimes.
 
 Account-wide `ActivePlace` leases enforce the hosted Hub's simultaneous-place rule independently of sharing presence ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)). They are excluded from account exports and cascade away with their session/account. Guarded record saves compare `_base` under a row lock and preserve conflicting values for the person's choice ([02 §5](02_MODULE_INTERACTION_HUB_UI.md#5-state--data-flow)).
+
+External MCP clients use a static key or hosted OAuth ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). `mcp_oauth_clients` holds registered app metadata and hashed client secrets; `mcp_oauth_requests` holds browser-bound consent and hashed codes; `mcp_oauth_grants` binds an account, owned default space, client, resource and scopes; access keys in `api_tokens` and hashed refresh tokens reference that grant. Every access checks expiry, revocation, resource and current ownership. Code/refresh claims are atomic. Known refresh replay invalidates the entire grant, and disconnect/self-logout cannot leave a live refresh family.
+
+Rotation is the default and mandatory for public/CIMD clients. A confidential client can explicitly register persistent linking for a vendor that requires it: secret authentication on every refresh, stable credential, extended 30-day expiry and no scope restoration after narrowing. Revocation and ownership checks are unchanged.
+
+OAuth connection metadata belongs to the authorizing account, including when its default space differs. Export returns app/grant metadata without authentication tables or secrets. Workspace erasure keeps connection configuration; account/default-space deletion cascades through grants and tokens. Consent mutations need the current browser session, matching web origin and CSRF proof. Provider sign-in carries its MCP return in a signed, flow-bound cookie, not an arbitrary redirect.
 
 ### 1.1 Completed and deleted data retention
 
@@ -23,6 +29,7 @@ Account-wide `ActivePlace` leases enforce the hosted Hub's simultaneous-place ru
 | `historyRetentionDays` | 90 days (30–365). Audit ledger, task status history, and how runs chose their agent sessions (`session_choices`, [30](30_ENGINES.md), Choosing a session) |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | The AI activity log (`ai_activity`, §1.4) | Fixed 30 days (`AI_ACTIVITY_RETENTION_DAYS`) |
+| MCP OAuth credentials | Consent/code requests: 10 minutes. Access keys: one hour. Refresh tokens: 30 days, rotation by default; confidential persistent linking extends expiry on refresh ([Context Bridge §4.1](CONTEXT_BRIDGE.md#41-oauth-for-ai-apps)). Daily `purgeMcpOAuth` removes expired consent, refresh/access rows 30 days past expiry and grants 30 days after revocation; account deletion removes them immediately |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; their snapshots are unpinned |
 
@@ -72,7 +79,7 @@ Writing never slows or fails the work: entries queue in memory and go to the dat
 | Assigned research/code jobs | Saved run profile, tools, folder trust, Ask / Review only / Unattended mode, sandbox, network and Git permissions, budgets |
 | Publishing | The exact saved approval and payload, with continuation checks |
 | Human terminal | Passkey unlock and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal--for-you-only)) |
-| Context Bridge | Read-only tools, scoped bearer key or session, bounded retrieval |
+| Context Bridge | Read/write/app grants, owned-space scope, static bearer or OAuth access keys, bounded retrieval; named catalog and legacy profiles use the same API checks |
 
 `assistant/apply.ts` validates approved proposals; an edited proposal is revalidated. Tools routed through `assistant/request.ts` reuse API authentication, quotas and resource checks. A guest never gains the owner's connections through a workflow.
 
